@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
 
@@ -12,7 +12,14 @@ describe("sourceAddedLabel", () => {
   });
 
   it("uses Added today for the current local calendar day", () => {
-    expect(sourceAddedLabel(new Date().toISOString(), false)).toBe("Added today");
+    const today = "2026-10-20T12:00:00.000Z";
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(today));
+      expect(sourceAddedLabel(today, false)).toBe("Added today");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("falls back to a formatted date for older sources", () => {

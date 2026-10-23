@@ -502,5 +502,4 @@ it.live(
         });
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
-  60_000,
 );

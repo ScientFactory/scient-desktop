@@ -722,92 +722,98 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
     const plan: ProviderManagedRuntimeActions["plan"] = (action) =>
       prepareAction(action).pipe(Effect.map((prepared) => prepared.plan));
 
+    const runEffect = Effect.fn("CodexManagedRuntimeActions.run")(function* (
+      action: Parameters<ProviderManagedRuntimeActions["run"]>[0],
+      catalogRevision: Parameters<ProviderManagedRuntimeActions["run"]>[1],
+      report: Parameters<ProviderManagedRuntimeActions["run"]>[2],
+      awaitActivationWindow: NonNullable<Parameters<ProviderManagedRuntimeActions["run"]>[3]>,
+    ) {
+      const prepared = yield* prepareAction(action);
+      const planned = prepared.plan;
+      if (planned.catalogRevision !== catalogRevision) {
+        return yield* runtimeError(
+          "The qualified Codex setup plan changed. Review it again before continuing.",
+        );
+      }
+      const context = yield* Effect.context<never>();
+      const runFork = Effect.runForkWith(context);
+      const runPromise = Effect.runPromiseWith(context);
+      if (action === "remove") {
+        yield* awaitActivationWindow;
+        yield* report({
+          status: "removing",
+          message: "Removing Scient's private Codex runtime.",
+        });
+        yield* Effect.tryPromise({
+          try: () => runtime.remove(),
+          catch: (cause) =>
+            runtimeError("Scient could not remove its private Codex runtime.", cause),
+        });
+        yield* Ref.set(managedHealthCache, null);
+        return;
+      }
+      const actionArtifact = prepared.artifact;
+      if (!actionArtifact) {
+        return yield* runtimeError("No qualified Codex artifact is available.");
+      }
+      let lastStatus: ManagedCodexRuntimeProgress["stage"] | undefined;
+      let lastReportedBytes = 0;
+      yield* Effect.tryPromise({
+        try: (signal) =>
+          runtime.install({
+            artifact: actionArtifact,
+            signal,
+            beforeActivate: (activationSignal) =>
+              runPromise(awaitActivationWindow, { signal: activationSignal }),
+            qualify: async ({ executablePath, signal: qualificationSignal }) => {
+              qualificationSignal.throwIfAborted();
+              const qualificationDirectory = await NodeFSP.mkdtemp(
+                NodePath.join(NodeOS.tmpdir(), "scient-codex-qualification-"),
+              );
+              try {
+                await runPromise(
+                  qualifyManagedCodexRuntime({
+                    binaryPath: executablePath,
+                    expectedVersion: actionArtifact.version,
+                    cwd: qualificationDirectory,
+                    environment: input.environment,
+                    spawner: input.spawner,
+                  }),
+                  { signal: qualificationSignal },
+                );
+              } finally {
+                await NodeFSP.rm(qualificationDirectory, {
+                  recursive: true,
+                  force: true,
+                }).catch(() => undefined);
+              }
+            },
+            onProgress: (progress) => {
+              const stageChanged = progress.stage !== lastStatus;
+              const downloadedBytes = progress.downloadedBytes ?? 0;
+              const downloadAdvanced = downloadedBytes - lastReportedBytes >= 1024 * 1024;
+              const downloadFinished =
+                progress.totalBytes !== undefined && downloadedBytes === progress.totalBytes;
+              if (!stageChanged && !downloadAdvanced && !downloadFinished) return;
+              lastStatus = progress.stage;
+              lastReportedBytes = downloadedBytes;
+              runFork(report(mapProgress(progress)));
+            },
+          }),
+        catch: (cause) =>
+          cause instanceof ProviderConnectionActionError
+            ? cause
+            : runtimeError("Scient could not install the private Codex runtime.", cause),
+      });
+      yield* Ref.set(managedHealthCache, null);
+    });
+
     const run: ProviderManagedRuntimeActions["run"] = (
       action,
       catalogRevision,
       report,
       awaitActivationWindow = Effect.void,
-    ) =>
-      Effect.gen(function* () {
-        const prepared = yield* prepareAction(action);
-        const planned = prepared.plan;
-        if (planned.catalogRevision !== catalogRevision) {
-          return yield* runtimeError(
-            "The qualified Codex setup plan changed. Review it again before continuing.",
-          );
-        }
-        const context = yield* Effect.context<never>();
-        const runFork = Effect.runForkWith(context);
-        const runPromise = Effect.runPromiseWith(context);
-        if (action === "remove") {
-          yield* awaitActivationWindow;
-          yield* report({
-            status: "removing",
-            message: "Removing Scient's private Codex runtime.",
-          });
-          yield* Effect.tryPromise({
-            try: () => runtime.remove(),
-            catch: (cause) =>
-              runtimeError("Scient could not remove its private Codex runtime.", cause),
-          });
-          yield* Ref.set(managedHealthCache, null);
-          return;
-        }
-        const actionArtifact = prepared.artifact;
-        if (!actionArtifact) {
-          return yield* runtimeError("No qualified Codex artifact is available.");
-        }
-        let lastStatus: ManagedCodexRuntimeProgress["stage"] | undefined;
-        let lastReportedBytes = 0;
-        yield* Effect.tryPromise({
-          try: (signal) =>
-            runtime.install({
-              artifact: actionArtifact,
-              signal,
-              beforeActivate: (activationSignal) =>
-                runPromise(awaitActivationWindow, { signal: activationSignal }),
-              qualify: async ({ executablePath, signal: qualificationSignal }) => {
-                qualificationSignal.throwIfAborted();
-                const qualificationDirectory = await NodeFSP.mkdtemp(
-                  NodePath.join(NodeOS.tmpdir(), "scient-codex-qualification-"),
-                );
-                try {
-                  await runPromise(
-                    qualifyManagedCodexRuntime({
-                      binaryPath: executablePath,
-                      expectedVersion: actionArtifact.version,
-                      cwd: qualificationDirectory,
-                      environment: input.environment,
-                      spawner: input.spawner,
-                    }),
-                    { signal: qualificationSignal },
-                  );
-                } finally {
-                  await NodeFSP.rm(qualificationDirectory, {
-                    recursive: true,
-                    force: true,
-                  }).catch(() => undefined);
-                }
-              },
-              onProgress: (progress) => {
-                const stageChanged = progress.stage !== lastStatus;
-                const downloadedBytes = progress.downloadedBytes ?? 0;
-                const downloadAdvanced = downloadedBytes - lastReportedBytes >= 1024 * 1024;
-                const downloadFinished =
-                  progress.totalBytes !== undefined && downloadedBytes === progress.totalBytes;
-                if (!stageChanged && !downloadAdvanced && !downloadFinished) return;
-                lastStatus = progress.stage;
-                lastReportedBytes = downloadedBytes;
-                runFork(report(mapProgress(progress)));
-              },
-            }),
-          catch: (cause) =>
-            cause instanceof ProviderConnectionActionError
-              ? cause
-              : runtimeError("Scient could not install the private Codex runtime.", cause),
-        });
-        yield* Ref.set(managedHealthCache, null);
-      });
+    ) => runEffect(action, catalogRevision, report, awaitActivationWindow);
 
     const summary = yield* getSummary.pipe(
       Effect.orElseSucceed(() => ({

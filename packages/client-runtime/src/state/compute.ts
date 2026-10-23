@@ -402,12 +402,15 @@ export function createComputeEnvironmentAtoms<R, E>(
         mode: "singleFlight",
         key: ({ environmentId }: InventoryTarget) => environmentId,
       },
-      execute: (_input: InventoryTarget["input"], registry, environmentId) =>
-        Effect.gen(function* () {
-          const query = runtimeInventory({ environmentId, input: {} });
-          registry.refresh(query);
-          return yield* AtomRegistry.getResult(registry, query, { suspendOnWaiting: true });
-        }),
+      execute: Effect.fn("compute.execute")(function* (
+        _input: InventoryTarget["input"],
+        registry,
+        environmentId,
+      ) {
+        const query = runtimeInventory({ environmentId, input: {} });
+        registry.refresh(query);
+        return yield* AtomRegistry.getResult(registry, query, { suspendOnWaiting: true });
+      }),
     }),
     runtimes,
     refreshRuntimes: createEnvironmentRpcCommand(runtime, {

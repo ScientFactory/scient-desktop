@@ -1,4 +1,3 @@
-// @vitest-environment happy-dom
 import { RegistryContext } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";

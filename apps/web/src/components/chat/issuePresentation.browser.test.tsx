@@ -1,3 +1,4 @@
+import { fakeTimers, act as _fixtureAct, render as _fixtureRender } from "../../../test/render";
 import "../../index.css";
 import {
   CheckpointId,
@@ -20,48 +21,18 @@ import {
 import * as DateTime from "effect/DateTime";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef } from "react";
-import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
 
-const listRef = createRef<LegendListRef>();
 const env = EnvironmentId.make("issue-presentation-fixture");
-const base = {
-  listRef,
-  isWorking: false,
-  activeTurnInProgress: false,
-  activeTurnStartedAt: null,
-  latestRun: null,
-  runningRunId: null,
-  turnDiffSummaries: [],
-  onOpenTurnDiff: () => {},
-  onOpenThread: () => {},
-  onForkFromRun: () => Promise.resolve(),
-  onRollbackCheckpoint: () => {},
-  supportsConversationRollback: false,
-  onRevertToTurnCount: () => {},
-  isRevertingCheckpoint: false,
-  onImageExpand: () => {},
-  activeThreadEnvironmentId: env,
-  markdownCwd: undefined,
-  resolvedTheme: "light" as const,
-  timestampFormat: "locale" as const,
-  workspaceRoot: undefined,
-  runs: [],
-  providerStatuses: [],
-  anchorMessageId: null,
-  onAnchorReady: () => {},
-  onAnchorSizeChanged: () => {},
-  contentInsetEndAdjustment: 100,
-  onIsAtEndChange: vi.fn(),
-  onManualNavigation: () => {},
-};
 
 it("keeps a successful answer clean and puts retry feedback on its approval", async () => {
+  await using _fixture = _createFixture();
+
   await page.viewport(1000, 800);
   const host = document.createElement("div");
   Object.assign(host.style, {
@@ -73,7 +44,7 @@ it("keeps a successful answer clean and puts retry feedback on its approval", as
     color: "black",
   });
   document.body.append(host);
-  const root = createRoot(host);
+  const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
   const date = DateTime.makeUnsafe("2026-09-29T00:00:00.000Z");
   const threadId = ThreadId.make("fixture-thread");
   const runId = RunId.make("fixture-run");
@@ -127,42 +98,46 @@ it("keeps a successful answer clean and puts retry feedback on its approval", as
     },
   ];
   try {
-    flushSync(() =>
-      root.render(
-        <>
-          <div style={{ height: "500px" }}>
-            <MessagesTimeline
-              {...base}
-              routeThreadKey="fixture"
-              timelineEntries={deriveTimelineEntriesFromVisibleTurnItems({
-                optimisticMessages: [],
-                visibleTurnItems: items.map((item, position) => ({
-                  position,
-                  visibility: "local",
-                  sourceThreadId: threadId,
-                  sourceItemId: item.id,
-                  item,
-                })),
-              })}
-            />
-          </div>
-          <div style={{ padding: "24px", borderTop: "1px solid #ddd" }}>
-            <ComposerPendingApprovalPanel
-              approval={{
-                requestId: RuntimeRequestId.make("approval"),
-                responseCapability: "live" as const,
-                requestKind: "command",
-                createdAt: DateTime.formatIso(date),
-                detail: "git status",
-                responseError: "Approval could not be sent. Try again.",
-              }}
-              pendingCount={1}
-            />
-          </div>
-        </>,
-      ),
+    await _fixtureAct(
+      async () =>
+        await root.rerender(
+          <>
+            <div style={{ height: "500px" }}>
+              <MessagesTimeline
+                emptyPlaceholderInset={0}
+                {..._fixture.base}
+                routeThreadKey="fixture"
+                timelineEntries={deriveTimelineEntriesFromVisibleTurnItems({
+                  optimisticMessages: [],
+                  visibleTurnItems: items.map((item, position) => ({
+                    position,
+                    visibility: "local",
+                    sourceThreadId: threadId,
+                    sourceItemId: item.id,
+                    item,
+                  })),
+                })}
+              />
+            </div>
+            <div style={{ padding: "24px", borderTop: "1px solid #ddd" }}>
+              <ComposerPendingApprovalPanel
+                approval={{
+                  requestId: RuntimeRequestId.make("approval"),
+                  responseCapability: "live" as const,
+                  requestKind: "command",
+                  createdAt: DateTime.formatIso(date),
+                  detail: "git status",
+                  responseError: "Approval could not be sent. Try again.",
+                }}
+                pendingCount={1}
+              />
+            </div>
+          </>,
+        ),
     );
-    await expect.poll(() => host.textContent).toContain("Here. What do you need?");
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain("Here. What do you need?");
+    });
     if (import.meta.env.VITE_SCIENT_ISSUE_SCREENSHOT) {
       await page.screenshot({ path: import.meta.env.VITE_SCIENT_ISSUE_SCREENSHOT, element: host });
     }
@@ -171,12 +146,14 @@ it("keeps a successful answer clean and puts retry feedback on its approval", as
       "Approval could not be sent. Try again.",
     );
   } finally {
-    root.unmount();
+    await root.unmount();
     host.remove();
   }
 });
 
 it("shows running sub-agents and a long wait as alive, on one line, with a ticking timer", async () => {
+  await using _fixture = _createFixture();
+
   await page.viewport(700, 800);
   const host = document.createElement("div");
   Object.assign(host.style, {
@@ -188,10 +165,13 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
     color: "black",
   });
   document.body.append(host);
-  const root = createRoot(host);
+  const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
 
+  using _clock = fakeTimers();
+  const now = Date.parse("2026-10-20T00:02:05.000Z");
+  vi.setSystemTime(now);
   // The turn began 2m 5s ago; its sub-agents were launched a minute in.
-  const start = Date.now() - 125_000;
+  const start = now - 125_000;
   const at = (seconds: number) => new Date(start + seconds * 1_000).toISOString();
   const runId = RunId.make("run-subagents");
   const threadId = ThreadId.make("thread-subagents");
@@ -260,7 +240,8 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
   };
   const timeline = (items: ReadonlyArray<OrchestrationV2TurnItem>) => (
     <MessagesTimeline
-      {...base}
+      emptyPlaceholderInset={0}
+      {..._fixture.base}
       routeThreadKey="fixture"
       isWorking
       activeTurnStartedAt={at(0)}
@@ -281,7 +262,7 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
   );
 
   try {
-    flushSync(() => root.render(timeline(subagents)));
+    await _fixtureAct(async () => await root.rerender(timeline(subagents)));
     const rowWith = (text: string) =>
       [...host.querySelectorAll<HTMLElement>("button, [role=button], [data-timeline-row-kind]")]
         .filter((element) => element.textContent?.includes(text))
@@ -292,15 +273,18 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
       match ? Number(match[1] ?? 0) * 60 + Number(match[2]) : Number.NaN;
 
     // The collapsed row: how the sub-agents stand, and for how long they have worked.
-    await expect.poll(() => host.textContent).toContain("Kicked off 2 subagents · 1 working · 1m");
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain("Kicked off 2 subagents · 1 working · 1m");
+    });
     const spawn = rowWith("Kicked off 2 subagents")!;
     const first = seconds(elapsedIn(spawn.textContent, "1 working · "));
     expect(first).toBeGreaterThanOrEqual(65);
     expect(first).toBeLessThan(80);
-    // It is a clock: it moves without any new event.
-    await expect
-      .poll(() => seconds(elapsedIn(spawn.textContent, "1 working · ")), { timeout: 5_000 })
-      .toBeGreaterThan(first);
+    // The timer advances without another orchestration event.
+    await _fixtureAct(() => vi.advanceTimersByTimeAsync(1_000));
+    await vi.waitFor(() => {
+      expect(seconds(elapsedIn(spawn.textContent, "1 working · "))).toBeGreaterThan(first);
+    });
 
     const fitsOnOneLine = (row: HTMLElement) => {
       expect(row.getBoundingClientRect().height, row.textContent ?? "").toBeLessThan(48);
@@ -313,7 +297,9 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
     // Opened: each sub-agent with its type, state, and why it stopped.
     (spawn.closest<HTMLElement>("[aria-expanded]") ??
       spawn.querySelector<HTMLElement>("[aria-expanded]"))!.click();
-    await expect.poll(() => host.textContent).toContain("Cancelled when you sent a follow-up");
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain("Cancelled when you sent a follow-up");
+    });
     const text = host.textContent ?? "";
     expect(text).toContain("explorer");
     expect(text).toMatch(/Working · 1m \d+s/);
@@ -326,8 +312,10 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
     await screenshot("subagents");
 
     // The main agent then waits on a sub-agent: the step says so and counts too.
-    flushSync(() => root.render(timeline([...subagents, waiting])));
-    await expect.poll(() => host.textContent).toContain("Waiting for sub-agent");
+    await _fixtureAct(async () => await root.rerender(timeline([...subagents, waiting])));
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain("Waiting for sub-agent");
+    });
     const wait = rowWith("Waiting for sub-agent")!;
     expect(seconds(elapsedIn(wait.textContent, "(up to 10 min) · "))).toBeGreaterThanOrEqual(25);
     fitsOnOneLine(wait);
@@ -341,7 +329,57 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
     expect(timer.getBoundingClientRect().width).toBeGreaterThan(20);
     await screenshot("waiting");
   } finally {
-    root.unmount();
+    await root.unmount();
     host.remove();
   }
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  const listRef = createRef<LegendListRef>();
+  const base = {
+    listRef,
+    isWorking: false,
+    activeTurnInProgress: false,
+    activeTurnStartedAt: null,
+    latestRun: null,
+    runningRunId: null,
+    turnDiffSummaries: [],
+    onOpenTurnDiff: () => {},
+    onOpenThread: () => {},
+    onForkFromRun: () => Promise.resolve(),
+    onRollbackCheckpoint: () => {},
+    supportsConversationRollback: false,
+    onRevertToTurnCount: () => {},
+    isRevertingCheckpoint: false,
+    onImageExpand: () => {},
+    activeThreadEnvironmentId: env,
+    markdownCwd: undefined,
+    resolvedTheme: "light" as const,
+    timestampFormat: "locale" as const,
+    workspaceRoot: undefined,
+    runs: [],
+    providerStatuses: [],
+    anchorMessageId: null,
+    onAnchorReady: () => {},
+    onAnchorSizeChanged: () => {},
+    contentInsetEndAdjustment: 100,
+    onIsAtEndChange: vi.fn(),
+    onManualNavigation: () => {},
+  };
+  return {
+    listRef,
+    base,
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

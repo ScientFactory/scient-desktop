@@ -1,7 +1,7 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 import { Button } from "~/components/ui/button";
 import { Combobox, ComboboxInput } from "~/components/ui/combobox";
@@ -11,22 +11,24 @@ import { NumberField, NumberFieldGroup, NumberFieldInput } from "~/components/ui
 import { Select, SelectTrigger } from "~/components/ui/select";
 import { Textarea } from "~/components/ui/textarea";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
-});
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 
 it.each(["light", "dark"])("keeps one form focus border in %s mode", async (mode) => {
-  host = document.createElement("div");
-  host.className = mode;
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  _fixture.host = document.createElement("div");
+  _fixture.host.className = mode;
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(
     <>
       <Input aria-label="Plain input" />
       <InputGroup variant="ghost">
@@ -52,7 +54,7 @@ it.each(["light", "dark"])("keeps one form focus border in %s mode", async (mode
       <Button variant="ghost">Unrelated button</Button>
     </>,
   );
-  await expect.poll(() => host?.querySelector('[data-slot="button"]')).toBeTruthy();
+  await expect.poll(() => _fixture.host?.querySelector('[data-slot="button"]')).toBeTruthy();
   await userEvent.tab();
 
   for (const name of [
@@ -63,7 +65,7 @@ it.each(["light", "dark"])("keeps one form focus border in %s mode", async (mode
     "Bordered select",
     "Combobox",
   ]) {
-    const field = host.querySelector<HTMLElement>(`[aria-label="${name}"]`)!;
+    const field = _fixture.host.querySelector<HTMLElement>(`[aria-label="${name}"]`)!;
     const surface =
       field.closest<HTMLElement>('[data-slot="input-group"]') ??
       field.closest<HTMLElement>(
@@ -89,11 +91,30 @@ it.each(["light", "dark"])("keeps one form focus border in %s mode", async (mode
   }
 
   for (const field of [
-    host.querySelector<HTMLElement>('[aria-label="Ghost select"]')!,
-    host.querySelector<HTMLElement>('[data-slot="button"]')!,
+    _fixture.host.querySelector<HTMLElement>('[aria-label="Ghost select"]')!,
+    _fixture.host.querySelector<HTMLElement>('[data-slot="button"]')!,
   ]) {
     field.focus();
     expect(field.matches(":focus-visible")).toBe(true);
     await expect.poll(() => getComputedStyle(field).boxShadow).not.toBe("none");
   }
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

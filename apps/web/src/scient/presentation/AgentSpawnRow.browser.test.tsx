@@ -1,5 +1,6 @@
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { type ReactNode } from "react";
+
 import {
   NodeId,
   ProviderDriverKind,
@@ -9,7 +10,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import { renderSubagentRosterGroup } from "./AgentSpawnRow";
 
@@ -43,19 +44,20 @@ function member(id: string, driver = "scient", child = true): Member {
     progress: "Checking the changed path",
   };
 }
-let renderer: Root | undefined;
-let container: HTMLDivElement;
-function mount(node: ReactNode) {
-  container = document.createElement("div");
-  document.body.append(container);
-  renderer = createRoot(container);
-  renderer.render(node);
+
+async function mount(_fixture: _Fixture, node: ReactNode) {
+  _fixture.container = document.createElement("div");
+  document.body.append(_fixture.container);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.container, router: false }),
+  );
+  await _fixture.root0.rerender(node);
 }
-afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  container?.remove();
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0?.unmount());
+  _fixture.container?.remove();
   vi.unstubAllGlobals();
-});
+}
 
 function fixture(
   members: Member[],
@@ -112,23 +114,25 @@ function fixture(
 it.each(["provider_native", "app_owned"] as const)(
   "keeps Scient assignments and child actions behind user-controlled group disclosure for %s",
   async (origin) => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const members = [member("one"), member("two", "scient", false)].map((item) => ({
       ...item,
       origin,
     }));
     const f = fixture(members);
     await act(async () => {
-      mount(f.render());
+      await mount(_fixture, f.render());
     });
-    expect([...container.querySelectorAll("button")]).toHaveLength(1);
-    expect(container.innerHTML).not.toContain(assignment);
-    await act(async () => container.querySelector("button")!.click());
-    await act(async () => renderer!.render(f.render()));
-    const details = [...container.querySelectorAll<HTMLElement>('[role="button"]')];
+    expect([..._fixture.container.querySelectorAll("button")]).toHaveLength(1);
+    expect(_fixture.container.innerHTML).not.toContain(assignment);
+    await act(async () => _fixture.container.querySelector("button")!.click());
+    await act(async () => await _fixture.root0!.rerender(f.render()));
+    const details = [..._fixture.container.querySelectorAll<HTMLElement>('[role="button"]')];
     expect(details).toHaveLength(2);
     expect(details[0]!.ariaLabel!.length).toBeLessThan(120);
-    const child = [...container.querySelectorAll("button")].find((button) =>
+    const child = [..._fixture.container.querySelectorAll("button")].find((button) =>
       button.ariaLabel?.startsWith("Open "),
     )!;
     await act(async () => child.click());
@@ -139,24 +143,28 @@ it.each(["provider_native", "app_owned"] as const)(
         new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
       ),
     );
-    expect(container.querySelector("pre")!.textContent).toContain(assignment);
-    expect(container.querySelector("pre")!.textContent).toContain("Observed result");
+    expect(_fixture.container.querySelector("pre")!.textContent).toContain(assignment);
+    expect(_fixture.container.querySelector("pre")!.textContent).toContain("Observed result");
     members[0] = { ...members[0]!, status: "completed", completedAt: now };
-    await act(async () => renderer!.render(f.render()));
-    expect([...container.querySelectorAll<HTMLElement>('[role="button"]')]).toHaveLength(2);
+    await act(async () => await _fixture.root0!.rerender(f.render()));
+    expect([..._fixture.container.querySelectorAll<HTMLElement>('[role="button"]')]).toHaveLength(
+      2,
+    );
     expect(f.onToggleSpawnRow).toHaveBeenCalledTimes(1);
   },
 );
 
 it("renders missing Scient roster members from retained items without inventing a model", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const f = fixture([member("one")], true, true);
   await act(async () => {
-    mount(f.render());
+    await mount(_fixture, f.render());
   });
-  const detail = container.querySelector<HTMLElement>('[role="button"]')!;
+  const detail = _fixture.container.querySelector<HTMLElement>('[role="button"]')!;
   await act(async () => detail.click());
-  expect(container.querySelector("pre")!.textContent).toContain(assignment);
+  expect(_fixture.container.querySelector("pre")!.textContent).toContain(assignment);
   expect(f.onOpenThread).not.toHaveBeenCalled();
 });
 
@@ -164,25 +172,29 @@ it.each([
   ["codex", "claudeAgent"],
   ["scient", "codex"],
 ])("preserves legacy child links for mixed/non-Scient groups %s/%s", async (first, second) => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const f = fixture([member("one", first), member("two", second)]);
   await act(async () => {
-    mount(f.render());
+    await mount(_fixture, f.render());
   });
   expect([
-    ...container.querySelectorAll<HTMLButtonElement>('[aria-label="Open child thread"]'),
+    ..._fixture.container.querySelectorAll<HTMLButtonElement>('[aria-label="Open child thread"]'),
   ]).toHaveLength(2);
-  expect(container.innerHTML).toContain("Open ");
+  expect(_fixture.container.innerHTML).toContain("Open ");
   await act(async () =>
     [
-      ...container.querySelectorAll<HTMLButtonElement>('[aria-label="Open child thread"]'),
+      ..._fixture.container.querySelectorAll<HTMLButtonElement>('[aria-label="Open child thread"]'),
     ][1]!.click(),
   );
   expect(f.onOpenThread).toHaveBeenCalledWith("child-two");
 });
 
 it("keeps retained first-seen order while a partial Scient roster catches up", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const members = [
     { ...member("one"), title: "First child" },
     { ...member("two"), title: "Second child" },
@@ -190,18 +202,37 @@ it("keeps retained first-seen order while a partial Scient roster catches up", a
   const knownIds = ["two"];
   const f = fixture(members, true, knownIds);
   await act(async () => {
-    mount(f.render());
+    await mount(_fixture, f.render());
   });
   expect(
-    [...container.querySelectorAll<HTMLElement>('[role="button"]')].map(
+    [..._fixture.container.querySelectorAll<HTMLElement>('[role="button"]')].map(
       (row) => row.ariaLabel!.split(",")[0],
     ),
   ).toEqual(["First child", "Second child"]);
   knownIds.push("one");
-  await act(async () => renderer!.render(f.render()));
+  await act(async () => await _fixture.root0!.rerender(f.render()));
   expect(
-    [...container.querySelectorAll<HTMLElement>('[role="button"]')].map(
+    [..._fixture.container.querySelectorAll<HTMLElement>('[role="button"]')].map(
       (row) => row.ariaLabel!.split(",")[0],
     ),
   ).toEqual(["First child", "Second child"]);
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    container: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

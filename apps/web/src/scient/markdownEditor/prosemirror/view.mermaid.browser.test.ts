@@ -1,8 +1,9 @@
+import { act } from "../../../../test/render";
 import "../../../index.css";
 
 import { EditorView as CodeMirrorEditorView } from "@codemirror/view";
-import { act } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 
 import { renderMermaidDiagram } from "~/scient/diagrams/mermaidRuntime";
@@ -18,24 +19,22 @@ const broken = "flowchart LR\n  Source --> Editor --> Save ---";
 const repaired = "flowchart LR\n  Source --> Editor --> Save";
 const markdown = (source: string) =>
   `Before **unchanged**.\n\n\`\`\`mermaid\n${source}\n\`\`\`\n\nAfter.\n`;
-const mounted: ScientMarkdownEditorView[] = [];
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function _setupFixture0(_fixture: _Fixture) {
   vi.mocked(renderMermaidDiagram).mockImplementation(async (source) => {
     if (source.endsWith("---")) throw new Error("Parse error on line 3");
     return { svg: '<svg aria-label="Repaired diagram" />', diagramType: "flowchart" };
   });
-});
+}
 
-afterEach(async () => {
-  await act(() => mounted.splice(0).forEach((controller) => controller.destroy()));
-  document.body.replaceChildren();
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(() => _fixture.mounted.splice(0).forEach((controller) => controller.destroy()));
+  _clearOwnedDOM(_fixture);
   vi.unstubAllGlobals();
   vi.clearAllMocks();
-});
+}
 
-async function fixture(mode: "write" | "read" = "write", source = broken) {
+async function fixture(_fixture: _Fixture, mode: "write" | "read" = "write", source = broken) {
   const onUserSourceChange = vi.fn();
   const showRichFenceContextMenu = vi.fn(async () => null);
   const controller = new ScientMarkdownEditorView({
@@ -46,10 +45,10 @@ async function fixture(mode: "write" | "read" = "write", source = broken) {
     onUserSourceChange,
     showRichFenceContextMenu,
   });
-  mounted.push(controller);
+  _fixture.mounted.push(controller);
   const host = document.createElement("div");
   host.style.cssText = "width:380px;margin:20px";
-  document.body.append(host);
+  document.body.append(_ownDOM(_fixture, host));
   await act(() => {
     controller.mount(host);
   });
@@ -75,20 +74,16 @@ async function clickText(editor: CodeMirrorEditorView, position: number) {
   await expect.poll(() => editor.coordsAtPos(position)).not.toBeNull();
   const cursor = editor.coordsAtPos(position)!;
   const content = editor.contentDOM.getBoundingClientRect();
-  await act(async () => {
-    await userEvent.click(editor.contentDOM, {
-      position: {
-        x: cursor.left - content.left,
-        y: (cursor.top + cursor.bottom) / 2 - content.top,
-      },
-    });
+  await userEvent.click(editor.contentDOM, {
+    position: {
+      x: cursor.left - content.left,
+      y: (cursor.top + cursor.bottom) / 2 - content.top,
+    },
   });
 }
 
 async function escape(_editor: CodeMirrorEditorView) {
-  await act(async () => {
-    await userEvent.keyboard("{Escape}");
-  });
+  await userEvent.keyboard("{Escape}");
 }
 
 async function key(editor: CodeMirrorEditorView, name: string, gesture: string) {
@@ -98,9 +93,7 @@ async function key(editor: CodeMirrorEditorView, name: string, gesture: string) 
   };
   editor.contentDOM.addEventListener("keydown", record);
   try {
-    await act(async () => {
-      await userEvent.keyboard(gesture);
-    });
+    await userEvent.keyboard(gesture);
     expect(event).toBeDefined();
     return event!;
   } finally {
@@ -110,7 +103,11 @@ async function key(editor: CodeMirrorEditorView, name: string, gesture: string) 
 
 describe("persistent Mermaid source editing", () => {
   it("places the first-click cursor in the existing box and edits in the middle without replacing it", async () => {
-    const { controller, host, onUserSourceChange } = await fixture();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { controller, host, onUserSourceChange } = await fixture(_fixture);
     const box = sourceBox(host);
     const parent = box.parentElement;
     const wrapper = parent!.parentElement!;
@@ -128,9 +125,7 @@ describe("persistent Mermaid source editing", () => {
     expect(box.parentElement).toBe(parent);
     expect(wrapper.className).toBe(wrapperClass);
     expect(onUserSourceChange).not.toHaveBeenCalled();
-    await act(async () => {
-      await userEvent.keyboard("X");
-    });
+    await userEvent.keyboard("X");
     expect(controller.session.session.draftSource).toBe(
       markdown(broken.slice(0, position) + "X" + broken.slice(position)),
     );
@@ -144,14 +139,16 @@ describe("persistent Mermaid source editing", () => {
   });
 
   it("retains the same focused source surface through repair, another parse failure, and undo", async () => {
-    const { controller, host } = await fixture();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { controller, host } = await fixture(_fixture);
     const box = sourceBox(host);
     const parent = box.parentElement;
     const editor = nestedEditor(host);
     await clickText(editor, broken.length);
-    await act(async () => {
-      await userEvent.keyboard("{Backspace}{Backspace}{Backspace}{Backspace}");
-    });
+    await userEvent.keyboard("{Backspace}{Backspace}{Backspace}{Backspace}");
     expect(controller.session.session.draftSource).toBe(markdown(repaired));
     await vi.waitFor(() =>
       expect(host.querySelector('svg[aria-label="Repaired diagram"]')).not.toBeNull(),
@@ -171,7 +168,11 @@ describe("persistent Mermaid source editing", () => {
   });
 
   it("uses native keyboard editing and keeps the same box across read/write mode changes", async () => {
-    const { controller, host, onUserSourceChange } = await fixture("read");
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { controller, host, onUserSourceChange } = await fixture(_fixture, "read");
     const box = sourceBox(host);
     const editor = nestedEditor(host);
     expect(editor.contentDOM.getAttribute("contenteditable")).toBe("false");
@@ -192,7 +193,11 @@ describe("persistent Mermaid source editing", () => {
   });
 
   it("keeps the native text context menu inside the source editor", async () => {
-    const { host, showRichFenceContextMenu } = await fixture();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { host, showRichFenceContextMenu } = await fixture(_fixture);
     const editor = nestedEditor(host);
     let nativeContext: MouseEvent | undefined;
     const record = (event: MouseEvent) => {
@@ -204,31 +209,29 @@ describe("persistent Mermaid source editing", () => {
     expect(nativeContext).toBeDefined();
     expect(nativeContext!.defaultPrevented).toBe(false);
     expect(showRichFenceContextMenu).not.toHaveBeenCalled();
-    await act(async () => {
-      await userEvent.click(host.querySelector<HTMLElement>(".scient-mermaid-card")!, {
-        button: "right",
-        position: { x: 10, y: 10 },
-      });
+    await userEvent.click(host.querySelector<HTMLElement>(".scient-mermaid-card")!, {
+      button: "right",
+      position: { x: 10, y: 10 },
     });
     expect(showRichFenceContextMenu).toHaveBeenCalledOnce();
   });
 
   it("opens valid diagram source from More and reuses it on reopening", async () => {
-    const { host, onUserSourceChange } = await fixture("write", repaired);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { host, onUserSourceChange } = await fixture(_fixture, "write", repaired);
     expect(host.querySelector(".cm-editor")).toBeNull();
     const openFromMenu = async () => {
-      await act(async () => {
-        await userEvent.click(
-          host.querySelector<HTMLButtonElement>('[aria-label="More diagram actions"]')!,
-        );
-      });
-      await act(async () => {
-        await userEvent.click(
-          [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-            (item) => item.textContent === "Edit source",
-          )!,
-        );
-      });
+      await userEvent.click(
+        host.querySelector<HTMLButtonElement>('[aria-label="More diagram actions"]')!,
+      );
+      await userEvent.click(
+        [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+          (item) => item.textContent === "Edit source",
+        )!,
+      );
     };
     await openFromMenu();
     const editor = nestedEditor(host);
@@ -245,19 +248,21 @@ describe("persistent Mermaid source editing", () => {
   it.each(["write", "read"] as const)(
     "keeps source readable and retries a failed editor in the same slot (%s)",
     async (mode) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+
       vi.mocked(createScientNestedCodeEditor).mockImplementationOnce(() => {
         throw new Error("Editor unavailable");
       });
-      const { host, onUserSourceChange } = await fixture(mode);
+      const { host, onUserSourceChange } = await fixture(_fixture, mode);
       const box = sourceBox(host);
       const parent = box.parentElement;
       expect(box.hidden).toBe(false);
       expect(box.textContent).toBe(broken);
-      await act(async () => {
-        await userEvent.click(
-          host.querySelector<HTMLButtonElement>('[aria-label="Retry code editor"]')!,
-        );
-      });
+      await userEvent.click(
+        host.querySelector<HTMLButtonElement>('[aria-label="Retry code editor"]')!,
+      );
       expect(sourceBox(host)).toBe(box);
       expect(box.parentElement).toBe(parent);
       expect(nestedEditor(host).state.doc.toString()).toBe(broken);
@@ -265,3 +270,34 @@ describe("persistent Mermaid source editing", () => {
     },
   );
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    _ownedDOM: [] as Node[],
+
+    mounted: [] as ScientMarkdownEditorView[],
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;
+
+function _ownDOM<T extends Node>(_fixture: _Fixture, node: T): T {
+  _fixture._ownedDOM.push(node);
+  _fixture.stack.defer(() => {
+    node.parentNode?.removeChild(node);
+  });
+  return node;
+}
+function _clearOwnedDOM(_fixture: _Fixture) {
+  for (const node of _fixture._ownedDOM.splice(0)) node.parentNode?.removeChild(node);
+}

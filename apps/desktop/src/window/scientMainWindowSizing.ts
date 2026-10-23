@@ -116,13 +116,13 @@ export function resolveOneTimeMainWindowSizeIncrease(
  * returns the settings the window should open with. A failed write keeps the
  * settings it started from.
  */
-export function applyOneTimeMainWindowSizing(
-  desktopSettings: DesktopAppSettings.DesktopAppSettings["Service"],
-  initialSettings: DesktopAppSettings.DesktopSettings,
-  displays: readonly DisplayArea[],
-  primaryDisplay: DisplayArea,
-): Effect.Effect<DesktopAppSettings.DesktopSettings> {
-  return Effect.gen(function* () {
+export const applyOneTimeMainWindowSizing = Effect.fn("DesktopWindow.applyOneTimeMainWindowSizing")(
+  function* (
+    desktopSettings: DesktopAppSettings.DesktopAppSettings["Service"],
+    initialSettings: DesktopAppSettings.DesktopSettings,
+    displays: readonly DisplayArea[],
+    primaryDisplay: DisplayArea,
+  ): Effect.fn.Return<DesktopAppSettings.DesktopSettings> {
     let persistedSettings = initialSettings;
     if (!persistedSettings.mainWindowSizeIncreaseApplied) {
       const increasedBounds = resolveOneTimeMainWindowSizeIncrease(
@@ -155,5 +155,5 @@ export function applyOneTimeMainWindowSizing(
       );
     }
     return persistedSettings;
-  });
-}
+  },
+);

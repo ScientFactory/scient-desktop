@@ -135,10 +135,15 @@ Chat Markdown (Scient): code blocks render through Scient's `MarkdownCodeBlock`
 `CodeBlockTitle.tsx`), a copy of T3's code block and Shiki highlighter mounted in
 `ChatMarkdown.tsx`. Upstream fixes to that code do not arrive through merges; port them by
 hand. T3's invisible placeholder while a language loads (#11062), the MorphIcon copy button
-(#14924) and the pressed wrap toggle (#13208) are ported. Returning the generic code block to
-`ChatMarkdown.tsx`, so such fixes merge in, is an open follow-up. Settled Mermaid, Vega-Lite and Plotly
-fences render through `scient/presentation/ScientRichFence.tsx` in place of T3's
-`chat/MermaidDiagram.tsx`. `ChatMarkdown.tsx` otherwise keeps upstream's layout and renderer
+(#14924) and the pressed wrap toggle (#13208) are ported. Sharing the generic implementation with
+upstream's extracted `chat/MarkdownCodeBlock.tsx` remains an open follow-up. Closed Mermaid fences render
+even while the answer streams; Vega-Lite and Plotly fences wait for settlement. These render
+through `scient/presentation/ScientRichFence.tsx`. Its Mermaid card, document previews and Word
+capture use the shared Pele lazy renderer in `chat/MermaidDiagram.tsx`, with Scient recovery,
+resource notices, theme snapshots and native exports around that renderer. The old Mermaid
+engine and isolated frame are removed, not retained as a fallback. Generic links, tables and media
+use upstream's extracted `chat/Markdown*` and `ChatMarkdownMedia` owners with marked Scient mounts.
+`ChatMarkdown.tsx` otherwise keeps upstream's layout and renderer
 names; every Scient edit there sits in a `SCIENT-FORK` region that names its owner. The Copy
 message rich flavour reads chat's Markdown through `scient/clipboard/chatMarkdownPipeline.ts`,
 which imports one marked export list from `ChatMarkdown.tsx`; math copy lives in
@@ -565,7 +570,7 @@ its read-acknowledgement policy, its revert dialog, the original database (which
 SQLite durability and Scient-only update repositories; upstream's workspace write
 authorization also covers Scient's own file writes. Release remains separate.
 
-The current alignment through
+The previous alignment through
 `f34ba437a5dec23a205ef5f670f7b10439ae98eb` is recorded in
 [the 2026-10-19 receipt](docs/internals/t3-upstream-sync-20261019-f34ba437a5.md)
 ([Scient PR #607](https://github.com/ScientFactory/scient-desktop/pull/607)).
@@ -583,6 +588,20 @@ Scient's HTML-print export rejects a browser PDF fallback before printing or
 publishing it, and workspace image refresh reaches both inline and Scient-card
 renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
+
+The current alignment through
+`21da3061aa006fc852ea4bd84c31ec084a3afa26` is recorded in
+[the 2026-10-20 receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md)
+([Scient PR #614](https://github.com/ScientFactory/scient-desktop/pull/614)).
+Literal extension merge `a495ed55e0d5f5e2740b750121772dcf1327108c` has exact owned
+base `80436ae5bead92d3cde82b90a6aa5b137aefde6b` and the frozen official target as
+parents, retaining all 133 additional donor commits after `81dea7821d`.
+Its committed provenance and staged seam checks pass; final qualification of the
+composed owned-main catch-up remains pending. Native V2, scientific capabilities,
+immutable migrations and database durability remain; cloud, telemetry, relay,
+updater, mobile publication and release holds are unchanged. The receipt separates
+older qualification from extension evidence and outstanding native/visual checks.
+Release remains separate.
 
 ## Receiving T3 updates
 
@@ -1488,6 +1507,10 @@ does not enable T3's tag/nightly workflow, npm publication, relay deployment,
 hosted-web aliases, or release bot. The owned manual workflow packages the
 exact promoted Scient tree, embeds the owned updater repository, and
 distributes the exact server runtime as a GitHub release asset.
+
+The inherited marketing workspace runs Astro directly for development and builds.
+Its upstream installer-staging hook and T3 `install.sh`/`install.ps1` launchers
+remain absent; Scient's release assets and pinned server launchers own distribution.
 
 Scient exposes Stable and Beta desktop update tracks. Stable retains its owned
 feed; Beta uses the isolated `ScientFactory/scient-desktop-beta` artifact

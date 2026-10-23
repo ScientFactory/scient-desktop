@@ -325,8 +325,8 @@ export function makeMatlabRuntimeAdapter(
   const probeLock = Semaphore.makeUnsafe(1);
   let probeEpoch = 0;
 
-  const readProbe = (executable: string, refresh = false) =>
-    Effect.gen(function* () {
+  const readProbe = Effect.fn("MatlabRuntimeAdapter.readProbe")(
+    function* (executable: string, refresh = false) {
       const now = yield* Clock.currentTimeMillis;
       const cached = cache.get(executable);
       if (!refresh && cached !== undefined && now - cached.observedAt < PROBE_CACHE_TTL_MS) {
@@ -344,7 +344,9 @@ export function makeMatlabRuntimeAdapter(
           cache.set(result.value.executableRealpath, { observedAt, result });
       }
       return yield* result;
-    }).pipe(probeLock.withPermits(1));
+    },
+    (effect) => effect.pipe(probeLock.withPermits(1)),
+  );
 
   const adapter: ComputeLanguageAdapter = {
     languageId: MATLAB_LANGUAGE_ID,
@@ -440,28 +442,27 @@ export function makeMatlabRuntimeAdapter(
           });
         }),
       ),
-    prepareLaunch: (request) =>
-      Effect.gen(function* () {
-        if (bridgePath === undefined) {
-          return yield* runtimeError("prepare", "The MATLAB bridge is unavailable.");
-        }
-        const probe = yield* readProbe(request.profile.executable, true);
-        return {
-          executable: probe.hostExecutable,
-          args: [
-            "-I",
-            "-B",
-            "-u",
-            bridgePath,
-            "--engine-directory",
-            probe.engineDirectory,
-            "--matlab-root",
-            probe.installationRoot,
-          ],
-          cwd: validateProjectRoot(request.cwd),
-          environment: sanitizeComputeEnvironment(request.environment).environment,
-        };
-      }),
+    prepareLaunch: Effect.fn("MatlabRuntimeAdapter.prepareLaunch")(function* (request) {
+      if (bridgePath === undefined) {
+        return yield* runtimeError("prepare", "The MATLAB bridge is unavailable.");
+      }
+      const probe = yield* readProbe(request.profile.executable, true);
+      return {
+        executable: probe.hostExecutable,
+        args: [
+          "-I",
+          "-B",
+          "-u",
+          bridgePath,
+          "--engine-directory",
+          probe.engineDirectory,
+          "--matlab-root",
+          probe.installationRoot,
+        ],
+        cwd: validateProjectRoot(request.cwd),
+        environment: sanitizeComputeEnvironment(request.environment).environment,
+      };
+    }),
     normalizeDiagnostic: (report, context) => [
       {
         errorName: (report.name || "MATLAB:ExecutionError").slice(0, 256),

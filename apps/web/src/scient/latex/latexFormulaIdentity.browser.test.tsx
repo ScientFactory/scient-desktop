@@ -1,7 +1,8 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import { useState, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+
 import type { Editor } from "@tiptap/core";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
@@ -22,27 +23,28 @@ const original = String.raw`\documentclass{article}
 \begin{document}
 Prose with \textbf{marked words} and \(\frac{x^2+1}{y+2}\), followed by several words that wrap around the formula. Here is \(\hat{z}+\sum_{k=1}^{n} k\) and more text.
 \end{document}`;
-let container: HTMLDivElement;
-let root: Root;
+
 let current: string;
 let publication = Promise.withResolvers<string>();
-beforeEach(async () => {
+async function _setupFixture0(_fixture: _Fixture) {
   clearVisualDraft(key);
   await page.viewport(1300, 900);
-  container = document.createElement("div");
-  container.style.cssText = "width:1000px;height:900px;display:flex;flex-direction:column";
-  document.body.append(container);
-  root = createRoot(container);
+  _fixture.container = document.createElement("div");
+  _fixture.container.style.cssText = "width:1000px;height:900px;display:flex;flex-direction:column";
+  document.body.append(_fixture.container);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.container, router: false }),
+  );
   current = original;
   publication = Promise.withResolvers<string>();
-});
-afterEach(() => {
-  root.unmount();
-  container.remove();
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await _fixture.root0.unmount();
+  _fixture.container.remove();
   clearVisualDraft(key);
-});
+}
 
-async function open() {
+async function open(_fixture: _Fixture) {
   function Harness() {
     const [source, setSource] = useState(current);
     const owner = useLatexVisualTestOwner(source);
@@ -66,31 +68,58 @@ async function open() {
       />
     );
   }
-  root.render(<Harness />);
+  await _fixture.root0.rerender(<Harness />);
   const editor = () =>
     (
-      container.querySelector(".scient-latex-visual-document") as
+      _fixture.container.querySelector(".scient-latex-visual-document") as
         | (HTMLElement & { editor?: Editor })
         | null
     )?.editor;
   await expect.poll(editor).toBeTruthy();
   await expect
-    .poll(() => container.querySelectorAll('[data-math-reading-view="true"]').length)
+    .poll(() => _fixture.container.querySelectorAll('[data-math-reading-view="true"]').length)
     .toBe(2);
   return editor()!;
 }
 
 it("keeps formula views through a prose edit, source publication and undo", async () => {
-  const editor = await open();
-  const maths = [...container.querySelectorAll('[data-math-reading-view="true"]')];
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const editor = await open(_fixture);
+  const maths = [..._fixture.container.querySelectorAll('[data-math-reading-view="true"]')];
   editor.view.dispatch(editor.state.tr.insertText("More ", 1));
   await expect(publication.promise).resolves.toBe(
     original.replace("Prose with", "More Prose with"),
   );
-  expect([...container.querySelectorAll('[data-math-reading-view="true"]')]).toEqual(maths);
-  expect(container.querySelector("math-field")).toBeNull();
+  expect([..._fixture.container.querySelectorAll('[data-math-reading-view="true"]')]).toEqual(
+    maths,
+  );
+  expect(_fixture.container.querySelector("math-field")).toBeNull();
   publication = Promise.withResolvers<string>();
   editor.commands.undo();
   await expect(publication.promise).resolves.toBe(original);
-  expect([...container.querySelectorAll('[data-math-reading-view="true"]')]).toEqual(maths);
-}, 15_000);
+  expect([..._fixture.container.querySelectorAll('[data-math-reading-view="true"]')]).toEqual(
+    maths,
+  );
+});
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    container: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

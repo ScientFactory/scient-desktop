@@ -42,13 +42,12 @@ export interface VcsDriverContractSuiteInput<R, E> {
 }
 
 export function runVcsDriverContractSuite<R, E>(input: VcsDriverContractSuiteInput<R, E>) {
-  const makeTmpDir = (
+  const makeTmpDir = Effect.fn("VcsDriverContractHarness.makeTmpDir")(function* (
     prefix = `t3-${input.kind}-vcs-contract-`,
-  ): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope> =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      return yield* fileSystem.makeTempDirectoryScoped({ prefix });
-    });
+  ): Effect.fn.Return<string, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope> {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* fileSystem.makeTempDirectoryScoped({ prefix });
+  });
 
   it.layer(input.layer)(`${input.name} VCS driver contract`, (it) => {
     describe("repository detection", () => {

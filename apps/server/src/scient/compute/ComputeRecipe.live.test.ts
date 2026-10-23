@@ -91,14 +91,7 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_MANAGED_PYTHON === "1")(
             recipes,
             toolkitIds: [PYTHON_DATA_AND_FIGURES_TOOLKIT.toolkitId],
           });
-          const settle = Effect.gen(function* () {
-            for (let attempt = 0; attempt < 6000; attempt++) {
-              const status = yield* controller.status();
-              if (status.operation === null) return status;
-              yield* Effect.sleep("50 millis");
-            }
-            return yield* Effect.die("Recipe transaction did not settle.");
-          });
+          const settle = controller.awaitSettled();
           try {
             yield* controller.manage("install");
             const installed = yield* settle;

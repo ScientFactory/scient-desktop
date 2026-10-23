@@ -131,37 +131,36 @@ export const makeDroidProviderStatus = Effect.fn("makeDroidProviderStatus")(func
       Effect.map((version) => Option.isNone(version) || version.value !== current.version),
     );
 
-  const tick = (intervalMillis: number) =>
-    Effect.gen(function* () {
-      if (!(yield* input.hasDemand)) return;
-      const current = yield* input.provider.getSnapshot;
-      // A probe is already due or running (startup, settings change, refresh).
-      if (!current.enabled || current.probePending === true) return;
-      if (current.status !== "error") {
-        failedRecoveries = 0;
-        nextRecoveryAtMillis = 0;
-      }
-      if (isSignedOut(current)) {
-        // A probe would only mint another pairing code. The version check says
-        // on its own whether there is still a Droid to sign in to.
-        const version = yield* input.probeVersion;
-        const binary =
-          Option.isSome(version) && version.value === current.version ? undefined : version;
-        if (Equal.equals(yield* Ref.get(signedOutBinaryRef), binary)) return;
-        yield* Ref.set(signedOutBinaryRef, binary);
-        yield* PubSub.publish(overlayChanges, undefined);
-        return;
-      }
-      const nowMillis = yield* Clock.currentTimeMillis;
-      const recoveryDue = current.status === "error" && nowMillis >= nextRecoveryAtMillis;
-      if (!recoveryDue && !(yield* binaryChanged(current))) return;
-      const probed = yield* input.provider.refresh;
-      if (probed.status === "error") {
-        failedRecoveries += 1;
-        nextRecoveryAtMillis =
-          nowMillis + Math.min(intervalMillis * 2 ** failedRecoveries, MAX_RECOVERY_BACKOFF_MILLIS);
-      }
-    });
+  const tick = Effect.fn("DroidProviderStatus.tick")(function* (intervalMillis: number) {
+    if (!(yield* input.hasDemand)) return;
+    const current = yield* input.provider.getSnapshot;
+    // A probe is already due or running (startup, settings change, refresh).
+    if (!current.enabled || current.probePending === true) return;
+    if (current.status !== "error") {
+      failedRecoveries = 0;
+      nextRecoveryAtMillis = 0;
+    }
+    if (isSignedOut(current)) {
+      // A probe would only mint another pairing code. The version check says
+      // on its own whether there is still a Droid to sign in to.
+      const version = yield* input.probeVersion;
+      const binary =
+        Option.isSome(version) && version.value === current.version ? undefined : version;
+      if (Equal.equals(yield* Ref.get(signedOutBinaryRef), binary)) return;
+      yield* Ref.set(signedOutBinaryRef, binary);
+      yield* PubSub.publish(overlayChanges, undefined);
+      return;
+    }
+    const nowMillis = yield* Clock.currentTimeMillis;
+    const recoveryDue = current.status === "error" && nowMillis >= nextRecoveryAtMillis;
+    if (!recoveryDue && !(yield* binaryChanged(current))) return;
+    const probed = yield* input.provider.refresh;
+    if (probed.status === "error") {
+      failedRecoveries += 1;
+      nextRecoveryAtMillis =
+        nowMillis + Math.min(intervalMillis * 2 ** failedRecoveries, MAX_RECOVERY_BACKOFF_MILLIS);
+    }
+  });
 
   yield* Effect.forever(
     input.refreshInterval.pipe(

@@ -2,6 +2,7 @@ import { createContext } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
 import { remarkScientMathRefinements, type ScientMathRefinementOptions } from "./remarkScientMath";
+import { protectScientMathTablePipes } from "./scientMathTablePipes";
 
 export {
   findScientBackslashMathSpans,
@@ -13,7 +14,7 @@ import { normalizeScientMathDelimiters } from "@scientfactory/conversation/chat-
 
 /** The compiler caches this normalization by the message text at its render call site. */
 export function scientMathMarkdownText(text: string): string {
-  return normalizeScientMathDelimiters(text);
+  return protectScientMathTablePipes(normalizeScientMathDelimiters(text), text);
 }
 
 type ScientRemarkPlugins = NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
@@ -43,7 +44,7 @@ export function scientMathRemarkPlugins(
 }
 
 function needsAuthoredMathIntent(sourceText: string): boolean {
-  return sourceText.includes("\\(") || sourceText.includes("\\[");
+  return sourceText.includes("\\(") || sourceText.includes("\\[") || sourceText.includes("|");
 }
 
 /** Messages without authored math intent retain the shared plugin array. */

@@ -933,6 +933,5 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
           expect(registry.path).toBe("C:\\OtherApp");
         }
       }).pipe(Effect.scoped),
-    60_000,
   );
 });

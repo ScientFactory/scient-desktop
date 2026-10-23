@@ -432,9 +432,11 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       : ({ ok: true, windowsEntryPath, linuxAppRoot: mountedAppRoot.value } as const);
   });
 
+  // SCIENT-FORK:START — retain the original staged failure without inventing a cache identity.
   let stagedFailure:
-    | { readonly runtimeId: string; readonly nodePty: FailedNodePtyResult }
+    | { readonly runtimeId?: string; readonly failure: WslPreflightFailure }
     | undefined;
+  // SCIENT-FORK:END
 
   if (input.runtimeArchive !== null) {
     const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeArchive);
@@ -464,8 +466,22 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
         "The staged WSL runtime could not load node-pty; retrying from the mounted server tree.",
         { reason: stagedNodePty.reason },
       );
-      stagedFailure = { runtimeId: input.runtimeArchive.runtimeId, nodePty: stagedNodePty };
+      // SCIENT-FORK:START — preserve the complete staged diagnostic through mounted fallback.
+      stagedFailure = {
+        runtimeId: input.runtimeArchive.runtimeId,
+        failure: failedNodePty(stagedNodePty),
+      };
+      // SCIENT-FORK:END
     } else {
+      // SCIENT-FORK:START — preparation failure has no staged cache to invalidate.
+      stagedFailure = {
+        failure: {
+          _tag: "Failed",
+          reason: `WSL runtime unavailable: ${runtime.reason}`,
+          fatal: true,
+        },
+      };
+      // SCIENT-FORK:END
       yield* Effect.logWarning(
         "Could not stage the WSL runtime; launching from the mounted server tree instead.",
         { reason: runtime.reason },
@@ -475,9 +491,11 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
 
   const mounted = yield* resolveMountedAppRoot;
   if (!mounted.ok) {
+    // SCIENT-FORK:START — prefer the staged diagnostic only when the fallback is also fatal.
     return stagedFailure && mounted.fatal
-      ? failedNodePty(stagedFailure.nodePty)
+      ? stagedFailure.failure
       : ({ _tag: "Failed", reason: mounted.reason, fatal: mounted.fatal } as const);
+    // SCIENT-FORK:END
   }
 
   const nodePtyResult = yield* wslEnv.ensureNodePty(
@@ -490,12 +508,14 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     // turn a retryable failure into a fatal one, ending the WSL attempt (and,
     // in wsl-only mode, persisting Windows) before the slow /mnt path had a
     // chance to answer and clear the bad cache.
-    return failedNodePty(
-      stagedFailure && nodePtyResult.fatal ? stagedFailure.nodePty : nodePtyResult,
-    );
+    // SCIENT-FORK:START — a transient mounted failure must remain retryable.
+    return stagedFailure && nodePtyResult.fatal
+      ? stagedFailure.failure
+      : failedNodePty(nodePtyResult);
+    // SCIENT-FORK:END
   }
 
-  if (stagedFailure) {
+  if (stagedFailure?.runtimeId) {
     yield* wslEnv.invalidateRuntime(runningDistro, stagedFailure.runtimeId);
   }
 
@@ -990,8 +1010,9 @@ export const make = Effect.gen(function* () {
       }
       return distro ? `WSL (${distro})` : "WSL";
     }).pipe(Effect.withSpan("desktop.backendConfiguration.resolvePrimaryLabel")),
-    resolveWsl: (input) =>
-      Effect.gen(function* () {
+    // The span options depend on each request's port and distro.
+    resolveWsl: Effect.fnUntraced(
+      function* (input) {
         const shared = yield* sharedInputs;
         return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
@@ -999,11 +1020,14 @@ export const make = Effect.gen(function* () {
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
         );
-      }).pipe(
-        Effect.withSpan("desktop.backendConfiguration.resolveWsl", {
-          attributes: { port: input.port, distro: input.distro ?? null },
-        }),
-      ),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.withSpan("desktop.backendConfiguration.resolveWsl", {
+            attributes: { port: input.port, distro: input.distro ?? null },
+          }),
+        ),
+    ),
   });
 });
 

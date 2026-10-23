@@ -124,12 +124,11 @@ export interface OmpScriptedWire {
  * `ready`, negotiates v2, and answers every command like
  * `makeOmpCaptureReplay` answers the commands its capture lacks.
  */
-export const makeOmpScriptedWire = (
-  respond: OmpReplayResponder = () => undefined,
-  /** Frames OMP writes after answering a command (for example a prompt's turn). */
-  after: (command: Frame) => ReadonlyArray<Frame> = () => [],
-) =>
-  Effect.gen(function* () {
+export const makeOmpScriptedWire = Effect.fn("OmpCaptureReplay.testFixtures.makeOmpScriptedWire")(
+  function* (
+    respond: OmpReplayResponder = () => undefined,
+    after: (command: Frame) => ReadonlyArray<Frame> = () => [],
+  ) {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
     const written: Array<Frame> = [];
     const send = (...frames: ReadonlyArray<Frame>) =>
@@ -166,7 +165,8 @@ export const makeOmpScriptedWire = (
       close: Queue.end(stdout).pipe(Effect.asVoid),
     };
     return { io, written, send } satisfies OmpScriptedWire;
-  });
+  },
+);
 
 export interface OmpCaptureReplay {
   readonly io: OmpRpcIo;
@@ -180,11 +180,8 @@ export interface OmpCaptureReplay {
   readonly releaseLateFrames: Effect.Effect<void>;
 }
 
-export const makeOmpCaptureReplay = (
-  name: OmpCaptureName,
-  respond: OmpReplayResponder = () => undefined,
-) =>
-  Effect.gen(function* () {
+export const makeOmpCaptureReplay = Effect.fn("OmpCaptureReplay.testFixtures.makeOmpCaptureReplay")(
+  function* (name: OmpCaptureName, respond: OmpReplayResponder = () => undefined) {
     const capture = readCapture(name);
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
     const written: Array<Frame> = [];
@@ -214,35 +211,34 @@ export const makeOmpCaptureReplay = (
         { discard: true },
       );
 
-    const answer = (command: Frame) =>
-      Effect.gen(function* () {
-        const id = text(command.id);
-        const type = text(command.type);
-        if (id.length === 0) return;
-        const recorded = capture.commands.find(
-          (candidate) => !candidate.consumed && candidate.type === type,
-        );
-        if (recorded) {
-          recorded.consumed = true;
-          ids.set(recorded.id, id);
-          // A new prompt starts a new turn: nothing it writes is late.
-          if (type === "prompt") settled = false;
-          yield* emit(recorded.output);
-          return;
-        }
-        const custom = respond(command);
-        if (custom === "silent") return;
-        const data = defaultData(command);
-        yield* emitNow(
-          custom ?? {
-            type: "response",
-            id,
-            command: type,
-            success: true,
-            ...(data === undefined ? {} : { data }),
-          },
-        );
-      });
+    const answer = Effect.fn("OmpCaptureReplay.testFixtures.answer")(function* (command: Frame) {
+      const id = text(command.id);
+      const type = text(command.type);
+      if (id.length === 0) return;
+      const recorded = capture.commands.find(
+        (candidate) => !candidate.consumed && candidate.type === type,
+      );
+      if (recorded) {
+        recorded.consumed = true;
+        ids.set(recorded.id, id);
+        // A new prompt starts a new turn: nothing it writes is late.
+        if (type === "prompt") settled = false;
+        yield* emit(recorded.output);
+        return;
+      }
+      const custom = respond(command);
+      if (custom === "silent") return;
+      const data = defaultData(command);
+      yield* emitNow(
+        custom ?? {
+          type: "response",
+          id,
+          command: type,
+          success: true,
+          ...(data === undefined ? {} : { data }),
+        },
+      );
+    });
 
     yield* emit(capture.preamble);
     const io: OmpRpcIo = {
@@ -262,4 +258,5 @@ export const makeOmpCaptureReplay = (
         Effect.forEach(late.splice(0), emitNow, { discard: true }),
       ),
     } satisfies OmpCaptureReplay;
-  });
+  },
+);

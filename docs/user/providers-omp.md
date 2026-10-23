@@ -162,7 +162,7 @@ holding the selected model opens with the picker, and searching lists every matc
   command discovery itself fails, every slash invocation stays blocked so an unreported command is
   never forwarded. Scient does not import those commands or skills into its own skill library.
   The settings list is a conservative built-in list from a probe that adds `--no-session
---no-tools --no-extensions --no-skills --no-rules`; a running conversation validates against its
+  --no-tools --no-extensions --no-skills --no-rules`; a running conversation validates against its
   live profile-specific catalog without publishing that catalog globally.
 - Rely on a fixed event set. With Oh My Pi 18.3.1 or newer, Scient pins the session's events to the
   kinds it understands (`set_event_filter`) at startup, so a new Oh My Pi event cannot break or

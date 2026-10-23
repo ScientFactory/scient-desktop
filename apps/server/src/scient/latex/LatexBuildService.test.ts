@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fs watchers are the completion receipts for evidence persistence and candidate cleanup.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import {
   ArtifactProducerId,
   LogicalDocumentKey,
@@ -8,7 +12,7 @@ import { ExecutionProcessError, type ExecutionProcessRequest } from "@scientfact
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, type ScientLatexToolchainStatus } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Context from "effect/Context";
+
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -19,7 +23,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
+
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -53,6 +57,10 @@ import { LatexToolchain } from "./LatexToolchain.ts";
 import { decodePublishedLatexBuildEvidence } from "./latexBuildEvidence.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
 import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
+import {
+  awaitLatexBuildTerminal as awaitTerminal,
+  observeLatexBuilds,
+} from "./latexBuildCompletion.testkit.ts";
 const publicationHelper = await filePublicationTestHelper();
 
 /** Byte-for-byte the fixture shape the document store's own tests accept. */
@@ -118,8 +126,6 @@ const NO_TOOLCHAIN: ScientLatexToolchainStatus = {
   version: null,
   probedAtEpochMs: 0,
 };
-
-const TERMINAL_STATES: ReadonlySet<string> = new Set(["succeeded", "failed", "cancelled"]);
 
 const SOURCE = "\\documentclass{article}\n\\begin{document}\nhello\n\\end{document}\n";
 const SOURCE_WITH_INCLUDE = [
@@ -300,6 +306,7 @@ const makeHarness = (input: {
     }
 
     const started = yield* Queue.unbounded<ExecutionProcessRequest>();
+    const completionLayer = yield* observeLatexBuilds();
     const startCount = yield* Ref.make(0);
     const cancelCount = yield* Ref.make(0);
     const pending = yield* Ref.make<ReadonlyArray<FakeCompile>>(input.compiles);
@@ -560,6 +567,7 @@ const makeHarness = (input: {
         ),
       ),
       Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(completionLayer),
     );
 
     return {
@@ -586,53 +594,106 @@ const makeHarness = (input: {
  * `succeeded` as soon as the PDF is bound and persists its evidence just
  * afterwards, so a test that simulates a restart has to let the state
  * directory settle first — a real restart is not instantaneous either.
+ * The receipt is the landing rename of the atomic write, not a timer.
  */
 const awaitPersistedEvidence = (latexDir: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const directory = path.join(latexDir, "evidence");
-    for (let attempt = 0; attempt < 500; attempt += 1) {
-      const entries = yield* fileSystem
-        .readDirectory(directory)
-        .pipe(Effect.orElseSucceed(() => []));
-      // The atomic write stages into a temporary directory alongside the
-      // target, so "something is in here" is not yet "the file has landed".
-      const written = entries.filter((entry) => entry.endsWith(".json"));
-      if (written.length > 0) return written;
-      yield* Effect.sleep(Duration.millis(10));
-    }
-    return [];
+    // The atomic write creates this directory on first persist; a watcher can
+    // only subscribe to a directory that already exists.
+    yield* fileSystem.makeDirectory(directory, { recursive: true });
+    return yield* Effect.callback<ReadonlyArray<string>>((resume) => {
+      let watcher: NodeFS.FSWatcher | undefined;
+      const finish = (effect: Effect.Effect<ReadonlyArray<string>>) => {
+        watcher?.close();
+        watcher = undefined;
+        resume(effect);
+      };
+      const inspect = () => {
+        // The atomic write stages into a temporary directory alongside the
+        // target, so "something is in here" is not yet "the file has landed".
+        const written = NodeFS.readdirSync(directory).filter((entry) => entry.endsWith(".json"));
+        if (written.length > 0) finish(Effect.succeed(written));
+      };
+      // Subscribe before the initial read so the rename cannot fall in a gap.
+      watcher = NodeFS.watch(directory, inspect);
+      watcher.on("error", (cause) => finish(Effect.die(cause)));
+      inspect();
+      return Effect.sync(() => watcher?.close());
+    });
   });
 
 const awaitBuildCandidateCleanup = (latexDir: string) =>
   Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const buildsDirectory = path.join(latexDir, "builds");
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const workDirectories = yield* fileSystem
-        .readDirectory(buildsDirectory)
-        .pipe(Effect.orElseSucceed(() => []));
-      const candidates = yield* Effect.forEach(workDirectories, (directory) =>
-        fileSystem
-          .readDirectory(path.join(buildsDirectory, directory))
-          .pipe(Effect.orElseSucceed(() => [])),
-      );
-      if (candidates.flat().every((fileName) => !fileName.endsWith(".pdf"))) return;
-      yield* Effect.sleep(Duration.millis(5));
-    }
-    throw new Error("build candidate PDF was not cleaned up");
-  });
-
-const awaitTerminal = (service: LatexBuildService["Service"], input: LatexBuildInput) =>
-  Effect.gen(function* () {
-    for (let attempt = 0; attempt < 600; attempt += 1) {
-      const snapshot = yield* service.status(input);
-      if (TERMINAL_STATES.has(snapshot.state)) return snapshot;
-      yield* Effect.sleep(Duration.millis(10));
-    }
-    return yield* service.status(input);
+    const dirtyWorkDirectories = (): Array<string> => {
+      let workDirectories: Array<string>;
+      try {
+        workDirectories = NodeFS.readdirSync(buildsDirectory);
+      } catch {
+        return [];
+      }
+      return workDirectories.filter((directory) => {
+        try {
+          return NodeFS.readdirSync(NodePath.join(buildsDirectory, directory)).some((fileName) =>
+            fileName.endsWith(".pdf"),
+          );
+        } catch {
+          // The work directory vanished between the two reads.
+          return false;
+        }
+      });
+    };
+    if (dirtyWorkDirectories().length === 0) return;
+    yield* Effect.callback<void>((resume) => {
+      let done = false;
+      const watchers = new Map<string, NodeFS.FSWatcher>();
+      const finish = (effect: Effect.Effect<void>) => {
+        if (done) return;
+        done = true;
+        for (const watcher of watchers.values()) watcher.close();
+        watchers.clear();
+        resume(effect);
+      };
+      const inspect = () => {
+        if (done) return;
+        // A candidate disappears from inside its work directory, so each one
+        // needs its own watch; a new work directory joins as it appears.
+        for (const directory of NodeFS.readdirSync(buildsDirectory)) {
+          const workPath = NodePath.join(buildsDirectory, directory);
+          if (watchers.has(workPath)) continue;
+          try {
+            const watcher = NodeFS.watch(workPath, inspect);
+            watcher.on("error", () => watcher.close());
+            watchers.set(workPath, watcher);
+          } catch {
+            // The work directory vanished before the watch attached.
+          }
+        }
+        if (dirtyWorkDirectories().length === 0) finish(Effect.void);
+      };
+      let root: NodeFS.FSWatcher;
+      try {
+        // Subscribe before the re-scan so the unlink cannot fall in a gap.
+        root = NodeFS.watch(buildsDirectory, inspect);
+      } catch {
+        // The builds directory went away before the watch attached, so there
+        // is nothing left to clean up.
+        resume(Effect.void);
+        return Effect.void;
+      }
+      root.on("error", (cause) => finish(Effect.die(cause)));
+      watchers.set(buildsDirectory, root);
+      inspect();
+      return Effect.sync(() => {
+        done = true;
+        for (const watcher of watchers.values()) watcher.close();
+        watchers.clear();
+      });
+    });
   });
 
 describe("LatexBuildService", () => {
@@ -1055,7 +1116,6 @@ describe("LatexBuildService", () => {
         // The cancelled installer wait cannot supply outputs to the new attempt.
         expect((yield* service.cancel(harness.buildInput)).state).toBe("cancelled");
         yield* service.requestBuild(harness.buildInput);
-        yield* Effect.sleep(Duration.millis(20));
         yield* Queue.take(harness.started);
         expect((yield* service.status(harness.buildInput)).state).toBe("running");
         expect(yield* Ref.get(harness.startCount)).toBe(2);
@@ -1098,7 +1158,6 @@ describe("LatexBuildService", () => {
         yield* Deferred.await(hashing);
         expect((yield* service.cancel(harness.buildInput)).state).toBe("cancelled");
         yield* service.requestBuild(harness.buildInput);
-        yield* Effect.sleep(Duration.millis(20));
         yield* Queue.take(harness.started);
         expect(yield* Ref.get(harness.startCount)).toBe(1);
         yield* Deferred.succeed(releaseHash, undefined);
@@ -1288,7 +1347,7 @@ describe("LatexBuildService", () => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const evidenceDirectory = path.join(h.latexDir, "evidence");
-          const [evidenceFile] = (yield* fs.readDirectory(evidenceDirectory)).filter((name) =>
+          const evidenceFile = (yield* fs.readDirectory(evidenceDirectory)).find((name) =>
             name.endsWith(".json"),
           );
           if (evidenceFile === undefined)
@@ -2960,17 +3019,19 @@ describe("LatexBuildService", () => {
           Queue.take(harness.started),
         ]);
 
-        // Give the fourth compile every chance to reach the port; the permit is
-        // the only thing holding it back.
-        for (let attempt = 0; attempt < 10; attempt += 1) {
-          yield* Effect.sleep(Duration.millis(10));
-          expect(yield* Ref.get(harness.startCount)).toBe(3);
-        }
+        // Three permits are held until `hold` opens, so the fourth build
+        // cannot have reached the port: nothing more was offered on `started`
+        // and its snapshot can only still be `queued`.
+        expect(yield* Ref.get(harness.startCount)).toBe(3);
+        expect(Option.isNone(yield* Queue.poll(harness.started))).toBe(true);
         const waiting = yield* Effect.all(inputs.map((input) => service.status(input)));
         expect(waiting.filter((snapshot) => snapshot.state === "running")).toHaveLength(3);
         expect(waiting.filter((snapshot) => snapshot.state === "queued")).toHaveLength(1);
 
         yield* Deferred.succeed(hold, undefined);
+        // The fourth start lands only now: a receipt that a permit had to free
+        // up first, not a race the engine happened to lose.
+        yield* Queue.take(harness.started);
         const finished = yield* Effect.all(
           inputs.map((input) => awaitTerminal(service, input)),
           { concurrency: "unbounded" },
@@ -3401,11 +3462,7 @@ describe("LatexBuildService", () => {
         yield* Queue.take(harness.started);
 
         yield* TestClock.adjust(Duration.minutes(5));
-        let snapshot = yield* service.status(harness.buildInput);
-        for (let attempt = 0; attempt < 100 && !TERMINAL_STATES.has(snapshot.state); attempt += 1) {
-          yield* TestClock.adjust(Duration.millis(20));
-          snapshot = yield* service.status(harness.buildInput);
-        }
+        const snapshot = yield* awaitTerminal(service, harness.buildInput);
         expect(snapshot.state).toBe("failed");
         expect(snapshot.failureSummary).toBe("Build timed out.");
         expect(yield* Ref.get(harness.cancelCount)).toBe(1);

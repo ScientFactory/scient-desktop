@@ -79,199 +79,205 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
   metadata: { displayName: scientAgentTarget.displayName, supportsMultipleInstances: false },
   configSchema: ScientAgentSettings,
   defaultConfig: () => decodeSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
-    Effect.gen(function* () {
-      const serverConfig = yield* ServerConfig;
-      const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const serverSettings = yield* ServerSettingsService;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const platform = yield* HostProcess.Platform;
-      const failure = (detail: string) => (cause: { readonly message?: string }) =>
-        new ProviderDriverError({ driver: DRIVER_KIND, instanceId, detail, cause });
-      const effectiveConfig = { ...config, enabled } satisfies ScientAgentSettings;
-      // Everything the agent owns (credentials, configuration, logs, caches,
-      // its native addon) lives here, per instance.
-      const root = path.join(
-        serverConfig.stateDir,
-        scientAgentTarget.stateNamespace,
-        "instances",
-        instanceId,
-      );
-      yield* fs
-        .makeDirectory(root, { recursive: true, mode: 0o700 })
-        .pipe(Effect.mapError(failure("Could not create the Scient Agent state directory.")));
-      const processEnv = scientAgentProcessEnvironment({
-        instanceEnvironment: environment,
-        root,
-        platform,
-      });
-      // A crashed server never removed its extension files, and a bootstrap
-      // it left unread still holds credentials.
-      yield* sweepStaleOmpExtensionFiles({
-        target: scientAgentTarget,
-        stateDir: serverConfig.stateDir,
-        startedAt: performance.timeOrigin,
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-      );
-      const makeRpcClient = yield* makeOmpCustomModelsClientFactory(
-        scientAgentTarget,
-        serverSettings,
-        instanceId,
-        serverConfig.stateDir,
-      ).pipe(Effect.mapError(failure("Could not prepare Scient Agent custom models.")));
-      const managedRuntime = yield* makeScientAgentManagedRuntimeResolution({
-        settings: effectiveConfig,
-        baseDir: serverConfig.baseDir,
-        environment: processEnv,
-        spawner,
-        managedInstallationAllowed: serverConfig.mode === "desktop",
-      });
-      const launchConfig = {
-        ...effectiveConfig,
-        binaryPath: managedRuntime.effectiveBinaryPath,
-      } satisfies ScientAgentSettings;
-      const continuationIdentity = defaultProviderContinuationIdentity({
-        driverKind: DRIVER_KIND,
-        instanceId,
-      });
-      const stampIdentity = withInstanceIdentity({
-        instanceId,
-        driverKind: DRIVER_KIND,
-        displayName,
-        accentColor,
-        continuationGroupKey: continuationIdentity.continuationKey,
-      });
-      // The agent signs in to several model accounts and reports its own list.
-      // An agent build that does not describe its entries offers no sign-in.
-      // The list itself says sign-in is available: `methods` stays empty, so a
-      // client that predates the account method still decodes this provider.
-      const stamp = (
-        snapshot: ServerProviderDraft & Pick<OmpProviderStatus, "accounts">,
-      ): ServerProvider => {
-        const { accounts, ...draft } = snapshot;
-        return {
-          ...stampIdentity(draft),
-          connection: {
-            methods: [],
-            canDisconnect: false,
-            operation: null,
-            runtime: managedRuntime.summary,
-            ...(accounts ? { accounts } : {}),
-          },
-        };
+  create: Effect.fn("ScientAgentDriver.create")(function* ({
+    instanceId,
+    displayName,
+    accentColor,
+    environment,
+    enabled,
+    config,
+  }) {
+    const serverConfig = yield* ServerConfig;
+    const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+    const serverSettings = yield* ServerSettingsService;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const platform = yield* HostProcess.Platform;
+    const failure = (detail: string) => (cause: { readonly message?: string }) =>
+      new ProviderDriverError({ driver: DRIVER_KIND, instanceId, detail, cause });
+    const effectiveConfig = { ...config, enabled } satisfies ScientAgentSettings;
+    // Everything the agent owns (credentials, configuration, logs, caches,
+    // its native addon) lives here, per instance.
+    const root = path.join(
+      serverConfig.stateDir,
+      scientAgentTarget.stateNamespace,
+      "instances",
+      instanceId,
+    );
+    yield* fs
+      .makeDirectory(root, { recursive: true, mode: 0o700 })
+      .pipe(Effect.mapError(failure("Could not create the Scient Agent state directory.")));
+    const processEnv = scientAgentProcessEnvironment({
+      instanceEnvironment: environment,
+      root,
+      platform,
+    });
+    // A crashed server never removed its extension files, and a bootstrap
+    // it left unread still holds credentials.
+    yield* sweepStaleOmpExtensionFiles({
+      target: scientAgentTarget,
+      stateDir: serverConfig.stateDir,
+      startedAt: performance.timeOrigin,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+    const makeRpcClient = yield* makeOmpCustomModelsClientFactory(
+      scientAgentTarget,
+      serverSettings,
+      instanceId,
+      serverConfig.stateDir,
+    ).pipe(Effect.mapError(failure("Could not prepare Scient Agent custom models.")));
+    const managedRuntime = yield* makeScientAgentManagedRuntimeResolution({
+      settings: effectiveConfig,
+      baseDir: serverConfig.baseDir,
+      environment: processEnv,
+      spawner,
+      managedInstallationAllowed: serverConfig.mode === "desktop",
+    });
+    const launchConfig = {
+      ...effectiveConfig,
+      binaryPath: managedRuntime.effectiveBinaryPath,
+    } satisfies ScientAgentSettings;
+    const continuationIdentity = defaultProviderContinuationIdentity({
+      driverKind: DRIVER_KIND,
+      instanceId,
+    });
+    const stampIdentity = withInstanceIdentity({
+      instanceId,
+      driverKind: DRIVER_KIND,
+      displayName,
+      accentColor,
+      continuationGroupKey: continuationIdentity.continuationKey,
+    });
+    // The agent signs in to several model accounts and reports its own list.
+    // An agent build that does not describe its entries offers no sign-in.
+    // The list itself says sign-in is available: `methods` stays empty, so a
+    // client that predates the account method still decodes this provider.
+    const stamp = (
+      snapshot: ServerProviderDraft & Pick<OmpProviderStatus, "accounts">,
+    ): ServerProvider => {
+      const { accounts, ...draft } = snapshot;
+      return {
+        ...stampIdentity(draft),
+        connection: {
+          methods: [],
+          canDisconnect: false,
+          operation: null,
+          runtime: managedRuntime.summary,
+          ...(accounts ? { accounts } : {}),
+        },
       };
-      const orchestrationAdapter = yield* makeOmpAdapterV2({
-        target: scientAgentTarget,
-        instanceId,
-        settings: launchConfig,
-        homePath: root,
-        environment: processEnv,
-        spawner,
-        fileSystem: fs,
-        path,
-        crypto: yield* Crypto.Crypto,
-        serverConfig,
-        makeProcess: makeRpcClient,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
-        continuations: yield* ProviderContinuationRequests.ProviderContinuationRequests,
-      });
-      const textGeneration = yield* makeOmpTextGeneration(
+    };
+    const orchestrationAdapter = yield* makeOmpAdapterV2({
+      target: scientAgentTarget,
+      instanceId,
+      settings: launchConfig,
+      homePath: root,
+      environment: processEnv,
+      spawner,
+      fileSystem: fs,
+      path,
+      crypto: yield* Crypto.Crypto,
+      serverConfig,
+      makeProcess: makeRpcClient,
+      ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+      continuations: yield* ProviderContinuationRequests.ProviderContinuationRequests,
+    });
+    const textGeneration = yield* makeOmpTextGeneration(
+      scientAgentTarget,
+      launchConfig,
+      processEnv,
+      makeRpcClient,
+    ).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+    const mapSnapshotSettings = (settings: ServerSettings) => ({
+      provider: effectiveConfig,
+      enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+      customModels: customModelDiscoverySnapshot(settings.customModels.connections, instanceId),
+    });
+    const checkProvider = (cwd?: string) =>
+      checkOmpProviderStatus(
         scientAgentTarget,
         launchConfig,
         processEnv,
         makeRpcClient,
+        cwd,
+        readScientAgentAccounts,
       ).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-      );
-      const mapSnapshotSettings = (settings: ServerSettings) => ({
-        provider: effectiveConfig,
-        enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-        customModels: customModelDiscoverySnapshot(settings.customModels.connections, instanceId),
-      });
-      const checkProvider = (cwd?: string) =>
-        checkOmpProviderStatus(
-          scientAgentTarget,
-          launchConfig,
-          processEnv,
-          makeRpcClient,
-          cwd,
-          readScientAgentAccounts,
-        ).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-          Effect.map(stamp),
-        );
-      // One isolated agent process per sign-in or sign-out, in the caller's scope.
-      const openSignIn = makeRpcClient({
-        target: scientAgentTarget,
-        command: launchConfig.binaryPath,
-        env: processEnv,
-        extraArgs: OMP_ISOLATED_ARGS,
-      }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
-        Effect.map((client) => ({
-          events: client.events,
-          command: client.command,
-          extensionUiResponse: client.extensionUiResponse,
-          redact: client.redaction.text,
-        })),
-        Effect.mapError(
-          (cause) =>
-            new ProviderConnectionActionError({
-              message: "Scient could not start Scient Agent to manage the account.",
-              cause,
-            }),
-        ),
+        Effect.map(stamp),
       );
-      // Account removal settles this exact instance's native conversations;
-      // other instances own independent account roots and remain live.
-      const connectionActions = makeScientAgentConnectionActions({ open: openSignIn });
-      // Scient Agent has no updater of its own; Scient replaces the executable.
-      const maintenance = makeManualOnlyProviderMaintenanceCapabilities({
-        provider: DRIVER_KIND,
-        packageName: null,
-      });
-      const snapshot = yield* makeManagedServerProvider<
-        ProviderSnapshotSettings<ScientAgentSettings> & {
-          readonly customModels: ReturnType<typeof customModelDiscoverySnapshot>;
-        }
-      >({
-        resolveMaintenance: () => Effect.succeed(maintenance),
-        getSettings: serverSettings.getSettings.pipe(Effect.map(mapSnapshotSettings)),
-        streamSettings: serverSettings.streamChanges.pipe(Stream.map(mapSnapshotSettings)),
-        haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-        initialSnapshot: (settings) =>
-          makePendingOmpProvider(scientAgentTarget, settings.provider).pipe(Effect.map(stamp)),
-        checkProvider: checkProvider(),
-      }).pipe(
-        Effect.mapError((cause) =>
-          failure(`Failed to build the Scient Agent snapshot: ${cause.message ?? String(cause)}`)(
+    // One isolated agent process per sign-in or sign-out, in the caller's scope.
+    const openSignIn = makeRpcClient({
+      target: scientAgentTarget,
+      command: launchConfig.binaryPath,
+      env: processEnv,
+      extraArgs: OMP_ISOLATED_ARGS,
+    }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.map((client) => ({
+        events: client.events,
+        command: client.command,
+        extensionUiResponse: client.extensionUiResponse,
+        redact: client.redaction.text,
+      })),
+      Effect.mapError(
+        (cause) =>
+          new ProviderConnectionActionError({
+            message: "Scient could not start Scient Agent to manage the account.",
             cause,
-          ),
+          }),
+      ),
+    );
+    // Account removal settles this exact instance's native conversations;
+    // other instances own independent account roots and remain live.
+    const connectionActions = makeScientAgentConnectionActions({ open: openSignIn });
+    // Scient Agent has no updater of its own; Scient replaces the executable.
+    const maintenance = makeManualOnlyProviderMaintenanceCapabilities({
+      provider: DRIVER_KIND,
+      packageName: null,
+    });
+    const snapshot = yield* makeManagedServerProvider<
+      ProviderSnapshotSettings<ScientAgentSettings> & {
+        readonly customModels: ReturnType<typeof customModelDiscoverySnapshot>;
+      }
+    >({
+      resolveMaintenance: () => Effect.succeed(maintenance),
+      getSettings: serverSettings.getSettings.pipe(Effect.map(mapSnapshotSettings)),
+      streamSettings: serverSettings.streamChanges.pipe(Stream.map(mapSnapshotSettings)),
+      haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+      initialSnapshot: (settings) =>
+        makePendingOmpProvider(scientAgentTarget, settings.provider).pipe(Effect.map(stamp)),
+      checkProvider: checkProvider(),
+    }).pipe(
+      Effect.mapError((cause) =>
+        failure(`Failed to build the Scient Agent snapshot: ${cause.message ?? String(cause)}`)(
+          cause,
         ),
-      );
-      return {
-        instanceId,
-        driverKind: DRIVER_KIND,
-        continuationIdentity,
-        displayName,
-        accentColor,
-        enabled,
-        snapshot,
-        snapshotForCwd: checkProvider,
-        orchestrationAdapter,
-        textGeneration,
-        connectionActions,
-        managedRuntimeActions: managedRuntime.actions,
-      } satisfies ScientProviderInstance;
-    }),
+      ),
+    );
+    return {
+      instanceId,
+      driverKind: DRIVER_KIND,
+      continuationIdentity,
+      displayName,
+      accentColor,
+      enabled,
+      snapshot,
+      snapshotForCwd: checkProvider,
+      orchestrationAdapter,
+      textGeneration,
+      connectionActions,
+      managedRuntimeActions: managedRuntime.actions,
+    } satisfies ScientProviderInstance;
+  }),
 };

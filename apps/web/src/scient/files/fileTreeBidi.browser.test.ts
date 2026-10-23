@@ -1,19 +1,23 @@
 import { FileTree } from "@pierre/trees";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const trees: FileTree[] = [];
-const hosts: HTMLElement[] = [];
 
-afterEach(() => {
+async function _cleanupFixture0(_fixture: _Fixture) {
   for (const tree of trees.splice(0)) tree.cleanUp();
-  for (const host of hosts.splice(0)) host.remove();
-});
+  for (const host of _fixture.hosts.splice(0)) host.remove();
+}
 
-async function mountTree(paths: string[], width = 320, flattenEmptyDirectories = false) {
+async function mountTree(
+  _fixture: _Fixture,
+  paths: string[],
+  width = 320,
+  flattenEmptyDirectories = false,
+) {
   const host = document.createElement("div");
   host.style.cssText = `width:${width}px;height:360px;font:16px Arial,sans-serif;direction:ltr`;
   document.body.append(host);
-  hosts.push(host);
+  _fixture.hosts.push(host);
   const onSelectionChange = vi.fn();
   const tree = new FileTree({
     paths,
@@ -71,8 +75,11 @@ const rtlNames = [
 
 describe("file tree bidi labels", () => {
   it.each([320, 120, 72])("keeps whole-name visual order and raw paths at %ipx", async (width) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const paths = rtlNames.map((name) => `${name}/`);
-    const { shadow } = await mountTree(paths, width);
+    const { shadow } = await mountTree(_fixture, paths, width);
     for (const [index, path] of paths.entries()) {
       const row = rowFor(shadow, path);
       const label = row.querySelector<HTMLElement>("[data-file-tree-bidi-label]");
@@ -102,8 +109,11 @@ describe("file tree bidi labels", () => {
   });
 
   it("selects the exact Hebrew file and keeps LTR extension-preserving labels", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const path = "מסמכים/סיכום (חדש).md";
-    const { shadow, tree, onSelectionChange } = await mountTree([path, "report.md"]);
+    const { shadow, tree, onSelectionChange } = await mountTree(_fixture, [path, "report.md"]);
     const file = rowFor(shadow, path);
     file.click();
     await vi.waitFor(() => expect(tree.getSelectedPaths()).toEqual([path]));
@@ -120,7 +130,10 @@ describe("file tree bidi labels", () => {
   });
 
   it("isolates each Hebrew segment of a flattened directory chain", async () => {
-    const { shadow } = await mountTree(["מסמכים/רפואה פנימית/notes.md"], 160, true);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const { shadow } = await mountTree(_fixture, ["מסמכים/רפואה פנימית/notes.md"], 160, true);
     const segments = [...shadow.querySelectorAll<HTMLElement>("[data-item-flattened-subitem]")];
     expect(segments.length).toBe(2);
     expect(
@@ -132,3 +145,21 @@ describe("file tree bidi labels", () => {
     ]);
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    hosts: [] as HTMLElement[],
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

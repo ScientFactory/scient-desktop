@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { Editor } from "@tiptap/core";
 import { applyDocumentSourcePatches } from "@scientfactory/scient-document";
 import {
   createLatexEditorSourceSnapshot,
@@ -85,4 +86,14 @@ export function useLatexVisualTestOwner(source: string) {
   const [owner] = useState(() => createLatexVisualTestOwner(source));
   owner.observe(source);
   return owner;
+}
+
+/** A Tiptap instance can exist before its view mounts, or outlive its detached view. */
+export function readMountedLatexVisualTestEditor(container: HTMLElement): Editor | null {
+  const element = container.querySelector<HTMLElement & { editor?: Editor }>(
+    ".scient-latex-visual-document",
+  );
+  const editor = element?.editor;
+  if (!element?.isConnected || !editor || editor.isDestroyed || !editor.isInitialized) return null;
+  return editor.view.dom === element ? editor : null;
 }

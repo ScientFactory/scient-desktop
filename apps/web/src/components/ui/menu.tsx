@@ -1,5 +1,3 @@
-"use client";
-
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import type * as React from "react";
@@ -45,7 +43,7 @@ function MenuPopup({
   collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
   keepMounted?: boolean;
   padding?: "default" | "compact";
-  width?: "default" | "compact";
+  width?: "default" | "compact" | "content";
   "data-writing-menu-owner"?: string;
 }) {
   const inheritedOwner = useContext(MenuOwnerContext);
@@ -71,9 +69,11 @@ function MenuPopup({
             // the topmost row would stay unhoverable without this opt-out.
             "[-webkit-app-region:no-drag]",
             "max-w-[calc(100vw-2rem)]",
-            width === "compact"
-              ? "min-w-[min(8rem,calc(100vw-2rem))]"
-              : "min-w-[min(10rem,calc(100vw-2rem))]",
+            width === "content"
+              ? "w-max min-w-0"
+              : width === "compact"
+                ? "min-w-[min(8rem,calc(100vw-2rem))]"
+                : "min-w-[min(10rem,calc(100vw-2rem))]",
             className,
           )}
           data-slot="menu-popup"
@@ -396,7 +396,7 @@ function MenuSubPopup({
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
   side?: MenuPrimitive.Positioner.Props["side"];
   collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
-  width?: "default" | "compact";
+  width?: "default" | "compact" | "content";
 }) {
   const defaultAlignOffset = align !== "center" ? -5 : undefined;
 

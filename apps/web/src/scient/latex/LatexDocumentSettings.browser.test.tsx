@@ -1,6 +1,7 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import { useLayoutEffect, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it } from "vite-plus/test";
+
+import { expect, it } from "vite-plus/test";
 import { page } from "vitest/browser";
 import { LatexDocumentSettings } from "./LatexDocumentSettings";
 import { updateLatexDocumentSettingsSource } from "./latexDocumentSettingsSource";
@@ -8,31 +9,30 @@ import { latexDocumentLanguage } from "./latexLanguage";
 import "~/index.css";
 import "./scient-latex.css";
 
-let host: HTMLDivElement | undefined;
-let root: Root | undefined;
-let source = "";
-let applyCount = 0;
-let setExternalSource: ((source: string) => void) | undefined;
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
-});
-
-async function mount(preamble = "", disabled = false, viewport = 900) {
+async function mount(_fixture: _Fixture, preamble = "", disabled = false, viewport = 900) {
   await page.viewport(viewport, 800);
-  source = `\\documentclass[11pt,a4paper]{article}\n${preamble}\\begin{document}\nExisting body.\n\\end{document}\n`;
-  applyCount = 0;
-  host = document.createElement("div");
-  host.style.cssText = "width:min(384px,calc(100vw - 32px));padding:4px;background:var(--popover);";
-  document.body.append(host);
-  root = createRoot(host);
+  _fixture.publishSource(
+    `\\documentclass[11pt,a4paper]{article}\n${preamble}\\begin{document}\nExisting body.\n\\end{document}\n`,
+  );
+  _fixture.publishApplyCount(0);
+  _fixture.host = document.createElement("div");
+  _fixture.host.style.cssText =
+    "width:min(384px,calc(100vw - 32px));padding:4px;background:var(--popover);";
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
   function Harness() {
-    const [text, setText] = useState(source);
+    const [text, setText] = useState(_fixture.source);
     useLayoutEffect(() => {
-      setExternalSource = setText;
+      _fixture.publishSetExternalSource(setText);
     });
     return (
       <LatexDocumentSettings
@@ -41,18 +41,18 @@ async function mount(preamble = "", disabled = false, viewport = 900) {
         onOpenChange={() => {}}
         onOpenSource={() => {}}
         onApply={(changes, expected) => {
-          if (expected !== source) return false;
-          const next = updateLatexDocumentSettingsSource(source, changes);
+          if (expected !== _fixture.source) return false;
+          const next = updateLatexDocumentSettingsSource(_fixture.source, changes);
           if (next === null) return false;
-          source = next;
-          applyCount++;
+          _fixture.publishSource(next);
+          _fixture.postIncrementApplyCount();
           setText(next);
           return true;
         }}
       />
     );
   }
-  root.render(<Harness />);
+  await _fixture.root0.rerender(<Harness />);
   await expect.element(page.getByRole("combobox", { name: "Document language" })).toBeVisible();
 }
 
@@ -62,16 +62,19 @@ async function chooseLanguage(name: "English" | "Hebrew") {
 }
 
 it.each([900, 320])("fits the approved three/two/two layout at viewport %s", async (viewport) => {
-  await mount("", false, viewport);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await mount(_fixture, "", false, viewport);
   const box = (label: string) =>
-    host!.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.getBoundingClientRect();
-  const type = box("Document type"),
-    size = box("Text size"),
-    paper = box("Paper size");
-  const language = box("Document language"),
-    orientation = box("Orientation");
-  const margins = box("Margins"),
-    paragraphs = box("Paragraphs");
+    _fixture.host!.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.getBoundingClientRect();
+  const type = box("Document type");
+  const size = box("Text size");
+  const paper = box("Paper size");
+  const language = box("Document language");
+  const orientation = box("Orientation");
+  const margins = box("Margins");
+  const paragraphs = box("Paragraphs");
   expect(Math.abs(type.top - size.top)).toBeLessThan(1);
   expect(Math.abs(size.top - paper.top)).toBeLessThan(1);
   expect(Math.abs(type.width - size.width)).toBeLessThan(1);
@@ -80,7 +83,7 @@ it.each([900, 320])("fits the approved three/two/two layout at viewport %s", asy
   expect(Math.abs(margins.top - paragraphs.top)).toBeLessThan(1);
   expect(language.top).toBeGreaterThan(type.bottom);
   expect(margins.top).toBeGreaterThan(language.bottom);
-  const bounds = host!.getBoundingClientRect();
+  const bounds = _fixture.host!.getBoundingClientRect();
   for (const control of [type, size, paper, language, orientation, margins, paragraphs]) {
     expect(control.left).toBeGreaterThanOrEqual(bounds.left);
     expect(control.right).toBeLessThanOrEqual(bounds.right);
@@ -89,34 +92,40 @@ it.each([900, 320])("fits the approved three/two/two layout at viewport %s", asy
 });
 
 it("stages language, clears a reverted choice, and publishes only on Apply", async () => {
-  await mount();
-  const original = source;
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await mount(_fixture);
+  const original = _fixture.source;
   const apply = page.getByRole("button", { name: "Apply", exact: true });
   await expect.element(apply).toBeDisabled();
   await chooseLanguage("Hebrew");
-  expect(source).toBe(original);
-  expect(applyCount).toBe(0);
+  expect(_fixture.source).toBe(original);
+  expect(_fixture.applyCount).toBe(0);
   await expect.element(apply).toBeEnabled();
   await chooseLanguage("English");
   await expect.element(apply).toBeDisabled();
   await chooseLanguage("Hebrew");
   await apply.click();
-  expect(applyCount).toBe(1);
-  expect(latexDocumentLanguage(source).main).toBe("hebrew");
-  expect(source).toContain("Existing body.");
+  expect(_fixture.applyCount).toBe(1);
+  expect(latexDocumentLanguage(_fixture.source).main).toBe("hebrew");
+  expect(_fixture.source).toContain("Existing body.");
 });
 
 it("refuses a staged change after the working source changes", async () => {
-  await mount();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await mount(_fixture);
   await chooseLanguage("Hebrew");
-  setExternalSource!(source + "% external edit\n");
+  _fixture.setExternalSource!(_fixture.source + "% external edit\n");
   await expect
     .element(page.getByRole("alert"))
     .toHaveTextContent(
       "The document changed while settings were open. Close and reopen settings to use the latest version.",
     );
   await expect.element(page.getByRole("button", { name: "Apply", exact: true })).toBeDisabled();
-  expect(applyCount).toBe(0);
+  expect(_fixture.applyCount).toBe(0);
 });
 
 it.each([
@@ -125,8 +134,59 @@ it.each([
 ])(
   "keeps unsupported or read-only language controls disabled: %j",
   async ({ preamble, disabled }) => {
-    await mount(preamble, disabled);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    await mount(_fixture, preamble, disabled);
     await expect.element(page.getByRole("combobox", { name: "Document language" })).toBeDisabled();
     await expect.element(page.getByRole("button", { name: "Apply", exact: true })).toBeDisabled();
   },
 );
+
+function _createFixture() {
+  let _published_setExternalSource = undefined! as ((source: string) => void) | undefined;
+  let _published_source = "";
+  let _published_applyCount = 0;
+
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    get source() {
+      return _published_source;
+    },
+    publishSource(next: typeof _published_source) {
+      _published_source = next;
+      return next;
+    },
+    get applyCount() {
+      return _published_applyCount;
+    },
+    publishApplyCount(next: typeof _published_applyCount) {
+      _published_applyCount = next;
+      return next;
+    },
+    postIncrementApplyCount() {
+      return _published_applyCount++;
+    },
+    get setExternalSource() {
+      return _published_setExternalSource;
+    },
+    publishSetExternalSource(next: typeof _published_setExternalSource) {
+      _published_setExternalSource = next;
+      return next;
+    },
+
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

@@ -5,7 +5,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentFilePath } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -21,6 +24,28 @@ import {
 
 const TestLayer = NodeServices.layer;
 const bytes = (value: string) => new TextEncoder().encode(value);
+
+const watchReceipts = vi.hoisted(() => ({
+  afterCallback: undefined as ((filename: string | Buffer | null) => void) | undefined,
+}));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...original,
+    watch: (...args: Parameters<typeof original.watch>): ReturnType<typeof original.watch> => {
+      const listener = args.at(-1);
+      if (typeof listener !== "function") return original.watch(...args);
+      return Reflect.apply(original.watch, original, [
+        ...args.slice(0, -1),
+        (event: string, filename: string | Buffer | null) => {
+          Reflect.apply(listener, undefined, [event, filename]);
+          watchReceipts.afterCallback?.(filename);
+        },
+      ]);
+    },
+  };
+});
 
 describe("EnvironmentFileOpen", () => {
   it.each([
@@ -188,21 +213,41 @@ describe("EnvironmentFileOpen", () => {
       yield* fileSystem.writeFileString(selectedPath, "before\n");
       yield* fileSystem.writeFileString(otherPath, "unrelated\n");
 
-      const event = yield* watchEnvironmentFile({
-        path: EnvironmentFilePath.make(selectedPath),
-      }).pipe(
-        Stream.tap((event) =>
-          event._tag === "watch-ready"
-            ? Effect.gen(function* () {
-                yield* fileSystem.writeFileString(otherPath, "still unrelated\n");
-                yield* Effect.sleep("150 millis");
-                yield* fileSystem.writeFileString(selectedPath, "after\n");
-              })
-            : Effect.void,
+      const ready = yield* Deferred.make<void>();
+      const unrelatedObserved = Promise.withResolvers<void>();
+      const selectedObserved = Promise.withResolvers<void>();
+      const changes = yield* Effect.forkChild(
+        watchEnvironmentFile({
+          path: EnvironmentFilePath.make(selectedPath),
+        }).pipe(
+          Stream.tap((event) =>
+            event._tag === "watch-ready" ? Deferred.succeed(ready, undefined) : Effect.void,
+          ),
+          Stream.filter((event) => event._tag === "file-changed"),
+          Stream.runHead,
         ),
-        Stream.filter((event) => event._tag === "file-changed"),
-        Stream.runHead,
+        { startImmediately: true },
       );
+      yield* TestClock.adjust("100 millis");
+      yield* Deferred.await(ready);
+      watchReceipts.afterCallback = (filename) => {
+        if (filename?.toString() === path.basename(otherPath)) unrelatedObserved.resolve();
+        if (filename?.toString() === path.basename(selectedPath)) selectedObserved.resolve();
+      };
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          watchReceipts.afterCallback = undefined;
+        }),
+      );
+      yield* fileSystem.writeFileString(otherPath, "still unrelated\n");
+      // The native callback has returned before virtual time flushes any coalesced event.
+      yield* Effect.promise(() => unrelatedObserved.promise);
+      yield* TestClock.adjust("150 millis");
+      expect(changes.pollUnsafe()).toBeUndefined();
+      yield* fileSystem.writeFileString(selectedPath, "after\n");
+      yield* Effect.promise(() => selectedObserved.promise);
+      yield* TestClock.adjust("100 millis");
+      const event = yield* Fiber.join(changes);
 
       expect(event).toEqual(
         Option.some({
@@ -211,7 +256,7 @@ describe("EnvironmentFileOpen", () => {
         }),
       );
       expect(yield* fileSystem.readFileString(selectedPath)).toBe("after\n");
-    }).pipe(Effect.provide(TestLayer), Effect.scoped, TestClock.withLive),
+    }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
 
   it.effect("keeps watching when an atomic save replaces the selected file", () =>

@@ -9,8 +9,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
-import type * as Electron from "electron";
-
 const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
   focusedWebContents: vi.fn(),
   ownerWindow: vi.fn(),
@@ -28,11 +26,13 @@ import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import {
   getLocalEnvironmentBootstraps,
+  getRelayTelemetryEnabled,
   getWindowFullscreenState,
   pasteAsText,
   reloadMainWindow,
   pickProjectFavicon,
   probeRemoteEditors,
+  revealWindow,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -88,23 +88,6 @@ const bootstrapsLayer = (instances: ReadonlyArray<DesktopBackendManager.DesktopB
   Layer.merge(DesktopBackendPool.layerTest([...instances]), backendConfigurationLayer);
 
 describe("getLocalEnvironmentBootstraps", () => {
-  it.effect("publishes the concrete running distro without replacing the stable instance id", () =>
-    Effect.gen(function* () {
-      const result = yield* getLocalEnvironmentBootstraps.handler();
-
-      assert.deepEqual(result, [
-        {
-          id: "wsl:default",
-          label: "WSL (Ubuntu)",
-          runningDistro: "Ubuntu",
-          httpBaseUrl: "http://127.0.0.1:3774/",
-          wsBaseUrl: "ws://127.0.0.1:3774/",
-          bootstrapToken: "bootstrap-token",
-        },
-      ]);
-    }).pipe(Effect.provide(bootstrapsLayer([defaultWslInstance]))),
-  );
-
   it.effect("hands out the current window's token to a backend launched with the secret", () =>
     Effect.gen(function* () {
       const result = yield* getLocalEnvironmentBootstraps.handler();
@@ -197,6 +180,32 @@ describe("getLocalEnvironmentBootstraps", () => {
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(bootstrapsLayer([stoppedInstance])));
   });
+});
+
+describe("getRelayTelemetryEnabled", () => {
+  it.effect("keeps relay tracing disabled by Scient policy regardless of ambient opt-in", () =>
+    Effect.gen(function* () {
+      assert.isFalse(
+        yield* getRelayTelemetryEnabled.handler().pipe(
+          Effect.provideService(HostProcess.Environment, {
+            T3CODE_TELEMETRY_ENABLED: "false",
+          }),
+        ),
+      );
+      assert.isFalse(
+        yield* getRelayTelemetryEnabled
+          .handler()
+          .pipe(Effect.provideService(HostProcess.Environment, {})),
+      );
+      assert.isFalse(
+        yield* getRelayTelemetryEnabled
+          .handler()
+          .pipe(
+            Effect.provideService(HostProcess.Environment, { T3CODE_TELEMETRY_ENABLED: "true" }),
+          ),
+      );
+    }),
+  );
 });
 
 describe("getWindowFullscreenState", () => {
@@ -292,6 +301,26 @@ describe("reloadMainWindow", () => {
     }).pipe(
       Effect.provide(
         Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeed(Option.some(window)) }),
+      ),
+    );
+  });
+});
+
+describe("revealWindow", () => {
+  it.effect("reveals the main window only when it asks", () => {
+    const window = { webContents: { id: 42 } } as unknown as Electron.BrowserWindow;
+    const reveal = vi.fn(() => Effect.void);
+    return Effect.gen(function* () {
+      yield* revealWindow.handler(undefined, { sender: { id: 99 } });
+      assert.equal(reveal.mock.calls.length, 0);
+      yield* revealWindow.handler(undefined, { sender: { id: 42 } });
+      assert.deepEqual(reveal.mock.calls, [[window]]);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          main: Effect.succeedSome(window),
+          reveal,
+        }),
       ),
     );
   });

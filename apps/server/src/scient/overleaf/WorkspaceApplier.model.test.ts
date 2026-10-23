@@ -11,7 +11,7 @@ const revisions = (files: Readonly<Record<string, string>>) =>
 const sorted = (tree: ReadonlyMap<string, string>) =>
   [...tree].sort(([a], [b]) => a.localeCompare(b));
 for (const model of modelCases) {
-  (HostProcess.Platform.defaultValue() === "darwin" ? it.live : it.live.skip)(
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
     `matches independent checker base: ${model.action} crash=${model.crash}`,
     () => {
       let stop = model.crash,

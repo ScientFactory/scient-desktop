@@ -889,7 +889,7 @@ or promise that every offscreen math node is unmounted.
 
 ## Performance budgets
 
-These are qualification targets. Unit timing covers editing/projection work; first-viewport
+These are qualification targets. Benchmarks cover editing/projection work; first-viewport
 painting, CPU-throttled interaction and physical lower-performance machines require separate
 runtime evidence:
 
@@ -904,13 +904,14 @@ runtime evidence:
 - Inactive Plotly and Mermaid nodes do not continuously animate or repaint.
 - Repeated presentation switches and file changes show no unbounded listener, DOM, or heap growth.
 
-Run `SCIENT_MARKDOWN_PERF_STRICT=1 pnpm exec vp test run --project unit
-src/scient/markdownEditor/prosemirror/performance.test.ts` from `apps/web` in an isolated,
-otherwise idle qualification run. The normal parallel suite uses wider timing ceilings to detect
-algorithmic regressions without treating runner contention as interaction latency. CI web shards
-run headless Chromium beside the unit project, so they skip this suite and shard 1 runs it alone
-with the wider ceilings. The fixtures
-cover 100/500 KiB documents, references, large tables and stable embedded-code surfaces.
+Run `SCIENT_MARKDOWN_PERF_STRICT=1 pnpm run test:performance` from `apps/web` in an isolated,
+otherwise idle qualification run with headless Chromium installed. This dedicated benchmark lane
+preserves the construction, mounting, mode-switching and typing budgets for 100/500 KiB documents,
+references, large tables and 64 embedded-code surfaces. It also checks LaTeX word counting and
+formula insertion into a document with 3,000 formulas. Ordinary unit and browser tests retain
+correctness and native-editor identity checks without wall-clock assertions. CI web shard 1 runs
+the benchmark lane separately with the strict budgets. Runs without `SCIENT_MARKDOWN_PERF_STRICT=1`
+use the existing wider Markdown interaction ceilings, not the strict qualification targets.
 
 ## Change acceptance
 

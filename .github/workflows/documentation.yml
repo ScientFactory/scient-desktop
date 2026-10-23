@@ -66,7 +66,7 @@ jobs:
           if (( ${#markdown_files[@]} > 0 )); then
             # Match the oxfmt bundled with vite-plus (pnpm-lock.yaml), which the
             # commit hook runs; versions disagree on long TypeScript unions.
-            npx --yes oxfmt@0.70.0 --config .github/oxfmt-documentation.json --check "${markdown_files[@]}"
+            npx --yes oxfmt@0.73.0 --config .github/oxfmt-documentation.json --check "${markdown_files[@]}"
             node scripts/check-markdown-links.mjs "${markdown_files[@]}"
           fi
 

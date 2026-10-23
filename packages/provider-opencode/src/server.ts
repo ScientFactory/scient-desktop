@@ -5,8 +5,13 @@ export {
   type OpenCodeDriverEnv,
   type OpenCodeDriverOptions,
 } from "./server/driver.ts";
+/**
+ * Default native OpenCode adapter for hosts without application-owned instruction policy.
+ *
+ * @public
+ */
+export { OpenCodeAdapterV2Driver } from "./server/adapter.ts";
 export {
-  OpenCodeAdapterV2Driver,
   makeOpenCodeAdapterV2Driver,
   openCodePermissionRules,
   type OpenCodeAdapterV2DriverEnv,

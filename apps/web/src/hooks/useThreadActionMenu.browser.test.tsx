@@ -1,3 +1,4 @@
+import { render as _fixtureRender, type Screen, act } from "../../test/render";
 import {
   EnvironmentId,
   MessageId,
@@ -7,9 +8,9 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { act, createElement, useEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createElement, useEffect } from "react";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { useThreadActionMenu } from "./useThreadActionMenu";
 import { threadEnvironment } from "../state/threads";
@@ -115,8 +116,7 @@ const target = {
   threadId: ThreadId.make("thread"),
 };
 const key = scopedThreadKey(target);
-let renderer: Root | undefined;
-let menu: ReturnType<typeof useThreadActionMenu> | undefined;
+
 function Header({ onReady }: { onReady: (menu: ReturnType<typeof useThreadActionMenu>) => void }) {
   const actions = useThreadActionMenu({
     threadRef: target,
@@ -127,19 +127,21 @@ function Header({ onReady }: { onReady: (menu: ReturnType<typeof useThreadAction
   useEffect(() => onReady(actions), [actions, onReady]);
   return null;
 }
-async function selectMarkUnread() {
+async function selectMarkUnread(_fixture: _Fixture) {
   await act(async () => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(
       createElement(Header, {
         onReady: (actions) => {
-          menu = actions;
+          _fixture.menu = actions;
         },
       }),
     );
   });
   await act(async () => {
-    menu?.openMenu({ x: 1, y: 2 });
+    _fixture.menu?.openMenu({ x: 1, y: 2 });
   });
   expect(boundary.show).toHaveBeenCalledOnce();
   expect(boundary.show).toHaveBeenCalledWith(
@@ -148,8 +150,7 @@ async function selectMarkUnread() {
   );
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function _setupFixture0(_fixture: _Fixture) {
   boundary.serverTracked = true;
   boundary.markUnread.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   boundary.unrelatedCommand.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
@@ -160,20 +161,24 @@ beforeEach(() => {
     completedAt: "2026-10-05T08:18:15.098Z",
   };
   useUiStateStore.setState({ threadLastVisitedAtById: { [key]: "2026-10-05T08:20:00.000Z" } });
-  menu = undefined;
-});
-afterEach(async () => {
+  _fixture.menu = undefined;
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
   await act(async () => {
-    renderer?.unmount();
+    await _fixture.root0?.unmount();
   });
-  renderer = undefined;
+  _fixture.root0 = undefined;
   useUiStateStore.setState({ threadLastVisitedAtById: {} });
   vi.unstubAllGlobals();
-});
+}
 
 describe("header Mark unread through the shared thread action", () => {
   it("dispatches the exact scoped native mutation when the server tracks visits", async () => {
-    await selectMarkUnread();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await selectMarkUnread(_fixture);
     expect(boundary.markUnread).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
       input: { threadId: target.threadId },
@@ -184,20 +189,48 @@ describe("header Mark unread through the shared thread action", () => {
     expect(boundary.unrelatedCommand).not.toHaveBeenCalled();
   });
   it("uses the canonical completed answer minus one millisecond for older servers", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     boundary.serverTracked = false;
-    await selectMarkUnread();
+    await selectMarkUnread(_fixture);
     expect(boundary.markUnread).not.toHaveBeenCalled();
     expect(useUiStateStore.getState().threadLastVisitedAtById[key]).toBe(
       "2026-10-05T08:18:15.097Z",
     );
   });
   it("does not invent a local unread answer from a completed run when the canonical answer is null", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     boundary.serverTracked = false;
     boundary.shell.latestCompletedAnswer = null;
-    await selectMarkUnread();
+    await selectMarkUnread(_fixture);
     expect(boundary.markUnread).not.toHaveBeenCalled();
     expect(useUiStateStore.getState().threadLastVisitedAtById[key]).toBe(
       "2026-10-05T08:20:00.000Z",
     );
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    menu: undefined! as ReturnType<typeof useThreadActionMenu> | undefined,
+
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

@@ -1,5 +1,6 @@
-import { act, useLayoutEffect, useSyncExternalStore } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { useLayoutEffect, useSyncExternalStore } from "react";
+
 import {
   EnvironmentId,
   type AuthSessionState,
@@ -8,7 +9,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
 import {
@@ -27,7 +28,7 @@ type TestEnvironment = {
 };
 
 const testState = vi.hoisted(() => ({
-  registry: undefined as AtomRegistry.AtomRegistry | undefined,
+  readRegistry: (): AtomRegistry.AtomRegistry | undefined => undefined,
   environments: [] as TestEnvironment[],
   sessions: new Map<string, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState, never>>>(),
   updateStateAtom: undefined as Atom.Atom<{ status: "idle" }> | undefined,
@@ -59,7 +60,7 @@ const testState = vi.hoisted(() => ({
 vi.mock("~/branding", () => ({ APP_VERSION: "0.6.2" }));
 vi.mock("~/env", () => ({ isElectron: true }));
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: Atom.Atom<unknown>) => testState.registry!.get(atom),
+  useAtomValue: (atom: Atom.Atom<unknown>) => testState.readRegistry()!.get(atom),
 }));
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments: testState.environments }),
@@ -76,12 +77,12 @@ vi.mock("~/state/session", async () => {
 });
 vi.mock("~/rpc/atomRegistry", () => ({
   appAtomRegistry: {
-    get: (atom: Atom.Atom<unknown>) => testState.registry!.get(atom),
+    get: (atom: Atom.Atom<unknown>) => testState.readRegistry()!.get(atom),
     update: <R, W>(atom: Atom.Writable<R, W>, f: (value: R) => W) =>
-      testState.registry!.update(atom, f),
+      testState.readRegistry()!.update(atom, f),
     set: <R, W>(atom: Atom.Writable<R, W>, value: W) => {
       testState.publishedAtoms.add(atom as Atom.Writable<unknown, unknown>);
-      testState.registry!.set(atom, value);
+      testState.readRegistry()!.set(atom, value);
     },
   },
 }));
@@ -221,19 +222,24 @@ function environment(id: string, selfUpdate: ServerSelfUpdateCapability): TestEn
   };
 }
 
-let renderer: Root | undefined;
-let current: ReturnType<typeof useUpdateEverything> | undefined;
-function Probe({ version = null }: { version?: string | null }) {
+function Probe({ _fixture, version = null }: { version?: string | null } & { _fixture: _Fixture }) {
   const value = useUpdateEverything(version);
   useLayoutEffect(() => {
-    current = value;
+    _fixture.publishCurrent(value);
   });
   return null;
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  testState.registry = AtomRegistry.make();
+async function _setupFixture0(_fixture: _Fixture) {
+  const registry = AtomRegistry.make();
+  testState.readRegistry = () => registry;
+  _fixture.stack.defer(() => {
+    try {
+      registry.dispose();
+    } finally {
+      testState.readRegistry = () => undefined;
+    }
+  });
   testState.environments = [
     environment("service", "boot-service"),
     environment("desktop", "desktop-managed"),
@@ -264,17 +270,15 @@ beforeEach(() => {
     .mockImplementation(async ({ input }) =>
       AsyncResult.success({ targetVersion: input.targetVersion }),
     );
-  current = undefined;
-});
+  _fixture.publishCurrent(undefined);
+}
 
-afterEach(async () => {
-  await act(() => renderer?.unmount());
-  renderer = undefined;
-  testState.registry?.dispose();
-  vi.unstubAllGlobals();
-});
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0?.unmount());
+  _fixture.root0 = undefined;
+}
 
-async function holdPass() {
+async function holdPass(_fixture: _Fixture) {
   let finishProviders = () => {};
   testState.updateProviders.mockImplementationOnce(
     () =>
@@ -282,19 +286,21 @@ async function holdPass() {
         finishProviders = () => resolve([]);
       }),
   );
-  await act(() => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(<Probe />);
+  await act(async () => {
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
   });
   let run: Promise<void> | undefined;
   await act(() => {
-    run = current!.run({});
+    run = _fixture.current!.run({});
   });
   expect(testState.updateProviders).toHaveBeenCalledOnce();
   expect(testState.updateServer).not.toHaveBeenCalled();
   return {
     finish: async () =>
-      act(async () => {
+      await act(async () => {
         finishProviders();
         await run;
       }),
@@ -304,7 +310,11 @@ async function holdPass() {
 it.each(["failure", "refresh"] as const)(
   "withdraws a held exact-service target on current %s, preserving remote desktop and recovery",
   async (phase) => {
-    const pass = await holdPass();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const pass = await holdPass(_fixture);
     const previous = AsyncResult.success(true);
     testState.availability =
       phase === "failure"
@@ -322,7 +332,7 @@ it.each(["failure", "refresh"] as const)(
           }
         : entry,
     );
-    await act(() => renderer!.render(<Probe />));
+    await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
     await pass.finish();
     expect(testState.updateServer.mock.calls).toMatchObject([
       [{ environmentId: "desktop", input: { targetVersion: "0.6.2" } }],
@@ -332,10 +342,10 @@ it.each(["failure", "refresh"] as const)(
     );
 
     testState.availability = AsyncResult.success(true);
-    await act(() => renderer!.render(<Probe />));
+    await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
     testState.updateServer.mockClear();
     await act(async () => {
-      await current!.run({});
+      await _fixture.current!.run({});
     });
     expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
       "service",
@@ -347,13 +357,16 @@ it.each(["failure", "refresh"] as const)(
 it.each(["scope", "offline", "channel", "capability", "mechanism", "current"] as const)(
   "does not admit a changed %s target or a newly eligible machine into a confirmed pass",
   async (change) => {
-    const pass = await holdPass();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const pass = await holdPass(_fixture);
     const first = testState.environments[0]!;
     if (change === "scope") {
-      testState.registry!.set(
-        testState.sessions.get("service")!,
-        AsyncResult.success({ ...session, scopes: [] }),
-      );
+      testState
+        .readRegistry()!
+        .set(testState.sessions.get("service")!, AsyncResult.success({ ...session, scopes: [] }));
     }
     const capabilities = { ...first.serverConfig.environment.capabilities };
     if (change === "capability") delete capabilities.serverSelfUpdate;
@@ -382,7 +395,7 @@ it.each(["scope", "offline", "channel", "capability", "mechanism", "current"] as
       testState.environments[1]!,
       environment("new-machine", "boot-service"),
     ];
-    await act(() => renderer!.render(<Probe />));
+    await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
     await pass.finish();
     expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
       "desktop",
@@ -391,22 +404,34 @@ it.each(["scope", "offline", "channel", "capability", "mechanism", "current"] as
 );
 
 it("does not change the confirmed version during a held provider step", async () => {
-  const pass = await holdPass();
-  await act(() => renderer!.render(<Probe version="0.6.3" />));
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const pass = await holdPass(_fixture);
+  await act(
+    async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} version="0.6.3" />),
+  );
   await pass.finish();
   expect(testState.updateServer).not.toHaveBeenCalled();
 });
 
 it("retires an unmounted held pass without disabling a newly confirmed pass", async () => {
-  const pass = await holdPass();
-  await act(() => renderer!.unmount());
-  renderer = undefined;
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const pass = await holdPass(_fixture);
+  await act(async () => await _fixture.root0!.unmount());
+  _fixture.root0 = undefined;
   testState.availability = AsyncResult.failureWithPrevious(Cause.fail("403"), {
     previous: Option.some(AsyncResult.success(true)),
   });
-  await act(() => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(<Probe />);
+  await act(async () => {
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
   });
   await pass.finish();
   expect(testState.updateServer).not.toHaveBeenCalled();
@@ -422,9 +447,9 @@ it("retires an unmounted held pass without disabling a newly confirmed pass", as
   ]);
 
   testState.availability = AsyncResult.success(true);
-  await act(() => renderer!.render(<Probe />));
+  await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
   await act(async () => {
-    await current!.run({});
+    await _fixture.current!.run({});
   });
   expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
     "service",
@@ -450,11 +475,20 @@ async function retryFromCircle(
     options: { readonly quiet: boolean },
   ) => Promise<ServerUpdateOutcome>,
 ) {
+  const started: string[] = [];
   await act(async () => {
     for (const id of ids) {
-      retryUpdateRunServer(EnvironmentId.make(id), run.useQualifiedUpdateRunServers(), update);
+      if (retryUpdateRunServer(EnvironmentId.make(id), run.useQualifiedUpdateRunServers(), update))
+        started.push(id);
     }
-    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await vi.waitFor(() => {
+    for (const id of started) {
+      expect(
+        run.useUpdateEverythingRun()?.machines.find((machine) => machine.environmentId === id)
+          ?.result,
+      ).not.toBe(null);
+    }
   });
 }
 
@@ -475,12 +509,18 @@ function failedRunMachine(target: ServerUpdateTarget): UpdateRunMachine {
 it.each(["availability", "scope", "version", "mechanism", "owner"] as const)(
   "does not retry a failed server whose target lost its %s, and still retries an eligible one",
   async (change) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const run = testState.runModule!;
     testState.setRun.mockImplementation(run.setUpdateEverythingRun);
     testState.settleMachine.mockImplementation(run.settleUpdateRunMachine);
-    await act(() => {
-      renderer = createRoot(document.createElement("div"));
-      renderer.render(<Probe />);
+    await act(async () => {
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+      );
+      await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
     });
     // Confirmed with flags the eligible server no longer has.
     const confirmed = (id: string, selfUpdate: ServerSelfUpdateCapability): ServerUpdateTarget => ({
@@ -510,16 +550,15 @@ it.each(["availability", "scope", "version", "mechanism", "owner"] as const)(
       });
     }
     if (change === "scope") {
-      testState.registry!.set(
-        testState.sessions.get("service")!,
-        AsyncResult.success({ ...session, scopes: [] }),
-      );
+      testState
+        .readRegistry()!
+        .set(testState.sessions.get("service")!, AsyncResult.success({ ...session, scopes: [] }));
     }
     if (change === "owner") {
-      await act(() => renderer!.unmount());
-      renderer = undefined;
+      await act(async () => await _fixture.root0!.unmount());
+      _fixture.root0 = undefined;
     } else {
-      await act(() => renderer!.render(<Probe />));
+      await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
     }
 
     const update = vi.fn<(target: ServerUpdateTarget) => Promise<ServerUpdateOutcome>>(
@@ -556,43 +595,51 @@ it.each(["availability", "scope", "version", "mechanism", "owner"] as const)(
 
 // SCIENT-FORK:START — eligibility readers hear only real changes, not every owner render.
 it("does not notify eligibility readers when its owner re-renders unchanged", async () => {
-  await act(() => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(<Probe />);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await act(async () => {
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
   });
   expect(testState.publishedAtoms.size).toBe(1);
   const [qualified] = testState.publishedAtoms;
   let notifications = 0;
-  const unsubscribe = testState.registry!.subscribe(qualified!, () => {
+  const unsubscribe = testState.readRegistry()!.subscribe(qualified!, () => {
     notifications += 1;
   });
   const readerRendered = vi.fn();
   function Reader() {
     readerRendered();
     useSyncExternalStore(
-      (onChange) => testState.registry!.subscribe(qualified!, onChange),
-      () => testState.registry!.get(qualified!),
+      (onChange) => testState.readRegistry()!.subscribe(qualified!, onChange),
+      () => testState.readRegistry()!.get(qualified!),
     );
     return null;
   }
-  let reader: Root | undefined;
-  await act(() => {
-    reader = createRoot(document.createElement("div"));
-    reader.render(<Reader />);
+  let reader: Screen | undefined;
+  await act(async () => {
+    reader = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await reader.rerender(<Reader />);
   });
   const rendersBefore = readerRendered.mock.calls.length;
-  await act(() => renderer!.render(<Probe />));
-  await act(() => renderer!.render(<Probe />));
+  await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
+  await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
   expect(notifications).toBe(0);
   expect(readerRendered).toHaveBeenCalledTimes(rendersBefore);
 
   // A real eligibility change still reaches readers once.
   testState.environments = [testState.environments[1]!];
-  await act(() => renderer!.render(<Probe />));
+  await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
   expect(notifications).toBe(1);
   expect(readerRendered).toHaveBeenCalledTimes(rendersBefore + 1);
   unsubscribe();
-  await act(() => reader!.unmount());
+  await act(async () => await reader!.unmount());
 });
 // SCIENT-FORK:END
 
@@ -600,14 +647,14 @@ it("does not notify eligibility readers when its owner re-renders unchanged", as
 // that target is eligible again, and never sends a stale one.
 describe("a server withdrawn when its step starts", () => {
   /** Runs a pass whose service goes offline during the provider step, recording the real run. */
-  async function passWithOfflineService() {
+  async function passWithOfflineService(_fixture: _Fixture) {
     const run = testState.runModule!;
     testState.setRun.mockImplementation(run.setUpdateEverythingRun);
     testState.settleMachine.mockImplementation(run.settleUpdateRunMachine);
-    const pass = await holdPass();
+    const pass = await holdPass(_fixture);
     const [service, desktop] = testState.environments;
     testState.environments = [{ ...service!, connection: { phase: "offline" } }, desktop!];
-    await act(() => renderer!.render(<Probe />));
+    await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
     await pass.finish();
     expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
       "desktop",
@@ -617,7 +664,11 @@ describe("a server withdrawn when its step starts", () => {
   }
 
   it("offers Retry once it is back online and retries its current eligible target", async () => {
-    const { run, service } = await passWithOfflineService();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const { run, service } = await passWithOfflineService(_fixture);
     expect(run.useUpdateEverythingRun()?.machines).toMatchObject([
       {
         environmentId: "service",
@@ -652,7 +703,7 @@ describe("a server withdrawn when its step starts", () => {
       },
       testState.environments[1]!,
     ];
-    await act(() => renderer!.render(<Probe />));
+    await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
     expect(circleOffersRetry(run, "service")).toBe(true);
     await retryFromCircle(run, ["service"], update);
     expect(update.mock.calls).toEqual([
@@ -671,7 +722,11 @@ describe("a server withdrawn when its step starts", () => {
   it.each(["version", "mechanism"] as const)(
     "never retries a target whose confirmed %s was replaced",
     async (change) => {
-      const { run, service } = await passWithOfflineService();
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+
+      const { run, service } = await passWithOfflineService(_fixture);
       const capabilities = { ...service.serverConfig.environment.capabilities };
       if (change === "mechanism") {
         capabilities.serverSelfUpdate = "desktop-managed";
@@ -688,7 +743,12 @@ describe("a server withdrawn when its step starts", () => {
         testState.environments[1]!,
       ];
       // Online and behind again, but for a different version or mechanism than confirmed.
-      await act(() => renderer!.render(<Probe version={change === "version" ? "0.6.3" : null} />));
+      await act(
+        async () =>
+          await _fixture.root0!.rerender(
+            <Probe _fixture={_fixture} version={change === "version" ? "0.6.3" : null} />,
+          ),
+      );
       expect(run.useQualifiedUpdateRunServers()).toContainEqual(
         expect.objectContaining({ environmentId: "service" }),
       );
@@ -721,18 +781,28 @@ describe("Scient-managed runtimes and self-updating remotes", () => {
   }
 
   it("offers and describes a managed runtime update when nothing else is behind", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     testState.environments = [];
     managedState.targets = [managedTarget];
-    await act(() => {
-      renderer = createRoot(document.createElement("div"));
-      renderer.render(<Probe />);
+    await act(async () => {
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+      );
+      await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
     });
-    expect(current!.hasUpdates).toBe(true);
-    expect(current!.summary).toBe("Update 1 provider");
-    expect(current!.lines).toEqual(["lab: Codex"]);
+    expect(_fixture.current!.hasUpdates).toBe(true);
+    expect(_fixture.current!.summary).toBe("Update 1 provider");
+    expect(_fixture.current!.lines).toEqual(["lab: Codex"]);
   });
 
   it("updates managed runtimes before servers and hands off a staged one", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     managedState.targets = [managedTarget];
     let finishManaged = (_runs: ReturnType<typeof managedRun>[]) => {};
     managedState.update.mockImplementationOnce(
@@ -741,13 +811,15 @@ describe("Scient-managed runtimes and self-updating remotes", () => {
           finishManaged = resolve;
         }),
     );
-    await act(() => {
-      renderer = createRoot(document.createElement("div"));
-      renderer.render(<Probe />);
+    await act(async () => {
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+      );
+      await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
     });
     let run: Promise<void> | undefined;
     await act(() => {
-      run = current!.run({});
+      run = _fixture.current!.run({});
     });
     expect(managedState.update).toHaveBeenCalledWith([managedTarget], { inPass: true });
     expect(testState.updateServer).not.toHaveBeenCalled();
@@ -762,16 +834,22 @@ describe("Scient-managed runtimes and self-updating remotes", () => {
   });
 
   it("reports a managed runtime failure in the pass summary", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     managedState.targets = [managedTarget];
     managedState.update.mockResolvedValueOnce([
       managedRun({ status: "failed", message: "Checksum mismatch." }),
     ]);
-    await act(() => {
-      renderer = createRoot(document.createElement("div"));
-      renderer.render(<Probe />);
+    await act(async () => {
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+      );
+      await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
     });
     await act(async () => {
-      await current!.run({});
+      await _fixture.current!.run({});
     });
     expect(testState.showResult).toHaveBeenCalledWith(
       expect.objectContaining({ failures: ["lab · Codex: Checksum mismatch."] }),
@@ -779,6 +857,10 @@ describe("Scient-managed runtimes and self-updating remotes", () => {
   });
 
   it("does not list an SSH package remote as needing a manual update", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const manual = (id: string, tag: string): TestEnvironment => {
       const base = environment(id, "boot-service");
       const { serverSelfUpdate: _omitted, ...capabilities } =
@@ -804,11 +886,13 @@ describe("Scient-managed runtimes and self-updating remotes", () => {
       "ssh",
       Atom.make<AsyncResult.AsyncResult<AuthSessionState, never>>(AsyncResult.success(session)),
     );
-    await act(() => {
-      renderer = createRoot(document.createElement("div"));
-      renderer.render(<Probe />);
+    await act(async () => {
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+      );
+      await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
     });
-    expect(current!.skipped).toEqual([
+    expect(_fixture.current!.skipped).toEqual([
       { environmentId: "bearer", label: "bearer", reason: "needs a manual update" },
     ]);
   });
@@ -830,23 +914,32 @@ describe("servers on machines still updating providers", () => {
     },
   };
 
-  async function runPass(options: Parameters<ReturnType<typeof useUpdateEverything>["run"]>[0]) {
+  async function runPass(
+    _fixture: _Fixture,
+    options: Parameters<ReturnType<typeof useUpdateEverything>["run"]>[0],
+  ) {
     const run = testState.runModule!;
     testState.setRun.mockImplementation(run.setUpdateEverythingRun);
     testState.settleMachine.mockImplementation(run.settleUpdateRunMachine);
-    await act(() => {
-      renderer = createRoot(document.createElement("div"));
-      renderer.render(<Probe />);
+    await act(async () => {
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+      );
+      await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
     });
     await act(async () => {
-      await current!.run(options);
+      await _fixture.current!.run(options);
     });
     return run;
   }
 
   it("leaves a busy machine's server to the circle and updates the rest", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     machineProviders.set("service", [updatingProvider]);
-    const run = await runPass({});
+    const run = await runPass(_fixture, {});
     expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
       "desktop",
     ]);
@@ -858,6 +951,10 @@ describe("servers on machines still updating providers", () => {
   });
 
   it("does not hold a server for a runtime staged to switch when idle", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     machineProviders.set("service", [
       {
         instanceId: "codex",
@@ -875,7 +972,7 @@ describe("servers on machines still updating providers", () => {
         },
       },
     ]);
-    await runPass({});
+    await runPass(_fixture, {});
     expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
       "service",
       "desktop",
@@ -883,7 +980,11 @@ describe("servers on machines still updating providers", () => {
   });
 
   it("asks the caller again for each server when its restart is due", async () => {
-    await runPass({ admitServer: (target) => target.environmentId !== "desktop" });
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await runPass(_fixture, { admitServer: (target) => target.environmentId !== "desktop" });
     expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
       "service",
     ]);
@@ -893,3 +994,30 @@ describe("servers on machines still updating providers", () => {
   });
 });
 // SCIENT-FORK:END
+
+function _createFixture() {
+  let _published_current = undefined! as ReturnType<typeof useUpdateEverything> | undefined;
+
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    get current() {
+      return _published_current;
+    },
+    publishCurrent(next: typeof _published_current) {
+      _published_current = next;
+    },
+
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

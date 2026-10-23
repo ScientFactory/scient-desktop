@@ -89,46 +89,48 @@ type MessageUpdated = Extract<ProviderAdapterV2Event, { readonly type: "message.
 type TurnItemUpdated = Extract<ProviderAdapterV2Event, { readonly type: "turn_item.updated" }>;
 
 /** Import a generated image from its authorized Codex homes and present it on the turn. */
-export const emitCodexGeneratedImage = <
-  Context extends {
-    readonly projectionThreadId: ThreadId;
-    readonly providerThread: {
-      readonly nativeThreadRef: { readonly nativeId: string | null } | null;
-    };
-  },
-  LayoutError,
-  BuildError,
-  EmitError,
->(input: {
-  readonly driver: ProviderDriverKind;
-  readonly instanceId: ProviderInstanceId;
-  readonly attachmentsDir: string;
-  readonly path: Path.Path;
-  readonly image: ImageGenerationItem;
-  readonly context: Context;
-  readonly resolveLayout: Effect.Effect<
-    {
-      readonly effectiveHomePath?: string | undefined;
-      readonly sharedHomePath?: string | undefined;
+export const emitCodexGeneratedImage = Effect.fn("CodexPresentation.emitCodexGeneratedImage")(
+  function* <
+    Context extends {
+      readonly projectionThreadId: ThreadId;
+      readonly providerThread: {
+        readonly nativeThreadRef: { readonly nativeId: string | null } | null;
+      };
     },
-    LayoutError
-  >;
-  readonly toProtocolError: (detail: string, payload?: unknown) => ProviderAdapterProtocolError;
-  readonly buildAgentMessageArtifacts: (
-    context: Context,
-    item: { readonly id: string; readonly text: string },
-    completed: boolean,
-  ) => Effect.Effect<
-    {
-      readonly node: NodeUpdated["node"];
-      readonly message: MessageUpdated["message"];
-      readonly turnItem: TurnItemUpdated["turnItem"];
-    },
-    BuildError
-  >;
-  readonly emitProviderEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown, EmitError>;
-}) =>
-  Effect.gen(function* () {
+    LayoutError,
+    BuildError,
+    EmitError,
+  >(input: {
+    readonly driver: ProviderDriverKind;
+    readonly instanceId: ProviderInstanceId;
+    readonly attachmentsDir: string;
+    readonly path: Path.Path;
+    readonly image: ImageGenerationItem;
+    readonly context: Context;
+    readonly resolveLayout: Effect.Effect<
+      {
+        readonly effectiveHomePath?: string | undefined;
+        readonly sharedHomePath?: string | undefined;
+      },
+      LayoutError
+    >;
+    readonly toProtocolError: (detail: string, payload?: unknown) => ProviderAdapterProtocolError;
+    readonly buildAgentMessageArtifacts: (
+      context: Context,
+      item: { readonly id: string; readonly text: string },
+      completed: boolean,
+    ) => Effect.Effect<
+      {
+        readonly node: NodeUpdated["node"];
+        readonly message: MessageUpdated["message"];
+        readonly turnItem: TurnItemUpdated["turnItem"];
+      },
+      BuildError
+    >;
+    readonly emitProviderEvent: (
+      event: ProviderAdapterV2Event,
+    ) => Effect.Effect<unknown, EmitError>;
+  }) {
     const { context, image, path, toProtocolError, buildAgentMessageArtifacts, emitProviderEvent } =
       input;
     const CODEX_PROVIDER = input.driver;
@@ -227,4 +229,5 @@ export const emitCodexGeneratedImage = <
           : {}),
       },
     });
-  });
+  },
+);

@@ -1,7 +1,8 @@
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import { EnvironmentId, ThreadId, ThreadSectionId } from "@t3tools/contracts";
-import { act, type ReactNode, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { type ReactNode, useLayoutEffect } from "react";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { SectionEnvironmentPicker } from "./NewSectionPopover";
 
@@ -55,36 +56,35 @@ const threadRef = { environmentId: LOCAL, threadId: ThreadId.make("thread-1") };
 const second = { environmentId: REMOTE, threadId: ThreadId.make("thread-2") };
 const design = { id: ThreadSectionId.make("design"), name: "Design", order: 0 };
 
-let hook: ReturnType<typeof useNewSectionForThreads>;
-let renderer: Root;
 const onCreated = vi.fn();
-function Probe(): ReactNode {
+function Probe({ _fixture }: { _fixture: _Fixture }): ReactNode {
   const value = useNewSectionForThreads({ onCreated });
   useLayoutEffect(() => {
-    hook = value;
+    _fixture.publishHook(value);
   });
   return value.popover;
 }
 
-function mount() {
-  act(() => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(<Probe />);
+async function mount(_fixture: _Fixture) {
+  await act(async () => {
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
   });
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function _setupFixture0(_fixture: _Fixture) {
   vi.clearAllMocks();
   mocks.catalogs = [{ environmentId: "local" }, { environmentId: "remote" }];
   mocks.popoverProps = null;
-  mount();
-});
-afterEach(() => {
-  act(() => renderer.unmount());
+  await mount(_fixture);
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0.unmount());
   setSidebarSectionScope(null);
   vi.unstubAllGlobals();
-});
+}
 
 async function submit(name: string) {
   let submitted: boolean | undefined;
@@ -95,13 +95,17 @@ async function submit(name: string) {
 }
 
 it("creates the section on the thread's environment and files it there", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   setSidebarSectionScope([
     { environmentId: "local", projectId: "project-a" },
     { environmentId: "remote", projectId: "project-r" },
   ]);
   mocks.create.mockResolvedValue(design);
   mocks.moveThreadsToSection.mockResolvedValue(true);
-  act(() => hook.request([threadRef], { x: 20, y: 100 }));
+  await act(() => _fixture.hook.request([threadRef], { x: 20, y: 100 }));
   // Threads decide the environment, so there is nothing to choose.
   expect(mocks.popoverProps).toMatchObject({ open: true, threadCount: 1, environmentPicker: null });
 
@@ -122,12 +126,16 @@ it("creates the section on the thread's environment and files it there", async (
 });
 
 it("gives threads from two environments a section on each of theirs", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   mocks.create.mockImplementation(async (environmentId: string) => ({
     ...design,
     id: ThreadSectionId.make(`design-${environmentId}`),
   }));
   mocks.moveThreadsToSection.mockResolvedValue(true);
-  act(() => hook.request([threadRef, second], { x: 20, y: 100 }));
+  await act(() => _fixture.hook.request([threadRef, second], { x: 20, y: 100 }));
   expect(mocks.popoverProps).toMatchObject({ threadCount: 2 });
   expect(await submit("Design")).toBe(true);
   expect(mocks.create.mock.calls.map((call) => call[0]).toSorted()).toEqual(["local", "remote"]);
@@ -142,11 +150,15 @@ it("gives threads from two environments a section on each of theirs", async () =
 });
 
 it("reports the environments where the section could not be created", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   mocks.create.mockImplementation(async (environmentId: string) =>
     environmentId === "remote" ? null : design,
   );
   mocks.moveThreadsToSection.mockResolvedValue(true);
-  act(() => hook.request([threadRef, second], { x: 20, y: 100 }));
+  await act(() => _fixture.hook.request([threadRef, second], { x: 20, y: 100 }));
   expect(await submit("Design")).toBe(true);
   expect(mocks.moveThreadsToSection).toHaveBeenCalledTimes(1);
   expect(toastManager.add).toHaveBeenCalledWith(
@@ -158,23 +170,31 @@ it("reports the environments where the section could not be created", async () =
 });
 
 it("files nothing and reports failure when the section cannot be created", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   mocks.create.mockResolvedValue(null);
-  act(() => hook.request([threadRef], { x: 20, y: 100 }));
+  await act(() => _fixture.hook.request([threadRef], { x: 20, y: 100 }));
   expect(await submit("Design")).toBe(false);
   expect(mocks.moveThreadsToSection).not.toHaveBeenCalled();
 });
 
 it("asks which machine holds a section started empty, defaulting to the selected project's", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   setSidebarSectionScope([{ environmentId: "remote", projectId: "project-r" }]);
   mocks.create.mockResolvedValue(design);
-  act(() => hook.request([], { x: 20, y: 100 }));
+  await act(() => _fixture.hook.request([], { x: 20, y: 100 }));
   const picker = mocks.popoverProps!.environmentPicker!;
   expect(picker.choices).toEqual([
     { environmentId: "local", label: "Laptop" },
     { environmentId: "remote", label: "Lab server" },
   ]);
   expect(picker.value).toBe("remote");
-  act(() => picker.onChange(LOCAL));
+  await act(() => picker.onChange(LOCAL));
   expect(mocks.popoverProps!.environmentPicker!.value).toBe("local");
   await submit("Later");
   expect(mocks.create).toHaveBeenCalledWith(LOCAL, "Later", expect.anything());
@@ -182,27 +202,35 @@ it("asks which machine holds a section started empty, defaulting to the selected
 });
 
 it("creates an empty section on the only environment that stores sections without asking", async () => {
-  act(() => renderer.unmount());
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await act(async () => await _fixture.root0.unmount());
   mocks.catalogs = [{ environmentId: "remote" }];
-  mount();
+  await mount(_fixture);
   mocks.create.mockResolvedValue(design);
-  act(() => hook.request([], { x: 20, y: 100 }));
+  await act(() => _fixture.hook.request([], { x: 20, y: 100 }));
   expect(mocks.popoverProps!.environmentPicker).toBeNull();
   await submit("Later");
   expect(mocks.create).toHaveBeenCalledWith(REMOTE, "Later", expect.anything());
 });
 
-it("does not let an old form close a newer creation request", () => {
-  act(() => hook.request([threadRef], { x: 20, y: 100 }));
+it("does not let an old form close a newer creation request", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await act(() => _fixture.hook.request([threadRef], { x: 20, y: 100 }));
   const oldForm = mocks.popoverProps!;
-  act(() => hook.request([threadRef, second], { x: 80, y: 200 }));
-  act(() => oldForm.onOpenChange(false));
+  await act(() => _fixture.hook.request([threadRef, second], { x: 80, y: 200 }));
+  await act(() => oldForm.onOpenChange(false));
   expect(mocks.popoverProps).toMatchObject({
     open: true,
     threadCount: 2,
     anchor: { x: 80, y: 200 },
   });
-  act(() => mocks.popoverProps!.onOpenChange(false));
+  await act(() => mocks.popoverProps!.onOpenChange(false));
   expect(mocks.popoverProps).toMatchObject({ open: false, anchor: { x: 80, y: 200 } });
 });
 
@@ -215,6 +243,10 @@ describe("createSectionAndFile", () => {
       [threadRef, { ...threadRef, threadId: ThreadId.make("t-3") }],
     ],
   ])("creates the section, then files %s into it", async (_label, refs) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const steps: string[] = [];
     const result = await createSectionAndFile({
       name: "Design",
@@ -240,6 +272,10 @@ describe("createSectionAndFile", () => {
   });
 
   it("creates nothing when a section without threads has nowhere to go", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const createSection = vi.fn();
     const result = await createSectionAndFile({
       name: "Design",
@@ -254,6 +290,10 @@ describe("createSectionAndFile", () => {
   });
 
   it("files nothing when the section cannot be created", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const move = vi.fn();
     const result = await createSectionAndFile({
       name: "Design",
@@ -267,3 +307,30 @@ describe("createSectionAndFile", () => {
     expect(move).not.toHaveBeenCalled();
   });
 });
+
+function _createFixture() {
+  let _published_hook = undefined! as ReturnType<typeof useNewSectionForThreads>;
+
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    get hook() {
+      return _published_hook;
+    },
+    publishHook(next: typeof _published_hook) {
+      _published_hook = next;
+    },
+
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

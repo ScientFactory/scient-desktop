@@ -294,7 +294,7 @@ const loadPersistedObservabilitySettings = Effect.fn(function* (settingsPath: st
   return parsePersistedServerObservabilitySettings(raw);
 });
 
-export const resolveServerConfig = (
+export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(function* (
   flags: CliServerFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
   options?: {
@@ -302,304 +302,301 @@ export const resolveServerConfig = (
     readonly forceAutoBootstrapProjectFromCwd?: boolean;
     readonly rejectRunningServer?: boolean;
   },
-) =>
-  Effect.gen(function* () {
-    const { findAvailablePort } = yield* NetService.NetService;
-    const path = yield* Path.Path;
-    const fs = yield* FileSystem.FileSystem;
-    const env = yield* EnvServerConfig;
-    const normalizedFlags = {
-      mode: flags.mode ?? Option.none(),
-      port: flags.port ?? Option.none(),
-      host: flags.host ?? Option.none(),
-      baseDir: flags.baseDir ?? Option.none(),
-      cwd: flags.cwd ?? Option.none(),
-      devUrl: flags.devUrl ?? Option.none(),
-      noBrowser: flags.noBrowser ?? Option.none(),
-      bootstrapFd: flags.bootstrapFd ?? Option.none(),
-      autoBootstrapProjectFromCwd: flags.autoBootstrapProjectFromCwd ?? Option.none(),
-      logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
-      tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
-      tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
-    } satisfies CliServerFlags;
-    const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
-    const bootstrapEnvelope =
-      bootstrapFd !== undefined
-        ? yield* readBootstrapEnvelope(DesktopBackendBootstrap, bootstrapFd)
-        : Option.none();
-    const bootstrap = Option.getOrUndefined(bootstrapEnvelope);
+) {
+  const { findAvailablePort } = yield* NetService.NetService;
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const env = yield* EnvServerConfig;
+  const normalizedFlags = {
+    mode: flags.mode ?? Option.none(),
+    port: flags.port ?? Option.none(),
+    host: flags.host ?? Option.none(),
+    baseDir: flags.baseDir ?? Option.none(),
+    cwd: flags.cwd ?? Option.none(),
+    devUrl: flags.devUrl ?? Option.none(),
+    noBrowser: flags.noBrowser ?? Option.none(),
+    bootstrapFd: flags.bootstrapFd ?? Option.none(),
+    autoBootstrapProjectFromCwd: flags.autoBootstrapProjectFromCwd ?? Option.none(),
+    logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
+    tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
+    tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+  } satisfies CliServerFlags;
+  const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
+  const bootstrapEnvelope =
+    bootstrapFd !== undefined
+      ? yield* readBootstrapEnvelope(DesktopBackendBootstrap, bootstrapFd)
+      : Option.none();
+  const bootstrap = Option.getOrUndefined(bootstrapEnvelope);
 
-    const mode: ServerConfig.RuntimeMode = Option.getOrElse(
-      resolveOptionPrecedence(
-        normalizedFlags.mode,
-        Option.fromUndefinedOr(env.mode),
-        Option.fromUndefinedOr(bootstrap?.mode),
-      ),
-      () => "web",
-    );
+  const mode: ServerConfig.RuntimeMode = Option.getOrElse(
+    resolveOptionPrecedence(
+      normalizedFlags.mode,
+      Option.fromUndefinedOr(env.mode),
+      Option.fromUndefinedOr(bootstrap?.mode),
+    ),
+    () => "web",
+  );
 
-    const port = yield* Option.match(
-      resolveOptionPrecedence(
-        normalizedFlags.port,
-        Option.fromUndefinedOr(env.port),
-        Option.fromUndefinedOr(bootstrap?.port),
-      ),
-      {
-        onSome: (value) => Effect.succeed(value),
-        onNone: () => {
-          if (mode === "desktop") {
-            return Effect.succeed(ServerConfig.DEFAULT_PORT);
-          }
-          return findAvailablePort(ServerConfig.DEFAULT_PORT);
-        },
+  const port = yield* Option.match(
+    resolveOptionPrecedence(
+      normalizedFlags.port,
+      Option.fromUndefinedOr(env.port),
+      Option.fromUndefinedOr(bootstrap?.port),
+    ),
+    {
+      onSome: (value) => Effect.succeed(value),
+      onNone: () => {
+        if (mode === "desktop") {
+          return Effect.succeed(ServerConfig.DEFAULT_PORT);
+        }
+        return findAvailablePort(ServerConfig.DEFAULT_PORT);
       },
-    );
-    const devUrl = Option.getOrElse(
-      resolveOptionPrecedence(normalizedFlags.devUrl, Option.fromUndefinedOr(env.devUrl)),
-      () => undefined,
-    );
-    const cliBaseDir = normalizedFlags.baseDir.pipe(
-      Option.filter((value) => value.trim().length > 0),
-    );
-    const scientEnvBaseDir = Option.fromUndefinedOr(env.scientNextHome).pipe(
-      Option.filter((value) => value.trim().length > 0),
-    );
-    const devAuthToken =
-      mode === "web" && devUrl !== undefined ? yield* DevAuthTokenConfig : undefined;
-    const explicitBaseDir = resolveOptionPrecedence(
-      cliBaseDir,
-      // The Scient compatibility name is authoritative for direct/server and
-      // desktop child launches. Do not allow ambient T3CODE_HOME to redirect
-      // a Scient process into an installed T3 or retired-Scient state root.
-      scientEnvBaseDir,
-      SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled
-        ? Option.none()
-        : Option.fromUndefinedOr(env.t3Home),
-    ).pipe(Option.filter((value) => value.trim().length > 0));
-    const baseDir = yield* resolveBaseDir(
-      Option.getOrUndefined(
-        resolveOptionPrecedence(
-          explicitBaseDir,
-          // The inherited bootstrap field is private IPC, but it still carries
-          // SCIENT-FORK:START — Scient-facing copy.
-          // a Scient-owned state path. Ignore it in Scient so a direct
-          // SCIENT-FORK:END
-          // server launch cannot be redirected into legacy state.
-          SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled
-            ? Option.none()
-            : Option.fromUndefinedOr(bootstrap?.t3Home),
-        ),
-      ),
-    );
-    const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
-    const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
-    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
-      developmentScratchRoot:
-        devUrl !== undefined && env.scientNextSafetyEnvelope
-          ? env.developmentScratchRoot
-          : undefined,
-      // The candidate runner supplies a candidate home to avoid ambient T3
-      // state, but that is still implicit development state when a dev URL is
-      // present. Keep it under the candidate development directory rather
-      // than production userdata.
-      developmentStateDirName: SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName,
-      forceDevelopmentState: env.scientNextDevelopmentState,
-      baseDirIsExplicit:
-        Option.isSome(cliBaseDir) ||
-        (Option.isSome(explicitBaseDir) &&
-          !(SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled && Option.isSome(scientEnvBaseDir))),
-    });
-    // An interactive CLI must not start over a discovered server. Lifetime locking
-    // and supervisor handoff are separate; this preflight cannot arbitrate two starts.
-    if (options?.rejectRunningServer && mode === "web") {
-      const runtime = yield* readPersistedServerRuntimeState(derivedPaths.serverRuntimeStatePath);
-      // A killed container can leave a record with the new server's own PID.
-      if (
-        Option.isSome(runtime) &&
-        runtime.value.pid > 0 &&
-        runtime.value.pid !== process.pid &&
-        isProcessAlive(runtime.value.pid)
-      ) {
-        return yield* new CliError.UserError({
-          // SCIENT-FORK:START — Scient-facing copy.
-          cause: `A Scient server is already running for ${baseDir} (pid ${runtime.value.pid}, ${runtime.value.origin}). Connect to that server, stop it before starting another, or use a different --base-dir.`,
-          // SCIENT-FORK:END
-        });
-      }
-    }
-    yield* fs.makeDirectory(cwd, { recursive: true });
-    yield* ServerConfig.ensureServerDirectories(derivedPaths);
-    const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
-      derivedPaths.settingsPath,
-    );
-    const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
-    yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
-    const startupPresentation = options?.startupPresentation ?? "browser";
-    const isHeadlessStartup = startupPresentation === "headless";
-    const noBrowser = Option.getOrElse(
+    },
+  );
+  const devUrl = Option.getOrElse(
+    resolveOptionPrecedence(normalizedFlags.devUrl, Option.fromUndefinedOr(env.devUrl)),
+    () => undefined,
+  );
+  const cliBaseDir = normalizedFlags.baseDir.pipe(
+    Option.filter((value) => value.trim().length > 0),
+  );
+  const scientEnvBaseDir = Option.fromUndefinedOr(env.scientNextHome).pipe(
+    Option.filter((value) => value.trim().length > 0),
+  );
+  const devAuthToken =
+    mode === "web" && devUrl !== undefined ? yield* DevAuthTokenConfig : undefined;
+  const explicitBaseDir = resolveOptionPrecedence(
+    cliBaseDir,
+    // The Scient compatibility name is authoritative for direct/server and
+    // desktop child launches. Do not allow ambient T3CODE_HOME to redirect
+    // a Scient process into an installed T3 or retired-Scient state root.
+    scientEnvBaseDir,
+    SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled
+      ? Option.none()
+      : Option.fromUndefinedOr(env.t3Home),
+  ).pipe(Option.filter((value) => value.trim().length > 0));
+  const baseDir = yield* resolveBaseDir(
+    Option.getOrUndefined(
       resolveOptionPrecedence(
-        isHeadlessStartup ? Option.some(true) : Option.none(),
-        normalizedFlags.noBrowser,
-        Option.fromUndefinedOr(env.noBrowser),
-        Option.fromUndefinedOr(bootstrap?.noBrowser),
+        explicitBaseDir,
+        // The inherited bootstrap field is private IPC, but it still carries
+        // SCIENT-FORK:START — Scient-facing copy.
+        // a Scient-owned state path. Ignore it in Scient so a direct
+        // SCIENT-FORK:END
+        // server launch cannot be redirected into legacy state.
+        SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled
+          ? Option.none()
+          : Option.fromUndefinedOr(bootstrap?.t3Home),
       ),
-      () => mode === "desktop",
-    );
-    const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
-    const desktopBootstrapSecret = bootstrap?.desktopBootstrapSecret;
-    const shellEnvironmentPrepared = bootstrap?.shellEnvironmentPrepared;
-    const desktopTelemetryFd = bootstrap?.desktopTelemetryFd;
-    const desktopTelemetryControlFd = bootstrap?.desktopTelemetryControlFd;
-    const desktopBrowserFd = bootstrap?.desktopBrowserFd;
-    const desktopBrowserControlFd = bootstrap?.desktopBrowserControlFd;
-    const resourceMonitorPath = bootstrap?.resourceMonitorPath;
-    const syncTexNavigatorPath = bootstrap?.syncTexNavigatorPath;
-    const filePublicationHelperPath =
-      bootstrap?.filePublicationHelperPath ?? env.filePublicationHelperPath;
-    const filePublicationRetentionRoot =
-      env.filePublicationRetentionRoot === undefined
-        ? undefined
-        : path.resolve(yield* expandHomePath(env.filePublicationRetentionRoot));
-    const fileExchangePath = bootstrap?.fileExchangePath ?? env.fileExchangePath;
-    const autoBootstrapProjectFromCwd = Option.getOrElse(
-      resolveOptionPrecedence(
-        Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
-        isHeadlessStartup ? Option.some(false) : Option.none(),
-        normalizedFlags.autoBootstrapProjectFromCwd,
-        Option.fromUndefinedOr(env.autoBootstrapProjectFromCwd),
-      ),
-      () => mode === "web",
-    );
-    const logWebSocketEvents = Option.getOrElse(
-      resolveOptionPrecedence(
-        normalizedFlags.logWebSocketEvents,
-        Option.fromUndefinedOr(env.logWebSocketEvents),
-      ),
-      () => Boolean(devUrl),
-    );
-    const tailscaleServeEnabled = Option.getOrElse(
-      resolveOptionPrecedence(
-        normalizedFlags.tailscaleServeEnabled,
-        Option.fromUndefinedOr(env.tailscaleServeEnabled),
-        Option.fromUndefinedOr(bootstrap?.tailscaleServeEnabled),
-      ),
-      () => false,
-    );
-    const tailscaleServePort = Option.getOrElse(
-      resolveOptionPrecedence(
-        normalizedFlags.tailscaleServePort,
-        Option.fromUndefinedOr(env.tailscaleServePort),
-        Option.fromUndefinedOr(bootstrap?.tailscaleServePort),
-      ),
-      () => 443,
-    );
-    const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
-    const host = Option.getOrElse(
-      resolveOptionPrecedence(
-        normalizedFlags.host,
-        Option.fromUndefinedOr(env.host),
-        Option.fromUndefinedOr(bootstrap?.host),
-      ),
-      () => (mode === "desktop" ? "127.0.0.1" : undefined),
-    );
-    const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
-
-    const otel = yield* OtelEnvironment.load;
-
-    // SCIENT-FORK:START — Scient-facing copy.
-    // Scient's own OTLP variables name no signal, so the one answer they give
-    // SCIENT-FORK:END
-    const signalExport: SignalExport = {
-      protocol: env.otlpProtocol,
-      headers: env.otlpHeaders,
-      exportIntervalMs: env.otlpExportIntervalMs,
-    };
-    const traces = OtelEnvironment.resolveSignalEndpoint(
-      otel,
-      "traces",
-      { url: env.otlpTracesUrl, export: signalExport },
-      bootstrap?.otlpTracesUrl,
-      persistedObservabilitySettings.otlpTracesUrl,
-    );
-    const metrics = OtelEnvironment.resolveSignalEndpoint(
-      otel,
-      "metrics",
-      { url: env.otlpMetricsUrl, export: signalExport },
-      bootstrap?.otlpMetricsUrl,
-      persistedObservabilitySettings.otlpMetricsUrl,
-    );
-    const logs = OtelEnvironment.resolveSignalEndpoint(
-      otel,
-      "logs",
-      { url: env.otlpLogsUrl, export: signalExport },
-      bootstrap?.otlpLogsUrl,
-      persistedObservabilitySettings.otlpLogsUrl,
-    );
-
-    const config: ServerConfig.ServerConfig["Service"] = {
-      logLevel,
-      traceMinLevel: env.traceMinLevel,
-      traceTimingEnabled: env.traceTimingEnabled,
-      traceBatchWindowMs: env.traceBatchWindowMs,
-      traceMaxBytes: env.traceMaxBytes,
-      traceMaxFiles: env.traceMaxFiles,
-      // SCIENT-FORK: Scient's fail-closed safety envelope stays authoritative
-      // and gates the endpoints upstream resolved. The resolution above already
-      // honors upstream's OpenTelemetry kill switch (OTEL_SDK_DISABLED /
-      // T3CODE_OTEL_SDK_DISABLED), per-signal Off, and the standard OTEL_*
-      // endpoint/header/protocol variables, so this only ever removes more.
-      otlpTracesUrl:
-        SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
-          ? undefined
-          : traces?.url,
-      otlpMetricsUrl:
-        SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
-          ? undefined
-          : metrics?.url,
-      otlpLogsUrl:
-        SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
-          ? undefined
-          : logs?.url,
-      otlpTracesExport: traces?.export ?? signalExport,
-      otlpMetricsExport: metrics?.export ?? signalExport,
-      otlpLogsExport: logs?.export ?? signalExport,
-      otelEnvironment: otel,
-      mode,
-      port,
-      cwd,
-      baseDir,
-      ...derivedPaths,
-      serverTracePath,
-      host,
-      staticDir,
-      devUrl,
-      ...(devAuthToken === undefined ? {} : { devAuthToken }),
-      devAllowedOrigins: env.devAllowedOrigins,
-      noBrowser,
-      startupPresentation,
-      desktopBootstrapToken,
-      ...(desktopBootstrapSecret === undefined ? {} : { desktopBootstrapSecret }),
-      ...(shellEnvironmentPrepared === undefined ? {} : { shellEnvironmentPrepared }),
-      desktopTelemetryFd,
-      desktopTelemetryControlFd,
-      desktopBrowserFd,
-      desktopBrowserControlFd,
-      resourceMonitorPath,
-      syncTexNavigatorPath,
-      ...(filePublicationHelperPath === undefined ? {} : { filePublicationHelperPath }),
-      ...(filePublicationRetentionRoot === undefined ? {} : { filePublicationRetentionRoot }),
-      ...(env.filePublicationRetentionLimitBytes === undefined
-        ? {}
-        : { filePublicationRetentionLimitBytes: env.filePublicationRetentionLimitBytes }),
-      fileExchangePath,
-      autoBootstrapProjectFromCwd,
-      logWebSocketEvents,
-      tailscaleServeEnabled,
-      tailscaleServePort,
-    };
-
-    return config;
+    ),
+  );
+  const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
+  const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
+  const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
+    developmentScratchRoot:
+      devUrl !== undefined && env.scientNextSafetyEnvelope ? env.developmentScratchRoot : undefined,
+    // The candidate runner supplies a candidate home to avoid ambient T3
+    // state, but that is still implicit development state when a dev URL is
+    // present. Keep it under the candidate development directory rather
+    // than production userdata.
+    developmentStateDirName: SCIENT_DESKTOP_IDENTITY.developmentUserDataDirName,
+    forceDevelopmentState: env.scientNextDevelopmentState,
+    baseDirIsExplicit:
+      Option.isSome(cliBaseDir) ||
+      (Option.isSome(explicitBaseDir) &&
+        !(SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled && Option.isSome(scientEnvBaseDir))),
   });
+  // An interactive CLI must not start over a discovered server. Lifetime locking
+  // and supervisor handoff are separate; this preflight cannot arbitrate two starts.
+  if (options?.rejectRunningServer && mode === "web") {
+    const runtime = yield* readPersistedServerRuntimeState(derivedPaths.serverRuntimeStatePath);
+    // A killed container can leave a record with the new server's own PID.
+    if (
+      Option.isSome(runtime) &&
+      runtime.value.pid > 0 &&
+      runtime.value.pid !== process.pid &&
+      isProcessAlive(runtime.value.pid)
+    ) {
+      return yield* new CliError.UserError({
+        // SCIENT-FORK:START — Scient-facing copy.
+        cause: `A Scient server is already running for ${baseDir} (pid ${runtime.value.pid}, ${runtime.value.origin}). Connect to that server, stop it before starting another, or use a different --base-dir.`,
+        // SCIENT-FORK:END
+      });
+    }
+  }
+  yield* fs.makeDirectory(cwd, { recursive: true });
+  yield* ServerConfig.ensureServerDirectories(derivedPaths);
+  const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
+    derivedPaths.settingsPath,
+  );
+  const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
+  yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
+  const startupPresentation = options?.startupPresentation ?? "browser";
+  const isHeadlessStartup = startupPresentation === "headless";
+  const noBrowser = Option.getOrElse(
+    resolveOptionPrecedence(
+      isHeadlessStartup ? Option.some(true) : Option.none(),
+      normalizedFlags.noBrowser,
+      Option.fromUndefinedOr(env.noBrowser),
+      Option.fromUndefinedOr(bootstrap?.noBrowser),
+    ),
+    () => mode === "desktop",
+  );
+  const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
+  const desktopBootstrapSecret = bootstrap?.desktopBootstrapSecret;
+  const shellEnvironmentPrepared = bootstrap?.shellEnvironmentPrepared;
+  const desktopTelemetryFd = bootstrap?.desktopTelemetryFd;
+  const desktopTelemetryControlFd = bootstrap?.desktopTelemetryControlFd;
+  const desktopBrowserFd = bootstrap?.desktopBrowserFd;
+  const desktopBrowserControlFd = bootstrap?.desktopBrowserControlFd;
+  const resourceMonitorPath = bootstrap?.resourceMonitorPath;
+  const syncTexNavigatorPath = bootstrap?.syncTexNavigatorPath;
+  const filePublicationHelperPath =
+    bootstrap?.filePublicationHelperPath ?? env.filePublicationHelperPath;
+  const filePublicationRetentionRoot =
+    env.filePublicationRetentionRoot === undefined
+      ? undefined
+      : path.resolve(yield* expandHomePath(env.filePublicationRetentionRoot));
+  const fileExchangePath = bootstrap?.fileExchangePath ?? env.fileExchangePath;
+  const autoBootstrapProjectFromCwd = Option.getOrElse(
+    resolveOptionPrecedence(
+      Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
+      isHeadlessStartup ? Option.some(false) : Option.none(),
+      normalizedFlags.autoBootstrapProjectFromCwd,
+      Option.fromUndefinedOr(env.autoBootstrapProjectFromCwd),
+    ),
+    () => mode === "web",
+  );
+  const logWebSocketEvents = Option.getOrElse(
+    resolveOptionPrecedence(
+      normalizedFlags.logWebSocketEvents,
+      Option.fromUndefinedOr(env.logWebSocketEvents),
+    ),
+    () => Boolean(devUrl),
+  );
+  const tailscaleServeEnabled = Option.getOrElse(
+    resolveOptionPrecedence(
+      normalizedFlags.tailscaleServeEnabled,
+      Option.fromUndefinedOr(env.tailscaleServeEnabled),
+      Option.fromUndefinedOr(bootstrap?.tailscaleServeEnabled),
+    ),
+    () => false,
+  );
+  const tailscaleServePort = Option.getOrElse(
+    resolveOptionPrecedence(
+      normalizedFlags.tailscaleServePort,
+      Option.fromUndefinedOr(env.tailscaleServePort),
+      Option.fromUndefinedOr(bootstrap?.tailscaleServePort),
+    ),
+    () => 443,
+  );
+  const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
+  const host = Option.getOrElse(
+    resolveOptionPrecedence(
+      normalizedFlags.host,
+      Option.fromUndefinedOr(env.host),
+      Option.fromUndefinedOr(bootstrap?.host),
+    ),
+    () => (mode === "desktop" ? "127.0.0.1" : undefined),
+  );
+  const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
+
+  const otel = yield* OtelEnvironment.load;
+
+  // SCIENT-FORK:START — Scient-facing copy.
+  // Scient's own OTLP variables name no signal, so the one answer they give
+  // SCIENT-FORK:END
+  const signalExport: SignalExport = {
+    protocol: env.otlpProtocol,
+    headers: env.otlpHeaders,
+    exportIntervalMs: env.otlpExportIntervalMs,
+  };
+  const traces = OtelEnvironment.resolveSignalEndpoint(
+    otel,
+    "traces",
+    { url: env.otlpTracesUrl, export: signalExport },
+    bootstrap?.otlpTracesUrl,
+    persistedObservabilitySettings.otlpTracesUrl,
+  );
+  const metrics = OtelEnvironment.resolveSignalEndpoint(
+    otel,
+    "metrics",
+    { url: env.otlpMetricsUrl, export: signalExport },
+    bootstrap?.otlpMetricsUrl,
+    persistedObservabilitySettings.otlpMetricsUrl,
+  );
+  const logs = OtelEnvironment.resolveSignalEndpoint(
+    otel,
+    "logs",
+    { url: env.otlpLogsUrl, export: signalExport },
+    bootstrap?.otlpLogsUrl,
+    persistedObservabilitySettings.otlpLogsUrl,
+  );
+
+  const config: ServerConfig.ServerConfig["Service"] = {
+    logLevel,
+    traceMinLevel: env.traceMinLevel,
+    traceTimingEnabled: env.traceTimingEnabled,
+    traceBatchWindowMs: env.traceBatchWindowMs,
+    traceMaxBytes: env.traceMaxBytes,
+    traceMaxFiles: env.traceMaxFiles,
+    // SCIENT-FORK: Scient's fail-closed safety envelope stays authoritative
+    // and gates the endpoints upstream resolved. The resolution above already
+    // honors upstream's OpenTelemetry kill switch (OTEL_SDK_DISABLED /
+    // T3CODE_OTEL_SDK_DISABLED), per-signal Off, and the standard OTEL_*
+    // endpoint/header/protocol variables, so this only ever removes more.
+    otlpTracesUrl:
+      SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
+        ? undefined
+        : traces?.url,
+    otlpMetricsUrl:
+      SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
+        ? undefined
+        : metrics?.url,
+    otlpLogsUrl:
+      SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
+        ? undefined
+        : logs?.url,
+    otlpTracesExport: traces?.export ?? signalExport,
+    otlpMetricsExport: metrics?.export ?? signalExport,
+    otlpLogsExport: logs?.export ?? signalExport,
+    otelEnvironment: otel,
+    mode,
+    port,
+    cwd,
+    baseDir,
+    ...derivedPaths,
+    serverTracePath,
+    host,
+    staticDir,
+    devUrl,
+    ...(devAuthToken === undefined ? {} : { devAuthToken }),
+    devAllowedOrigins: env.devAllowedOrigins,
+    noBrowser,
+    startupPresentation,
+    desktopBootstrapToken,
+    ...(desktopBootstrapSecret === undefined ? {} : { desktopBootstrapSecret }),
+    ...(shellEnvironmentPrepared === undefined ? {} : { shellEnvironmentPrepared }),
+    desktopTelemetryFd,
+    desktopTelemetryControlFd,
+    desktopBrowserFd,
+    desktopBrowserControlFd,
+    resourceMonitorPath,
+    syncTexNavigatorPath,
+    ...(filePublicationHelperPath === undefined ? {} : { filePublicationHelperPath }),
+    ...(filePublicationRetentionRoot === undefined ? {} : { filePublicationRetentionRoot }),
+    ...(env.filePublicationRetentionLimitBytes === undefined
+      ? {}
+      : { filePublicationRetentionLimitBytes: env.filePublicationRetentionLimitBytes }),
+    fileExchangePath,
+    autoBootstrapProjectFromCwd,
+    logWebSocketEvents,
+    tailscaleServeEnabled,
+    tailscaleServePort,
+  };
+
+  return config;
+});
 
 export const resolveCliAuthConfig = (
   flags: CliAuthLocationFlags,

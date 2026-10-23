@@ -1,8 +1,12 @@
-import { useState, type ReactNode } from "react";
+import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
+import { waitForTestReceipt } from "../../../test/receipt";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { undoDepth } from "@tiptap/pm/history";
+import { observeResize } from "~/lib/observeResize";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
@@ -13,7 +17,11 @@ vi.mock("~/assets/assetUrls", () => ({
 }));
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
-import { createLatexVisualTestOwner, useLatexVisualTestOwner } from "./latexVisualTestOwner";
+import {
+  createLatexVisualTestOwner,
+  readMountedLatexVisualTestEditor,
+  useLatexVisualTestOwner,
+} from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 import { pdfFitWidthScale } from "../pdf/pdfReaderModel";
 import { isMacKeyboard } from "../keyboard/keys";
@@ -82,16 +90,13 @@ The boundaries between areas are flexible.
 `;
 
 describe("visual LaTeX page layout", () => {
-  let container: HTMLDivElement;
-  let root: Root;
-
   // The whole document is loaded and editable.
-  const readingViewReady = () =>
+  const readingViewReady = (_fixture: _Fixture) =>
     expect
       .poll(
         () => {
-          const document = container.querySelector<HTMLElement>(".scient-latex-visual-document");
-          return !!document && document.dataset.latexLoading === undefined;
+          const editor = readMountedLatexVisualTestEditor(_fixture.container);
+          return !!editor && editor.view.dom.dataset.latexLoading === undefined;
         },
         { timeout: 5_000 },
       )
@@ -101,6 +106,10 @@ describe("visual LaTeX page layout", () => {
   it.each(["english", "hebrew"] as const)(
     "renders a new %s document's section immediately and updates imported heading levels",
     async (language) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+
       let current = createNewDocumentSource({ format: "latex", template: "blank", language })
         .replace("\\title{}", "\\title{New document}")
         .replace("\\par", "test\n\n\\section{Existing}");
@@ -127,13 +136,15 @@ describe("visual LaTeX page layout", () => {
           />
         );
       }
-      root.render(<Harness />);
+      await _fixture.root0.rerender(<Harness />);
       await expect
-        .poll(() => container.querySelector(".scient-latex-visual-document"))
+        .poll(() => _fixture.container.querySelector(".scient-latex-visual-document"))
         .toBeTruthy();
-      const document = container.querySelector<HTMLElement>(".scient-latex-visual-document")!;
+      const document = _fixture.container.querySelector<HTMLElement>(
+        ".scient-latex-visual-document",
+      )!;
       const editor = (document as HTMLElement & { editor: Editor }).editor;
-      await readingViewReady();
+      await readingViewReady(_fixture);
       const selectText = (text: string) => {
         editor.state.doc.descendants((node, position) => {
           if (node.isTextblock && node.textContent === text)
@@ -176,6 +187,10 @@ describe("visual LaTeX page layout", () => {
   );
 
   it("offers an accepted checkpoint before an outside update when recovery storage is occupied", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const key = "browser-statement-test";
     const slot = `scient:latex-visual-draft:source:${key}`;
     const tex = (body: string) =>
@@ -184,12 +199,17 @@ describe("visual LaTeX page layout", () => {
     let current = tex("Old base");
     let revision = "r1";
     const owner = createLatexVisualTestOwner(current);
-    const render = () =>
-      root.render(
+    let show: (source: string, revision: string) => void;
+    function SourceHarness() {
+      const [shown, update] = useState({ source: current, revision });
+      useEffect(() => {
+        show = (source, revision) => update({ source, revision });
+      }, []);
+      return (
         <LatexVisualEditor
-          source={current}
-          sourceSnapshot={owner.observe(current)}
-          fileRevision={revision}
+          source={shown.source}
+          sourceSnapshot={owner.observe(shown.source)}
+          fileRevision={shown.revision}
           draftKey={key}
           disabled={false}
           singleFileDocument
@@ -199,15 +219,21 @@ describe("visual LaTeX page layout", () => {
             const outcome = owner.edit(request, current === request.edit.source);
             if (!outcome.accepted) return outcome;
             current = outcome.snapshot.source;
-            render();
+            update({ source: current, revision: shown.revision });
             return outcome;
           }}
-        />,
+        />
       );
-    render();
-    await expect.poll(() => container.querySelector(".scient-latex-visual-document")).toBeTruthy();
+    }
+    const render = () => _fixture.root0.rerender(<SourceHarness />);
+    await render();
+    await expect
+      .poll(() => _fixture.container.querySelector(".scient-latex-visual-document"))
+      .toBeTruthy();
     const editor = (
-      container.querySelector(".scient-latex-visual-document") as HTMLElement & { editor: Editor }
+      _fixture.container.querySelector(".scient-latex-visual-document") as HTMLElement & {
+        editor: Editor;
+      }
     ).editor;
     const original = Storage.prototype.setItem;
     const quota = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
@@ -220,21 +246,29 @@ describe("visual LaTeX page layout", () => {
     });
     try {
       localStorage.setItem(slot, theirs);
-      editor.commands.setTextSelection(3);
-      editor.commands.setNode("heading", { level: 1 });
+      await act(async () => {
+        editor.commands.setTextSelection(3);
+        editor.commands.setNode("heading", { level: 1 });
+      });
       expect(current).toContain("\\section{Old base}");
+      const checkpoint = current;
       current = tex("Old base\n\nAgent paragraph.");
       revision = "r2";
-      render();
-      await expect
-        .poll(() => container.querySelector(".scient-latex-visual-recovery-message")?.textContent)
-        .toBe("Unsaved changes · keep this document open");
-      expect(editor.isEditable).toBe(false);
-      expect(container.querySelector(".ProseMirror")?.textContent).toContain("Agent paragraph.");
+      await act(() => show(current, revision));
+      await expect.poll(() => editor.isEditable).toBe(false);
+      expect(_fixture.container.querySelector(".ProseMirror")?.textContent).toContain(
+        "Agent paragraph.",
+      );
       expect(localStorage.getItem(slot)).toBe(theirs);
       await page.getByRole("button", { name: "Compare", exact: true }).click();
+      expect(_fixture.container.querySelector('pre[data-side="recovered"]')?.textContent).toContain(
+        "\\section{Old base}",
+      );
+      expect(_fixture.container.querySelector('pre[data-side="current"]')?.textContent).toContain(
+        "Agent paragraph.",
+      );
       await page.getByRole("button", { name: "Use recovered", exact: true }).click();
-      await expect.poll(() => current).toContain("\\section{Old base}");
+      await expect.poll(() => current).toBe(checkpoint);
       expect(localStorage.getItem(slot)).toBe(theirs);
     } finally {
       quota.mockRestore();
@@ -242,6 +276,10 @@ describe("visual LaTeX page layout", () => {
   });
 
   it("retains a composing title and its focus when document preparation is refused", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     let current = String.raw`\documentclass{article}
 \newtheorem{theorem}{Theorem}
 \begin{document}
@@ -277,13 +315,15 @@ Body.
         />
       );
     }
-    root.render(<Harness />);
+    await _fixture.root0.rerender(<Harness />);
     await expect
-      .poll(() => container.querySelector(".scient-latex-statement-title-text"))
+      .poll(() => _fixture.container.querySelector(".scient-latex-statement-title-text"))
       .toBeTruthy();
-    await readingViewReady();
+    await readingViewReady(_fixture);
     const editor = (
-      container.querySelector(".scient-latex-visual-document") as HTMLElement & { editor: Editor }
+      _fixture.container.querySelector(".scient-latex-visual-document") as HTMLElement & {
+        editor: Editor;
+      }
     ).editor;
     let position = -1;
     editor.state.doc.descendants((node, offset) => {
@@ -293,7 +333,7 @@ Body.
     editor.commands.setNodeSelection(position);
     await page.getByRole("button", { name: "Edit statement title", exact: true }).click();
     const field = () =>
-      container.querySelector<HTMLTextAreaElement>(
+      _fixture.container.querySelector<HTMLTextAreaElement>(
         'textarea[aria-label="Scientific statement title"]',
       );
     await expect.poll(field).toBeTruthy();
@@ -324,29 +364,35 @@ Body.
     expect(finishing.current?.()).toBe(true);
   });
 
-  beforeEach(async () => {
+  async function _setupFixture0(_fixture: _Fixture) {
     clearVisualDraft("browser-statement-test");
     await page.viewport(1400, 900);
-    container = document.createElement("div");
-    Object.assign(container.style, { width: "1200px", height: "900px" });
-    document.body.append(container);
-    root = createRoot(container);
-  });
+    _fixture.container = document.createElement("div");
+    Object.assign(_fixture.container.style, { width: "1200px", height: "900px" });
+    document.body.append(_fixture.container);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.container, router: false }),
+    );
+  }
 
-  afterEach(() => {
-    root.unmount();
-    container.remove();
+  async function _cleanupFixture1(_fixture: _Fixture) {
+    await _fixture.root0.unmount();
+    _fixture.container.remove();
     clearVisualDraft("browser-statement-test");
-  });
+  }
 
   it("keeps PDF fit-width sizing through opening, resizing and a hidden pane", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const source =
       "\\documentclass[letterpaper]{article}\n\\begin{document}\n" +
       "A paragraph with enough ordinary text to lay out the editor.\n\n".repeat(35) +
       "\\end{document}";
     const owner = createLatexVisualTestOwner(source);
     const onEdit = vi.fn(owner.edit);
-    root.render(
+    await _fixture.root0.rerender(
       <LatexVisualEditor
         draftKey="browser-statement-test"
         fileRevision="r1"
@@ -358,35 +404,60 @@ Body.
         onEdit={onEdit}
       />,
     );
-    const scroll = () => container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
-    const frame = () => container.querySelector<HTMLElement>(".scient-latex-page-zoom-frame")!;
+    const scroll = () =>
+      _fixture.container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+    const frame = () =>
+      _fixture.container.querySelector<HTMLElement>(".scient-latex-page-zoom-frame")!;
     await expect.poll(scroll).toBeTruthy();
     const error = () =>
       Math.abs(
         Number.parseFloat(frame().style.width) / 816 - pdfFitWidthScale(scroll().clientWidth, 816)!,
       );
     await expect.poll(error).toBeLessThan(0.00001);
-    container.style.width = "780px";
+    _fixture.container.style.width = "780px";
     await expect.poll(error).toBeLessThan(0.00001);
     const width = frame().style.width;
-    container.style.display = "none";
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
+    let delivered!: () => void;
+    const hidden = new Promise<void>((resolve) => {
+      delivered = resolve;
+    });
+    const stop = observeResize(_fixture.container, delivered);
+    try {
+      _fixture.container.style.display = "none";
+      await hidden;
+      expect(_fixture.container.clientWidth).toBe(0);
+    } finally {
+      stop();
+    }
     expect(frame().style.width).toBe(width);
-    container.style.width = "1040px";
-    container.style.display = "block";
+    _fixture.container.style.width = "1040px";
+    _fixture.container.style.display = "block";
     await expect.poll(error).toBeLessThan(0.00001);
     expect(onEdit).not.toHaveBeenCalled();
   });
 
-  it.each([
+  it.for([
     "\\newcommand% name follows\n\\hiddenBegin{\\begin{comment}}",
     "\\newcommand% star follows\r\n*{\\hiddenBegin}{\\begin{comment}}",
     "\\DeclareDocumentCommand{\\hiddenBegin}{m}{\\begin{comment}#1}",
-  ])("types and undoes below unused declaration %s", async (definition) => {
+  ])("types and undoes below unused declaration %s", async (definition, context) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const original = `\\documentclass{article}\n${definition}\n\\begin{document}\nActual body.\n\\end{document}`;
     let current = original;
+    const publications = new Map<string, () => void>();
+    // Native text paints before recovery journaling and worker conversion publish it.
+    const nextPublication = (source: string) => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      publications.set(source, resolve);
+      const dispose = () => {
+        if (publications.get(source) === resolve) publications.delete(source);
+      };
+      _fixture.cleanup.defer(dispose);
+      return () => waitForTestReceipt(context.signal, promise, dispose);
+    };
     function Harness() {
       const [source, setSource] = useState(current);
       const owner = useLatexVisualTestOwner(source);
@@ -404,35 +475,47 @@ Body.
             if (!outcome.accepted) return outcome;
             current = outcome.snapshot.source;
             setSource(current);
+            publications.get(current)?.();
             return outcome;
           }}
         />
       );
     }
-    root.render(<Harness />);
-    const editor = () =>
-      (
-        container.querySelector(".scient-latex-visual-document") as
-          | (HTMLElement & { editor?: Editor })
-          | null
-      )?.editor;
-    await expect.poll(editor).toBeTruthy();
-    await readingViewReady();
-    const live = editor()!;
+    await _fixture.root0.rerender(<Harness />);
+    await readingViewReady(_fixture);
+    const live = readMountedLatexVisualTestEditor(_fixture.container)!;
     expect(live.isEditable).toBe(true);
     expect(live.state.doc.textContent).toBe("Actual body.");
+    const changed = original.replace("Actual body.", "New Actual body.");
+    const typed = nextPublication(changed);
     live.commands.setTextSelection(1);
     live.view.focus();
+    expect(document.activeElement).toBe(live.view.dom);
+    expect(live.view.hasFocus()).toBe(true);
+    const native = document.getSelection()!;
+    expect(native.isCollapsed).toBe(true);
+    expect(native.anchorNode).not.toBeNull();
+    expect(live.view.posAtDOM(native.anchorNode!, native.anchorOffset)).toBe(1);
     await userEvent.keyboard("New ");
-    const changed = original.replace("Actual body.", "New Actual body.");
-    await expect.poll(() => current).toBe(changed);
+    await vi.waitFor(() => expect(live.state.doc.textContent).toBe("New Actual body."));
+    await typed();
+    expect(current).toBe(changed);
+    const undone = nextPublication(original);
     await undoKeyboard();
-    await expect.poll(() => current).toBe(original);
+    await undone();
+    expect(current).toBe(original);
+    const redone = nextPublication(changed);
     live.commands.redo();
-    await expect.poll(() => current).toBe(changed);
+    await redone();
+    expect(current).toBe(changed);
+    expect(readMountedLatexVisualTestEditor(_fixture.container)).toBe(live);
   });
 
   it("saves and undoes a compound prose edit without rewriting protected commands", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const original =
       "\\documentclass{article}\n\\begin{document}\n" +
       String.raw`Before \protect\textit{italic} and \protect \ref{sec:one} after.` +
@@ -460,19 +543,19 @@ Body.
         />
       );
     }
-    root.render(<Harness />);
+    await _fixture.root0.rerender(<Harness />);
     const editor = () =>
       (
-        container.querySelector(".scient-latex-visual-document") as
+        _fixture.container.querySelector(".scient-latex-visual-document") as
           | (HTMLElement & { editor?: Editor })
           | null
       )?.editor;
     await expect.poll(editor).toBeTruthy();
-    await readingViewReady();
-    expect(container.querySelector(".scient-latex-visual-raw")).toBeNull();
+    await readingViewReady(_fixture);
+    expect(_fixture.container.querySelector(".scient-latex-visual-raw")).toBeNull();
     const live = editor()!;
-    let italicFrom = -1,
-      afterFrom = -1;
+    let italicFrom = -1;
+    let afterFrom = -1;
     live.state.doc.descendants((node, pos) => {
       if (node.isText && node.text === "italic") italicFrom = pos;
       if (node.isText && node.text === " after.") afterFrom = pos;
@@ -490,16 +573,20 @@ Body.
     await undoKeyboard();
     await expect.poll(() => current).toBe(original);
     expect(editor()).toBe(live);
-    expect(container.querySelector(".scient-latex-visual-raw")).toBeNull();
+    expect(_fixture.container.querySelector(".scient-latex-visual-raw")).toBeNull();
   });
 
   it("retains undo while accepted source revisions arrive during paced typing", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const original = "\\documentclass{article}\n\\begin{document}\nBefore words.\n\\end{document}";
     let current = original;
     let revision = 1;
     const editor = () =>
       (
-        container.querySelector(".scient-latex-visual-document") as
+        _fixture.container.querySelector(".scient-latex-visual-document") as
           | (HTMLElement & { editor?: Editor })
           | null
       )?.editor;
@@ -533,22 +620,26 @@ Body.
       );
     }
     try {
-      root.render(<Harness />);
+      await _fixture.root0.rerender(<Harness />);
       await expect.poll(editor).toBeTruthy();
-      await readingViewReady();
+      await readingViewReady(_fixture);
+      _fixture.cleanup.use(fakeTimers());
       const live = editor()!;
       live.commands.setTextSelection(1);
       live.view.focus();
       for (let index = 0; index < 12; index++) {
         await userEvent.keyboard("m");
-        await new Promise((resolve) => setTimeout(resolve, 220));
+        await act(() => vi.advanceTimersByTimeAsync(220));
       }
       await expect.poll(() => current).toBe(original.replace("Before", "m".repeat(12) + "Before"));
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      for (let count = 0; count < 12 && current !== original; count++) {
+      await act(() => vi.advanceTimersByTimeAsync(500));
+      const events = undoDepth(live.state);
+      expect(events).toBeGreaterThan(0);
+      expect(events).toBeLessThanOrEqual(12);
+      for (let count = 0; count < events; count++) {
         live.view.focus();
         await undoKeyboard();
-        await new Promise((resolve) => setTimeout(resolve, 400));
+        await act(() => vi.advanceTimersByTimeAsync(400));
       }
       await expect.poll(() => current).toBe(original);
       expect(editor()).toBe(live);
@@ -558,6 +649,10 @@ Body.
   });
 
   it.each(["Theorem", "Remark"])("inserts and edits %s through the actual menu", async (name) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     let current = "\\documentclass{article}\n\\begin{document}\nBefore\n\\end{document}";
     function Harness() {
       const [text, setText] = useState(current);
@@ -581,7 +676,7 @@ Body.
         />
       );
     }
-    root.render(<Harness />);
+    await _fixture.root0.rerender(<Harness />);
     await page.getByRole("button", { name: "Insert", exact: true }).click();
     await page.getByRole("menuitem", { name: "Theorems & proofs", exact: true }).click();
     await page.getByRole("menuitem", { name, exact: true }).click();
@@ -595,10 +690,14 @@ Body.
       .getByRole("textbox", { name: "Scientific statement title", exact: true })
       .fill("Main result");
     await expect.poll(() => current).toContain("\\begin{" + name.toLowerCase() + "}[Main result]");
-    expect(container.querySelector(".scient-latex-scientific-structure")).not.toBeNull();
+    expect(_fixture.container.querySelector(".scient-latex-scientific-structure")).not.toBeNull();
   });
 
   it("keeps statement bodies and backward selections in place through heading and position updates", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const original = String.raw`\documentclass{article}
 \usepackage{amsthm}
 \newtheorem{theorem}{Theorem}
@@ -634,26 +733,26 @@ Proof body.
         />
       );
     }
-    root.render(<Harness />);
+    await _fixture.root0.rerender(<Harness />);
     const editor = () =>
       (
-        container.querySelector(".scient-latex-visual-document") as
+        _fixture.container.querySelector(".scient-latex-visual-document") as
           | (HTMLElement & { editor?: Editor })
           | null
       )?.editor;
     await expect.poll(editor).toBeTruthy();
-    await readingViewReady();
+    await readingViewReady(_fixture);
     await expect
-      .poll(() => container.querySelectorAll(".scient-latex-scientific-body").length)
+      .poll(() => _fixture.container.querySelectorAll(".scient-latex-scientific-body").length)
       .toBe(2);
     const live = editor()!;
-    const statement = container.querySelector<HTMLElement>(
+    const statement = _fixture.container.querySelector<HTMLElement>(
       '.scient-latex-scientific-structure[data-environment="theorem"]',
     )!;
     const body = statement.querySelector<HTMLElement>(
       ".scient-latex-scientific-body > [data-node-view-content-react]",
     )!;
-    const proof = container.querySelector<HTMLElement>(
+    const proof = _fixture.container.querySelector<HTMLElement>(
       '.scient-latex-scientific-structure[data-environment="proof"]',
     )!;
     let statementPosition = -1;
@@ -683,7 +782,7 @@ Proof body.
     const observer = new MutationObserver((records) => {
       moved.push(...records.filter((record) => [...record.removedNodes].includes(body)));
     });
-    observer.observe(container, { childList: true, subtree: true });
+    observer.observe(_fixture.container, { childList: true, subtree: true });
     try {
       const node = live.state.doc.nodeAt(statementPosition)!;
       live.view.dispatch(
@@ -710,13 +809,17 @@ Proof body.
       expect(proof.dataset.proofEnd).toBe("square");
       expect(proof.querySelector(".scient-latex-scientific-body")?.textContent).toBe("Proof body.");
       expect(moved).toHaveLength(0);
-      expect(container.querySelector(".scient-latex-visual-raw")).toBeNull();
+      expect(_fixture.container.querySelector(".scient-latex-visual-raw")).toBeNull();
     } finally {
       observer.disconnect();
     }
   });
 
   it("edits the exact source of a scientific block with unsupported commands", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const raw =
       "\\begin{theorem}\nFor $u_0 \\in L^2(\\Omega)$, $t \\ge 0$.\n\\custom{Keep}\n\\end{theorem}";
     let current = "\\documentclass{article}\n\\begin{document}\n" + raw + "\n\\end{document}";
@@ -742,7 +845,7 @@ Proof body.
         />
       );
     }
-    root.render(<Harness />);
+    await _fixture.root0.rerender(<Harness />);
     await page.getByRole("button", { name: "Edit this block’s LaTeX", exact: true }).click();
     await page
       .getByRole("textbox", { name: "Block LaTeX source", exact: true })
@@ -753,8 +856,12 @@ Proof body.
   });
 
   it("keeps source-backed page commands off the paper", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const owner = createLatexVisualTestOwner(source);
-    root.render(
+    await _fixture.root0.rerender(
       <LatexVisualEditor
         draftKey="browser-pagination-test"
         fileRevision="r1"
@@ -767,12 +874,12 @@ Proof body.
       />,
     );
     await expect
-      .poll(() => container.querySelector(".scient-latex-toc-preview li:last-child"))
+      .poll(() => _fixture.container.querySelector(".scient-latex-toc-preview li:last-child"))
       .toBeTruthy();
-    const contents = container.querySelector<HTMLElement>(".scient-latex-toc-preview")!;
-    const pageBreak = container.querySelector<HTMLElement>(".scient-latex-page-break")!;
-    const firstSection = [...container.querySelectorAll<HTMLElement>("h1")].find((heading) =>
-      heading.textContent?.includes("What Computer Science Research Involves"),
+    const contents = _fixture.container.querySelector<HTMLElement>(".scient-latex-toc-preview")!;
+    const pageBreak = _fixture.container.querySelector<HTMLElement>(".scient-latex-page-break")!;
+    const firstSection = [..._fixture.container.querySelectorAll<HTMLElement>("h1")].find(
+      (heading) => heading.textContent?.includes("What Computer Science Research Involves"),
     )!;
     // The command is retained for paging; it never prints a labelled rule.
     expect(getComputedStyle(pageBreak).display).toBe("none");
@@ -782,12 +889,12 @@ Proof body.
       contents.getBoundingClientRect().bottom - 1,
     );
 
-    const preview = container.querySelector<HTMLElement>(".scient-latex-math-preview");
+    const preview = _fixture.container.querySelector<HTMLElement>(".scient-latex-math-preview");
     expect(preview).not.toBeNull();
     expect(preview!.getBoundingClientRect().width).toBeGreaterThan(0);
     await userEvent.click(preview!.closest<HTMLElement>(".scient-latex-mathfield")!);
-    await expect.poll(() => container.querySelector("math-field")).toBeTruthy();
-    const math = container.querySelector("math-field[aria-label='Inline equation']") as
+    await expect.poll(() => _fixture.container.querySelector("math-field")).toBeTruthy();
+    const math = _fixture.container.querySelector("math-field[aria-label='Inline equation']") as
       | (HTMLElement & { value?: string })
       | null;
     expect(math).not.toBeNull();
@@ -795,3 +902,22 @@ Proof body.
     expect(math!.getBoundingClientRect().width).toBeGreaterThan(0);
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    container: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

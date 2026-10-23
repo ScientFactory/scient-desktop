@@ -93,6 +93,8 @@ export const withDroid = <A, E, R>(
       p: (projection: OrchestrationV2ThreadProjection) => boolean,
     ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
     preparationEntered: Effect.Effect<void>;
+    initialOpenSettled: Effect.Effect<void>;
+    awaitProcessExit: (pid: number) => Effect.Effect<void>;
     admissionGuard: () => Effect.Effect<boolean>;
     releasePreparation: Effect.Effect<boolean>;
     log: Effect.Effect<ReadonlyArray<{ method?: string; params?: Record<string, unknown> }>>;
@@ -179,6 +181,7 @@ export const withDroid = <A, E, R>(
       );
       const entered = yield* Deferred.make<void>(),
         released = yield* Deferred.make<void>();
+      const initialOpenSettled = yield* Deferred.make<void>();
       const teardownEntered = yield* Deferred.make<void>(),
         teardownReleased = yield* Deferred.make<void>();
       let admissionGuard = () => Effect.succeed(false);
@@ -252,6 +255,7 @@ export const withDroid = <A, E, R>(
                 return runtime.startTurn(turn);
               },
             })),
+            Effect.ensuring(Deferred.succeed(initialOpenSettled, undefined)),
           ),
       };
       const nativeLayer = makeOrchestratorV2ReplayLayerWithRegistry(
@@ -449,6 +453,14 @@ export const withDroid = <A, E, R>(
               });
             }),
           preparationEntered: Deferred.await(entered),
+          initialOpenSettled: Deferred.await(initialOpenSettled),
+          awaitProcessExit: Effect.fn("test.DroidScheduling.awaitProcessExit")(function* (
+            pid: number,
+          ) {
+            const exit = exits[pids.indexOf(pid)];
+            if (!exit) return yield* Effect.die(new Error("The fixture does not own that PID."));
+            yield* Fiber.join(exit);
+          }),
           admissionGuard: () => admissionGuard(),
           releasePreparation: Deferred.succeed(released, undefined),
           log: peer.readLog(),

@@ -47,7 +47,6 @@ it.live.each(["fork-first", "delete-first", "concurrent"] as const)(
         for (const path of paths) assert.isFalse(yield* fs.exists(path));
       }),
     ),
-  120000,
 );
 
 it.live(
@@ -83,66 +82,59 @@ it.live(
         for (const path of paths) assert.isFalse(yield* fs.exists(path));
       }),
     ),
-  120000,
 );
 
-it.live(
-  "forking a fork while deleting the parent leaves accepted descendants intact",
-  () =>
-    run(
-      Effect.gen(function* () {
-        const source = yield* seed({ turns: 3, attachments: true });
-        const parent = (yield* fork(source.thread.id, "parent")).projection;
-        yield* remove(source.thread.id);
-        const [result] = yield* Effect.all(
-          [fork(parent.thread.id, "grandchild").pipe(Effect.exit), remove(parent.thread.id)],
-          { concurrency: "unbounded" },
+it.live("forking a fork while deleting the parent leaves accepted descendants intact", () =>
+  run(
+    Effect.gen(function* () {
+      const source = yield* seed({ turns: 3, attachments: true });
+      const parent = (yield* fork(source.thread.id, "parent")).projection;
+      yield* remove(source.thread.id);
+      const [result] = yield* Effect.all(
+        [fork(parent.thread.id, "grandchild").pipe(Effect.exit), remove(parent.thread.id)],
+        { concurrency: "unbounded" },
+      );
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig;
+      const paths = source.messages
+        .flatMap((m) => m.attachments)
+        .map((attachment) =>
+          resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!,
         );
-        const fs = yield* FileSystem.FileSystem;
-        const config = yield* ServerConfig;
-        const paths = source.messages
-          .flatMap((m) => m.attachments)
-          .map((attachment) =>
-            resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!,
-          );
-        if (result._tag === "Success") {
-          assert.deepEqual(
-            result.value.projection.messages.map((m) => m.text),
-            parent.messages.map((m) => m.text),
-          );
-          for (const path of paths) assert.isTrue(yield* fs.exists(path));
-          yield* remove(result.value.projection.thread.id);
-        }
-        for (const path of paths) assert.isFalse(yield* fs.exists(path));
-      }),
-    ),
-  120000,
+      if (result._tag === "Success") {
+        assert.deepEqual(
+          result.value.projection.messages.map((m) => m.text),
+          parent.messages.map((m) => m.text),
+        );
+        for (const path of paths) assert.isTrue(yield* fs.exists(path));
+        yield* remove(result.value.projection.thread.id);
+      }
+      for (const path of paths) assert.isFalse(yield* fs.exists(path));
+    }),
+  ),
 );
 
-it.live(
-  "all last forks deleted concurrently release files without leaks",
-  () =>
-    run(
-      Effect.gen(function* () {
-        const source = yield* seed({ turns: 3, attachments: true });
-        const forks = yield* Effect.all(
-          Array.from({ length: 12 }, (_, index) => fork(source.thread.id, `last-${index}`)),
-          { concurrency: "unbounded" },
+it.live("all last forks deleted concurrently release files without leaks", () =>
+  run(
+    Effect.gen(function* () {
+      const source = yield* seed({ turns: 3, attachments: true });
+      const forks = yield* Effect.all(
+        Array.from({ length: 12 }, (_, index) => fork(source.thread.id, `last-${index}`)),
+        { concurrency: "unbounded" },
+      );
+      const config = yield* ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const paths = source.messages
+        .flatMap((m) => m.attachments)
+        .map((attachment) =>
+          resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!,
         );
-        const config = yield* ServerConfig;
-        const fs = yield* FileSystem.FileSystem;
-        const paths = source.messages
-          .flatMap((m) => m.attachments)
-          .map((attachment) =>
-            resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!,
-          );
-        yield* remove(source.thread.id);
-        yield* Effect.all(
-          forks.map((f) => remove(f.projection.thread.id)),
-          { concurrency: "unbounded" },
-        );
-        for (const path of paths) assert.isFalse(yield* fs.exists(path));
-      }),
-    ),
-  120000,
+      yield* remove(source.thread.id);
+      yield* Effect.all(
+        forks.map((f) => remove(f.projection.thread.id)),
+        { concurrency: "unbounded" },
+      );
+      for (const path of paths) assert.isFalse(yield* fs.exists(path));
+    }),
+  ),
 );

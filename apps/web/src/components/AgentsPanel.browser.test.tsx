@@ -1,11 +1,12 @@
+import { render as _fixtureRender, type Screen, act } from "../../test/render";
 import { EnvironmentId, NodeId, ThreadId } from "@t3tools/contracts";
 import {
   deriveAgentPanelModel,
   projectedSubagentsToRuntime,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { type ReactNode } from "react";
+
 import { expect, it, vi } from "vite-plus/test";
 import { AgentsPanel } from "./AgentsPanel";
 
@@ -20,7 +21,8 @@ it.each([
 ] as const)(
   "preserves workflow history while gating current-workspace script reads (historical=%s, tokens=%s)",
   async (historical, tokens) => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    await using _fixture = _createFixture();
+
     const agents = projectedSubagentsToRuntime([
       {
         id: "workflow",
@@ -58,13 +60,15 @@ it.each([
       },
     ]).map((agent) => ({ ...agent, historical }));
     const model = deriveAgentPanelModel({ agents });
-    let renderer: Root | undefined;
+    let renderer: Screen | undefined;
     const container = document.createElement("div");
     document.body.append(container);
     try {
-      await act(() => {
-        renderer = createRoot(container);
-        renderer.render(
+      await act(async () => {
+        renderer = _fixture.stack.use(
+          await _fixtureRender(null, { container: container, router: false }),
+        );
+        await renderer.rerender(
           <AgentsPanel
             model={model}
             environmentId={EnvironmentId.make("environment")}
@@ -95,9 +99,26 @@ it.each([
       expect(text.includes("Idle · resumable")).toBe(!historical);
       expect(model.workflows[0]?.workflow.runHandles?.scriptPath).toBe("/old-workspace/audit.ts");
     } finally {
-      await act(() => renderer?.unmount());
+      await act(async () => await renderer?.unmount());
       container.remove();
       vi.unstubAllGlobals();
     }
   },
 );
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

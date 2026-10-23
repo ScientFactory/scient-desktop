@@ -10,19 +10,54 @@ import * as NodeURL from "node:url";
 
 const STATE_ENV = "SCIENT_MERMAID_SMOKE_STATE";
 const RENDERER_PROGRESS_PREFIX = "[scient-mermaid-smoke] ";
+const RENDERER_CLICK_PREFIX = "[scient-mermaid-smoke-click] ";
 
 if (!process.versions.electron) {
-  const { resolveElectronBinaryPath } = await import("./electron-launcher.mjs");
+  // Electron's Node entry auto-downloads missing binaries. Qualification must
+  // inspect installed files without importing it or invoking candidate launchers.
+  const electronRoot = NodePath.dirname(
+    NodeModule.createRequire(import.meta.url).resolve("electron/package.json"),
+  );
+  const pathFile = NodePath.join(electronRoot, "path.txt");
+  NodeAssert.ok(
+    NodeFS.existsSync(pathFile),
+    "Repository Electron runtime is not installed (missing path.txt); prepare it independently before running this gate.",
+  );
+  const electron = NodePath.resolve(
+    electronRoot,
+    "dist",
+    NodeFS.readFileSync(pathFile, "utf8").trim(),
+  );
+  NodeAssert.ok(
+    electron.startsWith(`${NodePath.join(electronRoot, "dist")}${NodePath.sep}`) &&
+      NodeFS.existsSync(electron),
+    "Repository Electron executable is missing or outside its installed dist directory.",
+  );
   const state = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-mermaid-smoke-"));
-  const environment = { ...process.env, [STATE_ENV]: state };
-  delete environment.ELECTRON_RUN_AS_NODE;
+  const environment = Object.fromEntries(
+    ["PATH", "SystemRoot", "WINDIR", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "LANG"]
+      .filter((name) => process.env[name] !== undefined)
+      .map((name) => [name, process.env[name]]),
+  );
+  Object.assign(environment, {
+    [STATE_ENV]: state,
+    HOME: NodePath.join(state, "home"),
+    USERPROFILE: NodePath.join(state, "home"),
+    XDG_CONFIG_HOME: NodePath.join(state, "config"),
+    XDG_CACHE_HOME: NodePath.join(state, "cache"),
+    TMPDIR: state,
+    TMP: state,
+    TEMP: state,
+  });
+  NodeFS.mkdirSync(environment.HOME);
   let result;
   try {
-    result = NodeChildProcess.spawnSync(
-      resolveElectronBinaryPath(),
-      [NodeURL.fileURLToPath(import.meta.url)],
-      { env: environment, stdio: "inherit", timeout: 420_000, killSignal: "SIGTERM" },
-    );
+    result = NodeChildProcess.spawnSync(electron, [NodeURL.fileURLToPath(import.meta.url)], {
+      env: environment,
+      stdio: "inherit",
+      timeout: 420_000,
+      killSignal: "SIGTERM",
+    });
   } finally {
     // Vite and Electron own files in userData until the child is gone. Keeping
     // profile cleanup in the parent prevents races with Electron shutdown.
@@ -62,13 +97,24 @@ async function run() {
     const { createServer } = await import(webRequire.resolve("vite"));
     server = await createServer({
       configFile: false,
+      envFile: false,
       root: webRoot,
       logLevel: "error",
       appType: "custom",
       cacheDir: NodePath.join(state, "vite"),
       resolve: { alias: { "~": NodePath.join(webRoot, "src") } },
       server: { host: "127.0.0.1", port: 0 },
-      optimizeDeps: { include: ["mermaid"] },
+      optimizeDeps: { include: ["pele/lazy", "dompurify", "react", "react/jsx-runtime"] },
+      plugins: [
+        {
+          name: "scient-smoke-parser",
+          resolveId: (id) => (id === "/__scient_pele_parser.js" ? id : null),
+          load: (id) =>
+            id === "/__scient_pele_parser.js"
+              ? 'export { load, detectType, parse } from "pele/lazy";'
+              : null,
+        },
+      ],
     });
     server.middlewares.use("/__mermaid_smoke", (_request, response) => {
       response.setHeader("Content-Type", "text/html");
@@ -93,10 +139,40 @@ async function run() {
       show: false,
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
     });
+    const blockedRequests = [];
+    const origin = new URL(server.resolvedUrls.local[0]);
+    window.webContents.session.webRequest.onBeforeRequest((details, callback) => {
+      const url = new URL(details.url);
+      const local = ["http:", "ws:"].includes(url.protocol) && url.host === origin.host;
+      const cancel =
+        details.url.includes("__scient_native_diagram_probe__") ||
+        (!local && !["blob:", "data:"].includes(url.protocol));
+      if (cancel) blockedRequests.push(details.url);
+      callback({ cancel });
+    });
     window.webContents.on("console-message", (details) => {
       const message = details.message;
       if (typeof message === "string" && message.startsWith(RENDERER_PROGRESS_PREFIX))
         phase = message.slice(RENDERER_PROGRESS_PREFIX.length);
+      if (typeof message === "string" && message.startsWith(RENDERER_CLICK_PREFIX)) {
+        const { x, y } = JSON.parse(message.slice(RENDERER_CLICK_PREFIX.length));
+        NodeAssert.ok(Number.isInteger(x) && Number.isInteger(y), "Invalid node input point");
+        window.webContents.sendInputEvent({ type: "mouseMove", x, y });
+        window.webContents.sendInputEvent({
+          type: "mouseDown",
+          x,
+          y,
+          button: "left",
+          clickCount: 1,
+        });
+        window.webContents.sendInputEvent({
+          type: "mouseUp",
+          x,
+          y,
+          button: "left",
+          clickCount: 1,
+        });
+      }
     });
     await withTimeout(
       window.loadURL(`${server.resolvedUrls.local[0]}__mermaid_smoke`),
@@ -105,12 +181,16 @@ async function run() {
     );
     phase = "starting renderer assertions";
     const rendererPromise = window.webContents.executeJavaScript(
-      `(${async function (sources, progressPrefix) {
+      `(${async function (sources, progressPrefix, clickPrefix) {
         const progress = (message) => console.info(`${progressPrefix}${message}`);
         progress("loading renderer modules");
-        const { renderMermaidDiagram, MermaidRenderError, MERMAID_VERSION } =
+        const { renderMermaidDiagram, MermaidRenderError, MERMAID_RENDERER } =
           await import("/src/scient/diagrams/mermaidRuntime.ts");
-        const { sharedIsolatedMermaid } = await import("/src/scient/diagrams/isolatedMermaid.ts");
+        const pele = await import("/__scient_pele_parser.js");
+        async function parse(source) {
+          await pele.load(pele.detectType(source));
+          return pele.parse(source, { limit: 50_000, maxEdges: 500 });
+        }
         const { prepareSvgForExport, copyMermaidPng } =
           await import("/src/scient/diagrams/mermaidExport.ts");
         function check(condition, message) {
@@ -148,9 +228,7 @@ async function run() {
           for (const [index, source] of sources.slice(0, -2).entries()) {
             progress(`rendering native corpus ${theme}/${index + 1}/${sources.length - 2}`);
             const { svg, diagramType } = await renderMermaidDiagram(source, theme);
-            // Match the card's HTML insertion, not XML parsing. Both Mermaid
-            // 11 and 12 serialize HTML <br> labels that render correctly here
-            // but are not well-formed standalone XML (recorded below).
+            // Match the card's HTML insertion; standalone XML is checked separately.
             const node = new DOMParser().parseFromString(svg, "text/html");
             check(!node.querySelector("script"), "Script survived strict rendering");
             const dimensions = node
@@ -199,13 +277,9 @@ async function run() {
             ids.add(element.id);
           }
         }
-        // Chat draws in the shared no-network frame, so inspect that Mermaid, not
-        // the page's own copy (which only the PDF document page initializes).
-        const frame = await sharedIsolatedMermaid();
-        const mermaid = frame.window.mermaid;
         check(
-          frame.window.frameElement?.isConnected === true && mermaid !== undefined,
-          "Chat diagrams were not drawn in the isolated frame",
+          document.body.childElementCount === 0 && !document.querySelector("iframe"),
+          "Snapshot measuring hosts or retired renderer frames leaked",
         );
         const { recoveryFixtures, unrecoverableFixtures, userRegressionFixtures } =
           await import("/src/scient/diagrams/mermaidRecovery.fixtures.ts");
@@ -244,7 +318,7 @@ async function run() {
               rendered = await renderMermaidDiagram(fixture.source, theme);
             } catch (error) {
               try {
-                await mermaid.parse(fixture.expected);
+                await parse(fixture.expected);
               } catch (candidateError) {
                 throw new Error(
                   `${fixture.name}/${theme} candidate failed: ${candidateError.message}`,
@@ -287,8 +361,8 @@ async function run() {
               "Recovery changed the diagram family",
             );
             if (fixture.shape) {
-              const diagram = await mermaid.mermaidAPI.getDiagramFromText(rendered.recovery.source);
-              const node = diagram.db.getVertices().get("A");
+              const diagram = await parse(rendered.recovery.source);
+              const node = diagram.nodes.get("A");
               check(
                 node.type === fixture.shape && node.text === fixture.label,
                 `Recovery changed shape or text: ${fixture.name}`,
@@ -301,8 +375,8 @@ async function run() {
               );
             }
             if (["parallel node expression", "edge ID expression"].includes(fixture.name)) {
-              const diagram = await mermaid.mermaidAPI.getDiagramFromText(fixture.expected);
-              const edges = diagram.db.getEdges();
+              const diagram = await parse(fixture.expected);
+              const edges = diagram.edges;
               if (fixture.name === "parallel node expression") {
                 check(
                   JSON.stringify(edges.map(({ start, end }) => [start, end])) ===
@@ -322,16 +396,16 @@ async function run() {
                 );
             }
             if (fixture.name === "class short arrow") {
-              const diagram = await mermaid.mermaidAPI.getDiagramFromText(fixture.expected);
-              const relations = diagram.db.getRelations();
+              const diagram = await parse(fixture.expected);
+              const relations = diagram.relations;
               check(
                 relations.length === 1 && relations[0].id1 === "A" && relations[0].id2 === "B",
                 "Class recovery changed relation endpoints",
               );
             }
             if (fixture.name === "sequence fullwidth colon") {
-              const diagram = await mermaid.mermaidAPI.getDiagramFromText(fixture.expected);
-              const messages = diagram.db.getMessages();
+              const diagram = await parse(fixture.expected);
+              const messages = diagram.messages;
               check(
                 messages.length === 1 &&
                   messages[0].from === "A" &&
@@ -341,8 +415,8 @@ async function run() {
               );
             }
             if (fixture.name === "pie spaced label") {
-              const diagram = await mermaid.mermaidAPI.getDiagramFromText(fixture.expected);
-              const values = diagram.db.getSections();
+              const diagram = await parse(fixture.expected);
+              const values = diagram.sections;
               check(
                 values.size === 2 &&
                   values.get("Small dogs") === 10 &&
@@ -351,8 +425,8 @@ async function run() {
               );
             }
             if (fixture.name === "pie dash separator") {
-              const diagram = await mermaid.mermaidAPI.getDiagramFromText(fixture.expected);
-              const values = diagram.db.getSections();
+              const diagram = await parse(fixture.expected);
+              const values = diagram.sections;
               check(
                 values.size === 3 &&
                   values.get("Dogs") === 40 &&
@@ -374,7 +448,7 @@ async function run() {
           check(error instanceof Error, `Ambiguous source unexpectedly recovered: ${source}`);
           if (source.startsWith("flowchart LR\nN0 -> N1"))
             check(
-              error.details.startsWith("Parse error"),
+              error.cause?.code === "syntax",
               "Candidate resource failure replaced the original syntax diagnostic",
             );
         }
@@ -388,36 +462,31 @@ async function run() {
             combined.source.slice(0, change.start) +
             change.replacement +
             combined.source.slice(change.end);
+          let failure;
+          try {
+            await parse(partial);
+          } catch (error) {
+            failure = error;
+          }
           check(
-            (await mermaid.parse(partial, { suppressErrors: true })) === false,
+            failure?.code === "syntax",
             "Combined fixture no longer proves multiple required fixes",
           );
         }
-        const literal = await mermaid.mermaidAPI.getDiagramFromText(
-          "flowchart LR\nA[Use -> operator] --> B",
-        );
+        const literal = await parse("flowchart LR\nA[Use -> operator] --> B");
         check(
-          literal.db.getVertices().get("A").text === "Use -> operator",
+          literal.nodes.get("A").text === "Use -> operator",
           "Recovery changed a literal operator",
         );
-        const styled = await mermaid.mermaidAPI.getDiagramFromText(
+        const styled = await parse(
           recoveryFixtures.find((fixture) => fixture.name === "comments and styles").expected,
         );
-        check(
-          styled.db.getVertices().get("B").text === "C4Context",
-          "Recovery renamed an unrelated label",
-        );
-        check(
-          styled.db.getVertices().get("A").text === "Read (local)",
-          "Quoting changed label text",
-        );
-        const pie = await mermaid.mermaidAPI.getDiagramFromText(
+        check(styled.nodes.get("B").text === "C4Context", "Recovery renamed an unrelated label");
+        check(styled.nodes.get("A").text === "Read (local)", "Quoting changed label text");
+        const pie = await parse(
           recoveryFixtures.find((fixture) => fixture.name === "pie Unicode").expected,
         );
-        check(
-          pie.db.getSections().get("שלום（עולם）") === 10,
-          "Recovery changed Unicode label or value",
-        );
+        check(pie.sections.get("שלום（עולם）") === 10, "Recovery changed Unicode label or value");
         const recoveryCopies = await Promise.all(
           Array.from({ length: 48 }, (_, index) =>
             renderMermaidDiagram(combined.source, index % 2 ? "light" : "dark"),
@@ -431,16 +500,19 @@ async function run() {
         progress("checking bounded recovery scanning");
         const stressSource =
           "flowchart LR\n" + "A[Read (local)] -> B\n".repeat(120) + "%% " + "x".repeat(45_000);
-        for (let iteration = 0; iteration < 200; iteration += 1) planMermaidRecovery(stressSource);
-        const scanMs = performance.now() - scanStart;
-        check(scanMs < 5_000, `Recovery scanner exceeded generous stress ceiling: ${scanMs}ms`);
-        check(pngFailures.length === 0, `PNG export failed: ${pngFailures.join("; ")}`);
-        const config = mermaid.mermaidAPI.getConfig();
+        const stressPlan = JSON.stringify(planMermaidRecovery(stressSource));
+        for (let iteration = 0; iteration < 200; iteration += 1)
+          check(
+            JSON.stringify(planMermaidRecovery(stressSource)) === stressPlan,
+            "Bounded recovery scanning changed its deterministic plan",
+          );
         check(
-          config.layout === "dagre" && config.look === "classic",
-          "Upgrade changed layout/look defaults",
+          planMermaidRecovery("flowchart LR\n" + "A -> B\n".repeat(257)) === null &&
+            planMermaidRecovery(stressSource + "x".repeat(50_000)) === null,
+          "Recovery edit/source bounds were lost",
         );
-        check(config.securityLevel === "strict", "Strict mode was lost");
+        const scanMs = performance.now() - scanStart;
+        check(pngFailures.length === 0, `PNG export failed: ${pngFailures.join("; ")}`);
         // Frontmatter/comments before the declaration are valid: guidance must
         // not demand the diagram declaration be the literal first line.
         await renderMermaidDiagram(
@@ -455,12 +527,116 @@ async function run() {
           !new DOMParser().parseFromString(untrusted.svg, "text/html").querySelector("script"),
           "Untrusted script survived rendering",
         );
+        progress("checking native resource refusal and cleanup");
+        const probe = "/__scient_native_diagram_probe__/";
+        const hostileSources = [
+          `flowchart LR\nA["<img src='${probe}label.png'>"] --> B`,
+          `flowchart LR\nA@{ img: "${probe}shape.png", h: 40 } --> B`,
+          `sequenceDiagram\nparticipant A\nproperties A: {"icon":"${probe}actor.png"}\nA->>A: hi`,
+          `flowchart LR\nA["<span style='background:url(${probe}style.png)'>text</span>"] --> B`,
+          `stateDiagram-v2\nclassDef c background-image:url(${probe}state.png)\n[*] --> A:::c`,
+          `%%{init: {"themeCSS":"@font-face{src:url(${probe}font.woff2)}"}}%%\nflowchart LR\nA --> B`,
+          `flowchart LR\nA["<svg><path mask='url(${probe}mask.svg)'/></svg>"] --> B`,
+        ];
+        for (const theme of ["light", "dark"]) {
+          for (const source of [
+            `flowchart LR\nA["icon: 'https://example.org/reference'"] --> B`,
+            `flowchart LR\n%% A@{ img: 'https://example.org/reference' }\nA["favicon: 'https://example.org/reference'"] --> B`,
+          ]) {
+            const result = await renderMermaidDiagram(source, theme);
+            check(!result.blocked?.length, "Inert prose produced a false resource refusal");
+            await copyMermaidPng(result.svg, theme);
+          }
+          for (const source of hostileSources) {
+            const result = await renderMermaidDiagram(source, theme);
+            check(result.blocked?.length > 0, "Authored resource lost its refusal notice");
+            check(!result.svg.includes(probe), "Authored resource survived the snapshot");
+            await copyMermaidPng(result.svg, theme);
+          }
+          const math = await renderMermaidDiagram(
+            "sequenceDiagram\nA->>B: $$\\frac{1}{2} + \\sqrt{2}$$",
+            theme,
+          );
+          const mathNode = new DOMParser().parseFromString(math.svg, "text/html");
+          check(mathNode.querySelector("math mfrac, math msqrt"), "Generated MathML was lost");
+          await copyMermaidPng(math.svg, theme);
+        }
+        let callbacks = 0;
+        window.scientNativeDiagramCallback = () => {
+          callbacks += 1;
+        };
+        const active = await renderMermaidDiagram(
+          '%%{init: {"securityLevel":"loose","startOnLoad":true}}%%\nflowchart LR\nA["Authored callback target"] --> B["<math href=\'javascript:alert(1)\'><mi onclick=\'alert(1)\'>x</mi></math>"]\nclick A scientNativeDiagramCallback',
+          "light",
+        );
+        const holder = document.createElement("div");
+        try {
+          holder.innerHTML = active.svg;
+          document.body.append(holder);
+          check(
+            !holder.querySelector("script, style, a, img, image, [href], [onclick], [onerror]"),
+            "Active content survived strict rendering",
+          );
+          const target = [...holder.querySelectorAll(".pele-node")].find(
+            (node) => node.querySelector(".pele-label")?.textContent === "Authored callback target",
+          );
+          check(target, "The authored A node is missing");
+          window.scientNativeDiagramCallback();
+          check(callbacks === 1, "Callback positive control did not run");
+          callbacks = 0;
+          target.scrollIntoView({ block: "center", inline: "center" });
+          const bounds = target.getBoundingClientRect();
+          const point = {
+            x: Math.round(bounds.x + bounds.width / 2),
+            y: Math.round(bounds.y + bounds.height / 2),
+          };
+          check(
+            bounds.width > 0 &&
+              bounds.height > 0 &&
+              point.x >= 0 &&
+              point.x < innerWidth &&
+              point.y >= 0 &&
+              point.y < innerHeight,
+            "The authored A node must have a visible native input target",
+          );
+          progress("checking calibrated native input on the authored A node");
+          const click = await new Promise((resolve) => {
+            target.addEventListener("click", resolve, { once: true });
+            // Electron, not renderer dispatchEvent, supplies a trusted input event.
+            console.info(`${clickPrefix}${JSON.stringify(point)}`);
+          });
+          check(
+            click.isTrusted && target.contains(click.target),
+            "Native input did not reach the authored A node",
+          );
+          check(callbacks === 0, "Diagram-authored callback executed");
+          const unrelated = document.createElement("pre");
+          unrelated.className = "mermaid";
+          unrelated.textContent = "flowchart LR\nUnrelated --> Source";
+          holder.append(unrelated);
+          check(!unrelated.querySelector("svg"), "Renderer processed unrelated page content");
+        } finally {
+          holder.remove();
+          delete window.scientNativeDiagramCallback;
+        }
+        check(
+          document.body.childElementCount === 0,
+          "Snapshot mounts, math measurement probes or error DOM leaked",
+        );
         progress("renderer assertions complete");
         return {
-          version: MERMAID_VERSION,
+          renderer: MERMAID_RENDERER,
           fixtures: output,
           concurrentCopies: copies.length,
           pngFailures,
+          resourceRefusals: hostileSources.length * 2,
+          callbackInteraction: {
+            target: "A / Authored callback target",
+            trustedNativeInput: true,
+            callbackPositiveControl: true,
+            authoredCallbackCalls: callbacks,
+          },
+          cleanup: true,
           recovery: {
             fixtures: recoveryTimings,
             declined: unrecoverableFixtures.length,
@@ -469,13 +645,14 @@ async function run() {
             scanMs: Math.round(scanMs),
           },
         };
-      }.toString()})(${JSON.stringify(fixtures)}, ${JSON.stringify(RENDERER_PROGRESS_PREFIX)})`,
+      }.toString()})(${JSON.stringify(fixtures)}, ${JSON.stringify(RENDERER_PROGRESS_PREFIX)}, ${JSON.stringify(RENDERER_CLICK_PREFIX)})`,
     );
     const results = await withTimeout(
       rendererPromise,
       240_000,
       () => `Chromium Mermaid smoke test timed out while ${phase}`,
     );
+    NodeAssert.deepEqual(blockedRequests, [], "Diagram rendering attempted a resource request");
     console.log(JSON.stringify(results, null, 2));
   } finally {
     phase = "closing the Chromium renderer";

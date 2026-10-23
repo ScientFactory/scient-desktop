@@ -1,3 +1,4 @@
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
@@ -5,9 +6,8 @@ import {
   ThreadId,
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+
+import { expect, it, vi } from "vite-plus/test";
 
 import {
   browserMiniPlayerSource,
@@ -22,8 +22,6 @@ import { useScientBrowserPresentation } from "./useScientBrowserPresentation";
 const ref = scopeThreadRef(EnvironmentId.make("env-a"), ThreadId.make("thread-a"));
 const otherRef = scopeThreadRef(EnvironmentId.make("env-b"), ref.threadId);
 type Input = Parameters<typeof useScientBrowserPresentation>[0];
-let renderer: Root | undefined;
-let input: Input;
 
 function session(
   id: string,
@@ -49,16 +47,20 @@ function Probe({ value }: { value: Input }) {
   return null;
 }
 
-function update(sessions: readonly PreviewSessionSnapshot[], overrides: Partial<Input> = {}) {
-  input = {
-    ...input,
+async function update(
+  _fixture: _Fixture,
+  sessions: readonly PreviewSessionSnapshot[],
+  overrides: Partial<Input> = {},
+) {
+  _fixture.input = {
+    ..._fixture.input,
     ...overrides,
     previewState: {
       listLoaded: true,
       sessions: Object.fromEntries(sessions.map((snapshot) => [snapshot.tabId, snapshot])),
     },
   };
-  act(() => renderer!.render(<Probe value={input} />));
+  await act(async () => await _fixture.root0!.rerender(<Probe value={_fixture.input} />));
 }
 
 const player = () =>
@@ -66,37 +68,42 @@ const player = () =>
 const tab = () =>
   selectThreadPreviewMiniPlayerTabId(usePreviewMiniPlayerStore.getState().byThreadKey, ref);
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function _setupFixture0(_fixture: _Fixture) {
   usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
   useRightPanelStore.setState({ byThreadKey: {} });
-  input = {
+  _fixture.input = {
     threadRef: ref,
     serverBrowserAvailable: true,
     previewState: { listLoaded: true, sessions: {} },
     autoShowFloatingPreview: true,
     surfaces: [],
   };
-  act(() => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(<Probe value={input} />);
+  await act(async () => {
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(<Probe value={_fixture.input} />);
   });
-});
+}
 
-afterEach(() => {
-  act(() => renderer?.unmount());
-  renderer = undefined;
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0?.unmount());
+  _fixture.root0 = undefined;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-});
+}
 
-it("closes only the matching floating browser on a fresh hidden request", () => {
-  update([session("tab-a", true, "shown")]);
+it("closes only the matching floating browser on a fresh hidden request", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await update(_fixture, [session("tab-a", true, "shown")]);
   usePreviewMiniPlayerStore.getState().open(otherRef, browserMiniPlayerSource("tab-a"));
   useRightPanelStore.getState().openBrowser(ref, "tab-a");
   const rightPanel = useRightPanelStore.getState().byThreadKey;
   expect(tab()).toBe("tab-a");
-  update([session("tab-a", false, "hidden")]);
+  await update(_fixture, [session("tab-a", false, "hidden")]);
   expect(player()).toBeNull();
   expect(
     selectThreadPreviewMiniPlayerTabId(usePreviewMiniPlayerStore.getState().byThreadKey, otherRef),
@@ -104,24 +111,38 @@ it("closes only the matching floating browser on a fresh hidden request", () => 
   expect(useRightPanelStore.getState().byThreadKey).toBe(rightPanel);
 });
 
-it("does not replay an old hidden request after the user manually reopens the browser", () => {
-  update([session("tab-a", true, "shown")]);
-  update([session("tab-a", false, "hidden")]);
+it("does not replay an old hidden request after the user manually reopens the browser", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await update(_fixture, [session("tab-a", true, "shown")]);
+  await update(_fixture, [session("tab-a", false, "hidden")]);
   expect(player()).toBeNull();
   usePreviewMiniPlayerStore.getState().open(ref, browserMiniPlayerSource("tab-a"));
-  update([{ ...session("tab-a", false, "hidden"), updatedAt: "2026-10-08T00:00:01Z" }]);
+  await update(_fixture, [
+    { ...session("tab-a", false, "hidden"), updatedAt: "2026-10-08T00:00:01Z" },
+  ]);
   expect(tab()).toBe("tab-a");
-  update([session("tab-a", false, "hidden-again")]);
+  await update(_fixture, [session("tab-a", false, "hidden-again")]);
   expect(player()).toBeNull();
 });
 
-it("leaves a different floating browser untouched", () => {
+it("leaves a different floating browser untouched", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   usePreviewMiniPlayerStore.getState().open(ref, browserMiniPlayerSource("tab-b"));
-  update([session("tab-a", false, "hidden")]);
+  await update(_fixture, [session("tab-a", false, "hidden")]);
   expect(tab()).toBe("tab-b");
 });
 
-it("leaves a floating device untouched", () => {
+it("leaves a floating device untouched", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   usePreviewMiniPlayerStore.getState().open(ref, {
     kind: "device",
     hostId: "host-a",
@@ -130,11 +151,15 @@ it("leaves a floating device untouched", () => {
     name: "Pixel",
   });
   const before = player();
-  update([session("tab-a", false, "hidden")]);
+  await update(_fixture, [session("tab-a", false, "hidden")]);
   expect(player()).toBe(before);
 });
 
-it("leaves a Scient artifact untouched", () => {
+it("leaves a Scient artifact untouched", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const artifact: PreviewStaticImageSurfaceDescriptor = {
     surfaceId: "project-a:script.m:figure-001",
     label: "Figure 1",
@@ -151,41 +176,57 @@ it("leaves a Scient artifact untouched", () => {
   };
   usePreviewMiniPlayerStore.getState().openArtifact(ref, artifact);
   const before = player();
-  update([session("tab-a", false, "hidden")]);
+  await update(_fixture, [session("tab-a", false, "hidden")]);
   expect(player()).toBe(before);
 });
 
-it("suppresses a matching browser even when automatic floating is disabled", () => {
+it("suppresses a matching browser even when automatic floating is disabled", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   usePreviewMiniPlayerStore.getState().open(ref, browserMiniPlayerSource("tab-a"));
-  update([session("tab-a", false, "hidden")], { autoShowFloatingPreview: false });
+  await update(_fixture, [session("tab-a", false, "hidden")], { autoShowFloatingPreview: false });
   expect(player()).toBeNull();
 });
 
-it("preserves default automatic reveal and explicit force when automatic floating is disabled", () => {
-  update([session("tab-a", true, "default")]);
+it("preserves default automatic reveal and explicit force when automatic floating is disabled", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await update(_fixture, [session("tab-a", true, "default")]);
   expect(tab()).toBe("tab-a");
   usePreviewMiniPlayerStore.getState().close(ref);
-  update([session("tab-a", true, "unforced")], { autoShowFloatingPreview: false });
+  await update(_fixture, [session("tab-a", true, "unforced")], { autoShowFloatingPreview: false });
   expect(player()).toBeNull();
-  update([session("tab-a", true, "forced", true)]);
+  await update(_fixture, [session("tab-a", true, "forced", true)]);
   expect(tab()).toBe("tab-a");
 });
 
-it("activates an existing panel for a forced reveal instead of floating it", () => {
+it("activates an existing panel for a forced reveal instead of floating it", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   useRightPanelStore.getState().openBrowser(ref, "tab-a");
   const activate = vi.spyOn(useRightPanelStore.getState(), "activateSurface");
-  update([session("tab-a", true, "forced", true)], {
+  await update(_fixture, [session("tab-a", true, "forced", true)], {
     surfaces: [{ id: "browser:tab-a", kind: "preview", resourceId: "tab-a" }],
   });
   expect(activate).toHaveBeenCalledWith(ref, "browser:tab-a");
   expect(player()).toBeNull();
 });
 
-it("baselines old positive and negative requests on mount without changing manual presentation", () => {
-  act(() => renderer!.unmount());
+it("baselines old positive and negative requests on mount without changing manual presentation", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await act(async () => await _fixture.root0!.unmount());
   usePreviewMiniPlayerStore.getState().open(ref, browserMiniPlayerSource("tab-hidden"));
-  input = {
-    ...input,
+  _fixture.input = {
+    ..._fixture.input,
     previewState: {
       listLoaded: true,
       sessions: {
@@ -194,17 +235,43 @@ it("baselines old positive and negative requests on mount without changing manua
       },
     },
   };
-  act(() => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(<Probe value={input} />);
+  await act(async () => {
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(<Probe value={_fixture.input} />);
   });
   expect(tab()).toBe("tab-hidden");
-  update(Object.values(input.previewState.sessions));
+  await update(_fixture, Object.values(_fixture.input.previewState.sessions));
   expect(tab()).toBe("tab-hidden");
 });
 
-it("does not interpret an initial hidden tab without a request as fresh suppression", () => {
+it("does not interpret an initial hidden tab without a request as fresh suppression", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   usePreviewMiniPlayerStore.getState().open(ref, browserMiniPlayerSource("tab-a"));
-  update([session("tab-a", false)]);
+  await update(_fixture, [session("tab-a", false)]);
   expect(tab()).toBe("tab-a");
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    input: undefined! as Input,
+
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

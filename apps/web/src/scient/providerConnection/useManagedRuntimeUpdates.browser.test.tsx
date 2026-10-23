@@ -1,14 +1,20 @@
 import {
+  render as _fixtureRender,
+  type Screen,
+  fakeTimers as _fixtureFakeTimers,
+  act,
+} from "../../../test/render";
+import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderRuntimeOperation,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { act, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { useLayoutEffect } from "react";
+
 import { Atom, AtomRegistry } from "effect/reactivity";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 interface TestPresentation {
   readonly connection: { readonly phase: string };
@@ -16,7 +22,7 @@ interface TestPresentation {
 }
 
 const testState = vi.hoisted(() => ({
-  registry: undefined as AtomRegistry.AtomRegistry | undefined,
+  readRegistry: (): AtomRegistry.AtomRegistry | undefined => undefined,
   environments: [] as Array<{
     environmentId: EnvironmentId;
     label: string;
@@ -30,23 +36,24 @@ const testState = vi.hoisted(() => ({
 }));
 
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: Atom.Atom<unknown>) => testState.registry!.get(atom),
+  useAtomValue: (atom: Atom.Atom<unknown>) => testState.readRegistry()!.get(atom),
 }));
 vi.mock("~/rpc/atomRegistry", () => ({
   appAtomRegistry: {
-    get: (atom: Atom.Atom<unknown>) => testState.registry!.get(atom),
+    get: (atom: Atom.Atom<unknown>) => testState.readRegistry()!.get(atom),
     update: <R, W>(atom: Atom.Writable<R, W>, f: (value: R) => W) =>
-      testState.registry!.update(atom, f),
+      testState.readRegistry()!.update(atom, f),
     subscribe: <A,>(
       atom: Atom.Atom<A>,
       f: (value: A) => void,
       options?: { readonly immediate?: boolean },
-    ) => testState.registry!.subscribe(atom, f, options),
+    ) => testState.readRegistry()!.subscribe(atom, f, options),
   },
 }));
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments: testState.environments }),
-  useEnvironmentProviders: () => new Map([[lab, testState.registry!.get(testState.providers!)]]),
+  useEnvironmentProviders: () =>
+    new Map([[lab, testState.readRegistry()!.get(testState.providers!)]]),
 }));
 vi.mock("~/state/server", () => ({
   serverEnvironment: { providersValueAtom: () => testState.providers! },
@@ -133,12 +140,10 @@ function codex(
   };
 }
 
-let renderer: Root | undefined;
-let current: ReturnType<typeof useManagedRuntimeUpdates> | undefined;
-function Probe() {
+function Probe({ _fixture }: { _fixture: _Fixture }) {
   const value = useManagedRuntimeUpdates();
   useLayoutEffect(() => {
-    current = value;
+    _fixture.publishCurrent(value);
   });
   return null;
 }
@@ -146,15 +151,15 @@ function Probe() {
 function publish(
   presentation: (TestPresentation & { readonly providers?: ReadonlyArray<ServerProvider> }) | null,
 ) {
-  const previous = testState.registry!.get(testState.presentations.get(lab)!);
+  const previous = testState.readRegistry()!.get(testState.presentations.get(lab)!);
   if (presentation?.providers)
-    testState.registry!.set(testState.providers!, presentation.providers);
+    testState.readRegistry()!.set(testState.providers!, presentation.providers);
   // Provider pushes no longer replace the environment presentation.
   if (
     presentation?.connection.phase !== previous?.connection.phase ||
     (presentation?.serverConfig === null) !== (previous?.serverConfig === null)
   ) {
-    testState.registry!.set(testState.presentations.get(lab)!, presentation);
+    testState.readRegistry()!.set(testState.presentations.get(lab)!, presentation);
   }
 }
 const connected = (providers: ServerProvider[]) => ({
@@ -163,9 +168,16 @@ const connected = (providers: ServerProvider[]) => ({
   providers,
 });
 
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  testState.registry = AtomRegistry.make();
+async function _setupFixture0(_fixture: _Fixture) {
+  const registry = AtomRegistry.make();
+  testState.readRegistry = () => registry;
+  _fixture.stack.defer(() => {
+    try {
+      registry.dispose();
+    } finally {
+      testState.readRegistry = () => undefined;
+    }
+  });
   testState.toasts = [];
   testState.environments = [
     {
@@ -182,23 +194,27 @@ beforeEach(async () => {
   testState.startRuntimeAction
     .mockReset()
     .mockResolvedValue(codex({ operation: { status: "preparing" } }));
-  current = undefined;
-  await act(() => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(<Probe />);
+  _fixture.publishCurrent(undefined);
+  await act(async () => {
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
   });
-});
+}
 
-afterEach(async () => {
+async function _cleanupFixture1(_fixture: _Fixture) {
   vi.useRealTimers();
-  await act(() => renderer?.unmount());
-  testState.registry?.dispose();
-  vi.unstubAllGlobals();
-});
+  await act(async () => await _fixture.root0?.unmount());
+}
 
 describe("useManagedRuntimeUpdates", () => {
-  it("offers one runtime per connected machine and driver", () => {
-    expect(current!.targets).toEqual([
+  it("offers one runtime per connected machine and driver", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    expect(_fixture.current!.targets).toEqual([
       {
         environmentId: lab,
         environmentLabel: "lab",
@@ -210,10 +226,14 @@ describe("useManagedRuntimeUpdates", () => {
   });
 
   it("hands off a staged runtime, then reports its later failure", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     let handedOff = false;
     let runs: Runs = [];
     await act(async () => {
-      void current!.update(current!.targets, { inPass: true }).then((result) => {
+      void _fixture.current!.update(_fixture.current!.targets, { inPass: true }).then((result) => {
         handedOff = true;
         runs = result;
       });
@@ -247,8 +267,8 @@ describe("useManagedRuntimeUpdates", () => {
     await act(async () => {
       publish(connected([codex({ operation: { status: "failed", message: "Test failed." } })]));
     });
-    await act(() => renderer!.render(<Probe />));
-    expect([...current!.runs.values()][0]).toMatchObject({
+    await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
+    expect([..._fixture.current!.runs.values()][0]).toMatchObject({
       outcome: { status: "failed", message: "Test failed." },
     });
     // The pass summarizes what settled before the handoff; this one is reported on its own.
@@ -256,6 +276,10 @@ describe("useManagedRuntimeUpdates", () => {
   });
 
   it("joins an update already starting instead of resolving early", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     let finishStart = (_provider: ServerProvider) => {};
     testState.startRuntimeAction.mockImplementationOnce(
       () =>
@@ -265,8 +289,10 @@ describe("useManagedRuntimeUpdates", () => {
     );
     const settled: string[] = [];
     await act(async () => {
-      void current!.update(current!.targets).then(() => settled.push("row"));
-      void current!.update(current!.targets, { inPass: true }).then(() => settled.push("pass"));
+      void _fixture.current!.update(_fixture.current!.targets).then(() => settled.push("row"));
+      void _fixture
+        .current!.update(_fixture.current!.targets, { inPass: true })
+        .then(() => settled.push("pass"));
     });
     expect(testState.startRuntimeAction).toHaveBeenCalledOnce();
     expect(settled).toEqual([]);
@@ -283,8 +309,12 @@ describe("useManagedRuntimeUpdates", () => {
   });
 
   it("exposes a machine's runs to the server busy rule", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     await act(async () => {
-      void current!.update(current!.targets);
+      void _fixture.current!.update(_fixture.current!.targets);
     });
     expect(managedRuntimeRunsOn(lab)).toMatchObject([{ outcome: { status: "pending" } }]);
     expect(managedRuntimeRunsOn(EnvironmentId.make("elsewhere"))).toEqual([]);
@@ -292,9 +322,13 @@ describe("useManagedRuntimeUpdates", () => {
   });
 
   it("fails an update whose machine is removed", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     let runs: Runs = [];
     await act(async () => {
-      void current!.update(current!.targets).then((result) => {
+      void _fixture.current!.update(_fixture.current!.targets).then((result) => {
         runs = result;
       });
     });
@@ -303,10 +337,14 @@ describe("useManagedRuntimeUpdates", () => {
   });
 
   it("waits out a short disconnection and fails one that lasts", async () => {
-    vi.useFakeTimers();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    _fixture.stack.use(_fixtureFakeTimers());
     let runs: Runs = [];
     await act(async () => {
-      void current!.update(current!.targets).then((result) => {
+      void _fixture.current!.update(_fixture.current!.targets).then((result) => {
         runs = result;
       });
     });
@@ -322,10 +360,14 @@ describe("useManagedRuntimeUpdates", () => {
   });
 
   it("settles a failed start without following it", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     testState.startRuntimeAction.mockRejectedValueOnce(new Error("No catalog."));
     let runs: Runs = [];
     await act(async () => {
-      runs = await current!.update(current!.targets);
+      runs = await _fixture.current!.update(_fixture.current!.targets);
     });
     expect(runs).toMatchObject([{ outcome: { status: "failed", message: "No catalog." } }]);
     expect(managedRuntimeRunOutcomes(runs)).toEqual([
@@ -335,7 +377,11 @@ describe("useManagedRuntimeUpdates", () => {
 });
 
 describe("managed runtime pass helpers", () => {
-  it("counts a staged runtime as neither updated nor failed", () => {
+  it("counts a staged runtime as neither updated nor failed", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const target = {
       environmentId: lab,
       environmentLabel: "lab",
@@ -366,7 +412,11 @@ describe("managed runtime pass helpers", () => {
     ]);
   });
 
-  it("reads only connected machines", () => {
+  it("reads only connected machines", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     expect(
       connectedProviderEnvironments(
         [
@@ -388,3 +438,30 @@ describe("managed runtime pass helpers", () => {
     ).toEqual([{ environmentId: lab, label: "lab", providers: [] }]);
   });
 });
+
+function _createFixture() {
+  let _published_current = undefined! as ReturnType<typeof useManagedRuntimeUpdates> | undefined;
+
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    get current() {
+      return _published_current;
+    },
+    publishCurrent(next: typeof _published_current) {
+      _published_current = next;
+    },
+
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

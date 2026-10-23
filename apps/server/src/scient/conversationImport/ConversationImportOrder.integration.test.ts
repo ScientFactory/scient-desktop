@@ -288,7 +288,6 @@ it.live(
         ]),
       );
     }).pipe(Effect.provide(TestLayer)),
-  { timeout: 30_000 },
 );
 
 it.live(
@@ -388,7 +387,6 @@ it.live(
         edited,
       );
     }).pipe(Effect.provide(TestLayer)),
-  { timeout: 30_000 },
 );
 
 it.live(
@@ -501,7 +499,6 @@ it.live(
       assert.deepEqual(projection.runs, []);
       assert.deepEqual(projection.runtimeRequests, []);
     }).pipe(Effect.provide(TestLayer)),
-  { timeout: 30_000 },
 );
 
 it.live(
@@ -543,5 +540,4 @@ it.live(
         ),
       );
     }).pipe(Effect.provide(TestLayer)),
-  { timeout: 30_000 },
 );

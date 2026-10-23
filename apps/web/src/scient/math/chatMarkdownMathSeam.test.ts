@@ -60,11 +60,11 @@ describe("ChatMarkdown math seam", () => {
 
   it("routes math code nodes to the Scient components, with streaming state", () => {
     expect(chatMarkdownSource).toContain("const tex = nodeToPlainText(children);");
-    expect(chatMarkdownSource).toContain(
-      "<ScientInlineMath tex={tex} isStreaming={isStreaming} />",
+    expect(chatMarkdownSource).toMatch(
+      /<ScientInlineMath\s+tex=\{tex\}\s+isStreaming=\{isStreaming\}\s+focusable=\{!inline\}\s*\/>/,
     );
-    expect(chatMarkdownSource).toContain(
-      "<ScientDisplayMath tex={codeBlock.code} isStreaming={isStreaming} />",
+    expect(chatMarkdownSource).toMatch(
+      /<ScientDisplayMath\s+tex=\{codeBlock.code\}\s+isStreaming=\{isStreaming\}\s+focusable=\{!inline\}\s*\/>/,
     );
   });
 });

@@ -1,5 +1,4 @@
 import { expect, it } from "@effect/vitest";
-import { skillReleaseKey, type SkillRelease } from "@scientfactory/scient-skills";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -15,36 +14,10 @@ import {
 import { ScientSkillsToolkit } from "../../mcp/toolkits/skills/tools.ts";
 import { makeScientToolExecutor } from "./AgentOperationDispatcher.ts";
 import { SCIENT_CORE_AWARENESS } from "../../provider/ScientAwareness.ts";
-import { BUILT_IN_SKILL_RELEASES } from "../skills/BuiltInSkillReleases.ts";
 import { prepareScientSkillTurn } from "../skills/ScientSkillInvocation.ts";
-import { AgentInvocationContext, type AgentSkillDescriptor } from "./AgentInvocationContext.ts";
+import { AgentInvocationContext } from "./AgentInvocationContext.ts";
+import { capabilityBudgetFixture as fixtures } from "./AgentCapabilityBudget.testkit.ts";
 
-const fixtures = (count: number) => {
-  const base = BUILT_IN_SKILL_RELEASES[0]!;
-  const releases = new Map<string, SkillRelease>();
-  const skills: AgentSkillDescriptor[] = [];
-  for (let index = 0; index < count; index++) {
-    const name = `fixture-${String(index).padStart(3, "0")}`;
-    const release = {
-      ...base,
-      id: `fixture.${index}`,
-      name,
-      description: `Scientific workflow ${index}; inspect measurements and preserve evidence.`,
-    };
-    const releaseKey = skillReleaseKey(release);
-    releases.set(releaseKey, release);
-    skills.push({
-      releaseKey,
-      id: release.id,
-      name,
-      description: release.description,
-      origin: "scient",
-      invocationPolicy: "automatic",
-      activationScope: "user",
-    });
-  }
-  return { releases, skills };
-};
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 it.live(
@@ -126,13 +99,6 @@ it.live(
           offset = page.nextOffset;
         }
         expect(fallbackNames).toEqual(names);
-        const samples = Array.from({ length: 101 }, () => {
-          const start = performance.now();
-          prepareScientSkillTurn("Explain this function.", fixture.skills, fixture.releases);
-          return performance.now() - start;
-        });
-        const initialMeasuredMs = samples.shift()!;
-        samples.sort((a, b) => a - b);
         yield* Effect.logInfo({
           fixture: "skill-orientation",
           count,
@@ -156,9 +122,6 @@ it.live(
             ) +
             Buffer.byteLength(encode(found.result)) +
             Buffer.byteLength(encode(loaded.result)),
-          initialMeasuredMs,
-          p50Ms: samples[49],
-          p95Ms: samples[94],
         });
       }
     }).pipe(

@@ -278,29 +278,30 @@ export default function(pi) {
                           request.clearIfCurrent!().pipe(
                             Effect.tap(() => Deferred.succeed(discarded, undefined)),
                           ),
-                        dispatchIfCurrent: (effect) =>
-                          Effect.gen(function* () {
-                            // The worker requeues this guarded request directly. Observe
-                            // actual guard attempts rather than another producer offer.
-                            if (barrier) {
-                              offers.push(request);
-                              yield* Queue.offer(offerEvents, request);
-                            }
-                            return yield* request.dispatchIfCurrent!(
-                              beforeAdmission(request).pipe(Effect.andThen(effect)),
-                            ).pipe(
-                              Effect.tap((result) =>
-                                Option.isNone(result)
-                                  ? Deferred.succeed(staleAttempt, undefined).pipe(Effect.asVoid)
-                                  : Effect.void,
-                              ),
-                              Effect.tapError((error) =>
-                                isProviderWorkDeferred(error)
-                                  ? Queue.offer(deferredAttempts, error).pipe(Effect.asVoid)
-                                  : Effect.void,
-                              ),
-                            );
-                          }),
+                        dispatchIfCurrent: Effect.fn(
+                          "PiNativeInitiatedWorkTestHarness.dispatchIfCurrent",
+                        )(function* (effect) {
+                          // The worker requeues this guarded request directly. Observe
+                          // actual guard attempts rather than another producer offer.
+                          if (barrier) {
+                            offers.push(request);
+                            yield* Queue.offer(offerEvents, request);
+                          }
+                          return yield* request.dispatchIfCurrent!(
+                            beforeAdmission(request).pipe(Effect.andThen(effect)),
+                          ).pipe(
+                            Effect.tap((result) =>
+                              Option.isNone(result)
+                                ? Deferred.succeed(staleAttempt, undefined).pipe(Effect.asVoid)
+                                : Effect.void,
+                            ),
+                            Effect.tapError((error) =>
+                              isProviderWorkDeferred(error)
+                                ? Queue.offer(deferredAttempts, error).pipe(Effect.asVoid)
+                                : Effect.void,
+                            ),
+                          );
+                        }),
                       }),
                     ),
                   ),
@@ -421,22 +422,23 @@ export default function(pi) {
             Effect.gen(function* () {
               const real = yield* VcsProcess.VcsProcess;
               return {
-                run: (input: VcsProcess.VcsProcessInput) =>
-                  Effect.gen(function* () {
-                    if (
-                      (scenario === "captured" || barrier) &&
-                      !heldCapture &&
-                      input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
-                      input.args.includes("fetch") &&
-                      input.args.some((arg) => arg.endsWith(barrier ? "/ordinal/1" : "/ordinal/2"))
-                    ) {
-                      heldCapture = true;
-                      captureCwd = input.cwd;
-                      yield* Deferred.succeed(captureEntered, undefined);
-                      yield* Deferred.await(releaseCapture);
-                    }
-                    return yield* real.run(input);
-                  }),
+                run: Effect.fn("PiNativeInitiatedWorkTestHarness.run")(function* (
+                  input: VcsProcess.VcsProcessInput,
+                ) {
+                  if (
+                    (scenario === "captured" || barrier) &&
+                    !heldCapture &&
+                    input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
+                    input.args.includes("fetch") &&
+                    input.args.some((arg) => arg.endsWith(barrier ? "/ordinal/1" : "/ordinal/2"))
+                  ) {
+                    heldCapture = true;
+                    captureCwd = input.cwd;
+                    yield* Deferred.succeed(captureEntered, undefined);
+                    yield* Deferred.await(releaseCapture);
+                  }
+                  return yield* real.run(input);
+                }),
               };
             }),
           ).pipe(Layer.provide(VcsProcess.layer), Layer.provide(NodeServices.layer)),

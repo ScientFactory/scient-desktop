@@ -166,26 +166,25 @@ export function makeCursorConnectionActionsFromRuntime(
 ): ProviderConnectionActions {
   return {
     methods: ["cursor_browser"],
-    start: (method: ProviderConnectionMethod) =>
-      Effect.gen(function* () {
-        if (method !== "cursor_browser") {
-          return yield* connectionError("Cursor does not support this sign-in method.");
-        }
-        const process = yield* runtime.startLogin;
-        return {
-          initialStatus: process.authorizationUrl
-            ? ("waiting_for_browser" as const)
-            : ("verifying" as const),
-          ...(process.authorizationUrl
-            ? {
-                authorizationUrl: process.authorizationUrl,
-                authorizationUrlKind: "primary" as const,
-              }
-            : {}),
-          waitForCompletion: process.waitForExit.pipe(Effect.andThen(runtime.verifyLoggedIn)),
-          cancel: process.cancel,
-        };
-      }),
+    start: Effect.fn("CursorConnectionActions.start")(function* (method: ProviderConnectionMethod) {
+      if (method !== "cursor_browser") {
+        return yield* connectionError("Cursor does not support this sign-in method.");
+      }
+      const process = yield* runtime.startLogin;
+      return {
+        initialStatus: process.authorizationUrl
+          ? ("waiting_for_browser" as const)
+          : ("verifying" as const),
+        ...(process.authorizationUrl
+          ? {
+              authorizationUrl: process.authorizationUrl,
+              authorizationUrlKind: "primary" as const,
+            }
+          : {}),
+        waitForCompletion: process.waitForExit.pipe(Effect.andThen(runtime.verifyLoggedIn)),
+        cancel: process.cancel,
+      };
+    }),
     disconnect: runtime.logout,
   };
 }

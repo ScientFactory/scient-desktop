@@ -1,5 +1,6 @@
-import { act, useLayoutEffect, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { useLayoutEffect, type ReactNode } from "react";
+
 import {
   EnvironmentId,
   ProviderDriverKind,
@@ -9,28 +10,30 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 
-let root: Root | undefined;
-let host: HTMLDivElement;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
-
-function mount(node: ReactNode) {
-  if (!root) {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-  }
-  act(() => root!.render(node));
-  return host;
+async function _setupFixture0(_fixture: _Fixture) {
+  await undefined;
 }
-afterEach(() => {
-  if (root) act(() => root!.unmount());
-  host?.remove();
-  root = undefined;
+
+async function mount(_fixture: _Fixture, node: ReactNode) {
+  if (!_fixture.root0) {
+    _fixture.host = document.createElement("div");
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
+  }
+  await act(async () => await _fixture.root0!.rerender(node));
+  return _fixture.host;
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  if (_fixture.root0) await act(async () => await _fixture.root0!.unmount());
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
   vi.unstubAllGlobals();
-});
+}
 
 const start = vi.hoisted(() => vi.fn());
 const prepare = vi.hoisted(() => vi.fn());
@@ -76,13 +79,13 @@ const plan: ProviderRuntimePlan = {
 };
 
 describe("useProviderLifecycleController runtime start", () => {
-  beforeEach(() => {
+  async function _setupFixture2(_fixture: _Fixture) {
     prepare
       .mockReset()
       .mockResolvedValue({ _tag: "Success", value: { ...plan, catalogRevision: "fresh:2" } });
     start.mockReset().mockResolvedValue({ _tag: "Success", value: { providers: [provider] } });
-  });
-  const controller = () => {
+  }
+  const controller = async (_fixture: _Fixture) => {
     let result!: ReturnType<typeof useProviderLifecycleController>;
     function Probe() {
       const value = useProviderLifecycleController({ environmentId, provider });
@@ -91,12 +94,17 @@ describe("useProviderLifecycleController runtime start", () => {
       });
       return null;
     }
-    mount(<Probe />);
+    await mount(_fixture, <Probe />);
     return result;
   };
 
   it("starts the selected managed release without a separate version acceptance", async () => {
-    await controller().startRuntime(plan);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
+    await (await controller(_fixture)).startRuntime(plan);
 
     expect(start).toHaveBeenCalledExactlyOnceWith({
       environmentId,
@@ -105,7 +113,12 @@ describe("useProviderLifecycleController runtime start", () => {
   });
 
   it("preserves the optional legacy acceptance field for older callers", async () => {
-    await controller().startRuntime(plan, { acceptOlderThanSystem: true });
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
+    await (await controller(_fixture)).startRuntime(plan, { acceptOlderThanSystem: true });
 
     expect(start).toHaveBeenCalledExactlyOnceWith({
       environmentId,
@@ -131,8 +144,13 @@ describe("useProviderLifecycleController runtime start", () => {
   });
 
   it("refreshes a stale catalog once and starts the current release", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     start.mockResolvedValueOnce(stale());
-    await controller().startRuntime(plan);
+    await (await controller(_fixture)).startRuntime(plan);
     expect(prepare).toHaveBeenCalledExactlyOnceWith({
       environmentId,
       input: { instanceId, action: "install" },
@@ -145,8 +163,13 @@ describe("useProviderLifecycleController runtime start", () => {
   });
 
   it("stops if the refreshed plan is also stale", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     start.mockResolvedValue(stale());
-    await expect(controller().startRuntime(plan)).rejects.toMatchObject({
+    await expect((await controller(_fixture)).startRuntime(plan)).rejects.toMatchObject({
       reason: "runtime_plan_stale",
     });
     expect(start).toHaveBeenCalledTimes(2);
@@ -154,8 +177,15 @@ describe("useProviderLifecycleController runtime start", () => {
   });
 
   it("does not refresh a confirmed removal automatically", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     start.mockResolvedValue(stale());
-    await expect(controller().startRuntime({ ...plan, action: "remove" })).rejects.toMatchObject({
+    await expect(
+      (await controller(_fixture)).startRuntime({ ...plan, action: "remove" }),
+    ).rejects.toMatchObject({
       reason: "runtime_plan_stale",
     });
     expect(start).toHaveBeenCalledTimes(1);
@@ -163,9 +193,35 @@ describe("useProviderLifecycleController runtime start", () => {
   });
 
   it("does not retry other failures", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     start.mockResolvedValue({ _tag: "Failure", cause: Cause.fail(new Error("Runtime is busy.")) });
-    await expect(controller().startRuntime(plan)).rejects.toThrow("Runtime is busy.");
+    await expect((await controller(_fixture)).startRuntime(plan)).rejects.toThrow(
+      "Runtime is busy.",
+    );
     expect(start).toHaveBeenCalledTimes(1);
     expect(prepare).not.toHaveBeenCalled();
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

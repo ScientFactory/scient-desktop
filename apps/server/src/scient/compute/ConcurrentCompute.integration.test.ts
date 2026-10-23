@@ -1,6 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- gated native qualification of owned process trees.
 import * as NodeProcess from "node:process";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import type { DuplexProcessHandle } from "@scientfactory/execution";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ComputeExecutionId,
@@ -17,6 +20,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as Option from "effect/Option";
 
 import * as ServerConfig from "../../config.ts";
 import * as OwnedLocalEndpoints from "../../localEndpoints/OwnedLocalEndpointRegistry.ts";
@@ -35,16 +40,41 @@ const MATLAB = NodeProcess.env.SCIENT_TEST_MATLAB;
 const PROJECT = ComputeProjectId.make("native-concurrent-compute");
 const encodeQualificationMeasurement = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-const eventually = Effect.fn("ConcurrentCompute.eventually")(function* <A, E, R>(
+const afterSessionReceipt = Effect.fn("ConcurrentCompute.afterSessionReceipt")(function* <A, E, R>(
+  service: ComputeSessionService["Service"],
   read: Effect.Effect<A | null, E, R>,
 ) {
-  for (let attempt = 0; attempt < 600; attempt += 1) {
-    const value = yield* read;
-    if (value !== null) return value;
-    yield* Effect.sleep("50 millis");
-  }
-  return yield* Effect.die(new Error("The native compute condition did not settle."));
-});
+  const changes = yield* service.subscribeSessions({ projectId: PROJECT });
+  const value = yield* changes.pipe(
+    Stream.mapEffect(() => read),
+    Stream.filter((value) => value !== null),
+    Stream.runHead,
+  );
+  if (Option.isNone(value)) return yield* Effect.die("Compute receipt stream ended.");
+  return value.value;
+}, Effect.scoped);
+
+const awaitRuntimeEntry = (file: string) =>
+  Effect.callback<void>((resume) => {
+    const inspect = () => {
+      try {
+        if (NodeFS.readFileSync(file, "utf8") === "running") finish(Effect.void);
+      } catch (cause) {
+        if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
+          finish(Effect.die(cause));
+      }
+    };
+    const watcher = NodeFS.watch(NodePath.dirname(file), (_event, name) => {
+      if (name === NodePath.basename(file)) inspect();
+    });
+    const finish = (effect: Effect.Effect<void>) => {
+      watcher.close();
+      resume(effect);
+    };
+    watcher.on("error", (cause) => finish(Effect.die(cause)));
+    inspect();
+    return Effect.sync(() => watcher.close());
+  });
 
 /** Measurements only: inspect descendants of this test's exact bridge PIDs. */
 function ownedProcesses(roots: ReadonlyArray<number>) {
@@ -81,6 +111,23 @@ describe.runIf(Boolean(PYTHON && MATLAB))("native independent Compute contexts",
         });
         const sessions: ComputeSessionRecord[] = [];
         let ownedPids: number[] = [];
+        const exits = new Map<number, DuplexProcessHandle["exitCode"]>();
+        const observedDuplex = Layer.effect(
+          LocalDuplexProcess.DuplexProcess,
+          Effect.gen(function* () {
+            const delegate = yield* LocalDuplexProcess.DuplexProcess;
+            return LocalDuplexProcess.DuplexProcess.of({
+              start: (request) =>
+                delegate.start(request).pipe(
+                  Effect.tap((handle) =>
+                    Effect.sync(() => {
+                      exits.set(handle.pid, handle.exitCode);
+                    }),
+                  ),
+                ),
+            });
+          }),
+        ).pipe(Layer.provide(LocalDuplexProcess.layer));
         const layer = layerWithRuntimeBindings(
           Effect.all([pythonRuntimeBinding, matlabRuntimeBinding]),
         ).pipe(
@@ -92,7 +139,7 @@ describe.runIf(Boolean(PYTHON && MATLAB))("native independent Compute contexts",
           ),
           Layer.provide(LocalComputeStore.layer),
           Layer.provide(LocalExecutionProcess.layer),
-          Layer.provide(LocalDuplexProcess.layer),
+          Layer.provide(observedDuplex),
           Layer.provide(OwnedLocalEndpoints.layer),
           Layer.provide(ServerConfig.layerTest(cwd, state)),
           Layer.provide(NodeServices.layer),
@@ -164,7 +211,8 @@ describe.runIf(Boolean(PYTHON && MATLAB))("native independent Compute contexts",
               source: { _tag: "console" },
             });
           const finished = (session: ComputeSessionRecord, suffix: string) =>
-            eventually(
+            afterSessionReceipt(
+              service,
               service.listExecutions({ projectId: PROJECT, sessionId: session.sessionId }).pipe(
                 Effect.map((rows) => {
                   const row = rows.find(
@@ -189,7 +237,8 @@ describe.runIf(Boolean(PYTHON && MATLAB))("native independent Compute contexts",
               ),
             { concurrency: "unbounded" },
           );
-          yield* eventually(
+          yield* afterSessionReceipt(
+            service,
             service
               .listSessions({ projectId: PROJECT })
               .pipe(
@@ -201,11 +250,7 @@ describe.runIf(Boolean(PYTHON && MATLAB))("native independent Compute contexts",
           // "running" is admission; MATLAB Engine may buffer stdout until completion.
           // A test-owned file proves that each runtime entered its long-running code.
           for (let index = 0; index < sessions.length; index += 1)
-            yield* eventually(
-              fs
-                .exists(`${cwd}/started-${index}`)
-                .pipe(Effect.map((exists) => (exists ? true : null))),
-            );
+            yield* awaitRuntimeEntry(`${cwd}/started-${index}`);
           // Pending code belongs to each namespace. Stop A must not run its queue or stop B.
           yield* Effect.forEach(
             sessions,
@@ -266,20 +311,25 @@ describe.runIf(Boolean(PYTHON && MATLAB))("native independent Compute contexts",
           Effect.provide(layer),
           Effect.scoped,
           Effect.ensuring(
-            eventually(
-              // Always check cleanup, even when a native behavior assertion fails.
-              // The service scope has closed; never kill arbitrary processes to make this pass.
-              Effect.sync(() =>
-                ownedPids.every((pid) => {
-                  try {
-                    NodeProcess.kill(pid, 0);
-                    return false;
-                  } catch {
-                    return true;
-                  }
-                })
-                  ? true
-                  : null,
+            Effect.suspend(() =>
+              Effect.all([...exits.values()], { concurrency: "unbounded" }),
+            ).pipe(
+              Effect.orDie,
+              Effect.andThen(
+                // Always check cleanup, even when a native behavior assertion fails.
+                // The service scope has closed; never kill arbitrary processes to make this pass.
+                Effect.sync(() =>
+                  expect(
+                    ownedPids.every((pid) => {
+                      try {
+                        NodeProcess.kill(pid, 0);
+                        return false;
+                      } catch {
+                        return true;
+                      }
+                    }),
+                  ).toBe(true),
+                ),
               ),
             ),
           ),
@@ -288,6 +338,5 @@ describe.runIf(Boolean(PYTHON && MATLAB))("native independent Compute contexts",
         Effect.provide(Layer.mergeAll(NodeServices.layer, Logger.layer([Logger.consolePretty()]))),
         Effect.scoped,
       ),
-    { timeout: 240_000 },
   );
 });

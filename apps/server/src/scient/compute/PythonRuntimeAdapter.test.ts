@@ -1,5 +1,4 @@
 // @effect-diagnostics preferSchemaOverJson:off -- test data uses JSON for probe simulation.
-// @effect-diagnostics globalDate:off -- test uses process.hrtime for unique temp directories.
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -410,7 +409,7 @@ describe("python candidate discovery", () => {
   it("places project .venv before PATH candidates", () => {
     // This test uses a real directory that may or may not have .venv.
     // The important assertion is ordering when .venv exists.
-    const tmpDir = `/tmp/scient-test-${process.hrtime.bigint()}`;
+    const tmpDir = require("node:fs").mkdtempSync("/tmp/scient-test-");
     try {
       require("node:fs").mkdirSync(`${tmpDir}/.venv/bin`, { recursive: true });
       require("node:fs").writeFileSync(`${tmpDir}/.venv/bin/python`, "");

@@ -585,7 +585,6 @@ it.layer(testLayer.pipe(Layer.provideMerge(ThreadCommandExecutor.layer)))(
             expect(yield* h.registry.getInstance(first)).toBe(h.target);
           }).pipe(Effect.provide(configured.layer), Effect.scoped);
         }).pipe(Effect.scoped),
-      20_000,
     );
 
     it.effect.skipIf(windowsHost)(
@@ -624,7 +623,6 @@ it.layer(testLayer.pipe(Layer.provideMerge(ThreadCommandExecutor.layer)))(
             );
           }).pipe(Effect.provide(configured.layer), Effect.scoped);
         }).pipe(Effect.scoped),
-      20_000,
     );
 
     it.effect.skipIf(windowsHost)(
@@ -662,7 +660,6 @@ it.layer(testLayer.pipe(Layer.provideMerge(ThreadCommandExecutor.layer)))(
           expect(fresh.instanceId).toBe(first);
           expect(fresh.providerSession.cwd).toBe(h.root);
         }).pipe(Effect.scoped),
-      20_000,
     );
 
     it.effect.skipIf(windowsHost)(
@@ -709,7 +706,6 @@ it.layer(testLayer.pipe(Layer.provideMerge(ThreadCommandExecutor.layer)))(
           );
           expect(fresh.instanceId).toBe(first);
         }).pipe(Effect.scoped),
-      20_000,
     );
 
     it.effect.skipIf(windowsHost)(
@@ -764,7 +760,6 @@ it.layer(testLayer.pipe(Layer.provideMerge(ThreadCommandExecutor.layer)))(
           }),
         );
       },
-      20_000,
     );
     it.effect.skipIf(windowsHost)(
       "preserves Grok logout rejection after successful physical close without retiring the factory",
@@ -796,7 +791,6 @@ it.layer(testLayer.pipe(Layer.provideMerge(ThreadCommandExecutor.layer)))(
             yield* h.launches.findLast((launch) => launch.instanceId === first)!.handle.isRunning,
           ).toBe(true);
         }).pipe(Effect.scoped),
-      20_000,
     );
     it.effect.skipIf(windowsHost)(
       "refuses native opening after caller or configured instance retirement",
@@ -839,7 +833,6 @@ it.layer(testLayer.pipe(Layer.provideMerge(ThreadCommandExecutor.layer)))(
           for (const launch of h.launches.filter((launch) => launch.instanceId === second))
             expect(yield* launch.handle.isRunning).toBe(true);
         }).pipe(Effect.scoped),
-      20_000,
     );
   },
 );

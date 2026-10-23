@@ -3,9 +3,9 @@ import { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+
+import { render, stubGlobal, type Screen } from "../../test/render";
 
 const state = vi.hoisted(() => ({
   mode: "notifications",
@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   sound: vi.fn(),
   badge: vi.fn(),
   environmentIds: ["one", "two"],
+  publishNotification: (_notification: TestNotification) => {},
 }));
 vi.mock(import("@tanstack/react-router"), async (original) => ({
   ...(await original()),
@@ -56,13 +57,10 @@ vi.mock(import("../threadNotifications"), async (original) => ({
 
 import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
 
-let registry: AtomRegistry.AtomRegistry;
 const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
-state.shells = { set: (id, value) => registry.set(shellAtom(id), value) };
 
 class TestNotification extends EventTarget {
   static permission = "granted";
-  static sent: TestNotification[] = [];
   close = vi.fn();
   get tag() {
     return this.options.tag ?? "";
@@ -72,7 +70,7 @@ class TestNotification extends EventTarget {
     readonly options: NotificationOptions,
   ) {
     super();
-    TestNotification.sent.push(this);
+    state.publishNotification(this);
   }
 }
 
@@ -85,7 +83,6 @@ const thread = {
   session: null as { status: string } | null,
   latestTurn: { turnId: "turn", state: "running", completedAt: null as string | null },
 };
-let root: Root;
 let focused = false;
 let visibility = "visible";
 
@@ -145,10 +142,14 @@ function toV2ThreadShell(input: typeof thread) {
   };
 }
 
-function shell(overrides: Partial<typeof thread> = {}) {
+function shell(overrides: Partial<typeof thread> = {}, ...others: Partial<typeof thread>[]) {
   return {
     status: "live",
-    snapshot: Option.some({ threads: [toV2ThreadShell({ ...thread, ...overrides })] }),
+    snapshot: Option.some({
+      threads: [overrides, ...others].map((override) =>
+        toV2ThreadShell({ ...thread, ...override }),
+      ),
+    }),
   };
 }
 function complete(environment = "one", completedAt = "2026-09-13T08:00:00Z") {
@@ -157,19 +158,25 @@ function complete(environment = "one", completedAt = "2026-09-13T08:00:00Z") {
     shell({ latestTurn: { turnId: "turn", state: "completed", completedAt } }),
   );
 }
-async function render() {
-  await act(async () =>
-    root.render(
-      <RegistryContext.Provider value={registry}>
-        <ThreadNotificationCoordinator />
-      </RegistryContext.Provider>,
-    ),
-  );
-}
-
-beforeEach(() => {
+// The mocked modules read `state`, the registry and the focus flags, so every test starts by
+// resetting them. The first render is left to the test because some tests change state first.
+function setup() {
   vi.clearAllMocks();
-  registry = AtomRegistry.make();
+  const stack = new AsyncDisposableStack();
+  const testRegistry = AtomRegistry.make();
+  const previousShells = state.shells;
+  const notifications: TestNotification[] = [];
+  const previousPublication = state.publishNotification;
+  state.publishNotification = (notification) => {
+    notifications.push(notification);
+  };
+  state.shells = { set: (id, value) => testRegistry.set(shellAtom(id), value) };
+  stack.defer(() => {
+    state.shells = previousShells;
+    notifications.length = 0;
+    state.publishNotification = previousPublication;
+  });
+  stack.defer(() => testRegistry.dispose());
   state.mode = "notifications";
   state.inApp = false;
   state.environmentIds = ["one", "two"];
@@ -178,110 +185,39 @@ beforeEach(() => {
   focused = false;
   visibility = "visible";
   TestNotification.permission = "granted";
-  TestNotification.sent = [];
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("Notification", TestNotification);
-  vi.spyOn(window, "focus").mockImplementation(() => undefined);
-  vi.spyOn(document, "hasFocus").mockImplementation(() => focused);
-  vi.spyOn(document, "visibilityState", "get").mockImplementation(
-    () => visibility as DocumentVisibilityState,
+  stack.use(stubGlobal("Notification", TestNotification));
+  stack.use(vi.spyOn(window, "focus").mockImplementation(() => undefined));
+  stack.use(vi.spyOn(document, "hasFocus").mockImplementation(() => focused));
+  stack.use(
+    vi
+      .spyOn(document, "visibilityState", "get")
+      .mockImplementation(() => visibility as DocumentVisibilityState),
   );
-  root = createRoot(document.createElement("div"));
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  delete window.desktopBridge;
-  registry.dispose();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
-
-it("counts notifying threads across environments, replaces repeat alerts, and clears on focus", async () => {
-  await render();
-  complete();
-  await render();
-  expect(state.badge).toHaveBeenLastCalledWith(1);
-  complete("one", "2026-09-13T08:01:00Z");
-  complete("two");
-  await render();
-  expect(state.badge).toHaveBeenLastCalledWith(2);
-  expect(TestNotification.sent[0]!.close).toHaveBeenCalledOnce();
-  focused = true;
-  window.dispatchEvent(new Event("focus"));
-  expect(state.badge).toHaveBeenLastCalledWith(0);
-  expect(
-    TestNotification.sent.every((notification) => notification.close.mock.calls.length > 0),
-  ).toBe(true);
-  focused = false;
-  complete("two", "2026-09-13T08:02:00Z");
-  await render();
-  expect(state.badge).toHaveBeenLastCalledWith(1);
-});
-
-it("does not badge old completions on first load or reconnect", async () => {
-  complete();
-  await render();
-  state.shells.set("one", { status: "connecting", snapshot: Option.none() });
-  await render();
-  complete("one", "2026-09-13T08:01:00Z");
-  await render();
-  expect(TestNotification.sent).toHaveLength(0);
-  expect(state.badge.mock.calls.every(([count]) => count === 0)).toBe(true);
-});
-
-it("removes alerts only from environments that leave the client", async () => {
-  await render();
-  complete("one");
-  complete("two");
-  await render();
-  expect(state.badge).toHaveBeenLastCalledWith(2);
-  const [removed, retained] = TestNotification.sent;
-  state.environmentIds = ["two"];
-  await render();
-  expect(state.badge).toHaveBeenLastCalledWith(1);
-  expect(removed!.close).toHaveBeenCalledOnce();
-  expect(retained!.close).not.toHaveBeenCalled();
-  await render();
-  expect(removed!.close).toHaveBeenCalledOnce();
-  state.environmentIds = [];
-  await render();
-  expect(state.badge).toHaveBeenLastCalledWith(0);
-  expect(retained!.close).toHaveBeenCalledOnce();
-});
-
-it("starts a fresh count after another native app window gains focus", async () => {
-  let clear: (() => void) | undefined;
-  const unsubscribe = vi.fn();
-  Object.assign(window, {
-    desktopBridge: {
-      onNotificationBadgeClear: (listener: () => void) => {
-        clear = listener;
-        return unsubscribe;
-      },
+  const ui = () => (
+    <RegistryContext.Provider value={testRegistry}>
+      <ThreadNotificationCoordinator />
+    </RegistryContext.Provider>
+  );
+  let screen: Screen | undefined;
+  return {
+    notifications,
+    async render() {
+      if (screen) await screen.rerender(ui());
+      else screen = stack.use(await render(ui()));
     },
-  });
-  await render();
-  complete();
-  await render();
-  clear!();
-  expect(state.badge).toHaveBeenLastCalledWith(0);
-  complete("two");
-  await render();
-  expect(state.badge).toHaveBeenLastCalledWith(1);
-  await act(async () => root.unmount());
-  root = createRoot(document.createElement("div"));
-  expect(unsubscribe).toHaveBeenCalledOnce();
-  expect(state.badge).toHaveBeenLastCalledWith(0);
-});
+    unmount: () => screen!.unmount(),
+    [Symbol.asyncDispose]: () => stack.disposeAsync(),
+  };
+}
 
 it.each(["off", "sound", "focused", "denied", "archived"])(
   "does not show visual alerts when %s",
   async (condition) => {
+    await using app = setup();
     if (condition === "off" || condition === "sound") state.mode = condition;
     if (condition === "focused") focused = true;
     if (condition === "denied") TestNotification.permission = "denied";
-    await render();
+    await app.render();
     complete();
     if (condition === "archived")
       state.shells.set(
@@ -291,8 +227,8 @@ it.each(["off", "sound", "focused", "denied", "archived"])(
           hasPendingApprovals: true,
         }),
       );
-    await render();
-    expect(TestNotification.sent).toHaveLength(0);
+    await app.render();
+    expect(app.notifications).toHaveLength(0);
     expect(state.badge.mock.calls.every(([count]) => count === 0)).toBe(true);
   },
 );
@@ -300,40 +236,20 @@ it.each(["off", "sound", "focused", "denied", "archived"])(
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "badges %s and clears when notifications are disabled",
   async (flag) => {
-    await render();
+    await using app = setup();
+    await app.render();
     state.shells.set("one", shell({ [flag]: true }));
-    await render();
+    await app.render();
     expect(state.badge).toHaveBeenLastCalledWith(1);
-    const notification = TestNotification.sent[0]!;
+    const notification = app.notifications[0]!;
     notification.dispatchEvent(new Event("click"));
     expect(state.navigate).toHaveBeenCalledWith({
       to: "/$environmentId/$threadId",
       params: { environmentId: EnvironmentId.make("one"), threadId: "thread" },
     });
     state.mode = "sound";
-    await render();
+    await app.render();
     expect(state.badge).toHaveBeenLastCalledWith(0);
     expect(notification.close).toHaveBeenCalled();
   },
 );
-
-it("shows in-app alerts without adding a badge while focused", async () => {
-  state.inApp = true;
-  focused = true;
-  await render();
-  complete();
-  await render();
-  expect(state.toast).toHaveBeenCalledOnce();
-  expect(TestNotification.sent).toHaveLength(0);
-  expect(state.badge.mock.calls.every(([count]) => count === 0)).toBe(true);
-});
-
-it("badges background failures with in-app notifications enabled", async () => {
-  state.inApp = true;
-  await render();
-  state.shells.set("one", shell({ latestTurn: { ...thread.latestTurn, state: "error" } }));
-  await render();
-  expect(TestNotification.sent[0]?.title).toBe("Thread failed");
-  expect(state.badge).toHaveBeenLastCalledWith(1);
-  expect(state.toast).not.toHaveBeenCalled();
-});

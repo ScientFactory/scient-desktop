@@ -1,5 +1,6 @@
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { type ReactNode } from "react";
+
 import {
   EnvironmentId,
   ProviderConnectionError,
@@ -12,31 +13,33 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import type { ComponentProps, ReactElement } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ProviderRuntimeSection,
   resolveProviderRuntimeForPresentation,
 } from "./ProviderRuntimeSection";
 
-let root: Root | undefined;
-let host: HTMLDivElement;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
-
-function mount(node: ReactNode) {
-  if (!root) {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-  }
-  act(() => root!.render(node));
-  return host;
+async function _setupFixture0(_fixture: _Fixture) {
+  await undefined;
 }
-afterEach(() => {
-  if (root) act(() => root!.unmount());
-  host?.remove();
-  root = undefined;
+
+async function mount(_fixture: _Fixture, node: ReactNode) {
+  if (!_fixture.root0) {
+    _fixture.host = document.createElement("div");
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
+  }
+  await act(async () => await _fixture.root0!.rerender(node));
+  return _fixture.host;
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  if (_fixture.root0) await act(async () => await _fixture.root0!.unmount());
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
   vi.unstubAllGlobals();
-});
+}
 
 const atoms = vi.hoisted(() => ({
   plan: Symbol("planProviderRuntime"),
@@ -101,8 +104,11 @@ const provider: ServerProvider = {
   },
 };
 
-function renderSection(props: ComponentProps<typeof ProviderRuntimeSection>) {
-  return mount(<ProviderRuntimeSection {...props} />);
+async function renderSection(
+  _fixture: _Fixture,
+  props: ComponentProps<typeof ProviderRuntimeSection>,
+) {
+  return await mount(_fixture, <ProviderRuntimeSection {...props} />);
 }
 function serialize(element: HTMLElement) {
   return element.innerHTML;
@@ -115,6 +121,11 @@ function findActionButton(node: HTMLElement, label: string) {
 
 describe("ProviderRuntimeSection", () => {
   it("offers the shared removal command for a Scient-owned registry installation", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const registryProvider: ServerProvider = {
       ...provider,
       driver: ProviderDriverKind.make("acpRegistry"),
@@ -151,7 +162,7 @@ describe("ProviderRuntimeSection", () => {
       initialAction: "remove" as const,
     };
 
-    renderSection(props);
+    await renderSection(_fixture, props);
     await vi.waitFor(() =>
       expect(commands.plan).toHaveBeenCalledWith({
         environmentId,
@@ -160,13 +171,13 @@ describe("ProviderRuntimeSection", () => {
     );
     expect(commands.start).not.toHaveBeenCalled();
 
-    const plan = renderSection(props);
+    const plan = await renderSection(_fixture, props);
     expect(serialize(plan)).toContain("Remove Registry Agent?");
     const remove = findActionButton(plan, "Remove");
     expect(remove).toBeDefined();
     if (!remove || typeof remove.click !== "function")
       throw new Error("Expected registry removal action");
-    act(() => remove.click());
+    await act(() => remove.click());
     await vi.waitFor(() =>
       expect(commands.start).toHaveBeenCalledWith({
         environmentId,
@@ -175,9 +186,14 @@ describe("ProviderRuntimeSection", () => {
     );
   });
 
-  it("labels registry ownership without presenting it as a system executable", () => {
+  it("labels registry ownership without presenting it as a system executable", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         environmentId,
         displayName: "Registry Agent",
         provider: {
@@ -195,9 +211,14 @@ describe("ProviderRuntimeSection", () => {
     expect(markup).not.toContain("System installation");
   });
 
-  it("presents a missing Cursor CLI as separate from bundled SDK execution", () => {
+  it("presents a missing Cursor CLI as separate from bundled SDK execution", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         environmentId,
         displayName: "Cursor",
         provider: {
@@ -230,12 +251,15 @@ describe("ProviderRuntimeSection", () => {
         },
       },
     };
-    const render = (input: {
-      readonly provider: ServerProvider;
-      readonly presentation?: "card" | "row";
-    }) => {
+    const render = async (
+      _fixture: _Fixture,
+      input: {
+        readonly provider: ServerProvider;
+        readonly presentation?: "card" | "row";
+      },
+    ) => {
       return serialize(
-        renderSection({
+        await renderSection(_fixture, {
           environmentId,
           provider: input.provider,
           displayName: "Antigravity",
@@ -244,8 +268,13 @@ describe("ProviderRuntimeSection", () => {
       );
     };
 
-    it("renders the managed runtime as a frameless row with its actions beside the status", () => {
-      const markup = render({ provider: managedProvider, presentation: "row" });
+    it("renders the managed runtime as a frameless row with its actions beside the status", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
+      const markup = await render(_fixture, { provider: managedProvider, presentation: "row" });
       expect(markup).toContain("Managed by Scient");
       expect(markup).toContain("Repair");
       expect(markup).toContain("Remove");
@@ -256,7 +285,12 @@ describe("ProviderRuntimeSection", () => {
       expect(markup).toContain("px-3 py-3 sm:px-4");
     });
 
-    it("says when Scient last checked for a newer release, and why a check failed", () => {
+    it("says when Scient last checked for a newer release, and why a check failed", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
       const runtime = managedProvider.connection!.runtime!;
       const withCatalog = (catalog: ProviderRuntimeCatalogFreshness): ServerProvider => ({
         ...managedProvider,
@@ -265,17 +299,19 @@ describe("ProviderRuntimeSection", () => {
           runtime: { ...runtime, qualifiedVersion: "1.1.17", catalog },
         },
       });
-      const checkedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+      const now = Date.parse("2026-10-20T12:00:00.000Z");
+      using _now = vi.spyOn(Date, "now").mockReturnValue(now);
+      const checkedAt = new Date(now - 5 * 60_000).toISOString();
       expect(
-        render({
+        await render(_fixture, {
           provider: withCatalog({ checkedAt, failure: null, checksDisabled: false }),
           presentation: "row",
         }),
       ).toContain("Up to date · checked 5m ago");
-      const failed = render({
+      const failed = await render(_fixture, {
         provider: withCatalog({
           checkedAt,
-          failure: { at: new Date().toISOString(), message: "The check timed out." },
+          failure: { at: new Date(now).toISOString(), message: "The check timed out." },
           checksDisabled: false,
         }),
         presentation: "row",
@@ -286,12 +322,24 @@ describe("ProviderRuntimeSection", () => {
       expect(failed).toContain("text-warning-foreground");
     });
 
-    it("keeps its own frame outside settings", () => {
-      expect(render({ provider: managedProvider })).toContain("rounded-lg border p-3");
+    it("keeps its own frame outside settings", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
+      expect(await render(_fixture, { provider: managedProvider })).toContain(
+        "rounded-lg border p-3",
+      );
     });
 
-    it("keeps an in-progress operation frameless in a settings row", () => {
-      const markup = render({
+    it("keeps an in-progress operation frameless in a settings row", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
+      const markup = await render(_fixture, {
         presentation: "row",
         provider: {
           ...managedProvider,
@@ -321,7 +369,12 @@ describe("ProviderRuntimeSection", () => {
 
   it.each([true, false])(
     "keeps Pi installation concise without hiding unsupported-platform guidance (canInstall=%s)",
-    (canInstall) => {
+    async (canInstall) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
       const piProvider: ServerProvider = {
         ...provider,
         driver: ProviderDriverKind.make("pi"),
@@ -337,7 +390,7 @@ describe("ProviderRuntimeSection", () => {
       };
 
       const markup = serialize(
-        renderSection({
+        await renderSection(_fixture, {
           environmentId,
           provider: piProvider,
           displayName: "Pi",
@@ -354,7 +407,12 @@ describe("ProviderRuntimeSection", () => {
     },
   );
 
-  it("preserves a failed Pi install above its retry action", () => {
+  it("preserves a failed Pi install above its retry action", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const piProvider: ServerProvider = {
       ...provider,
       driver: ProviderDriverKind.make("pi"),
@@ -376,7 +434,7 @@ describe("ProviderRuntimeSection", () => {
     };
 
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         environmentId,
         provider: piProvider,
         displayName: "Pi",
@@ -387,7 +445,7 @@ describe("ProviderRuntimeSection", () => {
     expect(markup).toContain("Install");
   });
 
-  beforeEach(() => {
+  async function _setupFixture2(_fixture: _Fixture) {
     commands.start
       .mockReset()
       .mockImplementation(
@@ -434,11 +492,16 @@ describe("ProviderRuntimeSection", () => {
           },
         }),
       );
-  });
+  }
 
   it.each(["install", "update", "repair"] as const)(
     "starts %s once after preflight for an explicit action entry point",
     async (action) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
       const actionableProvider = {
         ...provider,
         connection: {
@@ -450,7 +513,7 @@ describe("ProviderRuntimeSection", () => {
         },
       };
 
-      renderSection({
+      await renderSection(_fixture, {
         environmentId,
         provider: actionableProvider,
         displayName: "Antigravity",
@@ -474,7 +537,7 @@ describe("ProviderRuntimeSection", () => {
       });
 
       const markup = serialize(
-        renderSection({
+        await renderSection(_fixture, {
           environmentId,
           provider: actionableProvider,
           displayName: "Antigravity",
@@ -489,9 +552,14 @@ describe("ProviderRuntimeSection", () => {
     },
   );
 
-  it.each([false, true])("opening the runtime card is passive (compact=%s)", (compact) => {
+  it.each([false, true])("opening the runtime card is passive (compact=%s)", async (compact) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         compact,
         environmentId,
         provider,
@@ -511,6 +579,11 @@ describe("ProviderRuntimeSection", () => {
   ] as const)(
     "starts %s card action %s from one click, after preflight completes",
     async (compact, action) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
       const actionableProvider = {
         ...provider,
         connection: {
@@ -548,17 +621,19 @@ describe("ProviderRuntimeSection", () => {
       );
 
       const button = findActionButton(
-        renderSection(props),
+        await renderSection(_fixture, props),
         action === "install" ? "Install" : "Update",
       );
       expect(button).toBeDefined();
-      act(() => button!.click());
+      await act(() => button!.click());
       expect(commands.plan).toHaveBeenCalledTimes(1);
       expect(commands.start).not.toHaveBeenCalled();
 
       expect(
-        findActionButton(renderSection(props), action === "install" ? "Install" : "Update")
-          ?.disabled,
+        findActionButton(
+          await renderSection(_fixture, props),
+          action === "install" ? "Install" : "Update",
+        )?.disabled,
       ).toBe(true);
       finishPlan(planResult);
       await vi.waitFor(() =>
@@ -575,9 +650,14 @@ describe("ProviderRuntimeSection", () => {
     },
   );
 
-  it("presents a qualified system-to-managed action as a blue primary choice", () => {
+  it("presents a qualified system-to-managed action as a blue primary choice", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         compact: true,
         environmentId,
         displayName: "Grok",
@@ -640,13 +720,13 @@ describe("ProviderRuntimeSection", () => {
       },
     };
     const props = { compact: true, environmentId, provider: systemProvider, displayName: name };
-    const render = () => {
-      return renderSection(props);
+    const render = async (_fixture: _Fixture) => {
+      return await renderSection(_fixture, props);
     };
-    const click = () => {
-      const button = findActionButton(render(), "Use Scient-managed");
+    const click = async (_fixture: _Fixture) => {
+      const button = findActionButton(await render(_fixture), "Use Scient-managed");
       expect(button).toBeDefined();
-      act(() => button!.click());
+      await act(() => button!.click());
     };
     const plan = (systemVersion: string | null, olderThanSystem: boolean) => ({
       instanceId: id,
@@ -668,23 +748,33 @@ describe("ProviderRuntimeSection", () => {
     ] as const)(
       "starts when the managed version is %s without another decision",
       async (_case, version, older) => {
+        await using _fixture = _createFixture();
+        _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+        await _setupFixture0(_fixture);
+        await _setupFixture2(_fixture);
+
         const reviewed = plan(version, older);
         commands.plan.mockResolvedValue({ _tag: "Success", value: reviewed });
         expect(commands.plan).not.toHaveBeenCalled();
-        click();
+        await click(_fixture);
         await vi.waitFor(() =>
           expect(commands.start).toHaveBeenCalledExactlyOnceWith({
             environmentId,
             input: { instanceId: id, action: "install", catalogRevision: reviewed.catalogRevision },
           }),
         );
-        const markup = serialize(render());
+        const markup = serialize(await render(_fixture));
         expect(markup).not.toContain(">Back</button>");
         expect(markup).not.toContain("Private copy installation.");
         expect(markup).toContain("text-primary");
       },
     );
     it("refreshes a stale plan once and starts the current managed release", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
       commands.plan
         .mockResolvedValueOnce({ _tag: "Success", value: plan("1.1.0", false) })
         .mockResolvedValueOnce({
@@ -702,11 +792,11 @@ describe("ProviderRuntimeSection", () => {
           }),
         ),
       });
-      click();
+      await click(_fixture);
       await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(2));
       expect(commands.plan).toHaveBeenCalledTimes(2);
       expect(commands.start.mock.calls[1]![0].input.catalogRevision).toBe("reviewed:2");
-      expect(serialize(render())).not.toContain(">Back</button>");
+      expect(serialize(await render(_fixture))).not.toContain(">Back</button>");
     });
     const staleResult = () => ({
       _tag: "Failure",
@@ -720,16 +810,26 @@ describe("ProviderRuntimeSection", () => {
       ),
     });
     it("stops after a second stale plan instead of reopening confirmation", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
       commands.plan.mockResolvedValue({ _tag: "Success", value: plan(null, false) });
       commands.start.mockResolvedValue(staleResult());
-      click();
+      await click(_fixture);
       await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(2));
       expect(commands.plan).toHaveBeenCalledTimes(2);
-      const markup = serialize(render());
+      const markup = serialize(await render(_fixture));
       expect(markup).toContain("Plan changed.");
       expect(markup).not.toContain(">Back</button>");
     });
     it("reports a failed refresh without dispatching another start", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
       commands.plan
         .mockResolvedValueOnce({ _tag: "Success", value: plan(null, false) })
         .mockResolvedValueOnce({
@@ -737,12 +837,17 @@ describe("ProviderRuntimeSection", () => {
           cause: Cause.fail(new Error("Catalog unavailable.")),
         });
       commands.start.mockResolvedValueOnce(staleResult());
-      click();
+      await click(_fixture);
       await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(2));
       expect(commands.start).toHaveBeenCalledTimes(1);
-      expect(serialize(render())).toContain("Catalog unavailable.");
+      expect(serialize(await render(_fixture))).toContain("Catalog unavailable.");
     });
     it("ignores another click while the preflight is pending", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
       let finish!: (value: { _tag: "Success"; value: ProviderRuntimePlan }) => void;
       commands.plan.mockImplementationOnce(
         () =>
@@ -750,8 +855,8 @@ describe("ProviderRuntimeSection", () => {
             finish = resolve;
           }),
       );
-      click();
-      click();
+      await click(_fixture);
+      await click(_fixture);
       expect(commands.plan).toHaveBeenCalledTimes(1);
       finish({ _tag: "Success", value: plan("1.3.0", true) });
       await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(1));
@@ -759,7 +864,12 @@ describe("ProviderRuntimeSection", () => {
   });
 
   it("still starts a first installation from its explicit action", async () => {
-    const section = renderSection({
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
+    const section = await renderSection(_fixture, {
       compact: true,
       environmentId,
       provider,
@@ -767,7 +877,7 @@ describe("ProviderRuntimeSection", () => {
     });
     const button = findActionButton(section, "Install");
     expect(button).toBeDefined();
-    act(() => button!.click());
+    await act(() => button!.click());
 
     await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(1));
     expect(commands.start).toHaveBeenCalledWith({
@@ -782,6 +892,11 @@ describe("ProviderRuntimeSection", () => {
     ["update", "plan"],
     ["update", "start"],
   ] as const)("shows %s %s failures without automatically retrying", async (action, stage) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     commands[stage].mockResolvedValue({
       _tag: "Failure",
       cause: Cause.fail(
@@ -811,9 +926,9 @@ describe("ProviderRuntimeSection", () => {
       initialAction: action,
     };
 
-    renderSection(props);
-    await vi.waitFor(() => {
-      const markup = serialize(renderSection(props));
+    await renderSection(_fixture, props);
+    await vi.waitFor(async () => {
+      const markup = serialize(await renderSection(_fixture, props));
       expect(markup).toContain('role="alert"');
       expect(markup).toContain("The provider service is unavailable. Try again.");
     });
@@ -822,6 +937,11 @@ describe("ProviderRuntimeSection", () => {
   });
 
   it("drops an install-plan failure superseded by an active runtime operation", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     let settlePlan:
       | ((result: {
           readonly _tag: "Failure";
@@ -841,7 +961,7 @@ describe("ProviderRuntimeSection", () => {
       displayName: "Droid",
     };
 
-    renderSection({
+    await renderSection(_fixture, {
       compact: true,
       environmentId,
       provider: droidProvider,
@@ -871,7 +991,7 @@ describe("ProviderRuntimeSection", () => {
       },
     };
 
-    renderSection({
+    await renderSection(_fixture, {
       compact: true,
       environmentId,
       provider: installingDroidProvider,
@@ -892,7 +1012,7 @@ describe("ProviderRuntimeSection", () => {
     await Promise.resolve();
 
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         compact: true,
         environmentId,
         provider: installingDroidProvider,
@@ -906,6 +1026,11 @@ describe("ProviderRuntimeSection", () => {
   });
 
   it("does not request an initial plan while a runtime operation is active", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const installingProvider: ServerProvider = {
       ...provider,
       connection: {
@@ -925,7 +1050,7 @@ describe("ProviderRuntimeSection", () => {
     };
 
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         compact: true,
         environmentId,
         provider: installingProvider,
@@ -940,6 +1065,11 @@ describe("ProviderRuntimeSection", () => {
   });
 
   it("keeps a plan failure visible while its runtime action remains current", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     commands.plan.mockResolvedValue({
       _tag: "Failure",
       cause: Cause.fail(
@@ -952,7 +1082,7 @@ describe("ProviderRuntimeSection", () => {
       ),
     });
 
-    renderSection({
+    await renderSection(_fixture, {
       compact: true,
       environmentId,
       provider,
@@ -962,7 +1092,7 @@ describe("ProviderRuntimeSection", () => {
     await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
 
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         compact: true,
         environmentId,
         provider,
@@ -975,6 +1105,11 @@ describe("ProviderRuntimeSection", () => {
   });
 
   it("closes a prepared plan when a newer runtime no longer offers its action", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const onPlanOpenChange = vi.fn();
     const removableProvider = {
       ...provider,
@@ -987,7 +1122,7 @@ describe("ProviderRuntimeSection", () => {
       },
     };
 
-    renderSection({
+    await renderSection(_fixture, {
       compact: true,
       environmentId,
       provider: removableProvider,
@@ -999,7 +1134,7 @@ describe("ProviderRuntimeSection", () => {
 
     expect(
       serialize(
-        renderSection({
+        await renderSection(_fixture, {
           compact: true,
           environmentId,
           provider: removableProvider,
@@ -1028,7 +1163,7 @@ describe("ProviderRuntimeSection", () => {
     };
 
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         compact: true,
         environmentId,
         provider: managedProvider,
@@ -1043,6 +1178,11 @@ describe("ProviderRuntimeSection", () => {
   });
 
   it.each(["Back", "Remove"])("keeps removal confirmed and honors %s", async (choice) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const removableProvider: ServerProvider = {
       ...provider,
       installed: true,
@@ -1071,7 +1211,7 @@ describe("ProviderRuntimeSection", () => {
       },
     });
 
-    renderSection({
+    await renderSection(_fixture, {
       compact: true,
       environmentId,
       provider: removableProvider,
@@ -1082,7 +1222,7 @@ describe("ProviderRuntimeSection", () => {
     await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
 
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         compact: true,
         environmentId,
         provider: removableProvider,
@@ -1110,7 +1250,7 @@ describe("ProviderRuntimeSection", () => {
     expect(removeButton).not.toContain("text-white");
     expect(commands.start).not.toHaveBeenCalled();
 
-    const section = renderSection({
+    const section = await renderSection(_fixture, {
       compact: true,
       environmentId,
       provider: removableProvider,
@@ -1119,7 +1259,7 @@ describe("ProviderRuntimeSection", () => {
     });
     const button = findActionButton(section, choice);
     expect(button).toBeDefined();
-    act(() => button!.click());
+    await act(() => button!.click());
     if (choice === "Remove") {
       await vi.waitFor(() =>
         expect(commands.start).toHaveBeenCalledWith({
@@ -1134,7 +1274,7 @@ describe("ProviderRuntimeSection", () => {
     } else {
       expect(
         serialize(
-          renderSection({
+          await renderSection(_fixture, {
             compact: true,
             environmentId,
             provider: removableProvider,
@@ -1147,7 +1287,12 @@ describe("ProviderRuntimeSection", () => {
     }
   });
 
-  it("shows compact download progress beside the quiet cancel action", () => {
+  it("shows compact download progress beside the quiet cancel action", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const activeProvider: ServerProvider = {
       ...provider,
       installed: true,
@@ -1172,7 +1317,7 @@ describe("ProviderRuntimeSection", () => {
     };
 
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         compact: true,
         environmentId,
         provider: activeProvider,
@@ -1198,7 +1343,12 @@ describe("ProviderRuntimeSection", () => {
     expect(cancelButton).not.toContain("border-input");
   });
 
-  it("drops stale local removal progress once the server reports the runtime missing", () => {
+  it("drops stale local removal progress once the server reports the runtime missing", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const localRuntime = {
       ...provider.connection!.runtime!,
       source: "scient_managed" as const,
@@ -1224,7 +1374,12 @@ describe("ProviderRuntimeSection", () => {
     expect(resolveProviderRuntimeForPresentation(serverRuntime, localRuntime)).toBe(serverRuntime);
   });
 
-  it("keeps optimistic install progress while the streamed server snapshot catches up", () => {
+  it("keeps optimistic install progress while the streamed server snapshot catches up", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const localRuntime = {
       ...provider.connection!.runtime!,
       operation: {
@@ -1242,7 +1397,12 @@ describe("ProviderRuntimeSection", () => {
     );
   });
 
-  it("drops stale local install progress once the server reports a managed runtime", () => {
+  it("drops stale local install progress once the server reports a managed runtime", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const localRuntime = {
       ...provider.connection!.runtime!,
       source: "missing" as const,
@@ -1267,6 +1427,11 @@ describe("ProviderRuntimeSection", () => {
   });
 
   it("reports repair success only after the matching streamed operation succeeds", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const onActionSucceeded = vi.fn();
     const repairableProvider: ServerProvider = {
       ...provider,
@@ -1320,7 +1485,7 @@ describe("ProviderRuntimeSection", () => {
       },
     });
 
-    renderSection({
+    await renderSection(_fixture, {
       environmentId,
       provider: repairableProvider,
       displayName: "Antigravity",
@@ -1359,7 +1524,7 @@ describe("ProviderRuntimeSection", () => {
       },
     };
 
-    renderSection({
+    await renderSection(_fixture, {
       environmentId,
       provider: otherRepairProvider,
       displayName: "Antigravity",
@@ -1387,7 +1552,7 @@ describe("ProviderRuntimeSection", () => {
       },
     };
 
-    renderSection({
+    await renderSection(_fixture, {
       environmentId,
       provider: repairedProvider,
       displayName: "Antigravity",
@@ -1398,7 +1563,7 @@ describe("ProviderRuntimeSection", () => {
     expect(onActionSucceeded).toHaveBeenCalledTimes(1);
     expect(onActionSucceeded).toHaveBeenCalledWith("repair");
 
-    renderSection({
+    await renderSection(_fixture, {
       environmentId,
       provider: repairedProvider,
       displayName: "Antigravity",
@@ -1409,7 +1574,12 @@ describe("ProviderRuntimeSection", () => {
     expect(onActionSucceeded).toHaveBeenCalledTimes(1);
   });
 
-  it("ignores a stale successful repair that this section did not start", () => {
+  it("ignores a stale successful repair that this section did not start", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const onActionSucceeded = vi.fn();
     const repairedProvider: ServerProvider = {
       ...provider,
@@ -1429,7 +1599,7 @@ describe("ProviderRuntimeSection", () => {
       },
     };
 
-    renderSection({
+    await renderSection(_fixture, {
       environmentId,
       provider: repairedProvider,
       displayName: "Antigravity",
@@ -1439,7 +1609,12 @@ describe("ProviderRuntimeSection", () => {
     expect(onActionSucceeded).not.toHaveBeenCalled();
   });
 
-  it("does not persist a successful repair message in the runtime row", () => {
+  it("does not persist a successful repair message in the runtime row", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const repairedProvider: ServerProvider = {
       ...provider,
       installed: true,
@@ -1471,7 +1646,7 @@ describe("ProviderRuntimeSection", () => {
     };
 
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         compact: true,
         environmentId,
         provider: repairedProvider,
@@ -1486,7 +1661,12 @@ describe("ProviderRuntimeSection", () => {
 
   it.each(["1.1.17", "agy_acp_server_20260818_01_RC01"])(
     "keeps managed maintenance clear for %s",
-    (version) => {
+    async (version) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
       const managedProvider: ServerProvider = {
         ...provider,
         installed: true,
@@ -1517,7 +1697,7 @@ describe("ProviderRuntimeSection", () => {
       };
 
       const markup = serialize(
-        renderSection({
+        await renderSection(_fixture, {
           compact: true,
           environmentId,
           provider: managedProvider,
@@ -1550,7 +1730,12 @@ describe("ProviderRuntimeSection", () => {
     },
   );
 
-  it.each([true, false])("keeps the version in diagnostics only (compact=%s)", (compact) => {
+  it.each([true, false])("keeps the version in diagnostics only (compact=%s)", async (compact) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const version = "2026.09.02-c22c1a3";
     const managedProvider: ServerProvider = {
       ...provider,
@@ -1578,7 +1763,7 @@ describe("ProviderRuntimeSection", () => {
     };
 
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         compact,
         environmentId,
         provider: managedProvider,
@@ -1596,49 +1781,62 @@ describe("ProviderRuntimeSection", () => {
     expect(markup).not.toContain(`Cursor ${version}`);
   });
 
-  it.each([true, false])("keeps a terminal runtime failure visible (compact=%s)", (compact) => {
-    const failedProvider: ServerProvider = {
-      ...provider,
-      installed: true,
-      version: "1.1.17",
-      connection: {
-        methods: ["antigravity_google"],
-        canDisconnect: false,
-        operation: null,
-        runtime: {
-          source: "scient_managed",
-          supportTier: "fully_assisted",
-          target: "darwin-arm64",
-          actions: ["repair", "remove"],
-          managedVersion: "1.1.17",
-          previousManagedVersion: null,
-          operation: {
-            operationId: "repair-failed",
-            action: "repair",
-            status: "failed",
-            startedAt: "2026-08-22T12:00:00.000Z",
-            finishedAt: "2026-08-22T12:00:05.000Z",
-            message: "Verification failed after repair.",
+  it.each([true, false])(
+    "keeps a terminal runtime failure visible (compact=%s)",
+    async (compact) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
+
+      const failedProvider: ServerProvider = {
+        ...provider,
+        installed: true,
+        version: "1.1.17",
+        connection: {
+          methods: ["antigravity_google"],
+          canDisconnect: false,
+          operation: null,
+          runtime: {
+            source: "scient_managed",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["repair", "remove"],
+            managedVersion: "1.1.17",
+            previousManagedVersion: null,
+            operation: {
+              operationId: "repair-failed",
+              action: "repair",
+              status: "failed",
+              startedAt: "2026-08-22T12:00:00.000Z",
+              finishedAt: "2026-08-22T12:00:05.000Z",
+              message: "Verification failed after repair.",
+            },
+            message: "Managed Antigravity needs repair.",
           },
-          message: "Managed Antigravity needs repair.",
         },
-      },
-    };
+      };
 
-    const markup = serialize(
-      renderSection({
-        environmentId,
-        compact,
-        provider: failedProvider,
-        displayName: "Antigravity",
-      }),
-    );
+      const markup = serialize(
+        await renderSection(_fixture, {
+          environmentId,
+          compact,
+          provider: failedProvider,
+          displayName: "Antigravity",
+        }),
+      );
 
-    expect(markup).toContain("Verification failed after repair");
-    expect(markup).not.toContain("Antigravity 1.1.17");
-  });
+      expect(markup).toContain("Verification failed after repair");
+      expect(markup).not.toContain("Antigravity 1.1.17");
+    },
+  );
 
-  it("returns to the current runtime state after setup is cancelled", () => {
+  it("returns to the current runtime state after setup is cancelled", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const cancelledProvider: ServerProvider = {
       ...provider,
       installed: true,
@@ -1670,7 +1868,7 @@ describe("ProviderRuntimeSection", () => {
     };
 
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         compact: true,
         environmentId,
         provider: cancelledProvider,
@@ -1684,7 +1882,12 @@ describe("ProviderRuntimeSection", () => {
     expect(markup).not.toContain("previous working runtime");
   });
 
-  it("shows the current missing-runtime state after removal instead of a stale success row", () => {
+  it("shows the current missing-runtime state after removal instead of a stale success row", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+
     const removedProvider: ServerProvider = {
       ...provider,
       connection: {
@@ -1706,7 +1909,7 @@ describe("ProviderRuntimeSection", () => {
     };
 
     const markup = serialize(
-      renderSection({
+      await renderSection(_fixture, {
         environmentId,
         provider: removedProvider,
         displayName: "Antigravity",
@@ -1735,23 +1938,35 @@ describe("ProviderRuntimeSection accessible names", () => {
       },
     },
   });
-  const render = (snapshot: ServerProvider) => {
+  const render = async (_fixture: _Fixture, snapshot: ServerProvider) => {
     return serialize(
-      renderSection({ environmentId, provider: snapshot, displayName: "Antigravity" }),
+      await renderSection(_fixture, {
+        environmentId,
+        provider: snapshot,
+        displayName: "Antigravity",
+      }),
     );
   };
 
-  it("names the provider on its short-verb runtime actions", () => {
-    expect(render(provider)).toContain('aria-label="Install Antigravity"');
-    const markup = render(managed(["update", "repair", "remove"]));
+  it("names the provider on its short-verb runtime actions", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    expect(await render(_fixture, provider)).toContain('aria-label="Install Antigravity"');
+    const markup = await render(_fixture, managed(["update", "repair", "remove"]));
     expect(markup).toContain('aria-label="Update Antigravity"');
     expect(markup).toContain('aria-label="Repair Antigravity"');
     expect(markup).toContain('aria-label="Remove Antigravity"');
   });
 
-  it("names the provider and the operation on Cancel", () => {
+  it("names the provider and the operation on Cancel", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const snapshot = managed(["repair", "remove"]);
-    const markup = render({
+    const markup = await render(_fixture, {
       ...snapshot,
       connection: {
         ...snapshot.connection!,
@@ -1771,3 +1986,22 @@ describe("ProviderRuntimeSection accessible names", () => {
     expect(markup).toContain('aria-label="Cancel Antigravity repair"');
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

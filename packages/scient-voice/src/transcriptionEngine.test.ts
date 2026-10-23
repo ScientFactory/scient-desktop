@@ -97,7 +97,7 @@ async function installReadyModel(
     byteSize: definition.byteSize,
     sha256: definition.sha256,
     sourceRevision: definition.sourceRevision,
-    verifiedAt: new Date().toISOString(),
+    verifiedAt: "2026-10-20T00:00:00.000Z",
   };
   await NodeFSP.writeFile(
     NodePath.join(modelDir, `${definition.fileName}.json`),

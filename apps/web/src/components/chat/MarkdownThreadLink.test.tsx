@@ -10,6 +10,7 @@ vi.mock("../../state/entities", () => ({
     reads(ref);
     return null;
   },
+  useThreadRefs: () => [],
   useProject: () => null,
 }));
 vi.mock("@tanstack/react-router", () => ({
@@ -26,6 +27,7 @@ const threadId = ThreadId.make("thread-1");
 
 describe("MarkdownThreadLink identity", () => {
   it("copies new links with an ID-only href and renders inside the message environment", () => {
+    reads.mockClear();
     const html = renderToStaticMarkup(
       <MarkdownThreadLink
         environmentId={environmentId}
@@ -38,6 +40,7 @@ describe("MarkdownThreadLink identity", () => {
   });
 
   it("retains an old cross-environment link when copying instead of converting it to local identity", () => {
+    reads.mockClear();
     const html = renderToStaticMarkup(
       <MarkdownThreadLink
         environmentId={environmentId}

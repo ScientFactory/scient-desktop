@@ -27,28 +27,28 @@ export const rejectThreadCommandDuringClone = (
     ),
   );
 
-export const withProjectCloneGuard = <E, R>(
-  make: Effect.Effect<ThreadManagementServiceShape, E, R>,
-) =>
-  Effect.gen(function* () {
+export const withProjectCloneGuard = Effect.fn("ThreadDispatchCloneGuard.withProjectCloneGuard")(
+  function* <E, R>(make: Effect.Effect<ThreadManagementServiceShape, E, R>) {
     const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
     const service = yield* make;
     const orchestrator = yield* Orchestrator.OrchestratorV2;
 
-    const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
-      Effect.gen(function* () {
-        const projectId =
-          command.type === "thread.create"
-            ? command.projectId
-            : command.type === "message.dispatch" ||
-                command.type === "queue.resume" ||
-                command.type === "queued-message.promote-to-steer"
-              ? (yield* orchestrator.getThreadShell(command.threadId))?.projectId
-              : undefined;
-        if (projectId !== undefined)
-          yield* rejectThreadCommandDuringClone(cloneTracker, command, projectId);
-        return yield* service.dispatch(command);
-      });
+    const dispatch: ThreadManagementServiceShape["dispatch"] = Effect.fn(
+      "ThreadDispatchCloneGuard.dispatch",
+    )(function* (command) {
+      const projectId =
+        command.type === "thread.create"
+          ? command.projectId
+          : command.type === "message.dispatch" ||
+              command.type === "queue.resume" ||
+              command.type === "queued-message.promote-to-steer"
+            ? (yield* orchestrator.getThreadShell(command.threadId))?.projectId
+            : undefined;
+      if (projectId !== undefined)
+        yield* rejectThreadCommandDuringClone(cloneTracker, command, projectId);
+      return yield* service.dispatch(command);
+    });
 
     return { ...service, dispatch } satisfies ThreadManagementServiceShape;
-  });
+  },
+);

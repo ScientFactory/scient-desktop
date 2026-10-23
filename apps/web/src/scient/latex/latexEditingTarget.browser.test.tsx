@@ -1,9 +1,10 @@
+import { render as _fixtureRender } from "../../../test/render";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { useEditorState } from "@tiptap/react";
 import { useLayoutEffect } from "react";
-import { createRoot } from "react-dom/client";
+
 import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 import {
@@ -15,6 +16,8 @@ import {
 } from "./latexEditingTarget";
 
 it("layout metadata preserves deferred typing while independent presentation and explicit selections update", async () => {
+  await using _fixture = _createFixture();
+
   const host = document.createElement("div");
   const paper = document.createElement("div");
   document.body.append(host, paper);
@@ -27,7 +30,7 @@ it("layout metadata preserves deferred typing while independent presentation and
   editor.registerPlugin(
     new Plugin({ key, state: { init: () => 0, apply: (tr, value) => tr.getMeta(key) ?? value } }),
   );
-  const root = createRoot(host);
+  const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
   function Layout() {
     const count = useEditorState({ editor, selector: ({ editor }) => key.getState(editor.state) });
     return <output data-layout="">{count}</output>;
@@ -42,7 +45,7 @@ it("layout metadata preserves deferred typing while independent presentation and
     );
   }
   try {
-    root.render(
+    await root.rerender(
       <>
         <Toolbar />
         <Layout />
@@ -75,7 +78,7 @@ it("layout metadata preserves deferred typing while independent presentation and
       .poll(() => host.querySelector("[data-toolbar]")?.getAttribute("data-editable"))
       .toBe("true");
   } finally {
-    root.unmount();
+    await root.unmount();
     editor.destroy();
     host.remove();
     paper.remove();
@@ -83,6 +86,8 @@ it("layout metadata preserves deferred typing while independent presentation and
 });
 
 it("native typing leaves unchanged controls alone while selection, formatting and editability remain live", async () => {
+  await using _fixture = _createFixture();
+
   const host = document.createElement("div");
   const paper = document.createElement("div");
   paper.dataset.presentationPaper = "";
@@ -92,7 +97,7 @@ it("native typing leaves unchanged controls alone while selection, formatting an
     extensions: [StarterKit],
     content: "<p>Original text.</p>",
   });
-  const root = createRoot(host);
+  const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
   let renders = 0;
   function Toolbar() {
     const state = useLatexEditingPresentation(editor);
@@ -112,7 +117,7 @@ it("native typing leaves unchanged controls alone while selection, formatting an
   }
   const presentation = () => JSON.parse(host.querySelector("output")!.textContent!);
   try {
-    root.render(<Toolbar />);
+    await root.rerender(<Toolbar />);
     await expect
       .poll(() => host.querySelector("output")?.textContent)
       .toContain('"formattingAvailable":true');
@@ -144,7 +149,7 @@ it("native typing leaves unchanged controls alone while selection, formatting an
     editor.setEditable(true);
     await expect.poll(() => presentation().formattingAvailable).toBe(true);
   } finally {
-    root.unmount();
+    await root.unmount();
     editor.destroy();
     host.remove();
     paper.remove();
@@ -152,6 +157,8 @@ it("native typing leaves unchanged controls alone while selection, formatting an
 });
 
 it("presentation follows inline ownership and commands without waiting for a transaction", async () => {
+  await using _fixture = _createFixture();
+
   const host = document.createElement("div");
   const paper = document.createElement("div");
   const fieldPaper = document.createElement("div");
@@ -167,7 +174,7 @@ it("presentation follows inline ownership and commands without waiting for a tra
     content: "<p><em>Caption text.</em></p>",
   });
   field.commands.setTextSelection({ from: 1, to: 8 });
-  const root = createRoot(host);
+  const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
   let renderedEditor: Editor | null = null;
   function Toolbar({ editor }: { editor: Editor | null }) {
     const state = useLatexEditingPresentation(editor);
@@ -177,9 +184,9 @@ it("presentation follows inline ownership and commands without waiting for a tra
     return <output>{`${state.italic}|${state.selectedWords}|${state.formattingAvailable}`}</output>;
   }
   try {
-    root.render(<Toolbar editor={null} />);
+    await root.rerender(<Toolbar editor={null} />);
     await expect.poll(() => host.textContent).toBe("false|null|false");
-    root.render(<Toolbar editor={owner} />);
+    await root.rerender(<Toolbar editor={owner} />);
     await expect.poll(() => renderedEditor).toBe(owner);
     field.commands.focus();
     activateLatexEditingTarget(owner, field);
@@ -192,7 +199,7 @@ it("presentation follows inline ownership and commands without waiting for a tra
     await expect.poll(() => renderedEditor).toBe(owner);
     expect(host.textContent).toBe("false|null|true");
   } finally {
-    root.unmount();
+    await root.unmount();
     clearLatexEditingTarget(owner);
     field.destroy();
     owner.destroy();
@@ -201,3 +208,20 @@ it("presentation follows inline ownership and commands without waiting for a tra
     fieldPaper.remove();
   }
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

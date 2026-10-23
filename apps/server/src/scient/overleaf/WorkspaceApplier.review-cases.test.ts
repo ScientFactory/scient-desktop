@@ -4,13 +4,18 @@
  * applier onto the shared file layer. The applier publishes only through the
  * native helper, so these run where that helper qualifies.
  */
+import * as NodeChildProcess from "node:child_process";
+import * as NodeDiagnosticsChannel from "node:diagnostics_channel";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { nativePublicationHost } from "../workspace/fileExchange.testkit.ts";
+import {
+  filePublicationTestHelper,
+  nativePublicationHost,
+} from "../workspace/fileExchange.testkit.ts";
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 import { advanceBase } from "./syncRules.ts";
 import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
@@ -879,7 +884,7 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
   });
 
   describe("editor saves", () => {
-    it.live("shares the mutation lock with editor saves", () => {
+    it.live("checks an editor save's revision after an overlapping apply", () => {
       let entered!: () => void, release!: () => void;
       const started = new Promise<void>((resolve) => {
           entered = resolve;
@@ -895,6 +900,7 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
             "locked",
             plan({ "main.tex": "base" }, { "main.tex": "incoming" }),
           );
+          let saving: Promise<unknown> | undefined;
           try {
             // An apply that fails before holding the lock ends the test at once.
             await Promise.race([
@@ -903,6 +909,53 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
                 throw new Error("The apply finished before holding the lock.");
               }),
             ]);
+            const helper = await filePublicationTestHelper();
+            if (!helper) throw new Error("The native publication helper is required.");
+            const root = await NodeFSP.stat(h.cwd, { bigint: true });
+            const expectedBinding = [
+              h.cwd,
+              ".",
+              String(root.dev),
+              String(root.ino),
+              String(root.dev),
+              String(root.ino),
+              "exclusive",
+            ];
+            const requested = Promise.withResolvers<void>();
+            using observer = new DisposableStack();
+            const onChild = (message: unknown) => {
+              if (
+                typeof message !== "object" ||
+                message === null ||
+                !("process" in message) ||
+                !(message.process instanceof NodeChildProcess.ChildProcess)
+              )
+                return;
+              const child = message.process;
+              // The diagnostics channel publishes before spawnfile/spawnargs are populated.
+              const onSpawn = () => {
+                const args = child.spawnargs;
+                if (child.spawnfile !== helper || args[1] !== "--lease=1" || args[2] !== "shared")
+                  return;
+                for (let offset = 3; offset + 6 < args.length; offset += 7) {
+                  if (!expectedBinding.every((value, index) => args[offset + index] === value))
+                    continue;
+                  requested.resolve();
+                  return;
+                }
+              };
+              const onError = (error: Error) => requested.reject(error);
+              child.once("spawn", onSpawn);
+              child.once("error", onError);
+              observer.defer(() => {
+                child.removeListener("spawn", onSpawn);
+                child.removeListener("error", onError);
+              });
+            };
+            NodeDiagnosticsChannel.subscribe("child_process", onChild);
+            observer.defer(() => {
+              NodeDiagnosticsChannel.unsubscribe("child_process", onChild);
+            });
             const save = h.run(
               Effect.result(
                 h.files.writeFile({
@@ -913,13 +966,15 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
                 }),
               ),
             );
-            // While the applier holds the lock the save cannot finish; without the lock it
-            // would, since the file still holds the revision the save expects.
-            const whileHeld = await Promise.race([
-              save.then(() => "finished"),
-              h.run(Effect.as(Effect.sleep("1 second"), "waiting")),
+            saving = save;
+            // Lease requests are complete in argv. Observe the real request's successful
+            // spawn while the apply is held, then check the editor's revision after release.
+            await Promise.race([
+              requested.promise,
+              save.then(() => {
+                throw new Error("The editor save finished before its lease request was observed.");
+              }),
             ]);
-            expect(whileHeld).toBe("waiting");
             release();
             await applying;
             expect(await save).toMatchObject({
@@ -928,7 +983,7 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
             });
           } finally {
             release();
-            await applying.catch(() => undefined);
+            await Promise.allSettled(saving ? [applying, saving] : [applying]);
           }
           expect(await read(h.cwd, "main.tex")).toBe("incoming");
           await h.run(

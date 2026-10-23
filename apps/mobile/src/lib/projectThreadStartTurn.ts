@@ -12,45 +12,31 @@ import {
 } from "@t3tools/contracts";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
-import { truncate } from "@t3tools/shared/String";
+import {
+  deriveThreadTitleSeed as deriveSharedThreadTitleSeed,
+  threadTitleTextFromPrompt,
+} from "@t3tools/client-runtime/operations";
 
 export function deriveThreadTitleFromPrompt(value: string): string {
-  const trimmed = composerCitationsToPlainText(value).trim();
-  if (trimmed.length === 0) {
-    return "New thread";
-  }
-
-  const compact = trimmed.replace(/\s+/g, " ");
-  return compact.length <= 72 ? compact : `${compact.slice(0, 69).trimEnd()}...`;
+  const title = threadTitleTextFromPrompt(composerCitationsToPlainText(value)) || "New thread";
+  return title.length <= 72 ? title : `${title.slice(0, 69).trimEnd()}...`;
 }
 
-/**
- * Title seed for a new thread.
- *
- * SCIENT-FORK:START — same shape as client-runtime's `deriveThreadTitleSeed`, but
- * keeps `composerCitationsToPlainText`: it renders file quotes that
- * `assistantCitationsToPlainText` drops, and a thread started from a cited file
- * should be titled from what the user actually sees.
- * SCIENT-FORK:END
- */
+// SCIENT-FORK:START — file quotes keep readable titles through the shared context normalizer.
 export function deriveThreadTitleSeed(input: {
   readonly text: string;
-  readonly attachments: ReadonlyArray<{ readonly name: string }>;
+  readonly attachments: ReadonlyArray<Pick<ChatAttachment, "type" | "name">>;
 }): string {
-  const text = composerCitationsToPlainText(input.text).trim().replace(/\s+/gu, " ");
-  if (text.length > 0) {
-    return truncate(text);
-  }
-
-  const attachmentName = composerCitationsToPlainText(input.attachments[0]?.name ?? "")
-    .trim()
-    .replace(/\s+/gu, " ");
-  if (attachmentName.length > 0) {
-    return truncate(`Image: ${attachmentName}`);
-  }
-
-  return "New thread";
+  return deriveSharedThreadTitleSeed({
+    ...input,
+    text: composerCitationsToPlainText(input.text),
+    attachments: input.attachments.map((attachment) => ({
+      ...attachment,
+      name: composerCitationsToPlainText(attachment.name),
+    })),
+  });
 }
+// SCIENT-FORK:END
 
 export interface ProjectThreadStartTurnSpec {
   readonly projectId: ProjectId;
@@ -60,6 +46,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly messageId: string;
   readonly createdAt: string;
   readonly text: string;
+  readonly titleText?: string;
   readonly context?: OrchestrationMessageContext;
   /** Wire attachments in composer order: freshly uploaded ones from
    * `prepareTurnAttachments`, or the server's own persisted copies when a
@@ -77,7 +64,7 @@ export interface ProjectThreadStartTurnSpec {
 
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
   const title = deriveThreadTitleSeed({
-    text: spec.text,
+    text: spec.titleText ?? spec.text,
     attachments: spec.uploadedAttachments,
   });
   const isWorktree = spec.workspaceMode === "worktree";

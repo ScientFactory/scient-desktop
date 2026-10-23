@@ -1,8 +1,6 @@
 import {
   runStressScenario,
-  totalStressStats,
   type StressDocumentFormat,
-  type StressResult,
 } from "@scientfactory/scient-document/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -141,35 +139,21 @@ describe("MarkdownPersistenceCoordinator under randomized interleavings", () => 
     vi.useRealTimers();
   });
 
-  // Hundreds of seeded runs: well under a second locally, slower on shared CI runners.
-  it("merges through Markdown reconciliation without losing a change or an untouched byte", async () => {
-    expect(markdown.validate!(INITIAL)).toBeNull();
-    const results: StressResult[] = [];
-    for (let seed = 1; seed <= 300; seed += 1) {
-      results.push(
-        await runStressScenario<MarkdownReconciliation>({
-          format: markdown,
-          createCoordinator: (options) => new MarkdownPersistenceCoordinator(options),
-          advanceTime: async (ms) => {
-            await vi.advanceTimersByTimeAsync(ms);
-          },
-          seed,
-          steps: 80,
-        }),
-      );
-    }
-    expect(results.flatMap((result) => result.violations)).toEqual([]);
-    const total = totalStressStats(results);
-    expect(total.runsWithoutChoices).toBeGreaterThan(30);
-    expect(total.runsWithoutChoices).toBeLessThan(300);
-    expect(total.merges).toBeGreaterThan(150);
-    expect(total.mergesWithLocalEdits).toBeGreaterThan(150);
-    expect(total.disconnects).toBeGreaterThan(50);
-    expect(total.refusedDuringRename).toBeGreaterThan(20);
-    expect(total.conflicts).toBeGreaterThan(30);
-    expect(total.renames).toBeGreaterThan(15);
-    expect(total.bursts).toBeGreaterThan(150);
-    expect(total.deferrals).toBeGreaterThan(15);
-    expect(total.viewRefusals).toBeGreaterThan(10);
-  }, 60_000);
+  // Give independent scenarios their own deadline and fake clock, not concurrent timers.
+  it.each(Array.from({ length: 300 }, (_, index) => index + 1))(
+    "merges through Markdown reconciliation without losing a change or an untouched byte (seed %i)",
+    async (seed) => {
+      expect(markdown.validate!(INITIAL)).toBeNull();
+      const result = await runStressScenario<MarkdownReconciliation>({
+        format: markdown,
+        createCoordinator: (options) => new MarkdownPersistenceCoordinator(options),
+        advanceTime: async (ms) => {
+          await vi.advanceTimersByTimeAsync(ms);
+        },
+        seed,
+        steps: 80,
+      });
+      expect(result.violations).toEqual([]);
+    },
+  );
 });

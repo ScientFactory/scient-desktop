@@ -1184,9 +1184,13 @@ describe("latexmk discovery lifecycle", () => {
   it.live("releases a waiting caller when the service shuts down mid-discovery", () =>
     Effect.gen(function* () {
       const never = yield* Deferred.make<void>();
+      const started = yield* Deferred.make<void>();
       const { layer } = yield* harness((command) =>
         command === "latexmk"
-          ? Deferred.await(never).pipe(Effect.as(output(LATEXMK_BANNER)))
+          ? Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(never)),
+              Effect.as(output(LATEXMK_BANNER)),
+            )
           : spawnFailure(command),
       );
       const serviceScope = yield* Scope.make();
@@ -1196,7 +1200,7 @@ describe("latexmk discovery lifecycle", () => {
           Effect.provideContext(context),
         ),
       );
-      yield* Effect.sleep("50 millis");
+      yield* Deferred.await(started);
       yield* Scope.close(serviceScope, Exit.void);
       const exit = yield* Fiber.await(waiting).pipe(
         Effect.timeoutOrElse({ duration: "5 seconds", orElse: () => Effect.die("still waiting") }),

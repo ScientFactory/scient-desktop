@@ -1,6 +1,7 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it } from "vite-plus/test";
+
+import { expect, it, vi } from "vite-plus/test";
 import { MarkdownFindContext } from "~/components/chat/markdownFindContext";
 import {
   collectThreadFindRanges,
@@ -11,27 +12,28 @@ import { ScientMathFindSurface } from "./ScientMathFindSurface";
 import { renderCachedScientMath, ScientInlineMath } from "./ScientMath";
 import * as katexRuntime from "./katexRuntime";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-afterEach(() => {
+async function _cleanupFixture0(_fixture: _Fixture) {
   window.getSelection()?.removeAllRanges();
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
-});
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 
-const nextFrame = () =>
-  new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
 const tex = "x_{browser_find}^2";
 
 it("reveals a selected formula source in Chromium while preserving KaTeX and one-copy semantics", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   renderCachedScientMath(katexRuntime, tex, false);
-  host = document.createElement("div");
-  host.style.width = "640px";
-  document.body.append(host);
-  root = createRoot(host);
-  const container = host;
+  _fixture.host = document.createElement("div");
+  _fixture.host.style.width = "640px";
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  const container = _fixture.host;
   function Probe({ query, searching = true }: { query: string; searching?: boolean }) {
     useThreadFindHighlights({
       container,
@@ -52,25 +54,28 @@ it("reveals a selected formula source in Chromium while preserving KaTeX and one
       </div>
     );
   }
-  root.render(<Probe query="" />);
-  await nextFrame();
-  await nextFrame();
-  const formula = host.querySelector(".katex");
+  await _fixture.root0.rerender(<Probe query="" />);
+  await vi.waitFor(() => expect(_fixture.host!.querySelector(".katex")).not.toBeNull());
+  await vi.waitFor(() =>
+    expect(_fixture.host!.querySelector(".katex")!.getBoundingClientRect().height).toBeGreaterThan(
+      0,
+    ),
+  );
+  const formula = _fixture.host.querySelector(".katex");
   expect(formula).not.toBeNull();
-  const source = host.querySelector<HTMLElement>("[data-thread-find-canonical-source]")!;
+  const source = _fixture.host.querySelector<HTMLElement>("[data-thread-find-canonical-source]")!;
   expect(source.hidden).toBe(true);
 
-  root.render(<Probe query="browser_find" />);
+  await _fixture.root0.rerender(<Probe query="browser_find" />);
   await expect.poll(() => source.hidden).toBe(false);
-  await nextFrame();
-  expect(source.getBoundingClientRect().height).toBeGreaterThan(0);
-  expect(host.querySelector(".katex")).toBe(formula);
-  expect(collectThreadFindRanges(host, "browser_find")).toHaveLength(1);
+  await vi.waitFor(() => expect(source.getBoundingClientRect().height).toBeGreaterThan(0));
+  expect(_fixture.host.querySelector(".katex")).toBe(formula);
+  expect(collectThreadFindRanges(_fixture.host, "browser_find")).toHaveLength(1);
   expect(source.getAttribute("aria-hidden")).toBe("true");
 
   const selection = window.getSelection()!;
   const range = document.createRange();
-  range.selectNode(host.querySelector("p")!);
+  range.selectNode(_fixture.host.querySelector("p")!);
   selection.removeAllRanges();
   selection.addRange(range);
   const payload = chatMarkdownClipboardPayload(selection)!;
@@ -80,7 +85,28 @@ it("reveals a selected formula source in Chromium while preserving KaTeX and one
   expect(copiedHtml.textContent?.match(/browser_find/g)).toHaveLength(1);
   expect(copiedHtml.querySelector("[data-thread-find-canonical-source], .katex, math")).toBeNull();
 
-  root.render(<Probe query="" searching={false} />);
-  await expect.poll(() => host?.querySelector("[data-thread-find-canonical-source]")).toBeNull();
-  expect(host.querySelector(".katex")).toBe(formula);
+  await _fixture.root0.rerender(<Probe query="" searching={false} />);
+  await expect
+    .poll(() => _fixture.host?.querySelector("[data-thread-find-canonical-source]"))
+    .toBeNull();
+  expect(_fixture.host.querySelector(".katex")).toBe(formula);
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

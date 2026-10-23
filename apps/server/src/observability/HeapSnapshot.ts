@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 
+// SCIENT-FORK: retained owner-only snapshot publication test invokes the production writer.
 export const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true })(
   function* (logsDir: string) {
     const fs = yield* FileSystem.FileSystem;

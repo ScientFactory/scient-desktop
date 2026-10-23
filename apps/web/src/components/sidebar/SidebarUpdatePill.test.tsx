@@ -1,12 +1,7 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
-import {
-  handleSidebarUpdateReleaseNotesPopoverOpenChange,
-  openSidebarUpdateReleaseNotesPopoverOnForwardTab,
-  shouldShowSidebarUpdateRestartIcon,
-  shouldUseSidebarUpdateReleaseNotesPopover,
-} from "./SidebarUpdatePill";
+import { shouldShowSidebarUpdateRestartIcon } from "./SidebarUpdatePill";
 
 const nightlyState: DesktopUpdateState = {
   enabled: true,
@@ -26,71 +21,6 @@ const nightlyState: DesktopUpdateState = {
   errorContext: null,
   canRetry: false,
 };
-
-describe("sidebar update release notes popover", () => {
-  it("shows release notes for Beta updates", () => {
-    expect(
-      shouldUseSidebarUpdateReleaseNotesPopover(true, { ...nightlyState, channel: "beta" }),
-    ).toBe(true);
-  });
-
-  it("uses the popover only for visible nightly release notes", () => {
-    expect(shouldUseSidebarUpdateReleaseNotesPopover(true, nightlyState)).toBe(true);
-    expect(shouldUseSidebarUpdateReleaseNotesPopover(false, nightlyState)).toBe(false);
-    expect(
-      shouldUseSidebarUpdateReleaseNotesPopover(true, {
-        ...nightlyState,
-        channel: "latest",
-      }),
-    ).toBe(false);
-    expect(
-      shouldUseSidebarUpdateReleaseNotesPopover(true, {
-        ...nightlyState,
-        releaseNotes: [],
-      }),
-    ).toBe(false);
-  });
-
-  it("cancels trigger presses without canceling other open reasons", () => {
-    const cancelTriggerPress = vi.fn();
-    const cancelHover = vi.fn();
-
-    handleSidebarUpdateReleaseNotesPopoverOpenChange(true, {
-      reason: "trigger-press",
-      cancel: cancelTriggerPress,
-    });
-    handleSidebarUpdateReleaseNotesPopoverOpenChange(true, {
-      reason: "trigger-hover",
-      cancel: cancelHover,
-    });
-
-    expect(cancelTriggerPress).toHaveBeenCalledOnce();
-    expect(cancelHover).not.toHaveBeenCalled();
-  });
-
-  it("promotes forward Tab without preventing native navigation", () => {
-    const open = vi.fn();
-    const preventDefault = vi.fn();
-    const event = { key: "Tab", shiftKey: false, preventDefault };
-
-    openSidebarUpdateReleaseNotesPopoverOnForwardTab(event, { open }, "nightly-release-notes");
-
-    expect(open).toHaveBeenCalledWith("nightly-release-notes");
-    expect(preventDefault).not.toHaveBeenCalled();
-  });
-
-  it("does not promote backward Tab", () => {
-    const open = vi.fn();
-
-    openSidebarUpdateReleaseNotesPopoverOnForwardTab(
-      { key: "Tab", shiftKey: true },
-      { open },
-      "nightly-release-notes",
-    );
-
-    expect(open).not.toHaveBeenCalled();
-  });
-});
 
 describe("sidebar update restart icon", () => {
   it("hides the icon when the downloaded update is ready to restart", () => {

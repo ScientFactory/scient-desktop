@@ -843,6 +843,12 @@ full, is offered from its live slot instead, and the editor stays read-only
 until the user uses or discards it, since writing would replace that slot;
 this window's own unwritten checkpoints are also kept out of that slot meanwhile.
 Work applied from its slot stays there as the live draft.
+A first checkpoint cannot claim a different stored record just by observing it.
+Later writes replace only this window's last successfully written identity or
+an identical complete checkpoint. Opening or explicitly applying recovery may
+adopt an exact stored checkpoint whose source is already accepted, so subsequent
+edits continue checkpointing. Opening does not release another recovery offer's
+live-slot hold.
 The source-draft cache holds only this window's unwritten checkpoints, and
 confirming or discarding a draft judges the unwritten checkpoint and the stored
 record separately and removes each one that matches. A recovery copy is stamped with the
@@ -1971,9 +1977,10 @@ attribute step. Local source lineage guards still distinguish acknowledgements f
 outside edits; external-source adoption still clears obsolete document history.
 
 Typing snapshots, source checkpoints and individual text/math/object-field
-journals check the exact stored version before replacing or retiring it. A
-delayed writer cannot intentionally replace recovery data it did not observe;
-failed writes retain live input and surface a document-level recovery notice.
+journals check the exact stored version before replacing or retiring it.
+Source-checkpoint ownership comes from a successful write or explicit adoption
+of accepted opening or recovered source, not from observing an occupied slot.
+Failed writes retain live input and surface a document-level recovery notice.
 These are synchronous identity checks, not an atomic cross-window storage
 transaction. Workspace persistence sessions remain authoritative for disk saves.
 

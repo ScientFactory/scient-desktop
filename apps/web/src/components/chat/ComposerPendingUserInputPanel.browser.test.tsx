@@ -1,7 +1,8 @@
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { type ReactNode } from "react";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   ComposerPendingUserInputPanel,
@@ -29,8 +30,12 @@ const prompt: ComposerPendingUserInput = {
   dismissible: true,
 };
 
-function renderPanel(pendingUserInput: ComposerPendingUserInput = prompt) {
-  return renderMarkup(
+async function renderPanel(
+  _fixture: _Fixture,
+  pendingUserInput: ComposerPendingUserInput = prompt,
+) {
+  return await renderMarkup(
+    _fixture,
     <ComposerPendingUserInputPanel
       pendingUserInputs={[pendingUserInput]}
       cwd="/repo"
@@ -46,8 +51,11 @@ function renderPanel(pendingUserInput: ComposerPendingUserInput = prompt) {
 }
 
 describe("ComposerPendingUserInputPanel", () => {
-  it("renders the header as a disclosure control for the question body", () => {
-    const markup = renderPanel();
+  it("renders the header as a disclosure control for the question body", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const markup = await renderPanel(_fixture);
 
     const toggle = markup.match(/<button[^>]*data-pending-user-input-toggle="[^"]*"[^>]*>/)?.[0];
     expect(toggle).toBeDefined();
@@ -60,15 +68,21 @@ describe("ComposerPendingUserInputPanel", () => {
     expect(markup).toMatch(new RegExp(`<div[^>]*\\sid="${controlledId}"`));
   });
 
-  it("offers dismiss only for async questions", () => {
-    expect(renderPanel()).toContain("data-pending-user-input-dismiss");
-    expect(renderPanel({ ...prompt, dismissible: false })).not.toContain(
+  it("offers dismiss only for async questions", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    expect(await renderPanel(_fixture)).toContain("data-pending-user-input-dismiss");
+    expect(await renderPanel(_fixture, { ...prompt, dismissible: false })).not.toContain(
       "data-pending-user-input-dismiss",
     );
   });
 
-  it("starts expanded so the question and its options are visible", () => {
-    const markup = renderPanel();
+  it("starts expanded so the question and its options are visible", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const markup = await renderPanel(_fixture);
 
     expect(markup).toContain("Approach");
     expect(markup).toContain("Which approach should the migration take?");
@@ -76,10 +90,13 @@ describe("ComposerPendingUserInputPanel", () => {
     expect(markup).toContain("Big bang");
   });
 
-  it("links URLs in the question text", () => {
+  it("links URLs in the question text", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const url = "https://accounts.t3.codes/device?user_code=RTJS-TQGS";
     const question = prompt.questions[0]!;
-    const markup = renderPanel({
+    const markup = await renderPanel(_fixture, {
       ...prompt,
       questions: [{ ...question, question: `Authorize BeeBox at ${url} and confirm.` }],
     });
@@ -88,8 +105,11 @@ describe("ComposerPendingUserInputPanel", () => {
   });
 });
 
-it("keeps reply feedback next to the available question", () => {
-  const markup = renderPanel({
+it("keeps reply feedback next to the available question", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const markup = await renderPanel(_fixture, {
     ...prompt,
     responseError: "Your response could not be sent. Try again.",
   });
@@ -98,17 +118,48 @@ it("keeps reply feedback next to the available question", () => {
   expect(markup).toContain("Which approach should the migration take?");
 });
 
-const browserRoots: Root[] = [];
-afterEach(async () => {
-  for (const root of browserRoots.splice(0)) await act(async () => root.unmount());
-  document.body.replaceChildren();
+async function _cleanupFixture0(_fixture: _Fixture) {
+  for (const root of _fixture.root0.splice(0)) await act(async () => await root.unmount());
+  _clearOwnedDOM(_fixture);
   vi.unstubAllGlobals();
-});
-function renderMarkup(node: ReactNode): string {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const container = document.body.appendChild(document.createElement("div"));
-  const root = createRoot(container);
-  browserRoots.push(root);
-  act(() => root.render(node));
+}
+async function renderMarkup(_fixture: _Fixture, node: ReactNode): Promise<string> {
+  const container = document.body.appendChild(_ownDOM(_fixture, document.createElement("div")));
+  const root = _fixture.stack.use(
+    await _fixtureRender(null, { container: container, router: false }),
+  );
+  _fixture.root0.push(root);
+  await act(async () => await root.rerender(node));
   return container.innerHTML;
+}
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    _ownedDOM: [] as Node[],
+
+    stack,
+    cleanup,
+    root0: [] as Screen[],
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;
+
+function _ownDOM<T extends Node>(_fixture: _Fixture, node: T): T {
+  _fixture._ownedDOM.push(node);
+  _fixture.stack.defer(() => {
+    node.parentNode?.removeChild(node);
+  });
+  return node;
+}
+function _clearOwnedDOM(_fixture: _Fixture) {
+  for (const node of _fixture._ownedDOM.splice(0)) node.parentNode?.removeChild(node);
 }

@@ -1,6 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadState } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import type { DraftId } from "./composerDraftStore";
 
 export type ThreadRouteTarget =
@@ -31,6 +33,7 @@ export function resolveThreadRouteRenderState(input: {
   bootstrapComplete: boolean;
   serverThreadExists: boolean;
   serverThreadDeleted: boolean;
+  unlistedThreadDetail?: EnvironmentThreadState;
   draftThreadExists: boolean;
 }): ThreadRouteRenderState {
   if (input.draftThreadExists || (input.serverThreadExists && !input.serverThreadDeleted)) {
@@ -39,19 +42,18 @@ export function resolveThreadRouteRenderState(input: {
   if (!input.bootstrapComplete) {
     return "loading";
   }
-  if (input.draftThreadExists) {
-    return "ready";
-  }
-  if (input.serverThreadDeleted) {
+  if (input.serverThreadDeleted || input.unlistedThreadDetail?.status === "deleted") {
     return "missing";
   }
-  if (input.serverThreadExists) {
-    return "ready";
+  // Shell membership can lag a new thread; its detail decides.
+  const projection = input.unlistedThreadDetail
+    ? Option.getOrNull(input.unlistedThreadDetail.data)
+    : null;
+  if (projection === null) {
+    return "loading";
   }
-  // SCIENT-FORK:START a ready fork or an archived source may not be in the sidebar
-  // snapshot yet. Only an explicit deletion proves the thread is missing, so keep
-  // waiting instead of rendering the missing state on an absent snapshot entry.
-  return "loading";
+  // SCIENT-FORK:START — archived originals remain readable through fork lineage.
+  return projection.thread.deletedAt !== null ? "missing" : "ready";
   // SCIENT-FORK:END
 }
 

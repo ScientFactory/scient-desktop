@@ -1,26 +1,28 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import { EnvironmentId, OrchestrationV2TurnItem, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import "../../index.css";
-import { createRoot, type Root } from "react-dom/client";
+
 import { page } from "vitest/browser";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { V2LifecycleRow } from "./V2LifecycleRow";
 
 const decodeBoundaryItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
-});
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 
 it.each(["run", "message"] as const)(
   "opens the exact origin of a persisted %s boundary",
   async (sourceType) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const sourceThreadId = ThreadId.make("origin-fork");
     const targetThreadId = ThreadId.make("destination-fork");
     const onOpenThread = vi.fn();
@@ -51,10 +53,12 @@ it.each(["run", "message"] as const)(
               position: "after",
             },
     });
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-    root.render(
+    _fixture.host = document.createElement("div");
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
+    await _fixture.root0.rerender(
       <V2LifecycleRow
         item={item}
         environmentId={EnvironmentId.make("test-env")}
@@ -69,3 +73,22 @@ it.each(["run", "message"] as const)(
     expect(onOpenThread).not.toHaveBeenCalledWith(targetThreadId);
   },
 );
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

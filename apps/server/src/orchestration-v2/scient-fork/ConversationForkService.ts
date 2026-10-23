@@ -134,59 +134,58 @@ const make = Effect.gen(function* () {
   // beside new forks instead of delaying server startup.
   yield* checkpointOwnership.recover().pipe(Effect.forkScoped);
 
-  const resolveSource = (
+  const resolveSource = Effect.fn("ConversationForkService.resolveSource")(function* (
     projection: Pick<
       OrchestrationV2ThreadProjection,
       "providerTurns" | "attempts" | "runs" | "visibleTurnItems"
     >,
     input: GetForkOptionsInput,
-  ) =>
-    Effect.gen(function* () {
-      const selected = [
-        input.sourceAssistantMessageId,
-        input.sourceUserMessageId,
-        input.sourceRunningRunId,
-        input.sourceRunningTurnId,
-      ].filter((value) => value !== undefined);
-      if (selected.length > 1) return yield* failure("Choose exactly one conversation boundary.");
-      if (input.sourceRunningRunId !== undefined)
-        return {
-          kind: "running-turn",
-          runId: input.sourceRunningRunId,
-        } satisfies ConversationForkSource;
-      if (input.sourceRunningTurnId !== undefined) {
-        // Older clients name a provider turn. Resolve its durable owning run;
-        // a provider identity is never cast into an application run identity.
-        const turn = projection.providerTurns.find(
-          (turn) => turn.nativeTurnRef?.nativeId === input.sourceRunningTurnId,
-        );
-        const attempt = projection.attempts.find((attempt) => attempt.id === turn?.runAttemptId);
-        const run = projection.runs.find(
-          (run) => String(run.id) === input.sourceRunningTurnId || run.id === attempt?.runId,
-        );
-        if (run === undefined) return yield* failure("The selected running turn is unavailable.");
-        return { kind: "running-turn", runId: run.id } satisfies ConversationForkSource;
-      }
-      if (input.sourceUserMessageId !== undefined)
-        return {
-          kind: "user-message",
-          messageId: input.sourceUserMessageId,
-        } satisfies ConversationForkSource;
-      const messageId =
-        input.sourceAssistantMessageId ??
-        projection.visibleTurnItems.findLast(
-          ({ item }) =>
-            item.type === "assistant_message" && !item.streaming && item.status === "completed",
-        )?.item;
-      if (typeof messageId === "string")
-        return { kind: "assistant-response", messageId } satisfies ConversationForkSource;
-      if (messageId?.type === "assistant_message")
-        return {
-          kind: "assistant-response",
-          messageId: messageId.messageId,
-        } satisfies ConversationForkSource;
-      return yield* failure("There is no completed response to fork yet.");
-    });
+  ) {
+    const selected = [
+      input.sourceAssistantMessageId,
+      input.sourceUserMessageId,
+      input.sourceRunningRunId,
+      input.sourceRunningTurnId,
+    ].filter((value) => value !== undefined);
+    if (selected.length > 1) return yield* failure("Choose exactly one conversation boundary.");
+    if (input.sourceRunningRunId !== undefined)
+      return {
+        kind: "running-turn",
+        runId: input.sourceRunningRunId,
+      } satisfies ConversationForkSource;
+    if (input.sourceRunningTurnId !== undefined) {
+      // Older clients name a provider turn. Resolve its durable owning run;
+      // a provider identity is never cast into an application run identity.
+      const turn = projection.providerTurns.find(
+        (turn) => turn.nativeTurnRef?.nativeId === input.sourceRunningTurnId,
+      );
+      const attempt = projection.attempts.find((attempt) => attempt.id === turn?.runAttemptId);
+      const run = projection.runs.find(
+        (run) => String(run.id) === input.sourceRunningTurnId || run.id === attempt?.runId,
+      );
+      if (run === undefined) return yield* failure("The selected running turn is unavailable.");
+      return { kind: "running-turn", runId: run.id } satisfies ConversationForkSource;
+    }
+    if (input.sourceUserMessageId !== undefined)
+      return {
+        kind: "user-message",
+        messageId: input.sourceUserMessageId,
+      } satisfies ConversationForkSource;
+    const messageId =
+      input.sourceAssistantMessageId ??
+      projection.visibleTurnItems.findLast(
+        ({ item }) =>
+          item.type === "assistant_message" && !item.streaming && item.status === "completed",
+      )?.item;
+    if (typeof messageId === "string")
+      return { kind: "assistant-response", messageId } satisfies ConversationForkSource;
+    if (messageId?.type === "assistant_message")
+      return {
+        kind: "assistant-response",
+        messageId: messageId.messageId,
+      } satisfies ConversationForkSource;
+    return yield* failure("There is no completed response to fork yet.");
+  });
 
   const inspect = Effect.fn("ConversationFork.inspect")(function* (
     input: GetForkOptionsInput,
@@ -269,40 +268,41 @@ const make = Effect.gen(function* () {
     } satisfies OrchestrationV2DomainEvent;
   });
 
-  const awaitReady = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const cursor = yield* sink.latestSequence({ threadId });
-      const initial = yield* projections.getThread(threadId);
-      const final =
-        initial.deletedAt === null && initial.conversationFork?.status === "pending"
-          ? yield* sink.stream({ threadId, afterSequence: cursor }).pipe(
-              Stream.filterMap((stored) => {
-                const event = stored.event;
-                return (event.type === "thread.metadata-updated" &&
-                  event.payload.conversationFork?.status !== "pending") ||
-                  event.type === "thread.deleted"
-                  ? Result.succeed(event.payload)
-                  : Result.failVoid;
-              }),
-              Stream.take(1),
-              Stream.runCollect,
-              Effect.map((threads) => threads[0]!),
-            )
-          : initial;
-      if (final.deletedAt !== null || final.conversationFork?.status === "abandoned")
-        return yield* failure(
-          final.conversationFork?.error ?? "The fork was abandoned.",
-          "abandoned",
-        );
-      if (final.conversationFork?.status !== "ready")
-        return yield* failure(
-          final.conversationFork?.error ?? "Fork setup failed. Retry the same fork.",
-          "failed",
-        );
-      return Object.fromEntries(
-        final.conversationFork.attachmentCopies.map(({ source, target }) => [source.id, target.id]),
+  const awaitReady = Effect.fn("ConversationForkService.awaitReady")(function* (
+    threadId: ThreadId,
+  ) {
+    const cursor = yield* sink.latestSequence({ threadId });
+    const initial = yield* projections.getThread(threadId);
+    const final =
+      initial.deletedAt === null && initial.conversationFork?.status === "pending"
+        ? yield* sink.stream({ threadId, afterSequence: cursor }).pipe(
+            Stream.filterMap((stored) => {
+              const event = stored.event;
+              return (event.type === "thread.metadata-updated" &&
+                event.payload.conversationFork?.status !== "pending") ||
+                event.type === "thread.deleted"
+                ? Result.succeed(event.payload)
+                : Result.failVoid;
+            }),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.map((threads) => threads[0]!),
+          )
+        : initial;
+    if (final.deletedAt !== null || final.conversationFork?.status === "abandoned")
+      return yield* failure(
+        final.conversationFork?.error ?? "The fork was abandoned.",
+        "abandoned",
       );
-    });
+    if (final.conversationFork?.status !== "ready")
+      return yield* failure(
+        final.conversationFork?.error ?? "Fork setup failed. Retry the same fork.",
+        "failed",
+      );
+    return Object.fromEntries(
+      final.conversationFork.attachmentCopies.map(({ source, target }) => [source.id, target.id]),
+    );
+  });
 
   const prepareTextCapture = Effect.fnUntraced(function* (command: ThreadForkCommand) {
     if (command.sourceRunningRunId === undefined && command.sourceRunningTurnId === undefined)

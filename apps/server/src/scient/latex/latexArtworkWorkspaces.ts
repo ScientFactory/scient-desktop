@@ -132,13 +132,13 @@ export const makeLatexArtworkWorkspaces = Effect.fnUntraced(function* (parent: s
     return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
   };
 
-  const fingerprint = (
-    directory: string,
-    searchPath: string | null,
-    pathDelimiter: string,
-    tracked: readonly string[],
-  ) =>
-    Effect.gen(function* () {
+  const fingerprint = Effect.fn("latexArtworkWorkspaces.fingerprint")(
+    function* (
+      directory: string,
+      searchPath: string | null,
+      pathDelimiter: string,
+      tracked: readonly string[],
+    ) {
       if (searchPath === null || (pathDelimiter !== ":" && pathDelimiter !== ";")) return null;
       const canonicalDirectory = yield* fs.realPath(directory);
       const roots = new Set([canonicalDirectory]);
@@ -288,10 +288,12 @@ export const makeLatexArtworkWorkspaces = Effect.fnUntraced(function* (parent: s
         ),
       );
       return hash.digest("hex");
-    }).pipe(Effect.orElseSucceed(() => null));
+    },
+    (effect) => effect.pipe(Effect.orElseSucceed(() => null)),
+  );
 
-  const withinSizeLimit = (directory: string) =>
-    Effect.gen(function* () {
+  const withinSizeLimit = Effect.fn("latexArtworkWorkspaces.withinSizeLimit")(
+    function* (directory: string) {
       let size = 0n;
       for (const name of yield* fs.readDirectory(directory)) {
         const info = yield* fs.stat(path.join(directory, name));
@@ -300,7 +302,9 @@ export const makeLatexArtworkWorkspaces = Effect.fnUntraced(function* (parent: s
         if (size > maximumWorkspaceBytes) return false;
       }
       return true;
-    }).pipe(Effect.orElseSucceed(() => false));
+    },
+    (effect) => effect.pipe(Effect.orElseSucceed(() => false)),
+  );
 
   const reserve = (key: string) =>
     admission.withPermits(1)(

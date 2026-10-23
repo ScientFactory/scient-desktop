@@ -126,44 +126,41 @@ export const ownNativeSessionLifetimes = (
     },
     orchestrationAdapter: {
       ...adapter,
-      openSession: (input) =>
-        Effect.gen(function* () {
-          const callerScope = yield* Scope.Scope;
-          const retired = () =>
-            new ProviderAdapterOpenSessionError({
-              driver: instance.driverKind,
-              providerSessionId: input.providerSessionId,
-              cause: "The configured provider instance has been retired.",
-            });
-          if (instanceScope.state._tag === "Closed" || callerScope.state._tag === "Closed")
-            return yield* retired();
-          const sessionScope = yield* Scope.fork(instanceScope);
-          yield* Scope.addFinalizerExit(callerScope, (exit) => Scope.close(sessionScope, exit));
-          if (yield* Effect.sync(() => sessionScope.state._tag === "Closed"))
-            return yield* retired();
-          const opening = yield* adapter
-            .openSession(input)
-            .pipe(
-              Effect.provideService(Scope.Scope, sessionScope),
-              Effect.interruptible,
-              Effect.forkIn(sessionScope),
-            );
-          const runtime = yield* Fiber.join(opening).pipe(
-            // Instance retirement is an opening failure, so the manager's
-            // failure path also revokes newly issued MCP credentials.
-            Effect.catchCause((cause) =>
-              instanceScope.state._tag === "Closed"
-                ? Effect.fail(retired())
-                : Effect.failCause(cause),
-            ),
-            Effect.onExit((exit) =>
-              Exit.isFailure(exit) ? Scope.close(sessionScope, exit) : Effect.void,
-            ),
+      openSession: Effect.fn("ScientNativeSessionLifetimes.openSession")(function* (input) {
+        const callerScope = yield* Scope.Scope;
+        const retired = () =>
+          new ProviderAdapterOpenSessionError({
+            driver: instance.driverKind,
+            providerSessionId: input.providerSessionId,
+            cause: "The configured provider instance has been retired.",
+          });
+        if (instanceScope.state._tag === "Closed" || callerScope.state._tag === "Closed")
+          return yield* retired();
+        const sessionScope = yield* Scope.fork(instanceScope);
+        yield* Scope.addFinalizerExit(callerScope, (exit) => Scope.close(sessionScope, exit));
+        if (yield* Effect.sync(() => sessionScope.state._tag === "Closed")) return yield* retired();
+        const opening = yield* adapter
+          .openSession(input)
+          .pipe(
+            Effect.provideService(Scope.Scope, sessionScope),
+            Effect.interruptible,
+            Effect.forkIn(sessionScope),
           );
-          if (yield* Effect.sync(() => sessionScope.state._tag === "Closed"))
-            return yield* retired();
-          return guardSessionLifetime(runtime, sessionScope);
-        }),
+        const runtime = yield* Fiber.join(opening).pipe(
+          // Instance retirement is an opening failure, so the manager's
+          // failure path also revokes newly issued MCP credentials.
+          Effect.catchCause((cause) =>
+            instanceScope.state._tag === "Closed"
+              ? Effect.fail(retired())
+              : Effect.failCause(cause),
+          ),
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) ? Scope.close(sessionScope, exit) : Effect.void,
+          ),
+        );
+        if (yield* Effect.sync(() => sessionScope.state._tag === "Closed")) return yield* retired();
+        return guardSessionLifetime(runtime, sessionScope);
+      }),
     },
   };
 };

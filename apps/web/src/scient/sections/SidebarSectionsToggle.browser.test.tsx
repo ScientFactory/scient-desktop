@@ -1,51 +1,54 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 
 import { SidebarProvider } from "../../components/ui/sidebar";
 import { SidebarSectionsToggle } from "./SidebarSectionsToggle";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
-});
-
-const nextFrame = () =>
-  new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 
 /** The computed color of a sidebar token, read off a probe element. */
-function tokenColor(className: string): string {
+function tokenColor(_fixture: _Fixture, className: string): string {
   const probe = document.createElement("div");
   probe.className = className;
-  host!.append(probe);
+  _fixture.host!.append(probe);
   const color = getComputedStyle(probe).backgroundColor;
   probe.remove();
   return color;
 }
 
 it("marks the on state with a small gray inset that the white hover surrounds", async () => {
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(
     <SidebarProvider>
       <SidebarSectionsToggle active onActiveChange={() => {}} />
     </SidebarProvider>,
   );
-  await nextFrame();
+  await vi.waitFor(() =>
+    expect(_fixture.host!.querySelector('[data-testid="sidebar-sections-toggle"]')).not.toBeNull(),
+  );
 
-  const button = host.querySelector<HTMLElement>('[data-testid="sidebar-sections-toggle"]')!;
+  const button = _fixture.host.querySelector<HTMLElement>(
+    '[data-testid="sidebar-sections-toggle"]',
+  )!;
   await userEvent.unhover(button);
   const mark = button.querySelector<HTMLElement>("span.absolute")!;
-  const gray = tokenColor("bg-sidebar-foreground/6");
-  expect(gray).not.toBe(tokenColor("bg-sidebar-row-selected"));
+  const gray = tokenColor(_fixture, "bg-sidebar-foreground/6");
+  expect(gray).not.toBe(tokenColor(_fixture, "bg-sidebar-row-selected"));
 
   // At rest: the gray mark, inset inside the button.
   expect(getComputedStyle(mark).backgroundColor).toBe(gray);
@@ -56,5 +59,26 @@ it("marks the on state with a small gray inset that the white hover surrounds", 
   await userEvent.hover(button);
   expect(getComputedStyle(mark).display).not.toBe("none");
   expect(getComputedStyle(mark).backgroundColor).toBe(gray);
-  expect(getComputedStyle(button).backgroundColor).toBe(tokenColor("bg-sidebar-row-hover"));
+  expect(getComputedStyle(button).backgroundColor).toBe(
+    tokenColor(_fixture, "bg-sidebar-row-hover"),
+  );
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

@@ -311,418 +311,411 @@ async function privateDirectory(directory: string, userId: number | undefined): 
   return true;
 }
 
-export const make = (options: {
+export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   readonly root: string;
   readonly hooks?: OverleafStateStoreHooks;
   /** Test seam: the disk's volume UUID for a path. Defaults to `diskutil`. */
   readonly volumeUuid?: OverleafVolumeIdentityResolver;
-}) =>
-  Effect.gen(function* () {
-    const userId = yield* HostProcess.UserId;
-    const root = options.root;
-    const connections = NodePath.join(root, "connections");
-    const receipts = NodePath.join(root, "receipts");
-    const quarantine = NodePath.join(root, "quarantine");
-    const retained = NodePath.join(root, "retained");
-    const hook = (point: Parameters<NonNullable<OverleafStateStoreHooks["at"]>>[0], file: string) =>
-      options.hooks?.at?.(point, file) ?? Promise.resolve();
+}) {
+  const userId = yield* HostProcess.UserId;
+  const root = options.root;
+  const connections = NodePath.join(root, "connections");
+  const receipts = NodePath.join(root, "receipts");
+  const quarantine = NodePath.join(root, "quarantine");
+  const retained = NodePath.join(root, "retained");
+  const hook = (point: Parameters<NonNullable<OverleafStateStoreHooks["at"]>>[0], file: string) =>
+    options.hooks?.at?.(point, file) ?? Promise.resolve();
 
-    const io = <A>(operation: OverleafStateIoError["operation"], run: () => Promise<A>) =>
-      Effect.tryPromise({
-        try: run,
-        catch: (cause) => new OverleafStateIoError({ operation, cause }),
-      });
-
-    // One writer at a time inside this process; the lease excludes other processes.
-    // Every mutation runs uninterruptibly while holding this permit, so an
-    // interrupted caller cannot leave a filesystem write running after another
-    // writer has started, and shutdown cannot release the lease mid-write.
-    const writes = yield* Semaphore.make(1);
-    const leasePath = NodePath.join(root, "lease.sqlite");
-    let lease: {
-      readonly scope: Scope.Closeable;
-      readonly root: { dev: string; ino: string };
-      readonly file: { dev: string; ino: string };
-    } | null = null;
-    const releaseLease = Effect.suspend(() => {
-      const held = lease;
-      lease = null;
-      return held === null ? Effect.void : Scope.close(held.scope, Exit.void);
+  const io = <A>(operation: OverleafStateIoError["operation"], run: () => Promise<A>) =>
+    Effect.tryPromise({
+      try: run,
+      catch: (cause) => new OverleafStateIoError({ operation, cause }),
     });
-    yield* Effect.addFinalizer(() => writes.withPermits(1)(releaseLease));
 
-    const acquireLease = Effect.gen(function* () {
-      yield* io("prepare-directory", async () => {
-        for (const directory of [root, connections, receipts, quarantine])
-          if (!(await privateDirectory(directory, userId)))
-            throw new Error("Overleaf state directory is not private.");
-      });
-      // Record which file SQLite is about to open. Create it first (never
-      // following a link) so there is an identity to record.
-      const before = yield* io("acquire-lease", async () => {
-        const handle = await NodeFSP.open(
-          leasePath,
-          NodeFS.constants.O_CREAT | NodeFS.constants.O_WRONLY | NodeFS.constants.O_NOFOLLOW,
-          0o600,
-        );
-        await handle.close();
-        return { root: await directoryIdentity(root), file: await leaseFileIdentity() };
-      });
-      const scope = yield* Scope.make();
-      yield* Effect.gen(function* () {
-        const context = yield* Layer.buildWithScope(
-          makeRuntimeSqliteLayer({ filename: leasePath, busyTimeout: 0, disableWAL: true }),
-          scope,
-        );
-        const sql = Context.get(context, SqlClient.SqlClient);
-        yield* sql`PRAGMA busy_timeout = 0`;
-        // The first write takes an exclusive lock that this connection keeps
-        // until it closes. The kernel releases it if the process dies.
-        yield* sql`PRAGMA locking_mode = EXCLUSIVE`;
-        yield* sql`CREATE TABLE IF NOT EXISTS overleaf_lease (id INTEGER PRIMARY KEY CHECK (id = 1), acquired_at INTEGER NOT NULL)`;
-        const now = yield* Clock.currentTimeMillis;
-        yield* sql`INSERT OR REPLACE INTO overleaf_lease (id, acquired_at) VALUES (1, ${now})`;
-      }).pipe(
-        Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))),
-        Effect.mapError((error) =>
-          SqlError.isSqlError(error) && error.reason._tag === "LockTimeoutError"
-            ? new OverleafStateLockedError()
-            : new OverleafStateIoError({ operation: "acquire-lease", cause: error }),
-        ),
+  // One writer at a time inside this process; the lease excludes other processes.
+  // Every mutation runs uninterruptibly while holding this permit, so an
+  // interrupted caller cannot leave a filesystem write running after another
+  // writer has started, and shutdown cannot release the lease mid-write.
+  const writes = yield* Semaphore.make(1);
+  const leasePath = NodePath.join(root, "lease.sqlite");
+  let lease: {
+    readonly scope: Scope.Closeable;
+    readonly root: { dev: string; ino: string };
+    readonly file: { dev: string; ino: string };
+  } | null = null;
+  const releaseLease = Effect.suspend(() => {
+    const held = lease;
+    lease = null;
+    return held === null ? Effect.void : Scope.close(held.scope, Exit.void);
+  });
+  yield* Effect.addFinalizer(() => writes.withPermits(1)(releaseLease));
+
+  const acquireLease = Effect.gen(function* () {
+    yield* io("prepare-directory", async () => {
+      for (const directory of [root, connections, receipts, quarantine])
+        if (!(await privateDirectory(directory, userId)))
+          throw new Error("Overleaf state directory is not private.");
+    });
+    // Record which file SQLite is about to open. Create it first (never
+    // following a link) so there is an identity to record.
+    const before = yield* io("acquire-lease", async () => {
+      const handle = await NodeFSP.open(
+        leasePath,
+        NodeFS.constants.O_CREAT | NodeFS.constants.O_WRONLY | NodeFS.constants.O_NOFOLLOW,
+        0o600,
       );
-      // If the file was replaced while SQLite opened and locked it, the lock may
-      // be on a file nobody else will check; give it up rather than trust it.
-      const identities = yield* io("acquire-lease", async () => {
-        await NodeFSP.chmod(leasePath, 0o600);
-        const after = { root: await directoryIdentity(root), file: await leaseFileIdentity() };
-        if (
-          after.root.dev !== before.root.dev ||
-          after.root.ino !== before.root.ino ||
-          after.file.dev !== before.file.dev ||
-          after.file.ino !== before.file.ino
-        )
-          throw new Error("Overleaf lease file was replaced during acquisition.");
-        return after;
-      }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
-      lease = { scope, ...identities };
-      // Only this process writes here now: temporaries from a dead writer are orphans.
-      yield* io("prepare-directory", async () => {
-        for (const directory of [connections, receipts]) {
-          const entries = await NodeFSP.readdir(directory, { recursive: true });
-          for (const entry of entries)
-            if (NodePath.basename(entry).endsWith(".tmp"))
-              await NodeFSP.rm(NodePath.join(directory, entry), { force: true });
-        }
-      });
+      await handle.close();
+      return { root: await directoryIdentity(root), file: await leaseFileIdentity() };
     });
-    const leaseFileIdentity = async () => {
-      const stat = await NodeFSP.lstat(leasePath, { bigint: true });
-      if (!stat.isFile()) throw new Error("Overleaf lease is not a regular file.");
-      return { dev: String(stat.dev), ino: String(stat.ino) };
-    };
-    /**
-     * The lock protects the file this connection opened. If that file or the
-     * state root was replaced, another process may lock the replacement, so the
-     * old lease is dropped and the lock is taken again on what is there now.
-     * A replacement between this check and the write that follows is not
-     * detected; that window is the boundary of this protection.
-     */
-    const ensureLease = Effect.gen(function* () {
-      const held = lease;
-      if (held !== null) {
-        const current = yield* Effect.promise(async () => {
-          try {
-            return { root: await directoryIdentity(root), file: await leaseFileIdentity() };
-          } catch {
-            return null;
-          }
-        });
-        if (
-          current !== null &&
-          current.root.dev === held.root.dev &&
-          current.root.ino === held.root.ino &&
-          current.file.dev === held.file.dev &&
-          current.file.ino === held.file.ino
-        )
-          return;
-        yield* releaseLease;
-      }
-      yield* acquireLease;
-    });
-    const withLease = <A, E>(effect: Effect.Effect<A, E>) =>
-      writes.withPermits(1)(Effect.uninterruptible(ensureLease.pipe(Effect.andThen(effect))));
-    const admitWritable: OverleafStateStore["Service"]["admitWritable"] = withLease(Effect.void);
-
-    /** Writes a complete, synced temporary next to `file`. */
-    const writeTemporary = async (file: string, contents: string) => {
-      const temporary = NodePath.join(
-        NodePath.dirname(file),
-        `.${NodePath.basename(file)}.${NodeCrypto.randomUUID()}.tmp`,
+    const scope = yield* Scope.make();
+    yield* Effect.gen(function* () {
+      const context = yield* Layer.buildWithScope(
+        makeRuntimeSqliteLayer({ filename: leasePath, busyTimeout: 0, disableWAL: true }),
+        scope,
       );
-      const handle = await NodeFSP.open(temporary, "wx", 0o600);
-      try {
-        await handle.writeFile(contents);
-        await hook("temporary-written", file);
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      await hook("temporary-synced", file);
-      return temporary;
-    };
-    /** Replaces `file` atomically, then makes the rename durable. */
-    const replaceDurably = async (file: string, contents: string) => {
-      const temporary = await writeTemporary(file, contents);
-      try {
-        await hook("before-publish", file);
-        await NodeFSP.rename(temporary, file);
-      } catch (error) {
-        // A temporary left by a crash is removed at the next lease acquisition.
-        await NodeFSP.rm(temporary, { force: true });
-        throw error;
-      }
-      await hook("published", file);
-      await syncDirectory(NodePath.dirname(file));
-    };
-    /** Publishes `file` only if nothing exists there yet. */
-    const createDurably = async (file: string, contents: string): Promise<boolean> => {
-      const temporary = await writeTemporary(file, contents);
-      try {
-        await hook("before-publish", file);
-        await NodeFSP.link(temporary, file);
-      } catch (error) {
-        if (errorCode(error) === "EEXIST") return false;
-        throw error;
-      } finally {
-        await NodeFSP.rm(temporary, { force: true });
-      }
-      await hook("published", file);
-      await syncDirectory(NodePath.dirname(file));
-      return true;
-    };
-
-    const connectionFile = (connectionId: string) => {
-      if (!isServerId(connectionId)) throw new Error("Invalid connection id.");
-      return NodePath.join(connections, `${connectionId}.json`);
-    };
-    const receiptFile = (connectionId: string, requestId: string) => {
-      if (!isServerId(connectionId) || !isServerId(requestId)) throw new Error("Invalid id.");
-      return NodePath.join(receipts, connectionId, `${requestId}.json`);
-    };
-
-    const readConnection: OverleafStateStore["Service"]["readConnection"] = (connectionId) =>
-      io("read", async (): Promise<OverleafConnectionRead> => {
-        let text: string;
-        try {
-          text = await NodeFSP.readFile(connectionFile(connectionId), "utf8");
-        } catch (error) {
-          if (errorCode(error) === "ENOENT") return { _tag: "missing" };
-          throw error;
-        }
-        const decoded = decodeConnection(text);
-        if (Exit.isSuccess(decoded)) {
-          // A document filed under another name is not this connection's state.
-          if (decoded.value.connectionId !== connectionId) return { _tag: "corrupt" };
-          return { _tag: "ready", document: decoded.value };
-        }
-        let version: unknown;
-        try {
-          version = (JSON.parse(text) as { schemaVersion?: unknown } | null)?.schemaVersion;
-        } catch {
-          return { _tag: "corrupt" };
-        }
-        return typeof version === "number" && version !== OVERLEAF_CONNECTION_SCHEMA_VERSION
-          ? { _tag: "unsupported" }
-          : { _tag: "corrupt" };
-      });
-
-    const listConnections: OverleafStateStore["Service"]["listConnections"] = io(
-      "list",
-      async () => {
-        const entries = await NodeFSP.readdir(connections).catch((error: unknown) => {
-          if (errorCode(error) === "ENOENT") return [];
-          throw error;
-        });
-        return entries
-          .filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
-          .map((entry) => entry.slice(0, -".json".length))
-          .filter((id) => isServerId(id))
-          .sort();
-      },
+      const sql = Context.get(context, SqlClient.SqlClient);
+      yield* sql`PRAGMA busy_timeout = 0`;
+      // The first write takes an exclusive lock that this connection keeps
+      // until it closes. The kernel releases it if the process dies.
+      yield* sql`PRAGMA locking_mode = EXCLUSIVE`;
+      yield* sql`CREATE TABLE IF NOT EXISTS overleaf_lease (id INTEGER PRIMARY KEY CHECK (id = 1), acquired_at INTEGER NOT NULL)`;
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql`INSERT OR REPLACE INTO overleaf_lease (id, acquired_at) VALUES (1, ${now})`;
+    }).pipe(
+      Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))),
+      Effect.mapError((error) =>
+        SqlError.isSqlError(error) && error.reason._tag === "LockTimeoutError"
+          ? new OverleafStateLockedError()
+          : new OverleafStateIoError({ operation: "acquire-lease", cause: error }),
+      ),
     );
-
-    const requireValid = (record: "connection" | "receipt", value: unknown) =>
-      (
-        record === "connection"
-          ? Exit.isSuccess(validateConnection(value))
-          : Exit.isSuccess(validateReceipt(value))
+    // If the file was replaced while SQLite opened and locked it, the lock may
+    // be on a file nobody else will check; give it up rather than trust it.
+    const identities = yield* io("acquire-lease", async () => {
+      await NodeFSP.chmod(leasePath, 0o600);
+      const after = { root: await directoryIdentity(root), file: await leaseFileIdentity() };
+      if (
+        after.root.dev !== before.root.dev ||
+        after.root.ino !== before.root.ino ||
+        after.file.dev !== before.file.dev ||
+        after.file.ino !== before.file.ino
       )
-        ? Effect.void
-        : Effect.fail(new OverleafRecordInvalidError({ record }));
-
-    const createConnection: OverleafStateStore["Service"]["createConnection"] = (document) =>
-      withLease(
-        Effect.gen(function* () {
-          yield* requireValid("connection", document);
-          const created = yield* io("write", () =>
-            createDurably(connectionFile(document.connectionId), encodeConnection(document)),
-          );
-          if (!created)
-            return yield* new OverleafConnectionExistsError({
-              connectionId: document.connectionId,
-            });
-        }),
-      );
-
-    const replaceConnection: OverleafStateStore["Service"]["replaceConnection"] = (input) =>
-      withLease(
-        Effect.gen(function* () {
-          const connectionId = input.next.connectionId;
-          yield* requireValid("connection", input.next);
-          const current = yield* readConnection(connectionId);
-          if (current._tag !== "ready")
-            return yield* new OverleafConnectionUnavailableError({
-              connectionId,
-              condition: current._tag,
-            });
-          if (current.document.revision !== input.expectedRevision)
-            return yield* new OverleafConnectionStaleError({
-              connectionId,
-              expectedRevision: input.expectedRevision,
-              actualRevision: current.document.revision,
-            });
-          const now = yield* Clock.currentTimeMillis;
-          const violation = overleafTransitionViolation(current.document, input.next, now);
-          if (violation !== null)
-            return yield* new OverleafTransitionRejectedError({ connectionId, violation });
-          yield* io("write", () =>
-            replaceDurably(connectionFile(connectionId), encodeConnection(input.next)),
-          );
-        }),
-      );
-
-    const quarantineConnection: OverleafStateStore["Service"]["quarantineConnection"] = (
-      connectionId,
-    ) =>
-      withLease(
-        Effect.gen(function* () {
-          const current = yield* readConnection(connectionId);
-          if (current._tag === "ready" || current._tag === "missing")
-            return yield* new OverleafConnectionUnavailableError({
-              connectionId,
-              condition: current._tag === "ready" ? "valid" : "missing",
-            });
-          const now = yield* Clock.currentTimeMillis;
-          return yield* io("quarantine", async () => {
-            const name = `${connectionId}.${now}.${NodeCrypto.randomUUID()}.json`;
-            await NodeFSP.rename(connectionFile(connectionId), NodePath.join(quarantine, name));
-            await syncDirectory(quarantine);
-            await syncDirectory(connections);
-            return name;
-          });
-        }),
-      );
-
-    /** A receipt filed under another request's name is not that request's receipt. */
-    const readReceipt = (file: string, connectionId: string, requestId: string) =>
-      io("read", async () => {
-        const decoded = decodeReceipt(await NodeFSP.readFile(file, "utf8"));
-        if (
-          Exit.isFailure(decoded) ||
-          decoded.value.connectionId !== connectionId ||
-          decoded.value.requestId !== requestId
-        )
-          throw new Error("Unreadable Overleaf request receipt.");
-        return decoded.value;
-      });
-
-    const beginReceipt: OverleafStateStore["Service"]["beginReceipt"] = (receipt) =>
-      withLease(
-        Effect.gen(function* () {
-          yield* requireValid("receipt", receipt);
-          const file = yield* io("write", async () => {
-            const file = receiptFile(receipt.connectionId, receipt.requestId);
-            if (!(await privateDirectory(NodePath.dirname(file), userId)))
-              throw new Error("Overleaf receipt directory is not private.");
-            return file;
-          });
-          const created = yield* io("write", () => createDurably(file, encodeReceipt(receipt)));
-          if (created) return { _tag: "created" as const };
-          const existing = yield* readReceipt(file, receipt.connectionId, receipt.requestId);
-          if (existing.kind !== receipt.kind || existing.payloadDigest !== receipt.payloadDigest)
-            return yield* new OverleafRequestReusedError({
-              connectionId: receipt.connectionId,
-              requestId: receipt.requestId,
-            });
-          return { _tag: "existing" as const, receipt: existing };
-        }),
-      );
-
-    const finishReceipt: OverleafStateStore["Service"]["finishReceipt"] = (input) =>
-      withLease(
-        Effect.gen(function* () {
-          const file = yield* io("write", async () =>
-            receiptFile(input.connectionId, input.requestId),
-          );
-          const existing = yield* readReceipt(file, input.connectionId, input.requestId);
-          // A terminal receipt is final; a second terminal status cannot replace it.
-          if (existing.status !== "running") {
-            if (
-              existing.status === input.status &&
-              existing.resultCategory === input.resultCategory
-            )
-              return;
-            return yield* new OverleafRequestReusedError({
-              connectionId: input.connectionId,
-              requestId: input.requestId,
-            });
-          }
-          const finished: OverleafOperationReceipt = {
-            ...existing,
-            status: input.status,
-            resultCategory: input.resultCategory,
-            updatedAt: DateTime.formatIso(yield* DateTime.now),
-          };
-          yield* requireValid("receipt", finished);
-          yield* io("write", () => replaceDurably(file, encodeReceipt(finished)));
-        }),
-      );
-
-    const prepareRetention: OverleafStateStore["Service"]["prepareRetention"] = (input) =>
-      withLease(
-        Effect.gen(function* () {
-          const located = yield* io("prepare-retention", () => {
-            if (!isServerId(input.connectionId) || !isServerId(input.environmentId))
-              throw new Error("Invalid connection or environment id.");
-            return locateOverleafRetention({
-              stateRetained: retained,
-              environmentId: input.environmentId,
-              connectionId: input.connectionId,
-              checkoutRoot: input.checkoutRoot,
-              userId,
-              exchangeHelper: input.exchangeHelper,
-              expected: input.expected,
-              volumeUuid: options.volumeUuid ?? macVolumeUuid,
-            });
-          });
-          if (located._tag === "refused")
-            return yield* new OverleafRetentionUnavailableError({ reason: located.reason });
-          return { directory: located.directory, identity: located.identity };
-        }),
-      );
-
-    return OverleafStateStore.of({
-      readConnection,
-      listConnections,
-      admitWritable,
-      createConnection,
-      replaceConnection,
-      quarantineConnection,
-      beginReceipt,
-      finishReceipt,
-      prepareRetention,
+        throw new Error("Overleaf lease file was replaced during acquisition.");
+      return after;
+    }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
+    lease = { scope, ...identities };
+    // Only this process writes here now: temporaries from a dead writer are orphans.
+    yield* io("prepare-directory", async () => {
+      for (const directory of [connections, receipts]) {
+        const entries = await NodeFSP.readdir(directory, { recursive: true });
+        for (const entry of entries)
+          if (NodePath.basename(entry).endsWith(".tmp"))
+            await NodeFSP.rm(NodePath.join(directory, entry), { force: true });
+      }
     });
   });
+  const leaseFileIdentity = async () => {
+    const stat = await NodeFSP.lstat(leasePath, { bigint: true });
+    if (!stat.isFile()) throw new Error("Overleaf lease is not a regular file.");
+    return { dev: String(stat.dev), ino: String(stat.ino) };
+  };
+  /**
+   * The lock protects the file this connection opened. If that file or the
+   * state root was replaced, another process may lock the replacement, so the
+   * old lease is dropped and the lock is taken again on what is there now.
+   * A replacement between this check and the write that follows is not
+   * detected; that window is the boundary of this protection.
+   */
+  const ensureLease = Effect.gen(function* () {
+    const held = lease;
+    if (held !== null) {
+      const current = yield* Effect.promise(async () => {
+        try {
+          return { root: await directoryIdentity(root), file: await leaseFileIdentity() };
+        } catch {
+          return null;
+        }
+      });
+      if (
+        current !== null &&
+        current.root.dev === held.root.dev &&
+        current.root.ino === held.root.ino &&
+        current.file.dev === held.file.dev &&
+        current.file.ino === held.file.ino
+      )
+        return;
+      yield* releaseLease;
+    }
+    yield* acquireLease;
+  });
+  const withLease = <A, E>(effect: Effect.Effect<A, E>) =>
+    writes.withPermits(1)(Effect.uninterruptible(ensureLease.pipe(Effect.andThen(effect))));
+  const admitWritable: OverleafStateStore["Service"]["admitWritable"] = withLease(Effect.void);
+
+  /** Writes a complete, synced temporary next to `file`. */
+  const writeTemporary = async (file: string, contents: string) => {
+    const temporary = NodePath.join(
+      NodePath.dirname(file),
+      `.${NodePath.basename(file)}.${NodeCrypto.randomUUID()}.tmp`,
+    );
+    const handle = await NodeFSP.open(temporary, "wx", 0o600);
+    try {
+      await handle.writeFile(contents);
+      await hook("temporary-written", file);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await hook("temporary-synced", file);
+    return temporary;
+  };
+  /** Replaces `file` atomically, then makes the rename durable. */
+  const replaceDurably = async (file: string, contents: string) => {
+    const temporary = await writeTemporary(file, contents);
+    try {
+      await hook("before-publish", file);
+      await NodeFSP.rename(temporary, file);
+    } catch (error) {
+      // A temporary left by a crash is removed at the next lease acquisition.
+      await NodeFSP.rm(temporary, { force: true });
+      throw error;
+    }
+    await hook("published", file);
+    await syncDirectory(NodePath.dirname(file));
+  };
+  /** Publishes `file` only if nothing exists there yet. */
+  const createDurably = async (file: string, contents: string): Promise<boolean> => {
+    const temporary = await writeTemporary(file, contents);
+    try {
+      await hook("before-publish", file);
+      await NodeFSP.link(temporary, file);
+    } catch (error) {
+      if (errorCode(error) === "EEXIST") return false;
+      throw error;
+    } finally {
+      await NodeFSP.rm(temporary, { force: true });
+    }
+    await hook("published", file);
+    await syncDirectory(NodePath.dirname(file));
+    return true;
+  };
+
+  const connectionFile = (connectionId: string) => {
+    if (!isServerId(connectionId)) throw new Error("Invalid connection id.");
+    return NodePath.join(connections, `${connectionId}.json`);
+  };
+  const receiptFile = (connectionId: string, requestId: string) => {
+    if (!isServerId(connectionId) || !isServerId(requestId)) throw new Error("Invalid id.");
+    return NodePath.join(receipts, connectionId, `${requestId}.json`);
+  };
+
+  const readConnection: OverleafStateStore["Service"]["readConnection"] = (connectionId) =>
+    io("read", async (): Promise<OverleafConnectionRead> => {
+      let text: string;
+      try {
+        text = await NodeFSP.readFile(connectionFile(connectionId), "utf8");
+      } catch (error) {
+        if (errorCode(error) === "ENOENT") return { _tag: "missing" };
+        throw error;
+      }
+      const decoded = decodeConnection(text);
+      if (Exit.isSuccess(decoded)) {
+        // A document filed under another name is not this connection's state.
+        if (decoded.value.connectionId !== connectionId) return { _tag: "corrupt" };
+        return { _tag: "ready", document: decoded.value };
+      }
+      let version: unknown;
+      try {
+        version = (JSON.parse(text) as { schemaVersion?: unknown } | null)?.schemaVersion;
+      } catch {
+        return { _tag: "corrupt" };
+      }
+      return typeof version === "number" && version !== OVERLEAF_CONNECTION_SCHEMA_VERSION
+        ? { _tag: "unsupported" }
+        : { _tag: "corrupt" };
+    });
+
+  const listConnections: OverleafStateStore["Service"]["listConnections"] = io("list", async () => {
+    const entries = await NodeFSP.readdir(connections).catch((error: unknown) => {
+      if (errorCode(error) === "ENOENT") return [];
+      throw error;
+    });
+    return entries
+      .filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
+      .map((entry) => entry.slice(0, -".json".length))
+      .filter((id) => isServerId(id))
+      .sort();
+  });
+
+  const requireValid = (record: "connection" | "receipt", value: unknown) =>
+    (
+      record === "connection"
+        ? Exit.isSuccess(validateConnection(value))
+        : Exit.isSuccess(validateReceipt(value))
+    )
+      ? Effect.void
+      : Effect.fail(new OverleafRecordInvalidError({ record }));
+
+  const createConnection: OverleafStateStore["Service"]["createConnection"] = (document) =>
+    withLease(
+      Effect.gen(function* () {
+        yield* requireValid("connection", document);
+        const created = yield* io("write", () =>
+          createDurably(connectionFile(document.connectionId), encodeConnection(document)),
+        );
+        if (!created)
+          return yield* new OverleafConnectionExistsError({
+            connectionId: document.connectionId,
+          });
+      }),
+    );
+
+  const replaceConnection: OverleafStateStore["Service"]["replaceConnection"] = (input) =>
+    withLease(
+      Effect.gen(function* () {
+        const connectionId = input.next.connectionId;
+        yield* requireValid("connection", input.next);
+        const current = yield* readConnection(connectionId);
+        if (current._tag !== "ready")
+          return yield* new OverleafConnectionUnavailableError({
+            connectionId,
+            condition: current._tag,
+          });
+        if (current.document.revision !== input.expectedRevision)
+          return yield* new OverleafConnectionStaleError({
+            connectionId,
+            expectedRevision: input.expectedRevision,
+            actualRevision: current.document.revision,
+          });
+        const now = yield* Clock.currentTimeMillis;
+        const violation = overleafTransitionViolation(current.document, input.next, now);
+        if (violation !== null)
+          return yield* new OverleafTransitionRejectedError({ connectionId, violation });
+        yield* io("write", () =>
+          replaceDurably(connectionFile(connectionId), encodeConnection(input.next)),
+        );
+      }),
+    );
+
+  const quarantineConnection: OverleafStateStore["Service"]["quarantineConnection"] = (
+    connectionId,
+  ) =>
+    withLease(
+      Effect.gen(function* () {
+        const current = yield* readConnection(connectionId);
+        if (current._tag === "ready" || current._tag === "missing")
+          return yield* new OverleafConnectionUnavailableError({
+            connectionId,
+            condition: current._tag === "ready" ? "valid" : "missing",
+          });
+        const now = yield* Clock.currentTimeMillis;
+        return yield* io("quarantine", async () => {
+          const name = `${connectionId}.${now}.${NodeCrypto.randomUUID()}.json`;
+          await NodeFSP.rename(connectionFile(connectionId), NodePath.join(quarantine, name));
+          await syncDirectory(quarantine);
+          await syncDirectory(connections);
+          return name;
+        });
+      }),
+    );
+
+  /** A receipt filed under another request's name is not that request's receipt. */
+  const readReceipt = (file: string, connectionId: string, requestId: string) =>
+    io("read", async () => {
+      const decoded = decodeReceipt(await NodeFSP.readFile(file, "utf8"));
+      if (
+        Exit.isFailure(decoded) ||
+        decoded.value.connectionId !== connectionId ||
+        decoded.value.requestId !== requestId
+      )
+        throw new Error("Unreadable Overleaf request receipt.");
+      return decoded.value;
+    });
+
+  const beginReceipt: OverleafStateStore["Service"]["beginReceipt"] = (receipt) =>
+    withLease(
+      Effect.gen(function* () {
+        yield* requireValid("receipt", receipt);
+        const file = yield* io("write", async () => {
+          const file = receiptFile(receipt.connectionId, receipt.requestId);
+          if (!(await privateDirectory(NodePath.dirname(file), userId)))
+            throw new Error("Overleaf receipt directory is not private.");
+          return file;
+        });
+        const created = yield* io("write", () => createDurably(file, encodeReceipt(receipt)));
+        if (created) return { _tag: "created" as const };
+        const existing = yield* readReceipt(file, receipt.connectionId, receipt.requestId);
+        if (existing.kind !== receipt.kind || existing.payloadDigest !== receipt.payloadDigest)
+          return yield* new OverleafRequestReusedError({
+            connectionId: receipt.connectionId,
+            requestId: receipt.requestId,
+          });
+        return { _tag: "existing" as const, receipt: existing };
+      }),
+    );
+
+  const finishReceipt: OverleafStateStore["Service"]["finishReceipt"] = (input) =>
+    withLease(
+      Effect.gen(function* () {
+        const file = yield* io("write", async () =>
+          receiptFile(input.connectionId, input.requestId),
+        );
+        const existing = yield* readReceipt(file, input.connectionId, input.requestId);
+        // A terminal receipt is final; a second terminal status cannot replace it.
+        if (existing.status !== "running") {
+          if (existing.status === input.status && existing.resultCategory === input.resultCategory)
+            return;
+          return yield* new OverleafRequestReusedError({
+            connectionId: input.connectionId,
+            requestId: input.requestId,
+          });
+        }
+        const finished: OverleafOperationReceipt = {
+          ...existing,
+          status: input.status,
+          resultCategory: input.resultCategory,
+          updatedAt: DateTime.formatIso(yield* DateTime.now),
+        };
+        yield* requireValid("receipt", finished);
+        yield* io("write", () => replaceDurably(file, encodeReceipt(finished)));
+      }),
+    );
+
+  const prepareRetention: OverleafStateStore["Service"]["prepareRetention"] = (input) =>
+    withLease(
+      Effect.gen(function* () {
+        const located = yield* io("prepare-retention", () => {
+          if (!isServerId(input.connectionId) || !isServerId(input.environmentId))
+            throw new Error("Invalid connection or environment id.");
+          return locateOverleafRetention({
+            stateRetained: retained,
+            environmentId: input.environmentId,
+            connectionId: input.connectionId,
+            checkoutRoot: input.checkoutRoot,
+            userId,
+            exchangeHelper: input.exchangeHelper,
+            expected: input.expected,
+            volumeUuid: options.volumeUuid ?? macVolumeUuid,
+          });
+        });
+        if (located._tag === "refused")
+          return yield* new OverleafRetentionUnavailableError({ reason: located.reason });
+        return { directory: located.directory, identity: located.identity };
+      }),
+    );
+
+  return OverleafStateStore.of({
+    readConnection,
+    listConnections,
+    admitWritable,
+    createConnection,
+    replaceConnection,
+    quarantineConnection,
+    beginReceipt,
+    finishReceipt,
+    prepareRetention,
+  });
+});
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const layer = Layer.effect(

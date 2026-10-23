@@ -4,6 +4,7 @@ import * as NodeProcess from "node:process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ExecutionRunId } from "@scientfactory/execution";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -26,7 +27,7 @@ describe("LocalExecutionProcess", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const processes = yield* ExecutionProcess;
-        const started = performance.now();
+        const started = yield* Clock.currentTimeMillis;
         const handle = yield* processes.start({
           runId: ExecutionRunId.make("short-process-test"),
           executable: NodeProcess.execPath,
@@ -37,9 +38,9 @@ describe("LocalExecutionProcess", () => {
         const output = yield* Effect.forkScoped(Stream.runCollect(handle.output));
         expect(yield* handle.exitCode).toBe(0);
         yield* Fiber.join(output);
-        expect(performance.now() - started).toBeLessThan(2000);
+        expect(yield* Clock.currentTimeMillis).toBe(started);
       }),
-    ).pipe(Effect.provide(Live), TestClock.withLive),
+    ).pipe(Effect.provide(Live)),
   );
   it.effect("cancels a spawned descendant with the owned process tree", () =>
     Effect.scoped(

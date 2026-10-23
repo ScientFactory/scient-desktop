@@ -1,8 +1,10 @@
+import { act, fakeTimers, render as _fixtureRender, type Screen } from "../../../test/render";
+import { waitForTestReceipt } from "../../../test/receipt";
 import { useState, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+
 import type { Editor as ProseEditor } from "@tiptap/core";
-import type { Editor } from "@pierre/diffs/edit";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import type { Editor, EditorSelection } from "@pierre/diffs/edit";
+import { expect, it, vi, type TestContext } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
@@ -14,57 +16,48 @@ vi.mock("~/assets/assetUrls", async (importOriginal) => ({
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { EditableFileEditor, useFileLineReveal } from "~/components/files/FilePreviewPanel";
-import { sourcePosition } from "../math/input/sourceAdapter";
+import { sourceOffset, sourcePosition } from "../math/input/sourceAdapter";
 import { latexTextSelectionRects } from "./latexTextSelectionRects";
 import { pagedLayoutSettled } from "./latexPagedGeometry";
-import { mathReadingPreviewReady } from "./mathReadingPreview";
+import { waitForLatexVisualTestReadiness } from "./latexVisualTestReadiness";
 import type { MathfieldElement } from "mathlive";
 import template26 from "./fixtures/hebrew-math-and-tables.tex?raw";
 import template28 from "./fixtures/mock-medical-article.tex?raw";
 import "~/index.css";
 import "./scient-latex.css";
 
-let root: Root;
-let host: HTMLDivElement;
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-});
-const frame = () =>
-  new Promise<void>((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-  );
-async function settleRect(measure: () => DOMRect) {
-  let previous = "",
-    since = 0;
-  await expect
-    .poll(
-      () => {
-        const rect = measure();
-        const key = [rect.left, rect.top, rect.width, rect.height]
-          .map((value) => value.toFixed(1))
-          .join(",");
-        if (key !== previous) {
-          previous = key;
-          since = performance.now();
-        }
-        return performance.now() - since >= 300;
-      },
-      { timeout: 15_000, interval: 50 },
-    )
-    .toBe(true);
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
 }
-async function mount(input: string, name: string) {
+async function readyToHit(editor: ProseEditor, measure: () => DOMRect) {
+  await vi.waitFor(() => {
+    expect(pagedLayoutSettled(editor.view)).toBe(true);
+    const rect = measure();
+    expect(rect.width).toBeGreaterThan(0);
+    expect(rect.height).toBeGreaterThan(0);
+    const viewport = editor.view.dom
+      .closest(".scient-latex-visual-scroll")!
+      .getBoundingClientRect();
+    expect(rect.top + rect.height / 2).toBeGreaterThanOrEqual(viewport.top);
+    expect(rect.top + rect.height / 2).toBeLessThanOrEqual(viewport.bottom);
+  });
+}
+async function mount(_fixture: _Fixture, input: string, name: string, context: TestContext) {
   await page.viewport(1300, 900);
-  host = document.createElement("div");
-  host.style.cssText = "width:1250px;height:840px;display:flex";
-  host.dataset.testid = "split-browser-host";
-  host.setAttribute("data-latex-split", "true");
-  document.body.append(host);
-  root = createRoot(host);
+  _fixture.host = document.createElement("div");
+  _fixture.host.style.cssText = "width:1250px;height:840px;display:flex";
+  _fixture.host.dataset.testid = "split-browser-host";
+  _fixture.host.setAttribute("data-latex-split", "true");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
   let sourceEditor: Editor<"file", unknown, undefined> | undefined;
+  const sourceReady = Promise.withResolvers<void>();
   let current = input;
   const reveals: { from: number; to: number; precise?: boolean }[] = [];
+  const sourceSelections = vi.fn<(selection: EditorSelection | null) => void>();
   function Harness() {
     const [source, setSource] = useState(input);
     const owner = useLatexVisualTestOwner(source);
@@ -95,10 +88,12 @@ async function mount(input: string, name: string) {
             revealRequestId={reveal?.requestId ?? -1}
             wordWrap
             retainSelectionOnBlur
+            onEditorSelectionChange={sourceSelections}
             sourceSelectionReveal={reveal}
             onPostRender={(container, instance, context) => {
               sourceEditor = (instance as unknown as { editor: typeof sourceEditor }).editor;
               onPostRender(container, instance, context);
+              if (sourceEditor?.getFile()) sourceReady.resolve();
             }}
             onContentsChange={(value) => {
               current = value;
@@ -146,43 +141,16 @@ async function mount(input: string, name: string) {
       </>
     );
   }
-  root.render(<Harness />);
-  await expect
-    .poll(
-      () =>
-        host.querySelector<HTMLElement & { editor: ProseEditor }>(".scient-latex-visual-document")
-          ?.editor,
-    )
-    .toBeTruthy();
-  await expect
-    .poll(
-      () => host.querySelector("diffs-container")?.shadowRoot?.querySelector("[data-content]"),
-      { timeout: 15_000 },
-    )
-    .toBeTruthy();
-  await userEvent.click(
-    host
-      .querySelector("diffs-container")!
-      .shadowRoot!.querySelector<HTMLElement>("[data-content]")!,
-    { position: { x: 100, y: 10 } },
-  );
-  await expect.poll(() => sourceEditor?.getFile(), { timeout: 15_000 }).toBeTruthy();
-  const visual = host.querySelector<HTMLElement & { editor: ProseEditor }>(
-    ".scient-latex-visual-document",
-  )!.editor;
-  await expect
-    .poll(() => visual.view.dom.hasAttribute("data-latex-loading"), { timeout: 15_000 })
-    .toBe(false);
-  await document.fonts.ready;
-  await expect
-    .poll(
-      () => [...host.querySelectorAll(".scient-latex-math-preview")].every(mathReadingPreviewReady),
-      { timeout: 15_000 },
-    )
-    .toBe(true);
-  await frame();
-  await expect.poll(() => pagedLayoutSettled(visual.view), { timeout: 15_000 }).toBe(true);
-  return { visual, source: () => sourceEditor!, reveals, text: () => current };
+  await _fixture.root0.rerender(<Harness />);
+  const visual = await waitForLatexVisualTestReadiness(_fixture.host, context, `split ${name}`);
+  await waitForTestReceipt(context.signal, sourceReady.promise);
+  return {
+    visual,
+    source: () => sourceEditor!,
+    sourceSelections,
+    reveals,
+    text: () => current,
+  };
 }
 function wordPosition(root: HTMLElement | ShadowRoot, word: string, scroll = true) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
@@ -218,7 +186,7 @@ function wordPosition(root: HTMLElement | ShadowRoot, word: string, scroll = tru
   }
   throw new Error(`Missing word: ${word}`);
 }
-it.each([
+it.for([
   ["26", template26, "פסקה"],
   ["26-abstract", template26, "מסמך"],
   ["26-abstract-line-end", template26, "ניסוי"],
@@ -244,32 +212,36 @@ it.each([
   ["28", template28, "Early"],
 ] as const)(
   "template %s: native word selection updates Source without jumping, then survives pane handoff",
-  async (name, source, word) => {
-    const state = await mount(source, name);
+  async ([name, source, word], context) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const state = await mount(_fixture, source, name, context);
     if (name === "26-footnote") {
       await page
         .getByRole("button", { name: "Return to footnote 1 marker", exact: true })
         .nth(0)
         .click();
       await page.getByRole("button", { name: "Edit text", exact: true }).click();
-      await expect.poll(() => host.querySelector('[aria-label="Footnote text"]')).toBeTruthy();
+      await expect
+        .poll(() => _fixture.host.querySelector('[aria-label="Footnote text"]'))
+        .toBeTruthy();
     }
-    const scroll = host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+    const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
     wordPosition(state.visual.view.dom, word);
-    await frame();
-    await settleRect(() => wordPosition(state.visual.view.dom, word, false).box);
+    await readyToHit(state.visual, () => wordPosition(state.visual.view.dom, word, false).box);
     const hit = wordPosition(state.visual.view.dom, word, false);
     state.visual.view.dom.dataset.testid = "active-visual-editor";
     let before = scroll.scrollTop;
     const pointer = () => {
       before = scroll.scrollTop;
-      host.removeEventListener("pointerdown", pointer, true);
+      _fixture.host.removeEventListener("pointerdown", pointer, true);
     };
-    host.addEventListener("pointerdown", pointer, true);
+    _fixture.host.addEventListener("pointerdown", pointer, true);
     const cell = hit.element.closest<HTMLElement>("[data-table-cell]");
     if (cell) {
-      const bounds = hit.element.getBoundingClientRect(),
-        cellBounds = cell.getBoundingClientRect();
+      const bounds = hit.element.getBoundingClientRect();
+      const cellBounds = cell.getBoundingClientRect();
       await page
         .getByRole("textbox", { name: cell.getAttribute("aria-label")!, exact: true })
         .nth(0)
@@ -283,8 +255,8 @@ it.each([
       const field = state.visual.view.dom.querySelector<HTMLElement>(
         '[aria-label="Literal text"]',
       )!;
-      const bounds = hit.element.getBoundingClientRect(),
-        fieldBounds = field.getBoundingClientRect();
+      const bounds = hit.element.getBoundingClientRect();
+      const fieldBounds = field.getBoundingClientRect();
       await page
         .getByRole("textbox", { name: "Literal text", exact: true })
         .nth(0)
@@ -308,12 +280,12 @@ it.each([
         .nth(0)
         .dblClick({ position: hit.position });
     } else {
-      await page
+      const target = page
         .getByTestId("active-visual-editor")
         .nth(0)
         .getByText(word, { exact: false })
-        .nth(0)
-        .dblClick({ position: hit.position });
+        .nth(0);
+      await target.dblClick({ position: hit.position });
     }
     await expect.poll(() => state.reveals.length).toBe(1);
     const mapped = state.reveals[0]!;
@@ -339,7 +311,7 @@ it.each([
       .nth(0)
       .click({ position: { x: 100, y: 100 } });
     expect(state.source().getViewState().selections).toEqual(selection);
-    const container = host.querySelector("diffs-container")!;
+    const container = _fixture.host.querySelector("diffs-container")!;
     await expect
       .poll(
         () =>
@@ -348,8 +320,17 @@ it.each([
       )
       .toBe("visible");
     const sourceHit = wordPosition(container.shadowRoot!, word);
+    state.sourceSelections.mockClear();
     await userEvent.dblClick(sourceHit.element, { position: sourceHit.position });
-    await frame();
+    await vi.waitFor(() => {
+      expect(state.sourceSelections).toHaveBeenCalled();
+      const selected = state.source().getViewState().selections?.[0];
+      expect(selected).toBeDefined();
+      if (!selected) throw new Error("The Source owner did not acknowledge its native selection.");
+      expect(
+        source.slice(sourceOffset(source, selected.start), sourceOffset(source, selected.end)),
+      ).toBe(word);
+    });
     const manuallySelected = state.source().getViewState().selections;
     await page
       .getByTestId("active-visual-split")
@@ -358,35 +339,45 @@ it.each([
     expect(state.source().getViewState().selections).toEqual(manuallySelected);
     expect(state.text()).toBe(source);
   },
-  30_000,
 );
 
-it("a Source interaction cancels a queued Visual reveal before it can replace Source selection", async () => {
-  const state = await mount(template26, "cancel-source");
-  const hit = wordPosition(state.visual.view.dom, "פסקה");
+it("a Source interaction cancels a queued Visual reveal before it can replace Source selection", async (context) => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const state = await mount(_fixture, template26, "cancel-source", context);
+  wordPosition(state.visual.view.dom, "פסקה");
+  await readyToHit(state.visual, () => wordPosition(state.visual.view.dom, "פסקה", false).box);
+  const hit = wordPosition(state.visual.view.dom, "פסקה", false);
   const bounds = hit.element.getBoundingClientRect();
   const before = state.source().getViewState().selections;
-  hit.element.dispatchEvent(
-    new MouseEvent("dblclick", {
-      bubbles: true,
-      clientX: bounds.left + hit.position.x,
-      clientY: bounds.top + hit.position.y,
-    }),
-  );
-  host.dispatchEvent(new CustomEvent("scient-latex-source-interaction"));
-  await frame();
+  using _clock = fakeTimers();
+  await act(() => {
+    hit.element.dispatchEvent(
+      new MouseEvent("dblclick", {
+        bubbles: true,
+        clientX: bounds.left + hit.position.x,
+        clientY: bounds.top + hit.position.y,
+      }),
+    );
+    _fixture.host.dispatchEvent(new CustomEvent("scient-latex-source-interaction"));
+  });
+  await act(() => vi.advanceTimersByTimeAsync(32));
   expect(state.reveals).toHaveLength(0);
   expect(state.source().getViewState().selections).toEqual(before);
-}, 30_000);
+});
 
-it.each([
+it.for([
   ["matrix", "pmatrix", "4", "4"],
   ["cases", "cases", "0", "x\\geq0,"],
   ["aligned", "x-y", "−", null],
 ] as const)(
   "template 26: clicking inside %s reveals its authored cell",
-  async (name, match, word, expected) => {
-    const state = await mount(template26, `26-math-${name}`);
+  async ([name, match, word, expected], context) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const state = await mount(_fixture, template26, `26-math-${name}`, context);
     let mathNode: HTMLElement | null = null;
     state.visual.state.doc.descendants((node, at) => {
       if (
@@ -399,19 +390,16 @@ it.each([
     expect(mathNode).toBeTruthy();
     const shell = mathNode as unknown as HTMLElement;
     shell.scrollIntoView({ block: "center" });
-    await frame();
-    await settleRect(() => shell.getBoundingClientRect());
+    await readyToHit(state.visual, () => shell.getBoundingClientRect());
     shell.dataset.testid = "active-math-shell";
     await page.getByTestId("active-math-shell").nth(0).click();
     const field = () =>
       [...state.visual.view.dom.querySelectorAll<MathfieldElement>("math-field")].find((field) =>
         field.value.replace(/\s+/gu, "").includes(match),
       )!;
-    await expect
-      .poll(() => field()?.shadowRoot?.querySelector(".ML__latex"), { timeout: 15_000 })
-      .toBeTruthy();
+    await expect.poll(() => field()?.shadowRoot?.querySelector(".ML__latex")).toBeTruthy();
     field().scrollIntoView({ block: "center" });
-    await frame();
+    await readyToHit(state.visual, () => field().getBoundingClientRect());
     const glyph = () => {
       const math = field();
       for (let at = 1; at <= math.lastOffset; at++) {
@@ -422,8 +410,8 @@ it.each([
       return null;
     };
     await expect.poll(glyph).toBeTruthy();
-    const bounds = glyph()!,
-      rootBounds = field().getBoundingClientRect();
+    const bounds = glyph()!;
+    const rootBounds = field().getBoundingClientRect();
     field().dataset.testid = "active-math-field";
     await page
       .getByTestId("active-math-field")
@@ -449,5 +437,23 @@ it.each([
       .toEqual(sourcePosition(template26, range.from));
     expect(state.text()).toBe(template26);
   },
-  30_000,
 );
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

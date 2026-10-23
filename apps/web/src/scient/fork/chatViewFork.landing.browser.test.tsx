@@ -1,20 +1,21 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import { useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
+
 import { userEvent } from "vitest/browser";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import { markForkLanding, settleForkLanding } from "~/components/scient-fork/forkLanding";
 import { useForkLanding, useForkLandingReveal } from "./chatViewFork";
 
 const fork = "env:landing-browser-fork";
 const origin = "env:landing-browser-origin";
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-let reveal: ReturnType<typeof useForkLandingReveal>;
 
 // The actual landing hooks with the messages wrapper's inert/opacity binding.
 // ChatView's full provider/composer shell is not mounted by this focused proof.
-function Probe(props: { threadKey: string; detailLoaded: boolean; onAction: () => void }) {
+function Probe({
+  _fixture,
+  ...props
+}: { threadKey: string; detailLoaded: boolean; onAction: () => void } & { _fixture: _Fixture }) {
   const landing = useForkLanding(props.threadKey);
   const currentReveal = useForkLandingReveal({
     landing,
@@ -26,7 +27,7 @@ function Probe(props: { threadKey: string; detailLoaded: boolean; onAction: () =
     timelineEmpty: false,
   });
   useLayoutEffect(() => {
-    reveal = currentReveal;
+    _fixture.publishReveal(currentReveal);
   });
   return (
     <>
@@ -50,37 +51,42 @@ function Probe(props: { threadKey: string; detailLoaded: boolean; onAction: () =
   );
 }
 
-async function render(props: Parameters<typeof Probe>[0]) {
-  if (!root) {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
+async function render(_fixture: _Fixture, props: Omit<Parameters<typeof Probe>[0], "_fixture">) {
+  if (!_fixture.root0) {
+    _fixture.host = document.createElement("div");
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
   }
-  root.render(<Probe {...props} />);
-  await expect.poll(() => host?.querySelector("[data-action]")).not.toBeNull();
+  await _fixture.root0.rerender(<Probe _fixture={_fixture} {...props} />);
+  await expect.poll(() => _fixture.host?.querySelector("[data-action]")).not.toBeNull();
 }
 
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
   settleForkLanding(fork);
-});
+}
 
 it("measures pending rows but blocks pointer/focus until their own landing settles", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const onAction = vi.fn();
-  await render({ threadKey: origin, detailLoaded: true, onAction });
-  const button = host!.querySelector<HTMLButtonElement>("[data-action]")!;
-  const before = host!.querySelector<HTMLButtonElement>("[data-before]")!;
-  const after = host!.querySelector<HTMLButtonElement>("[data-after]")!;
-  const surface = host!.querySelector<HTMLElement>("[data-landing-surface]")!;
+  await render(_fixture, { threadKey: origin, detailLoaded: true, onAction });
+  const button = _fixture.host!.querySelector<HTMLButtonElement>("[data-action]")!;
+  const before = _fixture.host!.querySelector<HTMLButtonElement>("[data-before]")!;
+  const after = _fixture.host!.querySelector<HTMLButtonElement>("[data-after]")!;
+  const surface = _fixture.host!.querySelector<HTMLElement>("[data-landing-surface]")!;
   expect(surface.inert).toBe(false);
   await userEvent.click(button);
   expect(onAction).toHaveBeenCalledTimes(1);
 
   markForkLanding(fork, 60_000);
-  await render({ threadKey: fork, detailLoaded: false, onAction });
+  await render(_fixture, { threadKey: fork, detailLoaded: false, onAction });
   await expect.poll(() => surface.inert).toBe(true);
   const pendingBounds = surface.getBoundingClientRect();
   expect(pendingBounds.width).toBeGreaterThan(0);
@@ -96,9 +102,9 @@ it("measures pending rows but blocks pointer/focus until their own landing settl
   await userEvent.tab();
   expect(document.activeElement).toBe(after);
 
-  await render({ threadKey: fork, detailLoaded: true, onAction });
-  await expect.poll(() => reveal.onPositionedThreadKeyChange).toBeDefined();
-  reveal.onPositionedThreadKeyChange?.(fork);
+  await render(_fixture, { threadKey: fork, detailLoaded: true, onAction });
+  await expect.poll(() => _fixture.reveal.onPositionedThreadKeyChange).toBeDefined();
+  _fixture.reveal.onPositionedThreadKeyChange?.(fork);
   await expect.poll(() => surface.inert, { timeout: 3_000 }).toBe(false);
   expect(surface.getBoundingClientRect().height).toBe(pendingBounds.height);
   before.focus();
@@ -109,12 +115,43 @@ it("measures pending rows but blocks pointer/focus until their own landing settl
 });
 
 it("releases inertness at expiry even when the fork never finishes loading", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const onAction = vi.fn();
   markForkLanding(fork, 1_000);
-  await render({ threadKey: fork, detailLoaded: false, onAction });
-  const surface = host!.querySelector<HTMLElement>("[data-landing-surface]")!;
+  await render(_fixture, { threadKey: fork, detailLoaded: false, onAction });
+  const surface = _fixture.host!.querySelector<HTMLElement>("[data-landing-surface]")!;
   await expect.poll(() => surface.inert).toBe(true);
   await expect.poll(() => surface.inert, { timeout: 3_000 }).toBe(false);
-  await userEvent.click(host!.querySelector<HTMLButtonElement>("[data-action]")!);
+  await userEvent.click(_fixture.host!.querySelector<HTMLButtonElement>("[data-action]")!);
   expect(onAction).toHaveBeenCalledTimes(1);
 });
+
+function _createFixture() {
+  let _published_reveal = undefined! as ReturnType<typeof useForkLandingReveal>;
+
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    get reveal() {
+      return _published_reveal;
+    },
+    publishReveal(next: typeof _published_reveal) {
+      _published_reveal = next;
+    },
+
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

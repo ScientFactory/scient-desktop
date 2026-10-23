@@ -17,6 +17,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import * as OwnedLocalEndpoints from "../../localEndpoints/OwnedLocalEndpointRegistry.ts";
@@ -61,20 +63,24 @@ const waitForTerminal = Effect.fn("ComputeProduct.waitForTerminal")(function* (
   sessionId: ComputeSessionId,
   executionId: ComputeExecutionId,
 ) {
-  for (let attempt = 0; attempt < 3_000; attempt += 1) {
-    const executions = yield* gateway.listExecutions({ cwd, sessionId, limit: 100 });
-    const execution = executions.find((candidate) => candidate.request.executionId === executionId);
-    if (
-      execution !== undefined &&
-      execution.result !== null &&
-      TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status)
-    ) {
-      return execution;
-    }
-    yield* Effect.sleep("10 millis");
-  }
-  return yield* Effect.die(new Error(`Execution '${executionId}' did not finish.`));
-});
+  const changes = yield* gateway.subscribeSessions({ cwd });
+  const found = yield* changes.pipe(
+    Stream.mapEffect(() => gateway.listExecutions({ cwd, sessionId, limit: 100 })),
+    Stream.map((executions) => {
+      const execution = executions.find(
+        (candidate) => candidate.request.executionId === executionId,
+      );
+      return execution?.result && TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status)
+        ? execution
+        : null;
+    }),
+    Stream.filter((execution) => execution !== null),
+    Stream.runHead,
+  );
+  if (Option.isNone(found))
+    return yield* Effect.die(`Execution receipt stream ended: ${executionId}`);
+  return found.value;
+}, Effect.scoped);
 
 describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
   it.live("runs the Phase 4 gateway through the durable service and a real kernel", () =>

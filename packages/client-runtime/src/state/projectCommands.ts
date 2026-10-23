@@ -153,6 +153,11 @@ export function createProjectEnvironmentAtoms<R, E>(
           (result, isCurrent) => fileMetadata.rememberEntries(input.cwd, result.entries, isCurrent),
         ),
     }),
+    listIgnoredFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:list-ignored-files",
+      tag: WS_METHODS.projectsListIgnoredFiles,
+      staleTimeMs: 15_000,
+    }),
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,
@@ -161,7 +166,10 @@ export function createProjectEnvironmentAtoms<R, E>(
       execute: (input) =>
         fileMetadata.seedAfterRead(
           request(WS_METHODS.projectsReadFile, input),
-          (result, isCurrent) => fileMetadata.rememberFile(input.cwd, result, isCurrent),
+          (result, isCurrent) =>
+            result.exists === false
+              ? Effect.void
+              : fileMetadata.rememberFile(input.cwd, result, isCurrent),
         ),
     }),
     // Unlike the SWR query, this starts a new read only after preceding writes
@@ -268,16 +276,19 @@ export function createProjectEnvironmentAtoms<R, E>(
       tag: WS_METHODS.projectsWriteFile,
       scheduler: fileScheduler,
       concurrency: fileConcurrency,
-      execute: (input) =>
-        Effect.gen(function* () {
+      execute: Effect.fn("ProjectCommands.writeFile")(
+        function* (input) {
           const mutationId =
             input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie));
           return yield* requestGuarded(WS_METHODS.projectsWriteFile, { ...input, mutationId });
-        }).pipe(
-          Effect.tap((result) =>
-            Effect.forEach(writtenFilePaths(input, result), fileMetadata.invalidate),
+        },
+        (effect, input) =>
+          effect.pipe(
+            Effect.tap((result) =>
+              Effect.forEach(writtenFilePaths(input, result), fileMetadata.invalidate),
+            ),
           ),
-        ),
+      ),
       onSuccess: ({ environmentId, input }, registry, result) =>
         Effect.sync(() => {
           for (const path of writtenFilePaths(input, result))
@@ -289,25 +300,28 @@ export function createProjectEnvironmentAtoms<R, E>(
       tag: WS_METHODS.projectsRenameFile,
       scheduler: fileScheduler,
       concurrency: fileConcurrency,
-      execute: (input) =>
-        Effect.gen(function* () {
+      execute: Effect.fn("ProjectCommands.renameFile")(
+        function* (input) {
           const mutationId =
             input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie));
           return yield* requestGuarded(WS_METHODS.projectsRenameFile, { ...input, mutationId });
-        }).pipe(
-          Effect.tap((result) =>
-            Effect.forEach(
-              new Set(
-                [
-                  input.relativePath,
-                  input.destinationRelativePath,
-                  result.destinationRelativePath,
-                ].map((path) => resolveWorkspaceFilePath(path, input.cwd)),
+        },
+        (effect, input) =>
+          effect.pipe(
+            Effect.tap((result) =>
+              Effect.forEach(
+                new Set(
+                  [
+                    input.relativePath,
+                    input.destinationRelativePath,
+                    result.destinationRelativePath,
+                  ].map((path) => resolveWorkspaceFilePath(path, input.cwd)),
+                ),
+                fileMetadata.invalidate,
               ),
-              fileMetadata.invalidate,
             ),
           ),
-        ),
+      ),
       onSuccess: ({ environmentId, input }, registry, result) =>
         Effect.sync(() => {
           for (const path of new Set(
@@ -321,12 +335,11 @@ export function createProjectEnvironmentAtoms<R, E>(
     deleteFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:delete-file",
       tag: WS_METHODS.projectsDeleteFile,
-      execute: (input) =>
-        Effect.gen(function* () {
-          const mutationId =
-            input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie));
-          return yield* request(WS_METHODS.projectsDeleteFile, { ...input, mutationId });
-        }),
+      execute: Effect.fn("ProjectCommands.deleteFile")(function* (input) {
+        const mutationId =
+          input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie));
+        return yield* request(WS_METHODS.projectsDeleteFile, { ...input, mutationId });
+      }),
       scheduler: fileScheduler,
       concurrency: fileConcurrency,
     }),

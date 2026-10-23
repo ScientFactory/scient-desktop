@@ -313,19 +313,17 @@ export const makeAgySession = Effect.fn("makeAgySession")(function* (
   const kill = child.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.ignore, Effect.asVoid);
   yield* Effect.addFinalizer(() => kill);
 
-  const failActive = (error: AgySessionError) =>
-    Effect.gen(function* () {
-      const active = yield* Ref.getAndSet(activeTurn, undefined);
-      if (active) yield* Deferred.fail(active.deferred, error).pipe(Effect.ignore);
-    });
+  const failActive = Effect.fn("AgySession.failActive")(function* (error: AgySessionError) {
+    const active = yield* Ref.getAndSet(activeTurn, undefined);
+    if (active) yield* Deferred.fail(active.deferred, error).pipe(Effect.ignore);
+  });
 
-  const failProtocol = (detail: string) =>
-    Effect.gen(function* () {
-      const error = new AgySessionError({ stage: "protocol", detail });
-      yield* Ref.set(terminalError, error);
-      yield* failActive(error);
-      yield* kill;
-    });
+  const failProtocol = Effect.fn("AgySession.failProtocol")(function* (detail: string) {
+    const error = new AgySessionError({ stage: "protocol", detail });
+    yield* Ref.set(terminalError, error);
+    yield* failActive(error);
+    yield* kill;
+  });
 
   const emit = (active: ActiveTurn, event: AgySessionEvent) =>
     active.onEvent
@@ -338,78 +336,80 @@ export const makeAgySession = Effect.fn("makeAgySession")(function* (
           )
       : Effect.void;
 
-  const handleKnownEvent = (event: AgyKnownOutputEvent, raw: unknown) =>
-    Effect.gen(function* () {
-      if (event.event === "init") {
-        yield* Ref.set(conversationId, event.conversation_id);
-        return;
-      }
-      if (event.event === "step_update") {
-        const update = event.step_update;
-        yield* Ref.set(conversationId, update.conversation_id);
-        const active = yield* Ref.get(activeTurn);
-        if (!active) return;
-        if (update.step_type === "agent_response") {
-          if (update.text_delta && update.text_delta.length > 0) {
-            yield* emit(active, { _tag: "AssistantText", text: update.text_delta, raw });
-          }
-          return;
-        }
-        const name =
-          update.tool_name?.trim() || (update.subagent_info === undefined ? undefined : "subagent");
-        if (!name) return;
-        const id = toolStepId(update.conversation_id, update.step_index);
-        if (!active.seenToolIds.has(id)) {
-          active.seenToolIds.add(id);
-          yield* emit(active, {
-            _tag: "ToolCall",
-            id,
-            name,
-            input:
-              update.tool_info === undefined
-                ? (update.subagent_info ?? {})
-                : toolInput(update.tool_info),
-            raw,
-          });
-        }
-        const state = update.state.trim().toUpperCase();
-        if (state === "DONE" || state === "COMPLETED" || state === "FAILED" || state === "ERROR") {
-          if (active.completedToolIds.has(id)) return;
-          active.completedToolIds.add(id);
-          const toolRecord = asRecord(update.tool_info);
-          const output =
-            update.tool_info === undefined ? update.subagent_info : toolOutput(update.tool_info);
-          yield* emit(active, {
-            _tag: "ToolCallUpdate",
-            id,
-            name,
-            status:
-              state === "FAILED" || state === "ERROR" || toolRecord?.error !== undefined
-                ? "failed"
-                : "completed",
-            ...(output === undefined ? {} : { output }),
-            raw,
-          });
-        }
-        return;
-      }
-
-      yield* Ref.set(conversationId, event.result.conversation_id);
-      const active = yield* Ref.getAndSet(activeTurn, undefined);
+  const handleKnownEvent = Effect.fn("AgySession.handleKnownEvent")(function* (
+    event: AgyKnownOutputEvent,
+    raw: unknown,
+  ) {
+    if (event.event === "init") {
+      yield* Ref.set(conversationId, event.conversation_id);
+      return;
+    }
+    if (event.event === "step_update") {
+      const update = event.step_update;
+      yield* Ref.set(conversationId, update.conversation_id);
+      const active = yield* Ref.get(activeTurn);
       if (!active) return;
-      const status = normalizeResultStatus(event.result.status);
-      yield* Deferred.succeed(active.deferred, {
-        status,
-        conversationId: event.result.conversation_id,
-        ...(event.result.response === undefined ? {} : { response: event.result.response }),
-        ...(event.result.error === undefined ? {} : { error: event.result.error }),
-        ...(event.result.structured_output === undefined
-          ? {}
-          : { structuredOutput: event.result.structured_output }),
-        ...(event.result.usage === undefined ? {} : { usage: event.result.usage }),
-        raw,
-      });
+      if (update.step_type === "agent_response") {
+        if (update.text_delta && update.text_delta.length > 0) {
+          yield* emit(active, { _tag: "AssistantText", text: update.text_delta, raw });
+        }
+        return;
+      }
+      const name =
+        update.tool_name?.trim() || (update.subagent_info === undefined ? undefined : "subagent");
+      if (!name) return;
+      const id = toolStepId(update.conversation_id, update.step_index);
+      if (!active.seenToolIds.has(id)) {
+        active.seenToolIds.add(id);
+        yield* emit(active, {
+          _tag: "ToolCall",
+          id,
+          name,
+          input:
+            update.tool_info === undefined
+              ? (update.subagent_info ?? {})
+              : toolInput(update.tool_info),
+          raw,
+        });
+      }
+      const state = update.state.trim().toUpperCase();
+      if (state === "DONE" || state === "COMPLETED" || state === "FAILED" || state === "ERROR") {
+        if (active.completedToolIds.has(id)) return;
+        active.completedToolIds.add(id);
+        const toolRecord = asRecord(update.tool_info);
+        const output =
+          update.tool_info === undefined ? update.subagent_info : toolOutput(update.tool_info);
+        yield* emit(active, {
+          _tag: "ToolCallUpdate",
+          id,
+          name,
+          status:
+            state === "FAILED" || state === "ERROR" || toolRecord?.error !== undefined
+              ? "failed"
+              : "completed",
+          ...(output === undefined ? {} : { output }),
+          raw,
+        });
+      }
+      return;
+    }
+
+    yield* Ref.set(conversationId, event.result.conversation_id);
+    const active = yield* Ref.getAndSet(activeTurn, undefined);
+    if (!active) return;
+    const status = normalizeResultStatus(event.result.status);
+    yield* Deferred.succeed(active.deferred, {
+      status,
+      conversationId: event.result.conversation_id,
+      ...(event.result.response === undefined ? {} : { response: event.result.response }),
+      ...(event.result.error === undefined ? {} : { error: event.result.error }),
+      ...(event.result.structured_output === undefined
+        ? {}
+        : { structuredOutput: event.result.structured_output }),
+      ...(event.result.usage === undefined ? {} : { usage: event.result.usage }),
+      raw,
     });
+  });
 
   const stdoutFiber = yield* child.stdout.pipe(
     Stream.decodeText(),
@@ -518,8 +518,8 @@ export const makeAgySession = Effect.fn("makeAgySession")(function* (
 
   const close = cancel;
 
-  const prompt: AgySession["prompt"] = ({ text, onEvent }) =>
-    Effect.gen(function* () {
+  const prompt: AgySession["prompt"] = Effect.fn("AgySession.prompt")(
+    function* ({ text, onEvent }) {
       if ((yield* Ref.get(closed)) === true) {
         return yield* new AgySessionError({
           stage: "closed",
@@ -582,7 +582,9 @@ export const makeAgySession = Effect.fn("makeAgySession")(function* (
         Effect.tapError((error) => failActive(error)),
       );
       return yield* Deferred.await(deferred);
-    }).pipe(Effect.onInterrupt(() => cancel));
+    },
+    Effect.onInterrupt(() => cancel),
+  );
 
   return {
     prompt,

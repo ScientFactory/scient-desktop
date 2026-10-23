@@ -631,7 +631,9 @@ describe("OverleafStateStore", () => {
         );
         yield* Effect.promise(() => reached);
         // The caller gives up while its rename is still pending.
-        const interruption = yield* Effect.forkChild(Fiber.interrupt(writer));
+        const interruption = yield* Effect.forkChild(Fiber.interrupt(writer), {
+          startImmediately: true,
+        });
         const competitor = yield* Effect.forkChild(
           Effect.flip(
             store.replaceConnection({
@@ -639,11 +641,14 @@ describe("OverleafStateStore", () => {
               next: revised(document, { updatedAt: "2026-10-13T11:00:02.000Z" }),
             }),
           ),
+          { startImmediately: true },
         );
-        // Give the interruption and the competitor time to act while the write is held.
-        // If the write were abandoned, the competitor would publish within this window.
-        yield* Effect.sleep("100 millis");
-        release();
+        // Both fibers reach their real blocking operations before the held write is released.
+        yield* Effect.sync(() => {
+          expect(writer.pollUnsafe()).toBeUndefined();
+          expect(interruption.pollUnsafe()).toBeUndefined();
+          expect(competitor.pollUnsafe()).toBeUndefined();
+        }).pipe(Effect.ensuring(Effect.sync(release)));
         yield* Fiber.join(interruption);
         // The competitor ran only after the first write landed, so it sees revision 2.
         expect(yield* Fiber.join(competitor)).toMatchObject({

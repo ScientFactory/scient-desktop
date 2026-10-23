@@ -25,7 +25,7 @@ publication authority.
   coverage to Scient's shared citation component:
   `e5f191b7a7` (`test(web): cover citation dismissal on shared chip`).
 - A final narrow composition fix, `fix(web): preserve dictated citation drafts
-on dismissal`, also forwards voice-inserted text through the same draft
+  on dismissal`, also forwards voice-inserted text through the same draft
   tracking callback used by typed comments.
 
 ## Upstream behavior included in this alignment

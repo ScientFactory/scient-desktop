@@ -496,8 +496,8 @@ export const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => null),
       );
 
-  const unresolvedFiles = (input: LatexFileVisibilityInput) =>
-    Effect.gen(function* () {
+  const unresolvedFiles = Effect.fn("LatexPackageInstaller.unresolvedFiles")(
+    function* (input: LatexFileVisibilityInput) {
       if (input.binDirectory.length === 0) return [];
       if (
         unretiredDistributions.has(input.binDirectory) ||
@@ -520,14 +520,13 @@ export const make = Effect.gen(function* () {
         if (answer !== null) unresolved.push(...answer);
       }
       return unresolved;
-    }).pipe(tlmgrGate.withPermits(1));
+    },
+    (effect) => effect.pipe(tlmgrGate.withPermits(1)),
+  );
 
   /** Maps a missing file back to the package that ships it. Costs one query. */
-  const searchOwningPackage = (input: {
-    readonly binDirectory: string;
-    readonly packageName: string;
-  }) =>
-    Effect.gen(function* () {
+  const searchOwningPackage = Effect.fn("LatexPackageInstaller.searchOwningPackage")(
+    function* (input: { readonly binDirectory: string; readonly packageName: string }) {
       const result = yield* runTlmgr({
         binDirectory: input.binDirectory,
         // The query is a path fragment: `/mathtools.` reaches the package that
@@ -538,70 +537,70 @@ export const make = Effect.gen(function* () {
       });
       if (result === null || !result.ok) return null;
       return owningPackageFromSearch(result.output, input.packageName);
-    });
+    },
+  );
 
   /** The fetch itself, over names already deduplicated and checked. */
-  const installNamed = (input: {
+  const installNamed = Effect.fn("LatexPackageInstaller.installNamed")(function* (input: {
     readonly packages: ReadonlyArray<string>;
     readonly binDirectory: string;
     readonly timeout: Duration.Input;
-  }) =>
-    Effect.gen(function* () {
-      const requested = input.packages;
-      if (input.binDirectory.length === 0) return { installed: [], failed: requested };
+  }) {
+    const requested = input.packages;
+    if (input.binDirectory.length === 0) return { installed: [], failed: requested };
 
-      const timeout = input.timeout;
-      const attempt = yield* runTlmgr({
-        binDirectory: input.binDirectory,
-        args: ["install", ...requested],
-        timeout,
-      });
-      if (attempt === null) return { installed: [], failed: requested };
-
-      const unknown = unknownPackagesFromInstall(attempt.output, requested);
-      const named = requested.filter((packageName) => !unknown.includes(packageName));
-      // `tlmgr` places what it can and names what it could not find, so a run
-      // that only stumbled over unknown packages still installed the rest.
-      const installed: string[] = attempt.ok || unknown.length > 0 ? [...named] : [];
-      const failed: string[] = installed.length === named.length ? [] : [...named];
-      if (unknown.length === 0) return { installed, failed };
-
-      // A package named after the file is the common case, not the rule:
-      // `algorithm.sty` comes from `algorithms`. One search says which.
-      const owners: string[] = [];
-      const nowEpochMs = yield* Clock.currentTimeMillis;
-      for (const packageName of unknown) {
-        // A name this session already searched for and did not find is not
-        // searched for again: a document with a typo in a `\usepackage` asks
-        // for it on every save, and the answer does not change that fast.
-        if (searchFailedRecently(packageName, nowEpochMs)) {
-          failed.push(packageName);
-          continue;
-        }
-        const owner = yield* searchOwningPackage({
-          binDirectory: input.binDirectory,
-          packageName,
-        });
-        if (owner === null || installed.includes(owner) || owners.includes(owner)) {
-          if (owner === null) rememberFailedSearch(packageName, nowEpochMs);
-          failed.push(packageName);
-          continue;
-        }
-        owners.push(owner);
-      }
-      if (owners.length === 0) return { installed, failed };
-
-      const mapped = yield* runTlmgr({
-        binDirectory: input.binDirectory,
-        args: ["install", ...owners],
-        timeout,
-      });
-      if (mapped?.ok === true) return { installed: [...installed, ...owners], failed };
-      return {
-        installed,
-        failed: [...failed, ...unknown.filter((name) => !failed.includes(name))],
-      };
+    const timeout = input.timeout;
+    const attempt = yield* runTlmgr({
+      binDirectory: input.binDirectory,
+      args: ["install", ...requested],
+      timeout,
     });
+    if (attempt === null) return { installed: [], failed: requested };
+
+    const unknown = unknownPackagesFromInstall(attempt.output, requested);
+    const named = requested.filter((packageName) => !unknown.includes(packageName));
+    // `tlmgr` places what it can and names what it could not find, so a run
+    // that only stumbled over unknown packages still installed the rest.
+    const installed: string[] = attempt.ok || unknown.length > 0 ? [...named] : [];
+    const failed: string[] = installed.length === named.length ? [] : [...named];
+    if (unknown.length === 0) return { installed, failed };
+
+    // A package named after the file is the common case, not the rule:
+    // `algorithm.sty` comes from `algorithms`. One search says which.
+    const owners: string[] = [];
+    const nowEpochMs = yield* Clock.currentTimeMillis;
+    for (const packageName of unknown) {
+      // A name this session already searched for and did not find is not
+      // searched for again: a document with a typo in a `\usepackage` asks
+      // for it on every save, and the answer does not change that fast.
+      if (searchFailedRecently(packageName, nowEpochMs)) {
+        failed.push(packageName);
+        continue;
+      }
+      const owner = yield* searchOwningPackage({
+        binDirectory: input.binDirectory,
+        packageName,
+      });
+      if (owner === null || installed.includes(owner) || owners.includes(owner)) {
+        if (owner === null) rememberFailedSearch(packageName, nowEpochMs);
+        failed.push(packageName);
+        continue;
+      }
+      owners.push(owner);
+    }
+    if (owners.length === 0) return { installed, failed };
+
+    const mapped = yield* runTlmgr({
+      binDirectory: input.binDirectory,
+      args: ["install", ...owners],
+      timeout,
+    });
+    if (mapped?.ok === true) return { installed: [...installed, ...owners], failed };
+    return {
+      installed,
+      failed: [...failed, ...unknown.filter((name) => !failed.includes(name))],
+    };
+  });
 
   /**
    * Holds the outcome to what the caller can actually observe.
@@ -616,83 +615,83 @@ export const make = Effect.gen(function* () {
    * reports as installed only what the answer is yes for. Whatever is still
    * invisible is a failed name, which the caller already knows how to say.
    */
-  const gateOnVisibility = (input: {
+  const gateOnVisibility = Effect.fn("LatexPackageInstaller.gateOnVisibility")(function* (input: {
     readonly outcome: LatexPackageInstallResult;
     readonly expectedFiles: ReadonlyArray<string>;
     readonly binDirectory: string;
-  }) =>
-    Effect.gen(function* () {
-      const expected = dedupe(input.expectedFiles);
-      if (expected.length === 0 || input.outcome.installed.length === 0) return input.outcome;
+  }) {
+    const expected = dedupe(input.expectedFiles);
+    if (expected.length === 0 || input.outcome.installed.length === 0) return input.outcome;
 
-      let unresolved = yield* unresolvedFiles({
-        files: expected,
+    let unresolved = yield* unresolvedFiles({
+      files: expected,
+      binDirectory: input.binDirectory,
+    });
+    if (unresolved.length > 0) {
+      // One rebuild of the index, then the same question again. `tlmgr` runs
+      // this itself; running it here is only how a caller stops waiting for
+      // it to get around to it.
+      yield* runScript({
+        binDirectory: input.binDirectory,
+        script: "mktexlsr",
+        args: [],
+        timeout: INDEX_REFRESH_TIMEOUT,
+      });
+      unresolved = yield* unresolvedFiles({
+        files: unresolved,
         binDirectory: input.binDirectory,
       });
-      if (unresolved.length > 0) {
-        // One rebuild of the index, then the same question again. `tlmgr` runs
-        // this itself; running it here is only how a caller stops waiting for
-        // it to get around to it.
-        yield* runScript({
-          binDirectory: input.binDirectory,
-          script: "mktexlsr",
-          args: [],
-          timeout: INDEX_REFRESH_TIMEOUT,
-        });
-        unresolved = yield* unresolvedFiles({
-          files: unresolved,
-          binDirectory: input.binDirectory,
-        });
-      }
-      if (unresolved.length === 0) return input.outcome;
+    }
+    if (unresolved.length === 0) return input.outcome;
 
-      // Nothing the round fetched became visible, so there is nothing for the
-      // caller to compile again for.
-      if (unresolved.length === expected.length) {
-        return {
-          installed: [],
-          failed: dedupe([...input.outcome.failed, ...input.outcome.installed]),
-        };
-      }
-      const invisible = new Set(
-        unresolved.map((fileName) => packageOfFile(fileName)).filter((name) => name !== null),
-      );
-      const stillMissing = input.outcome.installed.filter((packageName) =>
-        invisible.has(packageName.toLowerCase()),
-      );
+    // Nothing the round fetched became visible, so there is nothing for the
+    // caller to compile again for.
+    if (unresolved.length === expected.length) {
       return {
-        installed: input.outcome.installed.filter(
-          (packageName) => !invisible.has(packageName.toLowerCase()),
-        ),
-        failed: dedupe([...input.outcome.failed, ...stillMissing]),
+        installed: [],
+        failed: dedupe([...input.outcome.failed, ...input.outcome.installed]),
       };
-    });
+    }
+    const invisible = new Set(
+      unresolved.map((fileName) => packageOfFile(fileName)).filter((name) => name !== null),
+    );
+    const stillMissing = input.outcome.installed.filter((packageName) =>
+      invisible.has(packageName.toLowerCase()),
+    );
+    return {
+      installed: input.outcome.installed.filter(
+        (packageName) => !invisible.has(packageName.toLowerCase()),
+      ),
+      failed: dedupe([...input.outcome.failed, ...stillMissing]),
+    };
+  });
 
-  const install = (input: LatexPackageInstallInput) =>
-    Effect.gen(function* () {
-      const requested = dedupe(input.packages);
-      // Names come out of a compiler transcript, and a transcript is written
-      // by the document. Anything that is not a package name is answered here
-      // rather than handed to `tlmgr` as argv, where a leading dash is an
-      // option.
-      const named = requested.filter((packageName) => PACKAGE_NAME_PATTERN.test(packageName));
-      const rejected = requested.filter((packageName) => !PACKAGE_NAME_PATTERN.test(packageName));
-      if (named.length === 0) return { installed: [], failed: rejected };
+  const install = Effect.fn("LatexPackageInstaller.install")(function* (
+    input: LatexPackageInstallInput,
+  ) {
+    const requested = dedupe(input.packages);
+    // Names come out of a compiler transcript, and a transcript is written
+    // by the document. Anything that is not a package name is answered here
+    // rather than handed to `tlmgr` as argv, where a leading dash is an
+    // option.
+    const named = requested.filter((packageName) => PACKAGE_NAME_PATTERN.test(packageName));
+    const rejected = requested.filter((packageName) => !PACKAGE_NAME_PATTERN.test(packageName));
+    if (named.length === 0) return { installed: [], failed: rejected };
 
-      const fetched = yield* installNamed({
-        packages: named,
-        binDirectory: input.binDirectory,
-        timeout: input.timeout ?? INSTALL_TIMEOUT,
-      });
-      const outcome = yield* gateOnVisibility({
-        outcome: fetched,
-        expectedFiles: input.expectedFiles ?? [],
-        binDirectory: input.binDirectory,
-      });
-      return rejected.length === 0
-        ? outcome
-        : { installed: outcome.installed, failed: [...outcome.failed, ...rejected] };
+    const fetched = yield* installNamed({
+      packages: named,
+      binDirectory: input.binDirectory,
+      timeout: input.timeout ?? INSTALL_TIMEOUT,
     });
+    const outcome = yield* gateOnVisibility({
+      outcome: fetched,
+      expectedFiles: input.expectedFiles ?? [],
+      binDirectory: input.binDirectory,
+    });
+    return rejected.length === 0
+      ? outcome
+      : { installed: outcome.installed, failed: [...outcome.failed, ...rejected] };
+  });
 
   return LatexPackageInstaller.of({ install, unresolvedFiles });
 });

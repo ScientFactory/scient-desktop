@@ -312,7 +312,6 @@ it.live(
       Effect.scoped,
       Effect.provide(outer),
     ),
-  30000,
 );
 
 it.live.each(
@@ -331,88 +330,74 @@ it.live.each(
     options,
     expected,
   })),
-)(
-  "$caseTitle",
-  ({ name, initial, options, expected }) =>
-    nativeScenario(name, initial, known, options).pipe(
-      Effect.map(({ completed, reopened, requests }) => {
-        assert.equal(completed.providerTurns[0]?.observedEffort, expected);
-        assert.equal(reopened.providerTurns[0]?.observedEffort, expected);
-        assert.equal(completed.providerTurns[0]?.nativeAcceptance, "accepted");
-        assert.equal(
-          completed.runs[0]?.modelSelection?.model,
-          name === "fresh-high" ? "default" : "fixture/model",
+)("$caseTitle", ({ name, initial, options, expected }) =>
+  nativeScenario(name, initial, known, options).pipe(
+    Effect.map(({ completed, reopened, requests }) => {
+      assert.equal(completed.providerTurns[0]?.observedEffort, expected);
+      assert.equal(reopened.providerTurns[0]?.observedEffort, expected);
+      assert.equal(completed.providerTurns[0]?.nativeAcceptance, "accepted");
+      assert.equal(
+        completed.runs[0]?.modelSelection?.model,
+        name === "fresh-high" ? "default" : "fixture/model",
+      );
+      assert.lengthOf(
+        requests.filter((r) => r.type === "prompt"),
+        1,
+      );
+      if (name === "fresh-high")
+        assert.isFalse(
+          requests.some((r) => r.type === "set_model" || r.type === "set_thinking_level"),
         );
-        assert.lengthOf(
-          requests.filter((r) => r.type === "prompt"),
-          1,
-        );
-        if (name === "fresh-high")
-          assert.isFalse(
-            requests.some((r) => r.type === "set_model" || r.type === "set_thinking_level"),
-          );
-      }),
-      Effect.scoped,
-      Effect.provide(outer),
-    ),
-  30000,
+    }),
+    Effect.scoped,
+    Effect.provide(outer),
+  ),
 );
-it.live(
-  "unknown native reasoning metadata does not expose a requested high value",
-  () =>
-    nativeScenario("unknown-explicit", "off", unknown, [
-      { id: "thinkingLevel", value: "high" },
-    ]).pipe(
-      Effect.map(({ completed, reopened }) => {
-        assert.notProperty(completed.providerTurns[0], "observedEffort");
-        assert.notProperty(reopened.providerTurns[0], "observedEffort");
-        assert.equal(completed.providerTurns[0]?.nativeAcceptance, "accepted");
-      }),
-      Effect.scoped,
-      Effect.provide(outer),
-    ),
-  30000,
+it.live("unknown native reasoning metadata does not expose a requested high value", () =>
+  nativeScenario("unknown-explicit", "off", unknown, [{ id: "thinkingLevel", value: "high" }]).pipe(
+    Effect.map(({ completed, reopened }) => {
+      assert.notProperty(completed.providerTurns[0], "observedEffort");
+      assert.notProperty(reopened.providerTurns[0], "observedEffort");
+      assert.equal(completed.providerTurns[0]?.nativeAcceptance, "accepted");
+    }),
+    Effect.scoped,
+    Effect.provide(outer),
+  ),
 );
-it.live(
-  "a new unknown turn never inherits the preceding known off snapshot",
-  () =>
-    nativeScenario("unknown-next", "off", known).pipe(
-      Effect.map(({ firstCompleted, completed, reopened }) => {
-        assert.equal(firstCompleted.providerTurns[0]?.observedEffort, "off");
-        assert.lengthOf(completed.providerTurns, 2);
-        assert.notEqual(completed.providerTurns[0]?.id, completed.providerTurns[1]?.id);
-        assert.equal(completed.providerTurns[0]?.observedEffort, "off");
-        assert.notProperty(completed.providerTurns[1], "observedEffort");
-        assert.notProperty(reopened.providerTurns[1], "observedEffort");
-      }),
-      Effect.scoped,
-      Effect.provide(outer),
-    ),
-  30000,
+it.live("a new unknown turn never inherits the preceding known off snapshot", () =>
+  nativeScenario("unknown-next", "off", known).pipe(
+    Effect.map(({ firstCompleted, completed, reopened }) => {
+      assert.equal(firstCompleted.providerTurns[0]?.observedEffort, "off");
+      assert.lengthOf(completed.providerTurns, 2);
+      assert.notEqual(completed.providerTurns[0]?.id, completed.providerTurns[1]?.id);
+      assert.equal(completed.providerTurns[0]?.observedEffort, "off");
+      assert.notProperty(completed.providerTurns[1], "observedEffort");
+      assert.notProperty(reopened.providerTurns[1], "observedEffort");
+    }),
+    Effect.scoped,
+    Effect.provide(outer),
+  ),
 );
 it.live.each(
   ["foreign", "foreign-invalid"].map((name) => ({
     caseTitle: `${name} native state refuses the new root before prompt and cannot replace prior observation`,
     name,
   })),
-)(
-  "$caseTitle",
-  ({ name }) =>
-    nativeScenario(name, "off", known).pipe(
-      Effect.map(({ completed, reopened, requests }) => {
-        assert.lengthOf(completed.runs, 2);
-        assert.isTrue(completed.runs.some((r) => r.status === "failed"));
-        assert.lengthOf(
-          requests.filter((r) => r.type === "prompt"),
-          1,
-        );
-        assert.lengthOf(completed.providerTurns, 1);
-        assert.equal(reopened.providerTurns[0]?.observedEffort, "off");
-      }),
-      Effect.scoped,
-      Effect.provide(outer),
-    ),
-  30000,
+)("$caseTitle", ({ name }) =>
+  nativeScenario(name, "off", known).pipe(
+    Effect.map(({ completed, reopened, requests }) => {
+      assert.lengthOf(completed.runs, 2);
+      assert.isTrue(completed.runs.some((r) => r.status === "failed"));
+      assert.lengthOf(
+        requests.filter((r) => r.type === "prompt"),
+        1,
+      );
+      assert.lengthOf(completed.providerTurns, 1);
+      assert.equal(reopened.providerTurns[0]?.observedEffort, "off");
+    }),
+    Effect.scoped,
+    Effect.provide(outer),
+  ),
 );
 it.live(
   "adopted native work omits later state rather than misattributing the original generation",
@@ -435,7 +420,6 @@ it.live(
       Effect.scoped,
       Effect.provide(outer),
     ),
-  30000,
 );
 
 it.live(
@@ -457,5 +441,4 @@ it.live(
       Effect.scoped,
       Effect.provide(outer),
     ),
-  30000,
 );

@@ -8,7 +8,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import { type ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
-import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
+
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {

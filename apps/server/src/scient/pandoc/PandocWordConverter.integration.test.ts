@@ -9,15 +9,18 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import type * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import type * as Scope from "effect/Scope";
 
 import {
   PandocWordConverter,
@@ -45,12 +48,28 @@ import { planWordDiagrams } from "./wordDiagramCapture.ts";
 const binary = pandocBinaryForTests();
 const artifactDirectory = process.env.SCIENT_PANDOC_FIXTURE_OUT?.trim() || null;
 
+const processReceipts = vi.hoisted(() => ({
+  observe: undefined as ((child: NodeChildProcess.ChildProcess) => void) | undefined,
+}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...original,
+    spawn: (...args: Parameters<typeof original.spawn>) => {
+      const child = original.spawn(...args);
+      processReceipts.observe?.(child);
+      return child;
+    },
+  };
+});
+
 const withConverter = <A, E>(
   body: (input: {
     readonly converter: PandocWordConverter["Service"];
     readonly directory: string;
     readonly scratchRoot: string;
-  }) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+  }) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -590,9 +609,27 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
       Effect.gen(function* () {
         const big = largeBundle();
         const outputPath = NodePath.join(directory, "cancelled.docx");
+        const spawned = Promise.withResolvers<NodeChildProcess.ChildProcess>();
+        const closed = Promise.withResolvers<void>();
+        const previous = processReceipts.observe;
+        processReceipts.observe = (child) => {
+          processReceipts.observe = undefined;
+          child.once("spawn", () => spawned.resolve(child));
+          child.once("error", spawned.reject);
+          child.once("close", () => closed.resolve());
+        };
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            processReceipts.observe = previous;
+          }),
+        );
         const fiber = yield* Effect.forkChild(converter.convert({ bundle: big, outputPath }));
-        yield* Effect.sleep("300 millis");
+        const child = yield* Effect.promise(() => spawned.promise);
+        expect(child.spawnfile).toBe(binary);
+        expect(child.pid).toBeTypeOf("number");
+        expect(child.exitCode).toBeNull();
         const exit = yield* Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber)));
+        yield* Effect.promise(() => closed.promise);
         expect(Exit.hasInterrupts(exit)).toBe(true);
         expect(NodeFS.existsSync(outputPath)).toBe(false);
         expect(NodeFS.existsSync(`${outputPath}.partial`)).toBe(false);

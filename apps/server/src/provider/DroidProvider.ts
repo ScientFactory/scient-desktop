@@ -70,44 +70,42 @@ const EMPTY_ACCOUNT_CAPABILITIES: DroidAccountCapabilities = {
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const DROID_ACP_AUTH_DISCOVERY_TIMEOUT_MS = 20_000;
 
-export function buildInitialDroidProviderSnapshot(
-  droidSettings: DroidSettings,
-): Effect.Effect<ServerProviderDraft> {
-  return Effect.gen(function* () {
-    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const models = droidModelsFromSettings(droidSettings.customModels);
+export const buildInitialDroidProviderSnapshot = Effect.fn(
+  "DroidProvider.buildInitialDroidProviderSnapshot",
+)(function* (droidSettings: DroidSettings): Effect.fn.Return<ServerProviderDraft> {
+  const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+  const models = droidModelsFromSettings(droidSettings.customModels);
 
-    if (!droidSettings.enabled) {
-      return buildServerProvider({
-        presentation: DROID_PRESENTATION,
-        enabled: false,
-        checkedAt,
-        models,
-        probe: {
-          installed: false,
-          version: null,
-          status: "warning",
-          auth: { status: "unknown" },
-          message: "Droid is disabled in Scient settings.",
-        },
-      });
-    }
-
+  if (!droidSettings.enabled) {
     return buildServerProvider({
       presentation: DROID_PRESENTATION,
-      enabled: true,
+      enabled: false,
       checkedAt,
       models,
       probe: {
-        installed: true,
+        installed: false,
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Checking Droid CLI availability...",
+        message: "Droid is disabled in Scient settings.",
       },
     });
+  }
+
+  return buildServerProvider({
+    presentation: DROID_PRESENTATION,
+    enabled: true,
+    checkedAt,
+    models,
+    probe: {
+      installed: true,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "Checking Droid CLI availability...",
+    },
   });
-}
+});
 
 function droidModelsFromSettings(
   customModels: ReadonlyArray<string> | undefined,
@@ -243,24 +241,23 @@ const DROID_PROBE_CLIENT_CAPABILITIES = {
   },
 } satisfies NonNullable<EffectAcpSchema.InitializeRequest["clientCapabilities"]>;
 
-const makeDroidAcpProbeRuntime = (
+const makeDroidAcpProbeRuntime = Effect.fn("DroidProvider.makeDroidAcpProbeRuntime")(function* (
   droidSettings: DroidSettings,
   environment: NodeJS.ProcessEnv,
   makeAcpRuntime: DroidAcpRuntimeFactory,
   cwd: string,
-) =>
-  Effect.gen(function* () {
-    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    return yield* makeAcpRuntime({
-      droidSettings,
-      environment,
-      childProcessSpawner,
-      cwd,
-      clientInfo: { name: "scient-provider-probe", version: "0.0.0" },
-      clientCapabilities: DROID_PROBE_CLIENT_CAPABILITIES,
-      authenticationMode: "passive",
-    });
+) {
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  return yield* makeAcpRuntime({
+    droidSettings,
+    environment,
+    childProcessSpawner,
+    cwd,
+    clientInfo: { name: "scient-provider-probe", version: "0.0.0" },
+    clientCapabilities: DROID_PROBE_CLIENT_CAPABILITIES,
+    authenticationMode: "passive",
   });
+});
 
 /**
  * Passive ACP probe over one disposable session: read the model
@@ -366,20 +363,22 @@ const probeAndDiscoverDroidViaAcp = (
     }),
   );
 
-const runDroidVersionCommand = (droidSettings: DroidSettings, environment: NodeJS.ProcessEnv) =>
-  Effect.gen(function* () {
-    const command = resolveDroidCliBinaryPath(droidSettings.binaryPath);
-    const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
-      env: environment,
-    });
-    return yield* spawnAndCollect(
-      command,
-      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: environment,
-        shell: spawnCommand.shell,
-      }),
-    );
+const runDroidVersionCommand = Effect.fn("DroidProvider.runDroidVersionCommand")(function* (
+  droidSettings: DroidSettings,
+  environment: NodeJS.ProcessEnv,
+) {
+  const command = resolveDroidCliBinaryPath(droidSettings.binaryPath);
+  const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
+    env: environment,
   });
+  return yield* spawnAndCollect(
+    command,
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      env: environment,
+      shell: spawnCommand.shell,
+    }),
+  );
+});
 
 /**
  * `droid --version` alone: no session, no network. None when the command

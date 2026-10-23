@@ -71,47 +71,46 @@ export const captureWordImages = Effect.fn("scient.pandoc.captureWordImages")(fu
   let totalBytes = 0;
   const captured = new Map<string, CapturedWorkspaceImage>();
 
-  const read = (candidate: string) =>
-    Effect.gen(function* () {
-      const lexical = path.resolve(candidate);
-      if (!roots.some((root) => root !== null && inside(path, root.lexical, lexical))) {
-        return { ok: false, refusal: "outside-allowlist" } as const;
-      }
-      const real = yield* fs.realPath(lexical).pipe(Effect.orElseSucceed(() => null));
-      if (real === null) return { ok: false, refusal: "missing" } as const;
-      const realRoot = roots.find((root) => root !== null && inside(path, root.real, real));
-      if (realRoot === undefined || realRoot === null) {
-        return { ok: false, refusal: "symlink-outside-allowlist" } as const;
-      }
-      const info = yield* fs.stat(real).pipe(Effect.orElseSucceed(() => null));
-      if (info === null) return { ok: false, refusal: "missing" } as const;
-      if (info.type !== "File") return { ok: false, refusal: "not-a-file" } as const;
-      if (Number(info.size) > WORD_IMAGE_MAX_BYTES) {
+  const read = Effect.fn("wordImageSnapshot.read")(function* (candidate: string) {
+    const lexical = path.resolve(candidate);
+    if (!roots.some((root) => root !== null && inside(path, root.lexical, lexical))) {
+      return { ok: false, refusal: "outside-allowlist" } as const;
+    }
+    const real = yield* fs.realPath(lexical).pipe(Effect.orElseSucceed(() => null));
+    if (real === null) return { ok: false, refusal: "missing" } as const;
+    const realRoot = roots.find((root) => root !== null && inside(path, root.real, real));
+    if (realRoot === undefined || realRoot === null) {
+      return { ok: false, refusal: "symlink-outside-allowlist" } as const;
+    }
+    const info = yield* fs.stat(real).pipe(Effect.orElseSucceed(() => null));
+    if (info === null) return { ok: false, refusal: "missing" } as const;
+    if (info.type !== "File") return { ok: false, refusal: "not-a-file" } as const;
+    if (Number(info.size) > WORD_IMAGE_MAX_BYTES) {
+      return { ok: false, refusal: "too-large" } as const;
+    }
+    const verified = yield* readVerifiedWorkspaceFile(
+      checkedFileIdentity(real, info),
+      realRoot.real,
+      platform,
+      WORD_IMAGE_MAX_BYTES,
+    );
+    switch (verified._tag) {
+      case "bytes":
+        return { ok: true, bytes: verified.bytes } as const;
+      case "too-large":
         return { ok: false, refusal: "too-large" } as const;
-      }
-      const verified = yield* readVerifiedWorkspaceFile(
-        checkedFileIdentity(real, info),
-        realRoot.real,
-        platform,
-        WORD_IMAGE_MAX_BYTES,
-      );
-      switch (verified._tag) {
-        case "bytes":
-          return { ok: true, bytes: verified.bytes } as const;
-        case "too-large":
-          return { ok: false, refusal: "too-large" } as const;
-        case "unreadable":
-          return { ok: false, refusal: "changed-during-capture" } as const;
-        case "unsupported-platform":
-          if (files.requireVerifiedReads === true) {
-            return yield* new WordImageSnapshotError({
-              reason: "unverifiable-platform",
-              message: "This platform cannot confirm which image files were read.",
-            });
-          }
-          return { ok: false, refusal: "unverifiable-platform" } as const;
-      }
-    });
+      case "unreadable":
+        return { ok: false, refusal: "changed-during-capture" } as const;
+      case "unsupported-platform":
+        if (files.requireVerifiedReads === true) {
+          return yield* new WordImageSnapshotError({
+            reason: "unverifiable-platform",
+            message: "This platform cannot confirm which image files were read.",
+          });
+        }
+        return { ok: false, refusal: "unverifiable-platform" } as const;
+    }
+  });
 
   for (const url of references) {
     if (captured.has(url)) continue;

@@ -477,8 +477,9 @@ git diff --check
 ```
 
 `pnpm alignment:gates` runs this list without the desktop host's live-profile variables,
-continues past failures and prints the receipt table; typecheck there reports every failing
-package in one run ([details](./scripts.md#alignment-gates-and-receipt-facts)). On Windows,
+continues past failures and prints the receipt table. Its typecheck includes workspace Vite
+tasks, but a failed aggregate can leave packages unscheduled; record task coverage and qualify
+missing packages separately ([details](./scripts.md#alignment-gates-and-receipt-facts)). On Windows,
 where the repository-wide aggregate is not yet a supported local lane, record the test row as
 "not run — hosted test qualification pending" and cite the hosted result for the pushed
 candidate; that result does not establish Windows-wide test compatibility.
@@ -505,6 +506,19 @@ behavior, then rerun the behavioral tests. Never remove an assertion just to tur
 The existing per-feature commands, including CI entry points, now use this same implementation;
 they are not independent fallbacks. If it needs repair, continue independent review, repair it
 with equivalent evidence, and do not claim the affected gate passed prematurely.
+The private index timestamp must not advance when copied: Git uses it to decide whether
+same-size working-tree edits need a content check even when cached file stats match.
+
+An ambiguous diff signal may have manifest-owned `diffSignalRefinements`: alternatives with a
+`changed` expression and optional `fileContext` expression. After the original signal matches,
+the `changed` expression inspects source lines with their `+`/`-` markers and the source
+declaration after a hunk header's closing `@@`, excluding Git filenames and other metadata.
+This retains ownership evidence when only a function body changes. Context is read from both
+the base and candidate file, so unchanged imports and removed namespaces still identify a seam.
+These rules apply only to the named `signal`; other signals retain their existing diff matching.
+Base signals and refinement alternatives remain active when the candidate removes or narrows them.
+Introducing a refinement requires positive boundary/removal fixtures and unrelated-domain negative fixtures;
+it is matching precision, not a path exemption or a substitute for behavioral review.
 
 Run additional focused gates required by the range, including mobile native checks, release smoke,
 provenance, migration, and provider seam tests where applicable. User-facing desktop behavior also

@@ -1,3 +1,4 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import {
@@ -8,8 +9,8 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -53,8 +54,6 @@ const options = new Map([
 ]);
 const forkRequested = vi.fn();
 const modelSelected = vi.fn();
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
 
 function ComposerPickerParent(props: {
   readonly history: Parameters<typeof hasCommittedConversationMessages>[0];
@@ -133,7 +132,7 @@ const forkDialog = () =>
     dialog.textContent?.includes("Fork this chat"),
   );
 
-beforeEach(async () => {
+async function _setupFixture0(_fixture: _Fixture) {
   forkRequested.mockClear();
   modelSelected.mockClear();
   useComposerDraftStore.getState().clearDraftThread(draftTarget);
@@ -153,22 +152,28 @@ beforeEach(async () => {
     ],
     { appendReference: false },
   );
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
   await page.viewport(1280, 900);
-});
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
   useComposerDraftStore.getState().clearDraftThread(draftTarget);
-});
+}
 
 describe("existing-conversation model picker continuation", () => {
   it("keeps providers enabled and selects a different provider in place with the footer present", async () => {
-    root!.render(<ComposerPickerParent history={existingHistory} />);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await _fixture.root0!.rerender(<ComposerPickerParent history={existingHistory} />);
     await expect.poll(() => footer()).toBeTruthy();
     expect(footer()!.textContent).toContain("Fork");
     expect(provider(codexId)!.disabled).toBe(false);
@@ -192,7 +197,11 @@ describe("existing-conversation model picker continuation", () => {
   it.each([false, true])(
     "offers the footer with one provider and opens Scient's dialog preserving the draft (%s)",
     async (singleProvider) => {
-      root!.render(
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+
+      await _fixture.root0!.rerender(
         <ComposerPickerParent history={existingHistory} singleProvider={singleProvider} />,
       );
       await expect.poll(() => footer()).toBeTruthy();
@@ -218,7 +227,11 @@ describe("existing-conversation model picker continuation", () => {
   ])(
     "hides the footer for empty or held queued-only history even with a typed draft",
     async (history) => {
-      root!.render(<ComposerPickerParent history={history} />);
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+
+      await _fixture.root0!.rerender(<ComposerPickerParent history={history} />);
       await expect.poll(() => provider(codexId)).toBeTruthy();
       expect(footer()).toBeNull();
       expect(document.body.textContent).not.toContain("Continue in a new chat");
@@ -230,7 +243,11 @@ describe("existing-conversation model picker continuation", () => {
   );
 
   it("keeps the new-chat fork reachable in the unavailable-provider setup selector", async () => {
-    root!.render(<ComposerPickerParent history={existingHistory} onboarding />);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await _fixture.root0!.rerender(<ComposerPickerParent history={existingHistory} onboarding />);
     await expect
       .poll(() => document.querySelector("[data-provider-onboarding-picker]"))
       .toBeTruthy();
@@ -246,7 +263,11 @@ describe("existing-conversation model picker continuation", () => {
   });
 
   it("keeps a new empty provider setup selector free of the fork footer", async () => {
-    root!.render(
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await _fixture.root0!.rerender(
       <ComposerPickerParent history={{ messages: [], runs: [], items: [] }} onboarding />,
     );
     await expect
@@ -257,7 +278,11 @@ describe("existing-conversation model picker continuation", () => {
   });
 
   it("shows the disabled footer while busy without opening the fork dialog", async () => {
-    root!.render(<ComposerPickerParent history={existingHistory} busy />);
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await _fixture.root0!.rerender(<ComposerPickerParent history={existingHistory} busy />);
     await expect.poll(() => footer()).toBeTruthy();
     expect(footer()!.disabled).toBe(true);
     footer()!.click();
@@ -265,3 +290,22 @@ describe("existing-conversation model picker continuation", () => {
     expect(forkDialog()).toBeUndefined();
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

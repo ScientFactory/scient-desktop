@@ -1,9 +1,11 @@
+import "../../../index.css";
+
 import { EnvironmentId, PdfCitation } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { act, type ComponentProps } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import type { ComponentProps } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
+import { act, render } from "../../../../test/render";
 
 const mocks = vi.hoisted(() => ({ navigate: vi.fn() }));
 vi.mock(import("@tanstack/react-router"), async (importOriginal) => ({
@@ -75,26 +77,17 @@ const quote = Schema.decodeUnknownSync(PdfCitation)({
   },
 });
 
-describe("PDF quote chips", () => {
-  let root: Root;
-  let container: HTMLDivElement;
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    mocks.navigate.mockClear();
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-  });
-  afterEach(async () => {
-    await act(async () => root.unmount());
-    container.remove();
-    vi.unstubAllGlobals();
-  });
+function setup() {
+  mocks.navigate.mockClear();
+}
 
+describe("PDF quote chips", () => {
   it.each([false, true])("names the PDF and page and opens it (composer: %s)", async (composer) => {
-    await act(async () =>
-      root.render(<AssistantCitationChip citation={quote} composer={composer} />),
+    setup();
+    await using screen = await render(
+      <AssistantCitationChip citation={quote} composer={composer} />,
     );
+    const { container } = screen;
     const chip = container.querySelector<HTMLElement>("[data-pdf-citation-chip]");
     expect(chip).not.toBeNull();
     expect(container.querySelector("[data-assistant-citation-chip]")).toBeNull();
@@ -105,12 +98,9 @@ describe("PDF quote chips", () => {
       `/${EnvironmentId.make("environment")}/thread#${pdfCitationHash(quote)}`,
     );
 
-    await act(async () => userEvent.hover(link));
-    await vi.waitFor(async () => {
-      await act(async () => {});
-      expect(document.querySelector('[data-slot="tooltip-popup"]')).not.toBeNull();
-    });
-    const popup = document.querySelector<HTMLElement>('[data-slot="tooltip-popup"]')!;
+    await userEvent.hover(link);
+    await expect.element(page.getByRole("tooltip")).toBeVisible();
+    const popup = page.getByRole("tooltip").element();
     expect(popup.textContent).toContain("smith-2024.pdf");
     expect(popup.textContent).toContain("papers/smith-2024.pdf");
     expect(popup.textContent).toContain("PDF, p. 2");

@@ -117,8 +117,8 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
   const initialize = Effect.gen(function* () {
     const orchestrator = yield* OrchestratorV2;
     const outbox = yield* EffectOutboxV2;
-    const completed = (commandId: CommandId) =>
-      Effect.gen(function* () {
+    const completed = Effect.fn("nativeOmpOrchestration.completed")(
+      function* (commandId: CommandId) {
         const updates = yield* outbox.subscribeCompletions;
         const done = yield* Stream.concat(Stream.succeed(undefined), updates).pipe(
           Stream.mapEffect(() => outbox.listByCommandId(commandId)),
@@ -128,9 +128,11 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
           Stream.runHead,
         );
         if (Option.isNone(done)) return yield* Effect.die("Native effect completion stream ended");
-      }).pipe(Effect.timeout(input.receiptTimeoutMs ?? 10_000));
-    const waitFor = (predicate: (p: OrchestrationV2ThreadProjection) => boolean) =>
-      Effect.gen(function* () {
+      },
+      Effect.timeout(input.receiptTimeoutMs ?? 10_000),
+    );
+    const waitFor = Effect.fn("nativeOmpOrchestration.waitFor")(
+      function* (predicate: (p: OrchestrationV2ThreadProjection) => boolean) {
         const sequence = yield* orchestrator.getThreadEventSequence(threadId);
         const pull = yield* Stream.toPull(
           orchestrator.streamStoredEventsFrom({ threadId, afterSequence: sequence }),
@@ -144,25 +146,25 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
         if (Option.isNone(found))
           return yield* Effect.die("Native background projection ended before receipt");
         return found.value;
-      }).pipe(
-        Effect.timeout(input.receiptTimeoutMs ?? 10_000),
-        Effect.tapError(() =>
-          orchestrator.getThreadProjection(threadId).pipe(
-            Effect.flatMap((p) =>
-              Effect.logWarning("Native background receipt timeout", {
-                runs: p.runs.map((r) => ({ id: r.id, status: r.status })),
-                sessions: p.providerSessions.map((row) => ({ id: row.id, status: row.status })),
-                threads: p.providerThreads.map((row) => ({
-                  id: row.id,
-                  status: row.status,
-                  pending: row.pendingBackgroundTasks,
-                })),
-                shutdowns: peer.state.shutdowns,
-              }),
-            ),
+      },
+      Effect.timeout(input.receiptTimeoutMs ?? 10_000),
+      Effect.tapError(() =>
+        orchestrator.getThreadProjection(threadId).pipe(
+          Effect.flatMap((p) =>
+            Effect.logWarning("Native background receipt timeout", {
+              runs: p.runs.map((r) => ({ id: r.id, status: r.status })),
+              sessions: p.providerSessions.map((row) => ({ id: row.id, status: row.status })),
+              threads: p.providerThreads.map((row) => ({
+                id: row.id,
+                status: row.status,
+                pending: row.pendingBackgroundTasks,
+              })),
+              shutdowns: peer.state.shutdowns,
+            }),
           ),
         ),
-      );
+      ),
+    );
     let ordinal = 0;
     const send = (text: string) => {
       ordinal++;

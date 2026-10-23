@@ -112,7 +112,7 @@ export function createScientNativeMarkdownProjection(sourceTools: ScientNativeMa
         });
       }
     };
-    const visit = (node: MarkdownNode) => {
+    const visit = (node: MarkdownNode, insideLink = false) => {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       if (
@@ -158,10 +158,25 @@ export function createScientNativeMarkdownProjection(sourceTools: ScientNativeMa
           }
         }
       }
-      if (node.type === "inlineCode" && ENRICHED_INLINE_FILE_LINK_REGEX.test(node.value)) {
+      if (
+        node.type === "inlineCode" &&
+        !insideLink &&
+        start !== undefined &&
+        end !== undefined &&
+        ENRICHED_INLINE_FILE_LINK_REGEX.test(node.value)
+      ) {
         const presentation = resolveMarkdownInlineCodePresentation(node.value);
         if (presentation?.kind === "file") {
-          recognizedLinkTextByUrl[node.value] = `[${presentation.label}](<${presentation.href}>)`;
+          const canonical = `[${presentation.label}](<${presentation.href}>)`;
+          recognizedLinkTextByUrl[node.value] = canonical;
+          // The native parser now reads explicit links, not inline-code recognizers.
+          // Keep the canonical Copy value while binding its actual parse occurrence.
+          links.push({ url: node.value, source: canonical });
+          edits.push({
+            start,
+            end,
+            replacement: `[${node.value.replace(/[\\[\]&]/g, "\\$&")}](<${node.value.replace(/[\\&<>]/g, "\\$&")}>)`,
+          });
         }
       }
       // md4c's native text callback omits entity nodes. Preserve the retired reader's
@@ -276,7 +291,10 @@ export function createScientNativeMarkdownProjection(sourceTools: ScientNativeMa
           });
         }
       }
-      if ("children" in node) node.children.forEach(visit);
+      if ("children" in node) {
+        const linked = insideLink || node.type === "link" || node.type === "linkReference";
+        node.children.forEach((child) => visit(child, linked));
+      }
     };
     visit(root);
     return {

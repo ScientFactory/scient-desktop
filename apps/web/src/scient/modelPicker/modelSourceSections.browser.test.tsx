@@ -1,8 +1,9 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
 import { ModelPickerContent } from "../../components/chat/ModelPickerContent";
@@ -38,20 +39,22 @@ const ACCOUNT_AND_CUSTOM: ReadonlyArray<ModelEsque> = [
   { slug: "scient_local/qwen", name: "Qwen Local", subProvider: "Local" },
 ];
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-function renderPicker(input: {
-  readonly options: ReadonlyArray<ModelEsque>;
-  readonly model: string;
-  readonly onChange?: (instance: ProviderInstanceId, model: string) => void;
-}) {
-  root?.unmount();
-  host?.remove();
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(
+async function renderPicker(
+  _fixture: _Fixture,
+  input: {
+    readonly options: ReadonlyArray<ModelEsque>;
+    readonly model: string;
+    readonly onChange?: (instance: ProviderInstanceId, model: string) => void;
+  },
+) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(
     <ModelPickerContent
       environmentId={null}
       activeInstanceId={instanceId}
@@ -65,89 +68,105 @@ function renderPicker(input: {
   );
 }
 
-const text = () => host?.textContent ?? "";
-const header = (label: string) =>
-  [...(host?.querySelectorAll<HTMLElement>("[aria-expanded]") ?? [])].find((element) =>
+const text = (_fixture: _Fixture) => _fixture.host?.textContent ?? "";
+const header = (_fixture: _Fixture, label: string) =>
+  [...(_fixture.host?.querySelectorAll<HTMLElement>("[aria-expanded]") ?? [])].find((element) =>
     element.textContent?.includes(label),
   );
 
-beforeEach(async () => {
+async function _setupFixture0(_fixture: _Fixture) {
   window.localStorage.removeItem(COLLAPSED_MODEL_SOURCES_STORAGE_KEY);
   await page.viewport(1280, 900);
-});
+}
 
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
   window.localStorage.removeItem(COLLAPSED_MODEL_SOURCES_STORAGE_KEY);
-});
+}
 
 describe("Oh My Pi model picker sections", () => {
   it("shows both sections, collapses one, remembers it, and lets search reach it", async () => {
-    renderPicker({ options: ACCOUNT_AND_CUSTOM, model: "scient_local/qwen" });
-    await expect.poll(() => header("Your Oh My Pi accounts")).toBeTruthy();
-    expect(header("Scient custom models")).toBeTruthy();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await renderPicker(_fixture, { options: ACCOUNT_AND_CUSTOM, model: "scient_local/qwen" });
+    await expect.poll(() => header(_fixture, "Your Oh My Pi accounts")).toBeTruthy();
+    expect(header(_fixture, "Scient custom models")).toBeTruthy();
     for (const name of ["Claude Opus", "Claude Sonnet", "GPT Sol", "GLM Flash", "Qwen Local"]) {
-      expect(text()).toContain(name);
+      expect(text(_fixture)).toContain(name);
     }
     // Account models are grouped by provider: both Anthropic models come first.
-    expect(text().indexOf("Claude Sonnet")).toBeLessThan(text().indexOf("GPT Sol"));
-    expect(header("Your Oh My Pi accounts")?.getAttribute("aria-expanded")).toBe("true");
+    expect(text(_fixture).indexOf("Claude Sonnet")).toBeLessThan(text(_fixture).indexOf("GPT Sol"));
+    expect(header(_fixture, "Your Oh My Pi accounts")?.getAttribute("aria-expanded")).toBe("true");
 
-    header("Your Oh My Pi accounts")!.click();
-    await expect.poll(() => text().includes("Claude Opus")).toBe(false);
-    expect(text()).toContain("Qwen Local");
-    expect(header("Your Oh My Pi accounts")?.getAttribute("aria-expanded")).toBe("false");
-    expect(header("Your Oh My Pi accounts")?.textContent).toContain("3 models");
+    header(_fixture, "Your Oh My Pi accounts")!.click();
+    await expect.poll(() => text(_fixture).includes("Claude Opus")).toBe(false);
+    expect(text(_fixture)).toContain("Qwen Local");
+    expect(header(_fixture, "Your Oh My Pi accounts")?.getAttribute("aria-expanded")).toBe("false");
+    expect(header(_fixture, "Your Oh My Pi accounts")?.textContent).toContain("3 models");
     expect(window.localStorage.getItem(COLLAPSED_MODEL_SOURCES_STORAGE_KEY)).toContain(
       "model-source:accounts:omp",
     );
 
     // A fresh picker keeps the section collapsed.
-    renderPicker({ options: ACCOUNT_AND_CUSTOM, model: "scient_local/qwen" });
-    await expect.poll(() => header("Your Oh My Pi accounts")).toBeTruthy();
-    expect(text()).not.toContain("Claude Opus");
+    await renderPicker(_fixture, { options: ACCOUNT_AND_CUSTOM, model: "scient_local/qwen" });
+    await expect.poll(() => header(_fixture, "Your Oh My Pi accounts")).toBeTruthy();
+    expect(text(_fixture)).not.toContain("Claude Opus");
 
     // Search lists plain matches, including collapsed ones, without headers.
-    await userEvent.type(host!.querySelector("input")!, "sonnet");
-    await expect.poll(() => text().includes("Claude Sonnet")).toBe(true);
-    expect(header("Your Oh My Pi accounts")).toBeUndefined();
+    await userEvent.type(_fixture.host!.querySelector("input")!, "sonnet");
+    await expect.poll(() => text(_fixture).includes("Claude Sonnet")).toBe(true);
+    expect(header(_fixture, "Your Oh My Pi accounts")).toBeUndefined();
 
-    await userEvent.clear(host!.querySelector("input")!);
-    await expect.poll(() => header("Your Oh My Pi accounts")).toBeTruthy();
-    header("Your Oh My Pi accounts")!.click();
-    await expect.poll(() => text().includes("Claude Opus")).toBe(true);
+    await userEvent.clear(_fixture.host!.querySelector("input")!);
+    await expect.poll(() => header(_fixture, "Your Oh My Pi accounts")).toBeTruthy();
+    header(_fixture, "Your Oh My Pi accounts")!.click();
+    await expect.poll(() => text(_fixture).includes("Claude Opus")).toBe(true);
     expect(window.localStorage.getItem(COLLAPSED_MODEL_SOURCES_STORAGE_KEY)).not.toContain(
       "model-source:accounts:omp",
     );
   });
 
   it("opens the section holding the selected model, then collapses it on request", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     window.localStorage.setItem(
       COLLAPSED_MODEL_SOURCES_STORAGE_KEY,
       JSON.stringify(["model-source:custom:omp"]),
     );
-    renderPicker({ options: ACCOUNT_AND_CUSTOM, model: "scient_openrouter/glm" });
-    await expect.poll(() => header("Scient custom models")).toBeTruthy();
-    expect(text()).toContain("GLM Flash");
-    expect(header("Scient custom models")?.getAttribute("aria-expanded")).toBe("true");
+    await renderPicker(_fixture, { options: ACCOUNT_AND_CUSTOM, model: "scient_openrouter/glm" });
+    await expect.poll(() => header(_fixture, "Scient custom models")).toBeTruthy();
+    expect(text(_fixture)).toContain("GLM Flash");
+    expect(header(_fixture, "Scient custom models")?.getAttribute("aria-expanded")).toBe("true");
 
-    header("Scient custom models")!.click();
-    await expect.poll(() => text().includes("GLM Flash")).toBe(false);
-    expect(header("Scient custom models")?.getAttribute("aria-expanded")).toBe("false");
+    header(_fixture, "Scient custom models")!.click();
+    await expect.poll(() => text(_fixture).includes("GLM Flash")).toBe(false);
+    expect(header(_fixture, "Scient custom models")?.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("selects a model from a section and never selects a header", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const onChange = vi.fn();
-    renderPicker({ options: ACCOUNT_AND_CUSTOM, model: "anthropic/opus", onChange });
-    await expect.poll(() => header("Scient custom models")).toBeTruthy();
-    header("Scient custom models")!.click();
-    header("Scient custom models")!.click();
+    await renderPicker(_fixture, {
+      options: ACCOUNT_AND_CUSTOM,
+      model: "anthropic/opus",
+      onChange,
+    });
+    await expect.poll(() => header(_fixture, "Scient custom models")).toBeTruthy();
+    header(_fixture, "Scient custom models")!.click();
+    header(_fixture, "Scient custom models")!.click();
     expect(onChange).not.toHaveBeenCalled();
 
-    const row = [...host!.querySelectorAll<HTMLElement>("[role=option]")].find(
+    const row = [..._fixture.host!.querySelectorAll<HTMLElement>("[role=option]")].find(
       (element) =>
         element.textContent?.includes("GLM Flash") && !element.hasAttribute("aria-expanded"),
     );
@@ -157,20 +176,50 @@ describe("Oh My Pi model picker sections", () => {
   });
 
   it("toggles a highlighted header with Enter", async () => {
-    renderPicker({ options: ACCOUNT_AND_CUSTOM, model: "anthropic/opus" });
-    await expect.poll(() => header("Your Oh My Pi accounts")).toBeTruthy();
-    const input = host!.querySelector("input")!;
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await renderPicker(_fixture, { options: ACCOUNT_AND_CUSTOM, model: "anthropic/opus" });
+    await expect.poll(() => header(_fixture, "Your Oh My Pi accounts")).toBeTruthy();
+    const input = _fixture.host!.querySelector("input")!;
     input.focus();
     // The first row is the accounts header.
     await userEvent.keyboard("{Home}");
     await userEvent.keyboard("{Enter}");
-    await expect.poll(() => text().includes("Claude Opus")).toBe(false);
+    await expect.poll(() => text(_fixture).includes("Claude Opus")).toBe(false);
   });
 
   it("shows a plain list when an instance has only one kind of model", async () => {
-    renderPicker({ options: ACCOUNT_AND_CUSTOM.slice(0, 3), model: "anthropic/opus" });
-    await expect.poll(() => text().includes("Claude Opus")).toBe(true);
-    expect(header("Your Oh My Pi accounts")).toBeUndefined();
-    expect(header("Scient custom models")).toBeUndefined();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await renderPicker(_fixture, {
+      options: ACCOUNT_AND_CUSTOM.slice(0, 3),
+      model: "anthropic/opus",
+    });
+    await expect.poll(() => text(_fixture).includes("Claude Opus")).toBe(true);
+    expect(header(_fixture, "Your Oh My Pi accounts")).toBeUndefined();
+    expect(header(_fixture, "Scient custom models")).toBeUndefined();
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

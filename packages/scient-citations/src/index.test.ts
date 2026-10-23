@@ -91,7 +91,7 @@ describe("formatSourceReference", () => {
   // tests below time only rendering.
   beforeAll(() => {
     for (const style of SCIENT_REFERENCE_STYLES) formatSourceReference(article, style.id);
-  }, 30_000);
+  });
 
   it("renders a Vancouver bibliography entry", () => {
     expect(formatSourceReference(article, "vancouver")).toBe(

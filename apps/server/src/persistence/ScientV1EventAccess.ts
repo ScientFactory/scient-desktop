@@ -127,8 +127,8 @@ const rowToV1Event = Effect.fn("OrchestrationEventStore.rowToV1Event")(function*
  * projector can decode: `application_event_version = 1` plus every project row.
  */
 export function makeV1EventAccess(sql: SqlClient.SqlClient) {
-  const appendV1Row = (event: Omit<OrchestrationEvent, "sequence">) =>
-    Effect.gen(function* () {
+  const appendV1Row = Effect.fn("ScientV1EventAccess.appendV1Row")(
+    function* (event: Omit<OrchestrationEvent, "sequence">) {
       const payloadJson =
         event.type === "project.deleted" ||
         !("projectIcon" in event.payload && event.payload.projectIcon)
@@ -202,14 +202,17 @@ export function makeV1EventAccess(sql: SqlClient.SqlClient) {
         );
       }
       return yield* rowToV1Event(row);
-    }).pipe(
-      Effect.mapError(
-        toPersistenceSqlOrDecodeError(
-          "OrchestrationEventStore.append:insert",
-          "OrchestrationEventStore.append:decode",
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "OrchestrationEventStore.append:insert",
+            "OrchestrationEventStore.append:decode",
+          ),
         ),
       ),
-    );
+  );
 
   const readV1EventRowsFromSequence = (input: {
     readonly sequenceExclusive: number;

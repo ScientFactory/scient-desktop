@@ -83,6 +83,9 @@ import Migration0066 from "./Migrations/066_ThreadFailureLookupIndex.ts";
 import Migration0067 from "./Migrations/067_DropUnusedV1Projections.ts";
 // SCIENT-FORK:START — incoming T3 migration 64 follows the immutable Scient ledger.
 import Migration0068 from "./Migrations/068_CanonicalizeThreadPullRequestLinks.ts";
+import Migration0069 from "./Migrations/069_CodexUsageNativeTurnIndex.ts";
+import Migration0070 from "./Migrations/070_RepairClientSettlementTimestamps.ts";
+import Migration0071 from "./Migrations/071_WebhookDedupe.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -170,6 +173,9 @@ export const migrationEntries = [
   [67, "DropUnusedV1Projections", Migration0067],
   // SCIENT-FORK:START — immutable migration numbering.
   [68, "CanonicalizeThreadPullRequestLinks", Migration0068],
+  [69, "CodexUsageNativeTurnIndex", Migration0069],
+  [70, "RepairClientSettlementTimestamps", Migration0070],
+  [71, "WebhookDedupe", Migration0071],
   // SCIENT-FORK:END
 ] as const;
 

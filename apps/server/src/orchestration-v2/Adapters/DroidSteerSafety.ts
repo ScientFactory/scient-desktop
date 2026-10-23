@@ -243,8 +243,8 @@ export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(i
               Effect.sync(() => {
                 droidCanonicalOwner = owner;
               }),
-            droidSteerTerminalHeld: (attemptId, status) =>
-              Effect.gen(function* () {
+            droidSteerTerminalHeld: Effect.fn("DroidSteerSafety.droidSteerTerminalHeld")(
+              function* (attemptId, status) {
                 const owner = droidCanonicalOwner;
                 if (owner?.attemptId !== attemptId || !(yield* owner.held)) return false;
                 if (
@@ -255,7 +255,8 @@ export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(i
                   return false;
                 }
                 return true;
-              }),
+              },
+            ),
             invalidateDroidSteer,
             validateDroidSteer: validDroidLease,
             droidSteerConsumed: (lease) =>
@@ -284,8 +285,8 @@ export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(i
                     : (input.testHooks?.afterDroidSteerReserved?.(id) ?? Effect.void),
                 ),
               ),
-            consumeDroidSteer: (turnInput) =>
-              Effect.gen(function* () {
+            consumeDroidSteer: Effect.fn("DroidSteerSafety.consumeDroidSteer")(
+              function* (turnInput) {
                 const owner = droidOwner;
                 if (owner?.providerTurnId !== turnInput.providerTurnId) return false;
                 if (owner.finalized) {
@@ -305,7 +306,8 @@ export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(i
                         : Effect.fail(error),
                   }),
                 );
-              }),
+              },
+            ),
           },
   };
 }

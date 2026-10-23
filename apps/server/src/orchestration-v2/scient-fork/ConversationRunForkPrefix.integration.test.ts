@@ -162,7 +162,7 @@ it.live.each(
       const name = `native-run-fork-prefix-${nested}`;
       const cwd = yield* checkpointWorkspace(name);
       const recorded = yield* readProviderReplayTranscript(
-        new URL("../testkit/fixtures/thread_fork_native/codex_transcript.ndjson", import.meta.url),
+        new URL("./fixtures/thread_fork_native/codex_transcript.ndjson", import.meta.url),
       );
       const full = yield* CodexOrchestratorReplayHarness.decodeTranscript(
         materializeReplayTranscriptWorkspace(recorded, cwd),

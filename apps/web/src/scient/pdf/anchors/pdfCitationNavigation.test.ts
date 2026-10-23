@@ -319,12 +319,22 @@ describe("PDF quote identity and navigation", () => {
       bindingStatus: "current",
       staleReason: null,
     });
-    let answer: (value: { descriptor: null }) => void = () => undefined;
-    currentDocument.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    const answer = Promise.withResolvers<{ descriptor: null }>();
+    currentDocument.mockReturnValueOnce(answer.promise);
     openPdfCitation(citation(pdfDocumentIdentity(generated)!), "/project", now);
     openPdfCitation(citation(pdfDocumentIdentity(workspaceSource)!), "/project", now);
-    answer({ descriptor: null });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    answer.resolve({ descriptor: null });
+    // A message task follows the resolved lookup's microtasks without a clock delay.
+    const channel = new MessageChannel();
+    try {
+      await new Promise<void>((resolve) => {
+        channel.port1.onmessage = () => resolve();
+        channel.port2.postMessage(null);
+      });
+    } finally {
+      channel.port1.close();
+      channel.port2.close();
+    }
     expect(openFile).toHaveBeenCalledTimes(1);
     expect(openScient).not.toHaveBeenCalled();
   });

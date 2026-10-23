@@ -9,9 +9,9 @@ import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import type { ChatComposerHandle } from "~/components/chat/ChatComposer";
 import { captureAssistantTextRange } from "~/lib/assistantTextSelection";
 import { markdownFenceCopySource } from "../presentation/presentationExport";
-import { MERMAID_VERSION } from "./mermaidRuntime";
+import { MERMAID_RENDERER } from "./mermaidRuntime";
 
-const REPAIR_INSTRUCTION = `Please fix this Mermaid diagram so it renders in Scient (Mermaid ${MERMAID_VERSION}). Preserve its intended meaning and return the corrected Mermaid code block.`;
+const REPAIR_INSTRUCTION = `Please fix this Mermaid diagram so it renders in Scient using ${MERMAID_RENDERER}. Preserve its intended meaning and return the corrected Mermaid code block.`;
 
 export function buildMermaidRepairRequest(source: string, diagnostic: string): string {
   return [

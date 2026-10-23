@@ -29,8 +29,12 @@ const cliBuildChannel = packageJson.version.includes("-beta.")
     ? "nightly"
     : "latest";
 
+// The root config's `projects` route repo-root runs to package configs,
+// including this one. Inheriting them would make this config a container.
+const { projects: _rootTestProjects, ...baseTestConfig } = baseConfig.test ?? {};
+
 export default mergeConfig(
-  baseConfig,
+  { ...baseConfig, test: baseTestConfig },
   defineConfig({
     run: {
       tasks: {
@@ -109,6 +113,9 @@ export default mergeConfig(
       // runtimes heavily. Running files in parallel introduces load-sensitive flakes.
       fileParallelism: false,
       sequence: { sequencer: WeightedShardSequencer },
+      // SCIENT-FORK:START — real measurements run in the maintained benchmark lane.
+      benchmark: { include: ["src/**/*.bench.ts"] },
+      // SCIENT-FORK:END
       // Appended to the root setup, which mergeConfig concatenates.
       setupFiles: [
         "./src/testUtils/gitConfig.setup.ts",

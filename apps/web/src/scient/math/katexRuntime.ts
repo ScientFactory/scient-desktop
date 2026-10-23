@@ -20,6 +20,7 @@ export function renderScientTexToHtml(tex: string, displayMode: boolean): string
       displayMode,
       throwOnError: true,
       strict: "ignore",
+      trust: false,
       maxSize: 50,
       maxExpand: 1000,
     });

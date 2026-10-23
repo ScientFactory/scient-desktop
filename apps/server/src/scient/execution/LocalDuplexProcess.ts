@@ -44,8 +44,8 @@ const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const platform = yield* HostProcess.Platform;
 
-  const start: DuplexProcessPort["start"] = (request) =>
-    Effect.gen(function* () {
+  const start: DuplexProcessPort["start"] = Effect.fn("LocalDuplexProcess.start")(
+    function* (request) {
       const child = yield* spawner
         .spawn(makeLocalOwnedProcess(request, platform, { keepInputOpen: true }))
         .pipe(
@@ -154,7 +154,8 @@ const make = Effect.gen(function* () {
         exitCode,
         cancelProcessTree,
       } satisfies DuplexProcessHandle;
-    });
+    },
+  );
 
   return DuplexProcess.of({ start });
 });

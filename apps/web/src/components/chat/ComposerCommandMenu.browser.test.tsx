@@ -1,13 +1,18 @@
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import { ProviderDriverKind } from "@t3tools/contracts";
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { type ReactNode } from "react";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ComposerCommandMenu } from "./ComposerCommandMenu";
 
 describe("ComposerCommandMenu", () => {
-  it("renders slash commands with their descriptions", () => {
-    const markup = renderMarkup(
+  it("renders slash commands with their descriptions", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const markup = await renderMarkup(
+      _fixture,
       <ComposerCommandMenu
         listId="test-suggestions"
         items={[
@@ -32,8 +37,12 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain("Switch response model for this thread");
   });
 
-  it("shows the app source for an app skill", () => {
-    const markup = renderMarkup(
+  it("shows the app source for an app skill", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const markup = await renderMarkup(
+      _fixture,
       <ComposerCommandMenu
         listId="test-suggestions"
         items={[
@@ -67,8 +76,12 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain("<svg");
   });
 
-  it("identifies built-in Scient skills while preserving project ownership", () => {
-    const markup = renderMarkup(
+  it("identifies built-in Scient skills while preserving project ownership", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const markup = await renderMarkup(
+      _fixture,
       <ComposerCommandMenu
         listId="test-suggestions"
         items={[
@@ -114,8 +127,12 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain('<img aria-hidden="true" class="shrink-0 size-3.5 sm:size-3"');
   });
 
-  it("shows the repo source for a slash skill", () => {
-    const markup = renderMarkup(
+  it("shows the repo source for a slash skill", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const markup = await renderMarkup(
+      _fixture,
       <ComposerCommandMenu
         listId="test-suggestions"
         items={[
@@ -151,17 +168,48 @@ describe("ComposerCommandMenu", () => {
   });
 });
 
-const browserRoots: Root[] = [];
-afterEach(async () => {
-  for (const root of browserRoots.splice(0)) await act(async () => root.unmount());
-  document.body.replaceChildren();
+async function _cleanupFixture0(_fixture: _Fixture) {
+  for (const root of _fixture.root0.splice(0)) await act(async () => await root.unmount());
+  _clearOwnedDOM(_fixture);
   vi.unstubAllGlobals();
-});
-function renderMarkup(node: ReactNode): string {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const container = document.body.appendChild(document.createElement("div"));
-  const root = createRoot(container);
-  browserRoots.push(root);
-  act(() => root.render(node));
+}
+async function renderMarkup(_fixture: _Fixture, node: ReactNode): Promise<string> {
+  const container = document.body.appendChild(_ownDOM(_fixture, document.createElement("div")));
+  const root = _fixture.stack.use(
+    await _fixtureRender(null, { container: container, router: false }),
+  );
+  _fixture.root0.push(root);
+  await act(async () => await root.rerender(node));
   return container.innerHTML;
+}
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    _ownedDOM: [] as Node[],
+
+    stack,
+    cleanup,
+    root0: [] as Screen[],
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;
+
+function _ownDOM<T extends Node>(_fixture: _Fixture, node: T): T {
+  _fixture._ownedDOM.push(node);
+  _fixture.stack.defer(() => {
+    node.parentNode?.removeChild(node);
+  });
+  return node;
+}
+function _clearOwnedDOM(_fixture: _Fixture) {
+  for (const node of _fixture._ownedDOM.splice(0)) node.parentNode?.removeChild(node);
 }

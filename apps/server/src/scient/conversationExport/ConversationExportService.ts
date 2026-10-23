@@ -294,7 +294,9 @@ const make = Effect.gen(function* () {
    * the order they appear, so an excluded tail cannot use up the budget. `read`
    * receives a regular file that fits and returns what the writer needs.
    */
-  const resolveAttachments = <A extends { readonly byteLength: number }>(
+  const resolveAttachments = Effect.fn("ConversationExportService.resolveAttachments")(function* <
+    A extends { readonly byteLength: number },
+  >(
     snapshot: ConversationSnapshotV1,
     attachmentFiles: ReadonlyMap<string, string>,
     read: (
@@ -302,54 +304,55 @@ const make = Effect.gen(function* () {
       remaining: number,
       size: number,
     ) => Effect.Effect<A | Exclude<DocumentAssetUnavailableReason, "missing">>,
-  ) =>
-    Effect.gen(function* () {
-      const resolved = new Map<string, A | UnavailableAttachment>();
-      let totalBytes = 0;
-      for (const localId of snapshotAttachmentIds(snapshot)) {
-        const path = attachmentFiles.get(localId);
-        if (path === undefined) continue;
-        const remaining = SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES - totalBytes;
-        const fileInfo = yield* fileSystem.stat(path).pipe(Effect.option);
-        if (fileInfo._tag === "None" || fileInfo.value.type !== "File") {
-          resolved.set(localId, { _tag: "unavailable", reason: "unreadable" });
-          continue;
-        }
-        if (fileInfo.value.size > remaining) {
-          resolved.set(localId, { _tag: "unavailable", reason: "too-large" });
-          continue;
-        }
-        const result = yield* read(path, remaining, Number(fileInfo.value.size));
-        if (typeof result === "string") {
-          resolved.set(localId, { _tag: "unavailable", reason: result });
-          continue;
-        }
-        totalBytes += result.byteLength;
-        resolved.set(localId, result);
+  ) {
+    const resolved = new Map<string, A | UnavailableAttachment>();
+    let totalBytes = 0;
+    for (const localId of snapshotAttachmentIds(snapshot)) {
+      const path = attachmentFiles.get(localId);
+      if (path === undefined) continue;
+      const remaining = SCIENT_CONVERSATION_EXPORT_MAX_ASSET_BYTES - totalBytes;
+      const fileInfo = yield* fileSystem.stat(path).pipe(Effect.option);
+      if (fileInfo._tag === "None" || fileInfo.value.type !== "File") {
+        resolved.set(localId, { _tag: "unavailable", reason: "unreadable" });
+        continue;
       }
-      return resolved;
-    });
+      if (fileInfo.value.size > remaining) {
+        resolved.set(localId, { _tag: "unavailable", reason: "too-large" });
+        continue;
+      }
+      const result = yield* read(path, remaining, Number(fileInfo.value.size));
+      if (typeof result === "string") {
+        resolved.set(localId, { _tag: "unavailable", reason: result });
+        continue;
+      }
+      totalBytes += result.byteLength;
+      resolved.set(localId, result);
+    }
+    return resolved;
+  });
 
   /** Reads attachments into memory, for writers that embed their bytes (PDF, Word). */
-  const readAttachmentBytes = (path: string, remaining: number) =>
-    Effect.gen(function* () {
-      // Bound the actual read too: the file could grow between stat and read.
-      const bytes = yield* fileSystem.stream(path, { bytesToRead: remaining + 1 }).pipe(
-        Stream.runCollect,
-        Effect.map((chunks) => Buffer.concat(chunks)),
-        Effect.option,
-      );
-      if (bytes._tag === "None") return "unreadable" as const;
-      if (bytes.value.byteLength > remaining) return "too-large" as const;
-      const digest = yield* crypto.digest("SHA-256", bytes.value).pipe(Effect.option);
-      if (digest._tag === "None") return "unreadable" as const;
-      return {
-        _tag: "bytes" as const,
-        bytes: bytes.value,
-        byteLength: bytes.value.byteLength,
-        sha256: `sha256:${Hex.encode(digest.value)}` as Sha256Digest,
-      };
-    });
+  const readAttachmentBytes = Effect.fn("ConversationExportService.readAttachmentBytes")(function* (
+    path: string,
+    remaining: number,
+  ) {
+    // Bound the actual read too: the file could grow between stat and read.
+    const bytes = yield* fileSystem.stream(path, { bytesToRead: remaining + 1 }).pipe(
+      Stream.runCollect,
+      Effect.map((chunks) => Buffer.concat(chunks)),
+      Effect.option,
+    );
+    if (bytes._tag === "None") return "unreadable" as const;
+    if (bytes.value.byteLength > remaining) return "too-large" as const;
+    const digest = yield* crypto.digest("SHA-256", bytes.value).pipe(Effect.option);
+    if (digest._tag === "None") return "unreadable" as const;
+    return {
+      _tag: "bytes" as const,
+      bytes: bytes.value,
+      byteLength: bytes.value.byteLength,
+      sha256: `sha256:${Hex.encode(digest.value)}` as Sha256Digest,
+    };
+  });
 
   /** A file a package streams when it is written; its size was checked against the budget. */
   const packageAttachmentFile = (path: string, _remaining: number, size: number) =>
@@ -371,6 +374,24 @@ const make = Effect.gen(function* () {
    * Markdown, Copy, and the Word diagram plan use the recorded sizes and never
    * open an attachment file.
    */
+  const listedDocumentEffect = Effect.fn("ConversationExportService.listedDocument")(function* (
+    snapshot: ConversationSnapshotV1,
+    exportValue: string,
+    request: ScientConversationExportRequest,
+    resolve: (
+      attachment: ConversationAttachment,
+    ) => ResolvedAttachmentContent | ExternalAttachmentContent,
+  ) {
+    const document = buildConversationDocument({
+      snapshot,
+      exportValue,
+      timeZone: request.timeZone ?? "UTC",
+      resolveAttachment: resolve,
+    });
+    if (document.messageCount === 0) return yield* nothingToExport;
+    return document;
+  });
+
   const listedDocument = (
     snapshot: ConversationSnapshotV1,
     exportValue: string,
@@ -382,17 +403,7 @@ const make = Effect.gen(function* () {
       byteLength: attachment.sizeBytes,
       sha256: null,
     }),
-  ) =>
-    Effect.gen(function* () {
-      const document = buildConversationDocument({
-        snapshot,
-        exportValue,
-        timeZone: request.timeZone ?? "UTC",
-        resolveAttachment: resolve,
-      });
-      if (document.messageCount === 0) return yield* nothingToExport;
-      return document;
-    });
+  ) => listedDocumentEffect(snapshot, exportValue, request, resolve);
 
   /** The document with attachment bytes in memory, for PDF and Word. */
   const embeddedDocument = Effect.fn("ConversationExportService.embeddedDocument")(function* (

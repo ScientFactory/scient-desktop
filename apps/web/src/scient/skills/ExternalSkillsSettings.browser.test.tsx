@@ -1,12 +1,12 @@
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   environmentId: "local",
@@ -30,7 +30,10 @@ vi.mock("../../state/use-atom-command", () => ({
 }));
 vi.mock("./scientSkillsState", () => ({ setProviderSkillEnabled: null }));
 vi.mock("../../components/ui/toast", () => ({ toastManager: { add: state.toast } }));
-vi.mock("@tanstack/react-router", () => ({ Link: "a" }));
+vi.mock("@tanstack/react-router", async (_actualRouter) => ({
+  ...(await _actualRouter<typeof import("@tanstack/react-router")>()),
+  Link: "a",
+}));
 vi.mock("../../components/chat/ProviderInstanceIcon", () => ({
   ProviderInstanceIcon: () => null,
 }));
@@ -132,13 +135,12 @@ function deferredResult() {
   return { promise, resolve };
 }
 
-let renderer: Root;
-let container: HTMLDivElement;
-const switches = () => [...container.querySelectorAll<HTMLButtonElement>("[data-switch]")];
+const switches = (_fixture: _Fixture) => [
+  ..._fixture.container.querySelectorAll<HTMLButtonElement>("[data-switch]"),
+];
 
 describe("ExternalSkillsSettings activation", () => {
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  async function _setupFixture0(_fixture: _Fixture) {
     state.environmentId = "local";
     state.providers = [provider()];
     state.setEnabled.mockReset();
@@ -147,112 +149,148 @@ describe("ExternalSkillsSettings activation", () => {
       value: { providers: [provider()] },
     });
     state.toast.mockReset();
-    act(() => {
-      container = document.createElement("div");
-      document.body.append(container);
-      renderer = createRoot(container);
-      renderer.render(<ExternalSkillsSettings />);
+    await act(async () => {
+      _fixture.container = document.createElement("div");
+      document.body.append(_fixture.container);
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: _fixture.container, router: false }),
+      );
+      await _fixture.root0.rerender(<ExternalSkillsSettings />);
     });
-    act(() => {
-      container.querySelector("button")?.click();
+    await act(() => {
+      _fixture.container.querySelector("button")?.click();
     });
-  });
+  }
 
-  afterEach(() => {
-    act(() => renderer.unmount());
-    container.remove();
+  async function _cleanupFixture1(_fixture: _Fixture) {
+    await act(async () => await _fixture.root0.unmount());
+    _fixture.container.remove();
     vi.unstubAllGlobals();
-  });
+  }
 
   it("keeps both switches responsive and coalesces repeated clicks on one skill", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const first = deferredResult();
     const second = deferredResult();
     state.setEnabled.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
 
-    act(() => {
-      switches()[0]?.click();
+    await act(() => {
+      switches(_fixture)[0]?.click();
     });
-    expect(switches().map((item) => item.dataset.checked === "true")).toEqual([false, true]);
-    expect([...container.querySelectorAll('[data-status="Personal · Updating"]')]).toHaveLength(1);
-    expect(switches().map((item) => item.getAttribute("disabled"))).toEqual([null, null]);
-    expect(switches()[0]?.dataset.motion).toBe("none");
+    expect(switches(_fixture).map((item) => item.dataset.checked === "true")).toEqual([
+      false,
+      true,
+    ]);
+    expect([
+      ..._fixture.container.querySelectorAll('[data-status="Personal · Updating"]'),
+    ]).toHaveLength(1);
+    expect(switches(_fixture).map((item) => item.getAttribute("disabled"))).toEqual([null, null]);
+    expect(switches(_fixture)[0]?.dataset.motion).toBe("none");
 
-    act(() => {
-      switches()[0]?.click();
+    await act(() => {
+      switches(_fixture)[0]?.click();
     });
     expect(state.setEnabled).toHaveBeenCalledTimes(1);
-    expect(switches()[0]!.dataset.checked === "true").toBe(true);
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(true);
 
-    act(() => {
-      switches()[0]?.click();
+    await act(() => {
+      switches(_fixture)[0]?.click();
     });
     expect(state.setEnabled).toHaveBeenCalledTimes(1);
-    expect(switches()[0]!.dataset.checked === "true").toBe(false);
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(false);
 
-    act(() => {
-      switches()[1]?.click();
+    await act(() => {
+      switches(_fixture)[1]?.click();
     });
-    expect(switches().map((item) => item.dataset.checked === "true")).toEqual([false, false]);
-    expect(switches().map((item) => item.getAttribute("disabled"))).toEqual([null, null]);
+    expect(switches(_fixture).map((item) => item.dataset.checked === "true")).toEqual([
+      false,
+      false,
+    ]);
+    expect(switches(_fixture).map((item) => item.getAttribute("disabled"))).toEqual([null, null]);
     expect(state.setEnabled).toHaveBeenCalledTimes(2);
     await act(async () => {
       first.resolve({ _tag: "Success" });
       second.resolve({ _tag: "Success" });
     });
     expect(state.setEnabled).toHaveBeenCalledTimes(2);
-    expect([...container.querySelectorAll('[data-status="Personal · Deactivated"]')]).toHaveLength(
-      2,
-    );
+    expect([
+      ..._fixture.container.querySelectorAll('[data-status="Personal · Deactivated"]'),
+    ]).toHaveLength(2);
   });
 
   it("applies only the last choice after an earlier write and ignores intermediate snapshots", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const first = deferredResult();
     const last = deferredResult();
     state.setEnabled.mockReturnValueOnce(first.promise).mockReturnValueOnce(last.promise);
 
-    act(() => switches()[0]?.click());
-    act(() => switches()[0]?.click());
-    expect(switches()[0]!.dataset.checked === "true").toBe(true);
+    await act(() => switches(_fixture)[0]?.click());
+    await act(() => switches(_fixture)[0]?.click());
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(true);
     expect(state.setEnabled).toHaveBeenCalledTimes(1);
 
-    act(() => {
+    await act(async () => {
       state.providers = [provider(true)];
-      renderer.render(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(<ExternalSkillsSettings />);
     });
-    expect([...container.querySelectorAll('[data-status="Personal · Updating"]')]).toHaveLength(1);
+    expect([
+      ..._fixture.container.querySelectorAll('[data-status="Personal · Updating"]'),
+    ]).toHaveLength(1);
 
     await act(async () => first.resolve({ _tag: "Success" }));
     expect(state.setEnabled).toHaveBeenCalledTimes(2);
     expect(state.setEnabled.mock.calls[1]?.[0].input.enabled).toBe(true);
-    expect([...container.querySelectorAll('[data-status="Personal · Updating"]')]).toHaveLength(1);
+    expect([
+      ..._fixture.container.querySelectorAll('[data-status="Personal · Updating"]'),
+    ]).toHaveLength(1);
 
     await act(async () => last.resolve({ _tag: "Success" }));
     expect(state.setEnabled).toHaveBeenCalledTimes(2);
-    expect(switches()[0]!.dataset.checked === "true").toBe(true);
-    expect([...container.querySelectorAll('[data-status="Personal · Updating"]')]).toHaveLength(0);
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(true);
+    expect([
+      ..._fixture.container.querySelectorAll('[data-status="Personal · Updating"]'),
+    ]).toHaveLength(0);
   });
 
   it("releases the local choice when the provider snapshot arrives before the response", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const write = deferredResult();
     state.setEnabled.mockReturnValueOnce(write.promise);
-    act(() => switches()[0]?.click());
+    await act(() => switches(_fixture)[0]?.click());
 
-    act(() => {
+    await act(async () => {
       state.providers = [provider(false)];
-      renderer.render(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(<ExternalSkillsSettings />);
     });
-    expect([...container.querySelectorAll('[data-status="Personal · Updating"]')]).toHaveLength(1);
+    expect([
+      ..._fixture.container.querySelectorAll('[data-status="Personal · Updating"]'),
+    ]).toHaveLength(1);
     await act(async () => write.resolve({ _tag: "Success" }));
 
-    act(() => {
+    await act(async () => {
       state.providers = [provider(true)];
-      renderer.render(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(<ExternalSkillsSettings />);
     });
-    expect(switches()[0]!.dataset.checked === "true").toBe(true);
-    expect([...container.querySelectorAll('[data-status="Personal · Updating"]')]).toHaveLength(0);
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(true);
+    expect([
+      ..._fixture.container.querySelectorAll('[data-status="Personal · Updating"]'),
+    ]).toHaveLength(0);
   });
 
   it("follows a changed choice even after the next provider write has started", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const first = deferredResult();
     const second = deferredResult();
     const last = deferredResult();
@@ -261,24 +299,28 @@ describe("ExternalSkillsSettings activation", () => {
       .mockReturnValueOnce(second.promise)
       .mockReturnValueOnce(last.promise);
 
-    act(() => switches()[0]?.click());
-    act(() => switches()[0]?.click());
+    await act(() => switches(_fixture)[0]?.click());
+    await act(() => switches(_fixture)[0]?.click());
     await act(async () => first.resolve({ _tag: "Success" }));
     expect(state.setEnabled.mock.calls[1]?.[0].input.enabled).toBe(true);
 
-    act(() => switches()[0]?.click());
-    expect(switches()[0]!.dataset.checked === "true").toBe(false);
+    await act(() => switches(_fixture)[0]?.click());
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(false);
     await act(async () => second.resolve({ _tag: "Success" }));
     expect(state.setEnabled.mock.calls[2]?.[0].input.enabled).toBe(false);
 
     await act(async () => last.resolve({ _tag: "Success" }));
     expect(state.setEnabled).toHaveBeenCalledTimes(3);
-    expect([...container.querySelectorAll('[data-status="Personal · Deactivated"]')]).toHaveLength(
-      1,
-    );
+    expect([
+      ..._fixture.container.querySelectorAll('[data-status="Personal · Deactivated"]'),
+    ]).toHaveLength(1);
   });
 
   it("refreshes and reports a failed write instead of replaying queued clicks", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const failure = deferredResult();
     state.setEnabled.mockReturnValueOnce(failure.promise);
     state.refreshProviders.mockResolvedValueOnce({
@@ -286,8 +328,8 @@ describe("ExternalSkillsSettings activation", () => {
       value: { providers: [provider(false)] },
     });
 
-    act(() => switches()[0]?.click());
-    act(() => switches()[0]?.click());
+    await act(() => switches(_fixture)[0]?.click());
+    await act(() => switches(_fixture)[0]?.click());
     await act(async () => failure.resolve({ _tag: "Failure" }));
 
     expect(state.setEnabled).toHaveBeenCalledTimes(1);
@@ -295,18 +337,24 @@ describe("ExternalSkillsSettings activation", () => {
       environmentId: EnvironmentId.make("local"),
       input: { instanceId },
     });
-    expect(switches()[0]!.dataset.checked === "true").toBe(false);
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(false);
     expect(state.toast).toHaveBeenCalledOnce();
   });
 
   it("reports an unverified state when both the write and refresh fail", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     state.setEnabled.mockResolvedValueOnce({ _tag: "Failure" });
     state.refreshProviders.mockResolvedValueOnce({ _tag: "Failure" });
 
-    await act(async () => switches()[0]?.click());
+    await act(async () => switches(_fixture)[0]?.click());
 
-    expect(switches()[0]!.dataset.checked === "true").toBe(true);
-    expect([...container.querySelectorAll('[data-status="Personal · Updating"]')]).toHaveLength(0);
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(true);
+    expect([
+      ..._fixture.container.querySelectorAll('[data-status="Personal · Updating"]'),
+    ]).toHaveLength(0);
     expect(state.toast).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "error",
@@ -316,60 +364,91 @@ describe("ExternalSkillsSettings activation", () => {
   });
 
   it("does not show an old environment's pending choice after switching environments", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const oldWrite = deferredResult();
     state.setEnabled.mockReturnValueOnce(oldWrite.promise);
 
-    act(() => switches()[0]?.click());
-    expect(switches()[0]!.dataset.checked === "true").toBe(false);
+    await act(() => switches(_fixture)[0]?.click());
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(false);
 
-    act(() => {
+    await act(async () => {
       state.environmentId = "other";
       state.providers = [provider()];
-      renderer.render(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(<ExternalSkillsSettings />);
     });
-    expect(switches()[0]!.dataset.checked === "true").toBe(true);
-    expect([...container.querySelectorAll('[data-status="Personal · Updating"]')]).toHaveLength(0);
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(true);
+    expect([
+      ..._fixture.container.querySelectorAll('[data-status="Personal · Updating"]'),
+    ]).toHaveLength(0);
 
     await act(async () => oldWrite.resolve({ _tag: "Success" }));
-    expect(switches()[0]!.dataset.checked === "true").toBe(true);
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(true);
   });
 
   it("reverts a failed write and releases a successful one to the provider snapshot", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const failure = deferredResult();
     state.setEnabled.mockReturnValueOnce(failure.promise);
-    act(() => {
-      switches()[0]?.click();
+    await act(() => {
+      switches(_fixture)[0]?.click();
     });
-    expect(switches()[0]!.dataset.checked === "true").toBe(false);
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(false);
     await act(async () => {
       failure.resolve({ _tag: "Failure" });
     });
-    expect(switches()[0]!.dataset.checked === "true").toBe(true);
-    expect(switches()[0]?.getAttribute("disabled")).toBeNull();
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(true);
+    expect(switches(_fixture)[0]?.getAttribute("disabled")).toBeNull();
 
     const success = deferredResult();
     state.setEnabled.mockReturnValueOnce(success.promise);
-    act(() => {
-      switches()[0]?.click();
+    await act(() => {
+      switches(_fixture)[0]?.click();
     });
     await act(async () => {
       success.resolve({ _tag: "Success" });
     });
-    expect(switches()[0]!.dataset.checked === "true").toBe(false);
-    expect([...container.querySelectorAll('[data-status="Personal · Updating"]')]).toHaveLength(0);
-    expect([...container.querySelectorAll('[data-status="Personal · Deactivated"]')]).toHaveLength(
-      1,
-    );
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(false);
+    expect([
+      ..._fixture.container.querySelectorAll('[data-status="Personal · Updating"]'),
+    ]).toHaveLength(0);
+    expect([
+      ..._fixture.container.querySelectorAll('[data-status="Personal · Deactivated"]'),
+    ]).toHaveLength(1);
 
-    act(() => {
+    await act(async () => {
       state.providers = [provider(false)];
-      renderer.render(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(<ExternalSkillsSettings />);
     });
-    expect(switches()[0]!.dataset.checked === "true").toBe(false);
-    act(() => {
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(false);
+    await act(async () => {
       state.providers = [provider(true)];
-      renderer.render(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(<ExternalSkillsSettings />);
     });
-    expect(switches()[0]!.dataset.checked === "true").toBe(true);
+    expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(true);
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    container: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

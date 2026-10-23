@@ -27,7 +27,10 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
 import { materializeReplayTranscriptWorkspace } from "@t3tools/provider-testing/replayTranscript";
 import { makeMuseAdapterV2 } from "@t3tools/provider-muse/server";
-import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
+import {
+  buildScientRuntimeInstructions,
+  SCIENT_PULL_REQUEST_LINKING_INSTRUCTIONS,
+} from "../../provider/ScientRuntimeInstructions.ts";
 
 export const MUSE_PROVIDER_KIND = "muse";
 export const MUSE_MSP_REPLAY_PROTOCOL = "muse.msp-jsonl";
@@ -445,7 +448,13 @@ export function layer(input: {
 }
 
 // SCIENT-FORK:START — recorded native requests retain Scient public identity.
-/** Adapt only Scient-owned request identity; native records and matcher stay exact. */
+// Pin the recorded guidance so an unknown instruction block cannot be silently
+// replaced by the current host policy.
+const RECORDED_MUSE_PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
+When the t3-code MCP server exposes link_pull_request, you must use it to register every pull request you create or work on for this thread. Call link_pull_request with the full PR URL immediately after creating a PR or starting work on an existing PR. For a stack, call it for every layer, not just the current branch or the top PR. This applies when creating or updating PRs through gh, gh stack, another CLI, or the host API: those operations do not register the PRs with this thread. Linking an already-linked PR is safe. Before finishing PR work, call list_thread_pull_requests and link any PR from your work that is missing. Do not link unrelated PRs mentioned only as background. If a linking call fails, report that failure instead of claiming the PR is linked. As a delegated child task, do not watch or poll PRs; return PR URLs, head SHA, and pending review/check state to your parent. Otherwise, when asked to monitor, watch, or babysit a PR and watch_pull_request is available, call it and end your turn: T3 Code wakes you when checks finish, someone else comments, or the branch conflicts, so do not poll or run your own watcher. When monitoring is done and you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.
+</pull_request_linking>`;
+
+/** Adapt only Scient-owned request copy; native records and matcher stay exact. */
 export function materializeScientMuseRequests(
   transcript: ProviderReplayTranscript,
 ): ProviderReplayTranscript {
@@ -487,6 +496,10 @@ export function materializeScientMuseRequests(
       // These are the exact owned/official RuntimeInstructions differences. Do
       // not regenerate model/effort or touch user input to make replay pass.
       const text = first.text
+        .replace(
+          RECORDED_MUSE_PULL_REQUEST_LINKING_INSTRUCTIONS,
+          SCIENT_PULL_REQUEST_LINKING_INSTRUCTIONS,
+        )
         .replace("you are running in T3 Code through ", "you are running in Scient through ")
         .replace("When the t3-code MCP server exposes ", "When the Scient MCP server exposes ")
         .replace("T3 Code wakes you when checks finish", "Scient wakes you when checks finish");

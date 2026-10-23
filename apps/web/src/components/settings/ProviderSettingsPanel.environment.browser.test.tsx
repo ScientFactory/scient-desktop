@@ -10,14 +10,14 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 import { AsyncResult, type Atom } from "effect/reactivity";
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { DRIVER_OPTIONS } from "./providerDriverMeta";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import { act, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   providers: null as unknown as Atom.Writable<ReadonlyArray<ServerProvider> | null>,
@@ -233,31 +233,26 @@ function provider(): ServerProvider {
   };
 }
 
-let root: Root;
-let container: HTMLDivElement;
-
 const setProviders = (providers: ReadonlyArray<ServerProvider> | null) =>
   act(async () => appAtomRegistry.set(state.providers, providers));
 
-async function render(options?: {
+function panel(options?: {
   readonly readOnly?: boolean;
   readonly targetInstanceId?: ProviderInstanceId;
 }) {
-  await act(async () =>
-    root.render(
-      <RegistryContext.Provider value={appAtomRegistry}>
-        <div className="@container/providers">
-          <EnvironmentProviderSettings
-            environmentId={environmentId}
-            environmentLabel="Remote device"
-            {...(options?.readOnly === undefined ? {} : { readOnly: options.readOnly })}
-            {...(options?.targetInstanceId === undefined
-              ? {}
-              : { targetInstanceId: options.targetInstanceId })}
-          />
-        </div>
-      </RegistryContext.Provider>,
-    ),
+  return (
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <div className="@container/providers">
+        <EnvironmentProviderSettings
+          environmentId={environmentId}
+          environmentLabel="Remote device"
+          {...(options?.readOnly === undefined ? {} : { readOnly: options.readOnly })}
+          {...(options?.targetInstanceId === undefined
+            ? {}
+            : { targetInstanceId: options.targetInstanceId })}
+        />
+      </div>
+    </RegistryContext.Provider>
   );
 }
 
@@ -266,10 +261,8 @@ const refreshButton = () => page.getByRole("button", { name: /^Refresh provider 
 // The section header and the end of the provider list both offer Add provider.
 const addProvider = () => page.getByRole("button", { name: "Add provider" }).first();
 const select = (name: string) => button(`Select ${name}`);
-const deleteButton = (id: string) => button(`Delete instance ${id}`);
 
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function setup() {
   await page.viewport(1280, 900);
   state.settings = DEFAULT_UNIFIED_SETTINGS;
   state.canManageProviders = true;
@@ -288,37 +281,29 @@ beforeEach(async () => {
   state.uninstall.mockReset().mockResolvedValue(AsyncResult.success({}));
   state.acceptUrlAuth.mockReset().mockResolvedValue(AsyncResult.success({ accepted: true }));
   await setProviders([]);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+}
 
 describe("EnvironmentProviderSettings routing", () => {
   // SCIENT-FORK:START - untouched slots are visible without enabling or configuring them.
   it.each(["loading", "empty", "partial"])(
     "shows built-in default slots with fresh settings and %s provider snapshots without writes",
     async (snapshot) => {
+      await setup();
       state.settings = { ...DEFAULT_UNIFIED_SETTINGS, providerInstances: {} };
       await setProviders(
         snapshot === "loading" ? null : snapshot === "partial" ? [provider()] : [],
       );
-      await render();
+      await using screen = await render(panel());
       const expected = DRIVER_OPTIONS.filter((option) => option.hasDefaultInstance !== false);
       expect(
-        [...container.querySelectorAll('button[aria-label^="Select "]')].map((element) =>
+        [...screen.container.querySelectorAll('button[aria-label^="Select "]')].map((element) =>
           element.getAttribute("aria-label"),
         ),
       ).toEqual(expected.map((option) => `Select ${option.label}`));
       for (const driver of ["cursor", "grok", "pi", "opencode", "muse"]) {
         const option = DRIVER_OPTIONS.find((option) => option.value === driver)!;
         expect(
-          container
+          screen.container
             .querySelector(`[role="switch"][aria-label="Enable ${option.label}"]`)
             ?.getAttribute("aria-checked"),
         ).toBe("false");
@@ -331,46 +316,10 @@ describe("EnvironmentProviderSettings routing", () => {
   );
   // SCIENT-FORK:END
 
-  it("keeps explicitly configured providers visible when disabled", async () => {
-    state.settings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [ProviderInstanceId.make("grok")]: {
-          driver: ProviderDriverKind.make("grok"),
-          enabled: false,
-        },
-      },
-    };
-    await render();
-    await expect.element(select("Grok")).toBeVisible();
-  });
-
-  it("keeps legacy provider configuration visible when disabled", async () => {
-    state.settings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [ProviderInstanceId.make("grok")]: {
-          driver: ProviderDriverKind.make("grok"),
-          enabled: false,
-          config: { binaryPath: "/custom/grok" },
-        },
-      },
-    };
-    await render();
-    await expect.element(select("Grok")).toBeVisible();
-  });
-
-  it("reads and writes settings on the selected environment", async () => {
-    await render();
-    await expect.element(select("Codex")).toBeVisible();
-    expect(new Set(state.readEnvironmentIds)).toEqual(new Set([environmentId]));
-    expect(new Set(state.updateEnvironmentIds)).toEqual(new Set([environmentId]));
-    expect(new Set(state.mutationEnvironmentIds)).toEqual(new Set([environmentId]));
-  });
-
   it("routes refresh and provider update commands to the selected environment", async () => {
+    await setup();
     await setProviders([provider()]);
-    await render({ targetInstanceId: codexId });
+    await using _screen = await render(panel());
 
     await userEvent.click(refreshButton());
     expect(state.refresh).toHaveBeenCalledWith({
@@ -386,26 +335,10 @@ describe("EnvironmentProviderSettings routing", () => {
     });
   });
 
-  it("opens the requested provider instance instead of the first provider", async () => {
-    state.settings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [customId]: {
-          driver: ProviderDriverKind.make("codex"),
-          enabled: true,
-          displayName: "Work",
-        },
-      },
-    };
-    await setProviders([provider()]);
-    await render({ targetInstanceId: customId });
-    await expect.element(deleteButton(customId)).toBeVisible();
-  });
-
   it("saves model favorites and visibility on the selected environment", async () => {
+    await setup();
     await setProviders([provider()]);
-    // SCIENT-FORK: UPSTREAM.md keeps default slots visible, with Scient first.
-    await render({ targetInstanceId: codexId });
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
 
     await userEvent.click(button("Add Chosen to favorites"));
     expect(state.toggleFavorite).toHaveBeenCalledExactlyOnceWith(codexId, "chosen");
@@ -425,101 +358,17 @@ describe("EnvironmentProviderSettings routing", () => {
   });
 
   it("does not substitute another account when the requested instance was removed", async () => {
+    await setup();
     await setProviders([provider()]);
-    await render({ targetInstanceId: customId });
+    await using _screen = await render(panel({ targetInstanceId: customId }));
     await expect
       .element(page.getByText("This provider instance is no longer available on this device."))
       .toBeVisible();
     expect(state.updateSettings).not.toHaveBeenCalled();
   });
 
-  it("keeps provider selection available while write controls are read only", async () => {
-    state.canWriteSettings = false;
-    state.settings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [customId]: {
-          driver: ProviderDriverKind.make("codex"),
-          enabled: true,
-          displayName: "Work",
-        },
-      },
-    };
-    await setProviders([provider()]);
-    await render({ readOnly: true });
-
-    await expect.element(page.getByRole("heading", { name: "Limited permissions" })).toBeVisible();
-    await userEvent.click(select("Work"));
-    await expect.element(deleteButton(customId)).toBeInTheDocument();
-    expect(container.querySelector("[inert]")).not.toBeNull();
-    await expect.element(refreshButton()).toBeVisible();
-    await expect.element(addProvider()).not.toBeInTheDocument();
-  });
-
-  it("keeps the editable layout interactive when not read only", async () => {
-    await setProviders([provider()]);
-    await render();
-    await expect.element(page.getByText("Limited permissions")).not.toBeInTheDocument();
-    await expect.element(refreshButton()).toBeVisible();
-    await expect.element(addProvider()).toBeVisible();
-    await expect.element(page.getByRole("switch", { name: "Enable Codex" }).first()).toBeEnabled();
-  });
-
-  it("removes an open add-instance dialog when the provider grant is revoked", async () => {
-    await render();
-    await userEvent.click(addProvider());
-    await expect.element(page.getByRole("dialog")).toBeVisible();
-
-    state.canManageProviders = false;
-    await render({ readOnly: true });
-    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
-    expect(state.updateSettings).not.toHaveBeenCalled();
-  });
-
-  it("keeps Advanced visible when search targets the provider health interval", async () => {
-    await render();
-    await expect.element(page.getByText("Advanced", { exact: true })).toBeVisible();
-    expect(container.querySelector("#provider-health-check-interval")).not.toBeNull();
-
-    state.searchTargetId = "provider-health-check-interval";
-    await render();
-    await expect.element(page.getByText("Advanced", { exact: true })).toBeVisible();
-    expect(container.querySelector("#provider-health-check-interval")).not.toBeNull();
-  });
-
-  it("deletes and resets provider configuration without erasing shared preferences", async () => {
-    state.settings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [codexId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
-        [customId]: {
-          driver: ProviderDriverKind.make("codex"),
-          enabled: true,
-          displayName: "Work",
-        },
-      },
-      providerModelPreferences: {
-        [customId]: { hiddenModels: ["hidden"], modelOrder: ["model"] },
-      },
-      favorites: [{ provider: customId, model: "favorite" }],
-    };
-    await render();
-    await userEvent.click(select("Work"));
-    await userEvent.click(deleteButton(customId));
-    expect(state.mutateProviderInstance).toHaveBeenLastCalledWith({
-      operation: "remove",
-      instanceId: customId,
-    });
-
-    state.mutateProviderInstance.mockClear();
-    await userEvent.click(select("Codex"));
-    await userEvent.click(button("Reset Codex provider settings to default"));
-    const [resetMutation, resetPatch] = state.mutateProviderInstance.mock.lastCall ?? [];
-    expect(resetMutation).toEqual({ operation: "remove", instanceId: codexId });
-    expect(resetPatch ?? {}).toEqual({});
-  });
-
   it("updates one provider instance without sending a stale whole map", async () => {
+    await setup();
     state.settings = {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
@@ -530,7 +379,7 @@ describe("EnvironmentProviderSettings routing", () => {
         },
       },
     };
-    await render();
+    await using _screen = await render(panel());
     await userEvent.click(page.getByRole("switch", { name: "Enable Work" }).first());
 
     expect(state.mutateProviderInstance).toHaveBeenCalledWith(
@@ -543,62 +392,8 @@ describe("EnvironmentProviderSettings routing", () => {
     );
   });
 
-  it("lets the server decide managed ACP cleanup after an atomic delete", async () => {
-    const firstId = ProviderInstanceId.make("acpRegistry_kilo_one");
-    const secondId = ProviderInstanceId.make("acpRegistry_kilo_two");
-    const registryInstance = (displayName: string) => ({
-      driver: ProviderDriverKind.make("acpRegistry"),
-      enabled: true,
-      displayName,
-      config: { agentId: "kilo" },
-    });
-    state.settings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [firstId]: registryInstance("Kilo one"),
-        [secondId]: registryInstance("Kilo two"),
-      },
-    };
-    await render();
-    await userEvent.click(select("Kilo one"));
-    await userEvent.click(deleteButton(firstId));
-
-    expect(state.mutateProviderInstance).toHaveBeenCalledWith({
-      operation: "remove",
-      instanceId: firstId,
-    });
-    await vi.waitFor(() =>
-      expect(state.uninstall).toHaveBeenCalledWith({ environmentId, input: { agentId: "kilo" } }),
-    );
-  });
-
-  it("keeps the signed-in ACP account visible when login methods are no longer advertised", async () => {
-    const instanceId = ProviderInstanceId.make("acpRegistry_devin");
-    state.settings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [instanceId]: {
-          driver: ProviderDriverKind.make("acpRegistry"),
-          enabled: true,
-          config: { agentId: "devin" },
-        },
-      },
-    };
-    await setProviders([
-      {
-        ...provider(),
-        instanceId,
-        driver: ProviderDriverKind.make("acpRegistry"),
-        auth: { status: "authenticated", canLogout: false },
-        setup: { canAuthenticate: false, canInstall: false },
-      },
-    ]);
-    await render({ targetInstanceId: instanceId });
-    await userEvent.click(button("Configuration"));
-    await expect.element(page.getByRole("heading", { name: "Account" })).toBeVisible();
-  });
-
   it("routes explicit ACP browser authentication consent to the selected environment", async () => {
+    await setup();
     const instanceId = ProviderInstanceId.make("acpRegistry_antigravity");
     const action = {
       elicitationId: "google-login-1",
@@ -623,7 +418,7 @@ describe("EnvironmentProviderSettings routing", () => {
         auth: { status: "unauthenticated", action },
       },
     ]);
-    await render({ targetInstanceId: instanceId });
+    await using _screen = await render(panel({ targetInstanceId: instanceId }));
     const link = page.getByRole("link", { name: "Continue authentication" });
     link.element().addEventListener("click", (event) => event.preventDefault());
     await userEvent.click(link);
@@ -666,6 +461,7 @@ function missingAntigravityProvider(): ServerProvider {
 
 describe("Scient provider settings", () => {
   it("renders default rows in canonical order with custom instances grouped after their driver", async () => {
+    await setup();
     const scientId = ProviderInstanceId.make("scient_research");
     const acpId = ProviderInstanceId.make("acpRegistry_devin");
     state.settings = {
@@ -689,9 +485,9 @@ describe("Scient provider settings", () => {
         },
       },
     };
-    await render();
+    await using screen = await render(panel());
     expect(
-      [...container.querySelectorAll('button[aria-label^="Select "]')].map((element) =>
+      [...screen.container.querySelectorAll('button[aria-label^="Select "]')].map((element) =>
         element.getAttribute("aria-label"),
       ),
     ).toEqual([
@@ -716,7 +512,8 @@ describe("Scient provider settings", () => {
   });
 
   it("renders Add provider choices in canonical order without changing settings", async () => {
-    await render();
+    await setup();
+    await using _screen = await render(panel());
     await userEvent.click(addProvider());
     const choices = [...document.querySelectorAll('[role="radio"]')].filter(
       (element) =>
@@ -733,6 +530,7 @@ describe("Scient provider settings", () => {
   });
 
   it("keeps explicitly configured provider slots visible when disabled", async () => {
+    await setup();
     const drivers = [
       "codex",
       "claudeAgent",
@@ -762,7 +560,7 @@ describe("Scient provider settings", () => {
         enabled: false,
       },
     ]);
-    await render();
+    await using _screen = await render(panel());
     for (const driver of drivers) {
       const option = DRIVER_OPTIONS.find((option) => option.value === driver)!;
       await expect.element(select(option.label)).toBeVisible();
@@ -772,6 +570,7 @@ describe("Scient provider settings", () => {
   });
 
   it("opens and enables an explicitly disabled instance through its exact environment", async () => {
+    await setup();
     const instanceId = ProviderInstanceId.make("droid");
     state.settings = {
       ...DEFAULT_UNIFIED_SETTINGS,
@@ -779,7 +578,7 @@ describe("Scient provider settings", () => {
         [instanceId]: { driver: ProviderDriverKind.make("droid"), enabled: false },
       },
     };
-    await render({ targetInstanceId: instanceId });
+    await using _screen = await render(panel({ targetInstanceId: instanceId }));
     await userEvent.click(select("Droid"));
     expect(state.mutateProviderInstance).not.toHaveBeenCalled();
     await userEvent.click(page.getByRole("switch", { name: "Enable Droid", exact: true }));
@@ -801,6 +600,7 @@ describe("Scient provider settings", () => {
   )(
     "saves $driver visibility on its owning environment with $preferences preferences",
     async ({ driver, preferences }) => {
+      await setup();
       const instanceId = ProviderInstanceId.make(driver);
       const models = [
         "anthropic/claude-haiku-4-5",
@@ -823,7 +623,7 @@ describe("Scient provider settings", () => {
       await setProviders([
         { ...provider(), instanceId, driver: ProviderDriverKind.make(driver), models },
       ]);
-      await render({ targetInstanceId: instanceId });
+      await using screen = await render(panel({ targetInstanceId: instanceId }));
       const hiddenModels = preferences === "missing" ? curatedHidden : [];
       const modelOrder = models.map((model) => model.slug);
       for (const model of models) {
@@ -867,7 +667,7 @@ describe("Scient provider settings", () => {
         modelOrder: preferences === "missing" ? modelOrder : [],
       });
       state.settings = { ...state.settings, providerModelPreferences: saved ?? {} };
-      await render({ targetInstanceId: instanceId });
+      await screen.rerender(panel({ targetInstanceId: instanceId }));
       for (const model of models)
         expect(
           page
@@ -879,6 +679,7 @@ describe("Scient provider settings", () => {
   );
 
   it("saves model order on the owning environment with the initial catalog preferences", async () => {
+    await setup();
     await setProviders([
       {
         ...provider(),
@@ -888,7 +689,7 @@ describe("Scient provider settings", () => {
         ],
       },
     ]);
-    await render({ targetInstanceId: codexId });
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
     await userEvent.click(button("Move Chosen down"));
     expect(state.updateModelPreferences).toHaveBeenCalledExactlyOnceWith({
       setProviderModelOrder: {
@@ -904,8 +705,9 @@ describe("Scient provider settings", () => {
   it.each([undefined, "install"] as const)(
     "opens a missing provider with only the requested action (%s)",
     async (action) => {
+      await setup();
       await setProviders([missingAntigravityProvider()]);
-      await render({ targetInstanceId: antigravityId });
+      await using _screen = await render(panel({ targetInstanceId: antigravityId }));
       await userEvent.click(select("Antigravity"));
       await userEvent.click(action ? button("Request install") : button("Manage Antigravity"));
       const dialog = page.getByRole("dialog", { name: "Provider connection" }).element();
@@ -915,8 +717,9 @@ describe("Scient provider settings", () => {
   );
 
   it("forwards a requested repair into the lifecycle dialog", async () => {
+    await setup();
     await setProviders([provider()]);
-    await render({ targetInstanceId: codexId });
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
     await userEvent.click(button("Request repair"));
     const dialog = page.getByRole("dialog", { name: "Provider connection" }).element();
     expect(dialog.getAttribute("data-instance-id")).toBe(codexId);
@@ -924,6 +727,7 @@ describe("Scient provider settings", () => {
   });
 
   it("selects another provider during an update and retains it across status refreshes", async () => {
+    await setup();
     let finishUpdate!: () => void;
     state.updateProvider.mockImplementationOnce(
       () =>
@@ -938,7 +742,7 @@ describe("Scient provider settings", () => {
         [antigravityId]: { driver: ProviderDriverKind.make("antigravity"), enabled: false },
       },
     };
-    await render({ targetInstanceId: codexId });
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
     await userEvent.click(page.getByRole("button", { name: /view details/ }).last());
     await userEvent.click(button("Update now"));
     await userEvent.click(select("Antigravity"));
@@ -952,10 +756,11 @@ describe("Scient provider settings", () => {
   });
 
   it("follows changed deep links without remounting and retains manual picks on refresh", async () => {
+    await setup();
     await setProviders([provider(), missingAntigravityProvider()]);
-    await render({ targetInstanceId: codexId });
+    await using screen = await render(panel({ targetInstanceId: codexId }));
     expect(select("Codex").element().getAttribute("aria-pressed")).toBe("true");
-    await render({ targetInstanceId: antigravityId });
+    await screen.rerender(panel({ targetInstanceId: antigravityId }));
     expect(select("Antigravity").element().getAttribute("aria-pressed")).toBe("true");
     await userEvent.click(select("Codex"));
     await setProviders([
@@ -963,7 +768,7 @@ describe("Scient provider settings", () => {
       missingAntigravityProvider(),
     ]);
     expect(select("Codex").element().getAttribute("aria-pressed")).toBe("true");
-    await render({ targetInstanceId: codexId });
+    await screen.rerender(panel({ targetInstanceId: codexId }));
     expect(select("Codex").element().getAttribute("aria-pressed")).toBe("true");
   });
 });

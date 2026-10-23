@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { mermaidConfigFetchRisk, mermaidStyleFetchRisk } from "./diagramSafety";
+import {
+  mermaidConfigFetchRisk,
+  mermaidStyleFetchRisk,
+  mermaidSourceConfigFetchRisk,
+} from "./diagramSafety";
 
 describe("mermaidStyleFetchRisk", () => {
   it("leaves label text alone, however it mentions url( or addresses", () => {
@@ -31,6 +35,38 @@ describe("mermaidStyleFetchRisk", () => {
     ]) {
       expect(mermaidStyleFetchRisk(source), source).not.toBeNull();
     }
+  });
+});
+
+describe("authored Mermaid configuration", () => {
+  it("allows safe YAML and both supported directive quote styles without interpreting labels as config", () => {
+    for (const source of [
+      'flowchart LR\nA["url(x), image(y), @import and https://example.org"]',
+      "%%{init: {'theme': 'forest', 'flowchart': {'curve': 'linear'}}}%%\nflowchart LR\nA",
+      '%%{initialize: {"theme": "base", "themeVariables": {"primaryColor": "#f00"}}}%%\nflowchart LR\nA',
+      "---\ntitle: url(example)\nconfig:\n  theme: forest\n  flowchart:\n    nodeSpacing: 40\n---\nflowchart LR\nA",
+    ])
+      expect(mermaidSourceConfigFetchRisk(source), source).toBeNull();
+  });
+
+  it("checks decoded JSON/YAML values and every override independently", () => {
+    for (const source of [
+      '%%{init: {"themeVariables": {"primaryColor": "\\u0075rl(x)"}}}%%\nflowchart LR\nA',
+      '---\nconfig:\n  themeVariables:\n    primaryColor: "\\u0075rl(x)"\n---\nflowchart LR\nA',
+      '%%{init: {"themeCSS": ".node{fill:red}"}}%%\n%%{init: {"theme": "forest"}}%%\nflowchart LR\nA',
+      "---\nconfig:\n  fontFamily: Inter\n---\nflowchart LR\nA",
+      "---\nconfig: unsupported\n---\nflowchart LR\nA",
+      "%%{init: not JSON}%%\nflowchart LR\nA",
+      "---\nconfig: [\n---\nflowchart LR\nA",
+    ])
+      expect(mermaidSourceConfigFetchRisk(source), source).not.toBeNull();
+  });
+
+  it("bounds nested configuration inspection, including cycles", () => {
+    const cyclic: { child?: unknown } = {};
+    cyclic.child = cyclic;
+    expect(mermaidConfigFetchRisk({ themeVariables: cyclic })).not.toBeNull();
+    expect(mermaidConfigFetchRisk({ themeVariables: { a: { b: { c: {} } } } })).not.toBeNull();
   });
 });
 

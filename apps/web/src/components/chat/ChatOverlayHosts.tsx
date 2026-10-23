@@ -1,7 +1,6 @@
 import type {
   DeviceServiceState,
   EnvironmentId,
-  MessageId,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -174,53 +173,6 @@ export function BranchRestoreConfirmHost(props: {
           >
             Switch branch
           </Button>
-        </AlertDialogFooter>
-      </AlertDialogPopup>
-    </AlertDialog>
-  );
-}
-
-interface PendingRevert {
-  readonly turnCount: number;
-  readonly messageId: MessageId;
-}
-
-const revertConfirmAtom = makeThreadOverlayAtom<PendingRevert>("revert-confirm");
-
-export function openRevertConfirm(threadKey: string, pending: PendingRevert): void {
-  appAtomRegistry.set(revertConfirmAtom, { threadKey, value: pending });
-}
-
-export function RevertConfirmHost(props: {
-  readonly threadKey: string;
-  readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
-}) {
-  const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
-  const confirm = (restoreFiles: boolean) => {
-    if (pending === null) return;
-    closeThreadOverlay(revertConfirmAtom);
-    props.onConfirm(pending.turnCount, pending.messageId, restoreFiles);
-  };
-  return (
-    <AlertDialog
-      open={pending !== null}
-      onOpenChange={(open) => {
-        if (!open) closeThreadOverlay(revertConfirmAtom);
-      }}
-    >
-      <AlertDialogPopup>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Edit from here?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Rewind chat to before this message. Your prompt and attachments return to the composer.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button variant="destructive" onClick={() => confirm(true)}>
-            Revert files too
-          </Button>
-          <Button onClick={() => confirm(false)}>Revert and keep changes</Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>

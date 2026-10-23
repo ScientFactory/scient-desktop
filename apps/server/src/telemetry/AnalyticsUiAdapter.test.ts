@@ -9,6 +9,7 @@ function fixture() {
   let epoch = 0;
   const events: unknown[] = [];
   const service = AnalyticsService.of({
+    recordOwners: () => Effect.void,
     status: Effect.sync(() => status),
     collectionEpoch: Effect.sync(() => epoch),
     record: (name, properties) =>

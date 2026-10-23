@@ -1322,8 +1322,12 @@ tests, and opt-in real lifecycle/stress tests. From `apps/server`, select the
 licensed installation explicitly with `SCIENT_TEST_MATLAB=/absolute/path/to/matlab`
 for `MatlabComputeProduct.integration.test.ts`. MATLAB may spawn graphics helpers
 even with `-nodesktop`; reserve the shared Mac before running it. Real Python
-tests similarly require an exact `SCIENT_TEST_PYTHON`; managed installation tests
-require `SCIENT_TEST_MANAGED_PYTHON=1` and use temporary state. macOS/R2026a evidence
+tests similarly require an exact `SCIENT_TEST_PYTHON`. The managed installation
+qualification runs in the explicit benchmark lane:
+`SCIENT_TEST_MANAGED_PYTHON=1 pnpm exec vp test bench --run src/scient/compute/ManagedPythonProduct.bench.ts`.
+It retains lifecycle and scientific-work assertions and provisions real pinned
+artifacts in temporary state. Run it only when that provisioning is intended;
+ordinary test runs do not execute it. macOS/R2026a evidence
 does not qualify other releases, licensing conditions, Windows/Linux, remote
 clients or packaged installations. Temporary QA evidence records the tested
 head and remaining gates; backend success is not visual acceptance.

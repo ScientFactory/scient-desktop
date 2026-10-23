@@ -123,6 +123,5 @@ describe.skipIf(publication === undefined || !diskImages)("file publication on o
           expect(await NodeFSP.readFile(staged, "utf8")).toBe("replacement");
         }
       }),
-    30_000,
   );
 });

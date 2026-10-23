@@ -15,6 +15,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
+import * as Option from "effect/Option";
 import { FetchHttpClient } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
@@ -81,16 +83,20 @@ const localHtmlServer = Effect.acquireRelease(
     }),
 );
 
-const eventually = Effect.fn("PortScannerPythonCompute.eventually")(function* <A, E, R>(
-  read: Effect.Effect<A | null, E, R>,
-) {
-  for (let attempt = 0; attempt < 800; attempt += 1) {
-    const value = yield* read;
-    if (value !== null) return value;
-    yield* Effect.sleep("25 millis");
-  }
-  return yield* Effect.die(new Error("The scanner/Compute integration condition did not settle."));
-});
+const afterSessionReceipt = Effect.fn("PortScannerPythonCompute.afterSessionReceipt")(function* <
+  A,
+  E,
+  R,
+>(compute: ComputeSessionService["Service"], read: Effect.Effect<A | null, E, R>) {
+  const changes = yield* compute.subscribeSessions({ projectId: PROJECT });
+  const value = yield* changes.pipe(
+    Stream.mapEffect(() => read),
+    Stream.filter((value) => value !== null),
+    Stream.runHead,
+  );
+  if (Option.isNone(value)) return yield* Effect.die("Compute receipt stream ended.");
+  return value.value;
+}, Effect.scoped);
 
 const recordingProcessRunnerLayer = (lsofSnapshots: Array<string>) =>
   Layer.effect(
@@ -133,290 +139,264 @@ const lsofObservedProcess = (snapshots: ReadonlyArray<string>, processId: number
 describe.runIf(Boolean(TEST_PYTHON) && NodeProcess.platform !== "win32")(
   "preview scanner with a real Python Compute session",
   () => {
-    it.live(
-      "never probes unconfigured kernel listeners or grows their transcripts",
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            if (!TEST_PYTHON) return yield* Effect.die("SCIENT_TEST_PYTHON is not set.");
-            const fs = yield* FileSystem.FileSystem;
-            const cwd = yield* fs.makeTempDirectoryScoped({
-              prefix: "scient-scanner-compute-project-",
-            });
-            const state = yield* fs.makeTempDirectoryScoped({
-              prefix: "scient-scanner-compute-state-",
-            });
-            const computeOwnedEndpoints = yield* OwnedLocalEndpoints.make();
-            const scannerOwnedEndpoints = yield* OwnedLocalEndpoints.make();
-            const requestedUrls: string[] = [];
-            const lsofSnapshots: string[] = [];
+    it.live("never probes unconfigured kernel listeners or grows their transcripts", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          if (!TEST_PYTHON) return yield* Effect.die("SCIENT_TEST_PYTHON is not set.");
+          const fs = yield* FileSystem.FileSystem;
+          const cwd = yield* fs.makeTempDirectoryScoped({
+            prefix: "scient-scanner-compute-project-",
+          });
+          const state = yield* fs.makeTempDirectoryScoped({
+            prefix: "scient-scanner-compute-state-",
+          });
+          const computeOwnedEndpoints = yield* OwnedLocalEndpoints.make();
+          const scannerOwnedEndpoints = yield* OwnedLocalEndpoints.make();
+          const requestedUrls: string[] = [];
+          const lsofSnapshots: string[] = [];
 
-            const computeLayer = PythonComputeRuntime.layer.pipe(
-              Layer.provide(LocalComputeStore.layer),
-              Layer.provide(LocalExecutionProcess.layer),
-              Layer.provide(LocalDuplexProcess.layer),
-              Layer.provide(
-                Layer.succeed(
-                  OwnedLocalEndpoints.OwnedLocalEndpointRegistry,
-                  computeOwnedEndpoints,
-                ),
-              ),
-              Layer.provide(ServerConfig.layerTest(cwd, state)),
-              Layer.provide(NodeServices.layer),
-            );
-            const scannerLayer = PortScanner.layer.pipe(
-              Layer.provide(recordingProcessRunnerLayer(lsofSnapshots)),
-              Layer.provide(
-                Layer.succeed(
-                  OwnedLocalEndpoints.OwnedLocalEndpointRegistry,
-                  scannerOwnedEndpoints,
-                ),
-              ),
-              Layer.provide(scannerFetchLayer(requestedUrls)),
-            );
+          const computeLayer = PythonComputeRuntime.layer.pipe(
+            Layer.provide(LocalComputeStore.layer),
+            Layer.provide(LocalExecutionProcess.layer),
+            Layer.provide(LocalDuplexProcess.layer),
+            Layer.provide(
+              Layer.succeed(OwnedLocalEndpoints.OwnedLocalEndpointRegistry, computeOwnedEndpoints),
+            ),
+            Layer.provide(ServerConfig.layerTest(cwd, state)),
+            Layer.provide(NodeServices.layer),
+          );
+          const scannerLayer = PortScanner.layer.pipe(
+            Layer.provide(recordingProcessRunnerLayer(lsofSnapshots)),
+            Layer.provide(
+              Layer.succeed(OwnedLocalEndpoints.OwnedLocalEndpointRegistry, scannerOwnedEndpoints),
+            ),
+            Layer.provide(scannerFetchLayer(requestedUrls)),
+          );
 
-            yield* Effect.gen(function* () {
-              const compute = yield* ComputeSessionService;
-              const scanner = yield* PortScanner.PortDiscovery;
-              const fixture = yield* localHtmlServer;
-              const expectOnlyFixtureTraffic = () => {
-                expect(requestedUrls.length).toBeGreaterThan(0);
-                expect(new Set(requestedUrls)).toEqual(new Set([fixture.url]));
-                expect(fixture.requests).toEqual(requestedUrls.map(() => "GET /health"));
-              };
-              const scanWithoutConfiguredUrls = Effect.fn(
-                "PortScannerPythonCompute.scanWithoutConfiguredUrls",
-              )(function* (repetitions: number) {
-                for (let attempt = 0; attempt < repetitions; attempt += 1) {
-                  const requestCount = requestedUrls.length;
-                  expect(yield* scanner.scan()).toEqual([]);
-                  expect(requestedUrls).toHaveLength(requestCount);
-                }
-              });
-              const scanConfiguredFixture = Effect.fn(
-                "PortScannerPythonCompute.scanConfiguredFixture",
-              )(function* (repetitions: number) {
-                for (let attempt = 0; attempt < repetitions; attempt += 1) {
-                  expect(yield* scanner.scan([fixture.url])).toEqual([
-                    expect.objectContaining({
-                      host: "127.0.0.1",
-                      port: Number(new URL(fixture.url).port),
-                      url: fixture.url,
-                    }),
-                  ]);
-                }
-              });
-              const waitForLsofProcess = Effect.fn("PortScannerPythonCompute.waitForLsofProcess")(
-                (processId: number) =>
-                  eventually(
-                    scanConfiguredFixture(1).pipe(
-                      Effect.map(() =>
-                        lsofObservedProcess(lsofSnapshots, processId) ? true : null,
-                      ),
+          yield* Effect.gen(function* () {
+            const compute = yield* ComputeSessionService;
+            const scanner = yield* PortScanner.PortDiscovery;
+            const fixture = yield* localHtmlServer;
+            const expectOnlyFixtureTraffic = () => {
+              expect(requestedUrls.length).toBeGreaterThan(0);
+              expect(new Set(requestedUrls)).toEqual(new Set([fixture.url]));
+              expect(fixture.requests).toEqual(requestedUrls.map(() => "GET /health"));
+            };
+            const scanWithoutConfiguredUrls = Effect.fn(
+              "PortScannerPythonCompute.scanWithoutConfiguredUrls",
+            )(function* (repetitions: number) {
+              for (let attempt = 0; attempt < repetitions; attempt += 1) {
+                const requestCount = requestedUrls.length;
+                expect(yield* scanner.scan()).toEqual([]);
+                expect(requestedUrls).toHaveLength(requestCount);
+              }
+            });
+            const scanConfiguredFixture = Effect.fn(
+              "PortScannerPythonCompute.scanConfiguredFixture",
+            )(function* (repetitions: number) {
+              for (let attempt = 0; attempt < repetitions; attempt += 1) {
+                expect(yield* scanner.scan([fixture.url])).toEqual([
+                  expect.objectContaining({
+                    host: "127.0.0.1",
+                    port: Number(new URL(fixture.url).port),
+                    url: fixture.url,
+                  }),
+                ]);
+              }
+            });
+            const waitForLsofProcess = Effect.fn("PortScannerPythonCompute.waitForLsofProcess")(
+              function* (processId: number) {
+                yield* scanConfiguredFixture(1);
+                expect(lsofObservedProcess(lsofSnapshots, processId)).toBe(true);
+              },
+            );
+            const waitForExecution = (executionId: ComputeExecutionId) =>
+              afterSessionReceipt(
+                compute,
+                compute.listExecutions({ projectId: PROJECT, sessionId: SESSION }).pipe(
+                  Effect.map((executions) => {
+                    const execution = executions.find(
+                      (candidate) => candidate.request.executionId === executionId,
+                    );
+                    return execution?.result !== null &&
+                      execution?.result !== undefined &&
+                      TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status)
+                      ? execution
+                      : null;
+                  }),
+                ),
+              );
+            const submitAndScan = Effect.fn("PortScannerPythonCompute.submitAndScan")(
+              function* (input: {
+                readonly executionId: ComputeExecutionId;
+                readonly generation: ComputeSessionRecord["generation"];
+                readonly label: string;
+              }) {
+                yield* compute.submitExecution({
+                  projectId: PROJECT,
+                  sessionId: SESSION,
+                  expectedGeneration: input.generation,
+                  executionId: input.executionId,
+                  code: [
+                    "import time",
+                    `print('${input.label}_BEGIN', flush=True)`,
+                    "time.sleep(0.75)",
+                    `print('${input.label}_END', flush=True)`,
+                  ].join("\n"),
+                  source: { _tag: "console" },
+                });
+                yield* afterSessionReceipt(
+                  compute,
+                  compute
+                    .listOutputs({
+                      projectId: PROJECT,
+                      sessionId: SESSION,
+                      executionId: input.executionId,
+                    })
+                    .pipe(
+                      Effect.map((transcript) => (transcript.outputs.length > 0 ? true : null)),
                     ),
-                  ),
-              );
-              const waitForExecution = (executionId: ComputeExecutionId) =>
-                eventually(
-                  compute.listExecutions({ projectId: PROJECT, sessionId: SESSION }).pipe(
-                    Effect.map((executions) => {
-                      const execution = executions.find(
-                        (candidate) => candidate.request.executionId === executionId,
-                      );
-                      return execution?.result !== null &&
-                        execution?.result !== undefined &&
-                        TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status)
-                        ? execution
-                        : null;
-                    }),
-                  ),
                 );
-              const submitAndScan = Effect.fn("PortScannerPythonCompute.submitAndScan")(
-                function* (input: {
-                  readonly executionId: ComputeExecutionId;
-                  readonly generation: ComputeSessionRecord["generation"];
-                  readonly label: string;
-                }) {
-                  yield* compute.submitExecution({
-                    projectId: PROJECT,
-                    sessionId: SESSION,
-                    expectedGeneration: input.generation,
-                    executionId: input.executionId,
-                    code: [
-                      "import time",
-                      `print('${input.label}_BEGIN', flush=True)`,
-                      "time.sleep(0.75)",
-                      `print('${input.label}_END', flush=True)`,
-                    ].join("\n"),
-                    source: { _tag: "console" },
-                  });
-                  yield* eventually(
-                    compute
-                      .listOutputs({
-                        projectId: PROJECT,
-                        sessionId: SESSION,
-                        executionId: input.executionId,
-                      })
-                      .pipe(
-                        Effect.map((transcript) => (transcript.outputs.length > 0 ? true : null)),
-                      ),
-                  );
-                  yield* scanWithoutConfiguredUrls(2);
-                  yield* scanConfiguredFixture(6);
-                  const execution = yield* waitForExecution(input.executionId);
-                  expect(execution.result?.status).toBe("succeeded");
-                  const transcript = yield* compute.listOutputs({
-                    projectId: PROJECT,
-                    sessionId: SESSION,
-                    executionId: input.executionId,
-                  });
-                  expect(
-                    transcript.outputs
-                      .filter((output) => output._tag === "stream")
-                      .map((output) => output.text)
-                      .join(""),
-                  ).toBe(`${input.label}_BEGIN\n${input.label}_END\n`);
-                  return transcript;
-                },
-              );
+                yield* scanWithoutConfiguredUrls(2);
+                yield* scanConfiguredFixture(6);
+                const execution = yield* waitForExecution(input.executionId);
+                expect(execution.result?.status).toBe("succeeded");
+                const transcript = yield* compute.listOutputs({
+                  projectId: PROJECT,
+                  sessionId: SESSION,
+                  executionId: input.executionId,
+                });
+                expect(
+                  transcript.outputs
+                    .filter((output) => output._tag === "stream")
+                    .map((output) => output.text)
+                    .join(""),
+                ).toBe(`${input.label}_BEGIN\n${input.label}_END\n`);
+                return transcript;
+              },
+            );
 
-              let session = yield* compute.startSession({
+            let session = yield* compute.startSession({
+              projectId: PROJECT,
+              sessionId: SESSION,
+              languageId: PYTHON,
+              label: "Preview scanner Python integration",
+              workingDirectory: cwd,
+              configuredExecutable: TEST_PYTHON,
+            });
+            const firstRuntimeProcessId = session.identity?.runtimeProcessId;
+            const firstTransportProcessId = session.identity?.transportProcessId;
+            if (firstRuntimeProcessId == null) {
+              return yield* Effect.die("The real Python session did not report its runtime PID.");
+            }
+            expect((yield* computeOwnedEndpoints.snapshot).protectedLoopbackTcpPorts.size).toBe(5);
+            expect((yield* scannerOwnedEndpoints.snapshot).protectedLoopbackTcpPorts.size).toBe(0);
+            yield* scanWithoutConfiguredUrls(2);
+            const sessionTranscriptBeforeScans = yield* compute.listOutputs({
+              projectId: PROJECT,
+              sessionId: SESSION,
+              executionId: null,
+            });
+
+            const firstExecutionId = ComputeExecutionId.make("scanner-first-execution");
+            const firstTranscript = yield* submitAndScan({
+              executionId: firstExecutionId,
+              generation: session.generation,
+              label: "FIRST",
+            });
+            yield* scanConfiguredFixture(3);
+            yield* waitForLsofProcess(firstRuntimeProcessId);
+            expectOnlyFixtureTraffic();
+            expect(
+              yield* compute.listOutputs({
                 projectId: PROJECT,
                 sessionId: SESSION,
-                languageId: PYTHON,
-                label: "Preview scanner Python integration",
-                workingDirectory: cwd,
-                configuredExecutable: TEST_PYTHON,
-              });
-              const firstRuntimeProcessId = session.identity?.runtimeProcessId;
-              if (firstRuntimeProcessId == null) {
-                return yield* Effect.die("The real Python session did not report its runtime PID.");
-              }
-              expect((yield* computeOwnedEndpoints.snapshot).protectedLoopbackTcpPorts.size).toBe(
-                5,
+                executionId: firstExecutionId,
+              }),
+            ).toEqual(firstTranscript);
+
+            [session] = yield* Effect.all(
+              [
+                compute.restartSession({
+                  projectId: PROJECT,
+                  sessionId: SESSION,
+                  expectedGeneration: session.generation,
+                }),
+                scanConfiguredFixture(6),
+              ],
+              { concurrency: "unbounded" },
+            );
+            const restartedRuntimeProcessId = session.identity?.runtimeProcessId;
+            if (restartedRuntimeProcessId == null) {
+              return yield* Effect.die(
+                "The restarted Python session did not report its runtime PID.",
               );
-              expect((yield* scannerOwnedEndpoints.snapshot).protectedLoopbackTcpPorts.size).toBe(
-                0,
+            }
+            expect(restartedRuntimeProcessId).not.toBe(firstRuntimeProcessId);
+            if (firstTransportProcessId == null)
+              return yield* Effect.die("The original bridge did not report its transport PID.");
+            // Restart replaces the kernel, not the bridge carrying its acknowledgement.
+            expect(session.identity?.transportProcessId).toBe(firstTransportProcessId);
+            expect(processExists(firstTransportProcessId)).toBe(true);
+            expect(processExists(firstRuntimeProcessId)).toBe(false);
+            yield* waitForLsofProcess(restartedRuntimeProcessId);
+            expect((yield* computeOwnedEndpoints.snapshot).protectedLoopbackTcpPorts.size).toBe(5);
+            expect((yield* scannerOwnedEndpoints.snapshot).protectedLoopbackTcpPorts.size).toBe(0);
+
+            const secondExecutionId = ComputeExecutionId.make("scanner-second-execution");
+            const secondTranscript = yield* submitAndScan({
+              executionId: secondExecutionId,
+              generation: session.generation,
+              label: "SECOND",
+            });
+            const restartedTransportProcessId = session.identity?.transportProcessId;
+            if (restartedTransportProcessId == null) {
+              return yield* Effect.die(
+                "The restarted Python session did not report its transport PID.",
               );
-              yield* scanWithoutConfiguredUrls(2);
-              const sessionTranscriptBeforeScans = yield* compute.listOutputs({
+            }
+            yield* Effect.all(
+              [
+                compute.stopSession({
+                  projectId: PROJECT,
+                  sessionId: SESSION,
+                  expectedGeneration: session.generation,
+                }),
+                scanConfiguredFixture(6),
+              ],
+              { concurrency: "unbounded" },
+            );
+            // Stop owns reaping; a signal-shaped exitCode failure is not another stop failure.
+            expect((yield* computeOwnedEndpoints.snapshot).protectedLoopbackTcpPorts.size).toBe(0);
+            expect(processExists(restartedRuntimeProcessId)).toBe(false);
+            expect(processExists(restartedTransportProcessId)).toBe(false);
+            yield* scanWithoutConfiguredUrls(2);
+            yield* scanConfiguredFixture(2);
+            expectOnlyFixtureTraffic();
+            expect(
+              yield* compute.listOutputs({
                 projectId: PROJECT,
                 sessionId: SESSION,
                 executionId: null,
-              });
-
-              const firstExecutionId = ComputeExecutionId.make("scanner-first-execution");
-              const firstTranscript = yield* submitAndScan({
+              }),
+            ).toEqual(sessionTranscriptBeforeScans);
+            expect(
+              yield* compute.listOutputs({
+                projectId: PROJECT,
+                sessionId: SESSION,
                 executionId: firstExecutionId,
-                generation: session.generation,
-                label: "FIRST",
-              });
-              yield* scanConfiguredFixture(3);
-              yield* waitForLsofProcess(firstRuntimeProcessId);
-              expectOnlyFixtureTraffic();
-              expect(
-                yield* compute.listOutputs({
-                  projectId: PROJECT,
-                  sessionId: SESSION,
-                  executionId: firstExecutionId,
-                }),
-              ).toEqual(firstTranscript);
-
-              [session] = yield* Effect.all(
-                [
-                  compute.restartSession({
-                    projectId: PROJECT,
-                    sessionId: SESSION,
-                    expectedGeneration: session.generation,
-                  }),
-                  scanConfiguredFixture(6),
-                ],
-                { concurrency: "unbounded" },
-              );
-              const restartedRuntimeProcessId = session.identity?.runtimeProcessId;
-              if (restartedRuntimeProcessId == null) {
-                return yield* Effect.die(
-                  "The restarted Python session did not report its runtime PID.",
-                );
-              }
-              expect(restartedRuntimeProcessId).not.toBe(firstRuntimeProcessId);
-              yield* eventually(
-                Effect.sync(() => (!processExists(firstRuntimeProcessId) ? true : null)),
-              );
-              yield* waitForLsofProcess(restartedRuntimeProcessId);
-              expect((yield* computeOwnedEndpoints.snapshot).protectedLoopbackTcpPorts.size).toBe(
-                5,
-              );
-              expect((yield* scannerOwnedEndpoints.snapshot).protectedLoopbackTcpPorts.size).toBe(
-                0,
-              );
-
-              const secondExecutionId = ComputeExecutionId.make("scanner-second-execution");
-              const secondTranscript = yield* submitAndScan({
+              }),
+            ).toEqual(firstTranscript);
+            expect(
+              yield* compute.listOutputs({
+                projectId: PROJECT,
+                sessionId: SESSION,
                 executionId: secondExecutionId,
-                generation: session.generation,
-                label: "SECOND",
-              });
-              const restartedTransportProcessId = session.identity?.transportProcessId;
-              if (restartedTransportProcessId == null) {
-                return yield* Effect.die(
-                  "The restarted Python session did not report its transport PID.",
-                );
-              }
-              yield* Effect.all(
-                [
-                  compute.stopSession({
-                    projectId: PROJECT,
-                    sessionId: SESSION,
-                    expectedGeneration: session.generation,
-                  }),
-                  scanConfiguredFixture(6),
-                ],
-                { concurrency: "unbounded" },
-              );
-              yield* scanWithoutConfiguredUrls(2);
-              yield* scanConfiguredFixture(2);
-              yield* eventually(
-                computeOwnedEndpoints.snapshot.pipe(
-                  Effect.map((snapshot) =>
-                    snapshot.protectedLoopbackTcpPorts.size === 0 ? true : null,
-                  ),
-                ),
-              );
-              yield* eventually(
-                Effect.sync(() =>
-                  !processExists(restartedRuntimeProcessId) &&
-                  !processExists(restartedTransportProcessId)
-                    ? true
-                    : null,
-                ),
-              );
-              expectOnlyFixtureTraffic();
-              expect(
-                yield* compute.listOutputs({
-                  projectId: PROJECT,
-                  sessionId: SESSION,
-                  executionId: null,
-                }),
-              ).toEqual(sessionTranscriptBeforeScans);
-              expect(
-                yield* compute.listOutputs({
-                  projectId: PROJECT,
-                  sessionId: SESSION,
-                  executionId: firstExecutionId,
-                }),
-              ).toEqual(firstTranscript);
-              expect(
-                yield* compute.listOutputs({
-                  projectId: PROJECT,
-                  sessionId: SESSION,
-                  executionId: secondExecutionId,
-                }),
-              ).toEqual(secondTranscript);
-            }).pipe(Effect.provide(Layer.merge(computeLayer, scannerLayer)), Effect.scoped);
-          }),
-        ).pipe(Effect.provide(NodeServices.layer), Effect.timeout("120 seconds")),
-      { timeout: 130_000 },
+              }),
+            ).toEqual(secondTranscript);
+          }).pipe(Effect.provide(Layer.merge(computeLayer, scannerLayer)), Effect.scoped);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer), Effect.timeout("120 seconds")),
     );
   },
 );

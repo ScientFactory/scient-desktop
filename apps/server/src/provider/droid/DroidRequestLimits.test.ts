@@ -156,37 +156,32 @@ const runtimeInput: DroidAcpRuntimeInput = {
 };
 
 describe("Droid per-turn request limits", () => {
-  it.effect(
-    "ends a truncation loop as a token-limit stop and cancels the Droid prompt",
-    () =>
-      Effect.gen(function* () {
-        let truncate = true;
-        const api = yield* Effect.promise(() =>
-          startModelApi(() => (truncate ? "length" : "stop")),
-        );
-        yield* Effect.addFinalizer(() => Effect.promise(api.close));
-        const droid = makeLoopingDroid(10_000);
-        const factory = yield* makeDroidCustomModelsRuntimeFactory(
-          fixture(api.origin),
-          instanceId,
-          droid.factory,
-        );
-        const runtime = yield* factory(runtimeInput);
-        const result = yield* runtime.prompt({ prompt: [{ type: "text", text: "go" }] });
-        expect(result.stopReason).toBe("max_tokens");
-        expect(droid.cancels()).toBe(1);
-        expect(api.requests()).toBe(5);
-        expect(runtime.requestLimitBreach?.()).toMatchObject({ reason: "truncated-responses" });
-        expect(runtime.requestLimitBreach?.()?.message).toContain("output limit 5 times in a row");
+  it.effect("ends a truncation loop as a token-limit stop and cancels the Droid prompt", () =>
+    Effect.gen(function* () {
+      let truncate = true;
+      const api = yield* Effect.promise(() => startModelApi(() => (truncate ? "length" : "stop")));
+      yield* Effect.addFinalizer(() => Effect.promise(api.close));
+      const droid = makeLoopingDroid(10_000);
+      const factory = yield* makeDroidCustomModelsRuntimeFactory(
+        fixture(api.origin),
+        instanceId,
+        droid.factory,
+      );
+      const runtime = yield* factory(runtimeInput);
+      const result = yield* runtime.prompt({ prompt: [{ type: "text", text: "go" }] });
+      expect(result.stopReason).toBe("max_tokens");
+      expect(droid.cancels()).toBe(1);
+      expect(api.requests()).toBe(5);
+      expect(runtime.requestLimitBreach?.()).toMatchObject({ reason: "truncated-responses" });
+      expect(runtime.requestLimitBreach?.()?.message).toContain("output limit 5 times in a row");
 
-        // The next turn starts with a fresh budget.
-        truncate = false;
-        yield* runtime.beginTurn!;
-        const next = yield* runtime.prompt({ prompt: [{ type: "text", text: "again" }] });
-        expect(next.stopReason).toBe("end_turn");
-        expect(runtime.requestLimitBreach?.()).toBeUndefined();
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    20_000,
+      // The next turn starts with a fresh budget.
+      truncate = false;
+      yield* runtime.beginTurn!;
+      const next = yield* runtime.prompt({ prompt: [{ type: "text", text: "again" }] });
+      expect(next.stopReason).toBe("end_turn");
+      expect(runtime.requestLimitBreach?.()).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports the first retryable upstream error of a turn, once per turn", () =>
@@ -387,102 +382,99 @@ describe("Droid per-turn request limits", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect(
-    "authorizes requests without waiting on a settings reload or reading keys",
-    () =>
-      Effect.gen(function* () {
-        const api = yield* Effect.promise(() => startModelApi(() => "stop"));
-        yield* Effect.addFinalizer(() => Effect.promise(api.close));
-        const reading = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        let keyReads = 0;
-        let holdNextKeyRead = false;
-        // The real secret store, holding the next custom-model key read.
-        const secretLayer = Layer.effect(
-          ServerSecretStore.ServerSecretStore,
-          Effect.gen(function* () {
-            const store = yield* ServerSecretStore.ServerSecretStore;
-            return {
-              ...store,
-              get: (name: string) =>
-                Effect.gen(function* () {
-                  if (name.startsWith("custom-model-")) {
-                    keyReads++;
-                    if (holdNextKeyRead) {
-                      holdNextKeyRead = false;
-                      yield* Deferred.succeed(reading, undefined);
-                      yield* Deferred.await(release);
-                    }
+  it.effect("authorizes requests without waiting on a settings reload or reading keys", () =>
+    Effect.gen(function* () {
+      const api = yield* Effect.promise(() => startModelApi(() => "stop"));
+      yield* Effect.addFinalizer(() => Effect.promise(api.close));
+      const reading = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let keyReads = 0;
+      let holdNextKeyRead = false;
+      // The real secret store, holding the next custom-model key read.
+      const secretLayer = Layer.effect(
+        ServerSecretStore.ServerSecretStore,
+        Effect.gen(function* () {
+          const store = yield* ServerSecretStore.ServerSecretStore;
+          return {
+            ...store,
+            get: (name: string) =>
+              Effect.gen(function* () {
+                if (name.startsWith("custom-model-")) {
+                  keyReads++;
+                  if (holdNextKeyRead) {
+                    holdNextKeyRead = false;
+                    yield* Deferred.succeed(reading, undefined);
+                    yield* Deferred.await(release);
                   }
-                  return yield* store.get(name);
-                }),
-            };
-          }),
-        ).pipe(Layer.provide(ServerSecretStore.layer));
-        yield* Effect.gen(function* () {
-          const settings = yield* ServerSettingsModule.ServerSettingsService;
-          const config = yield* ServerConfig.ServerConfig;
-          yield* settings.start;
-          const pi = ProviderInstanceId.make("pi");
-          yield* settings.saveCustomModel({
-            revision: 0,
-            connection: {
-              id: "reload",
-              name: "Reload",
-              protocol: "openai-completions",
-              baseUrl: api.origin,
-              models: [
-                {
-                  id: "fixture",
-                  modelId: "vendor/fixture",
-                  name: "Fixture",
-                  configurationMode: "manual",
-                  contextWindow: 32_000,
-                  maxOutputTokens: 1_024,
-                  images: false,
-                  reasoning: false,
-                  instanceIds: [pi],
-                },
-              ],
-            },
-            apiKey: Redacted.make("reload-real-key-0123456789"),
-          });
-          const droid = makeLoopingDroid(1);
-          const factory = yield* makeDroidCustomModelsRuntimeFactory(settings, pi, droid.factory);
-          const runtime = yield* factory(runtimeInput);
-          // A catalog written before key hints: reloading it reads the stored key.
-          holdNextKeyRead = true;
-          const file = decodeJson(NodeFS.readFileSync(config.settingsPath, "utf8")) as {
-            customModels: { connections: Array<Record<string, unknown>> };
+                }
+                return yield* store.get(name);
+              }),
           };
-          for (const connection of file.customModels.connections) delete connection.apiKeySuffix;
-          NodeFS.writeFileSync(config.settingsPath, encodeJson(file));
-          yield* Deferred.await(reading).pipe(Effect.timeout("5 seconds"));
-          const readsBefore = keyReads;
-          // The reload now waits on that key read; a brokered request does not.
-          const result = yield* runtime
-            .prompt({ prompt: [{ type: "text", text: "go" }] })
-            .pipe(Effect.timeout("3 seconds"), Effect.exit);
-          const readsDuring = keyReads - readsBefore;
-          yield* Deferred.succeed(release, undefined);
-          expect(result._tag).toBe("Success");
-          expect(api.authorizations).toEqual(["Bearer reload-real-key-0123456789"]);
-          expect(readsDuring).toBe(0);
-        }).pipe(
-          Effect.provide(
-            ServerSettingsModule.layer.pipe(
-              Layer.provide(secretLayer),
-              Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
-              Layer.provideMerge(
-                Layer.fresh(
-                  ServerConfig.layerTest(process.cwd(), { prefix: "scient-droid-reload-test-" }),
-                ),
+        }),
+      ).pipe(Layer.provide(ServerSecretStore.layer));
+      yield* Effect.gen(function* () {
+        const settings = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        yield* settings.start;
+        const pi = ProviderInstanceId.make("pi");
+        yield* settings.saveCustomModel({
+          revision: 0,
+          connection: {
+            id: "reload",
+            name: "Reload",
+            protocol: "openai-completions",
+            baseUrl: api.origin,
+            models: [
+              {
+                id: "fixture",
+                modelId: "vendor/fixture",
+                name: "Fixture",
+                configurationMode: "manual",
+                contextWindow: 32_000,
+                maxOutputTokens: 1_024,
+                images: false,
+                reasoning: false,
+                instanceIds: [pi],
+              },
+            ],
+          },
+          apiKey: Redacted.make("reload-real-key-0123456789"),
+        });
+        const droid = makeLoopingDroid(1);
+        const factory = yield* makeDroidCustomModelsRuntimeFactory(settings, pi, droid.factory);
+        const runtime = yield* factory(runtimeInput);
+        // A catalog written before key hints: reloading it reads the stored key.
+        holdNextKeyRead = true;
+        const file = decodeJson(NodeFS.readFileSync(config.settingsPath, "utf8")) as {
+          customModels: { connections: Array<Record<string, unknown>> };
+        };
+        for (const connection of file.customModels.connections) delete connection.apiKeySuffix;
+        NodeFS.writeFileSync(config.settingsPath, encodeJson(file));
+        yield* Deferred.await(reading).pipe(Effect.timeout("5 seconds"));
+        const readsBefore = keyReads;
+        // The reload now waits on that key read; a brokered request does not.
+        const result = yield* runtime
+          .prompt({ prompt: [{ type: "text", text: "go" }] })
+          .pipe(Effect.timeout("3 seconds"), Effect.exit);
+        const readsDuring = keyReads - readsBefore;
+        yield* Deferred.succeed(release, undefined);
+        expect(result._tag).toBe("Success");
+        expect(api.authorizations).toEqual(["Bearer reload-real-key-0123456789"]);
+        expect(readsDuring).toBe(0);
+      }).pipe(
+        Effect.provide(
+          ServerSettingsModule.layer.pipe(
+            Layer.provide(secretLayer),
+            Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+            Layer.provideMerge(
+              Layer.fresh(
+                ServerConfig.layerTest(process.cwd(), { prefix: "scient-droid-reload-test-" }),
               ),
             ),
           ),
-        );
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
-    20_000,
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
   );
 
   it.effect("refuses a request made after a key rotation committed, before any change event", () =>
@@ -544,25 +536,22 @@ describe("Droid per-turn request limits", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect(
-    "leaves long turns that keep finishing their responses alone",
-    () =>
-      Effect.gen(function* () {
-        const api = yield* Effect.promise(() => startModelApi(() => "tool_calls"));
-        yield* Effect.addFinalizer(() => Effect.promise(api.close));
-        const droid = makeLoopingDroid(150);
-        const factory = yield* makeDroidCustomModelsRuntimeFactory(
-          fixture(api.origin),
-          instanceId,
-          droid.factory,
-        );
-        const runtime = yield* factory(runtimeInput);
-        const result = yield* runtime.prompt({ prompt: [{ type: "text", text: "work" }] });
-        expect(result.stopReason).toBe("end_turn");
-        expect(api.requests()).toBe(150);
-        expect(droid.cancels()).toBe(0);
-        expect(runtime.requestLimitBreach?.()).toBeUndefined();
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    20_000,
+  it.effect("leaves long turns that keep finishing their responses alone", () =>
+    Effect.gen(function* () {
+      const api = yield* Effect.promise(() => startModelApi(() => "tool_calls"));
+      yield* Effect.addFinalizer(() => Effect.promise(api.close));
+      const droid = makeLoopingDroid(150);
+      const factory = yield* makeDroidCustomModelsRuntimeFactory(
+        fixture(api.origin),
+        instanceId,
+        droid.factory,
+      );
+      const runtime = yield* factory(runtimeInput);
+      const result = yield* runtime.prompt({ prompt: [{ type: "text", text: "work" }] });
+      expect(result.stopReason).toBe("end_turn");
+      expect(api.requests()).toBe(150);
+      expect(droid.cancels()).toBe(0);
+      expect(runtime.requestLimitBreach?.()).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

@@ -1,7 +1,8 @@
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { type ReactNode } from "react";
+
 import { page, userEvent } from "vite-plus/test/browser";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -12,25 +13,27 @@ import * as Redacted from "effect/Redacted";
 import { ModelConnectionEditor } from "./ModelConnectionEditor";
 import { CUSTOM_MODEL_PRESETS, customModelPresetId } from "./customModels";
 
-let root: Root | undefined;
-let host: HTMLDivElement;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
-
-function mount(node: ReactNode) {
-  if (!root) {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-  }
-  act(() => root!.render(node));
-  return host;
+async function _setupFixture0(_fixture: _Fixture) {
+  await undefined;
 }
-afterEach(() => {
-  if (root) act(() => root!.unmount());
-  host?.remove();
-  root = undefined;
+
+async function mount(_fixture: _Fixture, node: ReactNode) {
+  if (!_fixture.root0) {
+    _fixture.host = document.createElement("div");
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
+  }
+  await act(async () => await _fixture.root0!.rerender(node));
+  return _fixture.host;
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  if (_fixture.root0) await act(async () => await _fixture.root0!.unmount());
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
   vi.unstubAllGlobals();
-});
+}
 
 const pi = ProviderInstanceId.make("pi");
 const droid = ProviderInstanceId.make("droid");
@@ -62,7 +65,8 @@ const connection: CustomModelConnection = {
     },
   ],
 };
-function editor(
+async function editor(
+  _fixture: _Fixture,
   options: {
     connection?: CustomModelConnection;
     connections?: CustomModelConnection[];
@@ -76,7 +80,8 @@ function editor(
     if (options.fail) throw new Error("Save failed");
   });
   const onClose = vi.fn();
-  mount(
+  await mount(
+    _fixture,
     <ModelConnectionEditor
       settings={{ revision: 7, connections: options.connections ?? [connection] }}
       target={{
@@ -107,12 +112,12 @@ function editor(
       label === "API key"
         ? document.querySelector<HTMLInputElement>('input[aria-label="API key"]')!
         : field(label);
-    await act(async () => userEvent.fill(target, value));
+    await userEvent.fill(target, value);
   };
   const choose = async (label: string, value: string) =>
-    act(async () => userEvent.selectOptions(field(label) as HTMLSelectElement, value));
+    await userEvent.selectOptions(field(label) as HTMLSelectElement, value);
   const useExisting = async () =>
-    act(async () => page.getByRole("button", { name: /Use existing (key|connection)/ }).click());
+    await page.getByRole("button", { name: /Use existing (key|connection)/ }).click();
   const row = (label: string) => {
     const span = [...document.querySelectorAll("span")].find(
       (element) => element.textContent === label,
@@ -136,13 +141,11 @@ function editor(
   ]);
   const optionLabel = (value: string) => optionLabels.get(value) ?? value;
   const select = async (label: string, value: string) => {
-    await act(async () => userEvent.click(control(label)));
-    await act(async () =>
-      page.getByRole("option", { name: optionLabel(value), exact: true }).click(),
-    );
+    await userEvent.click(control(label));
+    await page.getByRole("option", { name: optionLabel(value), exact: true }).click();
   };
   const item = async (value: string) => {
-    await act(async () => userEvent.click(control("Reasoning")));
+    await userEvent.click(control("Reasoning"));
     const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
       (element) =>
         element.textContent?.trim() === optionLabel(value) ||
@@ -151,7 +154,7 @@ function editor(
     const state = option
       ? { disabled: option.getAttribute("aria-disabled") === "true" }
       : undefined;
-    await act(async () => userEvent.keyboard("{Escape}"));
+    await userEvent.keyboard("{Escape}");
     return state;
   };
   const submit = async () => {
@@ -164,7 +167,7 @@ function editor(
   const advanced = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
     (button) => button.textContent?.trim() === "Advanced",
   );
-  if (advanced?.getAttribute("aria-expanded") !== "true") act(() => advanced?.click());
+  if (advanced?.getAttribute("aria-expanded") !== "true") await act(() => advanced?.click());
   return {
     field,
     change,
@@ -182,7 +185,11 @@ function editor(
 
 describe("custom model editor", () => {
   it("saves and clears a preference without overriding detected capabilities or changing limits", async () => {
-    const f = editor({ connection, edit: true });
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture, { connection, edit: true });
     await f.select("Reasoning", "high");
     await f.submit();
     const saved = f.onSave.mock.calls[0]![0].connection.models[0]!;
@@ -201,6 +208,10 @@ describe("custom model editor", () => {
     expect(f.onSave.mock.calls[1]![0].connection.models[0]!.defaultReasoningLevel).toBeUndefined();
   });
   it("explains which reasoning levels Droid offers when the model is used with Droid", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const xhigh: CustomModelConnection = {
       ...connection,
       models: [
@@ -218,17 +229,17 @@ describe("custom model editor", () => {
     const note =
       "Droid offers Low, Medium and High for this model, and Extra-high only as its default level.";
     const noteIn = (element: HTMLElement) => element.textContent!.includes(note);
-    const withDroid = editor({
+    const withDroid = await editor(_fixture, {
       connection: xhigh,
       edit: true,
       agents: [{ id: droid, name: "Droid", driver: ProviderDriverKind.make("droid") }],
     });
     expect(noteIn(withDroid.row("Reasoning"))).toBe(true);
 
-    act(() => root!.unmount());
-    root = undefined;
-    host.remove();
-    const piOnly = editor({
+    await act(async () => await _fixture.root0!.unmount());
+    _fixture.root0 = undefined;
+    _fixture.host.remove();
+    const piOnly = await editor(_fixture, {
       connection: { ...xhigh, models: [{ ...xhigh.models[0]!, instanceIds: [pi] }] },
       edit: true,
     });
@@ -250,13 +261,21 @@ describe("custom model editor", () => {
         },
       ],
     });
-    const item = (f: ReturnType<typeof editor>, value: string) => f.item(value);
-    const says = (f: ReturnType<typeof editor>, text: string) =>
+    const item = (f: Awaited<ReturnType<typeof editor>>, value: string) => f.item(value);
+    const says = (f: Awaited<ReturnType<typeof editor>>, text: string) =>
       f.row("Reasoning").textContent!.includes(text);
     const substitute = "Droid cannot apply Max to this model and uses Medium instead.";
 
     it("offers a Droid-only model only the defaults Droid applies", async () => {
-      const f = editor({ connection: plain([droid]), edit: true, agents: [droidAgent, piAgent] });
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+
+      const f = await editor(_fixture, {
+        connection: plain([droid]),
+        edit: true,
+        agents: [droidAgent, piAgent],
+      });
       // The saved Max stays visible as what it is, and cannot be chosen again.
       expect((await item(f, "max"))?.disabled).toBe(true);
       for (const level of ["low", "medium", "high"])
@@ -271,7 +290,11 @@ describe("custom model editor", () => {
     });
 
     it("keeps another agent's levels and says what Droid uses instead", async () => {
-      const f = editor({
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+
+      const f = await editor(_fixture, {
         connection: plain([droid, pi]),
         edit: true,
         agents: [droidAgent, piAgent],
@@ -282,13 +305,25 @@ describe("custom model editor", () => {
     });
 
     it("says nothing about Droid when Droid is not attached", async () => {
-      const f = editor({ connection: plain([pi]), edit: true, agents: [droidAgent, piAgent] });
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+
+      const f = await editor(_fixture, {
+        connection: plain([pi]),
+        edit: true,
+        agents: [droidAgent, piAgent],
+      });
       expect((await item(f, "max"))?.disabled).toBe(false);
       expect(says(f, substitute)).toBe(false);
     });
   });
   it("preserves saved limits until the user switches them to automatic", async () => {
-    const f = editor({ connection, edit: true });
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture, { connection, edit: true });
     expect(f.field("Context window").value).toBe(String(32000));
     await f.submit();
     expect(f.onSave.mock.calls[0]![0].connection.models[0]).toMatchObject({
@@ -304,6 +339,10 @@ describe("custom model editor", () => {
     expect(automatic).not.toHaveProperty("maxOutputTokens");
   });
   it("shows detected limits and starts manual editing from them", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const { contextWindow: _c, maxOutputTokens: _m, ...saved } = connection.models[0]!;
     const automatic = {
       ...connection,
@@ -320,7 +359,11 @@ describe("custom model editor", () => {
         },
       ],
     };
-    const f = editor({ connection: automatic, connections: [automatic], edit: true });
+    const f = await editor(_fixture, {
+      connection: automatic,
+      connections: [automatic],
+      edit: true,
+    });
     expect(f.row("Limits").querySelector("p")?.textContent).toBe(
       "Detected: 400k context · 128k output",
     );
@@ -333,7 +376,11 @@ describe("custom model editor", () => {
     );
   });
   it("does not invent limits for an unknown local endpoint", async () => {
-    const f = editor({ connection });
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture, { connection });
     await f.change("Model ID", "unknown");
     expect(f.field("Context window").value).toBe("");
     expect(f.field("Max output tokens").value).toBe("");
@@ -341,7 +388,11 @@ describe("custom model editor", () => {
     expect(f.onSave).not.toHaveBeenCalled();
   });
   it("saves automatic images independently of manual limits and preserves explicit choices", async () => {
-    const f = editor({ connection, connections: [connection], edit: true });
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture, { connection, connections: [connection], edit: true });
     // This legacy model explicitly disabled images.
     expect(f.control("Image input").textContent).toContain("Disabled");
     await f.select("Image input", "automatic");
@@ -354,19 +405,31 @@ describe("custom model editor", () => {
     });
   });
   it("defaults a new model's images to automatic", async () => {
-    const f = editor();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture);
     await f.change("Model ID", "vision-new");
     await f.submit();
     expect(f.onSave.mock.calls[0]![0].connection.models.at(-1)!.imageInput).toBe("automatic");
   });
   it("uses the shared compact selector for the limits and reasoning rows", async () => {
-    const f = editor();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture);
     expect(f.field("Model provider").dataset.slot).toBe("native-select");
     expect(f.control("Limits").dataset.slot).toBe("select-trigger");
     expect(f.control("Reasoning").dataset.slot).toBe("select-trigger");
   });
   it("defaults new models to automatic capability detection without inventing reasoning support", async () => {
-    const f = editor();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture);
     expect(f.row("Limits").querySelector("p")?.textContent).toBe(
       "Detected from the provider after saving.",
     );
@@ -383,7 +446,11 @@ describe("custom model editor", () => {
     expect(model.maxOutputTokens).toBeUndefined();
   });
   it("does not save an empty manual capability assertion", async () => {
-    const f = editor();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture);
     await f.change("Model ID", "unknown-model");
     await f.select("Reasoning", "manual");
     await f.submit();
@@ -393,7 +460,11 @@ describe("custom model editor", () => {
     );
   });
   it("can return to automatic detection without retaining a manual override", async () => {
-    const f = editor();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture);
     await f.change("Model ID", "unknown-model");
     await f.select("Reasoning", "manual");
     await f.select("Reasoning", "");
@@ -401,16 +472,20 @@ describe("custom model editor", () => {
     expect(f.onSave.mock.calls[0]![0].connection.models.at(-1)?.reasoningOverride).toBeUndefined();
   });
   it("lets a manual reasoning ladder pick its default from the same selector", async () => {
-    const f = editor();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture);
     await f.change("Model ID", "unknown-model");
     await f.select("Reasoning", "manual");
-    act(() => {
+    await act(() => {
       const label = [...document.querySelectorAll("label")].find(
         (element) => element.textContent?.trim() === "Low",
       )!;
       label.querySelector<HTMLElement>('[role="checkbox"]')!.click();
     });
-    act(() => {
+    await act(() => {
       const label = [...document.querySelectorAll("label")].find(
         (element) => element.textContent?.trim() === "High",
       )!;
@@ -425,6 +500,10 @@ describe("custom model editor", () => {
     });
   });
   it("lists providers in the preferred order and defaults to OpenRouter", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     expect(CUSTOM_MODEL_PRESETS.map((preset) => preset.id)).toEqual([
       "openrouter",
       "openai",
@@ -432,11 +511,15 @@ describe("custom model editor", () => {
       "spacexai",
       "custom",
     ]);
-    expect(editor().field("Model provider").value).toBe("openrouter");
+    expect((await editor(_fixture)).field("Model provider").value).toBe("openrouter");
   });
   it("creates a redacted API-key submission attached to the default agents", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     // The panel passes the enabled agents (or the agent that opened the editor).
-    const f = editor({
+    const f = await editor(_fixture, {
       agents: [
         { id: droid, name: "Droid" },
         { id: pi, name: "Pi" },
@@ -457,22 +540,30 @@ describe("custom model editor", () => {
     expect(f.onClose).toHaveBeenCalledOnce();
   });
   it("shows an agent that was removed and lets the model be detached from it", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const removed = ProviderInstanceId.make("droid_work");
     const stale: CustomModelConnection = {
       ...connection,
       models: [{ ...connection.models[0]!, instanceIds: [pi, removed] }],
     };
-    const f = editor({ connection: stale, edit: true });
+    const f = await editor(_fixture, { connection: stale, edit: true });
     const removedSwitch = () =>
       document.querySelector<HTMLElement>('[aria-label="Use with droid_work (removed)"]');
     expect(removedSwitch()?.getAttribute("aria-checked")).toBe("true");
-    act(() => removedSwitch()!.click());
+    await act(() => removedSwitch()!.click());
     expect(removedSwitch()?.getAttribute("aria-checked")).toBe("false");
     await f.submit();
     expect(f.onSave.mock.calls[0]![0].connection.models[0]!.instanceIds).toEqual([pi]);
   });
   it("preserves an existing model's explicit agent attachments", async () => {
-    const f = editor({
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture, {
       connection,
       edit: true,
       agents: [
@@ -484,7 +575,11 @@ describe("custom model editor", () => {
     expect(f.onSave.mock.calls[0]![0].connection.models[0]!.instanceIds).toEqual([pi]);
   });
   it("adds a model to a saved connection without rewriting its key or other models", async () => {
-    const f = editor({ connection });
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture, { connection });
     await f.change("Model ID", "two");
     await f.change("Context window", "65536");
     await f.change("Max output tokens", "8192");
@@ -496,7 +591,11 @@ describe("custom model editor", () => {
     expect(saved.connection.models[0]).toEqual(connection.models[0]);
   });
   it("supports a keyless custom endpoint", async () => {
-    const f = editor();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture);
     await f.choose("Model provider", "custom");
     await f.choose("API key", "");
     await f.change("Base URL", "http://localhost:8080/v1");
@@ -512,7 +611,11 @@ describe("custom model editor", () => {
     });
   });
   it("keeps an explicit connection name for a custom endpoint", async () => {
-    const f = editor();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture);
     await f.choose("Model provider", "custom");
     await f.choose("API key", "");
     await f.change("Connection name", "Local");
@@ -524,7 +627,11 @@ describe("custom model editor", () => {
     expect(f.onSave.mock.calls[0]![0].connection.name).toBe("Local");
   });
   it("reuses an existing connection by default and clears a draft key when switching", async () => {
-    const f = editor();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture);
     await f.change("API key", "never-reuse");
     await f.choose("Model provider", "custom");
     expect(f.field("API key").value).toBe("shared");
@@ -533,6 +640,10 @@ describe("custom model editor", () => {
     expect(f.field("API key (optional)").value).toBe("");
   });
   it("offers only connections for the selected service and reuses their exact endpoint and key reference", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const openai = {
       ...connection,
       id: "openai-work",
@@ -541,7 +652,7 @@ describe("custom model editor", () => {
       baseUrl: "https://api.openai.com/v1",
     };
     const router = { ...connection, id: "router", baseUrl: "https://openrouter.ai/api/v1" };
-    const f = editor({ connections: [openai, router, connection] });
+    const f = await editor(_fixture, { connections: [openai, router, connection] });
     await f.choose("Model provider", "openai");
     expect(f.field("API key").querySelector('option[value="openai-work"]')).not.toBeNull();
     expect(f.field("API key").querySelector('option[value="router"]')).toBeNull();
@@ -569,8 +680,12 @@ describe("custom model editor", () => {
     expect(saved.connection.models[0]).toEqual(openai.models[0]);
   });
   it("clears reuse when switching services and retains the selected preset for new connections", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     const router = { ...connection, id: "router", baseUrl: "https://openrouter.ai/api/v1" };
-    const f = editor({ connections: [router, connection] });
+    const f = await editor(_fixture, { connections: [router, connection] });
     await f.choose("Model provider", "openrouter");
     expect(f.field("API key").value).toBe("router");
     await f.choose("API key", "");
@@ -585,6 +700,10 @@ describe("custom model editor", () => {
     expect(f.onSave.mock.calls[0]![0].connection.baseUrl).toBe("https://api.anthropic.com");
   });
   it("classifies connections by exact endpoint and compatible protocol, never their display name", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
     expect(customModelPresetId({ ...connection, baseUrl: "https://api.x.ai/v1" })).toBe("spacexai");
     expect(customModelPresetId({ ...connection, name: "OpenAI" })).toBe("custom");
     expect(customModelPresetId({ ...connection, baseUrl: "https://api.openai.com/v1/" })).toBe(
@@ -605,7 +724,11 @@ describe("custom model editor", () => {
     );
   });
   it("submits SpaceXAI with its preset endpoint and a redacted API key", async () => {
-    const f = editor();
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture);
     await f.choose("Model provider", "spacexai");
     await f.change("Model ID", "synthetic-grok-model");
     await f.change("API key", "synthetic-xai-key");
@@ -619,7 +742,11 @@ describe("custom model editor", () => {
     expect(Redacted.value(saved.apiKey!)).toBe("synthetic-xai-key");
   });
   it("edits only the selected model", async () => {
-    const f = editor({ connection, edit: true });
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture, { connection, edit: true });
     await f.change("Display name", "Renamed");
     await f.submit();
     expect(f.onSave.mock.calls[0]![0].connection.models).toHaveLength(1);
@@ -629,7 +756,11 @@ describe("custom model editor", () => {
     });
   });
   it("keeps the draft and dialog on failure", async () => {
-    const f = editor({ fail: true });
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const f = await editor(_fixture, { fail: true });
     await f.change("Model ID", "test");
     await f.submit();
     expect(f.onClose).not.toHaveBeenCalled();
@@ -637,3 +768,22 @@ describe("custom model editor", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toBe("Save failed");
   });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

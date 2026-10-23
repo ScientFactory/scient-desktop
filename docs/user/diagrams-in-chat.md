@@ -49,10 +49,11 @@ loaded; click a web address there to open it in your browser. This keeps a
 diagram from revealing to another site that, and when, you opened the
 conversation.
 
-While an answer is still being written, Scient shows the Mermaid source as an
-ordinary code block. Rendering begins only after the answer settles and the
-diagram is close to the visible conversation. A bad or unsupported diagram
-never makes the rest of the answer disappear.
+While an answer is still being written, an unfinished Mermaid fence remains
+an ordinary source code block. Once its closing fence arrives, the diagram can
+render near the visible conversation without waiting for the rest of the
+answer. A bad or unsupported diagram never makes the rest of the answer
+disappear.
 
 For supported syntax mistakes—such as unquoted labels, misplaced separators,
 the common pie dash separator, quadrant coordinate parentheses, or a known

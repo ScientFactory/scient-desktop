@@ -119,48 +119,47 @@ const shellWord = (value: string) =>
  * command. Packaged launchers keep AppImage mount handling; script installs
  * retain the running runtime and entry, including private Node installations.
  */
-export const resolveCliCommand = (args: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const env = yield* HostProcess.Environment;
-    const platform = yield* HostProcess.Platform;
-    // Operational snippets use PowerShell on Windows; quoting a path alone
-    // produces a string there, not an invocation. Typographic single quotes
-    // also end a PowerShell string, so they double like `'`.
-    const quote =
-      platform === "win32"
-        ? (value: string) => `'${value.replace(/['‘’‚‛]/g, "$&$&")}'`
-        : shellWord;
-    const invocationPrefix = platform === "win32" ? "& " : "";
-    const shim = env.T3CODE_CLI_PATH?.trim();
-    if (shim && path.isAbsolute(shim)) {
-      const valid = yield* fs.stat(shim).pipe(
-        Effect.map(
-          (info) => info.type === "File" && (platform === "win32" || (info.mode & 0o111) !== 0),
-        ),
-        Effect.orElseSucceed(() => false),
-      );
-      if (valid) return `${invocationPrefix}${[shim, ...args].map(quote).join(" ")}`;
-    }
+export const resolveCliCommand = Effect.fn("invocation.resolveCliCommand")(function* (
+  args: ReadonlyArray<string>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const env = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
+  // Operational snippets use PowerShell on Windows; quoting a path alone
+  // produces a string there, not an invocation. Typographic single quotes
+  // also end a PowerShell string, so they double like `'`.
+  const quote =
+    platform === "win32" ? (value: string) => `'${value.replace(/['‘’‚‛]/g, "$&$&")}'` : shellWord;
+  const invocationPrefix = platform === "win32" ? "& " : "";
+  const shim = env.T3CODE_CLI_PATH?.trim();
+  if (shim && path.isAbsolute(shim)) {
+    const valid = yield* fs.stat(shim).pipe(
+      Effect.map(
+        (info) => info.type === "File" && (platform === "win32" || (info.mode & 0o111) !== 0),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+    if (valid) return `${invocationPrefix}${[shim, ...args].map(quote).join(" ")}`;
+  }
 
-    const cwd = yield* HostProcess.WorkingDirectory;
-    const executable = path.resolve(cwd, yield* HostProcess.ExecutablePath);
-    if (yield* HostProcess.IsExecutable) {
-      return `${invocationPrefix}${[executable, ...args].map(quote).join(" ")}`;
-    }
-    const entry = (yield* HostProcess.Arguments)[1];
-    if (!entry) {
-      return yield* Effect.die(new Error("The running CLI has no entry script."));
-    }
-    const command = `${invocationPrefix}${[executable, path.resolve(cwd, entry), ...args].map(quote).join(" ")}`;
-    // Electron launches its GUI unless Node mode is restored after sudo strips
-    // the environment. Do not replay watch/debug execArgv from the server.
-    if (env.ELECTRON_RUN_AS_NODE !== "1") return command;
-    return platform === "win32"
-      ? `$env:ELECTRON_RUN_AS_NODE='1'; ${command}`
-      : `env ELECTRON_RUN_AS_NODE=1 ${command}`;
-  });
+  const cwd = yield* HostProcess.WorkingDirectory;
+  const executable = path.resolve(cwd, yield* HostProcess.ExecutablePath);
+  if (yield* HostProcess.IsExecutable) {
+    return `${invocationPrefix}${[executable, ...args].map(quote).join(" ")}`;
+  }
+  const entry = (yield* HostProcess.Arguments)[1];
+  if (!entry) {
+    return yield* Effect.die(new Error("The running CLI has no entry script."));
+  }
+  const command = `${invocationPrefix}${[executable, path.resolve(cwd, entry), ...args].map(quote).join(" ")}`;
+  // Electron launches its GUI unless Node mode is restored after sudo strips
+  // the environment. Do not replay watch/debug execArgv from the server.
+  if (env.ELECTRON_RUN_AS_NODE !== "1") return command;
+  return platform === "win32"
+    ? `$env:ELECTRON_RUN_AS_NODE='1'; ${command}`
+    : `env ELECTRON_RUN_AS_NODE=1 ${command}`;
+});
 
 /** An absolute invocation stays reachable after sudo resets PATH and HOME. */
 export const resolveRootCliCommand = (args: ReadonlyArray<string>) =>

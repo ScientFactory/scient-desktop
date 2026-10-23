@@ -479,7 +479,7 @@ describe.runIf(process.env.SCIENT_REAL_MATLAB === "1")("MATLAB runtime adapter i
     } finally {
       await prepared.cleanup();
     }
-  }, 360_000);
+  });
 
   it("captures the fast static preview and native continuation formats by default", async () => {
     const executablePath =
@@ -521,5 +521,5 @@ describe.runIf(process.env.SCIENT_REAL_MATLAB === "1")("MATLAB runtime adapter i
     expect(artifacts[0]?.representations.map((representation) => representation.mediaType)).toEqual(
       ["application/vnd.mathworks.matlab.figure", "image/png"],
     );
-  }, 360_000);
+  });
 });

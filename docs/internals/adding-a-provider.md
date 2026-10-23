@@ -107,32 +107,23 @@ A provider implementation belongs in its own `packages/provider-<name>` package 
 moved; [Pi](../../packages/provider-pi) is the reference. Drivers not yet moved remain in
 [`provider/Drivers`](../../apps/server/src/provider/Drivers).
 
-- **Package exports.** `./settings` owns the instance settings schema built with
-  `makeProviderSettingsSchema` from contracts. `./client` exports a browser- and React Native-safe
-  `ProviderClientDefinition` with plain-data icon metadata. `./server` exports the driver and
-  adapter driver; `./testing` exposes internals used by replay testkits. Testkits that depend on
-  orchestration stay in the server.
-- **Server boundary.** Provider packages depend on `provider-core`, contracts, and shared. They
-  reach server-owned services through `ProviderHost`, never by importing `apps/server`. Replay tests
-  use `@t3tools/provider-testing`.
-- **Registration.** Register the provider driver in [`builtInDrivers.ts`](../../apps/server/src/provider/builtInDrivers.ts).
-  The instance factory supplies its orchestration adapter; there is no separate adapter-driver
-  registry. Keep status ordering, compatibility policy, and automatic-model policy in sync.
-- **Client registration.** Add the provider client definition to web and mobile registries. Clients
-  render the package icon; do not add driver-specific icon branches.
-
-- **Settings and contracts:** put the provider settings schema in its package's `./settings` export.
-  Add shared wire types to [`packages/contracts`](../../packages/contracts/src) only when another
-  package or the client/server boundary needs them. New providers must stay disabled until the user
-  configures them.
-- **Server:** the driver in its provider package, or in
-  [`provider/Drivers`](../../apps/server/src/provider/Drivers) while it remains app-owned, and its
-  entry in [`builtInDrivers.ts`](../../apps/server/src/provider/builtInDrivers.ts). Also its position in
-  the [status order](../../apps/server/src/provider/providerStatusCache.ts), a compatibility policy
-  in [`model-manifest.json`](../../apps/server/src/provider/model-manifest.json) (bump `updatedAt`;
-  see [model manifest](./model-manifest.md)), and text generation for titles and commit messages.
-- **Clients:** web settings metadata and badge, provider icons on web and mobile, and settings
-  search terms.
+- **Package exports.** `./settings` holds the instance settings schema, built with
+  `makeProviderSettingsSchema` from contracts. `./client` exports a `ProviderClientDefinition`
+  (label, settings schema, plain-data icon, badge) and must stay browser- and React Native-safe.
+  `./server` exports the `ProviderDriver` and its adapter driver. `./testing` exposes internals
+  the server's replay testkits drive; testkits that need the orchestrator stay in the server.
+  Settings live in `providerInstances`; new providers are off by default.
+- **Package boundaries.** Server code imports only `@t3tools/provider-core/server/*`, contracts,
+  and shared. It reaches the server through `ProviderHost` (paths, settings, background demand,
+  attachments, stored credentials), never through `apps/server`. Tests use `@t3tools/provider-testing`.
+- **Server registration:** the driver's entry in
+  [`builtInDrivers.ts`](../../apps/server/src/provider/builtInDrivers.ts). The driver carries its
+  adapter driver. Also its position in the [status order](../../apps/server/src/provider/providerStatusCache.ts), a
+  compatibility policy in [`model-manifest.json`](../../apps/server/src/provider/model-manifest.json)
+  (bump `updatedAt`; see [model manifest](./model-manifest.md)), its default model in contracts,
+  and text generation for titles and commit messages.
+- **Client registration:** the client definition in the web and mobile provider registries, and
+  settings search terms. Clients draw the package icon; do not add a per-driver icon branch.
 - **Docs:** a `docs/user/providers-<name>.md` guide in the product's voice, a row in the
   [install](../user/install.md#providers) table, and any provider difference that changes the
   [permission modes](../user/permission-modes.md) page.

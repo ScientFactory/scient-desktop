@@ -2,7 +2,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterEach, assert, describe, it } from "vite-plus/test";
+import { afterEach, assert, describe, it, vi } from "vite-plus/test";
 import { writeColdHandoff } from "../apps/desktop/scripts/dev-cold-handoff.mjs";
 
 import {
@@ -567,15 +567,17 @@ describe("local dev app runner lifecycle", () => {
   it("ends a launch as soon as the desktop launcher records a failure", async () => {
     const { paths } = fixture();
     const failures = [];
+    using _clock = { [Symbol.dispose]: () => vi.useRealTimers() };
+    vi.useFakeTimers();
     const stop = watchForLaunchFailure(paths, (failure) => failures.push(failure), {
       intervalMs: 5,
     });
     try {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await vi.advanceTimersByTimeAsync(20);
       assert.deepEqual(failures, []);
       NodeFS.mkdirSync(paths.runtimeDir, { recursive: true });
       NodeFS.writeFileSync(paths.failurePath, JSON.stringify({ message: "Run pnpm dev:app." }));
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await vi.advanceTimersByTimeAsync(40);
       assert.deepEqual(failures, ["Run pnpm dev:app."]);
     } finally {
       stop();

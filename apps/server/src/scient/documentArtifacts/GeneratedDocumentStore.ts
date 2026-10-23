@@ -832,122 +832,124 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
     },
   );
 
-  const recordRejectedValidation = (
-    input: PublishGeneratedPdfInput,
-    validation: Extract<PdfValidationResult, { readonly accepted: false }>,
-  ) =>
-    Effect.gen(function* () {
+  const recordRejectedValidation = Effect.fn("GeneratedDocumentStore.recordRejectedValidation")(
+    function* (
+      input: PublishGeneratedPdfInput,
+      validation: Extract<PdfValidationResult, { readonly accepted: false }>,
+    ) {
       yield* failCurrentProduction({
         ...input,
         reason: validation.detail,
       });
       return yield* makeStoreError("publish", "validation-rejected", validation.detail);
-    });
+    },
+  );
 
-  const publishPdf = (input: PublishGeneratedPdfInput) =>
-    Effect.gen(function* () {
-      yield* lock.withPermit(ensureActiveProduction(input));
-      const ownedBytes =
-        input.bytes.byteLength > PDF_VALIDATION_MAX_BYTES ? input.bytes : input.bytes.slice();
-      const validation = yield* Effect.promise(() =>
-        validator.validate(ownedBytes, input.validationProfile ?? "producer-registration"),
-      );
-      if (!validation.accepted) {
-        return yield* lock.withPermit(recordRejectedValidation(input, validation));
-      }
-      const contentHash = ContentSha256.make(
-        NodeCrypto.createHash("sha256").update(ownedBytes).digest("hex"),
-      );
+  const publishPdf = Effect.fn("GeneratedDocumentStore.publishPdf")(function* (
+    input: PublishGeneratedPdfInput,
+  ) {
+    yield* lock.withPermit(ensureActiveProduction(input));
+    const ownedBytes =
+      input.bytes.byteLength > PDF_VALIDATION_MAX_BYTES ? input.bytes : input.bytes.slice();
+    const validation = yield* Effect.promise(() =>
+      validator.validate(ownedBytes, input.validationProfile ?? "producer-registration"),
+    );
+    if (!validation.accepted) {
+      return yield* lock.withPermit(recordRejectedValidation(input, validation));
+    }
+    const contentHash = ContentSha256.make(
+      NodeCrypto.createHash("sha256").update(ownedBytes).digest("hex"),
+    );
 
-      return yield* lock.withPermit(
-        Effect.gen(function* () {
-          const current = yield* readBinding(input.logicalDocumentKey);
-          if (current === null) {
-            return yield* makeStoreError(
-              "publish",
-              "missing-binding",
-              "Document production has not been started.",
-            );
-          }
-          const revisionId = ArtifactRevisionId.make(NodeCrypto.randomUUID());
-          const revision = { artifactId: current.artifactId, revisionId };
-          const nowEpochMs = yield* Clock.currentTimeMillis;
-          const transition = completeDocumentProduction(current, {
-            generation: input.generation,
-            operationId: input.operationId,
-            producerId: input.producerId,
-            revision,
-            nowEpochMs,
-          });
-          if (transition._tag === "Superseded") {
-            yield* announce(transition.binding, "supersede");
-            return yield* makeStoreError(
-              "publish",
-              "superseded",
-              "A newer document production superseded this PDF.",
-            );
-          }
+    return yield* lock.withPermit(
+      Effect.gen(function* () {
+        const current = yield* readBinding(input.logicalDocumentKey);
+        if (current === null) {
+          return yield* makeStoreError(
+            "publish",
+            "missing-binding",
+            "Document production has not been started.",
+          );
+        }
+        const revisionId = ArtifactRevisionId.make(NodeCrypto.randomUUID());
+        const revision = { artifactId: current.artifactId, revisionId };
+        const nowEpochMs = yield* Clock.currentTimeMillis;
+        const transition = completeDocumentProduction(current, {
+          generation: input.generation,
+          operationId: input.operationId,
+          producerId: input.producerId,
+          revision,
+          nowEpochMs,
+        });
+        if (transition._tag === "Superseded") {
+          yield* announce(transition.binding, "supersede");
+          return yield* makeStoreError(
+            "publish",
+            "superseded",
+            "A newer document production superseded this PDF.",
+          );
+        }
 
-          const stored: StoredGeneratedDocumentRevision = {
+        const stored: StoredGeneratedDocumentRevision = {
+          schemaVersion: 1,
+          artifact: {
             schemaVersion: 1,
-            artifact: {
-              schemaVersion: 1,
-              authority,
-              logicalDocumentKey: input.logicalDocumentKey,
-              artifactId: current.artifactId,
-              revisionId,
-              contentHash,
-              mediaType: "application/pdf",
-              byteLength: ownedBytes.byteLength,
-              createdAtEpochMs: nowEpochMs,
-              provenance: {
-                kind: input.provenanceKind,
-                producerId: input.producerId,
-                operationId: input.operationId,
-              },
-            },
-            title: input.title.trim().slice(0, 512) || "Document",
-            fileName: pdfFileName(input.title),
-            pageCount: validation.pageCount,
-          };
-          const publishedRevisionDirectory = revisionDirectory(current.artifactId, revisionId);
-          yield* writeRevisionAtomically(stored, ownedBytes).pipe(
-            Effect.mapError((cause) =>
-              makeStoreError(
-                "write-revision",
-                "filesystem",
-                "Unable to publish the complete PDF revision.",
-                cause,
-              ),
-            ),
-          );
-          // The revision directory exists but nothing references it yet, so a
-          // crash here strands an orphan the startup sweep reclaims. The
-          // retention entry is added only after the binding write commits: an
-          // adopted-but-unreferenced revision would otherwise be mistaken for
-          // retained history.
-          yield* commitBinding(transition.binding, "publish").pipe(
-            Effect.catch((cause) =>
-              fileSystem
-                .remove(publishedRevisionDirectory, {
-                  recursive: true,
-                  force: true,
-                })
-                .pipe(Effect.ignore, Effect.andThen(Effect.fail(cause))),
-            ),
-          );
-          yield* recordPublishedRevision({
+            authority,
+            logicalDocumentKey: input.logicalDocumentKey,
             artifactId: current.artifactId,
             revisionId,
-            logicalDocumentKey: input.logicalDocumentKey,
-            byteLength: retainedRevisionByteLength(stored),
+            contentHash,
+            mediaType: "application/pdf",
+            byteLength: ownedBytes.byteLength,
             createdAtEpochMs: nowEpochMs,
-          });
-          yield* enforceRetentionBudget();
-          return yield* descriptorFromBinding(transition.binding);
-        }),
-      );
-    });
+            provenance: {
+              kind: input.provenanceKind,
+              producerId: input.producerId,
+              operationId: input.operationId,
+            },
+          },
+          title: input.title.trim().slice(0, 512) || "Document",
+          fileName: pdfFileName(input.title),
+          pageCount: validation.pageCount,
+        };
+        const publishedRevisionDirectory = revisionDirectory(current.artifactId, revisionId);
+        yield* writeRevisionAtomically(stored, ownedBytes).pipe(
+          Effect.mapError((cause) =>
+            makeStoreError(
+              "write-revision",
+              "filesystem",
+              "Unable to publish the complete PDF revision.",
+              cause,
+            ),
+          ),
+        );
+        // The revision directory exists but nothing references it yet, so a
+        // crash here strands an orphan the startup sweep reclaims. The
+        // retention entry is added only after the binding write commits: an
+        // adopted-but-unreferenced revision would otherwise be mistaken for
+        // retained history.
+        yield* commitBinding(transition.binding, "publish").pipe(
+          Effect.catch((cause) =>
+            fileSystem
+              .remove(publishedRevisionDirectory, {
+                recursive: true,
+                force: true,
+              })
+              .pipe(Effect.ignore, Effect.andThen(Effect.fail(cause))),
+          ),
+        );
+        yield* recordPublishedRevision({
+          artifactId: current.artifactId,
+          revisionId,
+          logicalDocumentKey: input.logicalDocumentKey,
+          byteLength: retainedRevisionByteLength(stored),
+          createdAtEpochMs: nowEpochMs,
+        });
+        yield* enforceRetentionBudget();
+        return yield* descriptorFromBinding(transition.binding);
+      }),
+    );
+  });
 
   const getDescriptor = (logicalDocumentKey: LogicalDocumentKey) =>
     lock.withPermit(
@@ -964,12 +966,12 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
       }),
     );
 
-  const resolveRevisionUnlocked = (input: {
-    readonly authority: ArtifactAuthority;
-    readonly artifactId: ArtifactId;
-    readonly revisionId: ArtifactRevisionId;
-  }) =>
-    Effect.gen(function* () {
+  const resolveRevisionUnlocked = Effect.fn("GeneratedDocumentStore.resolveRevisionUnlocked")(
+    function* (input: {
+      readonly authority: ArtifactAuthority;
+      readonly artifactId: ArtifactId;
+      readonly revisionId: ArtifactRevisionId;
+    }) {
       if (input.authority !== authority) {
         return yield* makeStoreError(
           "resolve",
@@ -1031,7 +1033,8 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
           }),
         },
       };
-    });
+    },
+  );
 
   const resolveRevision = (input: {
     readonly authority: ArtifactAuthority;
@@ -1039,28 +1042,27 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
     readonly revisionId: ArtifactRevisionId;
   }) => resolveRevisionUnlocked(input);
 
-  const revisionExists = (input: {
+  const revisionExists = Effect.fn("GeneratedDocumentStore.revisionExists")(function* (input: {
     readonly authority: ArtifactAuthority;
     readonly artifactId: ArtifactId;
     readonly revisionId: ArtifactRevisionId;
-  }) =>
-    Effect.gen(function* () {
-      if (input.authority !== authority) return false;
-      const [metadataExists, pdfExists] = yield* Effect.all([
-        fileSystem.exists(revisionMetadataPath(input.artifactId, input.revisionId)),
-        fileSystem.exists(revisionPdfPath(input.artifactId, input.revisionId)),
-      ]).pipe(
-        Effect.mapError((cause) =>
-          makeStoreError(
-            "resolve",
-            "filesystem",
-            "Unable to inspect generated PDF revision evidence.",
-            cause,
-          ),
+  }) {
+    if (input.authority !== authority) return false;
+    const [metadataExists, pdfExists] = yield* Effect.all([
+      fileSystem.exists(revisionMetadataPath(input.artifactId, input.revisionId)),
+      fileSystem.exists(revisionPdfPath(input.artifactId, input.revisionId)),
+    ]).pipe(
+      Effect.mapError((cause) =>
+        makeStoreError(
+          "resolve",
+          "filesystem",
+          "Unable to inspect generated PDF revision evidence.",
+          cause,
         ),
-      );
-      return metadataExists && pdfExists;
-    });
+      ),
+    );
+    return metadataExists && pdfExists;
+  });
 
   const resolveRevisionForAsset = (input: {
     readonly authority: ArtifactAuthority;
@@ -1335,37 +1337,38 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
    * failure, so its production is released through the abandon path: a published
    * revision stays current instead of being wrongly staled.
    */
-  const reconcileInterruptedProductions = (bindings: ReadonlyArray<DocumentArtifactBinding>) =>
-    Effect.gen(function* () {
-      const interrupted = bindings.filter((binding) => binding.latestAttempt.state === "running");
-      if (interrupted.length === 0) return;
-      const nowEpochMs = yield* Clock.currentTimeMillis;
-      for (const binding of interrupted) {
-        const transition = abandonDocumentProduction(binding, {
-          generation: binding.generation,
-          operationId: binding.latestAttempt.operationId,
-          producerId: binding.latestAttempt.producerId,
-          reason: "The server restarted while this document was being produced.",
-          nowEpochMs,
-        });
-        if (transition._tag !== "Accepted") continue;
-        yield* commitBinding(transition.binding, "reconcile").pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Unable to reconcile an interrupted document production.", {
-              logicalDocumentKey: binding.logicalDocumentKey,
-              cause,
-            }),
-          ),
-        );
-        yield* Effect.logInfo("Reconciled an interrupted document production.", {
-          logicalDocumentKey: binding.logicalDocumentKey,
-          generation: transition.binding.generation,
-          operationId: binding.latestAttempt.operationId,
-          producerId: binding.latestAttempt.producerId,
-          status: transition.binding.status,
-        });
-      }
-    });
+  const reconcileInterruptedProductions = Effect.fn(
+    "GeneratedDocumentStore.reconcileInterruptedProductions",
+  )(function* (bindings: ReadonlyArray<DocumentArtifactBinding>) {
+    const interrupted = bindings.filter((binding) => binding.latestAttempt.state === "running");
+    if (interrupted.length === 0) return;
+    const nowEpochMs = yield* Clock.currentTimeMillis;
+    for (const binding of interrupted) {
+      const transition = abandonDocumentProduction(binding, {
+        generation: binding.generation,
+        operationId: binding.latestAttempt.operationId,
+        producerId: binding.latestAttempt.producerId,
+        reason: "The server restarted while this document was being produced.",
+        nowEpochMs,
+      });
+      if (transition._tag !== "Accepted") continue;
+      yield* commitBinding(transition.binding, "reconcile").pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Unable to reconcile an interrupted document production.", {
+            logicalDocumentKey: binding.logicalDocumentKey,
+            cause,
+          }),
+        ),
+      );
+      yield* Effect.logInfo("Reconciled an interrupted document production.", {
+        logicalDocumentKey: binding.logicalDocumentKey,
+        generation: transition.binding.generation,
+        operationId: binding.latestAttempt.operationId,
+        producerId: binding.latestAttempt.producerId,
+        status: transition.binding.status,
+      });
+    }
+  });
 
   // Startup reconciliation runs before the store is published so no caller can
   // observe interrupted state. It is best-effort: a store that cannot sweep still

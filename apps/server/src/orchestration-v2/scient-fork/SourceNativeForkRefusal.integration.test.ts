@@ -176,10 +176,7 @@ it.live(
         const name = "scient-source-native-fork-refusal";
         const cwd = yield* checkpointWorkspace(name);
         const recorded = yield* readProviderReplayTranscript(
-          new URL(
-            "../testkit/fixtures/thread_fork_native/codex_transcript.ndjson",
-            import.meta.url,
-          ),
+          new URL("./fixtures/thread_fork_native/codex_transcript.ndjson", import.meta.url),
         );
         const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
           materializeReplayTranscriptWorkspace(recorded, cwd),

@@ -20,18 +20,16 @@ import { LatexSyncTex } from "./LatexSyncTex.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import { LatexTikzPreview } from "./LatexTikzPreview.ts";
 
-function handle<A, E>(
+const handle = Effect.fn("ScientLatexHttp.handle")(function* <A, E>(
   endpointName: string,
   scope: typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope,
   reason: EnvironmentInternalErrorReason,
   run: Effect.Effect<A, E>,
 ) {
-  return Effect.gen(function* () {
-    yield* annotateEnvironmentRequest(endpointName);
-    yield* requireEnvironmentScope(scope);
-    return yield* run.pipe(Effect.catch((cause) => failEnvironmentInternal(reason, cause)));
-  });
-}
+  yield* annotateEnvironmentRequest(endpointName);
+  yield* requireEnvironmentScope(scope);
+  return yield* run.pipe(Effect.catch((cause) => failEnvironmentInternal(reason, cause)));
+});
 
 export const scientLatexHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -45,22 +43,21 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
     const documents = yield* GeneratedDocumentStore;
 
     /** Cached driver/compiler probes plus this server's managed-install facts. */
-    const toolchainReport = (refresh: boolean) =>
-      Effect.gen(function* () {
-        // Read the install state first. A finished install drops the probe
-        // cache before it reports itself ready, so probing afterwards means a
-        // report that says `ready` has already seen the engine it installed —
-        // which is what lets the client rebuild the moment it reads that.
-        const managedInstall = yield* managed.status;
-        const status = yield* toolchain.probe(refresh);
-        return {
-          ...status,
-          canInstallManaged: managed.canInstall,
-          downloadBytes: managed.downloadBytes,
-          // An install nobody has started yet is not news for the client.
-          ...(managedInstall.state === "idle" ? {} : { managedInstall }),
-        };
-      });
+    const toolchainReport = Effect.fn("http.toolchainReport")(function* (refresh: boolean) {
+      // Read the install state first. A finished install drops the probe
+      // cache before it reports itself ready, so probing afterwards means a
+      // report that says `ready` has already seen the engine it installed —
+      // which is what lets the client rebuild the moment it reads that.
+      const managedInstall = yield* managed.status;
+      const status = yield* toolchain.probe(refresh);
+      return {
+        ...status,
+        canInstallManaged: managed.canInstall,
+        downloadBytes: managed.downloadBytes,
+        // An install nobody has started yet is not news for the client.
+        ...(managedInstall.state === "idle" ? {} : { managedInstall }),
+      };
+    });
 
     return handlers
       .handle("artwork", (args) =>

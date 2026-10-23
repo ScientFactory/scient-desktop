@@ -39,30 +39,6 @@ async function runChild(source, deadlines = {}) {
   return result;
 }
 
-function processHasExited(pid) {
-  try {
-    process.kill(pid, 0);
-  } catch (error) {
-    if (error.code === "ESRCH") return true;
-    throw error;
-  }
-  // An orphan that already exited stays a zombie until its new parent reaps it.
-  try {
-    const stat = NodeFS.readFileSync(`/proc/${pid}/stat`, "utf8");
-    return stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z");
-  } catch {
-    return false;
-  }
-}
-
-async function waitForProcessExit(pid, timeoutMs = 5_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (!processHasExited(pid)) {
-    if (Date.now() > deadline) assert.fail(`process ${pid} is still running`);
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-}
-
 afterEach(() => {
   for (const root of roots.splice(0)) NodeFS.rmSync(root, { recursive: true, force: true });
 });
@@ -208,9 +184,30 @@ describe("actual desktop smoke child lifecycle", () => {
       let closed;
       let pending;
       let descendantPid;
+      const ready = Promise.withResolvers();
+      const descendantClosed = Promise.withResolvers();
       server.on("connection", (connection) => {
         socket = connection;
-        closed = new Promise((resolve) => connection.once("close", resolve));
+        let buffered = "";
+        connection.setEncoding("utf8");
+        connection.on("data", (chunk) => {
+          buffered += chunk;
+          const lines = buffered.split("\n");
+          buffered = lines.pop();
+          for (const line of lines) {
+            const receipt = JSON.parse(line);
+            if (receipt.type === "ready") ready.resolve(receipt);
+            if (receipt.type === "close") descendantClosed.resolve(receipt);
+          }
+        });
+        closed = new Promise((resolve) =>
+          connection.once("close", () => {
+            // A missing receipt is a failed handshake, never an inferred process exit.
+            ready.resolve(null);
+            descendantClosed.resolve(null);
+            resolve();
+          }),
+        );
         // An errored peer still closes and is released by the outer finally.
         connection.on("error", () => {});
       });
@@ -223,31 +220,60 @@ describe("actual desktop smoke child lifecycle", () => {
         const connected = NodeEvents.once(server, "connection", {
           signal: AbortSignal.timeout(5_000),
         });
-        const descendant = `
-          const net = require("node:net");
-          const socket = net.connect(${address.port}, "127.0.0.1", () => {
-            socket.write(String(process.pid));
-            process.send("ready");
+        const pipeHolder = `
+          process.on("message", (message) => {
+            if (message === "finish") process.exit(0);
           });
-          socket.on("data", () => process.exit(0));
-          socket.on("end", () => process.exit(1));
-          socket.on("error", () => process.exit(1));
+          process.send("ready");
+        `;
+        // Keep a real parent for the pipe holder after the smoke child exits,
+        // so cleanup can observe ChildProcess.close instead of polling an orphan PID.
+        const supervisor = `
+          const net = require("node:net");
+          const { spawn } = require("node:child_process");
+          const descendant = spawn(process.execPath, ["-e", ${JSON.stringify(pipeHolder)}], {
+            stdio: ["ignore", "inherit", "inherit", "ipc"]
+          });
+          let connected = false;
+          let childReady = false;
+          const announceReady = () => {
+            if (!connected || !childReady) return;
+            socket.write(JSON.stringify({ type: "ready", pid: descendant.pid }) + "\\n");
+            process.send("ready");
+          };
+          const socket = net.connect(${address.port}, "127.0.0.1", () => {
+            connected = true;
+            announceReady();
+          });
+          descendant.once("message", () => {
+            childReady = true;
+            announceReady();
+          });
+          descendant.once("close", (code, signal) => {
+            socket.write(JSON.stringify({ type: "close", pid: descendant.pid, code, signal }) + "\\n",
+              () => process.exit(code === 0 ? 0 : 1));
+          });
+          descendant.once("error", () => process.exit(1));
+          socket.on("data", () => {
+            if (descendant.connected) descendant.send("finish");
+          });
+          socket.on("end", () => descendant.kill("SIGKILL"));
+          socket.on("error", () => descendant.kill("SIGKILL"));
           // Safety cleanup if the test's handshake itself fails; this is not
           // the successful test's ordering or incomplete-drainage proof.
-          socket.setTimeout(5_000, () => process.exit(1));
+          socket.setTimeout(5_000, () => descendant.kill("SIGKILL"));
         `;
         pending = runChild(`
           const { spawn } = require("node:child_process");
-          const descendant = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], {
+          const supervisor = spawn(process.execPath, ["-e", ${JSON.stringify(supervisor)}], {
             stdio: ["ignore", "inherit", "inherit", "ipc"]
           });
-          descendant.once("message", () => process.exit(7));
+          supervisor.once("message", () => process.exit(7));
         `);
         await connected;
-        const [data] = await NodeEvents.once(socket, "data", {
-          signal: AbortSignal.timeout(5_000),
-        });
-        descendantPid = Number(data.toString());
+        const receipt = await ready.promise;
+        assert.isNotNull(receipt);
+        descendantPid = receipt.pid;
         assert.isTrue(Number.isInteger(descendantPid) && descendantPid > 0);
         const result = await pending;
         assert.equal(result.passed, false);
@@ -262,11 +288,17 @@ describe("actual desktop smoke child lifecycle", () => {
       } finally {
         try {
           if (socket && !socket.destroyed) socket.write("finish");
-          // The descendant closes this socket only as part of process.exit.
+          // The supervisor exits only after forwarding its child's actual close receipt.
           if (closed) await closed;
           if (pending) await pending;
           if (Number.isInteger(descendantPid) && descendantPid > 0) {
-            await waitForProcessExit(descendantPid);
+            assert.deepEqual(await descendantClosed.promise, {
+              type: "close",
+              pid: descendantPid,
+              code: 0,
+              signal: null,
+            });
+            assert.throws(() => process.kill(descendantPid, 0), /ESRCH/);
           }
         } finally {
           if (server.listening) {

@@ -6,6 +6,8 @@ import {
   OrchestrationV2ContextSourcePoint,
   OrchestrationV2ContextTransfer,
   OrchestrationV2CreationSource,
+  OrchestrationV2ProviderThread,
+  OrchestrationV2ProviderTurnTokenUsage,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
@@ -61,6 +63,8 @@ export interface ThreadForkServiceV2Shape {
     readonly commandId: CommandId;
     readonly cwd: string;
     readonly sourceRun: OrchestrationV2Run;
+    readonly sourceProviderThread?: OrchestrationV2ProviderThread | undefined;
+    readonly sourceTokenUsage?: OrchestrationV2ProviderTurnTokenUsage | undefined;
     readonly canonicalSourcePoint: OrchestrationV2ContextSourcePoint;
     readonly transferId: ContextTransferId;
     readonly targetThreadId: ThreadId;
@@ -79,126 +83,131 @@ export class ThreadForkServiceV2 extends Context.Service<
 export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
   ThreadForkServiceV2,
   ThreadForkServiceV2.of({
-    plan: (input) =>
-      Effect.gen(function* () {
-        if (!isForkableSourceRunStatus(input.sourceRun.status)) {
-          return yield* new ThreadForkPlanError({
-            sourceThreadId: input.sourceProjection.thread.id,
-            targetThreadId: input.targetThreadId,
-            cause: forkableSourceRunStatusError(input.sourceRun),
-          });
-        }
-        const history = yield* planConversationFork({
-          projection: input.sourceProjection,
-          targetThreadId: input.targetThreadId,
-          source: { kind: "settled-run", runId: input.sourceRun.id },
-        }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ThreadForkPlanError({
-                sourceThreadId: input.sourceProjection.thread.id,
-                targetThreadId: input.targetThreadId,
-                cause,
-              }),
-          ),
-        );
-        const native = freezeConversationForkNativeSource({
-          projection: input.sourceProjection,
-          retainedSourceItems: history.retained,
-          boundaryRunId: history.boundaryRunId,
-          sourceKind: "settled-run",
-        });
-        const targetThread: OrchestrationV2AppThread = {
-          ...input.sourceProjection.thread,
-          createdBy: input.createdBy,
-          creationSource: input.creationSource,
-          id: input.targetThreadId,
-          title: input.title ?? `${input.sourceProjection.thread.title} fork`,
-          activeProviderThreadId: null,
-          lineage: {
-            parentThreadId: input.sourceProjection.thread.id,
-            relationshipToParent: "fork",
-            rootThreadId: input.sourceProjection.thread.lineage.rootThreadId,
-          },
-          // Local frozen facts replace live source inheritance. Causal lineage
-          // and native optimization proof remain on the destination receipt.
-          forkedFrom: null,
-          historyOrigin: "scient_fork",
-          conversationImport: null,
-          forkLineage: {
-            originThreadId: input.sourceProjection.thread.id,
-            baselineAssistantMessageId: history.baselineAssistantMessageId,
-            ...(input.sourceProjection.thread.conversationImport != null
-              ? { sourceImport: input.sourceProjection.thread.conversationImport }
-              : input.sourceProjection.thread.forkLineage?.sourceImport === undefined
-                ? {}
-                : { sourceImport: input.sourceProjection.thread.forkLineage.sourceImport }),
-          },
-          conversationFork: {
-            commandId: input.commandId,
-            sourceThreadId: input.sourceProjection.thread.id,
-            workspaceMode: "local",
-            status: "ready",
-            cwd: input.cwd,
-            checkpointRef: null,
-            checkpointOid: null,
-            attachmentCopies: history.attachmentCopies,
-            error: null,
-          },
-          createdAt: input.createdAt,
-          updatedAt: input.createdAt,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          snoozedUntil: null,
-          snoozedAt: null,
-          lastVisitedAt: null,
-          unsettledAt: null,
-          limitRecovery: null,
-          pinnedAt: null,
-          pinOrderKey: null,
-          activeOrderKey: null,
-          titleRegeneration: null,
-          rollbackFailure: null,
-          rollbackRequestId: undefined,
-          // PR context follows the conversation; watching remains the source thread's responsibility.
-          pullRequests: input.sourceProjection.thread.pullRequests?.map(
-            ({ watch: _watch, ...link }) => link,
-          ),
-          deletedAt: null,
-        };
-        const transfer: OrchestrationV2ContextTransfer = {
-          id: input.transferId,
-          type: "fork",
+    plan: Effect.fn("ThreadForkService.plan")(function* (input) {
+      if (!isForkableSourceRunStatus(input.sourceRun.status)) {
+        return yield* new ThreadForkPlanError({
           sourceThreadId: input.sourceProjection.thread.id,
           targetThreadId: input.targetThreadId,
-          sourcePoint: input.canonicalSourcePoint,
-          basePoint: null,
-          sourceProviderInstanceId: input.sourceRun.providerInstanceId,
-          targetProviderInstanceId: null,
-          targetRunId: null,
-          ...(native.strategy === "native_fork"
-            ? { frozenSource: native.frozenSource }
-            : { portableReason: native.reason }),
-          status: "pending",
-          resolution: null,
-          createdBy: input.createdBy,
-          error: null,
-          createdAt: input.createdAt,
-          updatedAt: input.createdAt,
-          consumedAt: null,
-        };
-        const boundaryItem = conversationForkBoundaryItem({
-          targetThreadId: input.targetThreadId,
-          ordinal: history.history.length,
-          createdAt: input.createdAt,
-          source: {
-            type: "run",
-            threadId: input.sourceProjection.thread.id,
-            runId: input.sourceRun.id,
-          },
+          cause: forkableSourceRunStatusError(input.sourceRun),
         });
-        return { targetThread, transfer, history, boundaryItem };
-      }),
+      }
+      const history = yield* planConversationFork({
+        projection: input.sourceProjection,
+        targetThreadId: input.targetThreadId,
+        source: { kind: "settled-run", runId: input.sourceRun.id },
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadForkPlanError({
+              sourceThreadId: input.sourceProjection.thread.id,
+              targetThreadId: input.targetThreadId,
+              cause,
+            }),
+        ),
+      );
+      const native = freezeConversationForkNativeSource({
+        projection: input.sourceProjection,
+        retainedSourceItems: history.retained,
+        boundaryRunId: history.boundaryRunId,
+        sourceKind: "settled-run",
+      });
+      const targetThread: OrchestrationV2AppThread = {
+        ...input.sourceProjection.thread,
+        createdBy: input.createdBy,
+        creationSource: input.creationSource,
+        id: input.targetThreadId,
+        title: input.title ?? `${input.sourceProjection.thread.title} fork`,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: input.sourceProjection.thread.id,
+          relationshipToParent: "fork",
+          rootThreadId: input.sourceProjection.thread.lineage.rootThreadId,
+        },
+        // Local frozen facts replace live source inheritance. Causal lineage
+        // and native optimization proof remain on the destination receipt.
+        forkedFrom: null,
+        historyOrigin: "scient_fork",
+        conversationImport: null,
+        forkLineage: {
+          originThreadId: input.sourceProjection.thread.id,
+          baselineAssistantMessageId: history.baselineAssistantMessageId,
+          ...(input.sourceProjection.thread.conversationImport != null
+            ? { sourceImport: input.sourceProjection.thread.conversationImport }
+            : input.sourceProjection.thread.forkLineage?.sourceImport === undefined
+              ? {}
+              : { sourceImport: input.sourceProjection.thread.forkLineage.sourceImport }),
+        },
+        conversationFork: {
+          commandId: input.commandId,
+          sourceThreadId: input.sourceProjection.thread.id,
+          workspaceMode: "local",
+          status: "ready",
+          cwd: input.cwd,
+          checkpointRef: null,
+          checkpointOid: null,
+          attachmentCopies: history.attachmentCopies,
+          error: null,
+        },
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        snoozedUntil: null,
+        snoozedAt: null,
+        lastVisitedAt: null,
+        unsettledAt: null,
+        limitRecovery: null,
+        pinnedAt: null,
+        pinOrderKey: null,
+        activeOrderKey: null,
+        titleRegeneration: null,
+        rollbackFailure: null,
+        rollbackRequestId: undefined,
+        // PR context follows the conversation; watching remains the source thread's responsibility.
+        pullRequests: input.sourceProjection.thread.pullRequests?.map(
+          ({ watch: _watch, ...link }) => link,
+        ),
+        deletedAt: null,
+      };
+      const transfer: OrchestrationV2ContextTransfer = {
+        id: input.transferId,
+        type: "fork",
+        sourceThreadId: input.sourceProjection.thread.id,
+        targetThreadId: input.targetThreadId,
+        sourcePoint: input.canonicalSourcePoint,
+        basePoint: null,
+        sourceProviderInstanceId: input.sourceRun.providerInstanceId,
+        // Only native forks retain this context; portable handoffs rebuild it.
+        sourceTokenUsage:
+          (input.sourceRun.status === "completed" || input.sourceRun.status === "waiting") &&
+          native.strategy === "native_fork"
+            ? input.sourceTokenUsage
+            : undefined,
+        targetProviderInstanceId: null,
+        targetRunId: null,
+        ...(native.strategy === "native_fork"
+          ? { frozenSource: native.frozenSource }
+          : { portableReason: native.reason }),
+        status: "pending",
+        resolution: null,
+        createdBy: input.createdBy,
+        error: null,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+        consumedAt: null,
+      };
+      const boundaryItem = conversationForkBoundaryItem({
+        targetThreadId: input.targetThreadId,
+        ordinal: history.history.length,
+        createdAt: input.createdAt,
+        source: {
+          type: "run",
+          threadId: input.sourceProjection.thread.id,
+          runId: input.sourceRun.id,
+        },
+      });
+      return { targetThread, transfer, history, boundaryItem };
+    }),
   }),
 );

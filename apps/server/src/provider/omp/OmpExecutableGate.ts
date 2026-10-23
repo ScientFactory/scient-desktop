@@ -171,161 +171,165 @@ export const makeOmpExecutableGate = Effect.fn("makeOmpExecutableGate")(function
     | { readonly _tag: "Leased"; readonly id: number }
     | { readonly _tag: "Wait"; readonly released: Deferred.Deferred<void> };
 
-  const acquireProcess: OmpExecutableGateShape["acquireProcess"] = (identity, leaseOptions) =>
-    Effect.gen(function* () {
-      const scope = yield* Scope.Scope;
-      // One atomic reservation. Taking the lease and registering its release
-      // are uninterruptible together, so an interrupted start cannot leak it.
-      const attempt = Effect.uninterruptible(
-        Effect.gen(function* () {
-          const decision = yield* Ref.modify(
-            state,
-            (current): readonly [LeaseDecision, GateState] => {
-              const entry = current.identities.get(identity) ?? EMPTY;
-              const activation = entry.activation;
-              if (activation && activation.token !== leaseOptions.activation?.token) {
-                return [{ _tag: "Wait", released: activation.released }, current];
-              }
-              const id = current.nextId;
-              const leases = new Map(entry.leases).set(id, leaseOptions.kind);
-              return [
-                { _tag: "Leased", id },
-                {
-                  nextId: id + 1,
-                  identities: withIdentity(current, identity, { ...entry, leases }),
-                },
-              ];
-            },
-          );
-          if (decision._tag === "Leased") {
-            yield* Scope.addFinalizer(scope, releaseLease(identity, decision.id));
-          }
-          return decision;
-        }),
-      );
-      const leaseWhenFree: Effect.Effect<void> = attempt.pipe(
-        Effect.flatMap((decision) =>
-          decision._tag === "Leased"
-            ? Effect.void
-            : Deferred.await(decision.released).pipe(Effect.andThen(leaseWhenFree)),
-        ),
-      );
-      yield* leaseWhenFree.pipe(
-        Effect.timeoutOrElse({
-          duration: processWaitTimeout,
-          orElse: () =>
-            Effect.fail(
-              busy(
-                identity,
-                "updating",
-                `${leaseOptions.target.name} is being updated. Try again in a moment.`,
-              ),
+  const acquireProcess: OmpExecutableGateShape["acquireProcess"] = Effect.fn(
+    "OmpExecutableGate.acquireProcess",
+  )(function* (identity, leaseOptions) {
+    const scope = yield* Scope.Scope;
+    // One atomic reservation. Taking the lease and registering its release
+    // are uninterruptible together, so an interrupted start cannot leak it.
+    const attempt = Effect.uninterruptible(
+      Effect.gen(function* () {
+        const decision = yield* Ref.modify(
+          state,
+          (current): readonly [LeaseDecision, GateState] => {
+            const entry = current.identities.get(identity) ?? EMPTY;
+            const activation = entry.activation;
+            if (activation && activation.token !== leaseOptions.activation?.token) {
+              return [{ _tag: "Wait", released: activation.released }, current];
+            }
+            const id = current.nextId;
+            const leases = new Map(entry.leases).set(id, leaseOptions.kind);
+            return [
+              { _tag: "Leased", id },
+              {
+                nextId: id + 1,
+                identities: withIdentity(current, identity, { ...entry, leases }),
+              },
+            ];
+          },
+        );
+        if (decision._tag === "Leased") {
+          yield* Scope.addFinalizer(scope, releaseLease(identity, decision.id));
+        }
+        return decision;
+      }),
+    );
+    const leaseWhenFree: Effect.Effect<void> = attempt.pipe(
+      Effect.flatMap((decision) =>
+        decision._tag === "Leased"
+          ? Effect.void
+          : Deferred.await(decision.released).pipe(Effect.andThen(leaseWhenFree)),
+      ),
+    );
+    yield* leaseWhenFree.pipe(
+      Effect.timeoutOrElse({
+        duration: processWaitTimeout,
+        orElse: () =>
+          Effect.fail(
+            busy(
+              identity,
+              "updating",
+              `${leaseOptions.target.name} is being updated. Try again in a moment.`,
             ),
-        }),
-      );
-    });
+          ),
+      }),
+    );
+  });
 
   type ActivationDecision =
     | { readonly _tag: "Held"; readonly activation: Activation; readonly draining: boolean }
     | { readonly _tag: "Refused"; readonly error: OmpExecutableBusyError };
 
-  const acquireActivation: OmpExecutableGateShape["acquireActivation"] = (identity, { target }) =>
-    Effect.gen(function* () {
-      const scope = yield* Scope.Scope;
-      const released = yield* Deferred.make<void>();
-      const drained = yield* Deferred.make<void>();
-      const decision = yield* Effect.uninterruptible(
-        Effect.gen(function* () {
-          const result = yield* Ref.modify(
-            state,
-            (current): readonly [ActivationDecision, GateState] => {
-              const entry = current.identities.get(identity) ?? EMPTY;
-              if (entry.activation) {
-                return [
-                  {
-                    _tag: "Refused",
-                    error: busy(
-                      identity,
-                      "activation-pending",
-                      `Another ${target.name} runtime change is already in progress.`,
-                    ),
-                  },
-                  current,
-                ];
-              }
-              const conversations = [...entry.leases.values()].filter(
-                (kind) => kind === "session",
-              ).length;
-              if (conversations > 0) {
-                return [
-                  {
-                    _tag: "Refused",
-                    error: busy(
-                      identity,
-                      "conversations-open",
-                      `${target.name} still has ${conversations} open conversation${conversations === 1 ? "" : "s"}. Stop them and try again.`,
-                    ),
-                  },
-                  current,
-                ];
-              }
-              const activation: Activation = { token: current.nextId, released, drained };
+  const acquireActivation: OmpExecutableGateShape["acquireActivation"] = Effect.fn(
+    "OmpExecutableGate.acquireActivation",
+  )(function* (identity, { target }) {
+    const scope = yield* Scope.Scope;
+    const released = yield* Deferred.make<void>();
+    const drained = yield* Deferred.make<void>();
+    const decision = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const result = yield* Ref.modify(
+          state,
+          (current): readonly [ActivationDecision, GateState] => {
+            const entry = current.identities.get(identity) ?? EMPTY;
+            if (entry.activation) {
               return [
-                { _tag: "Held", activation, draining: entry.leases.size > 0 },
                 {
-                  nextId: current.nextId + 1,
-                  identities: withIdentity(current, identity, { ...entry, activation }),
+                  _tag: "Refused",
+                  error: busy(
+                    identity,
+                    "activation-pending",
+                    `Another ${target.name} runtime change is already in progress.`,
+                  ),
                 },
+                current,
               ];
-            },
-          );
-          if (result._tag === "Held") {
-            yield* Scope.addFinalizer(scope, releaseActivation(identity, result.activation));
-          }
-          return result;
-        }),
-      );
-      if (decision._tag === "Refused") return yield* decision.error;
-      const { activation } = decision;
-      if (decision.draining) {
-        yield* Deferred.await(drained).pipe(
-          Effect.timeoutOrElse({
-            duration: drainTimeout,
-            orElse: () =>
-              Effect.fail(
-                busy(
-                  identity,
-                  "work-running",
-                  `${target.name} is still finishing background work. Try the runtime change again in a moment.`,
-                ),
-              ),
-          }),
-          // Release at once: waiting processes must not stall until the
-          // caller's scope closes.
-          Effect.onError(() => releaseActivation(identity, activation)),
+            }
+            const conversations = [...entry.leases.values()].filter(
+              (kind) => kind === "session",
+            ).length;
+            if (conversations > 0) {
+              return [
+                {
+                  _tag: "Refused",
+                  error: busy(
+                    identity,
+                    "conversations-open",
+                    `${target.name} still has ${conversations} open conversation${conversations === 1 ? "" : "s"}. Stop them and try again.`,
+                  ),
+                },
+                current,
+              ];
+            }
+            const activation: Activation = { token: current.nextId, released, drained };
+            return [
+              { _tag: "Held", activation, draining: entry.leases.size > 0 },
+              {
+                nextId: current.nextId + 1,
+                identities: withIdentity(current, identity, { ...entry, activation }),
+              },
+            ];
+          },
         );
-      }
-      return { identity, token: activation.token };
-    });
-
-  const verifiedVersion = <A, E, R>(key: string, verify: Effect.Effect<A, E, R>) =>
-    Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      const cached = (yield* Ref.get(versions)).get(key);
-      if (cached && cached.expiresAt > now) return cached.verified as A;
-      const verified = yield* verify;
-      yield* Ref.update(versions, (current) => {
-        const next = new Map([...current].filter(([, entry]) => entry.expiresAt > now));
-        next.delete(key);
-        while (next.size >= MAX_VERSION_CACHE_ENTRIES) {
-          const oldest = next.keys().next().value;
-          if (oldest === undefined) break;
-          next.delete(oldest);
+        if (result._tag === "Held") {
+          yield* Scope.addFinalizer(scope, releaseActivation(identity, result.activation));
         }
-        return next.set(key, { verified, expiresAt: now + VERSION_CACHE_TTL_MS });
-      });
-      return verified;
+        return result;
+      }),
+    );
+    if (decision._tag === "Refused") return yield* decision.error;
+    const { activation } = decision;
+    if (decision.draining) {
+      yield* Deferred.await(drained).pipe(
+        Effect.timeoutOrElse({
+          duration: drainTimeout,
+          orElse: () =>
+            Effect.fail(
+              busy(
+                identity,
+                "work-running",
+                `${target.name} is still finishing background work. Try the runtime change again in a moment.`,
+              ),
+            ),
+        }),
+        // Release at once: waiting processes must not stall until the
+        // caller's scope closes.
+        Effect.onError(() => releaseActivation(identity, activation)),
+      );
+    }
+    return { identity, token: activation.token };
+  });
+
+  const verifiedVersion = Effect.fn("OmpExecutableGate.verifiedVersion")(function* <A, E, R>(
+    key: string,
+    verify: Effect.Effect<A, E, R>,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const cached = (yield* Ref.get(versions)).get(key);
+    if (cached && cached.expiresAt > now) return cached.verified as A;
+    const verified = yield* verify;
+    yield* Ref.update(versions, (current) => {
+      const next = new Map([...current].filter(([, entry]) => entry.expiresAt > now));
+      next.delete(key);
+      while (next.size >= MAX_VERSION_CACHE_ENTRIES) {
+        const oldest = next.keys().next().value;
+        if (oldest === undefined) break;
+        next.delete(oldest);
+      }
+      return next.set(key, { verified, expiresAt: now + VERSION_CACHE_TTL_MS });
     });
+    return verified;
+  });
 
   return OmpExecutableGate.of({ acquireProcess, acquireActivation, verifiedVersion });
 });

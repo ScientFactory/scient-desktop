@@ -1056,7 +1056,25 @@ describe("ConversationImportStaging", () => {
           Effect.gen(function* () {
             for (const staged of lease.input.attachments) {
               const destinationPath = NodePath.join(copies, staged.resourceId);
-              yield* lease.copyAttachment({ resourceId: staged.resourceId, destinationPath });
+              let selectedDestination = destinationPath;
+              const reads: string[] = [];
+              const copy = lease.copyAttachment({
+                get resourceId() {
+                  reads.push("resourceId");
+                  return staged.resourceId;
+                },
+                get destinationPath() {
+                  reads.push("destinationPath");
+                  return selectedDestination;
+                },
+              });
+              assert.deepStrictEqual(reads, ["resourceId", "destinationPath"]);
+              assert.isFalse(NodeFS.existsSync(destinationPath));
+              selectedDestination = `${destinationPath}-changed-after-construction`;
+              yield* copy;
+              assert.deepStrictEqual(reads, ["resourceId", "destinationPath"]);
+              assert.isTrue(NodeFS.existsSync(destinationPath));
+              assert.isFalse(NodeFS.existsSync(selectedDestination));
               // Retrying a copy of the same bytes is a no-op.
               yield* lease.copyAttachment({ resourceId: staged.resourceId, destinationPath });
             }

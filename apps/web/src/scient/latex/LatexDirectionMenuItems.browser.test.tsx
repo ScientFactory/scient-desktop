@@ -1,5 +1,6 @@
+import { render as _fixtureRender } from "../../../test/render";
 import type { ReactNode } from "react";
-import { createRoot } from "react-dom/client";
+
 import { Editor, Extension, Node } from "@tiptap/core";
 import { EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -59,10 +60,12 @@ const math = Node.create({
 });
 
 it("enables a compact direction menu in a plain English document and saves a working override", async () => {
+  await using _fixture = _createFixture();
+
   await page.viewport(1200, 800);
   const host = document.createElement("div");
   document.body.append(host);
-  const root = createRoot(host);
+  const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
   let source =
     "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\nText \\textbf{bold} $x^2$.\n\nNeighbour.\n\\end{document}\n";
   let projection = projectLatexVisualDocument(source);
@@ -70,17 +73,17 @@ it("enables a compact direction menu in a plain English document and saves a wor
   const editor = new Editor({
     extensions: [StarterKit, sourceAttributes, scientific, math],
     content: projection.content,
-    onUpdate: ({ editor: owner }) => {
+    onUpdate: async ({ editor: owner }) => {
       const result = applyLatexVisualDocumentChange(source, projection, owner.getJSON());
       if (!result) throw new Error("The direction command could not save its source.");
       source = result.source;
       projection = result.projection;
       writes++;
-      render();
+      await render();
     },
   });
-  const render = () =>
-    root.render(
+  const render = async () =>
+    await root.rerender(
       <>
         <TextMenu
           paragraphStyle={null}
@@ -99,7 +102,7 @@ it("enables a compact direction menu in a plain English document and saves a wor
       </>,
     );
   try {
-    render();
+    await render();
     await expect.poll(() => host.querySelector(".ProseMirror")).toBeTruthy();
     editor.commands.setTextSelection(3);
     editor.commands.focus();
@@ -127,8 +130,25 @@ it("enables a compact direction menu in a plain English document and saves a wor
     await expect.poll(() => source.includes("\\begin{RTL}")).toBe(true);
     expect(source.match(/\\usepackage\{bidi\}/gu)).toHaveLength(1);
   } finally {
-    root.unmount();
+    await root.unmount();
     editor.destroy();
     host.remove();
   }
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

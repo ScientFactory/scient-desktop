@@ -284,387 +284,386 @@ const defaultDependencies: DesktopVoiceDependencies = {
   }),
 };
 
-export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
-  Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
-    const runtimeDir = environment.isDevelopment
-      ? NodePath.join(environment.rootDir, "native", "whisper-runtime")
-      : NodePath.join(environment.resourcesPath, "whisper-runtime");
-    const modelDir = NodePath.join(environment.stateDir, "voice", "models");
-    const sharedVoiceDir = resolveDevelopmentSharedVoiceDirectory(environment);
+export const makeWithDependencies = Effect.fn("DesktopVoice.makeWithDependencies")(function* (
+  dependencies: DesktopVoiceDependencies,
+) {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const runtimeDir = environment.isDevelopment
+    ? NodePath.join(environment.rootDir, "native", "whisper-runtime")
+    : NodePath.join(environment.resourcesPath, "whisper-runtime");
+  const modelDir = NodePath.join(environment.stateDir, "voice", "models");
+  const sharedVoiceDir = resolveDevelopmentSharedVoiceDirectory(environment);
 
-    let activeModelMutation: "select" | "remove" | null = null;
-    let downloadController: AbortController | null = null;
-    let downloadModelId: VoiceModelId | null = null;
-    // Transcriptions run one at a time, in arrival order. A newer request waits
-    // for the engine; it never aborts work another window or thread started.
-    const transcriptions = new Set<{
-      readonly requestId: string | undefined;
-      readonly controller: AbortController;
-    }>();
-    let transcriptionTail: Promise<void> = Promise.resolve();
-    const abortTranscriptions = () => {
-      for (const transcription of transcriptions) transcription.controller.abort();
-    };
-    let selectedModelId = (yield* appSettings.load).voiceSelectedModelId ?? null;
-    const persistSelectedModel = (
-      modelId: VoiceModelId | null,
-    ): Effect.Effect<void, DesktopAppSettings.DesktopSettingsWriteError> =>
-      appSettings.setVoiceSelectedModelId(modelId).pipe(
-        Effect.tap(() =>
-          sharedVoiceDir !== null && modelId !== null
-            ? Effect.promise(() => writeSharedVoiceSelection(sharedVoiceDir, modelId))
-            : Effect.void,
-        ),
-        Effect.asVoid,
-      );
-
-    const engine: TranscriptionEngine = dependencies.createEngine({
-      runtimeDir,
-      modelDir,
-      ...(sharedVoiceDir !== null
-        ? { sharedModelDir: NodePath.join(sharedVoiceDir, "models") }
-        : {}),
-      manifests: VOICE_MODEL_DEFINITIONS,
-      platform: environment.platform,
-      isMaintenanceActive: () => activeModelMutation === "remove",
-    });
-    const runtimeAvailable = yield* Effect.tryPromise({
-      try: () => engine.isRuntimeInstalled(),
-      catch: () => new VoiceHostProbeError({ operation: "runtime" }),
-    }).pipe(
-      Effect.catch(() =>
-        Effect.logWarning("Could not inspect the offline voice runtime.").pipe(Effect.as(false)),
+  let activeModelMutation: "select" | "remove" | null = null;
+  let downloadController: AbortController | null = null;
+  let downloadModelId: VoiceModelId | null = null;
+  // Transcriptions run one at a time, in arrival order. A newer request waits
+  // for the engine; it never aborts work another window or thread started.
+  const transcriptions = new Set<{
+    readonly requestId: string | undefined;
+    readonly controller: AbortController;
+  }>();
+  let transcriptionTail: Promise<void> = Promise.resolve();
+  const abortTranscriptions = () => {
+    for (const transcription of transcriptions) transcription.controller.abort();
+  };
+  let selectedModelId = (yield* appSettings.load).voiceSelectedModelId ?? null;
+  const persistSelectedModel = (
+    modelId: VoiceModelId | null,
+  ): Effect.Effect<void, DesktopAppSettings.DesktopSettingsWriteError> =>
+    appSettings.setVoiceSelectedModelId(modelId).pipe(
+      Effect.tap(() =>
+        sharedVoiceDir !== null && modelId !== null
+          ? Effect.promise(() => writeSharedVoiceSelection(sharedVoiceDir, modelId))
+          : Effect.void,
       ),
+      Effect.asVoid,
     );
 
-    // Keep persisted selection aligned with verified files. A sole existing
-    // model is the unambiguous fallback, including installations created before
-    // model selection was persisted. A transient probe failure must not erase a
-    // previously valid preference.
-    const existingStates: Readonly<Record<string, CoreVoiceModelState>> | null =
-      yield* Effect.tryPromise({
-        try: () => engine.getModelStates(),
-        catch: () => new VoiceHostProbeError({ operation: "model" }),
-      }).pipe(
+  const engine: TranscriptionEngine = dependencies.createEngine({
+    runtimeDir,
+    modelDir,
+    ...(sharedVoiceDir !== null ? { sharedModelDir: NodePath.join(sharedVoiceDir, "models") } : {}),
+    manifests: VOICE_MODEL_DEFINITIONS,
+    platform: environment.platform,
+    isMaintenanceActive: () => activeModelMutation === "remove",
+  });
+  const runtimeAvailable = yield* Effect.tryPromise({
+    try: () => engine.isRuntimeInstalled(),
+    catch: () => new VoiceHostProbeError({ operation: "runtime" }),
+  }).pipe(
+    Effect.catch(() =>
+      Effect.logWarning("Could not inspect the offline voice runtime.").pipe(Effect.as(false)),
+    ),
+  );
+
+  // Keep persisted selection aligned with verified files. A sole existing
+  // model is the unambiguous fallback, including installations created before
+  // model selection was persisted. A transient probe failure must not erase a
+  // previously valid preference.
+  const existingStates: Readonly<Record<string, CoreVoiceModelState>> | null =
+    yield* Effect.tryPromise({
+      try: () => engine.getModelStates(),
+      catch: () => new VoiceHostProbeError({ operation: "model" }),
+    }).pipe(
+      Effect.catch(() =>
+        Effect.logWarning("Could not inspect the existing offline voice models.").pipe(
+          Effect.as<Readonly<Record<string, CoreVoiceModelState>> | null>(null),
+        ),
+      ),
+    );
+  if (existingStates !== null) {
+    const selectedState =
+      selectedModelId === null
+        ? ({ state: "missing" } as const)
+        : (existingStates[selectedModelId] ?? ({ state: "missing" } as const));
+    // A dev app that has several shared models and no choice of its own
+    // starts from the model last chosen in another dev app.
+    const sharedSelection =
+      sharedVoiceDir !== null && !isReady(selectedState)
+        ? yield* Effect.promise(() => readSharedVoiceSelection(sharedVoiceDir))
+        : null;
+    const reconciledModelId = isReady(selectedState)
+      ? selectedModelId
+      : (findOnlyReadyModelId(existingStates) ??
+        (sharedSelection !== null &&
+        isReady(existingStates[sharedSelection] ?? { state: "missing" })
+          ? sharedSelection
+          : null));
+    if (reconciledModelId !== selectedModelId) {
+      selectedModelId = reconciledModelId;
+      yield* persistSelectedModel(selectedModelId).pipe(
         Effect.catch(() =>
-          Effect.logWarning("Could not inspect the existing offline voice models.").pipe(
-            Effect.as<Readonly<Record<string, CoreVoiceModelState>> | null>(null),
-          ),
+          Effect.logWarning("Could not persist the reconciled offline voice selection."),
         ),
       );
-    if (existingStates !== null) {
-      const selectedState =
-        selectedModelId === null
-          ? ({ state: "missing" } as const)
-          : (existingStates[selectedModelId] ?? ({ state: "missing" } as const));
-      // A dev app that has several shared models and no choice of its own
-      // starts from the model last chosen in another dev app.
-      const sharedSelection =
-        sharedVoiceDir !== null && !isReady(selectedState)
-          ? yield* Effect.promise(() => readSharedVoiceSelection(sharedVoiceDir))
-          : null;
-      const reconciledModelId = isReady(selectedState)
-        ? selectedModelId
-        : (findOnlyReadyModelId(existingStates) ??
-          (sharedSelection !== null &&
-          isReady(existingStates[sharedSelection] ?? { state: "missing" })
-            ? sharedSelection
-            : null));
-      if (reconciledModelId !== selectedModelId) {
-        selectedModelId = reconciledModelId;
-        yield* persistSelectedModel(selectedModelId).pipe(
-          Effect.catch(() =>
-            Effect.logWarning("Could not persist the reconciled offline voice selection."),
-          ),
-        );
-      }
     }
+  }
 
-    const deviceCapacity = dependencies.readDeviceCapacity();
-    const freeModelStorageBytes = yield* Effect.tryPromise({
-      try: () => dependencies.resolveFreeBytes(modelDir),
-      catch: () => new VoiceHostProbeError({ operation: "storage" }),
-    }).pipe(
-      Effect.catch(() =>
-        Effect.logWarning("Could not inspect free space for offline voice models.").pipe(
-          Effect.as(0),
-        ),
+  const deviceCapacity = dependencies.readDeviceCapacity();
+  const freeModelStorageBytes = yield* Effect.tryPromise({
+    try: () => dependencies.resolveFreeBytes(modelDir),
+    catch: () => new VoiceHostProbeError({ operation: "storage" }),
+  }).pipe(
+    Effect.catch(() =>
+      Effect.logWarning("Could not inspect free space for offline voice models.").pipe(
+        Effect.as(0),
       ),
-    );
-    const recommendation = recommendVoiceModel(runtimeAvailable, {
-      ...deviceCapacity,
-      platform: environment.platform,
-      runningUnderArm64Translation: environment.runtimeInfo.runningUnderArm64Translation,
-      freeModelStorageBytes,
-    });
+    ),
+  );
+  const recommendation = recommendVoiceModel(runtimeAvailable, {
+    ...deviceCapacity,
+    platform: environment.platform,
+    runningUnderArm64Translation: environment.runtimeInfo.runningUnderArm64Translation,
+    freeModelStorageBytes,
+  });
 
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(async () => {
-        downloadController?.abort();
-        abortTranscriptions();
-        await engine.dispose().catch(() => undefined);
-      }),
-    );
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(async () => {
+      downloadController?.abort();
+      abortTranscriptions();
+      await engine.dispose().catch(() => undefined);
+    }),
+  );
 
-    const getPublicState = async (): Promise<VoiceModelsSnapshot> => {
-      const states = await engine.getModelStates();
-      const models: VoiceModelSummary[] = VOICE_MODEL_DEFINITIONS.map((definition) => {
-        const id = toPublicModelId(definition.id);
-        return {
-          id,
-          displayName: definition.displayName,
-          description: definition.description,
-          byteSize: definition.byteSize,
-          state: projectVoiceModelState(states[definition.id] ?? { state: "missing" }),
-        };
-      });
+  const getPublicState = async (): Promise<VoiceModelsSnapshot> => {
+    const states = await engine.getModelStates();
+    const models: VoiceModelSummary[] = VOICE_MODEL_DEFINITIONS.map((definition) => {
+      const id = toPublicModelId(definition.id);
       return {
-        runtimeAvailable,
-        ...(runtimeAvailable ? {} : { runtimeMessage: RUNTIME_UNAVAILABLE_MESSAGE }),
-        selectedModelId,
-        recommendation,
-        activeDownloadModelId: downloadModelId,
-        models,
+        id,
+        displayName: definition.displayName,
+        description: definition.description,
+        byteSize: definition.byteSize,
+        state: projectVoiceModelState(states[definition.id] ?? { state: "missing" }),
       };
+    });
+    return {
+      runtimeAvailable,
+      ...(runtimeAvailable ? {} : { runtimeMessage: RUNTIME_UNAVAILABLE_MESSAGE }),
+      selectedModelId,
+      recommendation,
+      activeDownloadModelId: downloadModelId,
+      models,
     };
+  };
 
-    return DesktopVoice.of({
-      getModelsState: Effect.promise(getPublicState),
+  return DesktopVoice.of({
+    getModelsState: Effect.promise(getPublicState),
 
-      downloadModel: (request) =>
-        Effect.gen(function* () {
-          if (activeModelMutation === "remove") {
-            return yield* new VoiceRequestError({
-              kind: "provider-error",
-              safeMessage: "Wait for the current offline voice model operation to finish.",
-            });
-          }
-          if (!runtimeAvailable) {
-            return yield* new VoiceRequestError({
-              kind: "backend-unavailable",
-              safeMessage: RUNTIME_UNAVAILABLE_MESSAGE,
-            });
-          }
-          if (downloadController !== null) {
-            return yield* new VoiceRequestError({
-              kind: "provider-error",
-              safeMessage: "Another offline voice model is downloading.",
-            });
-          }
-          const controller = new AbortController();
-          downloadController = controller;
-          downloadModelId = request.modelId;
-          const clearDownloadState = Effect.sync(() => {
-            if (downloadController === controller) {
-              downloadController = null;
-              downloadModelId = null;
-            }
+    downloadModel: Effect.fn("DesktopVoice.downloadModel")(function* (
+      request: VoiceModelDownloadRequest,
+    ) {
+      if (activeModelMutation === "remove") {
+        return yield* new VoiceRequestError({
+          kind: "provider-error",
+          safeMessage: "Wait for the current offline voice model operation to finish.",
+        });
+      }
+      if (!runtimeAvailable) {
+        return yield* new VoiceRequestError({
+          kind: "backend-unavailable",
+          safeMessage: RUNTIME_UNAVAILABLE_MESSAGE,
+        });
+      }
+      if (downloadController !== null) {
+        return yield* new VoiceRequestError({
+          kind: "provider-error",
+          safeMessage: "Another offline voice model is downloading.",
+        });
+      }
+      const controller = new AbortController();
+      downloadController = controller;
+      downloadModelId = request.modelId;
+      const clearDownloadState = Effect.sync(() => {
+        if (downloadController === controller) {
+          downloadController = null;
+          downloadModelId = null;
+        }
+      });
+      return yield* Effect.gen(function* () {
+        const definition = getVoiceModelDefinition(request.modelId);
+        if (!definition) {
+          return yield* new VoiceRequestError({
+            kind: "provider-error",
+            safeMessage: "This offline voice model is not supported by this build.",
           });
-          return yield* Effect.gen(function* () {
-            const definition = getVoiceModelDefinition(request.modelId);
-            if (!definition) {
-              return yield* new VoiceRequestError({
-                kind: "provider-error",
-                safeMessage: "This offline voice model is not supported by this build.",
-              });
-            }
-            const currentState = yield* Effect.tryPromise({
-              try: () => engine.getModelState(request.modelId),
-              catch: (cause) => toVoiceRequestError(cause, "download"),
-            });
-            if (currentState.state !== "ready") {
-              const freeBytes = yield* Effect.tryPromise({
-                try: () => dependencies.resolveFreeBytes(modelDir),
-                catch: (cause) => toVoiceRequestError(cause, "download"),
-              });
-              const partialBytes =
-                currentState.state === "missing"
-                  ? Math.min(currentState.partialBytes ?? 0, definition.byteSize)
-                  : 0;
-              const requiredBytes = definition.byteSize - partialBytes + 512 * 1024 * 1024;
-              if (Number.isFinite(freeBytes) && freeBytes < requiredBytes) {
-                return yield* new VoiceRequestError({
-                  kind: "insufficient-storage",
-                  safeMessage: `Not enough free space for ${definition.displayName}. Free at least ${Math.ceil(requiredBytes / 1024 / 1024)} MiB and try again.`,
-                });
-              }
-            }
-            const ensurePromise = engine.ensureModel(request.modelId, controller.signal);
-            yield* Effect.tryPromise({
-              try: () => ensurePromise,
-              catch: (cause) => toVoiceRequestError(cause, "download"),
-            });
-            const installedStates = yield* Effect.promise(() => engine.getModelStates());
-            const isOnlyInstalledModel = findOnlyReadyModelId(installedStates) === request.modelId;
-            if (
-              request.selectOnSuccess === true ||
-              (selectedModelId === null && isOnlyInstalledModel)
-            ) {
-              yield* persistSelectedModel(request.modelId).pipe(
-                Effect.mapError((cause) => toVoiceRequestError(cause, "download")),
-              );
-              selectedModelId = request.modelId;
-            }
-            yield* clearDownloadState;
-            return yield* Effect.promise(getPublicState);
-          }).pipe(Effect.ensuring(clearDownloadState));
-        }),
-
-      cancelModelDownload: (request) =>
-        Effect.sync(() => {
-          if (downloadModelId === request.modelId) downloadController?.abort();
-        }),
-
-      selectModel: (request) =>
-        Effect.gen(function* () {
-          if (activeModelMutation !== null) {
+        }
+        const currentState = yield* Effect.tryPromise({
+          try: () => engine.getModelState(request.modelId),
+          catch: (cause) => toVoiceRequestError(cause, "download"),
+        });
+        if (currentState.state !== "ready") {
+          const freeBytes = yield* Effect.tryPromise({
+            try: () => dependencies.resolveFreeBytes(modelDir),
+            catch: (cause) => toVoiceRequestError(cause, "download"),
+          });
+          const partialBytes =
+            currentState.state === "missing"
+              ? Math.min(currentState.partialBytes ?? 0, definition.byteSize)
+              : 0;
+          const requiredBytes = definition.byteSize - partialBytes + 512 * 1024 * 1024;
+          if (Number.isFinite(freeBytes) && freeBytes < requiredBytes) {
             return yield* new VoiceRequestError({
-              kind: "provider-error",
-              safeMessage: "Wait for the current offline voice model operation to finish.",
+              kind: "insufficient-storage",
+              safeMessage: `Not enough free space for ${definition.displayName}. Free at least ${Math.ceil(requiredBytes / 1024 / 1024)} MiB and try again.`,
             });
           }
-          activeModelMutation = "select";
-          return yield* Effect.gen(function* () {
-            const state = yield* Effect.tryPromise({
-              try: () => engine.getModelState(request.modelId),
-              catch: (cause) => toVoiceRequestError(cause, "download"),
-            });
-            if (!isReady(state)) {
-              return yield* new VoiceRequestError({
-                kind: "model-missing",
-                safeMessage: "Download this offline voice model before selecting it.",
-              });
-            }
-            yield* persistSelectedModel(request.modelId).pipe(
-              Effect.mapError((cause) => toVoiceRequestError(cause, "download")),
-            );
-            selectedModelId = request.modelId;
-            return yield* Effect.promise(getPublicState);
-          }).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (activeModelMutation === "select") activeModelMutation = null;
-              }),
-            ),
+        }
+        const ensurePromise = engine.ensureModel(request.modelId, controller.signal);
+        yield* Effect.tryPromise({
+          try: () => ensurePromise,
+          catch: (cause) => toVoiceRequestError(cause, "download"),
+        });
+        const installedStates = yield* Effect.promise(() => engine.getModelStates());
+        const isOnlyInstalledModel = findOnlyReadyModelId(installedStates) === request.modelId;
+        if (
+          request.selectOnSuccess === true ||
+          (selectedModelId === null && isOnlyInstalledModel)
+        ) {
+          yield* persistSelectedModel(request.modelId).pipe(
+            Effect.mapError((cause) => toVoiceRequestError(cause, "download")),
           );
-        }),
+          selectedModelId = request.modelId;
+        }
+        yield* clearDownloadState;
+        return yield* Effect.promise(getPublicState);
+      }).pipe(Effect.ensuring(clearDownloadState));
+    }),
 
-      removeModel: (request) =>
-        Effect.gen(function* () {
-          if (activeModelMutation !== null || downloadController !== null) {
+    cancelModelDownload: (request) =>
+      Effect.sync(() => {
+        if (downloadModelId === request.modelId) downloadController?.abort();
+      }),
+
+    selectModel: Effect.fn("DesktopVoice.selectModel")(function* (
+      request: VoiceModelOperationRequest,
+    ) {
+      if (activeModelMutation !== null) {
+        return yield* new VoiceRequestError({
+          kind: "provider-error",
+          safeMessage: "Wait for the current offline voice model operation to finish.",
+        });
+      }
+      activeModelMutation = "select";
+      return yield* Effect.gen(function* () {
+        const state = yield* Effect.tryPromise({
+          try: () => engine.getModelState(request.modelId),
+          catch: (cause) => toVoiceRequestError(cause, "download"),
+        });
+        if (!isReady(state)) {
+          return yield* new VoiceRequestError({
+            kind: "model-missing",
+            safeMessage: "Download this offline voice model before selecting it.",
+          });
+        }
+        yield* persistSelectedModel(request.modelId).pipe(
+          Effect.mapError((cause) => toVoiceRequestError(cause, "download")),
+        );
+        selectedModelId = request.modelId;
+        return yield* Effect.promise(getPublicState);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (activeModelMutation === "select") activeModelMutation = null;
+          }),
+        ),
+      );
+    }),
+
+    removeModel: Effect.fn("DesktopVoice.removeModel")(function* (
+      request: VoiceModelRemoveRequest,
+    ) {
+      if (activeModelMutation !== null || downloadController !== null) {
+        return yield* new VoiceRequestError({
+          kind: "provider-error",
+          safeMessage: "Wait for the current offline voice model operation to finish.",
+        });
+      }
+      activeModelMutation = "remove";
+      return yield* Effect.gen(function* () {
+        abortTranscriptions();
+        const drained = transcriptionTail;
+        yield* Effect.promise(() => drained);
+
+        let replacement = request.replacementModelId ?? null;
+        if (replacement === request.modelId) {
+          return yield* new VoiceRequestError({
+            kind: "model-missing",
+            safeMessage: "Choose a different installed voice model as the fallback.",
+          });
+        }
+        if (selectedModelId === request.modelId && replacement === null) {
+          const states = yield* Effect.promise(() => engine.getModelStates());
+          replacement =
+            VOICE_MODEL_DEFINITIONS.map((definition) => toPublicModelId(definition.id)).find(
+              (id) => id !== request.modelId && isReady(states[id] ?? { state: "missing" }),
+            ) ?? null;
+        }
+        if (replacement !== null) {
+          const replacementState = yield* Effect.promise(() => engine.getModelState(replacement));
+          if (!isReady(replacementState)) {
             return yield* new VoiceRequestError({
-              kind: "provider-error",
-              safeMessage: "Wait for the current offline voice model operation to finish.",
+              kind: "model-missing",
+              safeMessage: "The selected fallback voice model is not installed.",
             });
           }
-          activeModelMutation = "remove";
-          return yield* Effect.gen(function* () {
-            abortTranscriptions();
-            const drained = transcriptionTail;
-            yield* Effect.promise(() => drained);
-
-            let replacement = request.replacementModelId ?? null;
-            if (replacement === request.modelId) {
-              return yield* new VoiceRequestError({
-                kind: "model-missing",
-                safeMessage: "Choose a different installed voice model as the fallback.",
-              });
-            }
-            if (selectedModelId === request.modelId && replacement === null) {
-              const states = yield* Effect.promise(() => engine.getModelStates());
-              replacement =
-                VOICE_MODEL_DEFINITIONS.map((definition) => toPublicModelId(definition.id)).find(
-                  (id) => id !== request.modelId && isReady(states[id] ?? { state: "missing" }),
-                ) ?? null;
-            }
-            if (replacement !== null) {
-              const replacementState = yield* Effect.promise(() =>
-                engine.getModelState(replacement),
-              );
-              if (!isReady(replacementState)) {
-                return yield* new VoiceRequestError({
-                  kind: "model-missing",
-                  safeMessage: "The selected fallback voice model is not installed.",
-                });
-              }
-            }
-            if (selectedModelId === request.modelId) {
-              yield* persistSelectedModel(replacement).pipe(
-                Effect.mapError((cause) => toVoiceRequestError(cause, "remove")),
-              );
-              selectedModelId = replacement;
-            }
-            yield* Effect.promise(() => engine.removeModel(request.modelId));
-            return yield* Effect.promise(getPublicState);
-          }).pipe(
+        }
+        if (selectedModelId === request.modelId) {
+          yield* persistSelectedModel(replacement).pipe(
             Effect.mapError((cause) => toVoiceRequestError(cause, "remove")),
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (activeModelMutation === "remove") activeModelMutation = null;
-              }),
-            ),
           );
-        }),
+          selectedModelId = replacement;
+        }
+        yield* Effect.promise(() => engine.removeModel(request.modelId));
+        return yield* Effect.promise(getPublicState);
+      }).pipe(
+        Effect.mapError((cause) => toVoiceRequestError(cause, "remove")),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (activeModelMutation === "remove") activeModelMutation = null;
+          }),
+        ),
+      );
+    }),
 
-      cancelTranscription: (request) =>
-        Effect.sync(() => {
-          for (const transcription of transcriptions) {
-            if (transcription.requestId === request?.requestId) transcription.controller.abort();
-          }
-        }),
+    cancelTranscription: (request) =>
+      Effect.sync(() => {
+        for (const transcription of transcriptions) {
+          if (transcription.requestId === request?.requestId) transcription.controller.abort();
+        }
+      }),
 
-      transcribe: (request) =>
-        Effect.gen(function* () {
-          const clip = yield* Effect.try({
-            try: () => normalizeVoiceClip(request),
-            catch: (cause) =>
-              new VoiceRequestError({ kind: "invalid-audio", safeMessage: String(cause) }),
-          });
-          if (selectedModelId === null) {
-            return yield* new VoiceRequestError({
+    transcribe: Effect.fn("DesktopVoice.transcribe")(function* (request: VoiceTranscribeRequest) {
+      const clip = yield* Effect.try({
+        try: () => normalizeVoiceClip(request),
+        catch: (cause) =>
+          new VoiceRequestError({ kind: "invalid-audio", safeMessage: String(cause) }),
+      });
+      if (selectedModelId === null) {
+        return yield* new VoiceRequestError({
+          kind: "model-missing",
+          safeMessage: "Set up offline voice transcription before using the microphone.",
+        });
+      }
+      const entry = { requestId: request.requestId, controller: new AbortController() };
+      transcriptions.add(entry);
+      const previous = transcriptionTail;
+      let release!: () => void;
+      transcriptionTail = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      // The queue slot is released by the engine work itself, not by the
+      // calling fiber, so an interrupted caller cannot start a second run.
+      const run = (async () => {
+        try {
+          await previous;
+          entry.controller.signal.throwIfAborted();
+          const modelId = selectedModelId;
+          if (modelId === null) {
+            throw new VoiceRequestError({
               kind: "model-missing",
               safeMessage: "Set up offline voice transcription before using the microphone.",
             });
           }
-          const entry = { requestId: request.requestId, controller: new AbortController() };
-          transcriptions.add(entry);
-          const previous = transcriptionTail;
-          let release!: () => void;
-          transcriptionTail = new Promise<void>((resolve) => {
-            release = resolve;
+          const transcript = await engine.transcribe(modelId, clip, {
+            signal: entry.controller.signal,
+            ...(request.language !== undefined ? { language: request.language } : {}),
           });
-          // The queue slot is released by the engine work itself, not by the
-          // calling fiber, so an interrupted caller cannot start a second run.
-          const run = (async () => {
-            try {
-              await previous;
-              entry.controller.signal.throwIfAborted();
-              const modelId = selectedModelId;
-              if (modelId === null) {
-                throw new VoiceRequestError({
-                  kind: "model-missing",
-                  safeMessage: "Set up offline voice transcription before using the microphone.",
-                });
-              }
-              const transcript = await engine.transcribe(modelId, clip, {
-                signal: entry.controller.signal,
-                ...(request.language !== undefined ? { language: request.language } : {}),
-              });
-              return { ...transcript, modelId };
-            } finally {
-              transcriptions.delete(entry);
-              release();
-            }
-          })();
-          return yield* Effect.tryPromise({
-            try: () => run,
-            catch: (cause) => toVoiceRequestError(cause),
-          });
-        }),
-    });
+          return { ...transcript, modelId };
+        } finally {
+          transcriptions.delete(entry);
+          release();
+        }
+      })();
+      return yield* Effect.tryPromise({
+        try: () => run,
+        catch: (cause) => toVoiceRequestError(cause),
+      });
+    }),
   });
+});
 
 /** @public Canonical Effect service construction; production uses the composed layer. */
 export const make = makeWithDependencies(defaultDependencies);

@@ -174,7 +174,7 @@ They remain follow-up findings. Output is retained in
 
 - Native accessibility `setValue` on the custom Source editor, followed by Cmd+S,
   reached a route error: `InteractionManager.renderSelection: gutter and content
-children dont match, something is wrong`. Disk retained the prior saved bytes.
+  children dont match, something is wrong`. Disk retained the prior saved bytes.
   This path replaced accessibility content without ordinary editor input events;
   it is an automation/accessibility limitation, not proof that normal typing
   crashes or loses data.

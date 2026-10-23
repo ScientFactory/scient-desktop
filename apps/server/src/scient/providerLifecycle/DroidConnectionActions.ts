@@ -141,29 +141,28 @@ export function makeDroidConnectionActionsFromOpen(input: {
 }): ProviderConnectionActions {
   return {
     methods: ["droid_device_pairing"],
-    start: (method: ProviderConnectionMethod) =>
-      Effect.gen(function* () {
-        if (method !== "droid_device_pairing") {
-          return yield* connectionError("Droid does not support this sign-in method.");
-        }
-        const scope = yield* Scope.Scope;
-        const session = yield* input.open;
-        const { initializeResult } = session;
-        if (!droidAccountCapabilitiesFromInitializeResult(initializeResult).devicePairing) {
-          return yield* connectionError(
-            "This Droid version does not advertise Factory device pairing.",
-          );
-        }
+    start: Effect.fn("DroidConnectionActions.start")(function* (method: ProviderConnectionMethod) {
+      if (method !== "droid_device_pairing") {
+        return yield* connectionError("Droid does not support this sign-in method.");
+      }
+      const scope = yield* Scope.Scope;
+      const session = yield* input.open;
+      const { initializeResult } = session;
+      if (!droidAccountCapabilitiesFromInitializeResult(initializeResult).devicePairing) {
+        return yield* connectionError(
+          "This Droid version does not advertise Factory device pairing.",
+        );
+      }
 
-        const fiber = yield* Effect.forkIn(session.authenticate, scope);
-        return {
-          // Droid owns opening its dynamic Factory URL. ACP does not expose
-          // that URL to Scient, so the UI must not invent a fallback link.
-          initialStatus: "waiting_for_browser",
-          waitForCompletion: Fiber.join(fiber),
-          cancel: Fiber.interrupt(fiber).pipe(Effect.asVoid),
-        };
-      }),
+      const fiber = yield* Effect.forkIn(session.authenticate, scope);
+      return {
+        // Droid owns opening its dynamic Factory URL. ACP does not expose
+        // that URL to Scient, so the UI must not invent a fallback link.
+        initialStatus: "waiting_for_browser",
+        waitForCompletion: Fiber.join(fiber),
+        cancel: Fiber.interrupt(fiber).pipe(Effect.asVoid),
+      };
+    }),
     disconnect: Effect.gen(function* () {
       const session = yield* input.open;
       const { initializeResult } = session;

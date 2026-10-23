@@ -96,44 +96,44 @@ function normalizeModelSlugs(values: ReadonlyArray<string>): ReadonlyArray<strin
  * Initial provider snapshot: settings-derived models plus the verified
  * `agy --version` probe shape (bare version string, exit 0).
  */
-export function buildInitialAntigravityProviderSnapshot(
+export const buildInitialAntigravityProviderSnapshot = Effect.fn(
+  "LegacyAntigravityProvider.buildInitialAntigravityProviderSnapshot",
+)(function* (
   antigravitySettings: LegacyAntigravitySettings,
-): Effect.Effect<ServerProviderDraft> {
-  return Effect.gen(function* () {
-    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const models = antigravityModelsFromSettings(antigravitySettings.customModels);
+): Effect.fn.Return<ServerProviderDraft> {
+  const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+  const models = antigravityModelsFromSettings(antigravitySettings.customModels);
 
-    if (!antigravitySettings.enabled) {
-      return buildServerProvider({
-        presentation: ANTIGRAVITY_PRESENTATION,
-        enabled: false,
-        checkedAt,
-        models,
-        probe: {
-          installed: false,
-          version: null,
-          status: "warning",
-          auth: { status: "unknown", required: true, type: "oauth", label: "Google account" },
-          message: "Antigravity is disabled in Scient settings.",
-        },
-      });
-    }
-
+  if (!antigravitySettings.enabled) {
     return buildServerProvider({
       presentation: ANTIGRAVITY_PRESENTATION,
-      enabled: true,
+      enabled: false,
       checkedAt,
       models,
       probe: {
-        installed: true,
+        installed: false,
         version: null,
         status: "warning",
         auth: { status: "unknown", required: true, type: "oauth", label: "Google account" },
-        message: "Checking Antigravity CLI availability...",
+        message: "Antigravity is disabled in Scient settings.",
       },
     });
+  }
+
+  return buildServerProvider({
+    presentation: ANTIGRAVITY_PRESENTATION,
+    enabled: true,
+    checkedAt,
+    models,
+    probe: {
+      installed: true,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown", required: true, type: "oauth", label: "Google account" },
+      message: "Checking Antigravity CLI availability...",
+    },
   });
-}
+});
 
 function antigravityModelsFromSettings(
   customModels: LegacyAntigravitySettings["customModels"],
@@ -316,42 +316,41 @@ export function isAgyApiKeyModeConfigurationError(output: string): boolean {
  * every probe here is one-shot, so stdin is always closed up front. Chat and
  * text-generation turns use the separate persistent stream-json transport.
  */
-const runAgyCommand = (
+const runAgyCommand = Effect.fn("LegacyAntigravityProvider.runAgyCommand")(function* (
   antigravitySettings: LegacyAntigravitySettings,
   args: ReadonlyArray<string>,
   environment: NodeJS.ProcessEnv,
-) =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = antigravitySettings.binaryPath || "agy";
-    const spawnCommand = yield* resolveSpawnCommand(command, args, {
-      env: environment,
-    });
-    const childCommand = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-      env: environment,
-      extendEnv: false,
-      shell: spawnCommand.shell,
-      stdin: "ignore",
-    });
-    const child = yield* spawner.spawn(childCommand);
-    const [stdout, stderr, exitCode] = yield* Effect.all(
-      [
-        collectUint8StreamText({
-          stream: child.stdout,
-          maxBytes: MAX_PROBE_OUTPUT_BYTES,
-          truncatedMarker: "\n[output truncated]",
-        }).pipe(Effect.map((collected) => collected.text)),
-        collectUint8StreamText({
-          stream: child.stderr,
-          maxBytes: MAX_PROBE_OUTPUT_BYTES,
-          truncatedMarker: "\n[output truncated]",
-        }).pipe(Effect.map((collected) => collected.text)),
-        child.exitCode.pipe(Effect.map(Number)),
-      ],
-      { concurrency: "unbounded" },
-    );
-    return { stdout, stderr, code: exitCode } satisfies CommandResult;
-  }).pipe(Effect.scoped);
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const command = antigravitySettings.binaryPath || "agy";
+  const spawnCommand = yield* resolveSpawnCommand(command, args, {
+    env: environment,
+  });
+  const childCommand = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+    env: environment,
+    extendEnv: false,
+    shell: spawnCommand.shell,
+    stdin: "ignore",
+  });
+  const child = yield* spawner.spawn(childCommand);
+  const [stdout, stderr, exitCode] = yield* Effect.all(
+    [
+      collectUint8StreamText({
+        stream: child.stdout,
+        maxBytes: MAX_PROBE_OUTPUT_BYTES,
+        truncatedMarker: "\n[output truncated]",
+      }).pipe(Effect.map((collected) => collected.text)),
+      collectUint8StreamText({
+        stream: child.stderr,
+        maxBytes: MAX_PROBE_OUTPUT_BYTES,
+        truncatedMarker: "\n[output truncated]",
+      }).pipe(Effect.map((collected) => collected.text)),
+      child.exitCode.pipe(Effect.map(Number)),
+    ],
+    { concurrency: "unbounded" },
+  );
+  return { stdout, stderr, code: exitCode } satisfies CommandResult;
+}, Effect.scoped);
 
 export interface AntigravityProbeResult {
   readonly version: string | null;

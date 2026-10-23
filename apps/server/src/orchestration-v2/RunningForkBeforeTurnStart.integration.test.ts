@@ -146,9 +146,7 @@ it.live("forks a running Codex turn before Codex reports the turn started", () =
           creationSource: "web",
         });
         const starting = yield* worker.drain(12).pipe(Effect.forkScoped);
-        yield* Effect.gen(function* () {
-          while (!gate.hasReached("held-turn-start")) yield* Effect.sleep("10 millis");
-        }).pipe(Effect.timeout("15 seconds"));
+        assert.isTrue(yield* Effect.promise(() => gate.waitForReached("held-turn-start")));
         const running = yield* waitFor(
           (projection) =>
             ["starting", "running"].includes(projection.runs[0]?.status ?? "") &&

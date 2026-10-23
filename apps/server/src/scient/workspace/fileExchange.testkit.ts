@@ -9,6 +9,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import {
@@ -16,7 +17,10 @@ import {
   WorkspaceFileSystemOperationError,
   type WorkspaceFileSystem,
 } from "../../workspace/WorkspaceFileSystem.ts";
-import { makeWorkspaceFileMutations } from "./WorkspaceFileMutations.ts";
+import {
+  makeWorkspaceFileMutations,
+  type WorkspacePublicationEvent,
+} from "./WorkspaceFileMutations.ts";
 import {
   bytesRevision,
   directoryIdentity,
@@ -99,6 +103,11 @@ export const fileMutationFixture = Effect.fnUntraced(
       run: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
       methods: Effect.Success<ReturnType<typeof makeWorkspaceFileMutations>>;
       restart: () => Promise<Effect.Success<ReturnType<typeof makeWorkspaceFileMutations>>>;
+      publication: {
+        claimed: (mutationId: string, holders?: number) => Promise<void>;
+        waiting: (root: string) => Promise<void>;
+        close: () => Promise<boolean>;
+      };
       settledRead: (
         relativePath: string,
       ) => Promise<Effect.Success<ReturnType<WorkspaceFileSystem["Service"]["readFile"]>>>;
@@ -119,11 +128,14 @@ export const fileMutationFixture = Effect.fnUntraced(
     const cwd = NodePath.join(canonical, "paper"),
       retentionRoot = NodePath.join(canonical, "private-retention");
     yield* Effect.promise(() => NodeFSP.mkdir(cwd));
-    const workspacePaths = yield* WorkspacePaths.make;
+    const workspacePaths = yield* WorkspacePaths.WorkspacePaths.pipe(
+      Effect.provide(WorkspacePaths.layer),
+    );
     const workspaceEntries = WorkspaceEntries.WorkspaceEntries.of({
       refresh: () => Effect.void,
       browse: () => Effect.die("unused"),
       list: () => Effect.die("unused"),
+      listIgnoredFiles: () => Effect.die("unused"),
       listDirectory: () => Effect.die("unused"),
       search: () => Effect.die("unused"),
       searchContents: () => Effect.die("unused"),
@@ -158,6 +170,10 @@ export const fileMutationFixture = Effect.fnUntraced(
           revision: bytesRevision(leading),
         };
       });
+    const publicationEvents = yield* Effect.acquireRelease(
+      Queue.unbounded<WorkspacePublicationEvent>(),
+      Queue.shutdown,
+    );
     const create = () =>
       makeWorkspaceFileMutations({
         fileSystem,
@@ -166,9 +182,10 @@ export const fileMutationFixture = Effect.fnUntraced(
         workspaceEntries,
         readFile,
         ...(helper === undefined ? {} : { nativePublicationHelper: helper }),
-        retentionStorageDirectory: retentionRoot,
+        resolveRetentionStorageDirectory: async () => retentionRoot,
         retentionLimitBytes,
         retainedHooks: hooks,
+        publicationEvents,
         retentionDirectoryFor: async (_root, parent) => {
           if (!helper) throw new Error("Native private retention is unavailable.");
           const identity = await directoryIdentity(parent);
@@ -182,6 +199,15 @@ export const fileMutationFixture = Effect.fnUntraced(
     const methods = yield* create(),
       context = yield* Effect.context<never>(),
       run = Effect.runPromiseWith(context);
+    // Earlier unrelated receipts must not satisfy a later ownership wait.
+    const awaitPublication = Effect.fn("FileMutationFixture.awaitPublication")(function* (
+      matches: (event: WorkspacePublicationEvent) => boolean,
+    ) {
+      for (;;) {
+        const event = yield* Queue.take(publicationEvents);
+        if (matches(event)) return;
+      }
+    });
     yield* Effect.promise(() =>
       body({
         root: canonical,
@@ -191,6 +217,20 @@ export const fileMutationFixture = Effect.fnUntraced(
         run,
         methods,
         restart: () => run(create()),
+        publication: {
+          claimed: (mutationId, holders = 1) =>
+            run(
+              awaitPublication(
+                (event) =>
+                  event._tag === "Claimed" &&
+                  event.mutationId === mutationId &&
+                  event.holders === holders,
+              ),
+            ),
+          waiting: (root) =>
+            run(awaitPublication((event) => event._tag === "Waiting" && event.root === root)),
+          close: () => run(Queue.shutdown(publicationEvents)),
+        },
         settledRead: (relativePath) =>
           run(
             methods.withSettledFileRead({ cwd, relativePath }, (attention) =>

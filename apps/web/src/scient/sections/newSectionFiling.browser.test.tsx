@@ -1,3 +1,4 @@
+import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import {
   EnvironmentId,
   ThreadId,
@@ -5,9 +6,9 @@ import {
   threadSectionCatalogsEqual,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { act, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { useLayoutEffect } from "react";
+
+import { expect, it, vi } from "vite-plus/test";
 
 // DF-042 end to end: the real catalogs and membership actions, with only the
 // server boundary faked. The local settings copy never catches up during the
@@ -98,35 +99,31 @@ import { useThreadSectionActions } from "./actions";
 import { useThreadSectionCatalogs } from "./catalog";
 import { createSectionAndFile } from "./useNewSectionForThreads";
 
-let hooks: {
-  readonly catalogs: ReturnType<typeof useThreadSectionCatalogs>;
-  readonly actions: ReturnType<typeof useThreadSectionActions>;
-};
-let renderer: Root;
-function Probe() {
+function Probe({ _fixture }: { _fixture: _Fixture }) {
   const catalogs = useThreadSectionCatalogs();
   const actions = useThreadSectionActions();
   useLayoutEffect(() => {
-    hooks = { catalogs, actions };
+    _fixture.publishHooks({ catalogs, actions });
   });
   return null;
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function _setupFixture0(_fixture: _Fixture) {
   mocks.servers.set("primary", { threadSections: [], threadSectionsGeneralIndex: 0 });
   mocks.servers.set("remote", { threadSections: [], threadSectionsGeneralIndex: 0 });
   mocks.membership.clear();
   vi.mocked(toastManager.add).mockClear();
-  act(() => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(<Probe />);
+  await act(async () => {
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: document.createElement("div"), router: false }),
+    );
+    await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
   });
-});
-afterEach(() => {
-  act(() => renderer.unmount());
+}
+async function _cleanupFixture1(_fixture: _Fixture) {
+  await act(async () => await _fixture.root0.unmount());
   vi.unstubAllGlobals();
-});
+}
 
 const ref = (environmentId: string, threadId: string) => ({
   environmentId: EnvironmentId.make(environmentId),
@@ -134,14 +131,18 @@ const ref = (environmentId: string, threadId: string) => ({
 });
 
 it("files a thread into a section created a moment earlier on its own environment", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const thread = ref("remote", "t1");
   const result = await createSectionAndFile({
     name: "Design",
     threadRefs: [thread],
     scopeProjectRefs: [{ environmentId: "primary", projectId: "project-a" }],
     environmentId: null,
-    create: hooks.catalogs.create,
-    moveThreadsToSection: hooks.actions.moveThreadsToSection,
+    create: _fixture.hooks.catalogs.create,
+    moveThreadsToSection: _fixture.hooks.actions.moveThreadsToSection,
   });
   expect(result.failedEnvironmentIds).toEqual([]);
   const [created] = result.created;
@@ -164,13 +165,17 @@ it("files a thread into a section created a moment earlier on its own environmen
 });
 
 it("gives threads on two environments a section of that name on each", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const result = await createSectionAndFile({
     name: "Design",
     threadRefs: [ref("primary", "t1"), ref("remote", "t2")],
     scopeProjectRefs: null,
     environmentId: null,
-    create: hooks.catalogs.create,
-    moveThreadsToSection: hooks.actions.moveThreadsToSection,
+    create: _fixture.hooks.catalogs.create,
+    moveThreadsToSection: _fixture.hooks.actions.moveThreadsToSection,
   });
   expect(result.created.map((entry) => entry.environmentId).toSorted()).toEqual([
     "primary",
@@ -187,13 +192,17 @@ it("gives threads on two environments a section of that name on each", async () 
 });
 
 it("creates an empty section on the chosen environment", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
   const result = await createSectionAndFile({
     name: "Later",
     threadRefs: [],
     scopeProjectRefs: null,
     environmentId: EnvironmentId.make("remote"),
-    create: hooks.catalogs.create,
-    moveThreadsToSection: hooks.actions.moveThreadsToSection,
+    create: _fixture.hooks.catalogs.create,
+    moveThreadsToSection: _fixture.hooks.actions.moveThreadsToSection,
   });
   expect(result.created.map((entry) => entry.environmentId)).toEqual(["remote"]);
   const [later] = mocks.servers.get("remote")!.threadSections;
@@ -202,3 +211,33 @@ it("creates an empty section on the chosen environment", async () => {
   expect(later?.environmentIds).toBeUndefined();
   expect(mocks.servers.get("primary")!.threadSections).toEqual([]);
 });
+
+function _createFixture() {
+  let _published_hooks = undefined! as {
+    readonly catalogs: ReturnType<typeof useThreadSectionCatalogs>;
+    readonly actions: ReturnType<typeof useThreadSectionActions>;
+  };
+
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    get hooks() {
+      return _published_hooks;
+    },
+    publishHooks(next: typeof _published_hooks) {
+      _published_hooks = next;
+    },
+
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

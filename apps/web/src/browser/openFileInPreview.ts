@@ -99,10 +99,17 @@ export async function openUrlInPreview<E>(input: {
   readonly profileId?: PreviewOpenInput["profileId"];
   readonly background?: boolean;
   readonly onOpened?: (snapshot: PreviewSessionSnapshot) => void;
+  // SCIENT-FORK:START — preserve an originating file-link intent across Browser awaits.
+  readonly isCurrent?: () => boolean;
+  // SCIENT-FORK:END
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
+  // SCIENT-FORK:START — stale opens must not navigate or trigger a fallback.
+  if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
   );
+  if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
+  // SCIENT-FORK:END
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
@@ -124,6 +131,9 @@ export async function openUrlInPreview<E>(input: {
       ...(runtime === undefined ? {} : { runtime }),
     },
   });
+  // SCIENT-FORK:START — the user may have selected another surface during openPreview.
+  if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
+  // SCIENT-FORK:END
   return mapAtomCommandResult(result, (snapshot) => {
     rememberPreviewUrl(input.threadRef, input.url);
     if (input.background) {
@@ -155,12 +165,18 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     readonly input: { readonly resource: AssetResource };
   }) => Promise<AtomCommandResult<AssetCreateUrlResult, AssetError>>;
   readonly openPreview: OpenPreviewMutation<PreviewError>;
+  // SCIENT-FORK:START — the chat click owns intent through authorization too.
+  readonly isCurrent?: () => boolean;
+  // SCIENT-FORK:END
 }): Promise<
   AtomCommandResult<
     void,
     AssetError | PreviewError | BrowserPreviewUnavailableError | BrowserSettingsReadError
   >
 > {
+  // SCIENT-FORK:START — a superseded click cannot mint or open a new capability.
+  if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
+  // SCIENT-FORK:END
   if (!isPreviewAvailableFor(input.threadRef.environmentId)) {
     return AsyncResult.failure(
       Cause.fail(
@@ -190,6 +206,9 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     environmentId: input.threadRef.environmentId,
     input: { resource },
   });
+  // SCIENT-FORK:START — authorization may finish after another link or panel action.
+  if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
+  // SCIENT-FORK:END
   if (assetResult._tag === "Failure") {
     return AsyncResult.failure(assetResult.cause);
   }
@@ -203,6 +222,9 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     threadRef: input.threadRef,
     url: assetUrl,
     openPreview: input.openPreview,
+    // SCIENT-FORK:START — pass the same predicate, never claim a second intent.
+    ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
+    // SCIENT-FORK:END
     onOpened: (snapshot) => {
       if (
         input.workspaceRoot === undefined ||

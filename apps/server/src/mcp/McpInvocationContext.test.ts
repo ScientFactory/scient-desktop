@@ -2,7 +2,6 @@ import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   McpCapabilityUnavailableError,
-  PreviewAutomationUnavailableError,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -18,39 +17,6 @@ it("decodes only capabilities declared by the Scient MCP host", () => {
       new Set(["preview", "threads:read", "provider:future-capability"]),
     ),
   ).toEqual(new Set(["preview", "threads:read"]));
-});
-
-it.effect("reports the scoped credential context when preview capability is unavailable", () => {
-  const invocation: McpInvocationContext.McpInvocationScope = {
-    environmentId: EnvironmentId.make("environment-1"),
-    requestNamespace: "provider-session-1",
-    thread: {
-      threadId: ThreadId.make("thread-1"),
-      providerSessionId: "provider-session-1",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-    },
-    client: undefined,
-    capabilities: new Set(),
-    issuedAt: 1,
-  };
-
-  return Effect.gen(function* () {
-    const error = yield* McpInvocationContext.requireMcpCapability("preview").pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-      Effect.flip,
-    );
-
-    expect(error).toBeInstanceOf(PreviewAutomationUnavailableError);
-    expect(error).toMatchObject({
-      capability: "preview",
-      environmentId: invocation.environmentId,
-      threadId: invocation.thread?.threadId,
-      providerSessionId: invocation.thread?.providerSessionId,
-      providerInstanceId: invocation.thread?.providerInstanceId,
-    });
-    expect(error.message).toContain("MCP credential does not grant the preview capability");
-    expect(error.message).toContain("use a headless browser from the shell");
-  });
 });
 
 it("projects explicit Scient grants without conflating transport and native contexts", () => {

@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { downloadManagedRuntime, verifyManagedRuntimeChecksum } from "./runtimeFiles.ts";
 
+vi.mock("node:timers/promises", { spy: true });
+
 const roots: string[] = [];
 async function input(signal = new AbortController().signal) {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-download-test-"));
@@ -186,9 +188,19 @@ describe("transient managed runtime downloads", () => {
         }),
     );
     vi.stubGlobal("fetch", fetch);
+    const retryStarted = Promise.withResolvers<void>();
+    const { setTimeout: waitForRetry } =
+      await vi.importActual<typeof NodeTimersPromises>("node:timers/promises");
+    vi.mocked(NodeTimersPromises.setTimeout).mockClear();
+    using retryTimer = vi.spyOn(NodeTimersPromises, "setTimeout").mockImplementation((...args) => {
+      const waiting = waitForRetry(...args);
+      retryStarted.resolve();
+      return waiting;
+    });
     const download = downloadManagedRuntime(request);
     await bodyReleased.promise;
-    await NodeTimersPromises.setImmediate();
+    await retryStarted.promise;
+    expect(retryTimer).toHaveBeenCalledWith(500, undefined, { signal: expect.any(AbortSignal) });
     controller.abort();
     await expect(download).rejects.toMatchObject({ name: "AbortError" });
     expect(fetch).toHaveBeenCalledOnce();

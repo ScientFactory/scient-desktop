@@ -177,6 +177,38 @@ function withVoice<A, E>(
   );
 }
 
+it.effect("keeps engine construction and model operations lazy and disposes at scope close", () => {
+  const harness = makeFakeEngine();
+  const createEngine = vi.fn(() => harness.engine);
+  const dispose = vi.spyOn(harness.engine, "dispose");
+  const construction = makeWithDependencies({ ...dependencies(harness), createEngine });
+  expect(createEngine).not.toHaveBeenCalled();
+
+  return construction.pipe(
+    Effect.tap((voice) =>
+      Effect.gen(function* () {
+        expect(createEngine).toHaveBeenCalledOnce();
+        expect(dispose).not.toHaveBeenCalled();
+        const download = voice.downloadModel({ modelId: SMALL_MODEL_ID });
+        const select = voice.selectModel({ modelId: SMALL_MODEL_ID });
+        const remove = voice.removeModel({ modelId: SMALL_MODEL_ID });
+        expect(harness.ensureModel).not.toHaveBeenCalled();
+        expect(harness.removeModel).not.toHaveBeenCalled();
+        yield* download;
+        yield* select;
+        yield* remove;
+        expect(harness.ensureModel).toHaveBeenCalledOnce();
+        expect(harness.removeModel).toHaveBeenCalledOnce();
+        expect(dispose).not.toHaveBeenCalled();
+      }),
+    ),
+    Effect.provide(Layer.mergeAll(DesktopAppSettings.layerTest(), environmentLayer())),
+    // Observe the service's finalizer before the test's own scope closes.
+    Effect.scoped,
+    Effect.tap(() => Effect.sync(() => expect(dispose).toHaveBeenCalledOnce())),
+  );
+});
+
 describe("projectVoiceModelState", () => {
   it("never exposes the installed model path", () => {
     expect(

@@ -1,48 +1,27 @@
-/**
- * Word diagram capture against the real Mermaid, in a real browser: ordinary
- * diagrams become PNGs, and a diagram that names an outside resource makes no
- * request at all — the isolated frame refuses the load — and falls back to
- * its source.
- */
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { getMermaidRuntimePromise, renderMermaidDiagram } from "../diagrams/mermaidRuntime";
+import { renderMermaidDiagram } from "../diagrams/mermaidRuntime";
+import { recoveryFixtures } from "../diagrams/mermaidRecovery.fixtures";
 import { captureWordDiagrams } from "./captureDiagrams";
-import { openIsolatedMermaid } from "../diagrams/isolatedMermaid";
+import { mermaidSourceConfigFetchRisk } from "./diagramSafety";
 
 const PROBE = "__scient_word_capture_probe__";
 const digest = `sha256:${"a".repeat(64)}` as const;
-
-/**
- * Probe loads that reached the server. Chromium also lists loads its policy
- * refused, but those never get a response: no status and no response time.
- */
-const probeRequests = (target: Window = window) =>
-  (target.performance.getEntriesByType("resource") as PerformanceResourceTiming[])
-    .filter((entry) => entry.name.includes(PROBE))
-    .filter((entry) => entry.responseStatus !== 0 || entry.responseStart > 0)
+const probeRequests = () =>
+  (performance.getEntriesByType("resource") as PerformanceResourceTiming[])
+    .filter((entry) => entry.name.includes(PROBE) && !entry.name.endsWith("/control.png"))
     .map((entry) => entry.name);
-/** Loads the policy refused: listed, but never answered. */
-const refusedProbeLoads = (target: Window) =>
-  (target.performance.getEntriesByType("resource") as PerformanceResourceTiming[]).filter(
-    (entry) => entry.responseStatus === 0 && entry.responseStart === 0,
-  ).length;
 
+const planOf = (sources: ReadonlyArray<string>) => ({
+  sourceDigest: digest,
+  diagrams: sources.map((source, index) => ({
+    id: `mermaid-${index.toString(16).padStart(16, "0")}`,
+    source,
+  })),
+});
 const capture = async (sources: ReadonlyArray<string>) =>
-  (
-    await captureWordDiagrams({
-      sourceDigest: digest,
-      diagrams: sources.map((source, index) => ({
-        id: `mermaid-${index.toString(16).padStart(16, "0")}`,
-        source,
-      })),
-    })
-  ).diagrams.map((entry) => entry.result._tag);
+  (await captureWordDiagrams(planOf(sources))).diagrams.map((entry) => entry.result._tag);
 
-/** Lets any load a draw started reach the resource timeline. */
-const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
-
-/** Diagrams whose draw asks the browser to load something. */
 const FETCHING = {
   labelImage: `flowchart LR\nA["<img src='/${PROBE}/label.png'>"] --> B`,
   remoteLabelImage: "flowchart LR\nA[\"<img src='https://example.invalid/pixel.png'>\"] --> B",
@@ -56,102 +35,121 @@ const FETCHING = {
 /** State diagrams take a `classDef` style list as the rest of the line, so CSS `url()` parses. */
 const STYLED_STATE = `stateDiagram-v2\nclassDef c background-image:url(/${PROBE}/state.png)\n[*] --> A:::c`;
 
-afterEach(() => {
-  performance.clearResourceTimings();
-});
-
-describe("Word diagram capture with the real Mermaid", () => {
-  it("records a request to the probe, so an absent one means nothing was fetched", async () => {
+describe("Word capture through the shared Pele renderer", () => {
+  it("calibrates observation with a page-owned request", async () => {
+    // Vitest's dependency requests can fill Chromium's bounded timing buffer.
+    performance.clearResourceTimings();
     const image = new Image();
     image.src = `/${PROBE}/control.png`;
-    // Under a loaded machine the answer can take longer than the settle delay.
-    await expect.poll(() => probeRequests(), { timeout: 10_000 }).toHaveLength(1);
-  });
-
-  it("needs isolation: Mermaid's strict draw in the page requests a label's image", async () => {
-    await renderMermaidDiagram(
-      FETCHING.labelImage.replace("label.png", "page.png"),
-      "light",
-      "page",
+    await image.decode().catch(() => undefined);
+    await vi.waitFor(() =>
+      expect(
+        performance
+          .getEntriesByType("resource")
+          .some((entry) => entry.name.endsWith(`/${PROBE}/control.png`)),
+      ).toBe(true),
     );
-    await settle();
-    expect(probeRequests()).toEqual([expect.stringContaining(`/${PROBE}/page.png`)]);
   });
 
-  it("renders math, URLs and url( as text, and theme directives to PNG", async () => {
-    const results = await capture([
-      'flowchart LR\nA["$$\\frac{1}{2}$$"] --> B["$$\\beta$$ and https://example.org/x"]',
-      "%%{init: {'theme': 'forest', 'flowchart': {'curve': 'linear'}}}%%\nflowchart LR\nA[image: plot] --> B",
-      'flowchart LR\nA["C:\\Users\\ada\\beta.csv"] --> B["a<b"]',
-      'flowchart LR\nA["https://example.org/url(report)"] --> B["mentions url(x) and image(y)"]',
-      'flowchart LR\nA["url(x)"];style A fill:#f9f',
-    ]);
-    expect(results).toEqual(["png", "png", "png", "png", "png"]);
+  it("never requests an authored label image in the shared renderer", async () => {
+    const rendered = await renderMermaidDiagram(FETCHING.labelImage, "light");
+    expect(rendered.blocked).toContain(`/${PROBE}/label.png`);
+    expect(rendered.svg).not.toContain(PROBE);
+    expect(probeRequests()).toEqual([]);
   });
 
-  it("falls back for a diagram over chat's size limit, not Mermaid's stand-in image", async () => {
-    // Few edges, one long label: Mermaid parses it, then draws a stand-in over maxTextSize.
+  it("renders math, URLs and url( as text, and safe theme directives to PNG", async () => {
+    expect(
+      await capture([
+        'flowchart LR\nA["$$\\frac{1}{2}$$"] --> B["$$\\beta$$ and https://example.org/x"]',
+        "%%{init: {'theme': 'forest', 'flowchart': {'curve': 'linear'}}}%%\nflowchart LR\nA[image: plot] --> B",
+        'flowchart LR\nA["C:\\Users\\ada\\beta.csv"] --> B["a<b"]',
+        'flowchart LR\nA["https://example.org/url(report)"] --> B["mentions url(x) and image(y)"]',
+        'flowchart LR\nA["url(x)"];style A fill:#f9f',
+        "---\nconfig:\n  theme: forest\n  flowchart:\n    curve: linear\n---\nflowchart LR\nA --> B",
+      ]),
+    ).toEqual(["png", "png", "png", "png", "png", "png"]);
+  });
+
+  it("rejects empty and oversized sources without embedding a stand-in", async () => {
     const oversized = `flowchart LR\nA["${"x".repeat(50_000)}"] --> B`;
-    expect(await capture([oversized])).toEqual(["render-failed"]);
+    expect(await capture([oversized, "   "])).toEqual(["render-failed", "render-failed"]);
   });
 
-  it("makes no request for a diagram that names an outside resource, and falls back", async () => {
-    const results = await capture(Object.values(FETCHING));
-    await settle();
-    expect(results).toEqual(Object.values(FETCHING).map(() => "render-failed"));
+  it("captures resource-looking label and comment prose without a false omission or fallback", async () => {
+    const sources = [
+      `flowchart LR\nA["icon: 'https://example.org/reference'"] --> B`,
+      `flowchart LR\nA[img: 'https://example.org/reference'] --> B`,
+      `flowchart LR\nA["favicon: 'https://example.org/reference'"] --> B`,
+      `flowchart LR\n%% A@{ img: 'https://example.org/reference' }\n%% properties A: {"icon":"https://example.org/reference"}\nA --> B`,
+      `sequenceDiagram\nparticipant A as icon: 'https://example.org/reference'\nA->>A: img: 'https://example.org/reference'`,
+    ];
+    const captured = await captureWordDiagrams(planOf(sources));
+    expect(captured.diagrams.map((entry) => entry.result._tag)).toEqual(sources.map(() => "png"));
+    for (const { result } of captured.diagrams) {
+      if (result._tag !== "png") throw new Error("Expected a native PNG for inert prose.");
+      expect(
+        Array.from(atob(result.base64).slice(0, 8), (character) => character.charCodeAt(0)),
+      ).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    }
+    for (const source of sources) {
+      const rendered = await renderMermaidDiagram(source, "light");
+      expect(rendered.blocked, source).toBeUndefined();
+    }
     expect(probeRequests()).toEqual([]);
   });
 
-  it("refuses every load in the frame itself, before any request", async () => {
-    const mermaid = await openIsolatedMermaid();
-    try {
-      for (const [name, source] of Object.entries(FETCHING)) {
-        // An image shape waits for its image, so its refused load fails the draw.
-        const refused = await mermaid.render(source).then(
-          (drawn) => drawn.refused,
-          () => Number.POSITIVE_INFINITY,
-        );
-        expect(refused, name).toBeGreaterThan(0);
-      }
-      // A style the secondary check would refuse is still harmless when drawn.
-      const styled = await mermaid.render(STYLED_STATE);
-      expect(styled.svg).toContain("<svg");
-      expect(styled.refused).toBeGreaterThan(0);
-      await settle();
-      // Every load was attempted and refused; none reached the server.
-      expect(refusedProbeLoads(mermaid.window)).toBeGreaterThan(0);
-      expect(probeRequests(mermaid.window)).toEqual([]);
-      expect(probeRequests()).toEqual([]);
-    } finally {
-      mermaid.close();
-    }
-  });
-
-  it("refuses styles and settings that name an outside resource before drawing", async () => {
-    const styles = [STYLED_STATE, STYLED_STATE.replace("url(", "u\\72l(")];
-    // They are valid diagrams, so it is the style check that refuses them.
-    const mermaid = await openIsolatedMermaid();
-    try {
-      for (const source of styles) expect(await mermaid.parse(source), source).not.toBeNull();
-    } finally {
-      mermaid.close();
-    }
-    const results = await capture([
-      ...styles,
-      '%%{init: {"themeVariables": {"primaryColor": "\\u0075rl(probe)"}}}%%\nflowchart LR\nA --> B',
-      '%%{init: {"themeCSS": ".node rect { fill: red }"}}%%\nflowchart LR\nA --> B',
+  it("falls back independently for every authored resource without a network request", async () => {
+    expect(await capture([...Object.values(FETCHING), "flowchart LR\nLocal --> Result"])).toEqual([
+      ...Object.values(FETCHING).map(() => "render-failed"),
+      "png",
     ]);
-    await settle();
-    expect(results).toEqual(Array.from({ length: 4 }, () => "render-failed"));
     expect(probeRequests()).toEqual([]);
   });
 
-  it("checks the settings Mermaid decodes, not the escaped text", async () => {
-    const { default: mermaid } = await getMermaidRuntimePromise();
-    const parsed = await mermaid.parse(
-      '%%{init: {"themeVariables": {"primaryColor": "\\u0075rl(probe)"}}}%%\nflowchart LR\nA --> B',
-    );
-    // Mermaid's own sanitiser lets this through; Word capture refuses it (above).
-    expect(parsed && parsed.config.themeVariables?.primaryColor).toBe("url(probe)");
+  it("retains defense in depth when resources are rendered outside Word's preflight", async () => {
+    for (const source of [...Object.values(FETCHING), STYLED_STATE]) {
+      const result = await renderMermaidDiagram(source, "light");
+      expect(result.svg).toContain("<svg");
+      expect(result.svg).not.toContain(PROBE);
+      expect(result.blocked?.length).toBeGreaterThan(0);
+    }
+    expect(probeRequests()).toEqual([]);
+  });
+
+  it("refuses decoded unsafe settings and styles before native image capture", async () => {
+    const escaped =
+      '%%{init: {"themeVariables": {"primaryColor": "\\u0075rl(probe)"}}}%%\nflowchart LR\nA --> B';
+    expect(mermaidSourceConfigFetchRisk(escaped)).not.toBeNull();
+    expect(
+      await capture([
+        STYLED_STATE,
+        STYLED_STATE.replace("url(", "u\\72l("),
+        escaped,
+        '%%{init: {"themeCSS": ".node rect { fill: red }"}}%%\nflowchart LR\nA --> B',
+        `---\nconfig:\n  themeCSS: "@font-face{src:url(/${PROBE}/font.woff2)}"\n---\nflowchart LR\nA --> B`,
+      ]),
+    ).toEqual(Array.from({ length: 5 }, () => "render-failed"));
+    expect(probeRequests()).toEqual([]);
+  });
+
+  it("uses original-first recovery for native PNG bytes without modifying captured source", async () => {
+    const fixture = recoveryFixtures.find((entry) => entry.name === "round nested parentheses")!;
+    const plan = planOf([fixture.source, "not a diagram"]);
+    const result = await captureWordDiagrams(plan);
+    expect(plan.diagrams[0]?.source).toBe(fixture.source);
+    expect(result.sourceDigest).toBe(digest);
+    const image = result.diagrams[0]?.result;
+    expect(image?._tag).toBe("png");
+    if (image?._tag !== "png") throw new Error("Expected a captured PNG.");
+    expect(
+      Array.from(
+        Uint8Array.from(atob(image.base64), (character) => character.charCodeAt(0)).slice(0, 8),
+      ),
+    ).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    expect(result.diagrams[1]?.result._tag).toBe("render-failed");
+    const rendered = await renderMermaidDiagram(fixture.source, "light");
+    expect(rendered.recovery?.originalSource).toBe(fixture.source);
+    expect(rendered.recovery?.source).toBe(fixture.expected);
   });
 });

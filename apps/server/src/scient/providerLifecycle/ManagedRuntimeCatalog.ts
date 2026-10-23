@@ -568,8 +568,8 @@ export class ManagedRuntimeCatalog extends Context.Reference<ManagedRuntimeCatal
 /** @public Service construction is part of the canonical Effect module API. */
 export const layerTest = Layer.succeed(ManagedRuntimeCatalog, bundledOnlyService);
 
-export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: boolean }) =>
-  Effect.gen(function* () {
+export const makeWithOptions = Effect.fn("ManagedRuntimeCatalog.makeWithOptions")(
+  function* (options?: { readonly startBackgroundRefresh?: boolean }) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const config = yield* ServerConfig;
@@ -729,7 +729,8 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
       }),
       subscribeChanges: PubSub.subscribe(changesPubSub).pipe(Effect.map(Stream.fromSubscription)),
     });
-  });
+  },
+);
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = makeWithOptions();

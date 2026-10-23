@@ -1,3 +1,5 @@
+import type { CursorSettings } from "@t3tools/provider-cursor/settings";
+import type { GrokSettings } from "@t3tools/provider-grok/settings";
 import { scientAntigravityInstallationLayer } from "../scient/providerLifecycle/ScientAntigravityInstallation.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
@@ -18,8 +20,6 @@ import {
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import type { GrokSettings } from "@t3tools/provider-grok/settings";
-import type { CursorSettings } from "@t3tools/provider-cursor/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -32,7 +32,6 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
-import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
@@ -45,7 +44,6 @@ import * as ModelManifest from "./ModelManifest.ts";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
-import type { BuiltInDriversEnv } from "./builtInDrivers.ts";
 import { DroidDriver } from "./Drivers/DroidDriver.ts";
 import type { DroidDriverEnv } from "./Drivers/DroidDriver.ts";
 import { MuseDriver, type MuseCompositionEnv } from "./MuseDriverComposition.ts";
@@ -717,6 +715,90 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(outcome).toMatchObject({ _tag: "Success", success: "alreadyRedeemed" });
       }),
   );
+
+  const makeClaudeCacheFixture = Effect.fn("ProviderInstanceRegistry.test.makeClaudeCacheFixture")(
+    function* (state: "ready" | "signed-out" | "usage-failed") {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixtures = yield* makeTildeProviderFixtures();
+      const recovered = path.join(fixtures.claudeHomePath, "recovered");
+      const instanceId = ProviderInstanceId.make("claude_cache");
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            environment: [
+              ...(state === "ready"
+                ? []
+                : [
+                    {
+                      name:
+                        state === "signed-out"
+                          ? "T3_CLAUDE_LOGIN_MARKER"
+                          : "T3_CLAUDE_USAGE_FAILS_UNTIL",
+                      value: recovered,
+                      sensitive: false,
+                    },
+                  ]),
+            ],
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const instance = yield* registry.getInstance(instanceId);
+      expect(instance).toBeDefined();
+      return {
+        refresh: instance!.snapshot.refresh,
+        recover: fs.writeFileString(recovered, ""),
+      };
+    },
+  );
+
+  it.effect.skipIf(windowsHost)("reuses Claude's successful usage probe on refresh", () =>
+    Effect.gen(function* () {
+      // CLI auth checks must remain fresh; only the SDK usage probe earns the cache TTL.
+      const query = vi.spyOn(ClaudeSdk, "query");
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+      const fixture = yield* makeClaudeCacheFixture("ready");
+      const first = yield* fixture.refresh;
+      const second = yield* fixture.refresh;
+      expect(first.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
+      expect(second.usageLimits).toEqual(first.usageLimits);
+      expect(query.mock.calls).toHaveLength(1);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  for (const state of ["signed-out", "usage-failed"] as const) {
+    it.effect.skipIf(windowsHost)(
+      state === "signed-out"
+        ? "shows Claude usage on the first refresh after signing back in"
+        : "retries Claude usage on the first refresh after a failed usage read",
+      () =>
+        Effect.gen(function* () {
+          const fixture = yield* makeClaudeCacheFixture(state);
+          const before = yield* fixture.refresh;
+          if (state === "signed-out") {
+            expect(before.auth.status).toBe("unauthenticated");
+            expect(before.usageLimits).toBeUndefined();
+          } else {
+            expect(before.auth.status).toBe("authenticated");
+            expect(before.usageLimits?.unavailable?.reason).toBe("probeFailed");
+          }
+
+          yield* fixture.recover;
+          const after = yield* fixture.refresh;
+          expect(after.auth.status).toBe("authenticated");
+          expect(after.usageLimits?.unavailable).toBeUndefined();
+          expect(after.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
+        }).pipe(Effect.provide(testLayer)),
+    );
+  }
 
   it.live(
     "shadows instances whose driver is not registered in this build without failing boot",

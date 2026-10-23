@@ -186,4 +186,4 @@ it("delivers from a relocated CLI chunk, preserves identity across restarts, and
     );
     await NodeFSP.rm(scratch, { recursive: true, force: true });
   }
-}, 60_000);
+});

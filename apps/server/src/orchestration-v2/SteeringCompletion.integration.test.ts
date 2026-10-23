@@ -560,14 +560,15 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   return { events, started, steered, layer, startFirstTurn };
 });
 
-it.effect.each([{ canRestart: false }, { canRestart: true }])(
-  "steers a changed turn-scoped selection into the running turn (canRestart=$canRestart)",
-  ({ canRestart }) =>
+// regression: #19210 a provider that can restart the turn must still steer, since restarting ends its native subagents
+it.effect(
+  "steers a changed turn-scoped selection into a running turn the provider could restart",
+  () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-          `steering-selection-change-${canRestart}`,
-          canRestart,
+          "steering-selection-change",
+          true,
         );
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;

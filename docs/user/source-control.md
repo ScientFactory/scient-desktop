@@ -260,6 +260,10 @@ missing, the composer can ask the selected agent to install it without replacing
 
 **Environment-side setup** — Authentication happens in the environment where the project runs, not necessarily on the device displaying Scient. An administrator may have already configured a shared environment.
 
+Use a thread's Git actions to commit, push, and create a pull request. Scient can generate commit
+messages, review titles, and descriptions from your changes. Descriptions also draw on the work in
+the thread, including the checks it ran.
+
 **Common issues:**
 
 - **Provider shows "Not authenticated"** – Run the login command for that provider (e.g., `gh auth login`) in a terminal on the server, then rescan in Settings
