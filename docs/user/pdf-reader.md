@@ -74,7 +74,7 @@ that page. The menu offers Rotate (left/right 90°), Move…, Duplicate, and
 Delete, in that order. Move… opens a compact popover beside the thumbnail with
 one Before page number field. Type a number or adjust it with the minus/plus buttons
 or arrow keys. Page numbers refer to the current document. The highest value,
-one above the last page and labeled End, moves the pages to the end.
+one above the last page, moves the pages to the end.
 Move saves immediately and supports undo. Copies appear after the last
 checked page. At least one page must remain. Rotation changes the saved PDF; the old view-only Rotate
 clockwise item is removed from More.

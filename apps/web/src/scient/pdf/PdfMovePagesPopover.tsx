@@ -22,7 +22,6 @@ export function PdfMovePagesPopover(props: {
   const [before, setBefore] = useState<number | null>(props.initialPage);
   const [error, setError] = useState<string | null>(null);
   const fieldId = useId();
-  const hintId = useId();
   const pageCount = snapshot.frame.pages.length;
   const valid =
     before !== null && Number.isInteger(before) && before >= 1 && before <= pageCount + 1;
@@ -90,7 +89,6 @@ export function PdfMovePagesPopover(props: {
                 <NumberFieldInput
                   ref={inputRef}
                   aria-invalid={!valid || undefined}
-                  aria-describedby={hintId}
                   aria-valuetext={before === pageCount + 1 ? "End of document" : undefined}
                   onFocus={(event) => event.currentTarget.select()}
                 />
@@ -98,9 +96,6 @@ export function PdfMovePagesPopover(props: {
               </NumberFieldGroup>
             </NumberField>
           </div>
-          <p id={hintId} className="text-xs text-muted-foreground">
-            {before === pageCount + 1 ? "End of document" : `${pageCount + 1} = End`}
-          </p>
           {error ? (
             <p role="alert" className="text-xs text-destructive">
               {error}

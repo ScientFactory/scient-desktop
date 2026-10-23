@@ -201,7 +201,7 @@ with a page-count badge.
 The context menu's Move… command captures explicit page IDs and opens a shared
 popover anchored to the thumbnail, using the insertion form's spacing and controls,
 with one shared NumberField for Before page. It supports typing and integer stepping;
-the maximum is page count plus one, labeled End. The form is about 220px wide.
+the maximum is page count plus one, without visible End helper text. The form is about 220px wide.
 It converts the current page number to an
 insertion boundary; page count + 1 means the end. It uses the same save and undo
 path as dragging. Gap menus only insert blank or imported pages.
