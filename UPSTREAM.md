@@ -1078,6 +1078,14 @@ provider packages, settings navigation and the chat header) and the shared
 `scientMounts`; `scripts/scient-seam-check.mjs` checks it with the other
 inventories. See [Scient Extensions](docs/internals/scient-extensions.md).
 
+Overleaf's checkout barrier (`scient/workspace/CheckoutBarrier.ts`) wraps bulk
+working-tree changes at marked `overleaf-checkout-barrier` seams: the Git driver's
+method table in `GitVcsDriverCore.ts` (pull, branch switch and create-and-switch,
+pull-request worktree refresh, worktree removal), `CheckpointServiceV2.restore`,
+`GitManager`'s local pull-request checkout and storage cleanup's worktree removal.
+When adopting upstream changes to those methods, keep each wrapper around the
+method that changes files. See [Overleaf engine](docs/internals/scient-overleaf-engine.md).
+
 Review previews preserve the source Git index timestamp when preparing a temporary
 index for untracked files. A freshly timestamped copy can bypass Git's racy-clean
 content checks and omit rapid same-size tracked edits. Keep the source index read-only,

@@ -25,6 +25,9 @@ import * as Schema from "effect/Schema";
 import { isGitImport, parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+// SCIENT-FORK:START overleaf-checkout-barrier
+import { CheckoutBarrier } from "../scient/workspace/CheckoutBarrier.ts";
+// SCIENT-FORK:END overleaf-checkout-barrier
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
 const ROOT_WORKSPACE_SCOPE_NAME_PREFIX = "root-workspace-v1-";
@@ -273,6 +276,9 @@ export const layer: Layer.Layer<
     const checkpointRefFor = (input: Parameters<typeof checkpointRefForScopeOrdinal>[0]) =>
       checkpointRefForScopeOrdinal(input).pipe(Effect.provideService(Crypto.Crypto, crypto));
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    // SCIENT-FORK:START overleaf-checkout-barrier — a restore pauses Overleaf applies.
+    const checkoutBarrier = yield* CheckoutBarrier;
+    // SCIENT-FORK:END overleaf-checkout-barrier
     const workspaceLocks = yield* KeyedLock.make<string>();
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
@@ -559,11 +565,16 @@ export const layer: Layer.Layer<
             });
           }
 
-          const restored = yield* checkpointStore.restoreCheckpoint({
-            cwd: input.scope.cwd,
-            checkpointRef: input.checkpoint.ref,
-            fallbackToHead: false,
-          });
+          // SCIENT-FORK:START overleaf-checkout-barrier
+          const restored = yield* checkoutBarrier.bulk(
+            input.scope.cwd,
+            checkpointStore.restoreCheckpoint({
+              cwd: input.scope.cwd,
+              checkpointRef: input.checkpoint.ref,
+              fallbackToHead: false,
+            }),
+          );
+          // SCIENT-FORK:END overleaf-checkout-barrier
           if (!restored) {
             return yield* new CheckpointRestoreError({
               scopeId: input.scope.id,

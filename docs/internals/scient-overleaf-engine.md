@@ -208,14 +208,49 @@ has its own reason: disk not connected, no volume UUID, unsupported file
 system, read-only or shared parent, checkout at the root of its disk, unsafe
 folder, missing or replaced folder.
 
+## Checkout barrier
+
+`scient/workspace/CheckoutBarrier.ts` keeps an Overleaf apply and a bulk change
+of the same checkout from overlapping. A checkout is a Git working tree's top
+folder, found by physical identity, so every path into it (a subfolder, a
+symlink) is the same checkout. A checkout inside another (a submodule, a nested
+repository) belongs to both, because a recursive checkout or pull of the outer
+one rewrites the inner one too.
+
+- A bulk change (checkpoint restore, pull, switching branch, creating a branch
+  and switching to it, moving a pull request's worktree to its head, checking
+  out a pull request locally, removing a worktree) closes new apply admission
+  at once, waits for running applies to finish, then runs.
+- Bulk changes of one checkout run one at a time. One the owning fiber makes
+  inside its own section (a provider's checkout calling the Git driver) runs
+  within it; any other fiber, a forked child included, waits its turn.
+- An apply asking to start during a bulk change is refused
+  (`CheckoutSuspendedError`), not queued.
+- Each bulk change advances the checkout's epoch as it starts and as it ends,
+  even if it fails. A plan made against an older epoch is stale; an inner
+  checkout's epoch includes its enclosing checkouts'.
+- Before a bulk change runs, registered settlers may finish unfinished local
+  work inside its section, or refuse the change (`CheckoutRecoveryRequiredError`,
+  which Git callers see as a `GitCommandError`). A folder that can't be examined
+  is a `CheckoutLookupError`, mapped the same way.
+
+The hooks sit in the Git driver's method table (one wrapper per bulk method, so
+callers that bypass `GitWorkflowService` are covered too), in
+`CheckpointServiceV2.restore`, in `GitManager`'s local pull-request checkout
+(provider command-line tools that never reach the driver), and in storage
+cleanup's worktree removal. Each is marked `SCIENT-FORK:START
+overleaf-checkout-barrier`. The barrier is a `Context.Reference` whose default
+is one instance per server process, shared however each layer was built.
+Arbitrary shell writers, external Git commands and other server profiles are
+outside it.
+
 ## Remaining integration gates
 
 The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
 defines the remaining work and tracks each step's status.
 Before exposing operations, implement connection ownership/binding checks,
 prepare/apply/publish recovery, bounded inventory and repository retention,
-checkout suspension for checkpoint restores and worktree/VCS operations, and
-the editor-flush bridge. The coordinator must implement cancellation between
+the barrier's settler for pending applies, and the editor-flush bridge. The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
 release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
 in the development app. The exercised Cloud protocol behavior is recorded on #535;

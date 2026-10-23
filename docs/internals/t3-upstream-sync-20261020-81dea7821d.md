@@ -1097,3 +1097,25 @@ native/platform round 3 and browser round 5. The final maintained reader run
 passes 31/31, and root `vp check` passes with warnings but no errors. Review
 approval is not a replacement for the remaining build, platform and hosted
 qualification gates.
+
+### Landed owned-main catch-up through `6a53599f99da`
+
+PR #626 landed the checkout barrier after the preceding checkpoint. The existing
+alignment therefore merges exact owned main
+`6a53599f99da349d1ada22015cb5759f3bb241e8`, preserving the original upstream
+merge and frozen `21da3061aa` boundary. It does not take the other agent's
+`2c8bdf6177` merge.
+
+The sole textual conflict was local pull-request checkout. Both the tracked-edit
+check and the non-forced provider checkout run inside the barrier, after pending
+work has settled. The clean checkpoint, Git-driver and cleanup compositions
+retain their barrier ownership and error mappings. Independent Codex composition
+review found no actionable issue.
+
+Six affected barrier/driver/checkpoint/cleanup files pass 393 tests with one
+skip. Fourteen local pull-request checkout cases pass, including the new
+settler-published-edit preservation case. Moving its dirty check before barrier
+admission makes that regression fail by incorrectly accepting checkout;
+restoring the reviewed ordering makes it pass. The regression stays beside the
+existing private production-manager fixture, with a marked Scient seam rather
+than duplicate fixture exports.

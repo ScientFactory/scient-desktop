@@ -49,6 +49,16 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import * as ServerConfig from "../config.ts";
+// SCIENT-FORK:START overleaf-checkout-barrier
+import {
+  CheckoutBarrier,
+  CheckoutLookupError,
+  CheckoutRecoveryRequiredError,
+} from "../scient/workspace/CheckoutBarrier.ts";
+const isCheckoutRefusal = Schema.is(
+  Schema.Union([CheckoutRecoveryRequiredError, CheckoutLookupError]),
+);
+// SCIENT-FORK:END overleaf-checkout-barrier
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);
@@ -920,6 +930,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
+  // SCIENT-FORK:START overleaf-checkout-barrier — bulk working-tree changes pause Overleaf applies.
+  const checkoutBarrier = yield* CheckoutBarrier;
+  const bulkChange = <A, E, R>(
+    operation: string,
+    cwd: string,
+    path: string,
+    effect: Effect.Effect<A, E, R>,
+    missing: "nearest" | "skip" = "nearest",
+  ) =>
+    checkoutBarrier
+      .bulk(path, effect, { missing })
+      .pipe(
+        Effect.catchIf(isCheckoutRefusal, (error) =>
+          Effect.fail(
+            new GitCommandError({ operation, command: "git", cwd, detail: error.message }),
+          ),
+        ),
+      );
+  // SCIENT-FORK:END overleaf-checkout-barrier
   const hostPlatform = yield* HostProcess.Platform;
   const serviceScope = yield* Effect.scope;
   const statusFetches = new Map<string, Fiber.Fiber<void, GitCommandError>>();
@@ -4469,7 +4498,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(cwd, commit(cwd, subject, body, options)),
     pushCurrentBranch: (cwd, fallbackBranch, options) =>
       withListRefsInvalidation(cwd, pushCurrentBranch(cwd, fallbackBranch, options)),
-    pullCurrentBranch: (cwd) => withListRefsInvalidation(cwd, pullCurrentBranch(cwd)),
+    // SCIENT-FORK:START overleaf-checkout-barrier
+    pullCurrentBranch: (cwd) =>
+      withListRefsInvalidation(
+        cwd,
+        bulkChange("GitVcsDriver.pullCurrentBranch", cwd, cwd, pullCurrentBranch(cwd)),
+      ),
+    // SCIENT-FORK:END overleaf-checkout-barrier
     readRangeContext,
     getReviewDiffPreview,
     getReviewDiffFileContents,
@@ -4482,8 +4517,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(input.cwd, fetchPullRequestBranch(input)),
     fetchPullRequestHeadCommit,
     resolveCommit,
+    // SCIENT-FORK:START overleaf-checkout-barrier
     refreshCheckedOutBranch: (input) =>
-      withListRefsInvalidation(input.cwd, refreshCheckedOutBranch(input)),
+      withListRefsInvalidation(
+        input.cwd,
+        bulkChange(
+          "GitVcsDriver.refreshCheckedOutBranch",
+          input.cwd,
+          input.cwd,
+          refreshCheckedOutBranch(input),
+        ),
+      ),
+    // SCIENT-FORK:END overleaf-checkout-barrier
     ensureRemote: (input) => withListRefsInvalidation(input.cwd, ensureRemote(input)),
     resolvePrimaryRemoteName,
     resolveDefaultBranchName,
@@ -4508,12 +4553,37 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     fetchRemoteTrackingBranch: (input) =>
       withListRefsInvalidation(input.cwd, fetchRemoteTrackingBranch(input)),
     setBranchUpstream: (input) => withListRefsInvalidation(input.cwd, setBranchUpstream(input)),
-    removeWorktree: (input) => withListRefsInvalidation(input.cwd, removeWorktree(input)),
+    // SCIENT-FORK:START overleaf-checkout-barrier
+    removeWorktree: (input) =>
+      withListRefsInvalidation(
+        input.cwd,
+        bulkChange(
+          "GitVcsDriver.removeWorktree",
+          input.cwd,
+          // Git resolves a relative worktree path against the repository, not the server.
+          path.resolve(input.cwd, input.path),
+          removeWorktree(input),
+          "skip",
+        ),
+      ),
+    // SCIENT-FORK:END overleaf-checkout-barrier
     pruneWorktrees: (input) => withListRefsInvalidation(input.cwd, pruneWorktrees(input)),
     deleteLocalBranch: (input) => withListRefsInvalidation(input.cwd, deleteLocalBranch(input)),
     renameBranch: (input) => withListRefsInvalidation(input.cwd, renameBranch(input)),
-    createRef: (input) => withListRefsInvalidation(input.cwd, createRef(input)),
-    switchRef: (input) => withListRefsInvalidation(input.cwd, switchRef(input)),
+    // SCIENT-FORK:START overleaf-checkout-barrier
+    createRef: (input) =>
+      withListRefsInvalidation(
+        input.cwd,
+        input.switchRef
+          ? bulkChange("GitVcsDriver.createRef", input.cwd, input.cwd, createRef(input))
+          : createRef(input),
+      ),
+    switchRef: (input) =>
+      withListRefsInvalidation(
+        input.cwd,
+        bulkChange("GitVcsDriver.switchRef", input.cwd, input.cwd, switchRef(input)),
+      ),
+    // SCIENT-FORK:END overleaf-checkout-barrier
     initRepo: initRepoWithListRefsInvalidation,
     listLocalBranchNames,
     listWorktreePaths,

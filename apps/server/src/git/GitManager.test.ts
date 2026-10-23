@@ -61,6 +61,9 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+// SCIENT-FORK:START overleaf-checkout-barrier
+import { CheckoutBarrier } from "../scient/workspace/CheckoutBarrier.ts";
+// SCIENT-FORK:END overleaf-checkout-barrier
 import * as ForgejoSourceControlProvider from "@t3tools/source-control-forgejo/server/ForgejoSourceControlProvider";
 import * as GitLabSourceControlProvider from "@t3tools/source-control-gitlab/server/GitLabSourceControlProvider";
 import {
@@ -4126,6 +4129,33 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(ghCalls.some((call) => call.startsWith("pr checkout"))).toBe(false);
       }),
   );
+
+  // SCIENT-FORK:START overleaf-checkout-barrier
+  it.effect("local PR checkout preserves tracked edits published by its checkout settler", () =>
+    Effect.gen(function* () {
+      const { repoDir, manager, ghCalls, firstCommit } = yield* setUpLocalCheckoutPullRequest();
+      const checkout = NodeFS.realpathSync(repoDir);
+      const file = NodePath.join(repoDir, "README.md");
+      const barrier = yield* CheckoutBarrier;
+      yield* barrier.settleBeforeBulk((section) =>
+        Effect.sync(() => {
+          if (section.root === checkout) NodeFS.writeFileSync(file, "settled unsaved edit\n");
+        }),
+      );
+
+      const error = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "91",
+        mode: "local",
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain("uncommitted changes");
+      expect(NodeFS.readFileSync(file, "utf8")).toBe("settled unsaved edit\n");
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(firstCommit);
+      expect(ghCalls.some((call) => call.startsWith("pr checkout"))).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+  // SCIENT-FORK:END overleaf-checkout-barrier
 
   it.effect("local PR checkout refuses a diverged branch and keeps its extra commit", () =>
     Effect.gen(function* () {

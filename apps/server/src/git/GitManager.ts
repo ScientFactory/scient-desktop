@@ -97,6 +97,9 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
+// SCIENT-FORK:START overleaf-checkout-barrier
+import { CheckoutBarrier } from "../scient/workspace/CheckoutBarrier.ts";
+// SCIENT-FORK:END overleaf-checkout-barrier
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -720,6 +723,9 @@ function toPullRequestHeadRemoteInfo(pr: {
 }
 
 export const make = Effect.gen(function* () {
+  // SCIENT-FORK:START overleaf-checkout-barrier — a provider's own checkout command pauses Overleaf applies.
+  const checkoutBarrier = yield* CheckoutBarrier;
+  // SCIENT-FORK:END overleaf-checkout-barrier
   const gitCore = yield* GitVcsDriver.GitVcsDriver;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const textGeneration = yield* TextGeneration.TextGeneration;
@@ -2782,11 +2788,41 @@ export const make = Effect.gen(function* () {
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
-        yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
-        yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
-          cwd: input.cwd,
-          reference: normalizedReference,
-        });
+        // SCIENT-FORK:START overleaf-checkout-barrier
+        yield* checkoutBarrier
+          .bulk(
+            input.cwd,
+            Effect.gen(function* () {
+              yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
+              yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
+                cwd: input.cwd,
+                reference: normalizedReference,
+              });
+            }),
+          )
+          .pipe(
+            Effect.catchTags({
+              CheckoutRecoveryRequiredError: (error) =>
+                Effect.fail(
+                  new GitCommandError({
+                    operation: "GitManager.preparePullRequestThread",
+                    command: "git",
+                    cwd: input.cwd,
+                    detail: error.message,
+                  }),
+                ),
+              CheckoutLookupError: (error) =>
+                Effect.fail(
+                  new GitCommandError({
+                    operation: "GitManager.preparePullRequestThread",
+                    command: "git",
+                    cwd: input.cwd,
+                    detail: error.message,
+                  }),
+                ),
+            }),
+          );
+        // SCIENT-FORK:END overleaf-checkout-barrier
         const details = yield* gitCore.statusDetails(input.cwd);
         const branch = details.branch ?? pullRequest.headBranch;
         yield* configurePullRequestHeadUpstream(

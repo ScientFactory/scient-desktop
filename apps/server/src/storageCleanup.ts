@@ -56,6 +56,9 @@ import { presentQueuedRunsAsBusy } from "./scient/storage/QueuedRunWorktreeReten
 // SCIENT-FORK:END worktree-lifetime-retention
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+// SCIENT-FORK:START overleaf-checkout-barrier
+import { CheckoutBarrier } from "./scient/workspace/CheckoutBarrier.ts";
+// SCIENT-FORK:END overleaf-checkout-barrier
 
 const decodeCleanupThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
@@ -213,6 +216,9 @@ export class StorageCleanup extends Context.Service<
 >()("t3/storageCleanup") {}
 
 const make = Effect.gen(function* () {
+  // SCIENT-FORK:START overleaf-checkout-barrier — removing a worktree pauses Overleaf applies.
+  const checkoutBarrier = yield* CheckoutBarrier;
+  // SCIENT-FORK:END overleaf-checkout-barrier
   const config = yield* ServerConfig.ServerConfig;
   const settingsService = yield* Settings.ServerSettingsService;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
@@ -1125,12 +1131,25 @@ const make = Effect.gen(function* () {
         if (submodules.force) return keep("submodule worktree cannot be isolated safely");
         // SCIENT-FORK:END preserve-racing-submodule-files
         // SCIENT-FORK:START preserve-racing-worktree-files — isolate, inspect, then remove.
-        const isolationChanges = yield* removeIsolatedWorktree(
-          project.workspaceRoot,
-          worktreePath,
-          thread.branch!,
-          head.commitSha,
-        ).pipe(Effect.uninterruptible);
+        // An unfinished Overleaf sync in the worktree keeps it (overleaf-checkout-barrier).
+        const isolationChanges = yield* checkoutBarrier
+          .bulk(
+            worktreePath,
+            removeIsolatedWorktree(
+              project.workspaceRoot,
+              worktreePath,
+              thread.branch!,
+              head.commitSha,
+            ).pipe(Effect.uninterruptible),
+            { missing: "skip" },
+          )
+          .pipe(
+            Effect.catchTags({
+              CheckoutRecoveryRequiredError: () =>
+                Effect.succeed("an unfinished Overleaf sync needs recovery first"),
+              CheckoutLookupError: () => Effect.succeed("its folder could not be examined"),
+            }),
+          );
         if (isolationChanges !== null) return keep(isolationChanges);
         // SCIENT-FORK:END preserve-racing-worktree-files
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
