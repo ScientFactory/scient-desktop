@@ -125,6 +125,7 @@ it.effect.skipIf(!binary)(
   () =>
     Effect.gen(function* () {
       let agentRequests = 0;
+      const titleRequest = Promise.withResolvers<void>();
       const origin = yield* listen(async (request, response) => {
         if (!request.url?.endsWith("/chat/completions")) {
           response.writeHead(200, { "content-type": "application/json" });
@@ -136,6 +137,7 @@ it.effect.skipIf(!binary)(
         // Droid's own session-title request carries no tools and finishes normally.
         const agent = decodeChatRequest(body).tools !== undefined;
         if (agent) agentRequests++;
+        else titleRequest.resolve();
         response.writeHead(200, { "content-type": "text/event-stream" });
         response.write(
           chunk({
@@ -167,7 +169,10 @@ it.effect.skipIf(!binary)(
       // Partial output stands.
       expect(text).toContain("Partial 1");
       const settled = agentRequests;
-      yield* Effect.sleep("2 seconds");
+      // The session-title request is Droid's own receipt that the turn is
+      // done: it is dispatched only after the turn's model traffic, so a
+      // delayed truncation retry would have to arrive first.
+      yield* Effect.promise(() => titleRequest.promise);
       expect(agentRequests).toBe(settled);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
   120_000,

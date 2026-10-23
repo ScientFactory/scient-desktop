@@ -1,6 +1,8 @@
+import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeVM from "node:vm";
 
 import { assert, describe, it } from "vite-plus/test";
 import {
@@ -8,6 +10,15 @@ import {
   macConversationDocumentTypes,
   macConversationExportedTypes,
 } from "./conversation-file-type.mjs";
+import {
+  SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV,
+  SCIENT_DEV_APP_FAILURE_FILE_ENV,
+} from "./dev-app-bundle.mjs";
+import {
+  developmentLauncherIsActive,
+  findOwnedDevelopmentProcesses,
+  makeMacDevelopmentAppLaunchCommand,
+} from "./dev-app-process.mjs";
 
 import {
   makeDevelopmentCommandScript,
@@ -22,8 +33,6 @@ import {
   resolveElectronBinaryPath,
   resolveDevelopmentAppDisplayName,
   resolveMacBundleInfoPlistStrings,
-  resolveMacCodeSignArguments,
-  resolveMacLauncherIconPaths,
   resolveMacLauncherPaths,
   resolveMacDevelopmentBundleExecutable,
   writeDevelopmentLauncherScript,
@@ -181,9 +190,12 @@ describe("electron development launcher", () => {
     assert.include(script, "cd '/repo'");
     assert.include(script, process.execPath);
     assert.include(script, `export PATH='${NodePath.dirname(process.execPath)}':"$PATH"`);
-    assert.include(script, "/tool/pnpm.cjs");
     assert.include(script, "export SCIENT_DEV_APP_ROLE='stable'");
-    assert.include(script, "dev:app:start");
+    assert.include(
+      script,
+      "'/tmp/scient-dev-stable/controller/scripts/dev-app/controller.mjs' open",
+    );
+    assert.notInclude(script, "dev:app:start");
     assert.include(script, "export SCIENT_NEXT_HOME='/tmp/scient-dev-stable'");
     assert.include(script, "/tmp/scient-dev-stable/local-dev-app.log");
     assert.include(
@@ -192,6 +204,16 @@ describe("electron development launcher", () => {
     );
     assert.include(script, 'printf \'%s\\0\' "$@" > "$conversation_args_tmp"');
     assert.include(script, "2>&1");
+  });
+
+  it("starts a candidate through its own checkout's pnpm script", () => {
+    const script = makeDevelopmentCommandScript({
+      desktopRoot: "/repo/apps/desktop",
+      environment: { npm_execpath: "/tool/pnpm.cjs" },
+    });
+
+    assert.include(script, "'/tool/pnpm.cjs' dev:app:start");
+    assert.include(script, NodePath.resolve("/repo", ".scient-next", "local-dev-app.log"));
   });
 
   it("repairs Electron before loading the package entrypoint", () => {
@@ -328,17 +350,6 @@ describe("electron development launcher", () => {
     });
   });
 
-  it("ad-hoc signs the complete development app bundle", () => {
-    assert.deepEqual(resolveMacCodeSignArguments("/runtime/T3 Code (Dev).app"), [
-      "--force",
-      "--deep",
-      "--sign",
-      "-",
-      "--timestamp=none",
-      "/runtime/T3 Code (Dev).app",
-    ]);
-  });
-
   it("restores execute permissions on an unchanged launcher", () => {
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-launcher-"));
     const launcherPath = NodePath.join(directory, "Scient.app", "Contents", "MacOS", "Launcher");
@@ -384,14 +395,95 @@ describe("electron development launcher", () => {
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }
   });
+});
 
-  it("derives launcher icons from canonical development and production assets", () => {
-    const development = resolveMacLauncherIconPaths("/runtime", true);
-    const production = resolveMacLauncherIconPaths("/runtime", false);
+async function developmentCleanupSignals(desktopDir, argvCases) {
+  const source = NodeFS.readFileSync(new URL("./dev-electron.mjs", import.meta.url), "utf8");
+  const appBundlePath = "/tmp/Scient (Dev).app";
+  const electronBinaryPath = NodePath.join(appBundlePath, "Contents", "MacOS", "Electron");
+  const processes = argvCases.map((args, index) => ({
+    pid: 100 + index,
+    command: `${electronBinaryPath} ${args.join(" ")}`,
+  }));
+  processes.push({ pid: 200, command: `/other/Electron ${argvCases[0].join(" ")}` });
+  const signals = [];
+  // Run the live lifecycle and ownership matcher, but keep all I/O and signals synthetic.
+  const lifecycle = await NodeVM.runInNewContext(
+    `(async () => { ${source.replace(/^import\s[\s\S]*?;\n/gm, "")}
+      return { startApp, stopApp };
+    })()`,
+    {
+      NodeChildProcess: {
+        execFileSync: () => undefined,
+        spawn: () => new NodeEvents.EventEmitter(),
+      },
+      NodeFS: {
+        readFileSync: () => {
+          throw Object.assign(new Error("No pending conversation"), { code: "ENOENT" });
+        },
+        writeFileSync: () => undefined,
+        watch: () => ({ close: () => undefined }),
+      },
+      NodeOS: { platform: () => "darwin" },
+      NodePath,
+      desktopDir,
+      SCIENT_DEV_APP_BACKGROUND_SERVICE_ENV,
+      SCIENT_DEV_APP_FAILURE_FILE_ENV,
+      createCoalescedRestartScheduler: () => ({ request: () => undefined }),
+      createWatchedFileStamps: () => ({ changed: () => false }),
+      developmentLauncherIsActive,
+      findOwnedDevelopmentProcesses: (input) =>
+        findOwnedDevelopmentProcesses({
+          ...input,
+          inspectAllProcesses: () =>
+            processes.filter(({ pid }) => !signals.some((sent) => sent.pid === pid)),
+        }),
+      makeMacDevelopmentAppLaunchCommand,
+      readOwnedDevelopmentAppProcess: () => null,
+      removeDevelopmentLaunchFiles: () => undefined,
+      waitForOwnedDevelopmentAppProcess: async () => ({ pid: 300 }),
+      waitForOwnedDevelopmentChildProcess: async () => ({ pid: 301 }),
+      writeDevelopmentProcessPid: () => undefined,
+      resolveDevProtocolClient: () => ({ appBundlePath }),
+      waitForResources: async () => undefined,
+      URL,
+      process: {
+        env: {
+          VITE_DEV_SERVER_URL: "http://localhost:1234",
+          SCIENT_LOCAL_DEV_APP_MANAGED: "1",
+        },
+        execPath: "node",
+        pid: 1,
+        once: () => undefined,
+        kill: (pid, signal) => signals.push({ pid, signal }),
+      },
+    },
+  );
+  await lifecycle.startApp();
+  await lifecycle.stopApp();
+  return signals;
+}
 
-    assert.match(development.sourceIconPath, /assets[\\/]dev[\\/]blueprint-macos-1024\.png$/);
-    assert.equal(development.generatedIconPath, "/runtime/icon-dev.icns");
-    assert.match(production.sourceIconPath, /assets[\\/]prod[\\/]black-macos-1024\.png$/);
-    assert.equal(production.generatedIconPath, "/runtime/icon-prod.icns");
-  });
+it.each([
+  "/tmp/t3-feature.one/apps/desktop",
+  "/tmp/t3-feature.one [two](three)+?^${four}|back\\slash*/apps/desktop",
+])("dev cleanup matches only the literal root argument: %s", async (desktopDir) => {
+  const flag = `--t3code-dev-root=${desktopDir}`;
+  const argvCases = [
+    [flag],
+    [flag, "main.cjs"],
+    [flag.replace(".one", "Xone")],
+    [`${flag}-two`],
+    [`prefix${flag}`],
+    [`--t3code-dev-root=/other${desktopDir}`],
+  ];
+  const signals = await developmentCleanupSignals(desktopDir, argvCases);
+  assert.sameMembers(
+    signals.map(({ pid }) => pid),
+    [100, 101],
+  );
+  assert.deepEqual(
+    signals.map(({ signal }) => signal),
+    ["SIGTERM", "SIGTERM"],
+  );
 });

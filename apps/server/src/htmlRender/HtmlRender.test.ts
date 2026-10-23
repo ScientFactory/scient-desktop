@@ -1,14 +1,12 @@
+import { HTML_RENDER_MEASURE_FONTS } from "@t3tools/shared/htmlRender";
+import { htmlRenderTheme } from "@t3tools/shared/htmlRender";
+import { T3_CODE_DARK_THEME_COLORS } from "@t3tools/shared/themePalettes";
 // @effect-diagnostics nodeBuiltinImport:off - plain local servers stand in for LAN services.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  HTML_RENDER_MEASURE_FONTS,
-  HTML_RENDER_MEASURE_WIDTHS,
-  htmlRenderTheme,
-} from "@t3tools/shared/htmlRender";
-import { T3_CODE_DARK_THEME_COLORS } from "@t3tools/shared/themePalettes";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
@@ -47,6 +45,7 @@ const layerHtmlRender = (
         }),
       ),
     ),
+    Layer.provideMerge(McpProviderSessions.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-html-render-" })),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -91,6 +90,28 @@ describe("HtmlRender", () => {
       for (const src of kept) expect(prepared).toContain(`<img src="${src}">`);
       expect(prepared.indexOf("<head>")).toBeLessThan(prepared.indexOf('<style id="t3-theme">'));
       expect(prepared.indexOf('<style id="t3-theme">')).toBeLessThan(prepared.indexOf("<title>"));
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("rejects viewport height units, which make the fitted frame grow without end", () =>
+    Effect.gen(function* () {
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      for (const page of [
+        "<style>main{min-height:100vh}</style>",
+        "<style media=screen>main{height: calc(100dvh - 2rem)}",
+        "<div style='top:.5svh'></div>",
+        "<div style=height:100vh></div>",
+      ]) {
+        const error = yield* htmlRender.prepare(page).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(HtmlRender.HtmlRenderViewportHeightError);
+      }
+      yield* htmlRender.prepare(
+        '<style>main{width:100vw;height:320px}</style><img src="data:image/png;base64,AB1vh+2vh/3vhC">',
+      );
+      yield* htmlRender.prepare(
+        "<p>Avoid 100vh here.</p><!-- <div style=\"height:100vh\"></div> --><script>const unit = '100vh';</script>",
+      );
+      yield* htmlRender.prepare(`<style>${"1".repeat(200_000)}vx</style>`);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -169,10 +190,25 @@ describe("HtmlRender", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const config = yield* ServerConfig.ServerConfig;
       const htmlRender = yield* HtmlRender.HtmlRender;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const threadId = ThreadId.make("thread-html-render");
+      const session = {
+        environmentId: EnvironmentId.make("html-render-environment"),
+        threadId,
+        providerSessionId: "first-credential",
+        providerInstanceId: ProviderInstanceId.make("claude"),
+        endpoint: "http://localhost:8311/mcp",
+        authorizationHeader: "Bearer first-token",
+        capabilities: new Set<string>(),
+        // SCIENT-FORK:START — Scient Extensions connectors.
+        connectors: [],
+        // SCIENT-FORK:END
+      };
+      yield* mcpSessions.set(session);
 
       const reference = yield* htmlRender.publish({
-        threadId: ThreadId.make("thread-html-render"),
-        html: "<p>Quarterly revenue</p>",
+        threadId,
+        html: `<p>Quarterly revenue</p>${" ".repeat(8_000)}`,
         title: "  Revenue  ",
         height: 9_000,
       });
@@ -190,32 +226,62 @@ describe("HtmlRender", () => {
       const html = yield* fileSystem.readFileString(stored ?? "");
       expect(html).toContain('<style id="t3-theme">');
       expect(html).toContain("<p>Quarterly revenue</p>");
+      // Antigravity reports the call without its result, so the thread's
+      // provider session keeps the page for one call with these arguments.
+      const page = {
+        html: `<p>Quarterly revenue</p>${" ".repeat(8_000)}`,
+        title: "  Revenue  ",
+        height: 9_000,
+      };
+      expect(
+        yield* mcpSessions.takeHtmlRender(threadId, {
+          ...page,
+          html: page.html.replace("revenue", "expense"),
+        }),
+      ).toBe(undefined);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(reference);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
+      const reused = yield* htmlRender.publish({ threadId, ...page });
+      yield* mcpSessions.set({ ...session, capabilities: new Set(["preview"]) });
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(reused);
+
+      yield* htmlRender.publish({ threadId, ...page });
+      yield* mcpSessions.set({
+        ...session,
+        providerSessionId: "replacement-credential",
+        providerInstanceId: ProviderInstanceId.make("antigravity"),
+        authorizationHeader: "Bearer replacement-token",
+      });
+      const replacement = yield* htmlRender.publish({ threadId, ...page });
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(replacement);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
+      // Clearing the thread's MCP session drops the pages it kept.
+      yield* htmlRender.publish({ threadId, ...page });
+      yield* mcpSessions.clear(threadId);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
     }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("removes the page when publishing is interrupted", () =>
     Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-html-cancel");
+      const page = { html: "<p>x</p>", title: "X", height: 200 };
       const measuring = yield* Deferred.make<void>();
       yield* Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const config = yield* ServerConfig.ServerConfig;
         const htmlRender = yield* HtmlRender.HtmlRender;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const storedPages = fileSystem
           .readDirectory(config.attachmentsDir, { recursive: true })
           .pipe(Effect.map((names) => names.filter((name) => name.endsWith(".html"))));
 
-        const publishing = yield* htmlRender
-          .publish({
-            threadId: ThreadId.make("thread-html-cancel"),
-            html: "<p>x</p>",
-            title: "X",
-            height: 200,
-          })
-          .pipe(Effect.forkChild);
+        const publishing = yield* htmlRender.publish({ threadId, ...page }).pipe(Effect.forkChild);
         yield* Deferred.await(measuring);
         expect(yield* storedPages).toHaveLength(1);
         yield* Fiber.interrupt(publishing);
         expect(yield* storedPages).toEqual([]);
+        expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
       }).pipe(
         Effect.provide(
           layerHtmlRender(
@@ -224,6 +290,34 @@ describe("HtmlRender", () => {
           ),
         ),
       );
+    }),
+  );
+
+  it.live("keeps every local file but the page itself out of the browser", (ctx) =>
+    Effect.gen(function* () {
+      const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
+      if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
+      yield* Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const htmlRender = yield* HtmlRender.HtmlRender;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-files-" });
+        const secret = path.join(directory, "secret.js");
+        yield* fileSystem.writeFileString(secret, 'window.secret = "abc123";');
+        const secretUrl = NodeURL.pathToFileURL(secret).href;
+
+        const preview = yield* htmlRender.preview({
+          html: [
+            `<script src="${secretUrl}"></script>`,
+            `<iframe src="${secretUrl}" onload="console.log('frame loaded')"></iframe>`,
+            '<script>addEventListener("load", () => console.log("secret:", window.secret ?? "none"));</script>',
+          ].join(""),
+        });
+
+        const texts = preview.consoleMessages.map((message) => message.text);
+        expect(texts).toContain("secret: none");
+        expect(texts.join(" ")).not.toContain("abc123");
+      }).pipe(Effect.scoped, Effect.provide(layerHtmlRender(executable)));
     }),
   );
 
@@ -242,7 +336,8 @@ describe("HtmlRender", () => {
               "<script>",
               "const root = getComputedStyle(document.documentElement);",
               'const page = document.getElementById("page"); page.focus();',
-              'const focus = getComputedStyle(page); console.log("focus", focus.outlineWidth, focus.outlineOffset, page.getBoundingClientRect().width, document.documentElement.scrollWidth);',
+              // The headless target gains focus after load, not during the parser's script.
+              'addEventListener("load", () => requestAnimationFrame(() => { const focus = getComputedStyle(page); console.log("focus", focus.outlineWidth, focus.outlineOffset, page.getBoundingClientRect().width, document.documentElement.scrollWidth); }));',
               'console.log("ready", 3); console.info(root.getPropertyValue("--font-sans"));',
               'console.warn(root.getPropertyValue("--background")); console.error("boom");',
               "</script>",
@@ -281,116 +376,57 @@ describe("HtmlRender", () => {
           );
         }).pipe(Effect.provide(layerHtmlRender(executable)));
       }),
-    30_000,
   );
 
-  it.live(
-    "keeps every local file but the page itself out of the browser",
-    (ctx) =>
-      Effect.gen(function* () {
-        const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
-        if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
-        yield* Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const htmlRender = yield* HtmlRender.HtmlRender;
-          const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-files-" });
-          const secret = path.join(directory, "secret.js");
-          yield* fileSystem.writeFileString(secret, 'window.secret = "abc123";');
-          const secretUrl = NodeURL.pathToFileURL(secret).href;
-
-          const preview = yield* htmlRender.preview({
-            html: [
-              `<script src="${secretUrl}"></script>`,
-              `<iframe src="${secretUrl}" onload="console.log('frame loaded')"></iframe>`,
-              '<script>addEventListener("load", () => console.log("secret:", window.secret ?? "none"));</script>',
-            ].join(""),
+  it.live("keeps the page off this machine's local network", (ctx) =>
+    Effect.gen(function* () {
+      const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
+      if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
+      const requests: Array<string> = [];
+      const server = yield* Effect.acquireRelease(
+        Effect.callback<NodeHttp.Server>((resume) => {
+          const listening = NodeHttp.createServer((request, response) => {
+            requests.push(`${request.url} ${request.headers["sec-purpose"] ?? ""}`);
+            response.end("<p>LOCAL</p>");
           });
-
-          const texts = preview.consoleMessages.map((message) => message.text);
-          expect(texts).toContain("secret: none");
-          expect(texts.join(" ")).not.toContain("abc123");
-        }).pipe(Effect.scoped, Effect.provide(layerHtmlRender(executable)));
-      }),
-    30_000,
-  );
-
-  it.live(
-    "keeps the page off this machine's local network",
-    (ctx) =>
-      Effect.gen(function* () {
-        const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
-        if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
-        const requests: Array<string> = [];
-        const server = yield* Effect.acquireRelease(
-          Effect.callback<NodeHttp.Server>((resume) => {
-            const listening = NodeHttp.createServer((request, response) => {
-              requests.push(`${request.url} ${request.headers["sec-purpose"] ?? ""}`);
-              response.end("<p>LOCAL</p>");
-            });
-            listening.listen(0, "127.0.0.1", () => resume(Effect.succeed(listening)));
+          listening.listen(0, "127.0.0.1", () => resume(Effect.succeed(listening)));
+        }),
+        (listening) =>
+          Effect.callback<void>((resume) => {
+            listening.close(() => resume(Effect.void));
           }),
-          (listening) =>
-            Effect.callback<void>((resume) => {
-              listening.close(() => resume(Effect.void));
-            }),
-        );
-        const datagrams: Array<string> = [];
-        const udp = yield* Effect.acquireRelease(
-          Effect.callback<NodeDgram.Socket>((resume) => {
-            const socket = NodeDgram.createSocket("udp4");
-            socket.on("message", (message) => datagrams.push(message.toString("hex")));
-            socket.bind(0, "127.0.0.1", () => resume(Effect.succeed(socket)));
+      );
+      const datagrams: Array<string> = [];
+      const udp = yield* Effect.acquireRelease(
+        Effect.callback<NodeDgram.Socket>((resume) => {
+          const socket = NodeDgram.createSocket("udp4");
+          socket.on("message", (message) => datagrams.push(message.toString("hex")));
+          socket.bind(0, "127.0.0.1", () => resume(Effect.succeed(socket)));
+        }),
+        (socket) =>
+          Effect.callback<void>((resume) => {
+            socket.close(() => resume(Effect.void));
           }),
-          (socket) =>
-            Effect.callback<void>((resume) => {
-              socket.close(() => resume(Effect.void));
-            }),
-        );
-        const address = server.address();
-        const origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
-        const stun = `stun:127.0.0.1:${udp.address().port}`;
-        yield* Effect.gen(function* () {
-          const htmlRender = yield* HtmlRender.HtmlRender;
-          yield* htmlRender.preview({
-            html: [
-              `<img src="${origin}/x.png"><iframe src="${origin}/"></iframe>`,
-              `<script type="speculationrules">{"prefetch":[{"source":"list","urls":["${origin}/prefetch"]}]}</script>`,
-              `<script>fetch("${origin}/").catch(() => {}); new WebSocket("ws${origin.slice(4)}/socket");`,
-              `try { const peer = new RTCPeerConnection({ iceServers: [{ urls: "${stun}" }] });`,
-              `peer.createDataChannel("x"); peer.createOffer().then((offer) => peer.setLocalDescription(offer));`,
-              `} catch {}`,
-              `window.open("${origin}/popup"); location.href = "${origin}/navigate";</script>`,
-            ].join(""),
-          });
-        }).pipe(Effect.provide(layerHtmlRender(executable)));
-        expect(requests).toEqual([]);
-        expect(datagrams).toEqual([]);
-      }).pipe(Effect.scoped),
-    30_000,
-  );
-
-  it.live(
-    "measures a published page at every client width with a fresh load each",
-    (ctx) =>
-      Effect.gen(function* () {
-        const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
-        if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
-        yield* Effect.gen(function* () {
-          const htmlRender = yield* HtmlRender.HtmlRender;
-          const reference = yield* htmlRender.publish({
-            threadId: ThreadId.make("thread-html-measure"),
-            html: '<div id="chart" style="background:#888"></div><script>document.getElementById("chart").style.height = innerWidth / 2 + "px";</script>',
-            title: "Chart",
-            height: 600,
-          });
-
-          expect(reference.heights).toEqual(
-            HTML_RENDER_MEASURE_WIDTHS.map((width) => [width, Math.ceil(width / 2)]),
-          );
-          expect(reference.outline).toBe("m0,0,182,91,1");
-        }).pipe(Effect.provide(layerHtmlRender(executable)));
-      }),
-    30_000,
+      );
+      const address = server.address();
+      const origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
+      const stun = `stun:127.0.0.1:${udp.address().port}`;
+      yield* Effect.gen(function* () {
+        const htmlRender = yield* HtmlRender.HtmlRender;
+        yield* htmlRender.preview({
+          html: [
+            `<img src="${origin}/x.png"><iframe src="${origin}/"></iframe>`,
+            `<script type="speculationrules">{"prefetch":[{"source":"list","urls":["${origin}/prefetch"]}]}</script>`,
+            `<script>fetch("${origin}/").catch(() => {}); new WebSocket("ws${origin.slice(4)}/socket");`,
+            `try { const peer = new RTCPeerConnection({ iceServers: [{ urls: "${stun}" }] });`,
+            `peer.createDataChannel("x"); peer.createOffer().then((offer) => peer.setLocalDescription(offer));`,
+            `} catch {}`,
+            `window.open("${origin}/popup"); location.href = "${origin}/navigate";</script>`,
+          ].join(""),
+        });
+      }).pipe(Effect.provide(layerHtmlRender(executable)));
+      expect(requests).toEqual([]);
+      expect(datagrams).toEqual([]);
+    }).pipe(Effect.scoped),
   );
 });

@@ -1,15 +1,16 @@
-"use client";
-
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import type * as React from "react";
-import { useContext } from "react";
+import { createContext, useContext } from "react";
 
 import { cn } from "~/lib/utils";
 import { OverlayScrollScope } from "./overlay-scroll-scope";
 import { buttonVariants } from "./button";
 
 const Menu = MenuPrimitive.Root;
+
+// Portal descendants retain the editing surface that owns their root popup.
+const MenuOwnerContext = createContext<string | undefined>(undefined);
 
 function MenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Props) {
   return (
@@ -30,6 +31,8 @@ function MenuPopup({
   collisionAvoidance,
   keepMounted = false,
   padding = "default",
+  width = "default",
+  "data-writing-menu-owner": explicitOwner,
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
@@ -40,7 +43,11 @@ function MenuPopup({
   collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
   keepMounted?: boolean;
   padding?: "default" | "compact";
+  width?: "default" | "compact" | "content";
+  "data-writing-menu-owner"?: string;
 }) {
+  const inheritedOwner = useContext(MenuOwnerContext);
+  const owner = explicitOwner ?? inheritedOwner;
   const scrollScope = useContext(OverlayScrollScope);
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
@@ -61,10 +68,16 @@ function MenuPopup({
             // the Review panel header). Drag hit-testing ignores z-index, so
             // the topmost row would stay unhoverable without this opt-out.
             "[-webkit-app-region:no-drag]",
-            "min-w-[min(10rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]",
+            "max-w-[calc(100vw-2rem)]",
+            width === "content"
+              ? "w-max min-w-0"
+              : width === "compact"
+                ? "min-w-[min(8rem,calc(100vw-2rem))]"
+                : "min-w-[min(10rem,calc(100vw-2rem))]",
             className,
           )}
           data-slot="menu-popup"
+          data-writing-menu-owner={owner}
           {...scrollScope?.portalProps}
           data-overlay-scroll-scope={scrollScope?.id}
           {...props}
@@ -76,7 +89,7 @@ function MenuPopup({
             )}
             data-padding={padding}
           >
-            {children}
+            <MenuOwnerContext value={owner}>{children}</MenuOwnerContext>
           </div>
         </MenuPrimitive.Popup>
       </MenuPrimitive.Positioner>
@@ -151,8 +164,51 @@ function MenuCheckboxItem({
   variant = "default",
   ...props
 }: MenuPrimitive.CheckboxItem.Props & {
-  variant?: "default" | "switch";
+  variant?: "default" | "switch" | "button" | "icon";
 }) {
+  // Icon rows reuse the leading icon slot for the check, without an extra gutter.
+  if (variant === "icon") {
+    return (
+      <MenuPrimitive.CheckboxItem
+        checked={checked}
+        className={cn(
+          "relative flex min-h-8 cursor-pointer items-center rounded-sm px-2 py-1 text-base text-foreground outline-none data-disabled:pointer-events-none data-disabled:opacity-64 data-highlighted:bg-accent data-highlighted:text-accent-foreground sm:min-h-7 sm:text-sm data-checked:[&>span>span>svg:first-child]:invisible [&_svg]:pointer-events-none [&_svg]:shrink-0",
+          className,
+        )}
+        data-slot="menu-checkbox-item"
+        {...props}
+      >
+        <span className="min-w-0 flex-1">{children}</span>
+        <MenuPrimitive.CheckboxItemIndicator
+          className="pointer-events-none absolute start-1.5 top-1/2 -translate-y-1/2"
+          aria-hidden
+        >
+          <CheckIcon className="size-4" />
+        </MenuPrimitive.CheckboxItemIndicator>
+      </MenuPrimitive.CheckboxItem>
+    );
+  }
+  if (variant === "button") {
+    return (
+      <MenuPrimitive.CheckboxItem
+        checked={checked}
+        className={cn(
+          buttonVariants({ size: "micro", variant: checked ? "selected-strong" : "outline" }),
+          "data-disabled:pointer-events-none data-disabled:opacity-64 data-highlighted:outline-1 data-highlighted:outline-ring",
+          className,
+        )}
+        data-slot="menu-checkbox-item"
+        {...props}
+      >
+        {children}
+        <span aria-hidden="true" className="flex size-3 shrink-0 items-center justify-center">
+          <MenuPrimitive.CheckboxItemIndicator>
+            <CheckIcon />
+          </MenuPrimitive.CheckboxItemIndicator>
+        </span>
+      </MenuPrimitive.CheckboxItem>
+    );
+  }
   return (
     <MenuPrimitive.CheckboxItem
       checked={checked}
@@ -332,6 +388,7 @@ function MenuSubPopup({
   align = "start",
   side = "inline-end",
   collisionAvoidance,
+  width = "default",
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
@@ -339,11 +396,13 @@ function MenuSubPopup({
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
   side?: MenuPrimitive.Positioner.Props["side"];
   collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
+  width?: "default" | "compact" | "content";
 }) {
   const defaultAlignOffset = align !== "center" ? -5 : undefined;
 
   return (
     <MenuPopup
+      width={width}
       align={align}
       alignOffset={alignOffset ?? defaultAlignOffset}
       className={className}

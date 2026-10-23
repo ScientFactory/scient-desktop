@@ -1,61 +1,49 @@
 import { useAtomValue } from "@effect/atom-react";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import * as Option from "effect/Option";
-import { Atom } from "effect/reactivity";
-import { useEffect, useMemo } from "react";
+import * as Schema from "effect/Schema";
+import { useEffect } from "react";
+
 import { environmentCatalog } from "../../connection/catalog";
-import { environmentShell } from "../../state/shell";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useNowMinute } from "../../hooks/useNowMinute";
+import { isLocalEnvironmentDisabled } from "../../localEnvironment";
+import { useAllEnvironmentShellsBootstrapped, useThreadShells } from "../../state/entities";
+import { environmentServerConfigsAtom } from "../../state/server";
 import { useUiStateStore } from "../../uiStateStore";
-import { getOrCreateBaseline, useAnswerBaselines } from "./baseline";
-import { hasUnreadAnswer } from "./completion";
+import { countUnreadConversations, environmentCatalogComplete } from "./unreadConversations";
 
-const snapshotsAtom = Atom.make((get) => {
-  const catalog = get(environmentCatalog.catalogValueAtom);
-  return {
-    ready: catalog.isReady,
-    environments: [...catalog.entries.keys()].map((environmentId) => ({
-      environmentId,
-      shell: get(environmentShell.stateValueAtom(environmentId)),
-    })),
-  };
-});
+/** Per device; on unless turned off in Settings. */
+export const APP_BADGE_ENABLED_KEY = "scient:app-badge:enabled";
 
-/** One owner above routes, counting snapshots rather than incrementing on replayable events. */
+/** One owner above routes: the desktop app icon counts the sidebar's unread threads. */
 export function ScientAnswerBadgeCoordinator() {
-  const snapshots = useAtomValue(snapshotsAtom);
-  const baselines = useAnswerBaselines((state) => state.byEnvironment);
-  const visits = useUiStateStore((state) => state.threadLastVisitedAtById);
-  useEffect(() => {
-    if (!snapshots.ready) return;
-    for (const { environmentId, shell } of snapshots.environments) {
-      if (shell.status !== "live" || Option.isNone(shell.snapshot)) continue;
-      getOrCreateBaseline(environmentId, shell.snapshot.value);
-    }
-  }, [snapshots]);
+  return window.desktopBridge?.setUnreadAnswerBadge ? <UnreadAnswerBadge /> : null;
+}
 
-  const count = useMemo(() => {
-    if (
-      !snapshots.ready ||
-      snapshots.environments.every(({ shell }) => Option.isNone(shell.snapshot))
-    )
-      return null;
-    let unread = 0;
-    for (const { environmentId, shell } of snapshots.environments) {
-      if (Option.isNone(shell.snapshot)) continue;
-      for (const thread of shell.snapshot.value.threads) {
-        const key = scopedThreadKey(scopeThreadRef(environmentId, thread.id));
-        if (!thread.archivedAt && hasUnreadAnswer(thread, visits[key] ?? baselines[environmentId]))
-          unread++;
-      }
-    }
-    return unread;
-  }, [snapshots, visits, baselines]);
+function UnreadAnswerBadge() {
+  const [enabled] = useLocalStorage(APP_BADGE_ENABLED_KEY, true, Schema.Boolean);
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const shellsBootstrapped = useAllEnvironmentShellsBootstrapped();
+  const threads = useThreadShells();
+  const localVisits = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  // Snoozes end on their own; a minute late is fine for a badge. The clock omits its UTC zone.
+  const now = `${useNowMinute()}:00.000Z`;
+  // Until every environment is known and has its threads, the badge keeps its last value.
+  const ready =
+    environmentCatalogComplete(catalog, isLocalEnvironmentDisabled()) && shellsBootstrapped;
+  const count = !enabled
+    ? 0
+    : ready
+      ? countUnreadConversations({ threads, localVisits, serverConfigs, now })
+      : null;
 
   useEffect(() => {
-    const setBadge = window.desktopBridge?.setUnreadAnswerCount;
+    const bridge = window.desktopBridge;
+    const setBadge = bridge?.setUnreadAnswerBadge;
     if (!setBadge || count === null) return;
+    const image = bridge.getClientPlatform?.() === "win32" ? taskbarOverlay(count) : null;
     const update = () => {
-      void setBadge(count).catch((error: unknown) => {
+      void setBadge({ count, image }).catch((error: unknown) => {
         console.warn("Could not update the unread-answer badge", error);
       });
     };
@@ -65,4 +53,23 @@ export function ScientAnswerBadgeCoordinator() {
     return () => window.removeEventListener("focus", update);
   }, [count]);
   return null;
+}
+
+/** Windows shows a count only as an image over the taskbar button. */
+function taskbarOverlay(count: number): string | null {
+  if (count === 0) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 64;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.fillStyle = "#e5484d";
+  context.beginPath();
+  context.arc(32, 32, 28, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = "white";
+  context.font = `600 ${count > 9 ? 30 : 40}px "Segoe UI", sans-serif`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(count > 9 ? "9+" : String(count), 32, 34);
+  return canvas.toDataURL("image/png");
 }

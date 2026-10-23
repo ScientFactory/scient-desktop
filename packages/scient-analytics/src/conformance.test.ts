@@ -1,13 +1,38 @@
 import { describe, expect, it } from "@effect/vitest";
 import legacy from "../fixtures/contract-v3.json" with { type: "json" };
-import fixture from "../fixtures/contract-v4.json" with { type: "json" };
+import previous from "../fixtures/contract-v4.json" with { type: "json" };
+import revision5 from "../fixtures/contract-v5.json" with { type: "json" };
+import fixture from "../fixtures/contract-v6.json" with { type: "json" };
 import { buildAnalyticsConformanceFixture } from "./conformance.ts";
 import { ANALYTICS_EVENT_NAMES, consentAllows, normalizeInheritedEvent } from "./contract.ts";
 import { eventContractViolation, type PrivacyLevel } from "./wireContract.ts";
 
 describe("analytics contract conformance corpus", () => {
+  it("continues accepting the complete revision 5 corpus", () => {
+    for (const entry of revision5.cases)
+      expect(
+        eventContractViolation({
+          ...entry,
+          privacyLevel: entry.privacyLevel as PrivacyLevel,
+          consentLevel: entry.consentLevel as PrivacyLevel,
+        }),
+        entry.case,
+      ).toBeNull();
+  });
   it("continues accepting the complete revision 3 corpus", () => {
     for (const entry of legacy.cases)
+      expect(
+        eventContractViolation({
+          ...entry,
+          privacyLevel: entry.privacyLevel as PrivacyLevel,
+          consentLevel: entry.consentLevel as PrivacyLevel,
+        }),
+        entry.case,
+      ).toBeNull();
+  });
+
+  it("continues accepting the complete revision 4 corpus", () => {
+    for (const entry of previous.cases)
       expect(
         eventContractViolation({
           ...entry,
@@ -94,6 +119,13 @@ describe("analytics contract conformance corpus", () => {
       normalizeInheritedEvent(
         "client.connected",
         {},
+        { appVersion: "0.6.8", buildChannel: "stable" },
+      ),
+    ).toBeNull();
+    expect(
+      normalizeInheritedEvent(
+        "feature.used",
+        { feature: "thread.launch", variant: "root", surface: "mobile" },
         { appVersion: "0.6.8", buildChannel: "stable" },
       ),
     ).toBeNull();

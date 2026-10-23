@@ -6,6 +6,7 @@ import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
   createCoalescedRestartScheduler,
+  createWatchedFileStamps,
   developmentLauncherIsActive,
   findOwnedDevelopmentChildProcess,
   findOwnedDevelopmentProcesses,
@@ -18,22 +19,22 @@ import {
 
 const roots = [];
 
-function flushPromises() {
-  return new Promise((resolve) => setImmediate(resolve));
-}
-
 function makeManualTimers() {
   const timers = [];
+  let scheduled = Promise.withResolvers();
   return {
     set: (callback) => {
       const timer = { callback, cancelled: false, fired: false };
       timers.push(timer);
+      scheduled.resolve(timer);
+      scheduled = Promise.withResolvers();
       return timer;
     },
     clear: (timer) => {
       timer.cancelled = true;
     },
     pending: () => timers.filter((timer) => !timer.cancelled && !timer.fired).length,
+    nextScheduled: () => scheduled.promise,
     fireNext: () => {
       const timer = timers.find((candidate) => !candidate.cancelled && !candidate.fired);
       assert.isDefined(timer);
@@ -169,6 +170,7 @@ describe("macOS development app process ownership", () => {
   it("coalesces restart requests made during an active restart into one follow-up", async () => {
     const timers = makeManualTimers();
     const releases = [];
+    const started = [Promise.withResolvers(), Promise.withResolvers()];
     let restarts = 0;
     const scheduler = createCoalescedRestartScheduler({
       debounceMs: 120,
@@ -176,7 +178,9 @@ describe("macOS development app process ownership", () => {
       clearTimer: timers.clear,
       restart: () => {
         restarts += 1;
-        return new Promise((resolve) => releases.push(resolve));
+        const completion = new Promise((resolve) => releases.push(resolve));
+        started[restarts - 1].resolve();
+        return completion;
       },
     });
 
@@ -185,17 +189,18 @@ describe("macOS development app process ownership", () => {
     scheduler.request();
     assert.equal(timers.pending(), 1);
     timers.fireNext();
-    await flushPromises();
+    await started[0].promise;
     assert.equal(restarts, 1);
 
     scheduler.request();
     scheduler.request();
     assert.equal(timers.pending(), 0);
+    const followUpArmed = timers.nextScheduled();
     releases.shift()();
-    await flushPromises();
+    await followUpArmed;
     assert.equal(timers.pending(), 1);
     timers.fireNext();
-    await flushPromises();
+    await started[1].promise;
     assert.equal(restarts, 2);
 
     releases.shift()();
@@ -205,9 +210,11 @@ describe("macOS development app process ownership", () => {
 
   it("waits for an in-flight restart on close and drops pending requests", async () => {
     const timers = makeManualTimers();
+    const started = Promise.withResolvers();
     let release;
     let finished = false;
     let restarts = 0;
+    let closed = false;
     const scheduler = createCoalescedRestartScheduler({
       debounceMs: 120,
       setTimer: timers.set,
@@ -216,7 +223,10 @@ describe("macOS development app process ownership", () => {
         restarts += 1;
         return new Promise((resolve) => {
           release = resolve;
+          started.resolve();
         }).then(() => {
+          // A close that resolves before this real completion violates the scheduler contract.
+          assert.isFalse(closed);
           finished = true;
         });
       },
@@ -224,14 +234,12 @@ describe("macOS development app process ownership", () => {
 
     scheduler.request();
     timers.fireNext();
-    await flushPromises();
+    await started.promise;
     scheduler.request();
 
-    let closed = false;
     const closing = scheduler.close().then(() => {
       closed = true;
     });
-    await flushPromises();
     assert.isFalse(closed);
 
     release();
@@ -255,5 +263,25 @@ describe("macOS development app process ownership", () => {
       ),
       "Scient (Dev) Stable",
     );
+  });
+});
+
+describe("createWatchedFileStamps", () => {
+  it("ignores events that leave a watched file's size and mtime unchanged", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "watched-stamps-"));
+    roots.push(root);
+    const bundlePath = NodePath.join(root, "main.cjs");
+    NodeFS.writeFileSync(bundlePath, "first");
+    const stamps = createWatchedFileStamps([bundlePath]);
+
+    NodeFS.readFileSync(bundlePath);
+    assert.isFalse(stamps.changed(bundlePath));
+
+    NodeFS.writeFileSync(bundlePath, "second build");
+    assert.isTrue(stamps.changed(bundlePath));
+    assert.isFalse(stamps.changed(bundlePath));
+
+    NodeFS.rmSync(bundlePath);
+    assert.isTrue(stamps.changed(bundlePath));
   });
 });

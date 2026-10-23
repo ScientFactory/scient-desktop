@@ -78,6 +78,9 @@ export const RPC_REQUIRED_SCOPES = {
 
   [WS_METHODS.serverStartProviderConnection]: AuthProvidersManageScope,
   [WS_METHODS.serverCancelProviderConnection]: AuthProvidersManageScope,
+  // SCIENT-FORK:START — claiming a sign-in page needs the scope that starts the sign-in.
+  [WS_METHODS.serverClaimProviderSignInPage]: AuthProvidersManageScope,
+  // SCIENT-FORK:END
   [WS_METHODS.serverSubmitProviderAuthorizationCode]: AuthProvidersManageScope,
   [WS_METHODS.serverDisconnectProvider]: AuthProvidersManageScope,
   [WS_METHODS.serverPlanProviderRuntime]: AuthProvidersManageScope,
@@ -103,6 +106,23 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.skillsSetProjectPreference]: AuthSettingsWriteScope,
   [WS_METHODS.skillsSetUserActivation]: AuthSettingsWriteScope,
   [WS_METHODS.providerSkillsSetEnabled]: AuthSettingsWriteScope,
+  // SCIENT-FORK:START — Scient extensions: reads observe, every change is a settings write.
+  [WS_METHODS.extensionsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsSubscribeChanges]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsDiscoverSearch]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsDiscoverCatalog]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsDiscoverEntry]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsDeliveryReceipt]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsConnectorAdd]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsConnectorStartSignIn]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsConnectorUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsConnectorRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsConnectorTest]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsPluginInstall]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsPluginRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsPluginSetEnabled]: AuthSettingsWriteScope,
+  [WS_METHODS.providerPluginsAct]: AuthSettingsWriteScope,
+  // SCIENT-FORK:END
 
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
   [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthProvidersManageScope,
@@ -154,6 +174,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsFilesViewed]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsChangeBreakdown]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsReportState]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
@@ -162,6 +183,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsListIgnoredFiles]: AuthFilesystemReadScope,
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
   [WS_METHODS.projectsSearchContents]: AuthFilesystemReadScope,
   [WS_METHODS.projectsSearchEntries]: AuthFilesystemReadScope,
@@ -172,6 +194,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.filesystemBrowse]: AuthFilesystemReadScope,
   [WS_METHODS.projectsListDirectory]: AuthFilesystemReadScope,
   [WS_METHODS.projectsRenameFile]: AuthFilesystemWriteScope,
+  [WS_METHODS.projectsDeleteFile]: AuthFilesystemWriteScope,
+  [WS_METHODS.projectsListFileVersions]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsDiscardFileVersion]: AuthFilesystemWriteScope,
+  [WS_METHODS.projectsResolveFileMutation]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsSubscribeFileChanges]: AuthFilesystemReadScope,
   [WS_METHODS.filesystemPrepareFileOpen]: AuthFilesystemReadScope,
   [WS_METHODS.filesystemResolveFileLink]: AuthFilesystemReadScope,
@@ -262,6 +288,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeDiscoveredLocalServers]: AuthOrchestrationReadScope,
   [WS_METHODS.deviceConfigure]: AuthSettingsWriteScope,
   [WS_METHODS.deviceTestHost]: AuthSettingsWriteScope,
+  [WS_METHODS.deviceEasAccount]: AuthSettingsWriteScope,
   [WS_METHODS.deviceList]: AuthOrchestrationReadScope,
   [WS_METHODS.deviceOpen]: AuthOrchestrationOperateScope,
   [WS_METHODS.deviceClose]: AuthOrchestrationOperateScope,
@@ -297,8 +324,11 @@ const SettingsUpdate = Schema.Struct({
   providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
 });
 
+const decodeSettingsUpdate = Schema.decodeUnknownSync(SettingsUpdate);
+const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
+
 const requiredScopesForSettingsUpdate = (payload: unknown) => {
-  const input = Schema.decodeUnknownSync(SettingsUpdate)(payload);
+  const input = decodeSettingsUpdate(payload);
   const scopes = requiredScopesForServerSettingsPatch(input.patch);
   if (input.providerInstanceMutation === undefined) return scopes;
   // An atomic provider mutation carries an empty patch unless it also changes settings.
@@ -320,7 +350,7 @@ const requiredScopesForRpcCall = (
     return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
   }
   if (method === WS_METHODS.assetsCreateUrl) {
-    const { resource } = Schema.decodeUnknownSync(AssetCreateUrlInput)(payload);
+    const { resource } = decodeAssetCreateUrlInput(payload);
     return [
       resource._tag === "workspace-file" ||
       resource._tag === "media-file" ||
@@ -338,11 +368,22 @@ const requiredScopesForRpcCall = (
   return [requiredScopeForRpcMethod(method)];
 };
 
-export const layer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+/**
+ * `onAuthorized` runs once after an authorized request succeeds; for a stream
+ * RPC, that is when the stream completes. Every RPC passes through here, so it
+ * is the one place to observe requests without wrapping each handler.
+ */
+export const layer = (
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+  onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
+) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
     const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
-    return requiredScope === undefined ? effect : Effect.fail(rpcAuthorizationError(requiredScope));
+    if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
+    return onAuthorized === undefined
+      ? effect
+      : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
   });
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */

@@ -1,3 +1,9 @@
+import {
+  act as _fixtureAct,
+  render as _fixtureRender,
+  type Screen,
+  fakeTimers as _fixtureFakeTimers,
+} from "../../../test/render";
 import "../../index.css";
 import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
 import {
@@ -8,12 +14,10 @@ import {
   type ScientThreadQueueItem,
 } from "@t3tools/contracts";
 import { DateTime } from "effect";
-import { useMemo } from "react";
-import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { useState } from "react";
+
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
-import { STATUS_MIN_VISIBLE_MS } from "@t3tools/client-runtime/delayed-status";
 import { QUEUE_ADMISSION_STATUS_DELAY_MS, ThreadQueueStrip } from "./ThreadQueueStrip";
 import {
   deriveQueueAcknowledgedUserMessages,
@@ -23,17 +27,14 @@ import {
   type OptimisticUserMessage,
 } from "./optimisticQueuePresentation";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-afterEach(() => {
-  vi.useRealTimers();
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
   onEdit.mockClear();
   onAcknowledged.mockClear();
-});
+}
 const message: OptimisticUserMessage = {
   id: MessageId.make("pending"),
   role: "user",
@@ -87,29 +88,33 @@ const serverMessage: OrchestrationV2ConversationMessage = {
   createdAt: DateTime.makeUnsafe(message.createdAt),
   updatedAt: DateTime.makeUnsafe(message.updatedAt),
 };
-function render(
+async function render(
+  _fixture: _Fixture,
   messages: OptimisticUserMessage[],
   items: ScientThreadQueueItem[] = [],
   serverProjection: Pick<OrchestrationV2ThreadProjection, "messages"> | null = null,
   threadKey = "host:thread",
   attachmentUrls?: ReadonlyMap<string, string>,
 ) {
-  if (!host) {
-    host = document.createElement("div");
-    host.style.width = "320px";
-    document.body.append(host);
-    root = createRoot(host);
+  if (!_fixture.host) {
+    _fixture.host = document.createElement("div");
+    _fixture.host.style.width = "320px";
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
   }
-  flushSync(() =>
-    root!.render(
-      <PreviewWitness
-        messages={messages}
-        items={items}
-        serverProjection={serverProjection}
-        threadKey={threadKey}
-        attachmentUrls={attachmentUrls}
-      />,
-    ),
+  await _fixtureAct(
+    async () =>
+      await _fixture.root0!.rerender(
+        <PreviewWitness
+          messages={messages}
+          items={items}
+          serverProjection={serverProjection}
+          threadKey={threadKey}
+          attachmentUrls={attachmentUrls}
+        />,
+      ),
   );
 }
 
@@ -127,10 +132,20 @@ function PreviewWitness({
   threadKey: string;
   attachmentUrls: ReadonlyMap<string, string> | undefined;
 }) {
-  const acknowledged = useMemo(
-    () => deriveQueueAcknowledgedUserMessages(serverProjection?.messages ?? []),
-    [serverProjection],
-  );
+  const projectionMessages = serverProjection?.messages;
+  const [selection, setSelection] = useState(() => ({
+    source: projectionMessages,
+    acknowledged: deriveQueueAcknowledgedUserMessages(projectionMessages ?? []),
+  }));
+  let acknowledged = selection.acknowledged;
+  if (selection.source !== projectionMessages) {
+    const next = {
+      source: projectionMessages,
+      acknowledged: deriveQueueAcknowledgedUserMessages(projectionMessages ?? []),
+    };
+    setSelection(next);
+    acknowledged = next.acknowledged;
+  }
   onAcknowledged(acknowledged);
   const serverMessages = serverProjection?.messages ?? [];
   const pending = pendingQueueAdmissionPreviews(messages, threadKey, items, acknowledged);
@@ -177,80 +192,99 @@ function PreviewWitness({
 }
 
 it("keeps pending and accepted follow-ups beside the composer until the queue snapshot arrives", async () => {
-  render([message]);
-  expect(host!.querySelector('[data-testid="timeline"]')!.textContent).toBe("");
-  const pending = host!.querySelector('[data-testid="thread-queue-pending-pending"]')!;
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await render(_fixture, [message]);
+  expect(_fixture.host!.querySelector('[data-testid="timeline"]')!.textContent).toBe("");
+  const pending = _fixture.host!.querySelector('[data-testid="thread-queue-pending-pending"]')!;
   expect(pending.querySelector('[role="status"]')).toBeNull();
   expect(pending.querySelector('[aria-label="1 attachment"]')).not.toBeNull();
   expect(pending.querySelector("button")).toBeNull();
-  expect(host!.scrollWidth).toBeLessThanOrEqual(321);
+  expect(_fixture.host!.scrollWidth).toBeLessThanOrEqual(321);
   const accepted = settleQueueAdmissionPreview([message], message.id, true);
-  render(accepted);
-  expect(host!.querySelector('[data-testid="thread-queue-pending-pending"]')).not.toBeNull();
-  expect(host!.querySelector('[data-testid="thread-queue-strip"]')!.textContent).not.toContain(
-    "Queued",
-  );
-  expect(host!.querySelector('[data-testid="timeline"]')!.textContent).toBe("");
-  render(accepted, [item]);
-  expect(host!.querySelector('[data-testid^="thread-queue-pending-"]')).toBeNull();
-  expect(host!.querySelectorAll('[data-testid^="thread-queue-row-"]')).toHaveLength(1);
-  await userEvent.click(host!.querySelector('[aria-label="Edit queued message"]')!);
+  await render(_fixture, accepted);
+  expect(
+    _fixture.host!.querySelector('[data-testid="thread-queue-pending-pending"]'),
+  ).not.toBeNull();
+  expect(
+    _fixture.host!.querySelector('[data-testid="thread-queue-strip"]')!.textContent,
+  ).not.toContain("Queued");
+  expect(_fixture.host!.querySelector('[data-testid="timeline"]')!.textContent).toBe("");
+  await render(_fixture, accepted, [item]);
+  expect(_fixture.host!.querySelector('[data-testid^="thread-queue-pending-"]')).toBeNull();
+  expect(_fixture.host!.querySelectorAll('[data-testid^="thread-queue-row-"]')).toHaveLength(1);
+  await userEvent.click(_fixture.host!.querySelector('[aria-label="Edit queued message"]')!);
   expect(onEdit).toHaveBeenCalledWith(item);
   // Delivery can beat the next queue poll; the stale preview must not duplicate it.
-  render(accepted, [], { messages: [serverMessage] });
-  expect(host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
-  expect(host!.querySelector('[data-testid="timeline"]')!.textContent).toBe(message.text);
+  await render(_fixture, accepted, [], { messages: [serverMessage] });
+  expect(_fixture.host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
+  expect(_fixture.host!.querySelector('[data-testid="timeline"]')!.textContent).toBe(message.text);
 });
 
-it("moves the preview to the timeline only if the server confirms an immediate send", () => {
-  render([message]);
-  render(settleQueueAdmissionPreview([message], message.id, false));
-  expect(host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
-  expect(host!.querySelector('[data-testid="timeline"]')!.textContent).toBe(message.text);
+it("moves the preview to the timeline only if the server confirms an immediate send", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await render(_fixture, [message]);
+  await render(_fixture, settleQueueAdmissionPreview([message], message.id, false));
+  expect(_fixture.host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
+  expect(_fixture.host!.querySelector('[data-testid="timeline"]')!.textContent).toBe(message.text);
 });
 
-it("does not leak a pending row to another thread or leave a row after rejection", () => {
-  render([message], [], null, "other-host:thread");
-  expect(host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
-  render([]);
-  expect(host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
-  expect(host!.querySelector('[data-testid="timeline"]')!.textContent).toBe("");
+it("does not leak a pending row to another thread or leave a row after rejection", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await render(_fixture, [message], [], null, "other-host:thread");
+  expect(_fixture.host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
+  await render(_fixture, []);
+  expect(_fixture.host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
+  expect(_fixture.host!.querySelector('[data-testid="timeline"]')!.textContent).toBe("");
 });
 
-it("says Queuing… only when admission is slow, and never Queued", () => {
-  vi.useFakeTimers();
+it("says Queuing… only when admission is slow, and never Queued", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await render(_fixture, []);
+  using _clock = _fixtureFakeTimers();
   const status = () =>
-    host!.querySelector('[data-testid="thread-queue-pending-pending"] [role="status"]')
+    _fixture.host!.querySelector('[data-testid="thread-queue-pending-pending"] [role="status"]')
       ?.textContent ?? null;
-  const advance = (ms: number) => flushSync(() => vi.advanceTimersByTime(ms));
+  const advance = async (ms: number) => await _fixtureAct(() => vi.advanceTimersByTime(ms));
 
-  render([message]);
-  advance(QUEUE_ADMISSION_STATUS_DELAY_MS - 1);
+  await render(_fixture, [message]);
+  await advance(QUEUE_ADMISSION_STATUS_DELAY_MS - 1);
   expect(status()).toBeNull();
-  advance(1);
+  await advance(1);
   expect(status()).toBe("Queuing…");
 
   // Acceptance clears it after a short hold instead of swapping in "Queued".
-  render(settleQueueAdmissionPreview([message], message.id, true));
+  await render(_fixture, settleQueueAdmissionPreview([message], message.id, true));
   expect(status()).toBe("Queuing…");
-  advance(STATUS_MIN_VISIBLE_MS);
+  // The accepted label must retire within its 400ms visible hold.
+  await advance(400);
   expect(status()).toBeNull();
-  expect(host!.querySelector('[data-testid="thread-queue-strip"]')!.textContent).not.toContain(
-    "Queued",
-  );
+  expect(
+    _fixture.host!.querySelector('[data-testid="thread-queue-strip"]')!.textContent,
+  ).not.toContain("Queued");
 
   // A fast admission never shows a label.
   const fast = { ...message, id: MessageId.make("fast") };
-  render([fast]);
-  advance(QUEUE_ADMISSION_STATUS_DELAY_MS - 1);
-  render(settleQueueAdmissionPreview([fast], fast.id, true));
-  advance(QUEUE_ADMISSION_STATUS_DELAY_MS + STATUS_MIN_VISIBLE_MS);
-  expect(host!.querySelector('[data-testid="thread-queue-strip"]')!.textContent).not.toMatch(
-    /Queuing…|Queued/,
-  );
+  await render(_fixture, [fast]);
+  await advance(QUEUE_ADMISSION_STATUS_DELAY_MS - 1);
+  await render(_fixture, settleQueueAdmissionPreview([fast], fast.id, true));
+  await advance(400);
+  expect(
+    _fixture.host!.querySelector('[data-testid="thread-queue-strip"]')!.textContent,
+  ).not.toMatch(/Queuing…|Queued/);
 });
 
-it("keeps the row's text and controls in place when the queued row replaces it", () => {
+it("keeps the row's text and controls in place when the queued row replaces it", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   const second: ScientThreadQueueItem = {
     ...item,
     queueItemId: "qitem_existing",
@@ -267,13 +301,13 @@ it("keeps the row's text and controls in place when the queued row replaces it",
   const unresolved = new Map<string, string>();
   const resolved = new Map([["plot", "data:image/png;base64,AA=="]]);
   const box = (selector: string) => {
-    const rect = host!.querySelector(selector)!.getBoundingClientRect();
+    const rect = _fixture.host!.querySelector(selector)!.getBoundingClientRect();
     return { left: rect.left, right: rect.right, top: rect.top, height: rect.height };
   };
   const textOf = (row: string) => `${row} span[dir="auto"]`;
 
   const accepted = settleQueueAdmissionPreview([settled], settled.id, true);
-  render(accepted, [second], null, "host:thread", unresolved);
+  await render(_fixture, accepted, [second], null, "host:thread", unresolved);
   const pendingRow = '[data-testid="thread-queue-pending-pending"]';
   const before = {
     existing: box(textOf('[data-testid="thread-queue-row-qitem_existing"]')),
@@ -281,54 +315,82 @@ it("keeps the row's text and controls in place when the queued row replaces it",
     text: box(textOf(pendingRow)),
   };
 
-  expect(host!.querySelectorAll(`${pendingRow} [data-thumbnail-slot]`)).toHaveLength(1);
+  expect(_fixture.host!.querySelectorAll(`${pendingRow} [data-thumbnail-slot]`)).toHaveLength(1);
 
   // The queued row arrives before its image URL resolves, then the URL resolves.
   const queuedRow = '[data-testid="thread-queue-row-qitem_server"]';
   for (const urls of [unresolved, resolved]) {
-    render(accepted, [second, queued], null, "host:thread", urls);
-    expect(host!.querySelector(pendingRow)).toBeNull();
+    await render(_fixture, accepted, [second, queued], null, "host:thread", urls);
+    expect(_fixture.host!.querySelector(pendingRow)).toBeNull();
     expect(box(textOf('[data-testid="thread-queue-row-qitem_existing"]'))).toEqual(before.existing);
     expect(box(queuedRow)).toEqual(before.row);
     expect(box(textOf(queuedRow))).toEqual(before.text);
   }
-  expect(host!.querySelectorAll(`${queuedRow} img`)).toHaveLength(1);
+  expect(_fixture.host!.querySelectorAll(`${queuedRow} img`)).toHaveLength(1);
 });
 
-it("reacts to projection replacement, excludes non-user acknowledgements, and retains the memo on an unchanged projection", () => {
-  const pendingRow = () => host!.querySelector('[data-testid="thread-queue-pending-pending"]');
+it("reacts to projection replacement, excludes non-user acknowledgements, and retains the memo on an unchanged projection", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const pendingRow = () =>
+    _fixture.host!.querySelector('[data-testid="thread-queue-pending-pending"]');
   const lastAcknowledged = () => onAcknowledged.mock.lastCall![0];
-  render([message]);
+  await render(_fixture, [message]);
   expect(pendingRow()).not.toBeNull();
   const absent = lastAcknowledged();
-  render(settleQueueAdmissionPreview([message], message.id, true));
+  await render(_fixture, settleQueueAdmissionPreview([message], message.id, true));
   expect(lastAcknowledged()).toBe(absent);
   expect(pendingRow()).not.toBeNull();
 
   const assistantProjection = { messages: [{ ...serverMessage, role: "assistant" as const }] };
-  render([message], [], assistantProjection);
+  await render(_fixture, [message], [], assistantProjection);
   expect(pendingRow()).not.toBeNull();
   const assistantAcknowledged = lastAcknowledged();
-  render(settleQueueAdmissionPreview([message], message.id, true), [], assistantProjection);
+  await render(
+    _fixture,
+    settleQueueAdmissionPreview([message], message.id, true),
+    [],
+    assistantProjection,
+  );
   expect(lastAcknowledged()).toBe(assistantAcknowledged);
   expect(pendingRow()).not.toBeNull();
 
   // The user message arrives before either the receipt or the queue poll.
   const delivered = { messages: [serverMessage] };
-  render([message], [], delivered);
+  await render(_fixture, [message], [], delivered);
   expect(pendingRow()).toBeNull();
-  expect(host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
-  expect(host!.querySelector('[data-testid="timeline"]')!.textContent).toBe(message.text);
+  expect(_fixture.host!.querySelector('[data-testid="thread-queue-strip"]')).toBeNull();
+  expect(_fixture.host!.querySelector('[data-testid="timeline"]')!.textContent).toBe(message.text);
   const userAcknowledged = lastAcknowledged();
-  render(settleQueueAdmissionPreview([message], message.id, true), [], delivered);
+  await render(_fixture, settleQueueAdmissionPreview([message], message.id, true), [], delivered);
   expect(lastAcknowledged()).toBe(userAcknowledged);
   expect(pendingRow()).toBeNull();
 
   // Replacing the projection without changing its messages keeps the same visible result.
-  render([message], [], { ...delivered });
+  await render(_fixture, [message], [], { ...delivered });
   expect(pendingRow()).toBeNull();
-  render([message], [], assistantProjection);
+  await render(_fixture, [message], [], assistantProjection);
   expect(pendingRow()).not.toBeNull();
-  render([message]);
+  await render(_fixture, [message]);
   expect(pendingRow()).not.toBeNull();
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

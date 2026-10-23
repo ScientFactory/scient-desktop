@@ -9,6 +9,9 @@ import {
   // SCIENT-FORK:START — generate the extension with optional host-owned orchestration copy.
   makePiMcpExtensionSource,
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Extensions: connectors ride the session's MCP credential.
+  T3_MCP_CONNECTORS_ENV,
+  // SCIENT-FORK:END
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
@@ -257,6 +260,7 @@ export function buildPiRpcLaunch(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly mcpSession: McpProviderSessionConfig | undefined;
   readonly extensionPath: string | undefined;
+  readonly sessionPath?: string | undefined;
   readonly ephemeral?: boolean;
   readonly disableExtensions?: boolean;
   readonly disableTools?: boolean;
@@ -277,7 +281,11 @@ export function buildPiRpcLaunch(input: {
   const args = [
     "--mode",
     "rpc",
-    ...(input.ephemeral === true ? ["--no-session"] : []),
+    ...(input.ephemeral === true
+      ? ["--no-session"]
+      : input.sessionPath !== undefined
+        ? ["--session", input.sessionPath]
+        : []),
     ...launchArgs,
     // Restrictions follow user launch args so a configured --tools or
     // --extension cannot silently re-enable unattended text-generation code.
@@ -297,6 +305,9 @@ export function buildPiRpcLaunch(input: {
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];
+  // SCIENT-FORK:START — Scient Extensions: the connector list belongs to the current session too.
+  delete environment[T3_MCP_CONNECTORS_ENV];
+  // SCIENT-FORK:END
 
   return {
     args,
@@ -319,6 +330,15 @@ export function buildPiRpcLaunch(input: {
             ),
           }
         : {}),
+      // SCIENT-FORK:START — the extension authenticates each connector with the bearer above.
+      ...(hasT3Mcp && input.mcpSession !== undefined && input.mcpSession.connectors.length > 0
+        ? {
+            [T3_MCP_CONNECTORS_ENV]: JSON.stringify(
+              input.mcpSession.connectors.map(({ serverName, url }) => ({ serverName, url })),
+            ),
+          }
+        : {}),
+      // SCIENT-FORK:END
     },
     hasT3Mcp,
   };

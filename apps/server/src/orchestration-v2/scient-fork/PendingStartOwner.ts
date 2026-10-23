@@ -382,26 +382,26 @@ interface DeclinedStartFinalWrite {
 }
 
 /** Settle a start Stop declined before native acceptance; true once the cancellation committed. */
-export const cancelDeclinedPendingStart = <E, R, StartError>(deps: {
-  readonly input: Pick<
-    RunExecutionServiceV2StartRootRunInput,
-    | "run"
-    | "rootNode"
-    | "checkpointScope"
-    | "providerThread"
-    | "attempt"
-    | "attemptId"
-    | "session"
-    | "cancelBeforeProviderTurn"
-  >;
-  readonly cancelledStartOwner: Ref.Ref<PendingStartOwner | undefined>;
-  readonly refreshAfterTurn: Effect.Effect<void>;
-  readonly writeOwnedFinalRunEvents: (
-    final: DeclinedStartFinalWrite,
-  ) => Effect.Effect<boolean, E, R>;
-  readonly startError: (cause: unknown) => StartError;
-}) =>
-  Effect.gen(function* () {
+export const cancelDeclinedPendingStart = Effect.fn("PendingStartOwner.cancelDeclinedPendingStart")(
+  function* <E, R, StartError>(deps: {
+    readonly input: Pick<
+      RunExecutionServiceV2StartRootRunInput,
+      | "run"
+      | "rootNode"
+      | "checkpointScope"
+      | "providerThread"
+      | "attempt"
+      | "attemptId"
+      | "session"
+      | "cancelBeforeProviderTurn"
+    >;
+    readonly cancelledStartOwner: Ref.Ref<PendingStartOwner | undefined>;
+    readonly refreshAfterTurn: Effect.Effect<void>;
+    readonly writeOwnedFinalRunEvents: (
+      final: DeclinedStartFinalWrite,
+    ) => Effect.Effect<boolean, E, R>;
+    readonly startError: (cause: unknown) => StartError;
+  }) {
     const { input, cancelledStartOwner, refreshAfterTurn, writeOwnedFinalRunEvents } = deps;
     const stoppedThread = yield* (
       input.cancelBeforeProviderTurn?.().pipe(Effect.mapError(deps.startError)) ?? Effect.void
@@ -427,18 +427,19 @@ export const cancelDeclinedPendingStart = <E, R, StartError>(deps: {
     }).pipe(Effect.mapError(deps.startError));
     if (committed) yield* Ref.set(cancelledStartOwner, stoppedThread);
     return committed;
-  });
+  },
+);
 
 /** After a committed cancellation the root run is final. No native root was started:
  * without retained background work there is no terminal frame to end its subscription. */
-export const settleCancelledStart = (input: {
-  readonly rootTerminalSeen: Ref.Ref<boolean>;
-  readonly rootRunFinalized: Ref.Ref<boolean>;
-  readonly cancelledStartOwner: Ref.Ref<PendingStartOwner | undefined>;
-  readonly providerThread: OrchestrationV2ProviderThread;
-  readonly interruptProviderEvents: Effect.Effect<void>;
-}) =>
-  Effect.gen(function* () {
+export const settleCancelledStart = Effect.fn("PendingStartOwner.settleCancelledStart")(
+  function* (input: {
+    readonly rootTerminalSeen: Ref.Ref<boolean>;
+    readonly rootRunFinalized: Ref.Ref<boolean>;
+    readonly cancelledStartOwner: Ref.Ref<PendingStartOwner | undefined>;
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly interruptProviderEvents: Effect.Effect<void>;
+  }) {
     yield* Ref.set(input.rootTerminalSeen, true);
     yield* Ref.set(input.rootRunFinalized, true);
     if (
@@ -447,4 +448,5 @@ export const settleCancelledStart = (input: {
     ) {
       yield* input.interruptProviderEvents;
     }
-  });
+  },
+);

@@ -7,12 +7,12 @@ import {
   type ProjectListEntriesResult,
   ProjectReadFileError,
   type ProjectReadFileResult,
+  T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useFilesystemReadAccess } from "~/state/filesystem";
@@ -29,6 +29,12 @@ const EMPTY_PROJECT_FILE_QUERY_ATOM = Atom.make(
 const projectFilesRefreshSignal = Atom.family((key: string) =>
   Atom.make(0).pipe(Atom.withLabel(`project-files-refresh:${key}`)),
 );
+// Only identities are indexed; the atoms remain authoritative for pending state and contents.
+const optimisticFileTargets: Map<
+  string,
+  { readonly environmentId: EnvironmentId; readonly cwd: string; readonly relativePath: string }
+> = import.meta.hot?.data?.optimisticFileTargets ?? new Map();
+if (import.meta.hot?.data) import.meta.hot.data.optimisticFileTargets = optimisticFileTargets;
 
 /** Refresh both query-backed pickers and mounted lazy trees after known workspace writes. */
 export function refreshProjectFiles(environmentId: EnvironmentId, cwd: string): void {
@@ -85,6 +91,7 @@ export interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFile
   readonly failureReason: ProjectFileErrorReason | null;
   /** The operating system's own error code for a failed read, when the server gave one. */
   readonly failureOsErrorCode: string | null;
+  readonly isFile: boolean;
 }
 
 function getProjectEntriesQueryAtom(
@@ -109,7 +116,11 @@ export function getProjectFileQueryAtom(
 ) {
   return projectEnvironment.readFile({
     environmentId,
-    input: { cwd, relativePath: relativePath ?? EMPTY_PROJECT_FILE_PATH },
+    input: {
+      cwd,
+      relativePath: relativePath ?? EMPTY_PROJECT_FILE_PATH,
+      ...(relativePath === T3_PROJECT_FILE_NAME ? { allowMissing: true } : {}),
+    },
   });
 }
 
@@ -130,6 +141,11 @@ export function setProjectFileQueryData(
       ),
     )?.revision;
   if (!currentRevision) return;
+  optimisticFileTargets.set(JSON.stringify([environmentId, cwd, relativePath]), {
+    environmentId,
+    cwd,
+    relativePath,
+  });
   if (!unsavedFileMounts.has(optimisticAtom))
     unsavedFileMounts.set(optimisticAtom, appAtomRegistry.mount(optimisticAtom));
   appAtomRegistry.set(optimisticAtom, {
@@ -150,6 +166,26 @@ export function getOptimisticProjectFileQueryData(
   relativePath: string,
 ): ProjectReadFileResult | null {
   return appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath))?.data ?? null;
+}
+
+/** Unconfirmed writes in this exact workspace, including files without a document session. */
+export function getPendingOptimisticProjectFilePaths(
+  environmentId: EnvironmentId,
+  cwd: string,
+): readonly string[] {
+  const paths: string[] = [];
+  for (const [key, target] of optimisticFileTargets) {
+    if (target.environmentId !== environmentId || target.cwd !== cwd) continue;
+    const optimistic = appAtomRegistry.get(
+      optimisticFileAtom(target.environmentId, target.cwd, target.relativePath),
+    );
+    if (optimistic === null || optimistic.confirmedAgainst !== undefined) {
+      optimisticFileTargets.delete(key);
+    } else {
+      paths.push(target.relativePath);
+    }
+  }
+  return paths;
 }
 
 export function getUnsavedProjectFileQueryData(
@@ -207,6 +243,7 @@ export function clearProjectFileQueryData(
   cwd: string,
   relativePath: string,
 ): void {
+  optimisticFileTargets.delete(JSON.stringify([environmentId, cwd, relativePath]));
   const atom = optimisticFileAtom(environmentId, cwd, relativePath);
   appAtomRegistry.set(atom, null);
   releaseUnsavedFile(atom);
@@ -253,7 +290,7 @@ export function useProjectEntriesQuery(
     : EMPTY_PROJECT_ENTRIES_QUERY_ATOM;
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
-  const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
+  const refresh = () => refreshAtom();
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
     error: fileAccess.isPending
@@ -315,26 +352,33 @@ export function useProjectFileQuery(
       : EMPTY_PROJECT_FILE_QUERY_ATOM;
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
-  const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
-  const data = Option.getOrNull(AsyncResult.value(result));
+  const refresh = () => refreshAtom();
+  const readData = Option.getOrNull(AsyncResult.value(result));
+  const isMissing = readData?.exists === false;
   const optimisticResult = useAtomValue(
     optimisticFileAtom(environmentId, cwd, relativePath ?? EMPTY_PROJECT_FILE_PATH),
   );
   const optimisticFile = relativePath === null ? null : optimisticResult;
   const cause = failureCause(result);
   const readError = isProjectReadFileError(cause) ? cause : null;
+  const data = canReadFiles ? (optimisticFile?.data ?? (isMissing ? null : readData)) : null;
+  const isNotFile = readError?.failure === "path_not_file";
 
   return {
-    data: canReadFiles ? (optimisticFile?.data ?? data) : null,
+    data,
     error:
       !isQueryEnabled || fileAccess.isPending
         ? null
         : canReadFiles
-          ? errorMessage(cause)
+          ? isMissing && !optimisticFile
+            ? `'${relativePath}' does not exist.`
+            : errorMessage(cause)
           : (fileAccess.error ?? "This connection cannot read host files."),
     isPending: isQueryEnabled && (fileAccess.isPending || result.waiting),
     readError,
-    isNotFile: readError?.failure === "path_not_file",
+    isNotFile,
+    // A folder error overrides cached contents retained across failed refreshes.
+    isFile: !isNotFile && (data !== null || readError?.failure === "binary_file"),
     authoritativeData: canReadFiles ? data : null,
     failure: isProjectReadFileError(cause) ? (cause.failure ?? null) : null,
     failureReason: isProjectReadFileError(cause) ? (cause.reason ?? null) : null,

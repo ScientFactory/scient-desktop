@@ -27,12 +27,14 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { settingsPageIgnoresProjects } from "../../scient/settings/settingsPageScopes";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import {
   ALL_ENVIRONMENTS_VALUE,
   ALL_PROJECTS_VALUE,
   environmentAxisValue,
   projectAxisValue,
+  projectScopeMenuGroups,
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentAddress,
@@ -67,6 +69,16 @@ export function SettingsScopeSentence() {
     environments,
     onChange: scope.selectScope,
   };
+  // SCIENT-FORK: a server-only page (Documents) offers just the environment its
+  // tools install on; its other choices stay on this device.
+  if (settingsPageIgnoresProjects(pathname)) {
+    return (
+      <p className="flex min-w-0 items-center gap-1.5 px-3 text-base text-muted-foreground sm:px-4">
+        <span className="shrink-0">Tools on</span>
+        <EnvironmentScopeMenu {...props} />
+      </p>
+    );
+  }
   return (
     <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-base text-muted-foreground sm:px-4">
       <span className="flex min-w-0 items-center gap-1.5">
@@ -229,6 +241,13 @@ function EnvironmentScopeMenu({
   const selected = environments.find(
     (environment) => environment.environmentId === environmentValue,
   );
+  const project = groups.find((group) => group.projectKey === value.project);
+  const memberEnvironmentIds = project
+    ? new Set(project.memberProjects.map((member) => member.environmentId))
+    : null;
+  const options = memberEnvironmentIds
+    ? environments.filter((environment) => memberEnvironmentIds.has(environment.environmentId))
+    : environments;
   return (
     <ScopeMenu
       ariaLabel="Environment scope"
@@ -262,7 +281,7 @@ function EnvironmentScopeMenu({
               icon: <LayersIcon aria-hidden className="size-3.5 shrink-0" />,
             }
       }
-      options={environments.map((environment) => {
+      options={options.map((environment) => {
         const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
         return {
           value: environment.environmentId,
@@ -287,7 +306,7 @@ function EnvironmentScopeMenu({
 
 function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsScopeMenuProps) {
   const selected = groups.find((group) => group.projectKey === value.project);
-  const projects = groups.map((group) => ({
+  const projects = projectScopeMenuGroups(groups, value).map((group) => ({
     group,
     machines: settingsScopeProjectMachines(group, environments, true).join(", "),
   }));

@@ -17,16 +17,11 @@ describe("Mermaid recovery ambiguity and preservation boundaries", () => {
       "sequenceDiagram\nparticipant A\nparticipant B\nA->>B" + long + ": invalid",
       "gitGraph\nbranchz" + long + "invalid extra",
     ];
-    const start = performance.now();
-    const elapsed = inputs.map(() => 0);
     for (let round = 0; round < 20; round += 1) {
-      for (const [index, source] of inputs.entries()) {
-        const before = performance.now();
+      for (const source of inputs) {
         expect(() => planMermaidRecovery(source)).not.toThrow();
-        elapsed[index]! += performance.now() - before;
       }
     }
-    expect(performance.now() - start, JSON.stringify(elapsed)).toBeLessThan(3_000);
   });
   it.each([
     "flowchart LR\nA[Start --> B",

@@ -3,26 +3,31 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   resolveFileLinkTarget,
   resolveHostFilePath,
-  fileRoutePathSegments,
-  isSvgImagePreviewFile,
-  resolveWorkspaceRelativeFilePath,
   fileHeaderSubtitle,
+  isSvgImagePreviewFile,
+  fileRoutePathSegments,
+  resolveFileLinkPath,
+  resolveWorkspaceRelativeFilePath,
 } from "./filePath";
 
-describe("fileRoutePathSegments", () => {
-  it("round-trips workspace-relative and host paths through the route", () => {
-    expect(fileRoutePathSegments("src/main.ts")).toEqual(["src", "main.ts"]);
-    expect(fileRoutePathSegments("/tmp/t3-cleanup/report.md").join("/")).toBe(
-      "/tmp/t3-cleanup/report.md",
-    );
+describe("resolveFileLinkPath", () => {
+  it.each([
+    ["/home/maria/project", "~/.agents/AGENTS.md", "/home/maria/.agents/AGENTS.md"],
+    ["/Users/maria/project", "~/notes.md", "/Users/maria/notes.md"],
+    ["C:\\Users\\maria\\project", "~\\.agents\\AGENTS.md", "C:\\Users\\maria\\.agents\\AGENTS.md"],
+  ])("expands a home link from %s", (cwd, path, expected) => {
+    expect(resolveFileLinkPath(cwd, path)).toBe(expected);
+    expect(fileRoutePathSegments(expected).join("/")).toBe(expected);
+  });
+
+  it("does not turn an unresolved home into a workspace path", () => {
+    expect(resolveFileLinkPath("/repo", "~/notes.md")).toBeNull();
+    expect(resolveFileLinkPath(null, "~/notes.md")).toBeNull();
+    expect(resolveFileLinkPath("/repo", "../notes.md")).toBeNull();
   });
 });
 
 describe("resolveWorkspaceRelativeFilePath", () => {
-  it("keeps normalized workspace-relative paths", () => {
-    expect(resolveWorkspaceRelativeFilePath("/repo", "./src/../src/main.ts")).toBe("src/main.ts");
-  });
-
   it("converts absolute paths inside the workspace", () => {
     expect(
       resolveWorkspaceRelativeFilePath("/Users/julius/repo", "/Users/julius/repo/src/main.ts"),
@@ -30,6 +35,15 @@ describe("resolveWorkspaceRelativeFilePath", () => {
     expect(resolveWorkspaceRelativeFilePath("C:\\repo", "c:\\repo\\src\\main.ts")).toBe(
       "src/main.ts",
     );
+  });
+
+  it("recognizes home links inside the workspace", () => {
+    expect(resolveWorkspaceRelativeFilePath("/home/maria/project", "~/project/src/main.ts")).toBe(
+      "src/main.ts",
+    );
+    expect(
+      resolveWorkspaceRelativeFilePath("/home/maria/project", "~/.agents/AGENTS.md"),
+    ).toBeNull();
   });
 
   it("rejects paths outside the workspace", () => {
@@ -97,6 +111,14 @@ describe("resolveFileLinkTarget", () => {
       kind: "host",
       path: "/Users/me/reviews/notes.md",
     });
-    expect(resolveFileLinkTarget("/Users/me/project", "~/notes.md")).toBeNull();
+    expect(resolveFileLinkTarget("/Users/me/project", "~/notes.md")).toEqual({
+      kind: "host",
+      path: "/Users/me/notes.md",
+    });
+    expect(resolveFileLinkTarget("/Users/me/project", "~/project/src/./file.ts")).toEqual({
+      kind: "workspace",
+      path: "src/file.ts",
+    });
+    expect(resolveFileLinkTarget(undefined, "~/notes.md")).toBeNull();
   });
 });

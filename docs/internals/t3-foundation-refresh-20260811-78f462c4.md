@@ -100,9 +100,9 @@ Executed in the isolated update worktree with Node `v24.19.0` and pnpm
   455 tests; mobile 101 / 623; web 242 / 2,143; server 242 files / 2,214 tests,
   with 2 files and 7 tests intentionally skipped.
 - `pnpm exec vp fmt --check`, `pnpm exec vp lint
---report-unused-disable-directives`, `pnpm run typecheck`, `pnpm run build`,
+  --report-unused-disable-directives`, `pnpm run typecheck`, `pnpm run build`,
   `pnpm run test:desktop-smoke`, `pnpm run release:smoke`, `pnpm run
-brand:check`, and `pnpm run icons:check` passed.
+  brand:check`, and `pnpm run icons:check` passed.
 - Lint reported one existing unused-disable warning in `ThemeEditorPanel.tsx`;
   typecheck emitted suggestion-only Effect diagnostics. The build emitted the
   normal bundle-size and generated-sourcemap warnings.

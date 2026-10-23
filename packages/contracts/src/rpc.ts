@@ -162,10 +162,6 @@ import {
   ScientConversationDispatchResult,
 } from "./scientConversationFork.ts";
 import {
-  OrchestrationGetFullThreadDiffInput,
-  OrchestrationGetTurnDiffInput,
-} from "./checkpointDiff.ts";
-import {
   OrchestrationSearchThreadsError,
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
@@ -180,6 +176,7 @@ import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
 import {
   PullRequestActionInput,
   PullRequestActivity,
+  PullRequestChangeBreakdown,
   PullRequestCommentInput,
   PullRequestCommentUpdateInput,
   PullRequestDetail,
@@ -247,12 +244,23 @@ import {
   ProjectListEntriesError,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
+  ProjectListIgnoredFilesInput,
+  ProjectListIgnoredFilesResult,
   ProjectReadFileError,
   ProjectReadFileInput,
   ProjectReadFileResult,
   ProjectRenameFileError,
   ProjectRenameFileInput,
   ProjectRenameFileResult,
+  ProjectDeleteFileError,
+  ProjectDeleteFileInput,
+  ProjectDeleteFileResult,
+  ProjectListFileVersionsInput,
+  ProjectListFileVersionsResult,
+  ProjectDiscardFileVersionInput,
+  ProjectDiscardFileVersionResult,
+  ProjectResolveFileMutationInput,
+  ProjectResolveFileMutationResult,
   ProjectFileWatchEvent,
   ProjectSubscribeFileChangesInput,
   ProjectSearchContentsError,
@@ -308,13 +316,15 @@ import {
   DeviceError,
   DeviceListInput,
   SshDeviceHostConfig,
+  DeviceEasAccount,
+  DeviceEasAccountError,
+  DeviceEasAccountInput,
   DeviceHostSummary,
   DeviceOpenInput,
   DeviceServiceState,
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
-import {} from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -416,11 +426,32 @@ import {
   WsProviderSkillsSetEnabledRpc,
 } from "./scient/skillRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient extensions RPCs.
+import {
+  SCIENT_EXTENSION_WS_METHODS,
+  WsExtensionsConnectorAddRpc,
+  WsExtensionsConnectorRemoveRpc,
+  WsExtensionsConnectorStartSignInRpc,
+  WsExtensionsConnectorTestRpc,
+  WsExtensionsConnectorUpdateRpc,
+  WsExtensionsDeliveryReceiptRpc,
+  WsExtensionsDiscoverCatalogRpc,
+  WsExtensionsDiscoverEntryRpc,
+  WsExtensionsDiscoverSearchRpc,
+  WsExtensionsListRpc,
+  WsExtensionsPluginInstallRpc,
+  WsExtensionsPluginRemoveRpc,
+  WsExtensionsPluginSetEnabledRpc,
+  WsExtensionsSubscribeChangesRpc,
+  WsProviderPluginsActRpc,
+} from "./scient/extensionRpcs.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient provider connection and runtime RPCs.
 import {
   SCIENT_PROVIDER_CONNECTION_WS_METHODS,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
+  WsServerClaimProviderSignInPageRpc,
   WsServerSubmitProviderAuthorizationCodeRpc,
   WsServerDisconnectProviderRpc,
   WsServerPlanProviderRuntimeRpc,
@@ -465,8 +496,13 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsListDirectory: "projects.listDirectory",
   projectsListEntries: "projects.listEntries",
+  projectsListIgnoredFiles: "projects.listIgnoredFiles",
   projectsReadFile: "projects.readFile",
   projectsRenameFile: "projects.renameFile",
+  projectsDeleteFile: "projects.deleteFile",
+  projectsListFileVersions: "projects.listFileVersions",
+  projectsDiscardFileVersion: "projects.discardFileVersion",
+  projectsResolveFileMutation: "projects.resolveFileMutation",
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
@@ -480,6 +516,10 @@ export const WS_METHODS = {
 
   // SCIENT-FORK:START — Scient skill methods.
   ...SCIENT_SKILL_WS_METHODS,
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — Scient extensions methods.
+  ...SCIENT_EXTENSION_WS_METHODS,
   // SCIENT-FORK:END
 
   shellOpenInEditor: "shell.openInEditor",
@@ -560,6 +600,7 @@ export const WS_METHODS = {
   deviceConfigure: "device.configure",
   deviceList: "device.list",
   deviceTestHost: "device.testHost",
+  deviceEasAccount: "device.easAccount",
   deviceOpen: "device.open",
   deviceClose: "device.close",
   deviceShutdown: "device.shutdown",
@@ -644,6 +685,7 @@ export const WS_METHODS = {
   pullRequestsThreadComments: "pullRequests.threadComments",
   pullRequestsDiffFileContents: "pullRequests.diffFileContents",
   pullRequestsFilesViewed: "pullRequests.filesViewed",
+  pullRequestsChangeBreakdown: "pullRequests.changeBreakdown",
   pullRequestsSetFilesViewed: "pullRequests.setFilesViewed",
   pullRequestsRunAction: "pullRequests.runAction",
   pullRequestsUpdate: "pullRequests.update",
@@ -1163,6 +1205,12 @@ const WsPullRequestsFilesViewedRpc = Rpc.make(WS_METHODS.pullRequestsFilesViewed
   error: PullRequestRpcError,
 });
 
+const WsPullRequestsChangeBreakdownRpc = Rpc.make(WS_METHODS.pullRequestsChangeBreakdown, {
+  payload: PullRequestRef,
+  success: PullRequestChangeBreakdown,
+  error: PullRequestRpcError,
+});
+
 const WsPullRequestsSetFilesViewedRpc = Rpc.make(WS_METHODS.pullRequestsSetFilesViewed, {
   payload: PullRequestSetFilesViewedInput,
   success: Schema.Void,
@@ -1338,6 +1386,12 @@ const WsProjectsListDirectoryRpc = Rpc.make(WS_METHODS.projectsListDirectory, {
   error: Schema.Union([ProjectListDirectoryError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsListIgnoredFilesRpc = Rpc.make(WS_METHODS.projectsListIgnoredFiles, {
+  payload: ProjectListIgnoredFilesInput,
+  success: ProjectListIgnoredFilesResult,
+  error: Schema.Union([ProjectListEntriesError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   payload: ProjectReadFileInput,
   success: ProjectReadFileResult,
@@ -1354,6 +1408,30 @@ const WsProjectsRenameFileRpc = Rpc.make(WS_METHODS.projectsRenameFile, {
   payload: ProjectRenameFileInput,
   success: ProjectRenameFileResult,
   error: Schema.Union([ProjectRenameFileError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsDeleteFileRpc = Rpc.make(WS_METHODS.projectsDeleteFile, {
+  payload: ProjectDeleteFileInput,
+  success: ProjectDeleteFileResult,
+  error: Schema.Union([ProjectDeleteFileError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsListFileVersionsRpc = Rpc.make(WS_METHODS.projectsListFileVersions, {
+  payload: ProjectListFileVersionsInput,
+  success: ProjectListFileVersionsResult,
+  error: Schema.Union([ProjectReadFileError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsDiscardFileVersionRpc = Rpc.make(WS_METHODS.projectsDiscardFileVersion, {
+  payload: ProjectDiscardFileVersionInput,
+  success: ProjectDiscardFileVersionResult,
+  error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsResolveFileMutationRpc = Rpc.make(WS_METHODS.projectsResolveFileMutation, {
+  payload: ProjectResolveFileMutationInput,
+  success: ProjectResolveFileMutationResult,
+  error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
 });
 
 const WsProjectsSubscribeFileChangesRpc = Rpc.make(WS_METHODS.projectsSubscribeFileChanges, {
@@ -1524,7 +1602,10 @@ const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
 });
 
 const WsVcsCreateWorktreeRpc = Rpc.make(WS_METHODS.vcsCreateWorktree, {
-  payload: VcsCreateWorktreeInput,
+  // Clients cannot choose the folder: new worktrees go in the server's managed
+  // worktrees folder. `path` stays a required null because older servers
+  // require the key.
+  payload: Schema.Struct({ ...VcsCreateWorktreeInput.fields, path: Schema.Null }),
   success: VcsCreateWorktreeResult,
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
@@ -1684,6 +1765,12 @@ const WsDeviceTestHostRpc = Rpc.make(WS_METHODS.deviceTestHost, {
   payload: SshDeviceHostConfig,
   success: DeviceHostSummary,
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceEasAccountRpc = Rpc.make(WS_METHODS.deviceEasAccount, {
+  payload: DeviceEasAccountInput,
+  success: DeviceEasAccount,
+  error: Schema.Union([DeviceEasAccountError, EnvironmentAuthorizationError]),
 });
 
 const WsDeviceListRpc = Rpc.make(WS_METHODS.deviceList, {
@@ -2063,6 +2150,9 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsServerUpdateProviderRpc,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
+  // SCIENT-FORK:START — the client that started a sign-in claims its page's one opening.
+  WsServerClaimProviderSignInPageRpc,
+  // SCIENT-FORK:END
   WsServerSubmitProviderAuthorizationCodeRpc,
   WsServerDisconnectProviderRpc,
   WsServerPlanProviderRuntimeRpc,
@@ -2135,6 +2225,7 @@ export const WsRepositoryRpcGroup = RpcGroup.make(
   WsPullRequestsThreadCommentsRpc,
   WsPullRequestsDiffFileContentsRpc,
   WsPullRequestsFilesViewedRpc,
+  WsPullRequestsChangeBreakdownRpc,
   WsPullRequestsSetFilesViewedRpc,
   WsPullRequestsRunActionRpc,
   WsPullRequestsUpdateRpc,
@@ -2160,6 +2251,10 @@ export const WsRepositoryRpcGroup = RpcGroup.make(
   WsProjectCloneRetryRpc,
   WsSubscribeProjectClonesRpc,
   WsSourceControlPublishRepositoryRpc,
+  WsProjectsListEntriesRpc,
+  WsProjectsListIgnoredFilesRpc,
+  WsProjectsReadFileRpc,
+  WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsSearchContentsRpc,
   WsProjectsListEntriesRpc,
@@ -2169,6 +2264,10 @@ export const WsRepositoryRpcGroup = RpcGroup.make(
   WsSubscribeDocumentBindingChangesRpc,
   WsProjectsWriteFileRpc,
   WsProjectsRenameFileRpc,
+  WsProjectsDeleteFileRpc,
+  WsProjectsListFileVersionsRpc,
+  WsProjectsDiscardFileVersionRpc,
+  WsProjectsResolveFileMutationRpc,
   WsAnalysisInspectRuntimesRpc,
 );
 
@@ -2247,6 +2346,7 @@ export const WsDeviceAndTelemetryRpcGroup = RpcGroup.make(
   WsDeviceConfigureRpc,
   WsDeviceTestHostRpc,
   WsDeviceListRpc,
+  WsDeviceEasAccountRpc,
   WsDeviceOpenRpc,
   WsDeviceCloseRpc,
   WsDeviceShutdownRpc,
@@ -2261,6 +2361,26 @@ export const WsDeviceAndTelemetryRpcGroup = RpcGroup.make(
   WsSubscribeResourceTelemetryRpc,
 );
 
+// SCIENT-FORK:START — Scient extensions group.
+export const WsExtensionsRpcGroup = RpcGroup.make(
+  WsExtensionsListRpc,
+  WsExtensionsSubscribeChangesRpc,
+  WsExtensionsConnectorAddRpc,
+  WsExtensionsConnectorStartSignInRpc,
+  WsExtensionsConnectorUpdateRpc,
+  WsExtensionsConnectorRemoveRpc,
+  WsExtensionsConnectorTestRpc,
+  WsExtensionsDiscoverSearchRpc,
+  WsExtensionsDiscoverCatalogRpc,
+  WsExtensionsDiscoverEntryRpc,
+  WsExtensionsPluginInstallRpc,
+  WsExtensionsPluginRemoveRpc,
+  WsExtensionsPluginSetEnabledRpc,
+  WsExtensionsDeliveryReceiptRpc,
+  WsProviderPluginsActRpc,
+);
+// SCIENT-FORK:END
+
 export const WsRpcGroup = WsConversationRpcGroup.merge(
   WsServerManagementRpcGroup,
   WsRepositoryRpcGroup,
@@ -2268,4 +2388,7 @@ export const WsRpcGroup = WsConversationRpcGroup.merge(
   WsWorkspaceRpcGroup,
   WsInteractiveRpcGroup,
   WsDeviceAndTelemetryRpcGroup,
+  // SCIENT-FORK:START — Scient extensions group.
+  WsExtensionsRpcGroup,
+  // SCIENT-FORK:END
 ).middleware(RpcScopeAuthorization);

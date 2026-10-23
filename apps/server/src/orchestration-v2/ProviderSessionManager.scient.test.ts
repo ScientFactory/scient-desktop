@@ -6,8 +6,7 @@ import {
   makeProviderThread,
   makeBrowserAccessProject,
 } from "./testkit/ProviderSessionManagerTestHarness.ts";
-import * as NetAddress from "effect/net/NetAddress";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+
 import { assert, it } from "@effect/vitest";
 import { ThreadId, type ProviderSessionId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";

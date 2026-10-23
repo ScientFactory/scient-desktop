@@ -7,7 +7,6 @@ import { EnvironmentId, type ScopedThreadRef, ThreadId, ThreadSectionId } from "
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback } from "react";
 
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
@@ -80,101 +79,98 @@ export function useThreadSectionActions() {
   const { markOccupied } = useThreadSectionCatalogs();
 
   /** One write, no notice. Skips threads already in the target section; null files in General. */
-  const setThreadSection = useCallback(
-    async (target: ScopedThreadRef, section: SectionRef | null) => {
-      // Checked first: another environment's section can share this id.
-      if (section !== null && section.environmentId !== target.environmentId) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new ThreadSectionElsewhereError({
-              environmentId: target.environmentId,
-              threadId: target.threadId,
-            }),
-          ),
-        );
-      }
-      const sectionId = section === null ? null : ThreadSectionId.make(section.sectionId);
-      if ((readThreadShell(target)?.sectionId ?? null) === sectionId) {
-        return AsyncResult.success(undefined);
-      }
-      if (!readEnvironmentSupportsSections(target.environmentId)) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new ThreadSectionsUnsupportedError({
-              environmentId: target.environmentId,
-              threadId: target.threadId,
-            }),
-          ),
-        );
-      }
-      // Mark the section occupied first, so filing always restarts the
-      // optional empty-section count, whether or not a sidebar is open to
-      // record it. A no-op once recorded.
-      if (section !== null && !(await markOccupied(section))) {
-        return AsyncResult.failure(Cause.fail(new ThreadSectionRegistrationError({})));
-      }
-      return setSectionMutation({
-        environmentId: target.environmentId,
-        input: { threadId: target.threadId, sectionId },
-      });
-    },
-    [markOccupied, setSectionMutation],
-  );
+  const setThreadSection = async (target: ScopedThreadRef, section: SectionRef | null) => {
+    // Checked first: another environment's section can share this id.
+    if (section !== null && section.environmentId !== target.environmentId) {
+      return AsyncResult.failure(
+        Cause.fail(
+          new ThreadSectionElsewhereError({
+            environmentId: target.environmentId,
+            threadId: target.threadId,
+          }),
+        ),
+      );
+    }
+    const sectionId = section === null ? null : ThreadSectionId.make(section.sectionId);
+    if ((readThreadShell(target)?.sectionId ?? null) === sectionId) {
+      return AsyncResult.success(undefined);
+    }
+    if (!readEnvironmentSupportsSections(target.environmentId)) {
+      return AsyncResult.failure(
+        Cause.fail(
+          new ThreadSectionsUnsupportedError({
+            environmentId: target.environmentId,
+            threadId: target.threadId,
+          }),
+        ),
+      );
+    }
+    // Mark the section occupied first, so filing always restarts the
+    // optional empty-section count, whether or not a sidebar is open to
+    // record it. A no-op once recorded.
+    if (section !== null && !(await markOccupied(section))) {
+      return AsyncResult.failure(Cause.fail(new ThreadSectionRegistrationError({})));
+    }
+    return setSectionMutation({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, sectionId },
+    });
+  };
 
   /** Files threads into a section (null: General) and offers Undo. */
-  const moveThreadsToSection = useCallback(
-    async (targets: readonly ScopedThreadRef[], section: SectionRef | null) => {
-      const moves = targets.flatMap((target) => {
-        const previous = readThreadShell(target)?.sectionId ?? null;
-        const unchanged =
-          previous === (section?.sectionId ?? null) &&
-          (section === null || section.environmentId === target.environmentId);
-        return unchanged ? [] : [{ target, previous }];
-      });
-      const results = await Promise.all(
-        moves.map(async ({ target, previous }) => {
-          const claim = ThreadUndo.begin("section", scopedThreadKey(target));
-          const result = await setThreadSection(target, section);
-          if (result._tag === "Failure") {
-            claim.finish();
-            return result;
-          }
-          showThreadUndoNotice({
-            action: "Moved",
-            claim,
-            undo: () =>
-              setThreadSection(
-                target,
-                previous === null
-                  ? null
-                  : { environmentId: target.environmentId, sectionId: previous },
-              ),
-            failureTitle: "Failed to undo section move",
-          });
+  const moveThreadsToSection = async (
+    targets: readonly ScopedThreadRef[],
+    section: SectionRef | null,
+  ) => {
+    const moves = targets.flatMap((target) => {
+      const previous = readThreadShell(target)?.sectionId ?? null;
+      const unchanged =
+        previous === (section?.sectionId ?? null) &&
+        (section === null || section.environmentId === target.environmentId);
+      return unchanged ? [] : [{ target, previous }];
+    });
+    const results = await Promise.all(
+      moves.map(async ({ target, previous }) => {
+        const claim = ThreadUndo.begin("section", scopedThreadKey(target));
+        const result = await setThreadSection(target, section);
+        if (result._tag === "Failure") {
+          claim.finish();
           return result;
+        }
+        showThreadUndoNotice({
+          action: "Moved",
+          claim,
+          undo: () =>
+            setThreadSection(
+              target,
+              previous === null
+                ? null
+                : { environmentId: target.environmentId, sectionId: previous },
+            ),
+          failureTitle: "Failed to undo section move",
+        });
+        return result;
+      }),
+    );
+    const failures = results.filter(
+      (result) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
+    );
+    const firstFailure = failures[0];
+    if (firstFailure !== undefined && firstFailure._tag === "Failure") {
+      const error = squashAtomCommandFailure(firstFailure);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title:
+            moves.length === 1
+              ? "Failed to move thread to section"
+              : `Failed to move ${failures.length} of ${moves.length} threads`,
+          description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
-      const failures = results.filter(
-        (result) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
-      );
-      const firstFailure = failures[0];
-      if (firstFailure !== undefined && firstFailure._tag === "Failure") {
-        const error = squashAtomCommandFailure(firstFailure);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title:
-              moves.length === 1
-                ? "Failed to move thread to section"
-                : `Failed to move ${failures.length} of ${moves.length} threads`,
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-      return results.every((result) => result._tag === "Success");
-    },
-    [setThreadSection],
-  );
+    }
+    return results.every((result) => result._tag === "Success");
+  };
 
   return { setThreadSection, moveThreadsToSection };
 }

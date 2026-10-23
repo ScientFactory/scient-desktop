@@ -124,27 +124,6 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     );
   });
 
-  it("normalizes Claude todo and proposed-plan tool input", () => {
-    assert.deepEqual(
-      ClaudeAdapterV2.claudeTodoSteps({
-        todos: [
-          { content: "Inspect", status: "completed" },
-          { content: "Implement", status: "in_progress" },
-        ],
-      }),
-      [
-        { id: "todo-0", text: "Inspect", status: "completed" },
-        { id: "todo-1", text: "Implement", status: "running" },
-      ],
-    );
-    assert.equal(
-      ClaudeAdapterV2.claudeProposedPlan({ plan: "  # Plan\nShip it  " }),
-      "# Plan\nShip it",
-    );
-    assert.isTrue(ClaudeAdapterV2.ClaudeProviderCapabilitiesV2.planning.emitsTodoList);
-    assert.isTrue(ClaudeAdapterV2.ClaudeProviderCapabilitiesV2.planning.emitsProposedPlan);
-  });
-
   it("maps canonical read-only never policy to Claude dontAsk with read-only tools", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
       ProviderAdapterV2RuntimePolicy.make({

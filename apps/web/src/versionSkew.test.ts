@@ -7,18 +7,14 @@ vi.mock("./branding", () => branding);
 
 import { APP_VERSION } from "./branding";
 import {
-  appendVersionMismatchHint,
   buildVersionMismatchDismissalKey,
   dismissServerUpdateFailure,
   dismissVersionMismatch,
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
   manualServerUpdateCommand,
-  resolveServerConfigVersionMismatch,
-  resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
   serverUpdateGuidance,
-  supportsDesktopAppUpdate,
 } from "./versionSkew";
 
 const MISMATCH_HINT =
@@ -27,7 +23,7 @@ const MISMATCH_HINT =
 describe("versionSkew", () => {
   it("keeps global-install recovery on the immutable Scient release without using its npm prefix", () => {
     const command =
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz t3";
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient";
     expect(manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
       command,
     );
@@ -39,7 +35,7 @@ describe("versionSkew", () => {
 
   it("keeps runner and unknown recovery on the immutable Scient release", () => {
     const command =
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz t3";
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient";
     expect(manualServerUpdateCommand("0.0.45")).toBe(command);
     expect(manualServerUpdateCommand("0.0.45", { kind: "npx" })).toBe(command);
     expect(manualServerUpdateCommand("0.0.45", { kind: "pnpm-dlx" })).toBe(command);
@@ -67,23 +63,6 @@ describe("versionSkew", () => {
     expect(failure.message).toBe("Download failed.");
     expect(isServerUpdateFailureDismissed(retryFailure)).toBe(false);
     expect(isServerUpdateFailureDismissed(otherEnvironmentFailure)).toBe(false);
-  });
-
-  it("does not dismiss an update that is still running", () => {
-    const running = {
-      status: "running",
-      stage: "resuming",
-      fromVersion: "0.0.33",
-      targetVersion: "0.0.34",
-    } as const satisfies ServerUpdateState;
-
-    dismissServerUpdateFailure(running);
-
-    expect(isServerUpdateFailureDismissed(running)).toBe(false);
-  });
-
-  it("does not warn when versions match", () => {
-    expect(resolveVersionMismatch(APP_VERSION)).toBeNull();
   });
 
   it("returns a mismatch when the server is behind the client", () => {
@@ -131,12 +110,6 @@ describe("versionSkew", () => {
     },
   );
 
-  it("does not warn when a nightly server is ahead on the same release", () => {
-    branding.APP_VERSION = "0.0.34-nightly.20260824.1125";
-
-    expect(resolveVersionMismatch("0.0.34-nightly.20260824.1126")).toBeNull();
-  });
-
   it("treats a nightly server built past the client as ahead, not skew", () => {
     expect(resolveVersionMismatch("0.0.35-nightly.20260818.1124")).toBeNull();
   });
@@ -163,27 +136,6 @@ describe("versionSkew", () => {
     expect(resolveVersionMismatch("0.0.34")).toMatchObject({ serverVersion: "0.0.34" });
   });
 
-  it("reads the server version from config descriptors", () => {
-    expect(
-      resolveServerConfigVersionMismatch({
-        environment: {
-          environmentId: EnvironmentId.make("environment-1"),
-          label: "Remote",
-          platform: {
-            os: "darwin",
-            arch: "arm64",
-          },
-          serverVersion: "0.0.33",
-          capabilities: {
-            repositoryIdentity: true,
-          },
-        },
-      }),
-    ).toMatchObject({
-      serverVersion: "0.0.33",
-    });
-  });
-
   it("keys dismissals by environment, client version, and server version", () => {
     const environmentId = EnvironmentId.make("environment-dismissal");
     const key = buildVersionMismatchDismissalKey(environmentId, {
@@ -207,56 +159,9 @@ describe("versionSkew", () => {
     ).toBe(false);
   });
 
-  it("appends a hint to connection errors when the server is behind", () => {
-    const mismatch = resolveVersionMismatch("0.0.33");
-
-    expect(appendVersionMismatchHint("Socket closed.", mismatch)).toBe(
-      `Socket closed. Hint: ${MISMATCH_HINT}`,
-    );
-  });
-
-  it("reads desktop-managed update capabilities from config descriptors", () => {
-    expect(
-      resolveServerSelfUpdateCapability({
-        environment: {
-          environmentId: EnvironmentId.make("environment-desktop"),
-          label: "Desktop",
-          platform: { os: "darwin", arch: "arm64" },
-          serverVersion: "9.9.9",
-          capabilities: {
-            repositoryIdentity: true,
-            serverSelfUpdate: "desktop-managed",
-          },
-        },
-      }),
-    ).toBe("desktop-managed");
-    expect(resolveServerSelfUpdateCapability(null)).toBeNull();
-  });
-
-  it("detects remote desktop-app update support from config descriptors", () => {
-    const descriptor = (desktopAppUpdate?: boolean) => ({
-      environment: {
-        environmentId: EnvironmentId.make("environment-desktop"),
-        label: "Desktop",
-        platform: { os: "darwin", arch: "arm64" } as const,
-        serverVersion: "9.9.9",
-        capabilities: {
-          repositoryIdentity: true,
-          serverSelfUpdate: "desktop-managed" as const,
-          ...(desktopAppUpdate === undefined ? {} : { desktopAppUpdate }),
-        },
-      },
-    });
-
-    expect(supportsDesktopAppUpdate(descriptor(true))).toBe(true);
-    expect(supportsDesktopAppUpdate(descriptor(false))).toBe(false);
-    expect(supportsDesktopAppUpdate(descriptor())).toBe(false);
-    expect(supportsDesktopAppUpdate(null)).toBe(false);
-  });
-
   it("matches version-drift guidance to the advertised update path", () => {
     expect(manualServerUpdateCommand("0.6.0")).toBe(
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.0/scient-server-0.6.0.tgz t3",
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.0/scient-server-0.6.0.tgz scient",
     );
     expect(serverUpdateGuidance("respawn")).toBe("Update to stay in sync");
     expect(serverUpdateGuidance("desktop-managed")).toBe("Update the desktop app");

@@ -25,11 +25,21 @@ interface MicrophoneSystemPreferences {
   readonly askForMediaAccess: (mediaType: "microphone") => Promise<boolean>;
 }
 
-/** Keep macOS consent policy independently testable from Electron IPC wiring. */
+/** Keep system consent policy independently testable from Electron IPC wiring. */
 export async function requestMicrophoneAccessForPlatform(
   platform: NodeJS.Platform,
   preferences: MicrophoneSystemPreferences,
 ): Promise<VoiceMicrophoneAccessStatusType> {
+  // Windows has no consent prompt for desktop apps, only the privacy switch.
+  // Anything but a clear answer falls through to renderer capture.
+  if (platform === "win32") {
+    try {
+      const status = preferences.getMediaAccessStatus("microphone");
+      return status === "granted" || status === "denied" ? status : "unavailable";
+    } catch {
+      return "unavailable";
+    }
+  }
   if (platform !== "darwin") return "unavailable";
 
   try {

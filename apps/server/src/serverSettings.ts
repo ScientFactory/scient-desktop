@@ -223,9 +223,12 @@ export class ServerSettingsService extends Context.Service<
       patch?: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    // SCIENT-FORK:START — provider revocation can read current unresolved settings without trusting an older emission.
     readonly withSettingsSnapshot: <A, E, R>(
       use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
+      options?: { readonly allowUnresolvedSecrets?: boolean },
     ) => Effect.Effect<A, E | ServerSettingsError, R>;
+    // SCIENT-FORK:END
 
     readonly streamChanges: Stream.Stream<ServerSettings>;
 
@@ -241,76 +244,72 @@ export class ServerSettingsService extends Context.Service<
   static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) => layerTest(overrides);
 }
 
-const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
-  Effect.gen(function* () {
-    const { automaticGitFetchInterval, providerHealthRefreshInterval, ...overridesForMerge } =
-      overrides;
-    const merged = deepMerge(DEFAULT_SERVER_SETTINGS, overridesForMerge);
-    const initialSettings = yield* normalizeServerSettings({
-      ...merged,
-      ...(automaticGitFetchInterval !== undefined
-        ? { automaticGitFetchInterval: automaticGitFetchInterval as Duration.Duration }
-        : {}),
-      ...(providerHealthRefreshInterval !== undefined
-        ? { providerHealthRefreshInterval: providerHealthRefreshInterval as Duration.Duration }
-        : {}),
-    });
-    const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
-    const writeSemaphore = yield* Semaphore.make(1);
-    const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
+const makeTest = Effect.fn("serverSettings.makeTest")(function* (
+  overrides: DeepPartial<ServerSettings> = {},
+) {
+  const { automaticGitFetchInterval, providerHealthRefreshInterval, ...overridesForMerge } =
+    overrides;
+  const merged = deepMerge(DEFAULT_SERVER_SETTINGS, overridesForMerge);
+  const initialSettings = yield* normalizeServerSettings({
+    ...merged,
+    ...(automaticGitFetchInterval !== undefined
+      ? { automaticGitFetchInterval: automaticGitFetchInterval as Duration.Duration }
+      : {}),
+    ...(providerHealthRefreshInterval !== undefined
+      ? { providerHealthRefreshInterval: providerHealthRefreshInterval as Duration.Duration }
+      : {}),
+  });
+  const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+  const writeSemaphore = yield* Semaphore.make(1);
+  const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
 
-    const updateTestSettings = (
-      update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
-    ): Effect.Effect<ServerSettings, ServerSettingsError> =>
-      writeSemaphore.withPermits(1)(
-        Ref.get(currentSettingsRef).pipe(
-          Effect.flatMap(update),
-          Effect.flatMap(normalizeServerSettings),
-          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-          Effect.map(resolveTextGenerationProvider),
-        ),
-      );
+  const updateTestSettings = (
+    update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    writeSemaphore.withPermits(1)(
+      Ref.get(currentSettingsRef).pipe(
+        Effect.flatMap(update),
+        Effect.flatMap(normalizeServerSettings),
+        Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+        Effect.map(resolveTextGenerationProvider),
+      ),
+    );
 
-    return {
-      // SCIENT-FORK:START — custom-model persistence is unavailable in the test
-      // layer, but the service shape still has to satisfy these members.
-      ...customModelsTestMethods,
-      committedCustomModels: () => Ref.getUnsafe(currentSettingsRef).customModels,
-      // SCIENT-FORK:END
-      start: Effect.void,
-      ready: Effect.void,
-      getSettings,
-      updateSettings: (patch) =>
-        updateTestSettings((currentSettings) =>
-          translateLegacyProviderSettingsPatch(currentSettings, patch, "test settings").pipe(
-            Effect.map((translatedPatch) =>
-              applyServerSettingsPatch(currentSettings, translatedPatch),
-            ),
+  return {
+    // SCIENT-FORK:START — custom models share the committed settings snapshot.
+    ...customModelsTestMethods,
+    committedCustomModels: () => Ref.getUnsafe(currentSettingsRef).customModels,
+    // SCIENT-FORK:END
+    start: Effect.void,
+    ready: Effect.void,
+    getSettings,
+    updateSettings: (patch) =>
+      updateTestSettings((currentSettings) =>
+        translateLegacyProviderSettingsPatch(currentSettings, patch, "test settings").pipe(
+          Effect.map((translatedPatch) =>
+            applyServerSettingsPatch(currentSettings, translatedPatch),
           ),
         ),
-      updateProviderInstance: (mutation, patch = {}) =>
-        updateTestSettings((currentSettings) =>
-          Effect.gen(function* () {
-            yield* ensureProviderInstanceMutationAllowed(
-              currentSettings,
-              mutation,
-              "test settings",
-            );
-            const translatedPatch = yield* translateLegacyProviderSettingsPatch(
-              currentSettings,
-              patch,
-              "test settings",
-            );
-            const patched = applyServerSettingsPatch(currentSettings, translatedPatch);
-            return applyProviderInstanceMutation(patched, mutation);
-          }),
-        ),
-      withSettingsSnapshot: (use) =>
-        writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
-      streamChanges: Stream.empty,
-      subscribeChanges: Effect.succeed(Stream.empty),
-    } satisfies ServerSettingsService["Service"];
-  });
+      ),
+    updateProviderInstance: (mutation, patch = {}) =>
+      updateTestSettings((currentSettings) =>
+        Effect.gen(function* () {
+          yield* ensureProviderInstanceMutationAllowed(currentSettings, mutation, "test settings");
+          const translatedPatch = yield* translateLegacyProviderSettingsPatch(
+            currentSettings,
+            patch,
+            "test settings",
+          );
+          const patched = applyServerSettingsPatch(currentSettings, translatedPatch);
+          return applyProviderInstanceMutation(patched, mutation);
+        }),
+      ),
+    withSettingsSnapshot: (use) =>
+      writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
+    streamChanges: Stream.empty,
+    subscribeChanges: Effect.succeed(Stream.empty),
+  } satisfies ServerSettingsService["Service"];
+});
 
 export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Layer.effect(ServerSettingsService, makeTest(overrides));
@@ -529,61 +528,61 @@ const isSettingsRecord = (value: unknown): value is Record<string, unknown> =>
  * the addressed default config and preserve named instances and envelope
  * metadata. When a modern whole-map patch is also present it is authoritative.
  */
-function translateLegacyProviderSettingsPatch(
+const translateLegacyProviderSettingsPatch = Effect.fn(
+  "ServerSettings.translateLegacyProviderSettingsPatch",
+)(function* (
   current: ServerSettings,
   rawPatch: ServerSettingsPatch,
   settingsPath: string,
-): Effect.Effect<ServerSettingsPatch, ServerSettingsError> {
-  return Effect.gen(function* () {
-    const legacyProviders = rawPatch.providers;
-    if (legacyProviders === undefined) return rawPatch;
+): Effect.fn.Return<ServerSettingsPatch, ServerSettingsError> {
+  const legacyProviders = rawPatch.providers;
+  if (legacyProviders === undefined) return rawPatch;
 
-    const { providers: _legacyProviders, ...patch } = rawPatch;
-    if (patch.providerInstances !== undefined) return patch;
+  const { providers: _legacyProviders, ...patch } = rawPatch;
+  if (patch.providerInstances !== undefined) return patch;
 
-    const providerInstances = { ...current.providerInstances };
-    for (const [driverName, legacyConfig] of Object.entries(legacyProviders)) {
-      if (!isProviderDriverKind(driverName)) continue;
+  const providerInstances = { ...current.providerInstances };
+  for (const [driverName, legacyConfig] of Object.entries(legacyProviders)) {
+    if (!isProviderDriverKind(driverName)) continue;
 
-      const instanceId = defaultInstanceIdForDriver(driverName);
-      const existing = providerInstances[instanceId];
-      // An instance id can be user-chosen. Do not change the driver identity of
-      // an existing non-default instance to satisfy a legacy single-slot write.
-      if (existing !== undefined && existing.driver !== driverName) {
-        return yield* new ServerSettingsError({
-          settingsPath,
-          operation: "normalize",
-          providerInstanceId: instanceId,
-          cause: new Error(
-            `Legacy ${driverName} settings cannot update the default instance because ${instanceId} belongs to ${existing.driver}.`,
-          ),
-        });
-      }
-
-      let configPatch = legacyConfig;
-      let enabledPatch: boolean | undefined;
-      if (isSettingsRecord(legacyConfig)) {
-        const { enabled, ...configWithoutEnabled } = legacyConfig;
-        if (typeof enabled === "boolean") {
-          enabledPatch = enabled;
-          configPatch = configWithoutEnabled;
-        }
-      }
-
-      const config = isSettingsRecord(configPatch)
-        ? deepMerge(isSettingsRecord(existing?.config) ? existing.config : {}, configPatch)
-        : configPatch;
-      providerInstances[instanceId] = {
-        ...(existing ?? {}),
-        driver: driverName,
-        ...(enabledPatch === undefined ? {} : { enabled: enabledPatch }),
-        config,
-      };
+    const instanceId = defaultInstanceIdForDriver(driverName);
+    const existing = providerInstances[instanceId];
+    // An instance id can be user-chosen. Do not change the driver identity of
+    // an existing non-default instance to satisfy a legacy single-slot write.
+    if (existing !== undefined && existing.driver !== driverName) {
+      return yield* new ServerSettingsError({
+        settingsPath,
+        operation: "normalize",
+        providerInstanceId: instanceId,
+        cause: new Error(
+          `Legacy ${driverName} settings cannot update the default instance because ${instanceId} belongs to ${existing.driver}.`,
+        ),
+      });
     }
 
-    return { ...patch, providerInstances };
-  });
-}
+    let configPatch = legacyConfig;
+    let enabledPatch: boolean | undefined;
+    if (isSettingsRecord(legacyConfig)) {
+      const { enabled, ...configWithoutEnabled } = legacyConfig;
+      if (typeof enabled === "boolean") {
+        enabledPatch = enabled;
+        configPatch = configWithoutEnabled;
+      }
+    }
+
+    const config = isSettingsRecord(configPatch)
+      ? deepMerge(isSettingsRecord(existing?.config) ? existing.config : {}, configPatch)
+      : configPatch;
+    providerInstances[instanceId] = {
+      ...existing,
+      driver: driverName,
+      ...(enabledPatch === undefined ? {} : { enabled: enabledPatch }),
+      config,
+    };
+  }
+
+  return { ...patch, providerInstances };
+});
 
 const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
 
@@ -795,8 +794,8 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const moveInlineSettingsSecrets = (settings: ServerSettings) =>
-    Effect.gen(function* () {
+  const moveInlineSettingsSecrets = Effect.fn("serverSettings.moveInlineSettingsSecrets")(
+    function* (settings: ServerSettings) {
       const pending: SettingsSecret[] = [];
       mapSettingsSecrets(settings, (secret) => {
         if (secret.kind === "field" && !secret.redacted && secret.value.length > 0) {
@@ -822,15 +821,17 @@ const make = Effect.gen(function* () {
       return mapSettingsSecrets(settings, (secret) =>
         moved.has(secret.secretName) ? { value: "", redacted: true } : secret,
       );
-    });
+    },
+  );
 
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = DEFAULT_SERVER_SETTINGS;
     let legacyProviders: Readonly<Record<string, unknown>> | undefined;
     let legacySourceControl: Parameters<typeof migrateLegacySourceControlSettings>[1] = {};
-    // A file that failed to decode must stay on disk for the user to repair;
-    // the fold below only writes when it started from the file's real contents.
+    let parseFailure = Option.none<unknown>();
+    // SCIENT-FORK:START — malformed legacy blobs must also preserve the original file.
     let settingsFileTrusted = true;
+    // SCIENT-FORK:END
 
     if (yield* readConfigExists) {
       const raw = yield* readRawConfig;
@@ -845,10 +846,10 @@ const make = Effect.gen(function* () {
       }
       if (decoded._tag === "Failure" || legacySettings._tag === "Failure") {
         const failure = decoded._tag === "Failure" ? decoded : legacySettings;
-        settingsFileTrusted = false;
         // The file may hold an opt-out we can no longer read; never resume threads on a guess.
         settings = { ...DEFAULT_SERVER_SETTINGS, continueThreadsAfterServerUpdate: false };
         if (failure._tag === "Failure") {
+          parseFailure = Option.some(Cause.squash(failure.cause));
           yield* Effect.logWarning("failed to parse settings.json, using defaults", {
             path: settingsPath,
             issues: Cause.pretty(failure.cause),
@@ -873,6 +874,8 @@ const make = Effect.gen(function* () {
       }
     }
 
+    // A file that failed to decode must stay on disk for the user to repair.
+    settingsFileTrusted &&= Option.isNone(parseFailure);
     const providerHistory = yield* sql<{
       readonly providerName: string;
       readonly providerInstanceId: string | null;
@@ -993,32 +996,35 @@ const make = Effect.gen(function* () {
       }
       yield* writeSettingsAtomically(migrated);
     }
-    return migrated;
+    return { settings: migrated, parseFailure };
   });
 
-  // Replaced whenever settings are committed or reloaded, never loaded lazily.
+  // SCIENT-FORK:START — custom models read the same committed snapshot as the settings cache.
   const committedCustomModels = Ref.makeUnsafe(DEFAULT_SERVER_SETTINGS.customModels);
-  const settingsCache = yield* Cache.makeWith<typeof cacheKey, ServerSettings, ServerSettingsError>(
-    () =>
-      loadSettingsFromDisk.pipe(
-        Effect.tap((settings) => Ref.set(committedCustomModels, settings.customModels)),
-      ),
-    {
-      capacity: 1,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
-    },
+  const loadCommittedSettings = loadSettingsFromDisk.pipe(
+    Effect.tap(({ settings }) => Ref.set(committedCustomModels, settings.customModels)),
   );
+  // SCIENT-FORK:END
+  const settingsCache = yield* Cache.makeWith((_key: typeof cacheKey) => loadCommittedSettings, {
+    capacity: 1,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+  });
 
-  const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
+  const getSettingsFromCache = Cache.get(settingsCache, cacheKey).pipe(
+    Effect.map((loaded) => loaded.settings),
+  );
+  const reloadSettings = Cache.invalidate(settingsCache, cacheKey).pipe(
+    Effect.andThen(Cache.get(settingsCache, cacheKey)),
+  );
+  // SCIENT-FORK:START — custom-model mutations commit to the same parsed-cache shape.
   const cacheSettings = (settings: ServerSettings) =>
     Ref.set(committedCustomModels, settings.customModels).pipe(
-      Effect.andThen(Cache.set(settingsCache, cacheKey, settings)),
+      Effect.andThen(Cache.set(settingsCache, cacheKey, { settings, parseFailure: Option.none() })),
     );
+  // SCIENT-FORK:END
 
-  const materializeSettingsSecrets = (
-    settings: ServerSettings,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
-    Effect.gen(function* () {
+  const materializeSettingsSecrets = Effect.fn("serverSettings.materializeSettingsSecrets")(
+    function* (settings: ServerSettings): Effect.fn.Return<ServerSettings, ServerSettingsError> {
       const storedSecrets = new Map<string, string>();
       const pending = new Map<string, SettingsSecret>();
       mapSettingsSecrets(settings, (secret) => {
@@ -1050,7 +1056,8 @@ const make = Effect.gen(function* () {
             : secret.value,
         redacted: secret.sensitive && secret.kind === "environment" && secret.redacted,
       }));
-    });
+    },
+  );
 
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
     changes.pipe(
@@ -1216,7 +1223,14 @@ const make = Effect.gen(function* () {
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        const current = yield* getSettingsFromCache;
+        const { settings: current, parseFailure } = yield* reloadSettings;
+        if (Option.isSome(parseFailure)) {
+          return yield* new ServerSettingsError({
+            settingsPath,
+            operation: "read-file",
+            cause: parseFailure.value,
+          });
+        }
         const updated = yield* update(current);
         const deferredInstance = newlyRequestedCodexSubscriptionSharing(current, updated);
         if (deferredInstance !== undefined)
@@ -1250,19 +1264,31 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>
+  // SCIENT-FORK:START — unresolved credentials stay redacted; ordinary snapshot readers still fail closed.
+  const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (
+    use,
+    options,
+  ) =>
     writeSemaphore.withPermits(1)(
       getSettingsFromCache.pipe(
-        Effect.flatMap(materializeSettingsSecrets),
+        Effect.flatMap((settings) =>
+          materializeSettingsSecrets(settings).pipe(
+            Effect.catch((error) =>
+              options?.allowUnresolvedSecrets === true && error.operation === "read-secret"
+                ? Effect.succeed(settings)
+                : Effect.fail(error),
+            ),
+          ),
+        ),
         Effect.map(resolveTextGenerationProvider),
         Effect.flatMap(use),
       ),
     );
+  // SCIENT-FORK:END
 
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
-      yield* Cache.invalidate(settingsCache, cacheKey);
-      const settings = yield* getSettingsFromCache;
+      const { settings } = yield* reloadSettings;
       yield* emitChange(settings);
     }),
   );
@@ -1399,8 +1425,7 @@ const make = Effect.gen(function* () {
 
     const startup = Effect.gen(function* () {
       yield* startWatcher;
-      yield* Cache.invalidate(settingsCache, cacheKey);
-      yield* getSettingsFromCache;
+      yield* reloadSettings;
     });
 
     // SCIENT-FORK:START — cancelled/failed startup cannot leave registered watches behind.

@@ -17,17 +17,24 @@
       "vitest": { "entry": [".github/**/*.test.cjs"] },
     },
     "scripts": {
-      // Knip loads its preprocessor through a CLI option, not a source import.
-      // Native verification and worktree setup (from t3.json) run directly.
+      // Knip loads its preprocessor through a CLI option; native verification and
+      // worktree setup (from t3.json) run directly. release-desktop.yml bundles the
+      // Windows verify script with esbuild through a path knip does not trace, and
+      // electron-builder loads the macOS signer by path.
       "entry": [
         "knip-schemas.ts",
         "qualify-managed-runtime-catalog.ts",
         "mobile-native-client.ts",
         "setup-worktree.ts",
+        "sign-macos.ts",
+        "verify-windows-desktop-artifact.ts",
         // Documented advisory inventory CLI and its independent Node regressions.
         "scient-divergence-inventory.mjs",
         "scient-divergence-inventory.node-test.mjs",
+        // Documented manual TeX-to-SVG math-symbol atlas generator.
+        "generate-math-symbol-glyphs.mjs",
       ],
+      "ignoreDependencies": ["esbuild"],
       // The `t3` npm package's files: copied into the package, never imported.
       "ignore": ["npm-launcher/**"],
     },
@@ -53,12 +60,17 @@
         "scripts/qualifyScientAgentManagedRuntime.ts",
         "scripts/qualify-muse-runtime.ts",
         "scripts/evaluate-thread-titles.ts",
+        "scripts/fetch-expo-schema.ts",
         "scripts/measure-pr-preview.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",
         "scripts/verify-background-live.ts",
         "src/provider/testFixtures/*.mjs",
+        // graphqlgen reads its config.
+        "graphql.config.ts",
       ],
+      // The generated operations export every selection's class.
+      "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
       // Keep the transitive Effect runtime pinned for standalone npm installs.
       // Native msgpack acceleration and the Vite+ web build prerequisite.
       // PDF.js resolves the packaged native canvas through createRequire.
@@ -102,20 +114,32 @@
       "ignoreDependencies": ["playwright-core", "electron-builder"],
     },
     "apps/web": {
-      // Vitest loads this through the per-file @vitest-environment directive.
-      "ignoreDependencies": ["jsdom"],
       // Worktree setup (scripts/setup-worktree.ts) and the dep-cache warmer run
       // this directly. The Mermaid smoke harness loads its recovery corpus
       // through Vite in a real Chromium renderer, so that fixture module is
       // also a test entry point.
       "entry": [
         "scripts/warm-dep-cache.ts",
+        "test/fixtures/**/*.mjs",
         // Explicit standalone connected extracted-intent qualification configuration.
         "extractedIntentSend.vitest.config.ts",
+        // Documented standalone Chromium selection qualification configuration.
+        "latexSelection.vitest.config.ts",
+        "latexPaging.vitest.config.ts",
         // The standalone PDF print page is loaded by scient-document.html.
         "src/scient/documentPage/main.tsx",
+        // The Visual performance benchmark: its production build configuration,
+        // page entry (latex-visual-benchmark.html) and Node runner.
+        "latexVisualBenchmark.config.ts",
+        "src/scient/latex/visualBenchmark/main.tsx",
+        "scripts/latex-visual-benchmark.ts",
         "src/scient/diagrams/mermaidRecovery.fixtures.ts",
         "public/scient-voice-worklet.js!",
+        // Retained donor update capsule and confirmation dialog: the sidebar shows other machines'
+        // updates in its own circle and asks beside the pill (docs/user/updating.md). Kept
+        // unmounted so upstream changes still merge.
+        "src/components/sidebar/SidebarUpdateCapsule.tsx",
+        "src/components/sidebar/UpdateEverythingDialog.tsx",
       ],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
@@ -134,6 +158,10 @@
         "src/components/settings/ProviderAuthCallbackCoordinator.tsx": ["files"],
         "src/providerAuthDelivery.ts": ["files"],
       },
+    },
+    "apps/marketing": {
+      // `astro check` runs from the typecheck task in vite.config.ts, which knip does not read.
+      "ignoreDependencies": ["@astrojs/check"],
     },
     "apps/mobile": {
       // Expo loads plugins and the fingerprint config by string; Metro embeds the browser entry in the native WebView.

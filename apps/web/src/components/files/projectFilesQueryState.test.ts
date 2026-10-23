@@ -23,10 +23,12 @@ vi.mock("~/rpc/atomRegistry", async () => {
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
+import { createTestCheckpointStore } from "~/scient/markdownEditor/persistence/markdownDraftCheckpointTestkit";
 import {
   clearProjectFileQueryData,
   confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
+  getPendingOptimisticProjectFilePaths,
   projectReadFailure,
   getUnsavedProjectFileQueryData,
   resolveProjectFileQueryData,
@@ -50,14 +52,14 @@ function drainRegistryTasks(): void {
   }
 }
 
-describe("project files queries", () => {
-  afterEach(() => {
-    clearProjectFileQueryData(environmentId, "/repo", "convex.json");
-    drainRegistryTasks();
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
+afterEach(() => {
+  clearProjectFileQueryData(environmentId, "/repo", "convex.json");
+  drainRegistryTasks();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
+describe("project files queries", () => {
   it("refreshes only mounted consumers of the changed workspace and unsubscribes cleanly", () => {
     const changed = vi.fn();
     const otherProject = vi.fn();
@@ -85,126 +87,65 @@ describe("project files queries", () => {
     }
   });
 
-  it("resumes an unsaved draft after closing the preview and restoring write access", async () => {
+  it("keeps the historical optimistic revision and draft pending after absent-current acceptance", async () => {
     vi.stubGlobal("window", {});
-    vi.useFakeTimers();
-    const closePreview = appAtomRegistry.mount(optimisticFile);
-    let canWrite = true;
-    const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
-    const onPendingChange = vi.fn();
-    const makeCoordinator = () =>
-      new FileSaveCoordinator({
-        debounceMs: 500,
-        initialRevision: "revision-1",
-        revisionFromResult: () => "revision-2",
-        canPersist: () => canWrite,
-        persist,
-        onPendingChange,
-        onConfirmed: (contents) =>
-          confirmProjectFileQueryData(
-            environmentId,
-            "/repo",
-            "convex.json",
-            contents,
-            "revision-2",
-          ),
-      });
-    const initial = makeCoordinator();
-    setProjectFileQueryData(environmentId, "/repo", "convex.json", "unsaved draft", "revision-1");
-    initial.change("unsaved draft");
-    canWrite = false;
-    initial.dispose();
-    closePreview();
-    await vi.runAllTimersAsync();
-    drainRegistryTasks();
-
-    expect(persist).not.toHaveBeenCalled();
-    expect(onPendingChange).toHaveBeenLastCalledWith(true);
-    const unsaved = getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json");
-    expect(unsaved?.contents).toBe("unsaved draft");
-
-    canWrite = true;
-    const reopened = makeCoordinator();
-    reopened.change(unsaved!.contents);
-    await vi.advanceTimersByTimeAsync(500);
-
-    expect(persist).toHaveBeenCalledOnce();
-    expect(persist).toHaveBeenCalledWith("unsaved draft", "revision-1");
-    expect(onPendingChange).toHaveBeenLastCalledWith(false);
-    expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")).toBeNull();
-    reopened.dispose();
-    drainRegistryTasks();
-    expect(appAtomRegistry.getNodes().has(optimisticFile)).toBe(false);
-  });
-
-  it("releases a retained unsaved draft when explicitly cleared", () => {
-    setProjectFileQueryData(environmentId, "/repo", "convex.json", "first draft", "revision-1");
-    setProjectFileQueryData(environmentId, "/repo", "convex.json", "latest draft", "revision-1");
-    drainRegistryTasks();
-    expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")?.contents).toBe(
-      "latest draft",
+    const attention = {
+      recoveryId: "absent",
+      mutationId: "prior",
+      retainedPaths: ["draft.copy"],
+      message: "Retained publication",
+    };
+    let disk: string | null = null;
+    const persist = async (
+      contents: string,
+      _expected: string | undefined,
+      _id: string,
+      createOnly?: boolean,
+    ) => {
+      if (!createOnly || disk !== null)
+        return AsyncResult.failure(Cause.fail(new Error("Not an exclusive create")));
+      disk = contents;
+      return AsyncResult.success(undefined);
+    };
+    setProjectFileQueryData(
+      environmentId,
+      "/repo",
+      "convex.json",
+      "original pending draft",
+      "historical",
     );
-
-    clearProjectFileQueryData(environmentId, "/repo", "convex.json");
-    drainRegistryTasks();
-    expect(appAtomRegistry.getNodes().has(optimisticFile)).toBe(false);
-  });
-
-  it("keeps a reopened editor's newer draft pending when the old editor's write finishes", async () => {
-    vi.stubGlobal("window", {});
-    vi.useFakeTimers();
-    let canWrite = true;
-    const saved = AsyncResult.success(undefined);
-    let finishFirstWrite!: (result: typeof saved) => void;
-    const firstWrite = new Promise<typeof saved>((resolve) => {
-      finishFirstWrite = resolve;
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      initialRevision: "historical",
+      initialAttention: attention,
+      persist,
+      initialSource: "historical source",
+      journal: { key: "query-missing", store: createTestCheckpointStore() },
+      revisionFromResult: () => "recreated",
+      readForRecovery: async () => ({ missing: true, revision: null }),
+      resolveRecovery: async () => ({ revision: null }),
+      onPendingChange: vi.fn(),
+      onConfirmed: (contents) =>
+        confirmProjectFileQueryData(environmentId, "/repo", "convex.json", contents, "recreated"),
     });
-    const persist = vi.fn().mockReturnValueOnce(firstWrite).mockResolvedValue(saved);
-    const onPendingChange = vi.fn();
-    const makeCoordinator = () =>
-      new FileSaveCoordinator({
-        debounceMs: 500,
-        initialRevision: "revision-1",
-        revisionFromResult: () => "revision-2",
-        canPersist: () => canWrite,
-        persist,
-        onPendingChange,
-        onConfirmed: (contents) =>
-          confirmProjectFileQueryData(
-            environmentId,
-            "/repo",
-            "convex.json",
-            contents,
-            "revision-2",
-          ),
-      });
-
-    const initial = makeCoordinator();
-    setProjectFileQueryData(environmentId, "/repo", "convex.json", "first draft", "revision-1");
-    initial.change("first draft");
-    await vi.advanceTimersByTimeAsync(500);
-    initial.dispose();
-
-    const reopened = makeCoordinator();
-    setProjectFileQueryData(environmentId, "/repo", "convex.json", "newer draft", "revision-1");
-    reopened.change("newer draft");
-    canWrite = false;
-    finishFirstWrite(saved);
-    await vi.runAllTimersAsync();
-
-    expect(persist).toHaveBeenCalledOnce();
-    expect(onPendingChange).toHaveBeenLastCalledWith(true);
-    expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")?.contents).toBe(
-      "newer draft",
+    await coordinator.ready();
+    coordinator.change("original pending draft");
+    await expect(coordinator.resolveRetainedAttention("absent", null)).resolves.toBe(true);
+    expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")).toMatchObject({
+      contents: "original pending draft",
+      revision: "historical",
+    });
+    refreshProjectFiles(environmentId, "/repo");
+    await expect(coordinator.flush()).resolves.toBe(false);
+    expect(disk).toBeNull();
+    expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")?.revision).toBe(
+      "historical",
     );
-
-    canWrite = true;
-    reopened.change("newer draft");
-    await vi.advanceTimersByTimeAsync(500);
-    expect(persist).toHaveBeenLastCalledWith("newer draft", "revision-1");
-    expect(onPendingChange).toHaveBeenLastCalledWith(false);
+    expect(coordinator.recreateMissingCurrent()).toBe(true);
+    await expect(coordinator.flush()).resolves.toBe(true);
+    expect(disk).toBe("original pending draft");
     expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")).toBeNull();
-    reopened.dispose();
+    coordinator.dispose();
   });
 
   it("keeps the latest optimistic draft when an older write finishes", () => {
@@ -286,6 +227,85 @@ describe("project files queries", () => {
   });
 });
 
+describe("pending optimistic project files", () => {
+  const otherEnvironmentId = EnvironmentId.make("other-pending-project-files-environment");
+  const targets = [
+    [environmentId, "/pending-repo", "data.txt"],
+    [environmentId, "/pending-repo", "chapters/introduction.tex"],
+    [environmentId, "/other-pending-repo", "data.txt"],
+    [otherEnvironmentId, "/pending-repo", "data.txt"],
+  ] as const;
+
+  afterEach(() => {
+    for (const [environment, cwd, path] of targets) {
+      clearProjectFileQueryData(environment, cwd, path);
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it("enumerates exact paths only within the requested environment and workspace", () => {
+    for (const [environment, cwd, path] of targets) {
+      setProjectFileQueryData(environment, cwd, path, "pending", "revision-1");
+    }
+
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/pending-repo")).toEqual([
+      "data.txt",
+      "chapters/introduction.tex",
+    ]);
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/other-pending-repo")).toEqual([
+      "data.txt",
+    ]);
+    expect(getPendingOptimisticProjectFilePaths(otherEnvironmentId, "/pending-repo")).toEqual([
+      "data.txt",
+    ]);
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/pending-repo/")).toEqual([]);
+  });
+
+  it("keeps a newer draft pending when an older write is acknowledged", () => {
+    vi.stubGlobal("window", {});
+    setProjectFileQueryData(environmentId, "/pending-repo", "data.txt", "first", "revision-1");
+    setProjectFileQueryData(environmentId, "/pending-repo", "data.txt", "newer");
+
+    expect(
+      confirmProjectFileQueryData(
+        environmentId,
+        "/pending-repo",
+        "data.txt",
+        "first",
+        "revision-2",
+      ),
+    ).toBe(false);
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/pending-repo")).toEqual([
+      "data.txt",
+    ]);
+
+    expect(
+      confirmProjectFileQueryData(
+        environmentId,
+        "/pending-repo",
+        "data.txt",
+        "newer",
+        "revision-3",
+      ),
+    ).toBe(true);
+    expect(
+      getOptimisticProjectFileQueryData(environmentId, "/pending-repo", "data.txt"),
+    ).not.toBeNull();
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/pending-repo")).toEqual([]);
+
+    setProjectFileQueryData(environmentId, "/pending-repo", "data.txt", "latest");
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/pending-repo")).toEqual([
+      "data.txt",
+    ]);
+  });
+
+  it("stops reporting a discarded draft", () => {
+    setProjectFileQueryData(environmentId, "/pending-repo", "data.txt", "pending", "revision-1");
+    clearProjectFileQueryData(environmentId, "/pending-repo", "data.txt");
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/pending-repo")).toEqual([]);
+  });
+});
+
 describe("projectReadFailure", () => {
   const missing = new ProjectReadFileError({
     cwd: "/repo",
@@ -310,5 +330,123 @@ describe("projectReadFailure", () => {
         new ProjectReadFileError({ cwd: "/repo", relativePath: "a.bin", failure: "binary_file" }),
       ),
     ).toBeNull();
+  });
+});
+
+describe("project files queries", () => {
+  it("resumes an unsaved draft after closing the preview and restoring write access", async () => {
+    vi.stubGlobal("window", {});
+    vi.useFakeTimers();
+    const closePreview = appAtomRegistry.mount(optimisticFile);
+    let canWrite = true;
+    const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
+    const onPendingChange = vi.fn();
+    const makeCoordinator = () =>
+      new FileSaveCoordinator({
+        debounceMs: 500,
+        initialRevision: "revision-1",
+        initialSource: "",
+        journal: { key: "query-close-reopen", store: createTestCheckpointStore() },
+        revisionFromResult: () => "revision-2",
+        canPersist: () => canWrite,
+        persist,
+        onPendingChange,
+        onConfirmed: (contents) =>
+          confirmProjectFileQueryData(
+            environmentId,
+            "/repo",
+            "convex.json",
+            contents,
+            "revision-2",
+          ),
+      });
+    const initial = makeCoordinator();
+    await initial.ready();
+    setProjectFileQueryData(environmentId, "/repo", "convex.json", "unsaved draft", "revision-1");
+    initial.change("unsaved draft");
+    canWrite = false;
+    initial.dispose();
+    closePreview();
+    await vi.runAllTimersAsync();
+    drainRegistryTasks();
+
+    expect(persist).not.toHaveBeenCalled();
+    expect(onPendingChange).toHaveBeenLastCalledWith(true);
+    const unsaved = getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json");
+    expect(unsaved?.contents).toBe("unsaved draft");
+
+    canWrite = true;
+    const reopened = makeCoordinator();
+    await reopened.ready();
+    reopened.change(unsaved!.contents);
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(persist).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledWith("unsaved draft", "revision-1", expect.any(String));
+    expect(onPendingChange).toHaveBeenLastCalledWith(false);
+    expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")).toBeNull();
+    reopened.dispose();
+    drainRegistryTasks();
+    expect(appAtomRegistry.getNodes().has(optimisticFile)).toBe(false);
+  });
+  it("keeps a reopened editor's newer draft pending when the old editor's write finishes", async () => {
+    vi.stubGlobal("window", {});
+    vi.useFakeTimers();
+    let canWrite = true;
+    const saved = AsyncResult.success(undefined);
+    let finishFirstWrite!: (result: typeof saved) => void;
+    const firstWrite = new Promise<typeof saved>((resolve) => {
+      finishFirstWrite = resolve;
+    });
+    const persist = vi.fn().mockReturnValueOnce(firstWrite).mockResolvedValue(saved);
+    const onPendingChange = vi.fn();
+    const makeCoordinator = () =>
+      new FileSaveCoordinator({
+        debounceMs: 500,
+        initialRevision: "revision-1",
+        initialSource: "",
+        journal: { key: "query-late-confirmation", store: createTestCheckpointStore() },
+        revisionFromResult: () => "revision-2",
+        canPersist: () => canWrite,
+        persist,
+        onPendingChange,
+        onConfirmed: (contents) =>
+          confirmProjectFileQueryData(
+            environmentId,
+            "/repo",
+            "convex.json",
+            contents,
+            "revision-2",
+          ),
+      });
+
+    const initial = makeCoordinator();
+    await initial.ready();
+    setProjectFileQueryData(environmentId, "/repo", "convex.json", "first draft", "revision-1");
+    initial.change("first draft");
+    await vi.advanceTimersByTimeAsync(500);
+    initial.dispose();
+
+    const reopened = makeCoordinator();
+    await reopened.ready();
+    setProjectFileQueryData(environmentId, "/repo", "convex.json", "newer draft");
+    reopened.change("newer draft");
+    canWrite = false;
+    finishFirstWrite(saved);
+    await vi.runAllTimersAsync();
+
+    expect(persist).toHaveBeenCalledOnce();
+    expect(onPendingChange).toHaveBeenLastCalledWith(true);
+    expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")?.contents).toBe(
+      "newer draft",
+    );
+
+    canWrite = true;
+    reopened.change("newer draft");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(persist).toHaveBeenLastCalledWith("newer draft", "revision-1", expect.any(String));
+    expect(onPendingChange).toHaveBeenLastCalledWith(false);
+    expect(getUnsavedProjectFileQueryData(environmentId, "/repo", "convex.json")).toBeNull();
+    reopened.dispose();
   });
 });

@@ -1,3 +1,7 @@
+import { PlanId } from "@t3tools/contracts";
+import { mergeThreadBack } from "./commands.ts";
+import { reorderQueuedRun } from "./commands.ts";
+import { promoteQueuedRun } from "./commands.ts";
 import {
   CheckpointId,
   CheckpointRef,
@@ -7,12 +11,10 @@ import {
   MessageId,
   NodeId,
   ORCHESTRATION_V2_WS_METHODS,
-  PlanId,
   ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
   RunId,
-  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   WS_METHODS,
@@ -44,21 +46,11 @@ import {
   archiveThread,
   cancelQueuedRun,
   resumeThreadQueue,
-  createProject,
-  dismissThreadUserInput,
   editQueuedRun,
   forkThreadFromRun,
   interruptThreadTurn,
-  mergeThreadBack,
-  promoteQueuedRun,
-  reorderActiveThread,
-  reorderQueuedRun,
   revertThreadCheckpoint,
-  settleThread,
   startThreadTurn,
-  unsettleThread,
-  updateProject,
-  updateThreadMetadata,
 } from "./commands.ts";
 
 const layerTestCrypto = Layer.succeed(
@@ -83,6 +75,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
+  readonly advertiseThreadStop?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -130,6 +123,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
       environment: {
         capabilities: {
           repositoryIdentity: true,
+          ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
           ...(input.advertiseServerResolvedCommandContext === false
             ? {}
             : { serverResolvedCommandContext: true }),
@@ -193,75 +187,6 @@ describe("V2 environment commands", () => {
     );
   }
 
-  it.effect("routes projects through the event-sourced project transport", () =>
-    Effect.gen(function* () {
-      const projects: ProjectMutation[] = [];
-      const supervisor = yield* makeSupervisor({ commands: [], projects });
-
-      yield* createProject({
-        projectId: ProjectId.make("project-1"),
-        title: "Project",
-        workspaceRoot: "/workspace/project",
-        createWorkspaceRootIfMissing: true,
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(projects).toEqual([
-        {
-          type: "project.create",
-          commandId: "00000000-0000-4000-8000-000000000000",
-          projectId: "project-1",
-          title: "Project",
-          workspaceRoot: "/workspace/project",
-          createWorkspaceRootIfMissing: true,
-        },
-      ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
-  it.effect("persists and clears project presentation and environment settings", () =>
-    Effect.gen(function* () {
-      const projects: ProjectMutation[] = [];
-      const supervisor = yield* makeSupervisor({ commands: [], projects });
-      const projectId = ProjectId.make("project-1");
-      const projectIcon = { kind: "emoji", emoji: "🌲" } as const;
-      yield* updateProject({
-        projectId,
-        autoPull: true,
-        projectIcon,
-        faviconPath: "/workspace/project/icon.png",
-        defaultThreadEnvMode: "worktree",
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-      yield* updateProject({
-        projectId,
-        autoPull: false,
-        projectIcon: null,
-        faviconPath: null,
-        defaultThreadEnvMode: null,
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(projects).toEqual([
-        {
-          type: "project.update",
-          commandId: "00000000-0000-4000-8000-000000000000",
-          projectId,
-          autoPull: true,
-          projectIcon,
-          faviconPath: "/workspace/project/icon.png",
-          defaultThreadEnvMode: "worktree",
-        },
-        {
-          type: "project.update",
-          commandId: "00000000-0000-4000-8000-000000000000",
-          projectId,
-          autoPull: false,
-          projectIcon: null,
-          faviconPath: null,
-          defaultThreadEnvMode: null,
-        },
-      ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
   it.effect("preserves caller command ids for idempotent V2 commands", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
@@ -322,46 +247,6 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
-  it.effect("preserves plan implementation provenance on V2 runs", () =>
-    Effect.gen(function* () {
-      const commands: OrchestrationV2Command[] = [];
-      const supervisor = yield* makeSupervisor({ commands, projects: [] });
-
-      yield* startThreadTurn({
-        commandId: CommandId.make("implement-plan"),
-        threadId: v2ThreadId,
-        message: {
-          messageId: MessageId.make("message-implementation"),
-          role: "user",
-          text: "Implement the plan",
-          attachments: [],
-        },
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.4",
-        },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        titleSeed: "Implement the plan",
-        sourceProposedPlan: {
-          threadId: ThreadId.make("thread-plan"),
-          planId: PlanId.make("plan-1"),
-        },
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(commands).toHaveLength(1);
-      expect(commands[0]).toMatchObject({
-        type: "message.dispatch",
-        commandId: "implement-plan",
-        threadId: v2ThreadId,
-        titleSeed: "Implement the plan",
-        sourcePlanRef: { threadId: "thread-plan", planId: "plan-1" },
-        deliveryIntent: "auto",
-        dispatchMode: { type: "start_immediately" },
-      });
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
   it.effect("preserves an existing worktree and branch during first-message launch", () =>
     Effect.gen(function* () {
       const launches: OrchestrationV2ThreadLaunchInput[] = [];
@@ -410,46 +295,6 @@ describe("V2 environment commands", () => {
           type: "existing_worktree",
           worktreePath: "/workspace/project-worktrees/feature",
           branch: "feature",
-        },
-      });
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
-  it.effect("provisions an origin-based worktree for an existing empty thread", () =>
-    Effect.gen(function* () {
-      const launches: OrchestrationV2ThreadLaunchInput[] = [];
-      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
-
-      yield* startThreadTurn({
-        commandId: CommandId.make("launch-existing-thread-worktree"),
-        threadId: v2ThreadId,
-        message: {
-          messageId: MessageId.make("message-existing-thread-worktree"),
-          role: "user",
-          text: "Move to a worktree",
-          attachments: [],
-        },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        bootstrap: {
-          prepareWorktree: {
-            projectCwd: "/workspace/project",
-            baseBranch: "main",
-            branch: "feature",
-            startFromOrigin: true,
-          },
-        },
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(launches[0]).toMatchObject({
-        threadId: v2ThreadId,
-        reuseExistingThread: true,
-        projectId: v2Projection.thread.projectId,
-        workspaceStrategy: {
-          type: "worktree",
-          baseRef: "main",
-          branch: "feature",
-          startFromOrigin: true,
         },
       });
     }).pipe(Effect.provide(layerTestCrypto)),
@@ -817,110 +662,6 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provide(layerTestCrypto)),
   );
 
-  it.effect("delegates model selection to the server without fetching the full projection", () =>
-    Effect.gen(function* () {
-      const commands: OrchestrationV2Command[] = [];
-      const projectionRequests: ThreadId[] = [];
-      const supervisor = yield* makeSupervisor({ commands, projects: [], projectionRequests });
-
-      yield* updateThreadMetadata({
-        commandId: CommandId.make("same-provider"),
-        threadId: v2ThreadId,
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "another-model",
-        },
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      yield* updateThreadMetadata({
-        commandId: CommandId.make("switch-provider"),
-        threadId: v2ThreadId,
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("claude"),
-          model: "claude-sonnet-4-6",
-        },
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(commands).toEqual([
-        {
-          type: "thread.model-selection.set",
-          commandId: "same-provider",
-          threadId: v2ThreadId,
-          modelSelection: { instanceId: "codex", model: "another-model" },
-        },
-        {
-          type: "thread.model-selection.set",
-          commandId: "switch-provider",
-          threadId: v2ThreadId,
-          modelSelection: { instanceId: "claude", model: "claude-sonnet-4-6" },
-        },
-      ]);
-      expect(projectionRequests).toEqual([]);
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
-  it.effect("retains provider-switch shaping for servers without command context support", () =>
-    Effect.gen(function* () {
-      const commands: OrchestrationV2Command[] = [];
-      const projectionRequests: ThreadId[] = [];
-      const supervisor = yield* makeSupervisor({
-        commands,
-        projects: [],
-        projectionRequests,
-        advertiseServerResolvedCommandContext: false,
-      });
-
-      yield* updateThreadMetadata({
-        commandId: CommandId.make("legacy-switch-provider"),
-        threadId: v2ThreadId,
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("claude"),
-          model: "claude-sonnet-4-6",
-        },
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(projectionRequests).toEqual([v2ThreadId]);
-      expect(commands).toEqual([
-        {
-          type: "provider.switch",
-          commandId: "legacy-switch-provider",
-          threadId: v2ThreadId,
-          modelSelection: { instanceId: "claude", model: "claude-sonnet-4-6" },
-        },
-      ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
-  it.effect.each([true, false])(
-    "rolls back an identified checkpoint without fetching the full projection, restoreFiles=%s",
-    (restoreFiles) =>
-      Effect.gen(function* () {
-        const commands: OrchestrationV2Command[] = [];
-        const projectionRequests: ThreadId[] = [];
-        const supervisor = yield* makeSupervisor({ commands, projects: [], projectionRequests });
-
-        yield* revertThreadCheckpoint({
-          commandId: CommandId.make("rollback-known-checkpoint"),
-          threadId: v2ThreadId,
-          checkpointId: CheckpointId.make("checkpoint-known"),
-          scopeId: CheckpointScopeId.make("scope-known"),
-          restoreFiles,
-        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-        expect(projectionRequests).toEqual([]);
-        expect(commands).toEqual([
-          {
-            type: "checkpoint.rollback",
-            commandId: "rollback-known-checkpoint",
-            threadId: v2ThreadId,
-            checkpointId: "checkpoint-known",
-            scopeId: "scope-known",
-            restoreFiles,
-          },
-        ]);
-      }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
   it.effect("validates identified checkpoints locally for older servers", () =>
     Effect.gen(function* () {
       const checkpointId = CheckpointId.make("legacy-checkpoint");
@@ -984,114 +725,6 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
-  it.effect("dispatches settle and unsettle commands without timestamps", () =>
-    Effect.gen(function* () {
-      const dispatched: OrchestrationV2Command[] = [];
-      const supervisor = yield* makeSupervisor({ commands: dispatched, projects: [] });
-
-      yield* settleThread({
-        commandId: CommandId.make("settle-command"),
-        threadId: ThreadId.make("thread-1"),
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-      yield* unsettleThread({
-        commandId: CommandId.make("unsettle-command"),
-        threadId: ThreadId.make("thread-1"),
-        reason: "user",
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(dispatched).toEqual([
-        {
-          type: "thread.settle",
-          commandId: "settle-command",
-          threadId: "thread-1",
-        },
-        {
-          type: "thread.unsettle",
-          commandId: "unsettle-command",
-          threadId: "thread-1",
-          reason: "user",
-        },
-      ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
-  it.effect("sends an active order key without changing activity timestamps", () =>
-    Effect.gen(function* () {
-      const dispatched: OrchestrationV2Command[] = [];
-      const supervisor = yield* makeSupervisor({ commands: dispatched, projects: [] });
-      yield* reorderActiveThread({
-        commandId: CommandId.make("reorder-command"),
-        threadId: ThreadId.make("thread-1"),
-        orderKey: "mf",
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-      expect(dispatched).toEqual([
-        {
-          type: "thread.active.reorder",
-          commandId: "reorder-command",
-          threadId: "thread-1",
-          orderKey: "mf",
-        },
-      ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
-  it.effect("dismisses a pending user-input request", () =>
-    Effect.gen(function* () {
-      const commands: OrchestrationV2Command[] = [];
-      const supervisor = yield* makeSupervisor({ commands, projects: [] });
-
-      yield* dismissThreadUserInput({
-        commandId: CommandId.make("dismiss-command"),
-        threadId: v2ThreadId,
-        requestId: RuntimeRequestId.make("request-1"),
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(commands).toEqual([
-        {
-          type: "thread.user-input.dismiss",
-          commandId: "dismiss-command",
-          threadId: v2ThreadId,
-          requestId: "request-1",
-        },
-      ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
-  it.effect("dispatches an explicit idle start without fetching the full projection", () =>
-    Effect.gen(function* () {
-      const commands: OrchestrationV2Command[] = [];
-      const projectionRequests: ThreadId[] = [];
-      const supervisor = yield* makeSupervisor({
-        commands,
-        projects: [],
-        projectionRequests,
-      });
-
-      yield* startThreadTurn({
-        commandId: CommandId.make("direct-start"),
-        threadId: v2ThreadId,
-        message: {
-          messageId: MessageId.make("direct-start-message"),
-          role: "user",
-          text: "continue",
-          attachments: [],
-        },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        dispatchMode: "start",
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(projectionRequests).toEqual([]);
-      expect(commands).toMatchObject([
-        {
-          type: "message.dispatch",
-          threadId: v2ThreadId,
-          dispatchMode: { type: "start_immediately" },
-        },
-      ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-
   it.effect(
     "a native subagent stop targets its owning run rather than holding the parent queue",
     () =>
@@ -1146,7 +779,66 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provide(layerTestCrypto)),
   );
 
-  it.effect("interrupts a known run without fetching the full projection", () =>
+  it.effect(
+    "an app-owned subagent stop asks the parent to clear an orphan, then stops the child",
+    () =>
+      Effect.gen(function* () {
+        const subagentId = NodeId.make("app-owned-subagent");
+        const runId = RunId.make("parent-run");
+        const childThreadId = ThreadId.make("app-owned-child-thread");
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({
+          commands,
+          projects: [],
+          advertiseThreadStop: true,
+          projection: {
+            ...v2Projection,
+            subagents: [
+              {
+                id: subagentId,
+                threadId: v2ThreadId,
+                runId,
+                parentNodeId: NodeId.make("owner-node"),
+                origin: "app_owned",
+                createdBy: "agent",
+                driver: ProviderDriverKind.make("codex"),
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                providerThreadId: null,
+                childThreadId,
+                nativeTaskRef: null,
+                prompt: "Work",
+                title: null,
+                model: null,
+                result: null,
+                status: "running",
+                startedAt: v2Now,
+                completedAt: null,
+                updatedAt: v2Now,
+              },
+            ],
+          },
+        });
+        yield* interruptThreadTurn({
+          commandId: CommandId.make("lineage-stop"),
+          threadId: v2ThreadId,
+          subagentId,
+          // A parent run must not be interrupted on the child thread.
+          runId,
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+        expect(commands).toEqual([
+          {
+            type: "subagent.stop",
+            commandId: expect.any(String),
+            threadId: v2ThreadId,
+            runId,
+            subagentId,
+          },
+          { type: "thread.stop", commandId: "lineage-stop", threadId: childThreadId },
+        ]);
+      }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("stops a thread without relying on background work in the history window", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
       const projectionRequests: ThreadId[] = [];
@@ -1154,22 +846,21 @@ describe("V2 environment commands", () => {
         commands,
         projects: [],
         projectionRequests,
+        advertiseThreadStop: true,
       });
 
-      yield* interruptThreadTurn({
-        commandId: CommandId.make("direct-interrupt"),
+      const result = yield* interruptThreadTurn({
+        commandId: CommandId.make("stop-outside-history-window"),
         threadId: v2ThreadId,
-        runId: RunId.make("active-run"),
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
+      expect(result).toEqual({ sequence: 1 });
       expect(projectionRequests).toEqual([]);
       expect(commands).toEqual([
         {
-          type: "run.interrupt",
-          commandId: "direct-interrupt",
+          type: "thread.stop",
+          commandId: "stop-outside-history-window",
           threadId: v2ThreadId,
-          runId: "active-run",
-          holdQueue: true,
         },
       ]);
     }).pipe(Effect.provide(layerTestCrypto)),

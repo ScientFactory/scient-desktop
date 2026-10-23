@@ -12,9 +12,14 @@ export {
   type PiRuntimeResolution,
   type PiRuntimeResolverInput,
 } from "./server/driver.ts";
+/**
+ * Default native Pi adapter for hosts composing providers through the server entry.
+ *
+ * @public
+ */
+export { PiAdapterV2Driver } from "./server/adapter.ts";
 export {
   PI_PROVIDER,
-  PiAdapterV2Driver,
   makePiAdapterV2,
   piContinuationRequestsIfProvided,
   type PiAdapterV2Options,

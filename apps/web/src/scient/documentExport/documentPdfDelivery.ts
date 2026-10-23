@@ -96,12 +96,11 @@ export async function saveDocumentPdfCopy(
 ): Promise<DesktopAssetCopyResult> {
   const connection = readPreparedConnection(environmentId);
   if (connection === null) return { _tag: "failed", reason: "source-unavailable" };
+  const resource = pdfSourceAssetResource(published.source);
+  if (resource === null) return { _tag: "failed", reason: "source-unavailable" };
   const issued = await executeAtomQuery(
     appAtomRegistry,
-    assetEnvironment.createUrl({
-      environmentId,
-      input: { resource: pdfSourceAssetResource(published.source) },
-    }),
+    assetEnvironment.createUrl({ environmentId, input: { resource } }),
     { ...commandOptions, refresh: true },
   );
   if (issued._tag === "Failure") return { _tag: "failed", reason: "source-unavailable" };

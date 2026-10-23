@@ -33,32 +33,34 @@ export const scientThreadQueueHttpApiLayer = HttpApiBuilder.group(
   "scientThreadQueue",
   Effect.fnUntraced(function* (handlers) {
     const service = yield* makeLegacyQueueCompatibility;
-    const handle = (name: string, request: Parameters<typeof service.execute>[0]) =>
-      Effect.gen(function* () {
-        yield* annotateEnvironmentRequest(name);
-        yield* requireEnvironmentScope(
-          request.method === "list" ? AuthOrchestrationReadScope : AuthOrchestrationOperateScope,
-        );
-        return yield* service.execute(request).pipe(
-          Effect.catch(
-            (
-              cause,
-            ): Effect.Effect<never, ScientThreadQueueOperationError | EnvironmentInternalError> => {
-              if (isQueueOperationError(cause)) return Effect.fail(cause);
-              if (isQueueError(cause))
-                return Effect.fail(new ScientThreadQueueOperationError({ message: cause.message }));
-              if (isDispatchError(cause) && typeof cause.cause === "string")
-                return Effect.fail(new ScientThreadQueueOperationError({ message: cause.cause }));
-              if (isRejectedError(cause) && isLegacyDispatchError(cause.cause)) {
-                const message = userFacingDispatchErrorMessage(cause.cause);
-                if (message !== undefined)
-                  return Effect.fail(new ScientThreadQueueOperationError({ message }));
-              }
-              return failEnvironmentInternal("scient_thread_queue_operation_failed", cause);
-            },
-          ),
-        );
-      });
+    const handle = Effect.fn("http.handle")(function* (
+      name: string,
+      request: Parameters<typeof service.execute>[0],
+    ) {
+      yield* annotateEnvironmentRequest(name);
+      yield* requireEnvironmentScope(
+        request.method === "list" ? AuthOrchestrationReadScope : AuthOrchestrationOperateScope,
+      );
+      return yield* service.execute(request).pipe(
+        Effect.catch(
+          (
+            cause,
+          ): Effect.Effect<never, ScientThreadQueueOperationError | EnvironmentInternalError> => {
+            if (isQueueOperationError(cause)) return Effect.fail(cause);
+            if (isQueueError(cause))
+              return Effect.fail(new ScientThreadQueueOperationError({ message: cause.message }));
+            if (isDispatchError(cause) && typeof cause.cause === "string")
+              return Effect.fail(new ScientThreadQueueOperationError({ message: cause.cause }));
+            if (isRejectedError(cause) && isLegacyDispatchError(cause.cause)) {
+              const message = userFacingDispatchErrorMessage(cause.cause);
+              if (message !== undefined)
+                return Effect.fail(new ScientThreadQueueOperationError({ message }));
+            }
+            return failEnvironmentInternal("scient_thread_queue_operation_failed", cause);
+          },
+        ),
+      );
+    });
     return handlers
       .handle("list", ({ endpoint, payload }) => handle(endpoint.name, { method: "list", payload }))
       .handle("enqueue", ({ endpoint, payload }) =>

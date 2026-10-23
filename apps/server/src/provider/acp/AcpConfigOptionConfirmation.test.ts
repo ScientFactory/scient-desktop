@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { describe, expect } from "vite-plus/test";
 
@@ -73,7 +74,10 @@ process.stdin.on("data", (data) => {
       process.stdout.write(line({ id: message.id, result: { protocolVersion: 1, agentCapabilities: {} } }));
     else if (message.method === "session/new")
       process.stdout.write(line({ id: message.id, result: { sessionId: "s", configOptions: options() } }));
-    else if (message.method === "session/prompt") promptId = message.id;
+    else if (message.method === "session/prompt") {
+      promptId = message.id;
+      fs.writeFileSync(process.env.ACP_PROMPT, "received");
+    }
     else if (message.method === "session/set_config_option") {
       writes.push({ id: message.id, configId: message.params.configId, value: message.params.value });
       fs.appendFileSync(process.env.ACP_WRITES, message.params.value + "\n");
@@ -106,13 +110,17 @@ const scriptedRuntime = (
     const agent = NodePath.join(directory, "agent.mjs");
     const writes = NodePath.join(directory, "writes");
     const pid = NodePath.join(directory, "pid");
+    const prompt = NodePath.join(directory, "prompt");
     NodeFS.writeFileSync(agent, AGENT_SOURCE);
     NodeFS.writeFileSync(writes, "");
+    const scope = yield* Effect.scope;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    let childExit: Fiber.Fiber<unknown, unknown> | undefined;
     const runtime = yield* AcpSessionRuntime.make({
       spawn: {
         command: process.execPath,
         args: [agent],
-        env: { ACP_PLAN: encodePlan(plan), ACP_WRITES: writes, ACP_PID: pid },
+        env: { ACP_PLAN: encodePlan(plan), ACP_WRITES: writes, ACP_PID: pid, ACP_PROMPT: prompt },
       },
       cwd: directory,
       clientInfo: { name: "t3-test", version: "0.0.0" },
@@ -120,13 +128,48 @@ const scriptedRuntime = (
       configOptionTransport,
       configOptionSettleTimeout: settleTimeout as never,
       ...(onTermination === undefined ? {} : { onTermination }),
-    });
+    }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+        ...spawner,
+        spawn: (command) =>
+          spawner.spawn(command).pipe(
+            Effect.tap((child) =>
+              child.exitCode.pipe(
+                Effect.forkIn(scope),
+                Effect.tap((fiber) =>
+                  Effect.sync(() => {
+                    childExit = fiber;
+                  }),
+                ),
+              ),
+            ),
+          ),
+      }),
+    );
     yield* runtime.start();
+    const awaitReceipt = Effect.fn("test.awaitAgentReceipt")(function* (predicate: () => boolean) {
+      yield* Effect.callback<void, Error>((resume) => {
+        const check = () => {
+          if (predicate()) resume(Effect.void);
+        };
+        const watcher = NodeFS.watch(directory, check);
+        watcher.on("error", (error) => resume(Effect.fail(error)));
+        check();
+        return Effect.sync(() => watcher.close());
+      });
+    });
     return {
       ...runtime,
       /** The values of the writes that reached the agent. */
       writesReceived: () => NodeFS.readFileSync(writes, "utf8").split("\n").filter(Boolean),
       childPid: () => decodePid(NodeFS.readFileSync(pid, "utf8")),
+      awaitPromptReceived: awaitReceipt(() => NodeFS.existsSync(prompt)),
+      awaitWriteReceived: awaitReceipt(
+        () => NodeFS.existsSync(writes) && NodeFS.readFileSync(writes, "utf8").length > 0,
+      ),
+      awaitChildExit: Effect.suspend(() =>
+        childExit ? Fiber.await(childExit).pipe(Effect.asVoid) : Effect.die("Missing native child"),
+      ),
     };
   });
 
@@ -142,8 +185,7 @@ const currentValue = (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"], i
   runtime.getConfigOptions.pipe(
     Effect.map((options) => options.find((option) => option.id === id)?.currentValue),
   );
-const live = <A, E>(name: string, body: () => Effect.Effect<A, E, never>) =>
-  it.live(name, body, 20_000);
+const live = <A, E>(name: string, body: () => Effect.Effect<A, E, never>) => it.live(name, body);
 const scoped = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
@@ -338,7 +380,7 @@ describe("confirmed config writes", () => {
           [{ respond: "prompt" }, APPLY, RESPOND, { update: { model: "c" } }],
         ]);
         yield* runtime.prompt({ prompt: [{ type: "text", text: "hi" }] }).pipe(Effect.forkScoped);
-        yield* Effect.sleep("200 millis");
+        yield* runtime.awaitPromptReceived;
         const { exit } = yield* timed(runtime.setModel("b"));
         expect((failure(exit) as Error | undefined)?.message).toBe(
           'The agent applied model "c" instead of "b".',
@@ -369,7 +411,7 @@ describe("confirmed config writes", () => {
           'The agent answered the change of model to "b" but did not report the applied value within 0.4 s, so its session was closed.',
         );
         expect(second.elapsed).toBeLessThan(300);
-        yield* Effect.sleep("700 millis");
+        yield* runtime.awaitChildExit;
         expect(runtime.writesReceived()).toEqual(["b"]);
       }),
     ),
@@ -407,7 +449,7 @@ describe("confirmed config writes", () => {
           'The agent\'s answer to the change of model to "b" was not a valid one, so its session was closed.',
         );
         expect(second.elapsed).toBeLessThan(300);
-        yield* Effect.sleep("700 millis");
+        yield* runtime.awaitChildExit;
         expect(runtime.writesReceived()).toEqual(["b"]);
       }),
     ),
@@ -444,13 +486,13 @@ describe("confirmed config writes", () => {
           [RESPOND, { sleep: 600 }, { update: { model: "c" } }],
         ]);
         const first = yield* runtime.setModel("b").pipe(Effect.forkScoped);
-        yield* Effect.sleep("150 millis");
+        yield* runtime.awaitWriteReceived;
         yield* Fiber.interrupt(first);
         const second = yield* timed(runtime.setModel("b"));
         expect((failure(second.exit) as Error | undefined)?.message).toBe(
           'The change of model to "b" was interrupted before the agent reported the applied value, so its session was closed.',
         );
-        yield* Effect.sleep("700 millis");
+        yield* runtime.awaitChildExit;
         expect(runtime.writesReceived()).toEqual(["b"]);
       }),
     ),

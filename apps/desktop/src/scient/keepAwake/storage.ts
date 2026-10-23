@@ -41,8 +41,8 @@ export const layer = Layer.effect(
         ),
         Effect.mapError((cause) => new KeepAwakeStorageError({ cause })),
       ),
-      save: (document) =>
-        Effect.gen(function* () {
+      save: Effect.fn("KeepAwakeStorage.save")(
+        function* (document: KeepAwakeDocument) {
           const resolved = yield* resolveSymlinkTarget(target).pipe(
             Effect.provideService(FileSystem.FileSystem, fs),
             Effect.provideService(Path.Path, path),
@@ -55,7 +55,9 @@ export const layer = Layer.effect(
           yield* fs
             .rename(temporary, resolved)
             .pipe(Effect.onError(() => fs.remove(temporary).pipe(Effect.ignore)));
-        }).pipe(Effect.mapError((cause) => new KeepAwakeStorageError({ cause }))),
+        },
+        Effect.mapError((cause) => new KeepAwakeStorageError({ cause })),
+      ),
     });
   }),
 );

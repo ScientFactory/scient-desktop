@@ -1,4 +1,4 @@
-import { Suspense, use, useMemo } from "react";
+import { Suspense, use } from "react";
 
 import { RenderErrorBoundary } from "~/components/RenderErrorBoundary";
 import { LRUCache } from "~/lib/lruCache";
@@ -54,57 +54,63 @@ interface ScientMathProps {
   tex: string;
   displayMode: boolean;
   isStreaming: boolean;
+  focusable: boolean;
 }
 
-/** The fallback for loading, render failure, and unsupported TeX: the source as typed. */
-function ScientMathLiteral({ tex, displayMode }: Omit<ScientMathProps, "isStreaming">) {
-  return (
-    <code dir="ltr" data-markdown-copy={mathMarkdownCopySource(tex, displayMode)}>
-      {`$$${tex}$$`}
-    </code>
-  );
+// SCIENT-FORK:START — shared clipboard metadata and keyboard access stay on the Scient surface.
+function mathSurfaceProps(tex: string, displayMode: boolean, focusable: boolean) {
+  return {
+    className: displayMode ? "scient-math-display" : "scient-math-inline",
+    dir: "ltr" as const,
+    "data-markdown-math": displayMode ? "display" : "inline",
+    "data-markdown-copy": mathMarkdownCopySource(tex, displayMode),
+    role: focusable ? "group" : undefined,
+    tabIndex: focusable ? 0 : undefined,
+    "aria-label": focusable
+      ? displayMode
+        ? "Scroll display equation"
+        : "Scroll inline equation"
+      : undefined,
+  };
+}
+
+/** Loading and unsupported TeX retain the same atomic source-copy surface. */
+function ScientMathLiteral({ tex, displayMode, focusable }: Omit<ScientMathProps, "isStreaming">) {
+  return <code {...mathSurfaceProps(tex, displayMode, focusable)}>{`$$${tex}$$`}</code>;
 }
 
 function ScientMathHtml({
   html,
   tex,
   displayMode,
-}: {
-  html: string;
-  tex: string;
-  displayMode: boolean;
-}) {
-  // KaTeX escapes its own input, so its output is the only markup injected here.
+  focusable,
+}: Omit<ScientMathProps, "isStreaming"> & { html: string }) {
+  // KaTeX's escaped, untrusted-command-disabled output is the only injected markup.
   return (
     <span
-      className={displayMode ? "scient-math-display" : "scient-math-inline"}
-      dir="ltr"
-      data-markdown-copy={mathMarkdownCopySource(tex, displayMode)}
+      {...mathSurfaceProps(tex, displayMode, focusable)}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
 }
+// SCIENT-FORK:END
 
-function UncachedScientMath({ displayMode, isStreaming, tex }: ScientMathProps) {
+function UncachedScientMath({ displayMode, isStreaming, tex, focusable }: ScientMathProps) {
   const runtime = use(getScientKatexRuntimePromise());
   // Streaming prefixes stay outside the cache. Settled math, including failed
   // parses, shares one bounded result with editor validation.
-  const html = useMemo(
-    () =>
-      isStreaming
-        ? runtime.renderScientTexToHtml(tex, displayMode)
-        : renderCachedScientMath(runtime, tex, displayMode),
-    [displayMode, isStreaming, runtime, tex],
-  );
+  const html = isStreaming
+    ? runtime.renderScientTexToHtml(tex, displayMode)
+    : renderCachedScientMath(runtime, tex, displayMode);
 
   if (html === null) {
-    return <ScientMathLiteral tex={tex} displayMode={displayMode} />;
+    return <ScientMathLiteral tex={tex} displayMode={displayMode} focusable={focusable} />;
   }
-  return <ScientMathHtml html={html} tex={tex} displayMode={displayMode} />;
+  return <ScientMathHtml html={html} tex={tex} displayMode={displayMode} focusable={focusable} />;
 }
 
-function ScientMath({ displayMode, isStreaming, tex }: ScientMathProps) {
-  const literal = <ScientMathLiteral tex={tex} displayMode={displayMode} />;
+function ScientMath({ displayMode, isStreaming, tex, focusable }: ScientMathProps) {
+  const literal = <ScientMathLiteral tex={tex} displayMode={displayMode} focusable={focusable} />;
 
   const cacheKey = `${displayMode}:${tex}`;
   const cachedHtml = isStreaming ? null : renderedMathCache.get(cacheKey);
@@ -112,14 +118,24 @@ function ScientMath({ displayMode, isStreaming, tex }: ScientMathProps) {
     return cachedHtml.html === null ? (
       literal
     ) : (
-      <ScientMathHtml html={cachedHtml.html} tex={tex} displayMode={displayMode} />
+      <ScientMathHtml
+        html={cachedHtml.html}
+        tex={tex}
+        displayMode={displayMode}
+        focusable={focusable}
+      />
     );
   }
 
   return (
-    <RenderErrorBoundary fallback={literal}>
+    <RenderErrorBoundary resetKeys={[tex]} fallback={literal}>
       <Suspense fallback={literal}>
-        <UncachedScientMath displayMode={displayMode} isStreaming={isStreaming} tex={tex} />
+        <UncachedScientMath
+          displayMode={displayMode}
+          isStreaming={isStreaming}
+          tex={tex}
+          focusable={focusable}
+        />
       </Suspense>
     </RenderErrorBoundary>
   );
@@ -128,19 +144,27 @@ function ScientMath({ displayMode, isStreaming, tex }: ScientMathProps) {
 export function ScientInlineMath({
   tex,
   isStreaming = false,
+  focusable = true,
 }: {
   tex: string;
   isStreaming?: boolean;
+  focusable?: boolean;
 }) {
-  return <ScientMath tex={tex} displayMode={false} isStreaming={isStreaming} />;
+  return (
+    <ScientMath tex={tex} displayMode={false} isStreaming={isStreaming} focusable={focusable} />
+  );
 }
 
 export function ScientDisplayMath({
   tex,
   isStreaming = false,
+  focusable = true,
 }: {
   tex: string;
   isStreaming?: boolean;
+  focusable?: boolean;
 }) {
-  return <ScientMath tex={tex} displayMode={true} isStreaming={isStreaming} />;
+  return (
+    <ScientMath tex={tex} displayMode={true} isStreaming={isStreaming} focusable={focusable} />
+  );
 }

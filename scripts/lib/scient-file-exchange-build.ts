@@ -11,6 +11,18 @@ export const FILE_EXCHANGE_RESOURCE = {
   to: "file-exchange",
 } as const;
 
+const decodeFileExchangeReceipt = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      schemaVersion: Schema.Literal(1),
+      component: Schema.Literal("scient-file-exchange"),
+      protocolVersion: Schema.Literal(1),
+      platform: Schema.Literal("darwin"),
+      arch: Schema.Literals(["arm64", "x64", "universal"]),
+    }),
+  ),
+);
+
 /** Validate the final Electron layout, including architecture, outside app.asar. */
 export async function validatePackagedFileExchange(
   app: string,
@@ -21,17 +33,9 @@ export async function validatePackagedFileExchange(
   const info = await NodeFSP.lstat(helper);
   if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o111) === 0)
     throw new Error("Packaged file exchange is not a regular executable.");
-  const receipt = Schema.decodeUnknownSync(
-    Schema.fromJsonString(
-      Schema.Struct({
-        schemaVersion: Schema.Literal(1),
-        component: Schema.Literal("scient-file-exchange"),
-        protocolVersion: Schema.Literal(1),
-        platform: Schema.Literal("darwin"),
-        arch: Schema.Literals(["arm64", "x64", "universal"]),
-      }),
-    ),
-  )(await NodeFSP.readFile(NodePath.join(directory, "provenance.json"), "utf8"));
+  const receipt = decodeFileExchangeReceipt(
+    await NodeFSP.readFile(NodePath.join(directory, "provenance.json"), "utf8"),
+  );
   if (receipt.arch !== arch)
     throw new Error("Packaged file exchange receipt has the wrong architecture.");
   const actual = NodeChildProcess.execFileSync("lipo", ["-archs", helper], {
@@ -147,7 +151,9 @@ export async function stageFileExchangeForDesktopBuild(input: {
   readonly arch: "arm64" | "x64" | "universal";
 }): Promise<void> {
   const directory = NodePath.join(input.stageResourcesDir, FILE_EXCHANGE_RESOURCE.to);
-  await NodeFSP.rm(directory, { recursive: true, force: true });
+  // Publication shares this resource directory; retire only this helper's artifacts.
+  for (const leaf of ["scient-file-exchange", "provenance.json"])
+    await NodeFSP.rm(NodePath.join(directory, leaf), { force: true });
   if (input.platform !== "mac") return;
   await buildFileExchange({
     repoRoot: input.repoRoot,

@@ -6,6 +6,7 @@ import { parseScientThreadLinkPrompt as parseThreadLinkPrompt } from "@t3tools/s
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
+import { isThreadRoutePathname } from "../../threadRoutes";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { placeLinkedPrompt } from "./linkedPrompt";
 
@@ -23,6 +24,8 @@ export function ThreadLinkPrompt({ threadRef }: { readonly threadRef: ScopedThre
   });
 
   useEffect(() => {
+    // A pending navigation shows the next location while the params still name this thread.
+    if (!isThreadRoutePathname(location.pathname, threadRef)) return;
     if (!new URLSearchParams(location.search).has("prompt")) return;
     if (!handledLinkKeys.has(location.key)) {
       handledLinkKeys.add(location.key);

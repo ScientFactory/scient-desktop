@@ -15,6 +15,7 @@ import {
 } from "./dev-app-bundle.mjs";
 import {
   createCoalescedRestartScheduler,
+  createWatchedFileStamps,
   developmentLauncherIsActive,
   findOwnedDevelopmentProcesses,
   inspectProcessCommand,
@@ -75,8 +76,12 @@ const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.tr
 const hostPlatform = NodeOS.platform();
 const managedByLocalDevApp = process.env.SCIENT_LOCAL_DEV_APP_MANAGED === "1";
 const coldApprovedPath = process.env.SCIENT_DEV_COLD_APPROVED_PATH;
+// The stable app's receipts live in its management root; SCIENT_NEXT_HOME is
+// the reviewed reference's profile there.
 const coldStateRoot =
-  process.env.SCIENT_NEXT_HOME ?? NodePath.resolve(desktopDir, "..", "..", ".scient-next");
+  (process.env.SCIENT_DEV_APP_ROLE === "stable" ? process.env.SCIENT_DEV_STABLE_ROOT : undefined) ??
+  process.env.SCIENT_NEXT_HOME ??
+  NodePath.resolve(desktopDir, "..", "..", ".scient-next");
 const coldRole = process.env.SCIENT_DEV_APP_ROLE === "stable" ? "stable" : "candidate";
 const coldFiles = coldApprovedPath
   ? takeApprovedHandoff({
@@ -235,7 +240,7 @@ async function waitForManagedProcessesToExit(app, timeoutMs) {
   return false;
 }
 
-function startApp() {
+async function startApp() {
   if (shuttingDown || currentApp !== null) {
     return;
   }
@@ -400,6 +405,11 @@ function startApp() {
       restartScheduler.request();
     }
   });
+
+  // LaunchServices returns before Electron publishes its identity. Keep the
+  // restart scheduler occupied until that launch and its backend are owned,
+  // otherwise a second rebuild can stop and replace a still-pending launch.
+  if (managedMacLaunch) await Promise.all([pidPromise, backendPidPromise]);
 }
 
 async function stopApp() {
@@ -419,7 +429,10 @@ async function stopApp() {
       signalOwnedProcesses(app.mainCommandPrefix, "SIGKILL");
       signalOwnedProcesses(app.backendCommandPrefix, "SIGKILL");
       if (developmentLauncherIsActive(app.launcher)) app.launcher.kill("SIGKILL");
-      await waitForManagedProcessesToExit(app, 2_000);
+      if (!(await waitForManagedProcessesToExit(app, 2_000))) {
+        currentApp = app;
+        throw new Error("The previous development app has not stopped; refusing a replacement.");
+      }
     }
     cleanupLaunchFiles(app);
     return;
@@ -458,12 +471,19 @@ const restartScheduler = createCoalescedRestartScheduler({
   restart: async () => {
     await stopApp();
     if (!shuttingDown) {
-      startApp();
+      await startApp();
     }
   },
 });
 
 function startWatchers() {
+  // SCIENT-FORK:START — restart only for real rewrites; see createWatchedFileStamps.
+  const watchedFileStamps = createWatchedFileStamps(
+    watchedDirectories.flatMap(({ directory, files }) =>
+      [...files].map((file) => NodePath.join(desktopDir, directory, file)),
+    ),
+  );
+  // SCIENT-FORK:END
   for (const { directory, files } of watchedDirectories) {
     const watcher = NodeFS.watch(
       NodePath.join(desktopDir, directory),
@@ -472,6 +492,9 @@ function startWatchers() {
         if (typeof filename !== "string" || !files.has(filename)) {
           return;
         }
+        // SCIENT-FORK:START
+        if (!watchedFileStamps.changed(NodePath.join(desktopDir, directory, filename))) return;
+        // SCIENT-FORK:END
 
         restartScheduler.request();
       },
@@ -499,7 +522,7 @@ async function shutdown(exitCode) {
 }
 
 startWatchers();
-startApp();
+restartScheduler.request();
 
 process.once("SIGINT", () => {
   void shutdown(130);

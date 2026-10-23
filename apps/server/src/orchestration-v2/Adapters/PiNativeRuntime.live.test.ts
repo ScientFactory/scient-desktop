@@ -131,6 +131,7 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
                 endpoint: `${baseUrl}/mcp`,
                 authorizationHeader: "Bearer synthetic-only",
                 capabilities,
+                connectors: [],
               }),
               () => mcpSessions.clear(h.threadId),
             );

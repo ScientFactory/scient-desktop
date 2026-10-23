@@ -76,6 +76,11 @@ other files keep their filename and can be downloaded.
 
 ## Send while the agent is working
 
+On web and desktop, choose **Settings → General → Follow-up behavior** to queue
+new messages for a later turn or steer the running turn immediately. The setting
+applies to this client; already queued messages keep their place. Queued messages
+are saved on the server and can be edited, reordered, or removed above the composer.
+
 On web and desktop, a message sent during a running turn appears in the queue
 above the composer. The server keeps its order across navigation and restarts,
 then sends it after the current turn finishes successfully. Use **Steer** on a
@@ -86,19 +91,17 @@ that hold. When the thread is idle, **Send** on the first waiting message starts
 only that message; the other messages stay held in order. Reorder first if you
 want to send a different one. Once resumed, the queue sends each message after
 the preceding answer finishes successfully.
-
-In **Settings → General → Follow-up behavior**, choose **Queue** to keep this
-behavior or **Steer** to send new messages immediately. **Send shortcut**
-controls whether Enter or Cmd/Ctrl+Enter sends. While a turn is running, the
-alternate shortcut uses the opposite action: `Cmd+Enter` on macOS or
-`Ctrl+Enter` on Windows and Linux steers when your default is Queue and queues
-when your default is Steer. These settings apply to the current client. Messages
-already queued keep their place.
+When Enter sends, `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses
+the opposite action: it steers when your default is Queue and queues when your
+default is Steer.
+If your **Send shortcut** requires `Cmd+Enter` or `Ctrl+Enter`, that shortcut uses
+your default follow-up behavior; add **Shift** to use the opposite action. This
+applies only to multiline messages when you choose the multiline send option.
 
 Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
-the oldest queued message now, as a steer into the running turn. It leaves the
-current draft in the composer and waits if the agent needs an approval or an
-answer, and it requires an active turn that supports steering. Change
+the oldest queued message as a steer. This leaves the current draft intact and
+requires an active turn that supports steering. If that shortcut sends the opposite
+action for your draft, move focus outside the composer to steer the queued message. Change
 `thread.steerQueuedMessage` in **Settings → Shortcuts** to use another shortcut.
 
 Press `Option+Up` on macOS or `Alt+Up` on Windows and Linux with the cursor at the
@@ -223,6 +226,13 @@ If it cannot verify a location, the quote remains intact and the recorded line
 opens with a notice. Existing rendered Markdown quotes keep their rendered-view
 reopening behavior.
 
+## Quote a PDF
+
+Select text in a PDF and choose **Ask in chat**. The quote keeps the PDF, the
+page and the exact text, and its chip reopens the PDF at the passage. See
+[PDF reader](pdf-reader.md#ask-in-chat-about-a-passage) for what can be quoted
+and what happens when the PDF has changed.
+
 ## Quote an assistant response
 
 On web and desktop, select text in an assistant response, then choose **Ask in chat** from the
@@ -264,7 +274,8 @@ into a normal draft.
 
 On web and desktop, choose **Edit from here** beneath a sent message to rewind
 the conversation to before that message. Choose **Revert and keep changes** to
-leave workspace files as they are, or **Revert files too** to restore them as well.
+leave workspace files as they are, or **Revert files too** to put the workspace back
+to its checkpoint from before that message. That also undoes edits you made yourself.
 File restore is only offered for threads running in a worktree, and it is
 refused when another thread or agent session also uses that directory, a folder
 inside it, or a folder that contains it, since
@@ -355,6 +366,12 @@ Provider commands must start the message to run. Scient commands such as
 
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
+
+Enable **Compact idle Claude threads (beta)** in **Settings > General** to compact
+an idle Claude thread with at least 200,000 tokens of context shortly before its
+prompt cache expires, so coming back does not reprocess the whole conversation.
+The cache lasts 1 hour on Claude subscriptions and 5 minutes with an API key. The
+compaction appears in the thread as a `/compact` turn sent by Scient.
 
 ## Goals
 

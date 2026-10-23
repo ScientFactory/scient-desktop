@@ -10,7 +10,7 @@ import * as Layer from "effect/Layer";
 import packageJson from "../../../package.json" with { type: "json" };
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
+
 import {
   CODEX_TEST_MODEL_SELECTION,
   makeCodexReplayTranscript,
@@ -41,6 +41,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             endpoint: "http://127.0.0.1:43123/mcp",
             authorizationHeader: "Bearer synthetic-live-peer",
             capabilities: new Set(["orchestration", "skills:read"] as const),
+            connectors: [],
           });
           yield* Effect.addFinalizer(() => sessions.clear(threadId));
           const transcript = makeCodexReplayTranscript({

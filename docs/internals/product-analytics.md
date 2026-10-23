@@ -63,7 +63,12 @@ protections below. Final copy and layout require human review before activation.
 persisted/wire validator; the website gateway consumes its generated copy.
 Revision 3 added product insight signals. Revision 4 makes provider installation
 state explicit, so a bundled-but-missing provider cannot be mistaken for an
-installed runtime. Installation state is aggregated per provider driver: it is
+installed runtime. Revision 5 names every settings page in `settings.viewed`
+(Scheduled Tasks, SnapShots, Documents and Storage reported as `other` before);
+the desktop derives its page list from the settings sidebar, and a test fails
+when a page is missing from the contract. Revision 6 adds `feature.viewed` with
+`feature: latex-visual` and UI-owned `scient.operation.*` with
+`operationKind: latex-visual-edit`. Installation state is aggregated per provider driver: it is
 true when at least one settled configured instance is installed. The envelope
 remains schema version 1.
 Legacy events may omit `contractRevision`; new events carry the bounded revision.
@@ -75,14 +80,33 @@ registered event. Regenerate and compare both repositories from the desktop root
 ```sh
 node packages/scient-analytics/src/generateConformance.ts \
   --wire=/absolute/website/workers/events/src/eventContract.ts \
-  packages/scient-analytics/fixtures/contract-v4.json \
-  /absolute/website/workers/events/fixtures/contract-v4.json
+  packages/scient-analytics/fixtures/contract-v6.json \
+  /absolute/website/workers/events/fixtures/contract-v6.json
 # Repeat with --check to verify exact source/corpus parity without writing.
 ```
 
 Deploy compatible gateway validation before releasing new producers. Do not
 edit the gateway copy independently or relax unknown-property rejection to make
 an old deployment accept new events.
+
+Visual LaTeX views report only while Visual is displayed (including Split/Visual),
+not when its retained editor is hidden in Source/PDF. Existing visibility and
+collection-context fencing apply; events go to the document's execution environment.
+Visual edit operations count **source-file autosave batches**, not documents,
+keystrokes or whole-project transactions. Accepted edits coalesce per source owner
+until a confirmed publication covers the latest accepted Visual version; later
+Source-only edits cannot delay or fail that result. Acceptance into a draft alone
+is not completion. Source-boundary refusals (coalesced until the next accepted
+Visual edit) and persistence errors/conflicts report failed with a bounded
+`unknown` failure class, never the diagnostic text. Discarded edits are cancelled;
+closing a view drops pending observation without inventing a save result. A retry
+after a recorded failure is not a new operation unless another Visual edit occurs.
+Source-only saves, builds and reference-file saves are not visual-edit operations.
+Views/starts/completions require Product consent; failures follow existing Essential
+consent rules. Off sends nothing. No document text, paths, filenames, document IDs,
+source revisions, selection, bibliography or error messages enter these events.
+The existing duration bucket measures draft acceptance to publication/failure,
+not writing time, compiler time or active editing duration.
 
 The renderer keeps per-connection consent discovery coalesced and at most 20
 event requests in flight. Unknown/Off consent does not queue or replay feature
@@ -362,6 +386,11 @@ SQLite migration/retention/deletion suite, whole-repository checks, and the
 packaged analytics worker. These do not prove deployed configuration, live
 PostHog queries, Windows/Linux behavior, or human privacy-UI acceptance.
 
+The bundled analytics worker is a sibling of every emitted server module,
+including lazy CLI chunks. Its location must not depend on an entry or chunk
+filename. `scripts/lib/analytics-worker-packaging.test.ts` builds and relocates
+that boundary, then exercises delivery, restart identity, and saved Off consent.
+
 The website candidate also contains an opt-in cross-repository test. After
 building the exact desktop candidate, run it from the website root:
 
@@ -398,8 +427,9 @@ connection method. The server validates those values and can persist the support
 connection management can describe current clients. Invalid or unknown values are ignored and never
 reject a connection.
 
-Upstream also added `client.connected` and `client.turn.requested` analytics call sites. Those names
-are not registered in Scient's analytics contract and are therefore dropped at the Scient boundary.
+Upstream also added `client.connected`, `client.turn.requested` and `feature.used` analytics call
+sites. Those names are not registered in Scient's analytics contract and are therefore dropped at the
+Scient boundary.
 They must not be documented as collected or used to build a dashboard unless Scient deliberately
 adds a reviewed, privacy-bounded contract for them.
 
@@ -410,6 +440,13 @@ addresses, provider account identifiers, or user-assigned device names. Provider
 are normalized into bounded families; unrecognized values collapse to safe categories. New inherited
 instrumentation is not automatically authorized by appearing in upstream code: it must either map to
 an existing Scient event or be explicitly reviewed and added to the Scient contract.
+
+Upstream's `installId`, `install.owner_observed`, and hashed Connect, OpenAI,
+Claude, or client-device owner graph are not Scient analytics. The inherited
+`recordOwners` service method is a no-op compatibility boundary, not permission
+to read or transmit those identities. Hashing an account or device identifier
+does not make its collection authorized. Generic T3 delivery and relay tracing
+remain disabled independently of Scient's sharing preference.
 
 The detailed current event schema and tests live in `packages/scient-analytics`. Historical design
 and capability evidence remains in

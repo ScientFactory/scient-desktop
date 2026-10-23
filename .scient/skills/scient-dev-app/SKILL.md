@@ -1,6 +1,6 @@
 ---
 name: scient-dev-app
-description: Launch, verify, restart, or stop an isolated Scient Desktop development candidate from its owning checkout. Select the macOS managed or Windows foreground workflow. Not for release builds, deployment, or visual feature acceptance.
+description: Launch, verify, restart, or stop an isolated Scient Desktop development candidate from its owning checkout, or switch the standing Scient (Dev) Stable app to a branch, pull request or commit for review. Not for release builds, deployment, or visual feature acceptance.
 ---
 
 # Scient Dev App
@@ -22,6 +22,13 @@ versions and commands in that revision rather than a maintainer's personal
 paths or another branch's capabilities.
 
 ## Select the existing platform workflow
+
+- **Reviewing a pushed branch, pull request or commit (macOS and Windows):**
+  prefer the standing stable app: `pnpm dev:app:review <#123 | branch |
+  commit:<sha>>`, then `pnpm dev:app:stable status`. Read
+  `docs/operations/dev-app-review.md` first. Never edit its review checkout
+  or profiles by hand; if `review` refuses, report why instead of working
+  around it.
 
 - **macOS:** use the runbook's managed lifecycle commands from the exact
   worktree. Check existing ownership before starting and reuse a healthy

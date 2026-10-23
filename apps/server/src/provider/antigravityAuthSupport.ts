@@ -24,6 +24,13 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 // SCIENT-FORK:START — plugin skills are projected without their other components.
 import { projectAntigravityPluginSkills } from "../scient/skills/antigravityPluginSkillProjection.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — safe skill links and a once-per-helper browser preflight.
+import {
+  recordAntigravityPreflightChild,
+  verifyAntigravityBrowserHelperOnce,
+} from "../scient/providerLifecycle/antigravityBrowserHelperPreflight.ts";
+import { prepareAntigravitySkillLink } from "../scient/skills/antigravityUserSkillLinks.ts";
+// SCIENT-FORK:END
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityUserSkillDirectories,
@@ -75,7 +82,7 @@ const isAcpProcessExitedError = Schema.is(AcpErrors.AcpProcessExitedError);
 const isAcpInputStreamEndedError = Schema.is(AcpErrors.AcpInputStreamEndedError);
 const isAcpProtocolParseError = Schema.is(AcpErrors.AcpProtocolParseError);
 const helperPreparationDetails: Record<string, true> = {
-  "The T3 runtime path cannot be used to suppress Antigravity browser launches.": true,
+  "The Scient runtime path cannot be used to suppress Antigravity browser launches.": true,
   "Antigravity browser suppression could not be verified.": true,
   "Antigravity browser suppression verification timed out.": true,
   "The Antigravity profile directory could not be created.": true,
@@ -141,6 +148,7 @@ export interface AntigravityProfile {
   readonly tokenPath: string;
   readonly tempDirectory: string;
   readonly browserCommand: string;
+  readonly caBundlePath?: string;
 }
 
 export interface AntigravityAuthConfig {
@@ -150,7 +158,7 @@ export interface AntigravityAuthConfig {
   readonly gcpLocation: string;
 }
 
-export const ANTIGRAVITY_PERSONAL_AUTH: AntigravityAuthConfig = {
+const ANTIGRAVITY_PERSONAL_AUTH: AntigravityAuthConfig = {
   authMethod: "oauth-personal",
   apiKey: "",
   gcpProject: "",
@@ -195,7 +203,7 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
  * `auth.type` names the selected method so a native logout clears only that method's credentials
  * instead of every stored token. Never holds a credential.
  */
-export function antigravityProfileSettings(auth: AntigravityAuthConfig): string {
+function antigravityProfileSettings(auth: AntigravityAuthConfig): string {
   const gcp = {
     ...(auth.gcpProject ? { project: auth.gcpProject } : {}),
     ...(auth.gcpLocation ? { location: auth.gcpLocation } : {}),
@@ -335,6 +343,11 @@ function antigravityEnvironment(
   return {
     ...environment,
     ...credential,
+    ...(profile.caBundlePath !== undefined &&
+    baseEnv.SSL_CERT_FILE === undefined &&
+    baseEnv.SSL_CERT_DIR === undefined
+      ? { SSL_CERT_FILE: profile.caBundlePath }
+      : {}),
     GEMINI_HOME: profile.geminiHome,
     AGY_ACP_FORCE_FILE_STORAGE: "1",
     BROWSER: profile.browserCommand,
@@ -368,6 +381,9 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
     [links[1], targets[1]],
   ] as const) {
     yield* Effect.gen(function* () {
+      // SCIENT-FORK:START — link only an existing directory; never leave a dangling link.
+      if (yield* prepareAntigravitySkillLink({ link, target })) return;
+      // SCIENT-FORK:END
       const existing = yield* fs.readLink(link).pipe(
         Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
         Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
@@ -436,13 +452,34 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     helperExecutable.includes("%s")
   ) {
     return yield* authSupportError(
-      "The T3 runtime path cannot be used to suppress Antigravity browser launches.",
+      "The Scient runtime path cannot be used to suppress Antigravity browser launches.",
     );
   }
 
   const geminiHome = path.resolve(input.profileDirectory);
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
   const tempDirectory = input.tempDirectory ?? path.join(acpDirectory, "tmp");
+  let caBundlePath: string | undefined;
+  if (platform === "linux") {
+    // Bundled Python may look for certificates at paths absent on this distribution.
+    // Relative paths would resolve differently when the agent runs in the project directory.
+    for (const candidate of [
+      (input.baseEnv ?? process.env).NIX_SSL_CERT_FILE,
+      "/etc/ssl/certs/ca-bundle.crt",
+      "/etc/ssl/certs/ca-certificates.crt",
+      "/etc/pki/tls/certs/ca-bundle.crt",
+      "/etc/ssl/cert.pem",
+    ]) {
+      if (
+        candidate &&
+        path.isAbsolute(candidate) &&
+        (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
+      ) {
+        caBundlePath = candidate;
+        break;
+      }
+    }
+  }
   const profile: AntigravityProfile = {
     platform,
     geminiHome,
@@ -450,6 +487,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     tokenPath: path.join(acpDirectory, "acp_token.json"),
     tempDirectory,
     browserCommand,
+    ...(caBundlePath === undefined ? {} : { caBundlePath }),
   };
   const environment = antigravityEnvironment(profile, input.baseEnv ?? process.env, auth);
   yield* Effect.gen(function* () {
@@ -460,6 +498,9 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         shell: false,
       }),
     );
+    // SCIENT-FORK:START — a timed-out preflight can force-kill this helper.
+    yield* recordAntigravityPreflightChild(child);
+    // SCIENT-FORK:END
     const [stdout, stderr, exitCode] = yield* Effect.all(
       [
         collectUint8StreamText({ stream: child.stdout, maxBytes: 4_096 }),
@@ -478,12 +519,15 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
       return yield* authSupportError("Antigravity browser suppression could not be verified.");
     }
   }).pipe(
-    Effect.scoped,
-    Effect.timeoutOrElse({
-      duration: "5 seconds",
-      orElse: () =>
-        Effect.fail(authSupportError("Antigravity browser suppression verification timed out.")),
+    // SCIENT-FORK:START — verified once per helper; a timeout does not wait for its teardown.
+    verifyAntigravityBrowserHelperOnce({
+      spawner,
+      helperExecutable,
+      environment,
+      timeout: "5 seconds",
+      onTimeout: () => authSupportError("Antigravity browser suppression verification timed out."),
     }),
+    // SCIENT-FORK:END
     Effect.mapError((error) =>
       error._tag === "AcpTransportError"
         ? error

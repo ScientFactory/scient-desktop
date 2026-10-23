@@ -215,85 +215,85 @@ export function inspectAttachmentFile(
   });
 }
 
-export const make = (options?: { readonly retention?: Duration.Duration }) =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = exportsDirectory(config, path);
-    const retentionMs = Duration.toMillis(options?.retention ?? CONVERSATION_EXPORT_RETENTION);
+export const make = Effect.fn("ConversationExportFiles.make")(function* (options?: {
+  readonly retention?: Duration.Duration;
+}) {
+  const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = exportsDirectory(config, path);
+  const retentionMs = Duration.toMillis(options?.retention ?? CONVERSATION_EXPORT_RETENTION);
 
-    // Nothing from a previous run is still addressed by a live asset URL.
-    yield* fileSystem
-      .remove(root, { recursive: true, force: true })
-      .pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not clear old conversation exports.", { cause }),
-        ),
-      );
-
-    const write: ConversationExportFiles["Service"]["write"] = Effect.fn(
-      "ConversationExportFiles.write",
-    )(function* (input) {
-      const directory = path.join(root, input.exportId);
-      const target = path.join(directory, input.fileName);
-      yield* Effect.gen(function* () {
-        yield* fileSystem.makeDirectory(directory, { recursive: true });
-        if (input.content._tag === "text") {
-          yield* fileSystem.writeFileString(target, input.content.text);
-        } else {
-          const { entries, modifiedAt } = input.content;
-          yield* Effect.tryPromise({
-            try: () =>
-              writeZip(target, entries, DateTime.toDateUtc(DateTime.makeUnsafe(modifiedAt))),
-            catch: (cause) => new ConversationExportFileError({ cause }),
-          }).pipe(
-            // Never leave a partial archive behind a signed URL.
-            Effect.onError(() => fileSystem.remove(target, { force: true }).pipe(Effect.ignore)),
-          );
-        }
-      }).pipe(Effect.mapError((cause) => new ConversationExportFileError({ cause })));
-      const info = yield* fileSystem
-        .stat(target)
-        .pipe(Effect.mapError((cause) => new ConversationExportFileError({ cause })));
-      return { path: target, byteLength: Number(info.size) };
-    });
-
-    const reserve: ConversationExportFiles["Service"]["reserve"] = Effect.fn(
-      "ConversationExportFiles.reserve",
-    )(function* (input) {
-      const directory = path.join(root, input.exportId);
-      yield* fileSystem
-        .makeDirectory(directory, { recursive: true })
-        .pipe(Effect.mapError((cause) => new ConversationExportFileError({ cause })));
-      return { path: path.join(directory, input.fileName) };
-    });
-
-    const sweep = Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      const names = yield* fileSystem.readDirectory(root);
-      for (const name of names) {
-        const directory = path.join(root, name);
-        const info = yield* fileSystem.stat(directory);
-        const modified = Option.match(info.mtime, {
-          onNone: () => 0,
-          onSome: (mtime) => mtime.getTime(),
-        });
-        if (now - modified >= retentionMs) {
-          yield* fileSystem.remove(directory, { recursive: true, force: true });
-        }
-      }
-    }).pipe(
-      Effect.catchTags({
-        PlatformError: (cause) =>
-          cause.reason._tag === "NotFound"
-            ? Effect.void
-            : Effect.logWarning("Could not remove expired conversation exports.", { cause }),
-      }),
+  // Nothing from a previous run is still addressed by a live asset URL.
+  yield* fileSystem
+    .remove(root, { recursive: true, force: true })
+    .pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not clear old conversation exports.", { cause }),
+      ),
     );
 
-    yield* Effect.forkScoped(Effect.repeat(sweep, Schedule.spaced(SWEEP_INTERVAL)));
-    return ConversationExportFiles.of({ write, reserve, sweep });
+  const write: ConversationExportFiles["Service"]["write"] = Effect.fn(
+    "ConversationExportFiles.write",
+  )(function* (input) {
+    const directory = path.join(root, input.exportId);
+    const target = path.join(directory, input.fileName);
+    yield* Effect.gen(function* () {
+      yield* fileSystem.makeDirectory(directory, { recursive: true });
+      if (input.content._tag === "text") {
+        yield* fileSystem.writeFileString(target, input.content.text);
+      } else {
+        const { entries, modifiedAt } = input.content;
+        yield* Effect.tryPromise({
+          try: () => writeZip(target, entries, DateTime.toDateUtc(DateTime.makeUnsafe(modifiedAt))),
+          catch: (cause) => new ConversationExportFileError({ cause }),
+        }).pipe(
+          // Never leave a partial archive behind a signed URL.
+          Effect.onError(() => fileSystem.remove(target, { force: true }).pipe(Effect.ignore)),
+        );
+      }
+    }).pipe(Effect.mapError((cause) => new ConversationExportFileError({ cause })));
+    const info = yield* fileSystem
+      .stat(target)
+      .pipe(Effect.mapError((cause) => new ConversationExportFileError({ cause })));
+    return { path: target, byteLength: Number(info.size) };
   });
+
+  const reserve: ConversationExportFiles["Service"]["reserve"] = Effect.fn(
+    "ConversationExportFiles.reserve",
+  )(function* (input) {
+    const directory = path.join(root, input.exportId);
+    yield* fileSystem
+      .makeDirectory(directory, { recursive: true })
+      .pipe(Effect.mapError((cause) => new ConversationExportFileError({ cause })));
+    return { path: path.join(directory, input.fileName) };
+  });
+
+  const sweep = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const names = yield* fileSystem.readDirectory(root);
+    for (const name of names) {
+      const directory = path.join(root, name);
+      const info = yield* fileSystem.stat(directory);
+      const modified = Option.match(info.mtime, {
+        onNone: () => 0,
+        onSome: (mtime) => mtime.getTime(),
+      });
+      if (now - modified >= retentionMs) {
+        yield* fileSystem.remove(directory, { recursive: true, force: true });
+      }
+    }
+  }).pipe(
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.void
+          : Effect.logWarning("Could not remove expired conversation exports.", { cause }),
+    }),
+  );
+
+  yield* Effect.forkScoped(Effect.repeat(sweep, Schedule.spaced(SWEEP_INTERVAL)));
+  return ConversationExportFiles.of({ write, reserve, sweep });
+});
 
 export const layer = Layer.effect(ConversationExportFiles, make());

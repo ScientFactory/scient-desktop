@@ -119,30 +119,31 @@ export function pandocEnvironment(input: {
  * everything in it when the surrounding scope closes — after a success, a
  * failure, or an interruption alike.
  */
-export const makePandocScratch = (scratchRoot: string) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    yield* fileSystem.makeDirectory(scratchRoot, { recursive: true });
-    const root = yield* Effect.acquireRelease(
-      fileSystem.makeTempDirectory({ directory: scratchRoot, prefix: "run-" }),
-      (directory) =>
-        fileSystem.remove(directory, { recursive: true, force: true }).pipe(Effect.ignoreCause()),
-    );
-    const scratch: PandocScratch = {
-      root,
-      home: path.join(root, "home"),
-      data: path.join(root, "data"),
-      work: path.join(root, "work"),
-      tmp: path.join(root, "tmp"),
-    };
-    yield* Effect.forEach(
-      [scratch.home, scratch.data, scratch.work, scratch.tmp],
-      (directory) => fileSystem.makeDirectory(directory, { recursive: true }),
-      { discard: true },
-    );
-    return scratch;
-  });
+export const makePandocScratch = Effect.fn("pandocProcess.makePandocScratch")(function* (
+  scratchRoot: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fileSystem.makeDirectory(scratchRoot, { recursive: true });
+  const root = yield* Effect.acquireRelease(
+    fileSystem.makeTempDirectory({ directory: scratchRoot, prefix: "run-" }),
+    (directory) =>
+      fileSystem.remove(directory, { recursive: true, force: true }).pipe(Effect.ignoreCause()),
+  );
+  const scratch: PandocScratch = {
+    root,
+    home: path.join(root, "home"),
+    data: path.join(root, "data"),
+    work: path.join(root, "work"),
+    tmp: path.join(root, "tmp"),
+  };
+  yield* Effect.forEach(
+    [scratch.home, scratch.data, scratch.work, scratch.tmp],
+    (directory) => fileSystem.makeDirectory(directory, { recursive: true }),
+    { discard: true },
+  );
+  return scratch;
+});
 
 /** Pandoc's `[WARNING] …` lines, one entry per warning with continuation lines joined. */
 export function parsePandocWarnings(stderr: string): ReadonlyArray<string> {

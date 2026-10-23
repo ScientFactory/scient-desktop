@@ -9,6 +9,116 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.25",
+    publishedAt: "2026-10-22",
+    format: "paragraphs",
+    headline: "Write visually. Ask about papers. Connect your tools.",
+    highlights: [
+      {
+        id: "visual-latex-0625",
+        title: "Write LaTeX in a visual workspace",
+        description:
+          "Open a LaTeX document in Visual to edit text, headings, lists, tables, figures, and references on the page. Switch to Source or use Split to work with both. Supported edits preserve the underlying LaTeX, while unsupported content remains accessible as source. The compiled PDF remains the authority for final layout.",
+      },
+      {
+        id: "math-authoring-0625",
+        title: "Build equations as you write",
+        description:
+          "Edit formulas directly in the visual document, browse mathematical symbols, and use command suggestions to insert structures such as fractions. Keep favorite and recent symbols close at hand, or open a formula's LaTeX source for precise changes. English and Hebrew documents support mixed text directions while formulas retain left-to-right entry.",
+      },
+      {
+        id: "document-templates-0625",
+        title: "Start a document from a template",
+        description:
+          "Choose Documents → LaTeX to start writing from your default template. Preview templates, choose English or Hebrew, and save your own. Settings → Documents brings templates, opening views, compiler readiness, and document tools together. Visual writing works before TeX is installed; building a PDF needs a local compiler and the document's packages.",
+      },
+      {
+        id: "extensions-0625",
+        title: "Connect services for your agents in one place",
+        description:
+          "Settings → Extensions lets you discover and connect services, manage Scient plugins, and inspect supported agents' own plugins and servers. Sign in to a service once through Scient, choose which projects may use it, and see which agents it works with. You can also add a service by URL or install a plugin bundle from a folder.",
+      },
+      {
+        id: "pdf-passages-0625",
+        title: "Ask about a passage in a PDF",
+        description:
+          "Select text in a PDF and choose Ask in chat. Your question carries the quote, its page, and nearby text. Click the quote to reopen the passage with a highlight. If the PDF has changed, Scient reports whether it can still locate the text. This works with project PDFs, LaTeX output, Sources papers, and sent PDF attachments that have a text layer.",
+      },
+      {
+        id: "unread-app-badge-0625",
+        title: "See unread answers on the app icon",
+        description:
+          "The desktop app icon now reflects unread conversations across your connected environments, using the sidebar's read state. Windows shows a taskbar overlay; macOS and supported Linux docks show a badge where system permissions allow it. Control it from Settings → General → App icon badge.",
+      },
+    ],
+    alsoIncluded:
+      "More reliable LaTeX tool detection and compiler installation on Windows, including fixes for Windows profiles whose names contain accents or Hebrew letters.",
+  },
+  {
+    version: "0.6.24",
+    publishedAt: "2026-10-19",
+    format: "paragraphs",
+    headline: "Voice on Windows. A faster, clearer workspace.",
+    highlights: [
+      {
+        id: "windows-local-dictation-0624",
+        title: "Set up offline dictation on Windows",
+        description:
+          "Choose the microphone in the composer, download a voice model, and dictate into your draft. Windows setup no longer requires extra system libraries. Speech recognition runs on your computer; optional AI correction sends transcript text, not your recording.",
+      },
+      {
+        id: "performance-reliability-0624",
+        title: "Work with a faster, steadier Scient",
+        description:
+          "Performance improvements make streaming answers, typing, and moving through conversations smoother. Startup is faster with large conversation histories, with reliability fixes across chat, model selection, file handling, and remote connections.",
+      },
+      {
+        id: "source-quotes-0624",
+        title: "Ask about code and document source",
+        description:
+          "Select text in code, Markdown, LaTeX, or compute source and choose Ask in chat. Your question keeps the exact quote and its file location. Click the quote to return to the source; Scient warns if it can no longer verify the passage’s location.",
+      },
+      {
+        id: "cross-computer-context-0624",
+        title: "Bring in a conversation from another computer",
+        description:
+          "Drag a conversation from another connected computer into your prompt to attach a saved transcript. Your agent can use it even after that computer disconnects. It’s a snapshot, not a live link; later messages and attached-file contents are not included.",
+      },
+      {
+        id: "answers-and-delegated-work-0624",
+        title: "See useful answers and delegated work more clearly",
+        description:
+          "Earlier substantial answers stay visible after a long turn, while short progress notes and tool activity fold away.\n\nExpand Scient Agent task groups to inspect each member’s assignment and available result. When Claude runs a team, each member’s work now streams into its own child conversation.",
+      },
+      {
+        id: "sidebar-updates-0624",
+        title: "Update your setup from the sidebar",
+        description:
+          "A new sidebar control brings updates for connected computers and supported AI providers together. Update one item or all available items, follow progress, and retry failures. Scient asks before server updates interrupt running work, and lets you postpone this app’s restart.",
+      },
+      {
+        id: "multi-computer-sections-0624",
+        title: "Clearer organization when you use several computers",
+        description:
+          "If you connect Scient on your laptop to an office computer or server, each computer now keeps its own conversation sections. They appear consistently wherever you connect to that computer. Matching names stay separate. Some remote conversations may move to General; file them again on their own computer. Update Scient on each computer.",
+      },
+      {
+        id: "muse-code-0624",
+        title: "Connect Muse Code (beta)",
+        description:
+          "Use Meta’s Muse Code agent directly in Scient. Install it and sign in from Settings → Providers, or connect an existing installation. Work with your project’s files and the models available to your Muse account.",
+      },
+      {
+        id: "review-guides-0624",
+        title: "Take a guided tour of a pull request (beta)",
+        description:
+          "Enable Review guides in Settings → Source Control, then choose Write guide in a pull request’s Guide tab. Claude or Codex prepares a tour of the changes, highlights decisions needing your attention, and lets you ask questions or collect review comments as you read.",
+      },
+    ],
+    alsoIncluded:
+      "Per-project agent controls; multilingual spell-checking; Antigravity subscription limits and Pi usage reports; improved conversation-fork recovery; and more time for Claude health checks on busy computers.",
+  },
+  {
     version: "0.6.23",
     publishedAt: "2026-10-10",
     format: "paragraphs",

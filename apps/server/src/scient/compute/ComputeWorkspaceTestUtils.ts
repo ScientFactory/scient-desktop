@@ -13,8 +13,8 @@ import type { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingR
 /** Fixture roots are explicitly selected by tests; production uses host registration. */
 export const computeWorkspaceResolverForTest: WorkspaceBindingResolver["Service"] = {
   ...workspaceResolverForTest(new Map()),
-  resolveWorkspaceRoot: (root) =>
-    Effect.gen(function* () {
+  resolveWorkspaceRoot: Effect.fn("ComputeWorkspaceTestUtils.resolveWorkspaceRoot")(
+    function* (root) {
       const observed = yield* Effect.tryPromise({
         try: async () => {
           const canonical = await NodeFSP.realpath(root);
@@ -43,9 +43,10 @@ export const computeWorkspaceResolverForTest: WorkspaceBindingResolver["Service"
           ],
         ]),
       ).resolveWorkspaceRoot(root);
-    }),
-  assertCurrentWorkspaceScope: (scope) =>
-    Effect.gen(function* () {
+    },
+  ),
+  assertCurrentWorkspaceScope: Effect.fn("ComputeWorkspaceTestUtils.assertCurrentWorkspaceScope")(
+    function* (scope) {
       const current = yield* computeWorkspaceResolverForTest.resolveWorkspaceRoot(
         scope.workspaceRoot,
       );
@@ -59,5 +60,6 @@ export const computeWorkspaceResolverForTest: WorkspaceBindingResolver["Service"
           kind: "stale-authority",
         });
       return current.binding;
-    }),
+    },
+  ),
 };

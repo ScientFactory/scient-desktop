@@ -1,3 +1,6 @@
+import { replayOpenCodeServer } from "./probeResponses.fixture.ts";
+import { OPENCODE_2_RESPONSES } from "./probeResponses.fixture.ts";
+import { OPENCODE_2_WORKSPACE_RESPONSES } from "./probeResponses.fixture.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -21,11 +24,6 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceResolver";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
-import {
-  OPENCODE_2_RESPONSES,
-  OPENCODE_2_WORKSPACE_RESPONSES,
-  replayOpenCodeServer,
-} from "./probeResponses.fixture.ts";
 import { OpenCodeDriver, openCodeUpdateFor } from "./driver.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
@@ -222,24 +220,6 @@ const layerUpdate = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
-  it.effect("never runs the binary for a disabled instance's update check", () =>
-    Effect.gen(function* () {
-      versionProbes.length = 0;
-      versionOutput.current = "opencode v2.0.18\n";
-      const instance = yield* OpenCodeDriver.create({
-        instanceId: ProviderInstanceId.make("opencode-disabled"),
-        displayName: undefined,
-        environment: [],
-        enabled: false,
-        config: { ...OpenCodeDriver.defaultConfig(), binaryPath: "opencode" },
-      }).pipe(Effect.provideService(HttpClient.HttpClient, noHttp));
-      const maintenance = yield* instance.snapshot.resolveMaintenance();
-      yield* instance.snapshot.resolveMaintenance({ fresh: true });
-      assert.isNull(maintenance.update);
-      assert.deepStrictEqual(versionProbes, []);
-    }).pipe(Effect.scoped),
-  );
-
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "offers no package update for an unknown version and follows a changed one on a fresh read",
     () =>

@@ -219,6 +219,7 @@ it.effect("gates pull-request, browser, and device access independently", () =>
   }),
 );
 
+// regression: #3114 use bound host for MCP endpoint
 it.effect("builds MCP endpoints from the bound server host", () =>
   Effect.gen(function* () {
     const cases = [
@@ -240,6 +241,57 @@ it.effect("builds MCP endpoints from the bound server host", () =>
     }
   }),
 );
+
+// SCIENT-FORK:START — Scient Extensions connectors.
+it.effect("binds the delivered connector set and derives proxy URLs from the bound host", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000, makeFakeHttpServer("::1"));
+    const connectors = [
+      { connectorId: "con_linear0001", serverName: "linear", displayName: "Linear" },
+      { connectorId: "con_notion0001", serverName: "notion", displayName: "Notion" },
+    ];
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-connectors"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: allCapabilities,
+      connectors,
+    });
+    expect(issued.config.connectors).toEqual([
+      { ...connectors[0], url: "http://[::1]:43123/mcp/connectors/con_linear0001" },
+      { ...connectors[1], url: "http://[::1]:43123/mcp/connectors/con_notion0001" },
+    ]);
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    // Neither the request nor the provider-facing copy can widen the bound set.
+    connectors.push({ connectorId: "con_widened01", serverName: "widened", displayName: "W" });
+    const resolved = yield* registry.resolve(token);
+    const boundIds = resolved?.connectorIds;
+    expect(boundIds).toEqual(new Set(["con_linear0001", "con_notion0001"]));
+    (boundIds as Set<string>).add("con_widened01");
+    expect((yield* registry.resolve(token))?.connectorIds).toEqual(
+      new Set(["con_linear0001", "con_notion0001"]),
+    );
+
+    const withoutConnectors = yield* registry.issue({
+      threadId: ThreadId.make("thread-no-connectors"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: allCapabilities,
+    });
+    expect(withoutConnectors.config.connectors).toEqual([]);
+    expect(
+      (yield* registry.resolve(
+        withoutConnectors.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+      ))?.connectorIds,
+    ).toEqual(new Set());
+  }),
+);
+
+it("places connector proxy URLs beside the MCP endpoint and escapes the id", () => {
+  expect(McpSessionRegistry.connectorProxyUrl("http://127.0.0.1:43123/mcp", "con_a/b?c")).toBe(
+    "http://127.0.0.1:43123/mcp/connectors/con_a%2Fb%3Fc",
+  );
+});
+// SCIENT-FORK:END
 
 it.effect("expires credentials once their session stops showing signs of life", () =>
   Effect.gen(function* () {
@@ -294,4 +346,66 @@ it.effect("does not keep credentials of other threads alive", () =>
 
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
+);
+
+it.effect("only a trusted touch restores an expired token with its original scope", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const threadId = ThreadId.make("thread-idle");
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      capabilities: new Set(["preview"]),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const scope = yield* registry.resolve(token);
+    expect(scope).toBeDefined();
+
+    timestamp += 101;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+    const otherThreadId = ThreadId.make("thread-active");
+    const other = yield* registry.issue({
+      threadId: otherThreadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["device"]),
+    });
+    yield* registry.touch(otherThreadId);
+    expect(
+      (yield* registry.resolve(other.config.authorizationHeader.replace(/^Bearer\s+/, "")))?.thread
+        .threadId,
+    ).toBe(otherThreadId);
+    expect(yield* registry.resolve("unknown-token")).toBeUndefined();
+    expect(yield* registry.resolve(token)).toBeUndefined();
+
+    yield* registry.touch(threadId);
+    expect(yield* registry.resolve(token)).toEqual(scope);
+    timestamp += 101;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect.each(["provider-session", "thread", "all"] as const)(
+  "never restores an expired token after %s revocation",
+  (revocation) =>
+    Effect.gen(function* () {
+      let timestamp = 1_000;
+      const registry = yield* makeRegistry(() => timestamp);
+      const threadId = ThreadId.make("thread-revoked");
+      const issued = yield* registry.issue({
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["preview"]),
+      });
+      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+      timestamp += 101;
+      yield* {
+        "provider-session": registry.revokeProviderSession(issued.config.providerSessionId),
+        thread: registry.revokeThread(threadId),
+        all: registry.revokeAll,
+      }[revocation];
+      yield* registry.touch(threadId);
+      expect(yield* registry.resolve(token)).toBeUndefined();
+    }),
 );

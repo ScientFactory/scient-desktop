@@ -206,7 +206,7 @@ it.live.each(
       const name = `scient-native-fork-continuity-${scenario}`;
       const cwd = yield* checkpointWorkspace(name);
       const recorded = yield* readProviderReplayTranscript(
-        new URL("../testkit/fixtures/thread_fork_native/codex_transcript.ndjson", import.meta.url),
+        new URL("./fixtures/thread_fork_native/codex_transcript.ndjson", import.meta.url),
       );
       const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
         materializeReplayTranscriptWorkspace(recorded, cwd),
@@ -886,10 +886,7 @@ it.live(
           Layer.provide(NodeServices.layer),
         );
         const recorded = yield* readProviderReplayTranscript(
-          new URL(
-            "../testkit/fixtures/thread_fork_native/codex_transcript.ndjson",
-            import.meta.url,
-          ),
+          new URL("./fixtures/thread_fork_native/codex_transcript.ndjson", import.meta.url),
         );
         const decoded = yield* CodexOrchestratorReplayHarness.decodeTranscript(
           materializeReplayTranscriptWorkspace(recorded, cwd),
@@ -1017,7 +1014,7 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
       const name = "scient-native-fork-first-turn-retry";
       const cwd = yield* checkpointWorkspace(name);
       const recorded = yield* readProviderReplayTranscript(
-        new URL("../testkit/fixtures/thread_fork_native/codex_transcript.ndjson", import.meta.url),
+        new URL("./fixtures/thread_fork_native/codex_transcript.ndjson", import.meta.url),
       );
       const decoded = yield* CodexOrchestratorReplayHarness.decodeTranscript(
         materializeReplayTranscriptWorkspace(recorded, cwd),
@@ -1193,7 +1190,7 @@ it.live.each(
       const name = `scient-fork-baseline-rollback-${queuedAttachment}`;
       const cwd = yield* checkpointWorkspace(name);
       const recorded = yield* readProviderReplayTranscript(
-        new URL("../testkit/fixtures/thread_fork_native/codex_transcript.ndjson", import.meta.url),
+        new URL("./fixtures/thread_fork_native/codex_transcript.ndjson", import.meta.url),
       );
       const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
         materializeReplayTranscriptWorkspace(recorded, cwd),

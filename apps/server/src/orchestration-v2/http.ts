@@ -3,8 +3,6 @@ import {
   EnvironmentHttpApi,
   COMPACT_THREAD_SNAPSHOT_FORMAT,
   THREAD_SNAPSHOT_FORMAT_HEADER,
-  ThreadId,
-  TurnItemId,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";

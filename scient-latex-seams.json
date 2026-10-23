@@ -16,6 +16,7 @@
     "apps/server/src/provider/ScientToolProjection.ts",
     "apps/server/src/provider/ScientAwareness.ts",
     "apps/server/src/scient/skills/BuiltInSkillSources.ts",
+    "apps/server/src/scient/extensions/plugins/BuiltInPlugins.ts",
     "apps/web/src/scient/markdownEditor/persistence/markdownPersistenceRegistry.ts",
     "scripts/stage-synctex-runtime.ts",
     "scripts/lib/scient-synctex-build.ts",
@@ -25,7 +26,22 @@
     "packages/contracts/src/latexPdfBuild.ts",
     "packages/contracts/src/scient/environmentHttpGroups.ts",
     "apps/server/src/scient/ScientServerLayers.ts",
-    "apps/web/src/scient/fileSurfaces/scientLazyFileSurfaces.tsx"
+    "apps/web/src/scient/fileSurfaces/scientLazyFileSurfaces.tsx",
+    "apps/web/latexSelection.vitest.config.ts",
+    "apps/web/latexPaging.vitest.config.ts",
+    "apps/web/scripts/render-template-previews.ts",
+    "apps/web/src/scient/documents/DocumentsSettings.tsx",
+    "apps/web/src/scient/documents/latexInstallationModel.ts",
+    "apps/web/src/scient/documents/useLatexInstallation.ts",
+    "apps/web/src/scient/fileSurfaces/scientFileEditorBindings.tsx",
+    "scripts/generate-math-symbol-glyphs.mjs",
+    "apps/web/latex-visual-benchmark.html",
+    "apps/web/latexVisualBenchmark.config.ts",
+    "apps/web/scripts/latex-visual-benchmark.ts",
+    "packages/contracts/src/fileCitations.ts",
+    "packages/shared/src/composerCitations.ts",
+    "packages/shared/src/pdfCitations.ts",
+    "packages/contracts/src/scientConversationExport.ts"
   ],
   "latexDiffSignals": [
     "ScientLatex",
@@ -39,9 +55,9 @@
   ],
   "upstreamMounts": [
     {
-      "path": "apps/server/src/testUtils/shardWeights.json",
-      "anchor": "src/scient/latex/LatexBuildService.test.ts",
-      "purpose": "Record CI durations for LaTeX behavioral tests in the shared server shard profile; scheduling changes retain every test and assertion (weightedShardSequencer.test.ts and the full current-file assignment check)."
+      "path": "apps/server/src/testUtils/weightedShardSequencer.ts",
+      "anchor": "recordedSeconds[key] ?? UNRECORDED_FILE_SECONDS",
+      "purpose": "Assign every discovered server test to one shard, including Scient tests absent from the retained official scheduling estimates. The timing table controls balance, not test inclusion or correctness evidence."
     },
     {
       "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts",
@@ -105,8 +121,13 @@
     },
     {
       "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
-      "anchor": "export function EditableFileSurface",
-      "purpose": "Mount the additive LaTeX build surface in the inherited file viewer, and export the panel's editable file surface so the LaTeX split view reuses it instead of forking the editor and its save coordination."
+      "anchor": "export function EditableFileEditor",
+      "purpose": "Expose the existing controlled editor so LaTeX Source and Visual share one existing save coordinator without forking the editor; let its PDF reader quote into the panel's conversation (citeThread, Ask in chat)."
+    },
+    {
+      "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
+      "anchor": "debounceMs = FILE_SAVE_DEBOUNCE_MS",
+      "purpose": "Permit a LaTeX-specific save debounce while preserving the default for other file editors."
     },
     {
       "path": "packages/client-runtime/src/rpc/client.ts",
@@ -147,6 +168,46 @@
       "path": "apps/server/vite.config.ts",
       "anchor": "src/pdf.worker.ts",
       "purpose": "Emit pdfjs' sibling fake-worker module so packaged PDF validation can load it."
+    },
+    {
+      "path": "knip.jsonc",
+      "anchor": "latexVisualBenchmark.config.ts",
+      "purpose": "Register the Visual LaTeX benchmark's production build configuration, page entry and runner."
+    },
+    {
+      "path": "apps/web/src/components/settings/SettingsGroup.tsx",
+      "anchor": "[&>:not(:first-child)]:border-t",
+      "purpose": "Draw row separators without a universal sibling selector, which restyled every following block on each insertion in long Visual documents."
+    },
+    {
+      "path": "apps/web/src/components/settings/FoldedSettingsSection.tsx",
+      "anchor": "[&>:not(:first-child)]:border-t",
+      "purpose": "Draw row separators without a universal sibling selector, which restyled every following block on each insertion in long Visual documents."
+    },
+    {
+      "path": "apps/web/src/components/files/AttachmentFilePreview.tsx",
+      "anchor": "attachmentPdfMount",
+      "purpose": "Open chat attachment PDFs in Scient's PDF reader (find, outline, zoom, Ask in chat) instead of Chromium's built-in viewer; other kinds keep their generic previews."
+    },
+    {
+      "path": "apps/web/src/components/chat/ChatComposer.tsx",
+      "anchor": "draftPdf={{",
+      "purpose": "Name a draft attachment (thread and composer file context id) to Scient's PDF reader; the prop affects only PDF previews."
+    },
+    {
+      "path": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+      "anchor": "PdfCitationHoverCard",
+      "purpose": "Render PDF quotes in the shared citation chip: label, hover card, removal label and navigation to the quoted page."
+    },
+    {
+      "path": "packages/shared/src/markdownPipeline.ts",
+      "anchor": "PDF_CITATION_PROTOCOL",
+      "purpose": "Keep PDF quote links through sanitization so the validated citation renderer can parse them; preserving the protocol grants no navigation authority."
+    },
+    {
+      "path": "packages/shared/package.json",
+      "anchor": "./pdfCitations",
+      "purpose": "Export Scient's PDF quote link format and agent projection to web, mobile and export consumers."
     }
   ]
 }

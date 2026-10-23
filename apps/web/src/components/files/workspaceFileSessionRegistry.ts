@@ -1,23 +1,46 @@
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import type { ProjectFilePublicationAttention } from "@t3tools/contracts";
+import type {
+  DocumentRenameIntent,
+  MarkdownDraftCheckpointStore,
+} from "~/scient/markdownEditor/persistence/markdownDraftCheckpoint";
+import type { MarkdownPersistenceTarget } from "~/scient/markdownEditor/persistence/markdownPersistenceTransport";
 
-import { FileSaveCoordinator, type FileSaveResolutionAction } from "./fileSaveCoordinator";
+import {
+  FileSaveCoordinator,
+  type FileSaveResolutionAction,
+  type FileSaveCoordinatorOptions,
+} from "./fileSaveCoordinator";
 
 type AtomCommandFailure<A, E> = Extract<AtomCommandResult<A, E>, { readonly _tag: "Failure" }>;
 
 export interface WorkspaceFileSessionCallbacks<A, E> {
   readonly onPendingChange?: (pending: boolean) => void;
+  readonly onRestoredSource?: (contents: string) => void;
+  readonly onRenameIntentChange?: (intent: DocumentRenameIntent | null) => void;
   readonly onConfirmed?: (contents: string, value: A) => void;
   readonly onFailure?: (contents: string, result: AtomCommandFailure<A, E>) => void;
   readonly onResolutionApplied?: (action: FileSaveResolutionAction) => void;
+  readonly onAttentionChange?: (attention: ProjectFilePublicationAttention | null) => void;
+  readonly onRecoveryFailure?: (error: unknown) => void;
+  readonly onReviewRequiredChange?: (required: boolean) => void;
+  readonly onCurrentMissingChange?: (missing: boolean) => void;
 }
 
 interface WorkspaceFileSessionTransport<A, E> {
   readonly canPersist?: () => boolean;
   readonly persist: (
     contents: string,
-    expectedRevision: string,
+    expectedRevision: string | undefined,
+    mutationId: string,
+    createOnly?: boolean,
   ) => Promise<AtomCommandResult<A, E>>;
   readonly revisionFromResult: (value: A) => string;
+  readonly classifyFailure?: FileSaveCoordinatorOptions<A, E>["classifyFailure"];
+  readonly describeAttention?: FileSaveCoordinatorOptions<A, E>["describeAttention"];
+  readonly publicationOutcome?: FileSaveCoordinatorOptions<A, E>["publicationOutcome"];
+  readonly readForRecovery?: FileSaveCoordinatorOptions<A, E>["readForRecovery"];
+  readonly resolveRecovery?: FileSaveCoordinatorOptions<A, E>["resolveRecovery"];
   /** Shared cache publication that must run once per successful write. */
   readonly onPersisted?: (contents: string, value: A) => boolean | void;
 }
@@ -29,15 +52,45 @@ export interface WorkspaceFileSessionLeaseOptions<A, E> extends WorkspaceFileSes
   readonly key: string;
   readonly debounceMs: number;
   readonly initialRevision: string;
+  readonly initialSource: string;
+  readonly journalStore: MarkdownDraftCheckpointStore;
+  readonly initialAttention?: ProjectFilePublicationAttention;
   readonly callbacks?: WorkspaceFileSessionCallbacks<A, E>;
 }
 
 export interface WorkspaceFileSessionLease {
   readonly change: (contents: string) => void;
+  readonly getDraftSource: () => string;
+  readonly ready: () => Promise<boolean>;
+  readonly beginRename: (
+    from: MarkdownPersistenceTarget,
+    destination: MarkdownPersistenceTarget,
+  ) => Promise<DocumentRenameIntent | null>;
+  readonly acknowledgeRename: (
+    intent: DocumentRenameIntent,
+    acknowledgement: NonNullable<DocumentRenameIntent["acknowledgement"]>,
+  ) => Promise<boolean>;
+  readonly rejectRename: (intent: DocumentRenameIntent, error: unknown) => Promise<boolean>;
+  readonly getRenameIntent: () => DocumentRenameIntent | null;
+  readonly isRenameCurrent: (intent: DocumentRenameIntent) => boolean;
+  readonly flush: () => Promise<boolean>;
   readonly setSuspended: (suspended: boolean) => void;
-  readonly syncConfirmedFileRevision: (revision: string) => void;
+  readonly syncConfirmedFileRevision: (revision: string, source: string) => void;
   readonly discardPending: (revision: string) => void;
   readonly retryPending: (revision: string) => void;
+  readonly observePublicationAttention: (
+    attention: ProjectFilePublicationAttention | null | undefined,
+  ) => void;
+  readonly resolveRetainedAttention: (
+    recoveryId: string,
+    currentRevision: string | null,
+  ) => Promise<boolean>;
+  readonly reviewUnchangedRefusal: (currentRevision: string | null) => Promise<boolean>;
+  readonly recreateMissingCurrent: (contents?: string) => boolean;
+  readonly currentMissing: boolean;
+  readonly noteMutationFailure: (error: unknown, mutationId: string) => void;
+  readonly publicationAttention: ProjectFilePublicationAttention | null;
+  readonly reviewRequired: boolean;
   readonly release: () => void;
 }
 
@@ -59,7 +112,10 @@ interface SessionEntry<A, E> {
   fallbackTransport: WorkspaceFileSessionTransport<A, E>;
   persistTransport: WorkspaceFileSessionTransport<A, E> | null;
   pending: boolean;
-  lastFailure: { readonly contents: string; readonly result: AtomCommandFailure<A, E> } | null;
+  lastFailure:
+    | { readonly contents: string; readonly result: AtomCommandFailure<A, E> }
+    | { readonly error: unknown }
+    | null;
   resolutionFingerprint: string | null;
   generation: number;
 }
@@ -91,6 +147,7 @@ function broadcast<A, E>(
  */
 export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
   private readonly entries = new Map<string, SessionEntry<A, E>>();
+  private readonly retiring = new Map<string, Promise<void>>();
 
   acquire(options: WorkspaceFileSessionLeaseOptions<A, E>): WorkspaceFileSessionLease {
     let entry = this.entries.get(options.key);
@@ -98,10 +155,25 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
       ...(options.canPersist === undefined ? {} : { canPersist: options.canPersist }),
       persist: options.persist,
       revisionFromResult: options.revisionFromResult,
+      ...(options.classifyFailure === undefined
+        ? {}
+        : { classifyFailure: options.classifyFailure }),
+      ...(options.describeAttention === undefined
+        ? {}
+        : { describeAttention: options.describeAttention }),
+      ...(options.publicationOutcome === undefined
+        ? {}
+        : { publicationOutcome: options.publicationOutcome }),
+      ...(options.readForRecovery === undefined
+        ? {}
+        : { readForRecovery: options.readForRecovery }),
+      ...(options.resolveRecovery === undefined
+        ? {}
+        : { resolveRecovery: options.resolveRecovery }),
       ...(options.onPersisted === undefined ? {} : { onPersisted: options.onPersisted }),
     };
     if (entry === undefined) {
-      entry = this.createEntry(options.key, options.debounceMs, options.initialRevision, transport);
+      entry = this.createEntry(options, transport);
       this.entries.set(options.key, entry);
     } else {
       entry.generation += 1;
@@ -126,17 +198,60 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
       }
     }
     if (entry.lastFailure !== null) {
-      record.callbacks.onFailure?.(entry.lastFailure.contents, entry.lastFailure.result);
+      if ("result" in entry.lastFailure) {
+        record.callbacks.onFailure?.(entry.lastFailure.contents, entry.lastFailure.result);
+      } else record.callbacks.onRecoveryFailure?.(entry.lastFailure.error);
     }
+    if (entry.coordinator.publicationAttention !== null) {
+      record.callbacks.onAttentionChange?.(entry.coordinator.publicationAttention);
+    }
+    record.callbacks.onReviewRequiredChange?.(entry.coordinator.reviewRequired);
+    record.callbacks.onCurrentMissingChange?.(entry.coordinator.currentMissing);
 
     const currentEntry = entry;
     const ifActive = (action: () => void): void => {
       if (record.active) action();
     };
     return {
+      get publicationAttention() {
+        return currentEntry.coordinator.publicationAttention;
+      },
+      getRenameIntent: () => currentEntry.coordinator.getRenameIntent(),
+      getDraftSource: () => currentEntry.coordinator.getDraftSource(),
+      isRenameCurrent: (intent) =>
+        record.active && currentEntry.coordinator.isRenameCurrent(intent),
+      beginRename: async (from, destination) => {
+        if (!record.active) return null;
+        const intent = await currentEntry.coordinator.beginRename(from, destination);
+        return record.active ? intent : null;
+      },
+      acknowledgeRename: async (intent, acknowledgement) => {
+        if (!record.active) return false;
+        const settled = await currentEntry.coordinator.acknowledgeRename(intent, acknowledgement);
+        if (settled && this.entries.get(currentEntry.key) === currentEntry) {
+          this.entries.delete(currentEntry.key);
+          currentEntry.pending = false;
+          for (const callback of currentEntry.pendingCallbacks) callback(false);
+          currentEntry.pendingCallbacks.clear();
+        }
+        return settled && record.active;
+      },
+      rejectRename: (intent, error) =>
+        record.active
+          ? currentEntry.coordinator.rejectRename(intent, error)
+          : Promise.resolve(false),
+      ready: () => (record.active ? currentEntry.coordinator.ready() : Promise.resolve(false)),
+      get reviewRequired() {
+        return currentEntry.coordinator.reviewRequired;
+      },
+      get currentMissing() {
+        return currentEntry.coordinator.currentMissing;
+      },
+      recreateMissingCurrent: (contents) =>
+        record.active && currentEntry.coordinator.recreateMissingCurrent(contents),
+      flush: () => (record.active ? currentEntry.coordinator.flush() : Promise.resolve(false)),
       change: (contents) =>
         ifActive(() => {
-          currentEntry.lastFailure = null;
           currentEntry.resolutionFingerprint = null;
           currentEntry.coordinator.change(contents, record.debounceMs);
         }),
@@ -148,7 +263,7 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
             [...currentEntry.leases.values()].some((lease) => lease.active && lease.suspended),
           );
         }),
-      syncConfirmedFileRevision: (revision) =>
+      syncConfirmedFileRevision: (revision, source) =>
         ifActive(() => {
           // Acquiring a second view must not let its possibly stale initial
           // render regress the revision already owned by the shared session.
@@ -156,10 +271,22 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
           // evidence from the authoritative file query.
           if (record.lastObservedRevision === revision) return;
           record.lastObservedRevision = revision;
-          currentEntry.coordinator.syncConfirmedFileRevision(revision);
+          currentEntry.coordinator.syncConfirmedFileRevision(revision, source);
         }),
       discardPending: (revision) => ifActive(() => this.resolve(currentEntry, "discard", revision)),
       retryPending: (revision) => ifActive(() => this.resolve(currentEntry, "retry", revision)),
+      observePublicationAttention: (attention) =>
+        ifActive(() => currentEntry.coordinator.observePublicationAttention(attention)),
+      resolveRetainedAttention: (recoveryId, currentRevision) =>
+        record.active
+          ? currentEntry.coordinator.resolveRetainedAttention(recoveryId, currentRevision)
+          : Promise.resolve(false),
+      reviewUnchangedRefusal: (currentRevision) =>
+        record.active
+          ? currentEntry.coordinator.reviewUnchangedRefusal(currentRevision)
+          : Promise.resolve(false),
+      noteMutationFailure: (error, mutationId) =>
+        ifActive(() => currentEntry.coordinator.noteMutationFailure(error, mutationId)),
       release: () => this.release(currentEntry, record),
     };
   }
@@ -170,16 +297,15 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
 
   /** Test-only cleanup for registries whose fake persistence never settles. */
   clear(): void {
-    for (const entry of this.entries.values()) entry.coordinator.dispose();
+    for (const entry of this.entries.values()) entry.coordinator.retire();
     this.entries.clear();
   }
 
   private createEntry(
-    key: string,
-    debounceMs: number,
-    initialRevision: string,
+    options: WorkspaceFileSessionLeaseOptions<A, E>,
     transport: WorkspaceFileSessionTransport<A, E>,
   ): SessionEntry<A, E> {
+    const { key, debounceMs, initialRevision, initialSource, journalStore } = options;
     const entry: SessionEntry<A, E> = {
       key,
       coordinator: null as unknown as FileSaveCoordinator<A, E>,
@@ -195,12 +321,65 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
     entry.coordinator = new FileSaveCoordinator({
       debounceMs,
       initialRevision,
+      initialSource,
+      journal: {
+        key,
+        store: {
+          read: async (at) => {
+            await this.retiring.get(at);
+            return journalStore.read(at);
+          },
+          replace: (at, expected, next) => journalStore.replace(at, expected, next),
+        },
+      },
+      ...(options.initialAttention === undefined
+        ? {}
+        : { initialAttention: options.initialAttention }),
+      onRenameIntentChange: (intent) =>
+        broadcast(entry, (callbacks) => callbacks.onRenameIntentChange?.(intent)),
+      onRestoredSource: (contents) =>
+        broadcast(entry, (callbacks) => callbacks.onRestoredSource?.(contents)),
       canPersist: () => activeTransport(entry).canPersist?.() !== false,
-      persist: (contents, expectedRevision) => {
+      persist: (contents, expectedRevision, mutationId, createOnly) => {
         const selected = activeTransport(entry);
         entry.persistTransport = selected;
-        return selected.persist(contents, expectedRevision);
+        return createOnly
+          ? selected.persist(contents, undefined, mutationId, true)
+          : selected.persist(contents, expectedRevision, mutationId);
       },
+      classifyFailure: (error) =>
+        (entry.persistTransport ?? activeTransport(entry)).classifyFailure?.(error) ?? "terminal",
+      describeAttention: (error, mutationId) =>
+        (entry.persistTransport ?? activeTransport(entry)).describeAttention?.(error, mutationId) ??
+        null,
+      publicationOutcome: (error) =>
+        (entry.persistTransport ?? activeTransport(entry)).publicationOutcome?.(error) ?? null,
+      readForRecovery: () => {
+        const read = activeTransport(entry).readForRecovery;
+        if (!read) return Promise.reject(new Error("Retained file recovery is unavailable."));
+        return read();
+      },
+      resolveRecovery: (review) => {
+        const resolve = activeTransport(entry).resolveRecovery;
+        if (!resolve) return Promise.reject(new Error("Retained file recovery is unavailable."));
+        return resolve(review);
+      },
+      onAttentionChange: (attention) => {
+        if (attention === null) {
+          entry.lastFailure = null;
+          entry.resolutionFingerprint = null;
+        }
+        broadcast(entry, (callbacks) => callbacks.onAttentionChange?.(attention));
+      },
+      onRecoveryFailure: (error) => {
+        entry.lastFailure = { error };
+        entry.resolutionFingerprint = null;
+        broadcast(entry, (callbacks) => callbacks.onRecoveryFailure?.(error));
+      },
+      onReviewRequiredChange: (required) =>
+        broadcast(entry, (callbacks) => callbacks.onReviewRequiredChange?.(required)),
+      onCurrentMissingChange: (missing) =>
+        broadcast(entry, (callbacks) => callbacks.onCurrentMissingChange?.(missing)),
       revisionFromResult: (value) =>
         (entry.persistTransport ?? activeTransport(entry)).revisionFromResult(value),
       onPendingChange: (pending) => {
@@ -246,6 +425,7 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
     revision: string,
   ): void {
     const fingerprint = `${action}\0${revision}`;
+    if (entry.coordinator.requiresRecovery) return;
     if (entry.resolutionFingerprint === fingerprint) return;
     entry.resolutionFingerprint = fingerprint;
     if (action === "discard") entry.coordinator.discardPending(revision);
@@ -276,13 +456,18 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
       const clean = await entry.coordinator.flush();
       if (
         !clean ||
+        entry.coordinator.hasRecoveryReceipt ||
         entry.leases.size !== 0 ||
         entry.generation !== generation ||
         this.entries.get(entry.key) !== entry
       )
         return;
-      entry.coordinator.dispose();
+      const retirement = entry.coordinator.retireCleanJournal();
       this.entries.delete(entry.key);
+      this.retiring.set(entry.key, retirement);
+      void retirement.finally(() => {
+        if (this.retiring.get(entry.key) === retirement) this.retiring.delete(entry.key);
+      });
     });
   }
 }

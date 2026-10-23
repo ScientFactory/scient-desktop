@@ -1,11 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as TestClock from "effect/testing/TestClock";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { handleMock, netFetchMock, unhandleMock } = vi.hoisted(() => ({
@@ -284,50 +284,69 @@ describe("ElectronProtocol", () => {
     }).pipe(Effect.provide(layerProtocol)),
   );
 
-  it("keeps executable sources host-restricted while allowing runtime network resources", () => {
-    const policy = ElectronProtocol.makeDesktopContentSecurityPolicy({
-      scheme: "t3code",
-      targetOrigin: new URL("http://127.0.0.1:3773/"),
-      clerkFrontendApiHostname: "clerk.t3.codes",
-    });
-    const directives = Object.fromEntries(
-      policy.split("; ").map((directive) => {
-        const [name, ...sources] = directive.split(" ");
-        return [name, sources];
-      }),
-    );
+  it.effect(
+    "keeps executable sources host-restricted while allowing runtime network resources",
+    () =>
+      Effect.gen(function* () {
+        let handler: ((request: Request) => Promise<Response>) | undefined;
+        handleMock.mockImplementation((_scheme, nextHandler) => {
+          handler = nextHandler;
+        });
+        netFetchMock.mockResolvedValue(new Response("<html>app</html>"));
+        const protocol = yield* ElectronProtocol.ElectronProtocol;
+        yield* protocol.registerDesktopProtocol({
+          scheme: "t3code",
+          targetOrigin: new URL("http://127.0.0.1:3773/"),
+          clerkFrontendApiHostname: "clerk.t3.codes",
+        });
+        const response = yield* Effect.promise(() => handler!(new Request("t3code://app/")));
+        const policy = response.headers.get("content-security-policy") ?? "";
+        const directives = Object.fromEntries(
+          policy.split("; ").map((directive) => {
+            const [name, ...sources] = directive.split(" ");
+            return [name, sources];
+          }),
+        );
 
-    assert.deepEqual(directives["script-src"], [
-      "'self'",
-      "'unsafe-inline'",
-      "'wasm-unsafe-eval'",
-      "https://clerk.t3.codes",
-      "https://challenges.cloudflare.com",
-    ]);
-    assert.deepEqual(directives["connect-src"], [
-      "'self'",
-      "blob:",
-      "http:",
-      "https:",
-      "ws:",
-      "wss:",
-    ]);
-    assert.deepEqual(directives["img-src"], [
-      "'self'",
-      "t3code:",
-      "blob:",
-      "data:",
-      "http:",
-      "https:",
-    ]);
-    assert.deepEqual(directives["media-src"], ["'self'", "t3code:", "blob:", "http:", "https:"]);
-    assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "data:"]);
-    assert.deepEqual(directives["frame-src"], [
-      "'self'",
-      "blob:",
-      "http:",
-      "https:",
-      "https://challenges.cloudflare.com",
-    ]);
-  });
+        assert.deepEqual(directives["script-src"], [
+          "'self'",
+          "'unsafe-inline'",
+          "'wasm-unsafe-eval'",
+          "https://clerk.t3.codes",
+          "https://challenges.cloudflare.com",
+        ]);
+        assert.deepEqual(directives["connect-src"], [
+          "'self'",
+          "blob:",
+          "http:",
+          "https:",
+          "ws:",
+          "wss:",
+        ]);
+        assert.deepEqual(directives["img-src"], [
+          "'self'",
+          "t3code:",
+          "blob:",
+          "data:",
+          "http:",
+          "https:",
+        ]);
+        assert.deepEqual(directives["media-src"], [
+          "'self'",
+          "t3code:",
+          "blob:",
+          "http:",
+          "https:",
+        ]);
+        assert.deepEqual(directives["object-src"], ["'self'", "blob:", "http:", "https:"]);
+        assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "data:"]);
+        assert.deepEqual(directives["frame-src"], [
+          "'self'",
+          "blob:",
+          "http:",
+          "https:",
+          "https://challenges.cloudflare.com",
+        ]);
+      }).pipe(Effect.provide(layerProtocol)),
+  );
 });

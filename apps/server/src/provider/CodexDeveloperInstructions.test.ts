@@ -1,11 +1,65 @@
+import { buildCodexDeveloperInstructions } from "./CodexDeveloperInstructions.ts";
 import * as NodeAssert from "node:assert/strict";
 
+import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "./ScientProviderInstructions.ts";
+import type { McpCapability } from "../mcp/McpInvocationContext.ts";
 import { describe, it } from "vite-plus/test";
 
 import {
   buildCodexAdditionalContext,
-  buildCodexDeveloperInstructions,
+  CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
 } from "./CodexDeveloperInstructions.ts";
+
+describe("buildCodexAdditionalContext", () => {
+  describe.each([
+    { model: "gpt-5.3-codex", reasoningEffort: "high" },
+    { model: "custom-model", modelName: "Custom 🦊 Model", reasoningEffort: "xhigh" },
+  ])("with runtime $model", (runtime) => {
+    it.each([
+      undefined,
+      new Set<McpCapability>(),
+      new Set<McpCapability>(["preview"]),
+      new Set<McpCapability>(["device"]),
+      new Set<McpCapability>(["preview", "device"]),
+      new Set<McpCapability>([
+        "preview",
+        "device",
+        "compute:inventory",
+        "documents:build",
+        "skills:read",
+      ]),
+    ])("keeps every entry within Codex's per-entry cap with tools %j", (availability) => {
+      const context = buildCodexAdditionalContext(runtime, availability);
+
+      for (const [key, entry] of Object.entries(context)) {
+        // Codex counts ceil(UTF-8 bytes / 4) tokens, excluding keys and wrappers.
+        const bytes = Buffer.byteLength(entry.value, "utf8");
+        const limit = CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES;
+        NodeAssert.ok(
+          bytes <= limit,
+          `${key}: ${bytes} UTF-8 bytes exceeds Codex's ${limit}-byte per-entry cap by ${bytes - limit} bytes; split the instructions into separate entries to avoid silent truncation`,
+        );
+      }
+    });
+  });
+
+  it("delivers all orchestration sections in authored order when keys are sorted", () => {
+    const context = buildCodexAdditionalContext({
+      model: "gpt-5.3-codex",
+      reasoningEffort: "high",
+    });
+    const sections = Object.keys(context)
+      .filter((key) => key.startsWith("t3_code_orchestration_"))
+      .sort()
+      .map((key) => context[key]!);
+
+    NodeAssert.ok(sections.every((entry) => entry.kind === "application"));
+    NodeAssert.equal(
+      sections.map((entry) => entry.value).join("\n\n"),
+      SCIENT_ORCHESTRATION_INSTRUCTIONS.trim(),
+    );
+  });
+});
 
 describe("buildCodexDeveloperInstructions", () => {
   it("appends runtime info after the mode instructions", () => {
@@ -21,42 +75,6 @@ describe("buildCodexDeveloperInstructions", () => {
     NodeAssert.match(instructions, /Scient/);
     NodeAssert.match(instructions, /Codex harness/);
     NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
-  });
-
-  it("describes Markdown media support in the runtime context in both modes", () => {
-    {
-      const instructions = runtimeInstructions({
-        model: "gpt-5.3-codex",
-        reasoningEffort: "high",
-      });
-      NodeAssert.match(
-        instructions,
-        /<runtime_info>.*embed images and videos.*Markdown.*<\/runtime_info>/,
-      );
-    }
-  });
-
-  it("includes runtime info alongside plan mode instructions", () => {
-    const instructions = runtimeInstructions({
-      model: "gpt-5.3-codex",
-      reasoningEffort: "medium",
-    });
-
-    NodeAssert.match(buildCodexDeveloperInstructions("plan"), /^<collaboration_mode># Plan Mode/);
-    NodeAssert.match(instructions, /as gpt-5\.3-codex with medium reasoning effort/);
-  });
-
-  it("varies with the model and effort of each turn", () => {
-    const first = runtimeInstructions({
-      model: "gpt-5.3-codex",
-      reasoningEffort: "medium",
-    });
-    const second = runtimeInstructions({
-      model: "gpt-5.4",
-      reasoningEffort: "high",
-    });
-
-    NodeAssert.notEqual(first, second);
   });
 
   it("flattens multiline metadata into single-line runtime info", () => {

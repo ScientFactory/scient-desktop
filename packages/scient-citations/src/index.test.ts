@@ -1,7 +1,7 @@
 import type { ScientSourceRecord } from "@scientfactory/scient-sources";
-import { describe, expect, it } from "vite-plus/test";
+import { beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { formatSourceReference, scientSourceToCslJson } from "./index.ts";
+import { SCIENT_REFERENCE_STYLES, formatSourceReference, scientSourceToCslJson } from "./index.ts";
 
 const article: ScientSourceRecord = {
   formatVersion: 1,
@@ -86,6 +86,13 @@ describe("scientSourceToCslJson", () => {
 });
 
 describe("formatSourceReference", () => {
+  // Building a style's citation engine is a one-time cost per process (over a
+  // second for APA locally, several on a loaded CI runner). Pay it here so the
+  // tests below time only rendering.
+  beforeAll(() => {
+    for (const style of SCIENT_REFERENCE_STYLES) formatSourceReference(article, style.id);
+  });
+
   it("renders a Vancouver bibliography entry", () => {
     expect(formatSourceReference(article, "vancouver")).toBe(
       "1. Ioannidis JPA. Why Most Published Research Findings Are False. PLOS Medicine. 2005;2(8):e124. doi:10.1371/journal.pmed.0020124",
@@ -95,6 +102,24 @@ describe("formatSourceReference", () => {
   it("renders an APA 7 bibliography entry from the same source truth", () => {
     expect(formatSourceReference(article, "apa")).toBe(
       "Ioannidis, J. P. A. (2005). Why Most Published Research Findings Are False. PLOS Medicine, 2(8), e124. https://doi.org/10.1371/journal.pmed.0020124",
+    );
+  });
+
+  it("renders a source's current metadata after rendering it before an edit", () => {
+    const edited: ScientSourceRecord = {
+      ...article,
+      revision: 2,
+      title: "A Corrected Title",
+      creators: [
+        { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
+      ],
+    };
+
+    expect(formatSourceReference(edited, "apa")).toBe(
+      "Lovelace, A. (2005). A Corrected Title. PLOS Medicine, 2(8), e124. https://doi.org/10.1371/journal.pmed.0020124",
+    );
+    expect(formatSourceReference(edited, "vancouver")).toBe(
+      "1. Lovelace A. A Corrected Title. PLOS Medicine. 2005;2(8):e124. doi:10.1371/journal.pmed.0020124",
     );
   });
 });

@@ -9,6 +9,7 @@ import { makeClaudeEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
+  getClaudeCatalogModelCapabilities,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogEffort,
@@ -54,6 +55,84 @@ export function buildClaudeVoiceTranscriptCorrectionArgs(input: {
   ];
 }
 
+const makeClaudeVoiceTranscriptCorrectionEffect = Effect.fn(
+  "ClaudeVoiceTranscriptCorrection.makeClaudeVoiceTranscriptCorrection",
+)(function* (
+  settings: ClaudeSettings,
+  environment: NodeJS.ProcessEnv,
+  modelCatalog: Effect.Effect<ClaudeModelCatalog>,
+): Effect.fn.Return<
+  ProviderVoiceTranscriptCorrection,
+  never,
+  FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const providerEnvironment = yield* makeClaudeEnvironment(settings, environment);
+  const scopedModelCatalog = modelCatalog.pipe(
+    Effect.map((catalog) => scopeClaudeModelCatalog(catalog, settings.customModels)),
+  );
+
+  const correct: ProviderVoiceTranscriptCorrection["correct"] = (input) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const tempDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "scient-voice-claude-",
+        });
+        const catalog = yield* scopedModelCatalog;
+        const model = resolveClaudeCatalogApiModelId(catalog, input.modelSelection);
+        // Voice chooses its own effort; unknown models have no advertised support for that default.
+        const supportsEffort = (
+          getClaudeCatalogModelCapabilities(catalog, input.modelSelection.model)
+            .optionDescriptors ?? []
+        ).some((option) => option.id === "effort");
+        const effort = supportsEffort
+          ? normalizeClaudeCatalogEffort(
+              catalog,
+              resolveClaudeCatalogEffort(catalog, input.modelSelection.model, "low"),
+              input.modelSelection.model,
+            )
+          : undefined;
+        const stdout = yield* runVoiceTranscriptCorrectionProcess({
+          spawner,
+          binaryPath: settings.binaryPath?.trim() || "claude",
+          args: buildClaudeVoiceTranscriptCorrectionArgs({
+            model,
+            jsonSchema: encodeJson(toJsonSchemaObject(VoiceTranscriptCorrectionOutput)),
+            ...(effort ? { effort } : {}),
+          }),
+          cwd: tempDirectory,
+          environment: providerEnvironment,
+          prompt: buildVoiceTranscriptCorrectionPrompt(input.transcript, input.language),
+        });
+        const envelope = yield* decodeClaudeOutput(stdout).pipe(
+          Effect.mapError(
+            () =>
+              new VoiceTranscriptCorrectionError({
+                kind: "malformed-response",
+                message: "Claude returned invalid structured output.",
+              }),
+          ),
+        );
+        return yield* validateVoiceTranscriptCorrectionOutput({
+          transcript: input.transcript,
+          output: envelope.structured_output,
+        });
+      }).pipe(
+        Effect.mapError((cause) =>
+          isVoiceTranscriptCorrectionError(cause)
+            ? cause
+            : new VoiceTranscriptCorrectionError({
+                kind: "provider-error",
+                message: "Claude transcript correction failed.",
+              }),
+        ),
+      ),
+    );
+
+  return { correct };
+});
+
 export function makeClaudeVoiceTranscriptCorrection(
   settings: ClaudeSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -63,64 +142,5 @@ export function makeClaudeVoiceTranscriptCorrection(
   never,
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const providerEnvironment = yield* makeClaudeEnvironment(settings, environment);
-    const scopedModelCatalog = modelCatalog.pipe(
-      Effect.map((catalog) => scopeClaudeModelCatalog(catalog, settings.customModels)),
-    );
-
-    const correct: ProviderVoiceTranscriptCorrection["correct"] = (input) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const tempDirectory = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "scient-voice-claude-",
-          });
-          const catalog = yield* scopedModelCatalog;
-          const model = resolveClaudeCatalogApiModelId(catalog, input.modelSelection);
-          const effort = normalizeClaudeCatalogEffort(
-            catalog,
-            resolveClaudeCatalogEffort(catalog, input.modelSelection.model, "low"),
-            input.modelSelection.model,
-          );
-          const stdout = yield* runVoiceTranscriptCorrectionProcess({
-            spawner,
-            binaryPath: settings.binaryPath?.trim() || "claude",
-            args: buildClaudeVoiceTranscriptCorrectionArgs({
-              model,
-              jsonSchema: encodeJson(toJsonSchemaObject(VoiceTranscriptCorrectionOutput)),
-              ...(effort ? { effort } : {}),
-            }),
-            cwd: tempDirectory,
-            environment: providerEnvironment,
-            prompt: buildVoiceTranscriptCorrectionPrompt(input.transcript, input.language),
-          });
-          const envelope = yield* decodeClaudeOutput(stdout).pipe(
-            Effect.mapError(
-              () =>
-                new VoiceTranscriptCorrectionError({
-                  kind: "malformed-response",
-                  message: "Claude returned invalid structured output.",
-                }),
-            ),
-          );
-          return yield* validateVoiceTranscriptCorrectionOutput({
-            transcript: input.transcript,
-            output: envelope.structured_output,
-          });
-        }).pipe(
-          Effect.mapError((cause) =>
-            isVoiceTranscriptCorrectionError(cause)
-              ? cause
-              : new VoiceTranscriptCorrectionError({
-                  kind: "provider-error",
-                  message: "Claude transcript correction failed.",
-                }),
-          ),
-        ),
-      );
-
-    return { correct };
-  });
+  return makeClaudeVoiceTranscriptCorrectionEffect(settings, environment, modelCatalog);
 }

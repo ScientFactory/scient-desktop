@@ -5,7 +5,6 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type ComponentProps,
@@ -25,6 +24,14 @@ const ToolbarPositionContext = createContext<{
   readonly beginMove: () => void;
   readonly reset: () => void;
 } | null>(null);
+
+export function useVisualCardToolbarMenuClose() {
+  const position = useContext(ToolbarPositionContext);
+  return () => {
+    const handle = position?.handle.current;
+    if (handle && !handle.hidden) handle.focus({ preventScroll: true });
+  };
+}
 
 /** Menu closing owns the focus transfer to the temporary movement handle. */
 export function VisualCardMenuPopup(props: ComponentProps<typeof MenuPopup>) {
@@ -81,21 +88,17 @@ export function VisualCardToolbar(props: {
     movementAllowed.current = directMovement || moving;
   }, [directMovement, moving]);
   const controller = useRef<ReturnType<typeof attachVisualCardToolbarDrag> | null>(null);
-  const position = useMemo(
-    () =>
-      directMovement
-        ? null
-        : {
-            moving,
-            handle: handleRef,
-            beginMove: () => setMoving(true),
-            reset: () => {
-              controller.current?.reset();
-              setMoving(false);
-            },
-          },
-    [directMovement, moving],
-  );
+  const position = directMovement
+    ? null
+    : {
+        moving,
+        handle: handleRef,
+        beginMove: () => setMoving(true),
+        reset: () => {
+          controller.current?.reset();
+          setMoving(false);
+        },
+      };
 
   useEffect(() => {
     const toolbar = toolbarRef.current;

@@ -126,8 +126,13 @@ export interface OmpRpcClient {
     level: OmpThinkingLevel,
   ) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
   readonly compact: (customInstructions?: string) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
+  /**
+   * With a model (OMP 18.6.3+), the session continues on it instead of its
+   * saved model, whose restoration is then not required.
+   */
   readonly switchSession: (
     sessionPath: string,
+    model?: { readonly provider: string; readonly modelId: string },
   ) => Effect.Effect<OmpSwitchSessionResult, OmpRpcError>;
   readonly setSubagentSubscription: (
     level: "off" | "progress" | "events",
@@ -339,53 +344,52 @@ type DecodedEvent =
       readonly event: OmpRpcEvent | undefined;
     };
 
-const decodeOmpEvent = (value: unknown) =>
-  Effect.gen(function* () {
-    if (!isRecord(value) || typeof value.type !== "string") {
-      return yield* violation("RPC event omitted its type.");
-    }
-    const type = value.type;
-    const project = (projection: unknown) =>
-      decodeEventProjection(projection).pipe(
-        Effect.mapError(() => violation(`RPC ${type} event could not be projected.`)),
-      );
-    if (!KNOWN_EVENT_TYPES.has(type)) {
-      const event = yield* project({ type, raw: value });
-      return { _tag: "Event", event } satisfies DecodedEvent;
-    }
-    const decodeOutcome = yield* decodeKnownEvent(value).pipe(Effect.option);
-    if (Option.isNone(decodeOutcome)) {
-      if (ROUTING_CRITICAL_EVENT_TYPES.has(type)) {
-        return yield* violation(`RPC ${type} event failed schema decoding.`);
-      }
-      const detail = `The agent sent an '${type}' event this client build cannot read.`;
-      const degraded = degradedProjection(value);
-      if (type === "message_end" && degraded === undefined) {
-        return yield* violation("RPC message_end event omitted its message.");
-      }
-      // A benign shape change in an informational event must not end the
-      // conversation. A drifted message_end or prompt_result still carries the
-      // turn outcome, so its matching fields are kept.
-      return {
-        _tag: "Degraded",
-        eventType: type,
-        detail,
-        event: degraded === undefined ? undefined : yield* project(degraded),
-      } satisfies DecodedEvent;
-    }
-    const decoded = decodeOutcome.value;
-    if (decoded.type === "extension_ui_request" && decoded.method === "open_url" && !decoded.url) {
-      return yield* violation("RPC open_url event omitted its URL.");
-    }
-    if (decoded.type === "prompt_result") {
-      // `error` is a structured object here and a string on other events.
-      const { error, ...rest } = decoded;
-      const event = yield* project(error === undefined ? rest : { ...rest, promptError: error });
-      return { _tag: "Event", event } satisfies DecodedEvent;
-    }
-    const event = yield* project(decoded);
+const decodeOmpEvent = Effect.fn("client.decodeOmpEvent")(function* (value: unknown) {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return yield* violation("RPC event omitted its type.");
+  }
+  const type = value.type;
+  const project = (projection: unknown) =>
+    decodeEventProjection(projection).pipe(
+      Effect.mapError(() => violation(`RPC ${type} event could not be projected.`)),
+    );
+  if (!KNOWN_EVENT_TYPES.has(type)) {
+    const event = yield* project({ type, raw: value });
     return { _tag: "Event", event } satisfies DecodedEvent;
-  });
+  }
+  const decodeOutcome = yield* decodeKnownEvent(value).pipe(Effect.option);
+  if (Option.isNone(decodeOutcome)) {
+    if (ROUTING_CRITICAL_EVENT_TYPES.has(type)) {
+      return yield* violation(`RPC ${type} event failed schema decoding.`);
+    }
+    const detail = `The agent sent an '${type}' event this client build cannot read.`;
+    const degraded = degradedProjection(value);
+    if (type === "message_end" && degraded === undefined) {
+      return yield* violation("RPC message_end event omitted its message.");
+    }
+    // A benign shape change in an informational event must not end the
+    // conversation. A drifted message_end or prompt_result still carries the
+    // turn outcome, so its matching fields are kept.
+    return {
+      _tag: "Degraded",
+      eventType: type,
+      detail,
+      event: degraded === undefined ? undefined : yield* project(degraded),
+    } satisfies DecodedEvent;
+  }
+  const decoded = decodeOutcome.value;
+  if (decoded.type === "extension_ui_request" && decoded.method === "open_url" && !decoded.url) {
+    return yield* violation("RPC open_url event omitted its URL.");
+  }
+  if (decoded.type === "prompt_result") {
+    // `error` is a structured object here and a string on other events.
+    const { error, ...rest } = decoded;
+    const event = yield* project(error === undefined ? rest : { ...rest, promptError: error });
+    return { _tag: "Event", event } satisfies DecodedEvent;
+  }
+  const event = yield* project(decoded);
+  return { _tag: "Event", event } satisfies DecodedEvent;
+});
 
 interface QueuedNotification {
   readonly notification: OmpRpcNotification;
@@ -510,46 +514,48 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
     });
 
   /** The agent violated the protocol: report it, terminate, and fail the caller. */
-  const fatal = (detail: string): Effect.Effect<never, OmpRpcProtocolViolationError> =>
-    Effect.gen(function* () {
-      const error = violation(detail);
-      if ((yield* Ref.get(state)).closedBy === undefined) {
-        yield* offerNow({ _tag: "ProtocolFailure", detail }, Buffer.byteLength(detail));
-      }
-      if (yield* terminate(error)) yield* closeTransportInBackground;
-      return yield* error;
-    });
+  const fatal = Effect.fn("client.fatal")(function* (
+    detail: string,
+  ): Effect.fn.Return<never, OmpRpcProtocolViolationError> {
+    const error = violation(detail);
+    if ((yield* Ref.get(state)).closedBy === undefined) {
+      yield* offerNow({ _tag: "ProtocolFailure", detail }, Buffer.byteLength(detail));
+    }
+    if (yield* terminate(error)) yield* closeTransportInBackground;
+    return yield* error;
+  });
 
   const closedError = Ref.get(state).pipe(Effect.map((current) => current.closedBy));
 
-  const writeFrame = (frame: Record<string, unknown> & { readonly type: string }) =>
-    Effect.gen(function* () {
-      const text = yield* encodeJson(frame).pipe(
-        Effect.mapError((cause) => protocol(`Failed to encode an RPC ${frame.type} frame.`, cause)),
-      );
-      const bytes = encoder.encode(`${text}\n`);
-      const { maxFrameBytes } = yield* Ref.get(clientLimits);
-      if (bytes.byteLength > maxFrameBytes) {
-        return yield* new OmpRpcFrameTooLargeError({
-          frameType: frame.type,
-          frameBytes: bytes.byteLength,
-          limitBytes: maxFrameBytes,
-        });
-      }
-      yield* trace("outbound", frame);
-      yield* writeLock.withPermit(
-        Effect.gen(function* () {
-          const closed = yield* closedError;
-          if (closed) return yield* closed;
-          yield* io.write(bytes).pipe(
-            Effect.timeoutOption(timeout),
-            Effect.flatMap((written) =>
-              Option.isSome(written) ? Effect.void : fatal(`RPC write of ${frame.type} timed out.`),
-            ),
-          );
-        }),
-      );
-    });
+  const writeFrame = Effect.fn("client.writeFrame")(function* (
+    frame: Record<string, unknown> & { readonly type: string },
+  ) {
+    const text = yield* encodeJson(frame).pipe(
+      Effect.mapError((cause) => protocol(`Failed to encode an RPC ${frame.type} frame.`, cause)),
+    );
+    const bytes = encoder.encode(`${text}\n`);
+    const { maxFrameBytes } = yield* Ref.get(clientLimits);
+    if (bytes.byteLength > maxFrameBytes) {
+      return yield* new OmpRpcFrameTooLargeError({
+        frameType: frame.type,
+        frameBytes: bytes.byteLength,
+        limitBytes: maxFrameBytes,
+      });
+    }
+    yield* trace("outbound", frame);
+    yield* writeLock.withPermit(
+      Effect.gen(function* () {
+        const closed = yield* closedError;
+        if (closed) return yield* closed;
+        yield* io.write(bytes).pipe(
+          Effect.timeoutOption(timeout),
+          Effect.flatMap((written) =>
+            Option.isSome(written) ? Effect.void : fatal(`RPC write of ${frame.type} timed out.`),
+          ),
+        );
+      }),
+    );
+  });
 
   const rememberPrompt = (id: string, command: string) =>
     command === "prompt" ||
@@ -663,6 +669,77 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
       }),
     );
 
+  const send = Effect.fn("client.send")(function* (
+    body: Record<string, unknown> & { readonly type: string },
+    internal = false,
+  ): Effect.fn.Return<OmpRpcResponse, OmpRpcError> {
+    const command = body.type;
+    if (!internal) {
+      const negotiatedInTime = yield* Deferred.await(negotiated).pipe(
+        Effect.timeoutOption(timeout),
+      );
+      if (Option.isNone(negotiatedInTime)) {
+        return yield* new OmpRpcCommandError({
+          command,
+          code: "timeout",
+          detail: `RPC command ${command} timed out after ${timeoutMs} ms waiting for protocol negotiation.`,
+        });
+      }
+    }
+    const id = String(yield* Ref.updateAndGet(nextId, (current) => current + 1));
+    const waiter = yield* Deferred.make<OmpRpcResponse, OmpRpcError>();
+    const deadlineMs = UNTIMED_COMMANDS.has(command)
+      ? undefined
+      : LONG_RUNNING_COMMANDS.has(command)
+        ? LONG_RUNNING_COMMAND_TIMEOUT_MS
+        : timeoutMs;
+    const response = yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        // Admission and registration are one atomic step, and the entry is
+        // removed on every exit, including interruption during the write.
+        const refused = yield* Ref.modify(
+          state,
+          (current): readonly [OmpRpcError | undefined, ClientState] => {
+            if (current.closedBy) return [current.closedBy, current];
+            if (current.pending.size >= MAX_PENDING_COMMANDS) {
+              return [protocol("Too many RPC commands are waiting for a response."), current];
+            }
+            const pending = new Map(current.pending);
+            pending.set(id, { command, waiter });
+            return [undefined, { ...current, pending }];
+          },
+        );
+        if (refused) return yield* refused;
+        return yield* restore(
+          Effect.gen(function* () {
+            yield* writeFrame({ ...body, id });
+            if (deadlineMs === undefined) return yield* Deferred.await(waiter);
+            const answered = yield* Deferred.await(waiter).pipe(
+              Effect.timeoutOption(Duration.millis(deadlineMs)),
+            );
+            if (Option.isSome(answered)) return answered.value;
+            // Only this waiter fails. A late response is ignored.
+            return yield* new OmpRpcCommandError({
+              command,
+              requestId: id,
+              code: "timeout",
+              detail: `RPC command ${command} timed out after ${deadlineMs} ms.`,
+            });
+          }),
+        ).pipe(Effect.ensuring(takeWaiter(id)));
+      }),
+    );
+    if (!response.success) {
+      return yield* new OmpRpcCommandError({
+        command: response.command,
+        detail: response.error ?? `RPC command ${response.command} failed.`,
+        requestId: response.id,
+        ...(response.code ? { code: response.code } : {}),
+      });
+    }
+    return response;
+  });
+
   const negotiate = send(
     { type: "negotiate_protocol", protocolVersion: OMP_RPC_PROTOCOL_V2 },
     true,
@@ -682,26 +759,27 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
     ),
   );
 
-  const dispatchReady = (value: Record<string, unknown>) =>
-    Effect.gen(function* () {
-      if (yield* Deferred.isDone(ready)) {
-        return yield* fatal("RPC emitted a second ready frame.");
-      }
-      const frame = yield* decodeReady(value).pipe(
-        Effect.catch(() => fatal("RPC ready frame is invalid.")),
-      );
-      negotiatedLimits = defaultOmpFrameLimits(frame);
-      yield* Ref.set(inboundLimits, negotiatedLimits);
-      yield* Ref.set(clientLimits, {
-        maxFrameBytes: outboundFrameBytes(frame),
-        maxReassembledFrameBytes: negotiatedLimits.maxReassembledFrameBytes,
-      });
-      yield* Deferred.succeed(ready, frame);
-      if (!frame.supportedProtocolVersions.includes(OMP_RPC_PROTOCOL_V2)) {
-        return yield* fatal("RPC protocol v2 was not offered.");
-      }
-      yield* Effect.forkIn(negotiate, scope);
+  const dispatchReady = Effect.fn("client.dispatchReady")(function* (
+    value: Record<string, unknown>,
+  ) {
+    if (yield* Deferred.isDone(ready)) {
+      return yield* fatal("RPC emitted a second ready frame.");
+    }
+    const frame = yield* decodeReady(value).pipe(
+      Effect.catch(() => fatal("RPC ready frame is invalid.")),
+    );
+    negotiatedLimits = defaultOmpFrameLimits(frame);
+    yield* Ref.set(inboundLimits, negotiatedLimits);
+    yield* Ref.set(clientLimits, {
+      maxFrameBytes: outboundFrameBytes(frame),
+      maxReassembledFrameBytes: negotiatedLimits.maxReassembledFrameBytes,
     });
+    yield* Deferred.succeed(ready, frame);
+    if (!frame.supportedProtocolVersions.includes(OMP_RPC_PROTOCOL_V2)) {
+      return yield* fatal("RPC protocol v2 was not offered.");
+    }
+    yield* Effect.forkIn(negotiate, scope);
+  });
 
   const dispatchEvent = (value: unknown, size: number) =>
     decodeOmpEvent(value).pipe(
@@ -738,79 +816,6 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
     }
     return dispatchEvent(value, size);
   };
-
-  function send(
-    body: Record<string, unknown> & { readonly type: string },
-    internal = false,
-  ): Effect.Effect<OmpRpcResponse, OmpRpcError> {
-    return Effect.gen(function* () {
-      const command = body.type;
-      if (!internal) {
-        const negotiatedInTime = yield* Deferred.await(negotiated).pipe(
-          Effect.timeoutOption(timeout),
-        );
-        if (Option.isNone(negotiatedInTime)) {
-          return yield* new OmpRpcCommandError({
-            command,
-            code: "timeout",
-            detail: `RPC command ${command} timed out after ${timeoutMs} ms waiting for protocol negotiation.`,
-          });
-        }
-      }
-      const id = String(yield* Ref.updateAndGet(nextId, (current) => current + 1));
-      const waiter = yield* Deferred.make<OmpRpcResponse, OmpRpcError>();
-      const deadlineMs = UNTIMED_COMMANDS.has(command)
-        ? undefined
-        : LONG_RUNNING_COMMANDS.has(command)
-          ? LONG_RUNNING_COMMAND_TIMEOUT_MS
-          : timeoutMs;
-      const response = yield* Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          // Admission and registration are one atomic step, and the entry is
-          // removed on every exit, including interruption during the write.
-          const refused = yield* Ref.modify(
-            state,
-            (current): readonly [OmpRpcError | undefined, ClientState] => {
-              if (current.closedBy) return [current.closedBy, current];
-              if (current.pending.size >= MAX_PENDING_COMMANDS) {
-                return [protocol("Too many RPC commands are waiting for a response."), current];
-              }
-              const pending = new Map(current.pending);
-              pending.set(id, { command, waiter });
-              return [undefined, { ...current, pending }];
-            },
-          );
-          if (refused) return yield* refused;
-          return yield* restore(
-            Effect.gen(function* () {
-              yield* writeFrame({ ...body, id });
-              if (deadlineMs === undefined) return yield* Deferred.await(waiter);
-              const answered = yield* Deferred.await(waiter).pipe(
-                Effect.timeoutOption(Duration.millis(deadlineMs)),
-              );
-              if (Option.isSome(answered)) return answered.value;
-              // Only this waiter fails. A late response is ignored.
-              return yield* new OmpRpcCommandError({
-                command,
-                requestId: id,
-                code: "timeout",
-                detail: `RPC command ${command} timed out after ${deadlineMs} ms.`,
-              });
-            }),
-          ).pipe(Effect.ensuring(takeWaiter(id)));
-        }),
-      );
-      if (!response.success) {
-        return yield* new OmpRpcCommandError({
-          command: response.command,
-          detail: response.error ?? `RPC command ${response.command} failed.`,
-          requestId: response.id,
-          ...(response.code ? { code: response.code } : {}),
-        });
-      }
-      return response;
-    });
-  }
 
   const acceptLine = (text: string, byteLength: number) => {
     const line = text.endsWith("\r") ? text.slice(0, -1) : text;
@@ -870,30 +875,29 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
     // OMP counts the terminating newline as part of the physical frame.
     Ref.get(inboundLimits).pipe(Effect.map((limits) => lineBytes + 1 > limits.maxFrameBytes));
 
-  const acceptChunk = (chunk: Uint8Array) =>
-    Effect.gen(function* () {
-      let start = 0;
-      while (start < chunk.byteLength) {
-        const newline = chunk.indexOf(0x0a, start);
-        const piece = chunk.subarray(start, newline === -1 ? chunk.byteLength : newline);
-        const lineBytes = partialLineBytes + piece.byteLength;
-        if (yield* exceedsPhysicalLimit(lineBytes)) {
-          partialLine = [];
-          partialLineBytes = 0;
-          return yield* fatal("RPC line exceeded the physical frame limit.");
-        }
-        if (newline === -1) {
-          partialLine.push(piece.slice());
-          partialLineBytes = lineBytes;
-          return;
-        }
-        const line = concatBytes([...partialLine, piece], lineBytes);
+  const acceptChunk = Effect.fn("client.acceptChunk")(function* (chunk: Uint8Array) {
+    let start = 0;
+    while (start < chunk.byteLength) {
+      const newline = chunk.indexOf(0x0a, start);
+      const piece = chunk.subarray(start, newline === -1 ? chunk.byteLength : newline);
+      const lineBytes = partialLineBytes + piece.byteLength;
+      if (yield* exceedsPhysicalLimit(lineBytes)) {
         partialLine = [];
         partialLineBytes = 0;
-        yield* acceptLineBytes(line);
-        start = newline + 1;
+        return yield* fatal("RPC line exceeded the physical frame limit.");
       }
-    });
+      if (newline === -1) {
+        partialLine.push(piece.slice());
+        partialLineBytes = lineBytes;
+        return;
+      }
+      const line = concatBytes([...partialLine, piece], lineBytes);
+      partialLine = [];
+      partialLineBytes = 0;
+      yield* acceptLineBytes(line);
+      start = newline + 1;
+    }
+  });
 
   const flushAtEof = Effect.suspend(() => {
     if (partialLineBytes === 0) return Effect.void;
@@ -980,9 +984,13 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
         type: "compact",
         ...(customInstructions ? { customInstructions } : {}),
       }),
-    switchSession: (sessionPath) =>
+    switchSession: (sessionPath, model) =>
       commandData(
-        { type: "switch_session", sessionPath },
+        {
+          type: "switch_session",
+          sessionPath,
+          ...(model ? { provider: model.provider, modelId: model.modelId } : {}),
+        },
         decodeSwitchSession,
         "Invalid switch_session response.",
       ),

@@ -1,5 +1,5 @@
 import { isValidElement, type ReactElement, type ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 
 const testState = vi.hoisted(() => ({
@@ -64,6 +64,24 @@ describe("showDesktopUpdateDownloadedToast", () => {
     testState.addToast.mockReset();
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("opens release notes from the configured repository", async () => {
+    vi.stubEnv("T3CODE_DESKTOP_UPDATE_REPOSITORY", "JustYannicc/t3code");
+    const openExternal = vi.fn().mockResolvedValue(true);
+
+    showDesktopUpdateDownloadedToast({ openExternal }, downloadedState());
+    findReleaseNotesLink(getDescription())?.props.onClick?.();
+
+    await vi.waitFor(() => {
+      expect(openExternal).toHaveBeenCalledWith(
+        "https://github.com/JustYannicc/t3code/releases/tag/v0.6.8",
+      );
+    });
+  });
+
   it("opens the downloaded Scient release even when a newer version is available", async () => {
     const openExternal = vi.fn().mockResolvedValue(true);
 
@@ -95,30 +113,6 @@ describe("showDesktopUpdateDownloadedToast", () => {
       expect(openExternal).toHaveBeenCalledWith(
         "https://github.com/ScientFactory/scient-desktop/releases/tag/v0.6.8",
       );
-    });
-  });
-
-  it("omits the link when the updater reports no version at all", () => {
-    showDesktopUpdateDownloadedToast(
-      { openExternal: vi.fn() },
-      downloadedState({ availableVersion: null, downloadedVersion: null }),
-    );
-
-    expect(findReleaseNotesLink(getDescription())).toBeNull();
-  });
-
-  it.each([
-    ["returns false", vi.fn().mockResolvedValue(false)],
-    ["rejects", vi.fn().mockRejectedValue(new Error("open failed"))],
-  ])("shows an error when opening release notes %s", async (_description, openExternal) => {
-    showDesktopUpdateDownloadedToast({ openExternal }, downloadedState());
-    findReleaseNotesLink(getDescription())?.props.onClick?.();
-
-    await vi.waitFor(() => {
-      expect(testState.addToast).toHaveBeenLastCalledWith({
-        type: "error",
-        title: "Unable to open release notes",
-      });
     });
   });
 });

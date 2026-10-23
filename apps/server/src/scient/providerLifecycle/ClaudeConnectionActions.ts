@@ -94,24 +94,23 @@ export function makeClaudeConnectionActionsFromRuntime(
 ): ProviderConnectionActions {
   return {
     methods: ["claude_subscription", "claude_console"],
-    start: (method: ProviderConnectionMethod) =>
-      Effect.gen(function* () {
-        if (method !== "claude_subscription" && method !== "claude_console") {
-          return yield* connectionError("Claude does not support this sign-in method.");
-        }
-        const process = yield* runtime.startLogin(method);
-        return {
-          authorizationUrl: process.authorizationUrl,
-          // Claude Code opens its localhost callback URL itself. The HTTPS URL
-          // printed by the CLI is the provider's manual copy-code recovery,
-          // not Scient's primary launch target.
-          authorizationUrlKind: "manual_fallback",
-          initialStatus: "waiting_for_browser",
-          submitAuthorizationCode: process.submitAuthorizationCode,
-          waitForCompletion: process.waitForExit.pipe(Effect.andThen(runtime.verifyLoggedIn)),
-          cancel: process.cancel,
-        };
-      }),
+    start: Effect.fn("ClaudeConnectionActions.start")(function* (method: ProviderConnectionMethod) {
+      if (method !== "claude_subscription" && method !== "claude_console") {
+        return yield* connectionError("Claude does not support this sign-in method.");
+      }
+      const process = yield* runtime.startLogin(method);
+      return {
+        authorizationUrl: process.authorizationUrl,
+        // Claude Code opens its localhost callback URL itself. The HTTPS URL
+        // printed by the CLI is the provider's manual copy-code recovery,
+        // not Scient's primary launch target.
+        authorizationUrlKind: "manual_fallback",
+        initialStatus: "waiting_for_browser",
+        submitAuthorizationCode: process.submitAuthorizationCode,
+        waitForCompletion: process.waitForExit.pipe(Effect.andThen(runtime.verifyLoggedIn)),
+        cancel: process.cancel,
+      };
+    }),
     disconnect: runtime.logout,
   };
 }
@@ -232,124 +231,121 @@ export const makeClaudeConnectionActions = Effect.fn("ClaudeConnectionActions.ma
     ),
   );
 
-  const startLogin: ClaudeAuthRuntime["startLogin"] = (method) =>
-    Effect.gen(function* () {
-      const args = ["auth", "login", method === "claude_subscription" ? "--claudeai" : "--console"];
-      const resolved = yield* resolveSpawnCommand(settings.binaryPath, args, {
-        env: claudeEnvironment,
-        extendEnv: false,
-      }).pipe(
+  const startLogin: ClaudeAuthRuntime["startLogin"] = Effect.fn(
+    "ClaudeConnectionActions.startLogin",
+  )(function* (method) {
+    const args = ["auth", "login", method === "claude_subscription" ? "--claudeai" : "--console"];
+    const resolved = yield* resolveSpawnCommand(settings.binaryPath, args, {
+      env: claudeEnvironment,
+      extendEnv: false,
+    }).pipe(
+      Effect.mapError((cause) =>
+        connectionError("Scient could not prepare Claude sign in.", cause),
+      ),
+    );
+    const child = yield* spawner
+      .spawn(
+        ChildProcess.make(resolved.command, resolved.args, {
+          env: claudeEnvironment,
+          extendEnv: false,
+          shell: resolved.shell,
+          stdin: { stream: "pipe", endOnDone: false },
+        }),
+      )
+      .pipe(
         Effect.mapError((cause) =>
-          connectionError("Scient could not prepare Claude sign in.", cause),
+          connectionError("Scient could not start Claude sign in.", cause),
         ),
       );
-      const child = yield* spawner
-        .spawn(
-          ChildProcess.make(resolved.command, resolved.args, {
-            env: claudeEnvironment,
-            extendEnv: false,
-            shell: resolved.shell,
-            stdin: { stream: "pipe", endOnDone: false },
-          }),
-        )
-        .pipe(
-          Effect.mapError((cause) =>
-            connectionError("Scient could not start Claude sign in.", cause),
-          ),
-        );
-      const cancel = child
-        .kill({ forceKillAfter: "2 seconds" })
-        .pipe(
-          Effect.mapError((cause) =>
-            connectionError("Claude sign in could not be cancelled.", cause),
-          ),
-        );
-      const authorizationUrl = yield* Deferred.make<string, ProviderConnectionActionError>();
-      const output = yield* Ref.make("");
-      yield* child.all.pipe(
-        Stream.decodeText(),
-        Stream.runForEach((chunk) =>
-          Ref.updateAndGet(output, (current) =>
-            `${current}${chunk}`.slice(-MAX_AUTH_OUTPUT_BYTES),
-          ).pipe(
-            Effect.flatMap((current) => {
-              const url = findClaudeAuthorizationUrl(current);
-              return url
-                ? Deferred.succeed(authorizationUrl, url).pipe(Effect.asVoid)
-                : Effect.void;
-            }),
-          ),
-        ),
-        Effect.catchCause(() =>
-          Deferred.fail(
-            authorizationUrl,
-            connectionError("Claude sign in stopped before opening its secure page."),
-          ).pipe(Effect.asVoid),
-        ),
-        Effect.forkScoped,
-      );
-
-      const exitedBeforeUrl = child.exitCode.pipe(
-        Effect.flatMap(() =>
-          Effect.fail(connectionError("Claude did not provide a secure sign-in page.")),
+    const cancel = child
+      .kill({ forceKillAfter: "2 seconds" })
+      .pipe(
+        Effect.mapError((cause) =>
+          connectionError("Claude sign in could not be cancelled.", cause),
         ),
       );
-      const url = yield* Effect.raceFirst(Deferred.await(authorizationUrl), exitedBeforeUrl).pipe(
-        Effect.timeoutOption(AUTH_URL_TIMEOUT),
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              Effect.fail(connectionError("Claude took too long to open its sign-in page.")),
-            onSome: Effect.succeed,
+    const authorizationUrl = yield* Deferred.make<string, ProviderConnectionActionError>();
+    const output = yield* Ref.make("");
+    yield* child.all.pipe(
+      Stream.decodeText(),
+      Stream.runForEach((chunk) =>
+        Ref.updateAndGet(output, (current) =>
+          `${current}${chunk}`.slice(-MAX_AUTH_OUTPUT_BYTES),
+        ).pipe(
+          Effect.flatMap((current) => {
+            const url = findClaudeAuthorizationUrl(current);
+            return url ? Deferred.succeed(authorizationUrl, url).pipe(Effect.asVoid) : Effect.void;
           }),
         ),
-        Effect.onError(() => cancel.pipe(Effect.ignore)),
-      );
+      ),
+      Effect.catchCause(() =>
+        Deferred.fail(
+          authorizationUrl,
+          connectionError("Claude sign in stopped before opening its secure page."),
+        ).pipe(Effect.asVoid),
+      ),
+      Effect.forkScoped,
+    );
 
-      const submitAuthorizationCode = (code: string) => {
-        const normalized = code.trim();
-        if (
-          normalized.length === 0 ||
-          normalized.length > AUTHORIZATION_CODE_MAX_LENGTH ||
-          hasControlCharacters(normalized)
-        ) {
-          return Effect.fail(connectionError("Enter the one-time code shown by Claude."));
-        }
-        return Stream.run(Stream.encodeText(Stream.make(`${normalized}\n`)), child.stdin).pipe(
-          Effect.mapError((cause) =>
-            connectionError("Scient could not return the one-time code to Claude.", cause),
-          ),
-        );
-      };
+    const exitedBeforeUrl = child.exitCode.pipe(
+      Effect.flatMap(() =>
+        Effect.fail(connectionError("Claude did not provide a secure sign-in page.")),
+      ),
+    );
+    const url = yield* Effect.raceFirst(Deferred.await(authorizationUrl), exitedBeforeUrl).pipe(
+      Effect.timeoutOption(AUTH_URL_TIMEOUT),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(connectionError("Claude took too long to open its sign-in page.")),
+          onSome: Effect.succeed,
+        }),
+      ),
+      Effect.onError(() => cancel.pipe(Effect.ignore)),
+    );
 
-      const completed = child.exitCode.pipe(
-        Effect.mapError((cause) => connectionError("Claude sign in stopped unexpectedly.", cause)),
-        Effect.flatMap((code) =>
-          Number(code) === 0
-            ? Effect.void
-            : Effect.fail(connectionError("Claude sign in was not completed.")),
+    const submitAuthorizationCode = (code: string) => {
+      const normalized = code.trim();
+      if (
+        normalized.length === 0 ||
+        normalized.length > AUTHORIZATION_CODE_MAX_LENGTH ||
+        hasControlCharacters(normalized)
+      ) {
+        return Effect.fail(connectionError("Enter the one-time code shown by Claude."));
+      }
+      return Stream.run(Stream.encodeText(Stream.make(`${normalized}\n`)), child.stdin).pipe(
+        Effect.mapError((cause) =>
+          connectionError("Scient could not return the one-time code to Claude.", cause),
         ),
       );
-      const waitForExit = completed.pipe(
-        Effect.timeoutOption(AUTH_LOGIN_TIMEOUT),
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              cancel.pipe(
-                Effect.ignore,
-                Effect.andThen(
-                  Effect.fail(
-                    connectionError("Claude sign in took too long. Start sign in again."),
-                  ),
-                ),
+    };
+
+    const completed = child.exitCode.pipe(
+      Effect.mapError((cause) => connectionError("Claude sign in stopped unexpectedly.", cause)),
+      Effect.flatMap((code) =>
+        Number(code) === 0
+          ? Effect.void
+          : Effect.fail(connectionError("Claude sign in was not completed.")),
+      ),
+    );
+    const waitForExit = completed.pipe(
+      Effect.timeoutOption(AUTH_LOGIN_TIMEOUT),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            cancel.pipe(
+              Effect.ignore,
+              Effect.andThen(
+                Effect.fail(connectionError("Claude sign in took too long. Start sign in again.")),
               ),
-            onSome: Effect.succeed,
-          }),
-        ),
-      );
+            ),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
 
-      return { authorizationUrl: url, submitAuthorizationCode, waitForExit, cancel };
-    });
+    return { authorizationUrl: url, submitAuthorizationCode, waitForExit, cancel };
+  });
 
   const logout = runClaudeAuthCommand(settings, claudeEnvironment, spawner, [
     "auth",

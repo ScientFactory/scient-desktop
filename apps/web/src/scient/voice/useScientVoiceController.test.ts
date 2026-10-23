@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { routeCompletedVoiceTranscription } from "./useScientVoiceController.ts";
+import {
+  describeMicrophoneAccessRefusal,
+  routeCompletedVoiceTranscription,
+} from "./useScientVoiceController.ts";
 
 describe("routeCompletedVoiceTranscription", () => {
   it("routes an in-flight result through the latest render callbacks", () => {
@@ -52,5 +55,13 @@ describe("routeCompletedVoiceTranscription", () => {
 
     expect(firstSubmit).not.toHaveBeenCalled();
     expect(latestSubmit).toHaveBeenCalledOnce();
+  });
+});
+
+describe("describeMicrophoneAccessRefusal", () => {
+  it("points each desktop platform at its own privacy setting", () => {
+    expect(describeMicrophoneAccessRefusal("denied", "win32")).toContain("Windows Settings");
+    expect(describeMicrophoneAccessRefusal("denied", "darwin")).toContain("System Settings");
+    expect(describeMicrophoneAccessRefusal("restricted", "darwin")).toContain("administrator");
   });
 });

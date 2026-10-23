@@ -40,9 +40,7 @@ export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./projectClone.ts";
 export * from "./pullRequest.ts";
-
 // SCIENT-ORCHESTRATION:START — historical data keeps its canonical codecs
-
 // after the V1 execution facade retires.
 export * from "./legacy/orchestrationEvent.ts";
 export { ScientConversationDispatchResult as DispatchResult } from "./scientConversationFork.ts";
@@ -92,6 +90,10 @@ export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
 export * from "./scientCompute.ts";
 export * from "./scientSkills.ts";
+// SCIENT-FORK:START — Scient Extensions contracts (new files, no upstream edits).
+export * from "./scient/secrets.ts";
+export * from "./scient/extensions.ts";
+// SCIENT-FORK:END
 export * from "./scientLatex.ts";
 export * from "./latexPdfBuild.ts";
 export * from "./browserPdfExport.ts";
@@ -116,6 +118,7 @@ export * from "./browserProfile.ts";
 export * from "./device.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
+export * from "./previewCapture.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./usage.ts";
 export * from "./scheduledTask.ts";

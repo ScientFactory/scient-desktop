@@ -1,0 +1,12 @@
+diff --git a/dist/chunks/index.aTZaPVhf.js b/dist/chunks/index.aTZaPVhf.js
+index 4c481d259556a3c3c974c9504047df161e7feef3..f771f28005d4ca943655dc5c424e5bffdb0236ea 100644
+--- a/dist/chunks/index.aTZaPVhf.js
++++ b/dist/chunks/index.aTZaPVhf.js
+@@ -5250,6 +5250,7 @@ function requireFakeTimersSrc () {
+ 	            const timer = getTimer(clock, id);
+ 	            if (
+ 	                timer.type === ttype ||
++	                (ttype === "IdleCallback" && timer.requestIdleCallback) ||
+ 	                (timer.type === "Timeout" && ttype === "Interval") ||
+ 	                (timer.type === "Interval" && ttype === "Timeout")
+ 	            ) {

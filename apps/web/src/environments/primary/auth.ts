@@ -66,7 +66,7 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
   }
 }
 
-const isPrimaryEnvironmentRequestError = Schema.is(PrimaryEnvironmentRequestError);
+export const isPrimaryEnvironmentRequestError = Schema.is(PrimaryEnvironmentRequestError);
 
 export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.TaggedError<PrimaryEnvironmentPairingCredentialRejectedError>()(
   "PrimaryEnvironmentPairingCredentialRejectedError",
@@ -79,10 +79,6 @@ export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.Tag
     return "Invalid pairing token. Check the token and try again.";
   }
 }
-
-export const isPrimaryEnvironmentPairingCredentialRejectedError = Schema.is(
-  PrimaryEnvironmentPairingCredentialRejectedError,
-);
 
 export class PrimaryEnvironmentAuthSessionTimeoutError extends Schema.TaggedError<PrimaryEnvironmentAuthSessionTimeoutError>()(
   "PrimaryEnvironmentAuthSessionTimeoutError",
@@ -297,9 +293,15 @@ function waitForBootstrapRetry(delayMs: number): Promise<void> {
   });
 }
 
-function isTransientBootstrapError(error: unknown): boolean {
+export function isTransientBootstrapError(error: unknown): boolean {
   if (isPrimaryEnvironmentRequestError(error)) {
-    return TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
+    return (
+      TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status) || isTransientBootstrapError(error.cause)
+    );
+  }
+
+  if (HttpClientError.isHttpClientError(error)) {
+    return error.reason._tag === "TransportError";
   }
 
   if (error instanceof TypeError) {

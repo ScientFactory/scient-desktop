@@ -40,7 +40,9 @@ import * as LatexBuildService from "./latex/LatexBuildService.ts";
 import * as LatexManagedToolchain from "./latex/LatexManagedToolchain.ts";
 import * as LatexPackageInstaller from "./latex/LatexPackageInstaller.ts";
 import * as LatexToolchain from "./latex/LatexToolchain.ts";
+import * as LatexTexDirectory from "./latex/latexTexDirectory.ts";
 import * as LatexSyncTex from "./latex/LatexSyncTex.ts";
+import * as LatexTikzPreview from "./latex/LatexTikzPreview.ts";
 import { scientSourcesHttpApiLayer } from "./sources/http.ts";
 import { scientLatexHttpApiLayer } from "./latex/http.ts";
 import { scientMarkdownHttpApiLayer } from "./markdown/http.ts";
@@ -156,12 +158,18 @@ export function makeScientRouteServices<
   // does; the toolchain probe is merged out because the HTTP group reads it too,
   // and the managed installer sits on top of the probe so a finished install can
   // drop its cache. The package installer is mounted once for both, because
-  // `tlmgr` serializes against a single distribution tree.
-  const ScientLatexServicesLive = LatexBuildService.layer.pipe(
+  // `tlmgr` serializes against a single distribution tree. All of them keep
+  // TeX's own files where TeX can read them, which on Windows may not be the
+  // profile `latexDir`.
+  const ScientLatexServicesLive = Layer.mergeAll(
+    LatexBuildService.layer,
+    LatexTikzPreview.layer,
+  ).pipe(
     Layer.provide(LocalExecutionProcess.layer),
     Layer.provideMerge(LatexSyncTex.layer),
     Layer.provideMerge(LatexManagedToolchain.layer.pipe(Layer.provideMerge(LatexToolchain.layer))),
     Layer.provideMerge(LatexPackageInstaller.layer),
+    Layer.provide(LatexTexDirectory.layer),
   );
 
   /** Scient HTTP API groups, provided in order after the upstream groups. */

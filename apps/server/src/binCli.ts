@@ -16,9 +16,10 @@ import { browserCommand } from "./cli/browser.ts";
 import { connectCommand } from "./cli/connect.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
-import { keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
+import { extendConnectionAttemptTimeout, keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
+import { threadCommand } from "./cli/thread.ts";
 import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { updateCommand } from "./cli/update.ts";
 import { uninstallCommand } from "./cli/uninstall.ts";
@@ -34,7 +35,7 @@ import { triageCommand } from "./cli/triage.ts";
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
 const connectPublicConfigMissingMessage =
-  "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
+  "Connect commands are unavailable: Scient does not operate a hosted relay for this build.";
 
 class ConnectPublicConfigMissingError extends CliError.UserError {
   override get message() {
@@ -45,7 +46,7 @@ class ConnectPublicConfigMissingError extends CliError.UserError {
 const connectUnavailableCommand = Command.make("connect", {
   command: Argument.String("command").pipe(Argument.variadic),
 }).pipe(
-  Command.withDescription("T3 Connect is unavailable in builds without public configuration."),
+  Command.withDescription("Unavailable: Scient does not operate a hosted relay for this build."),
   Command.unlisted,
   Command.withHandler(() =>
     Effect.fail(
@@ -85,6 +86,7 @@ export const makeCli = ({
       authCommand,
       browserCommand,
       projectCommand,
+      threadCommand,
       // Inherited service and standalone-install lifecycle remains dormant in
       // Scient. Desktop updates use the owned desktop updater.
       ...(serviceEnabled
@@ -110,6 +112,7 @@ export const makeCli = ({
 export const cli = makeCli();
 
 export function runCli() {
+  extendConnectionAttemptTimeout();
   keepOutboundFetchOnHttp1();
   Command.run(cli, { version: packageJson.version }).pipe(
     Effect.scoped,

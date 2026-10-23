@@ -1,6 +1,6 @@
 import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 import { LoaderCircle, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -30,21 +30,18 @@ export function SourceRemovalConfirmation(props: {
   const fromZotero = props.record.externalReferences.some(
     (reference) => reference.system === "zotero",
   );
-  const virtualAnchor = useMemo(
-    () => ({
-      getBoundingClientRect: () => ({
-        x: props.anchorPoint.x,
-        y: props.anchorPoint.y,
-        top: props.anchorPoint.y,
-        right: props.anchorPoint.x,
-        bottom: props.anchorPoint.y,
-        left: props.anchorPoint.x,
-        width: 0,
-        height: 0,
-      }),
+  const virtualAnchor = {
+    getBoundingClientRect: () => ({
+      x: props.anchorPoint.x,
+      y: props.anchorPoint.y,
+      top: props.anchorPoint.y,
+      right: props.anchorPoint.x,
+      bottom: props.anchorPoint.y,
+      left: props.anchorPoint.x,
+      width: 0,
+      height: 0,
     }),
-    [props.anchorPoint.x, props.anchorPoint.y],
-  );
+  };
 
   return (
     <Popover

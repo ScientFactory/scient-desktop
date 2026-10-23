@@ -42,7 +42,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "../CodexProvider.ts";
 import { checkClaudeProviderStatus } from "../ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+
 import * as ModelManifest from "../ModelManifest.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { applyProviderCompatibility } from "../providerCompatibility.ts";
@@ -55,8 +55,6 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { layer as ProviderInstanceRegistryHydrationLive } from "../ProviderInstanceRegistryHydration.ts";
 import {
   mergeProviderSnapshot,
-  mergeProviderSnapshots,
-  selectProvidersByKind,
   upsertProviderWorkspaceSnapshot,
   layer as ProviderRegistryLive,
 } from "../ProviderRegistry.ts";
@@ -69,7 +67,10 @@ import {
   writeProviderStatusCache,
 } from "../providerStatusCache.ts";
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
-import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import type {
+  ProviderInstance,
+  ProviderWorkspaceSnapshot,
+} from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -481,6 +482,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               slug: "gpt-live-codex",
               name: "GPT Live Codex",
               isCustom: false,
+              isDefault: true,
               capabilities: codexModelCapabilities,
             },
           ]);
@@ -863,6 +865,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         const refreshedProvider = {
           ...previousProvider,
           checkedAt: "2026-08-13T00:01:00.000Z",
+          nativeSessions: { canList: false, canLoad: false, canResume: false },
           models: [
             { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
           ],
@@ -1090,12 +1093,17 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         const empty: ServerProvider = {
           ...previous,
           status: "warning",
+          auth: { status: "unauthenticated", type: "pi" },
           models: [],
           slashCommands: [],
         };
         assert.deepStrictEqual(mergeProviderSnapshot(previous, empty).models, []);
         assert.deepStrictEqual(mergeProviderSnapshot(previous, empty).slashCommands, []);
-        const failed: ServerProvider = { ...empty, status: "error" };
+        const failed: ServerProvider = {
+          ...empty,
+          status: "error",
+          auth: { status: "unknown" },
+        };
         assert.deepStrictEqual(mergeProviderSnapshot(previous, failed).models, previous.models);
         assert.deepStrictEqual(
           mergeProviderSnapshot(previous, failed).slashCommands,
@@ -1929,7 +1937,8 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             status: "error",
             installed: false,
             slashCommands: [],
-          } as const satisfies ServerProvider;
+            slashCommandsPending: true,
+          } as const satisfies ProviderWorkspaceSnapshot;
           const snapshotCalls = yield* Ref.make(0);
           const scopedResult = yield* Ref.make<ServerProvider>(scopedProvider);
           const cacheInvalidations = yield* Ref.make(0);
@@ -2030,7 +2039,11 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
             yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
-            assert.strictEqual((yield* registry.getProviders)[0]?.workspaceSnapshots, undefined);
+            const pendingSnapshot = (yield* registry.getProviders)[0]?.workspaceSnapshots?.[0];
+            assert.strictEqual(pendingSnapshot?.cwd, "/workspace");
+            assert.deepStrictEqual(pendingSnapshot?.skills, scopedProvider.skills);
+            assert.deepStrictEqual(pendingSnapshot?.slashCommands, []);
+            assert.strictEqual(pendingSnapshot?.slashCommandsPending, true);
             yield* Ref.set(returnPendingSnapshot, false);
             const workspaceUpdate = yield* registry.streamChanges.pipe(
               Stream.runHead,
@@ -2304,70 +2317,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           assert.strictEqual(yield* Ref.get(openCodeRefreshCalls), 2);
         }),
       );
-
-      it("persists merged provider snapshots for the providers that were refreshed", () => {
-        const previousProviders = [
-          {
-            instanceId: ProviderInstanceId.make("cursor"),
-            driver: ProviderDriverKind.make("cursor"),
-            status: "ready",
-            enabled: true,
-            installed: true,
-            auth: { status: "authenticated" },
-            checkedAt: "2026-04-14T00:00:00.000Z",
-            version: "2026.04.09-f2b0fcd",
-            models: [
-              {
-                slug: "claude-opus-4-6",
-                name: "Opus 4.6",
-                isCustom: false,
-                capabilities: createModelCapabilities({
-                  optionDescriptors: [
-                    selectDescriptor("reasoning", "Reasoning", [
-                      { id: "high", label: "High", isDefault: true },
-                    ]),
-                    booleanDescriptor("fastMode", "Fast Mode"),
-                    booleanDescriptor("thinking", "Thinking"),
-                  ],
-                }),
-              },
-            ],
-            slashCommands: [],
-            skills: [],
-          },
-          {
-            instanceId: ProviderInstanceId.make("codex"),
-            driver: ProviderDriverKind.make("codex"),
-            status: "ready",
-            enabled: true,
-            installed: true,
-            auth: { status: "authenticated" },
-            checkedAt: "2026-04-14T00:00:00.000Z",
-            version: "1.0.0",
-            models: [],
-            slashCommands: [],
-            skills: [],
-          },
-        ] as const satisfies ReadonlyArray<ServerProvider>;
-        const refreshedCursor = {
-          ...previousProviders[0],
-          checkedAt: "2026-04-14T00:01:00.000Z",
-          models: [],
-        } satisfies ServerProvider;
-
-        const mergedProviders = mergeProviderSnapshots(previousProviders, [refreshedCursor]);
-        const persistedProviders = selectProvidersByKind(
-          mergedProviders,
-          new Set([ProviderDriverKind.make("cursor")]),
-        );
-
-        assert.deepStrictEqual(persistedProviders, [
-          {
-            ...refreshedCursor,
-            models: [...previousProviders[0].models],
-          },
-        ]);
-      });
 
       it.effect("persists the merged snapshot when a live update has empty models", () =>
         Effect.gen(function* () {

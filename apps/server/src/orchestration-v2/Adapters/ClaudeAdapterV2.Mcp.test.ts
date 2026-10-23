@@ -1,7 +1,6 @@
-import { EnvironmentId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
 import { Tool } from "effect/ai";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
@@ -14,7 +13,6 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ScientThreadsToolkit } from "../../mcp/toolkits/threads/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
-import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 
@@ -26,6 +24,7 @@ const makeMcpSession = (threadId: ThreadId): McpProviderSessionConfig => ({
   endpoint: "http://127.0.0.1:43123/mcp",
   authorizationHeader: "Bearer secret-claude-token",
   capabilities: new Set(["preview"]),
+  connectors: [],
 });
 
 describe("ClaudeAdapterV2 MCP query overrides", () => {
@@ -75,6 +74,62 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD],
       mcpServers: T3_MCP_SERVERS,
     });
+  });
+
+  it("adds one http server per connector without pre-approving connector tools", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-connectors");
+    const mcpSession: McpProviderSessionConfig = {
+      ...makeMcpSession(threadId),
+      connectors: [
+        {
+          connectorId: "con_linear0001",
+          serverName: "linear",
+          displayName: "Linear",
+          url: "http://127.0.0.1:43123/mcp/connectors/con_linear0001",
+        },
+        {
+          connectorId: "con_notion0001",
+          serverName: "notion",
+          displayName: "Notion",
+          url: "http://127.0.0.1:43123/mcp/connectors/con_notion0001",
+        },
+      ],
+    };
+    for (const readOnlySandbox of [false, true]) {
+      const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+        mcpSession,
+        readOnlySandbox,
+        allowedTools: ["Read"],
+      });
+
+      assert.deepEqual(overrides.mcpServers, {
+        ...T3_MCP_SERVERS,
+        linear: {
+          type: "http",
+          url: "http://127.0.0.1:43123/mcp/connectors/con_linear0001",
+          headers: { Authorization: "Bearer secret-claude-token" },
+        },
+        notion: {
+          type: "http",
+          url: "http://127.0.0.1:43123/mcp/connectors/con_notion0001",
+          headers: { Authorization: "Bearer secret-claude-token" },
+        },
+      });
+      const allowed = overrides.allowedTools ?? [];
+      assert.include(allowed, "Read");
+      for (const tool of allowed) {
+        assert.isFalse(tool.startsWith("mcp__linear"), tool);
+        assert.isFalse(tool.startsWith("mcp__notion"), tool);
+      }
+      assert.deepEqual(
+        overrides.allowedTools,
+        ClaudeAdapterV2.claudeMcpQueryOverrides({
+          mcpSession: makeMcpSession(threadId),
+          readOnlySandbox,
+          allowedTools: ["Read"],
+        }).allowedTools,
+      );
+    }
   });
 
   it("extends an explicit allowlist with the t3-code wildcard", () => {
@@ -225,6 +280,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer secret-claude-token",
       capabilities: new Set(["preview"] as const),
+      connectors: [],
     };
     const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
       mcpSession,
@@ -273,79 +329,6 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.equal(logged.hasMcpServers, true);
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");
   });
-
-  it.effect("writes Claude Agent SDK protocol frames to the native provider log", () =>
-    Effect.gen(function* () {
-      const writes: Array<{
-        readonly event: unknown;
-        readonly threadId: ThreadId | null;
-      }> = [];
-      const logger: EventNdjsonLogger = {
-        filePath: "/tmp/events.log",
-        write: (event, threadId) =>
-          Effect.sync(() => {
-            writes.push({ event, threadId });
-          }),
-        close: () => Effect.void,
-      };
-      const threadId = ThreadId.make("thread-1");
-      const providerSessionId = ProviderSessionId.make("provider-session-1");
-      const protocolLogger = ClaudeAdapterV2.makeClaudeAgentSdkProtocolLogger({
-        nativeEventLogger: logger,
-        threadId,
-        providerSessionId,
-      });
-
-      assert.notEqual(protocolLogger, undefined);
-      if (protocolLogger === undefined) {
-        return;
-      }
-
-      yield* protocolLogger({
-        direction: "incoming",
-        stage: "decoded",
-        payload: {
-          type: "stream_event",
-          uuid: "00000000-0000-0000-0000-000000000001",
-          session_id: "native-thread",
-          parent_tool_use_id: null,
-          event: {
-            type: "content_block_delta",
-            index: 0,
-            delta: {
-              type: "text_delta",
-              get text(): string {
-                throw new Error("streaming text must not be inspected");
-              },
-            },
-          },
-        },
-      });
-      yield* protocolLogger({
-        direction: "outgoing",
-        stage: "decoded",
-        payload: {
-          type: "query.interrupt",
-        },
-      });
-
-      assert.equal(writes.length, 1);
-      assert.equal(writes[0]?.threadId, threadId);
-      assert.deepEqual(writes[0]?.event, {
-        provider: "claudeAgent",
-        protocol: ClaudeAdapterV2.CLAUDE_AGENT_SDK_QUERY_PROTOCOL,
-        kind: "protocol",
-        providerSessionId,
-        event: {
-          direction: "outgoing",
-          stage: "decoded",
-          payload: {
-            type: "query.interrupt",
-          },
-        },
-      });
-    }),
-  );
 
   it("logs query options without leaking environment values or callback functions", () => {
     const options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions = {

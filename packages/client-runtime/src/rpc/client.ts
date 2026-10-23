@@ -32,6 +32,7 @@ export class EnvironmentRpcUnavailableError extends Schema.TaggedError<Environme
 
 export interface EnvironmentRpcRequestObservation {
   readonly environmentId: string;
+  readonly environmentLabel: string;
   readonly method: string;
 }
 
@@ -72,6 +73,9 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeAnalysisRuns
   | typeof WS_METHODS.subscribeComputeSessions
   | typeof WS_METHODS.subscribeDocumentBindingChanges
+  // SCIENT-FORK:START — Scient Extensions change stream.
+  | typeof WS_METHODS.extensionsSubscribeChanges
+  // SCIENT-FORK:END
   | typeof WS_METHODS.filesystemSubscribeFileChanges
   | typeof WS_METHODS.projectsSubscribeFileChanges
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
@@ -210,6 +214,7 @@ export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
   ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
   const completeObservation = yield* observer.observe({
     environmentId: supervisor.target.environmentId,
+    environmentLabel: supervisor.target.label,
     method: tag,
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));

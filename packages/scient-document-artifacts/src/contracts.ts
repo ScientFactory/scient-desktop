@@ -171,6 +171,39 @@ const WorkspacePdfLegacyLocator = Schema.Struct({
   absolutePath: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
 });
 
+const AttachmentIdentifier = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(256),
+  Schema.isPattern(/^[^\x00]+$/u),
+);
+
+/**
+ * A chat attachment PDF. A sent attachment is identified by its thread and
+ * persisted id. A draft is identified by its composer file context id, which
+ * stays stable through upload; its uploaded id, when it has one, only says
+ * where the bytes can already be fetched.
+ */
+export const AttachmentPdfLocator = Schema.Union([
+  Schema.TaggedStruct("sent", {
+    threadId: AttachmentIdentifier,
+    attachmentId: AttachmentIdentifier,
+    /** Lets a quote reopen the attachment with its real size. */
+    sizeBytes: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  }),
+  Schema.TaggedStruct("draft", {
+    threadId: AttachmentIdentifier,
+    fileContextId: AttachmentIdentifier,
+    uploadedAttachmentId: Schema.optional(AttachmentIdentifier),
+  }),
+]);
+export type AttachmentPdfLocator = typeof AttachmentPdfLocator.Type;
+
+const WorkspacePdfSourceOrigin = Schema.TaggedStruct("source", {
+  workspaceRoot: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
+  sourceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  attachmentId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+});
+
 export const PdfSourceDescriptor = Schema.Union([
   Schema.TaggedStruct("workspace-pdf", {
     ...PdfSourceBase,
@@ -179,6 +212,8 @@ export const PdfSourceDescriptor = Schema.Union([
     // Old servers resolve workspace assets through a thread. This compatibility
     // hint never contributes to document identity and can be omitted by producers.
     legacyLocator: Schema.optional(WorkspacePdfLegacyLocator),
+    /** The Sources item this file is attached to: provenance, never material identity. */
+    origin: Schema.optional(WorkspacePdfSourceOrigin),
   }),
   Schema.TaggedStruct("generated-pdf", {
     ...PdfSourceBase,
@@ -192,6 +227,10 @@ export const PdfSourceDescriptor = Schema.Union([
     ...PdfSourceBase,
     path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
   }),
+  Schema.TaggedStruct("attachment-pdf", {
+    ...PdfSourceBase,
+    locator: AttachmentPdfLocator,
+  }),
 ]);
 export type PdfSourceDescriptor = typeof PdfSourceDescriptor.Type;
 
@@ -200,6 +239,8 @@ export interface ResolvedPdfSource {
   readonly expiresAt: number;
   readonly sourcePath?: string;
   readonly refresh: () => void;
+  /** The retained URL is being reauthorized, not yet admitted for a new load. */
+  readonly waiting?: boolean;
 }
 
 export type PdfSourceResolution =

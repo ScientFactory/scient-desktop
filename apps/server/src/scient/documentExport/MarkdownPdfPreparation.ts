@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import { documentLogicalKey, writeDocumentCapture } from "./DocumentCapture.ts";
 import { boundCaptureWarnings } from "./documentPageInput.ts";
 import { buildMarkdownFileBundle, readProjectMarkdownFile } from "./MarkdownFileBundle.ts";
@@ -20,19 +21,59 @@ export const captureProjectMarkdownFile = Effect.fn("MarkdownPdfPreparation.capt
     readonly relativePath: string;
     readonly expectedRevision?: string;
   }) {
-    const file = yield* readProjectMarkdownFile(
-      input.workspaceRoot,
-      input.relativePath,
-      input.expectedRevision,
-    );
-    if (input.expectedRevision !== undefined && file.revision !== input.expectedRevision) {
-      return yield* new ScientDocumentPdfExportError({
-        reason: "source-changed",
-        detail:
-          "The file on disk differs from the version saved in the editor. Save or reload it, then export again.",
+    const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+    const unavailable = () =>
+      new ScientDocumentPdfExportError({
+        reason: "source-unavailable",
+        detail: "The workspace has unsettled publication authority. Resolve it before exporting.",
       });
-    }
-    const bundle = yield* buildMarkdownFileBundle({ workspaceRoot: input.workspaceRoot, file });
+    const mutationEpoch = yield* workspaceFiles
+      .getMutationEpoch({ cwd: input.workspaceRoot })
+      .pipe(Effect.mapError(unavailable));
+    const { file, bundle } = yield* workspaceFiles
+      .withSettledWorkspaceRead(
+        { cwd: input.workspaceRoot, relativePath: input.relativePath },
+        (attention) =>
+          Effect.gen(function* () {
+            if (attention !== null) return yield* unavailable();
+            const file = yield* readProjectMarkdownFile(
+              input.workspaceRoot,
+              input.relativePath,
+              input.expectedRevision,
+            );
+            if (input.expectedRevision !== undefined && file.revision !== input.expectedRevision) {
+              return yield* new ScientDocumentPdfExportError({
+                reason: "source-changed",
+                detail:
+                  "The file on disk differs from the version saved in the editor. Save or reload it, then export again.",
+              });
+            }
+            const bundle = yield* buildMarkdownFileBundle({
+              workspaceRoot: input.workspaceRoot,
+              file,
+            });
+            return { file, bundle };
+          }),
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          cause._tag === "ScientDocumentPdfExportError" ? cause : unavailable(),
+        ),
+      );
+    yield* workspaceFiles
+      .withWorkspacePublicationFence(
+        { cwd: input.workspaceRoot, expectedEpoch: mutationEpoch },
+        () => Effect.void,
+      )
+      .pipe(
+        Effect.mapError(
+          () =>
+            new ScientDocumentPdfExportError({
+              reason: "source-changed",
+              detail: "The workspace changed while the document was captured. Export it again.",
+            }),
+        ),
+      );
     const written = yield* writeDocumentCapture({
       bundle,
       logicalDocumentKey: documentLogicalKey("markdown-pdf", file.canonicalPath),
@@ -41,6 +82,7 @@ export const captureProjectMarkdownFile = Effect.fn("MarkdownPdfPreparation.capt
         workspaceRoot: input.workspaceRoot,
         relativePath: input.relativePath,
         canonicalPath: file.canonicalPath,
+        mutationEpoch,
       },
     });
     return { ...written, file };

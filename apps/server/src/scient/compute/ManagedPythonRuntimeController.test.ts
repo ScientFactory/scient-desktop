@@ -3,9 +3,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { ComputeToolkitId, type ComputeManagedRuntimeStatus } from "@scientfactory/compute";
+import { ComputeToolkitId } from "@scientfactory/compute";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 
 import {
   type ManagedPythonEnvironmentDependencies,
@@ -127,7 +128,7 @@ describe("ManagedPythonRuntimeController", () => {
 
   it.live("cancels catalog preparation before any generation is provisioned", () =>
     Effect.gen(function* () {
-      let entered = false;
+      const entered = Promise.withResolvers<void>();
       let provisions = 0;
       const manager = makeManagedPythonEnvironmentManager(
         computeDir,
@@ -145,7 +146,7 @@ describe("ManagedPythonRuntimeController", () => {
         dispose: () => {},
         prepare: (_action, _current, signal) =>
           new Promise((_resolve, reject) => {
-            entered = true;
+            entered.resolve();
             signal.addEventListener("abort", () => reject(signal.reason), { once: true });
           }),
       };
@@ -156,7 +157,7 @@ describe("ManagedPythonRuntimeController", () => {
       });
       try {
         yield* controller.manage("install");
-        yield* waitForStatus(controller, () => entered);
+        yield* Effect.promise(() => entered.promise);
         yield* controller.cancel();
         const cancelled = yield* waitForSettled(controller);
         expect(cancelled.installed).toBe(false);
@@ -196,12 +197,16 @@ describe("ManagedPythonRuntimeController", () => {
         release = resolve;
       });
       const builds: ReadonlyArray<ComputeToolkitId>[] = [];
+      const secondBuildStarted = Promise.withResolvers<void>();
       const manager = makeManagedPythonEnvironmentManager(
         computeDir,
         dependencies({
           provision: async ({ targetRoot, toolkitIds }) => {
             builds.push(toolkitIds);
-            if (builds.length === 2) await gate;
+            if (builds.length === 2) {
+              secondBuildStarted.resolve();
+              await gate;
+            }
             return executableAt(targetRoot);
           },
         }),
@@ -216,7 +221,7 @@ describe("ManagedPythonRuntimeController", () => {
       yield* controller.manage("update", {
         toolkitChange: { toolkitId: OPTIONAL_TOOLKIT_ID, action: "install" },
       });
-      yield* waitForStatus(controller, () => builds.length === 2);
+      yield* Effect.promise(() => secondBuildStarted.promise);
       yield* controller.manage("update", {
         toolkitChange: { toolkitId: second, action: "install" },
       });
@@ -251,12 +256,14 @@ describe("ManagedPythonRuntimeController", () => {
       });
       let buildCount = 0;
       let buildSignal: AbortSignal | undefined;
+      const secondBuildStarted = Promise.withResolvers<void>();
       const manager = makeManagedPythonEnvironmentManager(
         computeDir,
         dependencies({
           provision: async ({ targetRoot, signal }) => {
             if (++buildCount === 2) {
               buildSignal = signal;
+              secondBuildStarted.resolve();
               await gate;
             }
             return executableAt(targetRoot);
@@ -273,7 +280,7 @@ describe("ManagedPythonRuntimeController", () => {
       yield* controller.manage("update", {
         toolkitChange: { toolkitId: OPTIONAL_TOOLKIT_ID, action: "install" },
       });
-      yield* waitForStatus(controller, () => buildCount === 2);
+      yield* Effect.promise(() => secondBuildStarted.promise);
       yield* controller.manage("update", {
         toolkitChange: { toolkitId: second, action: "install" },
       });
@@ -300,13 +307,15 @@ describe("ManagedPythonRuntimeController", () => {
           release = resolve;
         });
         let buildCount = 0;
+        const thirdBuildStarted = Promise.withResolvers<void>();
         const manager = makeManagedPythonEnvironmentManager(
           computeDir,
           dependencies({
             provision: async ({ targetRoot, signal }) => {
               const build = ++buildCount;
               if (build === 2) await gate;
-              if (build === 3)
+              if (build === 3) {
+                thirdBuildStarted.resolve();
                 await new Promise<void>((_resolve, reject) => {
                   if (signal.aborted) reject(new Error("aborted"));
                   else
@@ -314,6 +323,7 @@ describe("ManagedPythonRuntimeController", () => {
                       once: true,
                     });
                 });
+              }
               return executableAt(targetRoot);
             },
           }),
@@ -335,7 +345,7 @@ describe("ManagedPythonRuntimeController", () => {
           toolkitChange: { toolkitId: third, action: "install" },
         });
         release();
-        yield* waitForStatus(controller, () => buildCount === 3);
+        yield* Effect.promise(() => thirdBuildStarted.promise);
         yield* controller.manage("update", {
           toolkitChange: { toolkitId: second, action: "cancel" },
         });
@@ -440,11 +450,13 @@ describe("ManagedPythonRuntimeController", () => {
       Effect.gen(function* () {
         const second = ComputeToolkitId.make("python-large-data");
         let buildCount = 0;
+        const secondBuildStarted = Promise.withResolvers<void>();
         const manager = makeManagedPythonEnvironmentManager(
           computeDir,
           dependencies({
             provision: async ({ targetRoot, signal }) => {
-              if (++buildCount === 2)
+              if (++buildCount === 2) {
+                secondBuildStarted.resolve();
                 await new Promise<void>((_resolve, reject) => {
                   if (signal.aborted) reject(new Error("aborted"));
                   else
@@ -452,6 +464,7 @@ describe("ManagedPythonRuntimeController", () => {
                       once: true,
                     });
                 });
+              }
               return executableAt(targetRoot);
             },
           }),
@@ -466,7 +479,7 @@ describe("ManagedPythonRuntimeController", () => {
         yield* controller.manage("update", {
           toolkitChange: { toolkitId: OPTIONAL_TOOLKIT_ID, action: "install" },
         });
-        yield* waitForStatus(controller, () => buildCount === 2);
+        yield* Effect.promise(() => secondBuildStarted.promise);
         yield* controller.manage("update", {
           toolkitChange: { toolkitId: second, action: "install" },
         });
@@ -486,11 +499,13 @@ describe("ManagedPythonRuntimeController", () => {
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
+      const downloading = Promise.withResolvers<void>();
       const manager = makeManagedPythonEnvironmentManager(
         computeDir,
         dependencies({
           provision: async ({ targetRoot, onProgress }) => {
             onProgress?.({ phase: "downloading", downloadedBytes: 5, totalBytes: 10 });
+            downloading.resolve();
             await gate;
             return await executableAt(targetRoot);
           },
@@ -500,9 +515,8 @@ describe("ManagedPythonRuntimeController", () => {
 
       const started = yield* controller.manage("install");
       expect(started).toMatchObject({ installed: false, operation: { action: "install" } });
-      expect(
-        yield* waitForStatus(controller, (status) => status.operation?.phase === "downloading"),
-      ).toMatchObject({
+      yield* Effect.promise(() => downloading.promise);
+      expect(yield* controller.status()).toMatchObject({
         operation: { phase: "downloading", downloadedBytes: 5, totalBytes: 10 },
       });
       release();
@@ -577,6 +591,7 @@ describe("ManagedPythonRuntimeController", () => {
     Effect.gen(function* () {
       let release!: () => void;
       let provisions = 0;
+      const provisionStarted = Promise.withResolvers<void>();
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
@@ -585,6 +600,7 @@ describe("ManagedPythonRuntimeController", () => {
         dependencies({
           provision: async ({ targetRoot }) => {
             provisions += 1;
+            provisionStarted.resolve();
             await gate;
             return await executableAt(targetRoot);
           },
@@ -598,11 +614,53 @@ describe("ManagedPythonRuntimeController", () => {
       );
       expect(first.operation).toMatchObject({ action: "install" });
       expect(first.operation?.operationId).toBe(second.operation?.operationId);
-      yield* waitForStatus(controller, () => provisions === 1);
+      yield* Effect.promise(() => provisionStarted.promise);
       expect(provisions).toBe(1);
       release();
       expect(yield* waitForSettled(controller)).toMatchObject({ installed: true, operation: null });
       controller.dispose();
+    }),
+  );
+
+  it.live("awaits settlement without blocking commands or cancelling the owned setup", () =>
+    Effect.gen(function* () {
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      let provisionSignal: AbortSignal | undefined;
+      const manager = makeManagedPythonEnvironmentManager(
+        computeDir,
+        dependencies({
+          provision: async ({ targetRoot, signal }) => {
+            provisionSignal = signal;
+            entered.resolve();
+            await release.promise;
+            return executableAt(targetRoot);
+          },
+        }),
+      );
+      const controller = makeManagedPythonRuntimeController({ manager, toolkitIds: [TOOLKIT_ID] });
+      try {
+        const started = yield* controller.manage("install");
+        yield* Effect.promise(() => entered.promise);
+        const waiting = yield* Effect.forkChild(controller.awaitSettled(), {
+          startImmediately: true,
+        });
+        expect(waiting.pollUnsafe()).toBeUndefined();
+        const duplicate = yield* controller.manage("install");
+        expect(duplicate.operation?.operationId).toBe(started.operation?.operationId);
+        expect(duplicate.operation).not.toBeNull();
+        yield* Fiber.interrupt(waiting);
+        expect(provisionSignal?.aborted).toBe(false);
+        release.resolve();
+        expect(yield* waitForSettled(controller)).toMatchObject({
+          installed: true,
+          operation: null,
+        });
+      } finally {
+        release.resolve();
+        controller.dispose();
+        yield* controller.awaitSettled();
+      }
     }),
   );
 
@@ -875,22 +933,11 @@ describe("ManagedPythonRuntimeController", () => {
 
 type Controller = ReturnType<typeof makeManagedPythonRuntimeController>;
 
-const waitForSettled = (controller: Controller) =>
-  waitForStatus(
-    controller,
-    (status) =>
-      status.operation === null &&
-      !status.toolkitChanges?.some((entry) => entry.state !== "failed"),
-  );
-
-const waitForStatus = Effect.fn("ManagedPythonRuntimeController.waitForStatus")(function* (
+const waitForSettled = Effect.fn("ManagedPythonRuntimeController.waitForSettled")(function* (
   controller: Controller,
-  accepted: (status: ComputeManagedRuntimeStatus) => boolean,
 ) {
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    const status = yield* controller.status();
-    if (accepted(status)) return status;
-    yield* Effect.sleep("1 millis");
-  }
-  return yield* Effect.die(new Error("Managed runtime operation did not settle."));
+  const status = yield* controller.awaitSettled();
+  expect(status.operation).toBeNull();
+  expect(status.toolkitChanges?.some((entry) => entry.state !== "failed")).not.toBe(true);
+  return status;
 });

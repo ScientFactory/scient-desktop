@@ -1,13 +1,15 @@
+import { render as _fixtureRender } from "../../../test/render";
 import "../../index.css";
 
 import type { DocumentSaveIntent } from "@scientfactory/scient-document";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { createRoot } from "react-dom/client";
+
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { MarkdownPersistenceRegistry } from "../markdownEditor/persistence/markdownPersistenceRegistry";
+import { createTestCheckpointStore } from "../markdownEditor/persistence/markdownDraftCheckpointTestkit";
 import { StaticTextFileSurface } from "./StaticTextFileSurface";
 
 const threadRef = {
@@ -15,11 +17,14 @@ const threadRef = {
   threadId: ThreadId.make("source-citation-browser"),
 };
 
-function mount() {
+async function mount(_fixture: _Fixture) {
   const host = document.createElement("div");
   host.style.cssText = "display:flex;width:800px;height:500px";
   document.body.append(host);
-  return { host, root: createRoot(host) };
+  return {
+    host,
+    root: _fixture.stack.use(await _fixtureRender(null, { container: host, router: false })),
+  };
 }
 
 function sourceRow(host: HTMLElement, line: number): HTMLElement | null {
@@ -33,10 +38,12 @@ function sourceRow(host: HTMLElement, line: number): HTMLElement | null {
 }
 
 it("activates a read-only shadow-DOM quote after focus moves and the native range collapses", async () => {
-  const { host, root } = mount();
+  await using _fixture = _createFixture();
+
+  const { host, root } = await mount(_fixture);
   const onCite = vi.fn<MarkdownCiteHandler>(() => true);
   try {
-    root.render(
+    await root.rerender(
       <StaticTextFileSurface
         threadRef={threadRef}
         onCite={onCite}
@@ -87,14 +94,16 @@ it("activates a read-only shadow-DOM quote after focus moves and the native rang
       origin: "saved",
     });
   } finally {
-    root.unmount();
+    await root.unmount();
     document.getSelection()?.removeAllRanges();
     host.remove();
   }
 });
 
 it("quotes the editable model's exact draft and CRLF range through the real toolbar", async () => {
-  const { host, root } = mount();
+  await using _fixture = _createFixture();
+
+  const { host, root } = await mount(_fixture);
   const target = {
     environmentId: threadRef.environmentId,
     cwd: "/source-citation-browser",
@@ -108,6 +117,7 @@ it("quotes the editable model's exact draft and CRLF range through the real tool
     acknowledgeWrite = resolve;
   });
   const registry = new MarkdownPersistenceRegistry({
+    checkpointStore: createTestCheckpointStore(),
     debounceMs: 60_000,
     createTransport: () => ({
       write: async (intent) => {
@@ -136,14 +146,23 @@ it("quotes the editable model's exact draft and CRLF range through the real tool
   const pendingSave = lease.flushNow();
   const onCite = vi.fn<MarkdownCiteHandler>(() => true);
   try {
-    expect(writes).toEqual([{ source: draft, expectedRevision: "initial", editVersion: 1 }]);
+    await expect
+      .poll(() => writes)
+      .toEqual([
+        {
+          source: draft,
+          expectedRevision: "initial",
+          editVersion: 1,
+          mutationId: expect.any(String),
+        },
+      ]);
     expect(lease.getSnapshot()).toMatchObject({
       baselineSource: source,
       draftSource: draft,
       pending: true,
       inFlight: true,
     });
-    root.render(
+    await root.rerender(
       <MarkdownSourceSurface
         {...target}
         threadRef={threadRef}
@@ -201,9 +220,26 @@ it("quotes the editable model's exact draft and CRLF range through the real tool
   } finally {
     acknowledgeWrite({ revision: "saved" });
     await pendingSave;
-    root.unmount();
+    await root.unmount();
     document.getSelection()?.removeAllRanges();
     host.remove();
     lease.release();
   }
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

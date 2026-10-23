@@ -1,5 +1,8 @@
 // @effect-diagnostics globalDate:off -- Fixed Date values make provenance assertions deterministic.
-import { describe, expect, it, vi } from "@effect/vitest";
+// @effect-diagnostics nodeBuiltinImport:off -- The test observes the native unref'ed metadata deadline.
+import * as NodeTimersPromises from "node:timers/promises";
+import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import type { ScientSourceCandidate, ScientSourceIdentifier } from "@scientfactory/scient-sources";
 
 import {
@@ -7,6 +10,8 @@ import {
   sourceMetadataEnricherInternals,
   type AbstractResolvers,
 } from "./SourceMetadataEnricher.ts";
+
+vi.mock("node:timers/promises", { spy: true });
 
 function candidate(
   input: {
@@ -149,19 +154,22 @@ describe("source metadata abstract enrichment", () => {
 
   it("bounds optional enrichment when a metadata service never settles", async () => {
     const input = candidate({ identifiers: [{ scheme: "pmid", value: "12345678" }] });
-    const startedAt = performance.now();
-    const enriched = await enrichScientSourceCandidate(input, {
+    const deadline = Promise.withResolvers<null>();
+    using clock = vi.spyOn(Date, "now").mockReturnValue(0);
+    using timer = vi.spyOn(NodeTimersPromises, "setTimeout").mockReturnValue(deadline.promise);
+    const europePmc = vi.fn<AbstractResolvers["europePmc"]>();
+    const pending = enrichScientSourceCandidate(input, {
       deadlineMs: 25,
       resolvers: resolverSet({
         pubmed: () => new Promise(() => undefined),
-        europePmc: async () => {
-          throw new Error("The shared deadline should expire first.");
-        },
+        europePmc,
       }),
     });
-
-    expect(enriched).toBe(input);
-    expect(performance.now() - startedAt).toBeLessThan(250);
+    expect(timer).toHaveBeenCalledWith(25, null, { ref: false });
+    clock.mockReturnValue(25);
+    deadline.resolve(null);
+    expect(await pending).toBe(input);
+    expect(europePmc).not.toHaveBeenCalled();
   });
 
   it("falls back from an unavailable primary service without failing import", async () => {

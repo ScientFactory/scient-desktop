@@ -28,6 +28,17 @@ Terminology: `docs/internals/glossary.md`.
 ## Shared quality defaults
 
 - Complexity belongs at the adapter boundary. Orchestration stays pure, UI stays dumb.
+- Client mutations use `createEnvironmentRpcCommand`. Add protected methods to
+  `CLIENT_GUARDED_RPC_SCOPES` in contracts and use the command's `permissionAtom`
+  for UI availability. Grants are checked at execution against the destination
+  environment; the server remains authoritative. Keep raw RPC clients inside
+  `rpc/`, and extend permission behavior tests when adding a protected method.
+- Reusable Effect functions use `Effect.fn("Service.operation")` with a stable
+  span name, not a function wrapping `Effect.gen`. Keep `Effect.gen` for inline
+  programs and layer construction. Use `Effect.fnUntraced` only for high-frequency
+  paths or an existing tracing boundary; explain the choice nearby. Named
+  `Effect.fn` creates a span; the unnamed form does not. Preserve existing span
+  names and options, passing combinators as additional function-builder arguments.
 - `apps/web/src/components/ui` exports own their look. Pick a `variant` or `size`; do not restyle one with `className`. If none fits and the look is a generic concept, add a variant to the component; a look that belongs to one feature stays in that feature's own component, not in `components/ui`. Layout classes (width, flex, margin, position) belong on the parent. `shadcn/no-restyle` fails lint on violations.
 - Inferred types over annotations. `any` is the enemy.
 - Comments say why: a constraint, an external quirk, or an invariant the code can't show. Don't restate names or signatures, narrate steps, or record history. `t3code/no-low-value-comments` catches the mechanical cases.
@@ -65,8 +76,10 @@ Terminology: `docs/internals/glossary.md`.
   Preserve unrelated working-tree and staged changes. Commit only the changes
   intended for the requested commit.
 - Follow `docs/operations/local-dev-app.md` for desktop lifecycle operations.
-  Stable and feature candidates have separate identities and state; never
-  repoint the stable launcher to a feature checkout as a shortcut.
+  Stable and feature candidates have separate identities and state. Switch the
+  stable app only with `pnpm dev:app:review <ref>`
+  (`docs/operations/dev-app-review.md`); never edit its review checkout,
+  profiles or launchers by hand.
   The shared `.scient/skills/scient-dev-app/SKILL.md` routes agent-assisted
   lifecycle work to that guide and its Windows instructions. Read it when
   launching, verifying, restarting, or stopping a candidate; it does not grant
@@ -98,13 +111,19 @@ Terminology: `docs/internals/glossary.md`.
 
 Use the versions declared in `package.json` and the committed lockfile.
 `vp i` installs dependencies; `vp run dev` starts server and web.
+If worktree setup is already running, wait for its completion marker instead of
+starting a second install.
 For persistent desktop candidates, use `docs/operations/local-dev-app.md`.
 Other commands and platform prerequisites: `docs/operations/development.md`.
 
 ### Verification
 
 Run focused tests, formatting, lint, and affected-package type checks while
-iterating. Final qualification uses the applicable focused checks plus:
+iterating. Use `vp run typecheck` in the affected package so its Vite task runs,
+including packages without a `typecheck` npm script. Run snippets from the owning
+package, where its dependencies resolve. Check unused files, exports and
+dependencies with `pnpm run knip:check` when changing those surfaces.
+Final qualification uses the applicable focused checks plus:
 
 ```sh
 pnpm exec vp fmt --check
@@ -136,6 +155,23 @@ An interim review can precede full qualification; identify remaining checks.
 
 Use orchestration receipts and worker completion signals in asynchronous tests.
 Use controlled clocks when testing time-dependent behavior.
+Do not add per-test timeouts or retries, wall-clock duration assertions, sleep or
+yield polling loops, or browser frame/transition waits. Browser assertions use
+`expect.element` or `vi.waitFor`; timed behavior uses the full controlled clock.
+Skipped tests need a tracking issue and reason. Mock factories must not spread
+real modules that load Shiki or diff workers.
+
+Web component tests are `*.browser.test.tsx` and render through
+`apps/web/test/render.tsx`. Acquire test changes with `using` / `await using`
+so disposal restores them even on failure; avoid module-level screens and
+`beforeEach` / `afterEach` cleanup. Reset shared `vi.mock` factory state in a
+`setup()` call at the start of each test. `t3code/require-disposable-render`
+enforces this lifecycle. Test meaningful behavior rather than static markup
+that only repeats props or callback wiring.
+Acquire timers and spies driven after mounting after the render, so they dispose
+before unmounting. A render helper that waits or interacts must own its screen in
+an `AsyncDisposableStack` until it returns successfully. Give `rerender` a fresh
+element. The router is enabled by default; explain any `router: false` fixture.
 
 Match verification to the claim: markup assertions do not establish native
 interaction, and mocked providers do not establish real-provider compatibility.

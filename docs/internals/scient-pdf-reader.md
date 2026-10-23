@@ -8,6 +8,15 @@ of T3's text editor. Every existing file-opening entry point converges on that
 panel, so Files-tree, search, chat, and linked-path selection share the same
 binary-safe route.
 
+Chat attachments are the second seam: `AttachmentFilePreview` mounts
+`AttachmentPdfPreview` for PDFs instead of Chromium's built-in viewer. Its
+`attachment-pdf` descriptor names a sent attachment by thread and persisted id,
+and a draft by its composer file context id; the uploaded id, when a draft has
+one, only says where its bytes can be fetched. A draft that is not uploaded
+reads its local Blob through an object URL and saves a copy by downloading it in
+the renderer, since native copy accepts only HTTP(S) sources. A preview with
+nothing durable to name (no thread) keeps the browser's own PDF viewer.
+
 PDFs must never be read through `projects.readFile`. The workspace service keeps
 its `WorkspaceBinaryFileError` protection. Instead, the reader requests an exact
 file-scoped, short-lived asset capability and PDF.js reads the authorized URL.
@@ -45,6 +54,15 @@ as its worker. This keeps Electron compatibility without changing the parsing or
 rendering engine. Search uses PDF.js's indexed text path with a short debounce,
 progressive counts, stale-query rejection, and idle prewarming; Scient does not
 maintain a second text index.
+
+Replacement loading is separate from the painted document's lifetime. Authorization,
+download, or decode failures retain the previous PDF, page, zoom, scroll position,
+and search query, with an update notice and **Try again**. Retry renews authorization
+and starts a new candidate attempt even when its URL and revision are unchanged;
+it never remounts the displayed reader. No candidate fetch begins while authorization
+is pending. Only the newest ready candidate can replace the presentation.
+Save Copy uses the painted document's source and authorized URL; SyncTeX remains
+disabled until the requested PDF is the current painted presentation.
 
 External outline URLs are accepted only for `http` and `https` and are opened
 through Scient's desktop shell. Internal destinations remain inside the reader.
@@ -90,6 +108,57 @@ PDF.js can emit transient view-area events while initial rotation and scale are
 being applied. The reader ignores those events until the saved destination has
 been restored and the following frame has begun, preventing initial page-one
 layout from replacing a valid saved viewport.
+
+## Quotes ("Ask in chat")
+
+`scient/pdf/anchors` owns quoting. A quote is a `PdfCitation` (contracts): the
+conversation plus a `PdfTarget` from `@scientfactory/document-artifacts`, the
+neutral location format a later annotation store will reuse.
+
+- **Target.** Document identity (authority, logical key, a scoped locator for
+  workspace, Sources, generated, attachment or environment PDFs), proven
+  material when a producer recorded it (`null` today), the extractor profile and
+  pdf.js version, and per page (up to four consecutive) the page geometry, a
+  hash of the page's text-layer text, the offsets, the quote and 64 characters
+  of context. No rectangles: they are recomputed from the offsets.
+- **Capture.** `readPdfTextSelection` maps the DOM selection to offsets in the
+  text layer's text (raw item strings, a newline per line break) synchronously,
+  and refuses diagonal text, unrendered or oversized pages and more than four
+  pages with selected text (pages holding only the selection's start or end do
+  not count). `PdfQuoteLayer` shows Ask in chat (or the refusal) next to the
+  selection and inserts through the active composer (`ComposerHandleContext`).
+  A host enables it by passing `citeThread`; a draft attachment has none.
+- **Budget.** A new quote's link must fit 40,000 characters
+  (`PDF_CITATION_CAPTURE_BUDGET`), or the button says "Shorten selection". Links
+  are read back up to 240,000 characters, as file quotes are, so the longest
+  comment (8,000 characters) never makes a quote unreadable; the message limit
+  still applies when sending.
+- **Showing a quote.** A chip opens its document through the right-panel opener
+  for its locator, after the active editor's pending save as file quotes do, and
+  files a pending reveal keyed by the document (`pdfRevealRequests`). A quote
+  from another workspace opens the original file by its full path. A generated
+  PDF opens at its current revision (`/api/scient/documents/current`); only when
+  the environment no longer knows the document does the captured revision open.
+  Anything the user does meanwhile wins: a later quote click, any change to the
+  thread's panel (another view, closing it), or leaving the conversation
+  abandons a quote still waiting for a save or a lookup (a view only abandons a
+  quote it started). Once opened, the pending reveal lives while its PDF stays
+  the panel's active view; the reader's outer shell claims it from its first
+  render and keeps it through authorization and loading (a slow download, a
+  password); closing that reader, or leaving the PDF before a reader claims it,
+  cancels it. No timer is involved, so a slow PDF still shows its quote and an
+  abandoned quote never replays later. The reader shows the quote once its
+  presentation is current. Stored offsets are reused only when the live page text
+  proves them (`verifyPdfTarget`: same extractor, geometry, text hash, quote and
+  context); otherwise the whole document is searched as one ordered text for a
+  unique quote-with-context, then a unique quote (`relocatePdfText`), within a
+  3-second budget. Repeats are reported as ambiguous and an unfinished search as
+  incomplete; neither is guessed. A cancelled reveal (another quote, another
+  document, the reader closing) stops before it scrolls or highlights. The highlight uses the CSS Custom Highlight API,
+  one name per reader, repainted on `textlayerrendered`, and clears on the next
+  pointer press in the reader.
+- **Agent view.** `pdfCitationForProvider` sends the document, pages, text and
+  context; hashes and offsets stay in the stored quote.
 
 ## Product boundary
 

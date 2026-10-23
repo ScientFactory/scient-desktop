@@ -26,6 +26,11 @@ export interface PandocToolView {
   /** `null` when there is nothing to press. */
   readonly actionLabel: string | null;
   readonly busy: boolean;
+  /**
+   * The status could not be read, so whether Pandoc is installed is unknown;
+   * a `failed` view without it is an install that did not finish.
+   */
+  readonly unchecked?: boolean;
 }
 
 const ACTIVE_PHASES: ReadonlySet<ScientPandocInstallState["state"]> = new Set([
@@ -85,12 +90,21 @@ export function pandocToolView(input: {
   readonly requesting: boolean;
   /** Reading the status or asking for the install failed. */
   readonly error: string | null;
+  /** The error came from reading the status, not from asking for the install. */
+  readonly errorFromCheck?: boolean;
 }): PandocToolView {
   const { status } = input;
+  if (input.error !== null && (status === null || input.errorFromCheck === true)) {
+    return {
+      kind: "failed",
+      detail: input.error,
+      actionLabel: "Check again",
+      busy: false,
+      unchecked: true,
+    };
+  }
   if (status === null) {
-    return input.error !== null
-      ? { kind: "failed", detail: input.error, actionLabel: "Try again", busy: false }
-      : { kind: "loading", detail: "Checking Word export…", actionLabel: null, busy: true };
+    return { kind: "loading", detail: "Checking Word export…", actionLabel: null, busy: true };
   }
   if (input.error !== null) {
     return { kind: "failed", detail: input.error, actionLabel: "Try again", busy: false };
@@ -142,4 +156,24 @@ export function pandocToolView(input: {
     actionLabel: `Install Pandoc${size}`,
     busy: false,
   };
+}
+
+/** The Word tab's one-word state on Settings ▸ Documents. */
+export function pandocToolSummary(view: PandocToolView): string {
+  switch (view.kind) {
+    case "loading":
+      return "Checking…";
+    case "ready":
+      return "Ready";
+    case "installing":
+      return "Installing…";
+    case "reinstall":
+      return "Not working";
+    case "unavailable":
+      return "Unavailable";
+    case "failed":
+      return view.unchecked === true ? "Not checked" : "Not installed";
+    case "offer":
+      return "Not installed";
+  }
 }

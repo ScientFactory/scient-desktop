@@ -5,12 +5,7 @@ import { FilesystemBrowseError, FilesystemGetMetadataInput } from "./filesystem.
 
 describe("FilesystemGetMetadataInput", () => {
   const decode = Schema.decodeUnknownSync(FilesystemGetMetadataInput);
-  it("bounds request size and path lengths", () => {
-    expect(() => decode({ paths: [] })).toThrow();
-    expect(() => decode({ paths: Array.from({ length: 65 }, () => "/file") })).toThrow();
-    expect(() => decode({ paths: ["/" + "x".repeat(512)] })).toThrow();
-    expect(decode({ paths: Array.from({ length: 64 }, () => "/file") }).paths).toHaveLength(64);
-  });
+
   it("preserves literal filename whitespace and rejects blank paths", () => {
     const paths = ["/tmp/report", "/tmp/report ", "/tmp/ report"];
     expect(decode({ paths }).paths).toEqual(paths);

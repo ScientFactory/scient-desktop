@@ -4,6 +4,10 @@ In release builds with analytics available, sharing is on by default unless you
 have saved a different preference. Scient does not send usage events to T3's
 analytics service.
 
+Scient analytics uses its own random installation identifier, not your provider
+account identifiers. Inherited telemetry and relay tracing remain disabled;
+the Scient sharing switch does not enable them.
+
 Where analytics are deliberately enabled, Scient accepts only its registered events and permitted
 properties, subject to the configured consent level. Prompts, responses, file contents, credentials,
 and raw provider events are not accepted as product analytics.

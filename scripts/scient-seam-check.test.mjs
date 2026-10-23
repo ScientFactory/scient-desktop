@@ -61,6 +61,22 @@ function fixture() {
   return { cwd, git, write, commit, upstream, base, manifest, saveManifest, inspect, messages };
 }
 
+function connectorFixture() {
+  const f = fixture();
+  const policy = JSON.parse(
+    NodeFS.readFileSync(new URL("../scient-extensions-seams.json", import.meta.url), "utf8"),
+  );
+  const manifest = { ...f.manifest, extensionsDiffSignals: policy.extensionsDiffSignals };
+  delete manifest.onboardingDiffSignals;
+  const saveManifest = () => f.write("scient-extensions-seams.json", JSON.stringify(manifest));
+  saveManifest();
+  const base = f.commit();
+  manifest.diffSignalRefinements = policy.diffSignalRefinements;
+  saveManifest();
+  const inspect = (args = ["--base", base]) => f.inspect(args, ["extensions"]);
+  return { ...f, manifest, saveManifest, base, inspect };
+}
+
 describe("Scient seam snapshot verification", () => {
   it.each([false, true])("does not retain temporary files or Git objects (failure: %s)", (fail) => {
     const f = fixture();
@@ -358,6 +374,184 @@ describe("Scient seam snapshot verification", () => {
     f.saveManifest();
     f.git("rm", "unclassified.ts");
     expect(f.inspect(["--base", before]).checks[0].status).toBe("review-needed");
+  });
+
+  it("retains filename and hunk evidence when index stats are racy", () => {
+    const f = fixture();
+    f.git("config", "diff.typescript.xfuncname", "^export function.*");
+    f.git("config", "core.trustctime", "false");
+    f.git("config", "core.checkStat", "minimal");
+    // Sub-millisecond time: a millisecond float would round the private index up.
+    const touch = (path) =>
+      NodeChildProcess.execFileSync("touch", ["-d", "2020-01-01T00:00:00.999999999Z", path]);
+    f.write(".gitattributes", "*.ts diff=typescript\n");
+    f.write("ordinary.ts", "export function ScientFeature() {\n  return 1;\n}\n");
+    touch(NodePath.join(f.cwd, "ordinary.ts"));
+    const before = f.commit();
+    const index = f.git("rev-parse", "--path-format=absolute", "--git-path", "index");
+    touch(index);
+    f.write("ordinary.ts", "export function ScientFeature() {\n  return 2;\n}\n");
+    touch(NodePath.join(f.cwd, "ordinary.ts"));
+    f.write("ScientFeature.ts", "export const unrelated = true;\n");
+    expect(f.git("diff", "--unified=0", before, "--", "ordinary.ts")).toContain(
+      "@@ -2 +2 @@ export function ScientFeature() {",
+    );
+    expect(f.messages(f.inspect(["--base", before]))).toEqual([
+      "Changed path is not classified in scient-onboarding-seams.json: ScientFeature.ts",
+      "Changed path is not classified in scient-onboarding-seams.json: ordinary.ts",
+    ]);
+  });
+
+  it("distinguishes tunnel connector changes from the Extensions boundary", () => {
+    const f = connectorFixture();
+    const unrelated = {
+      "apps/server/src/cloud/ConnectReachability.ts":
+        "const connector = tunnel.readyConnections;\n",
+      "apps/server/src/cloud/ManagedEndpointRuntime.ts": "cloudflared.inspectConnector();\n",
+      "apps/server/src/cloud/managedTunnelStartup.ts": "// Wait for connector registration.\n",
+      "infra/relay/src/environments/EnvironmentConnector.ts":
+        "// MCP authorization contracts share this module.\nexport const ready = true;\n",
+      "infra/relay/src/environments/ManagedEndpointProvider.ts":
+        "// Recover connector registration.\n",
+      "infra/relay/src/environments/endpointFailure.ts":
+        "// Cloudflared 1033: no live connector.\n",
+      "infra/relay/src/monitoring.ts": 'query("relay.environment_connector.connect");\n',
+      "packages/contracts/src/environmentHttp.ts":
+        '// Also contains MCP authorization contracts.\nconst tunnelStatus = "no_connector";\n',
+      "packages/contracts/src/relay.ts": "// Cloudflare connector disconnected.\n",
+    };
+    for (const [path, source] of Object.entries(unrelated)) f.write(path, source);
+    const result = f.inspect();
+    expect(result.changedPaths).toEqual(expect.arrayContaining(Object.keys(unrelated)));
+    expect(result.checks[0].status).toBe("passed");
+  });
+
+  it("keeps connector delivery and independent stronger signals classified", () => {
+    const f = connectorFixture();
+    const boundaries = {
+      "delivery.ts": "deliver(mcp.connectors);\n",
+      "session.ts": "export const config = { connectors: [] };\n",
+      "types.ts": "export type McpProviderSessionConnector = { url: string };\n",
+      "runtime.ts": "ConnectorRuntime.create();\n",
+      "native.ts": "ServerProviderPlugin.register();\n",
+    };
+    for (const [path, source] of Object.entries(boundaries)) f.write(path, source);
+    expect(f.messages(f.inspect())).toEqual(
+      Object.keys(boundaries)
+        .sort()
+        .map((path) => `Changed path is not classified in scient-extensions-seams.json: ${path}`),
+    );
+  });
+
+  it.each([
+    { domain: "MCP", status: "review-needed" },
+    { domain: "cloudflared", status: "passed" },
+  ])(
+    "preserves changed connector function ownership in the $domain domain",
+    ({ domain, status }) => {
+      const f = connectorFixture();
+      f.git("config", "diff.typescript.xfuncname", "^export function.*");
+      f.write(".gitattributes", "*.ts diff=typescript\n");
+      const context = `// ${domain} delivery\nexport function connector() {\n`;
+      f.write("delivery.ts", `${context}  return 1;\n}\n`);
+      const before = f.commit();
+      f.write("delivery.ts", `${context}  return 2;\n}\n`);
+      expect(f.git("diff", "--unified=0", before, "--", "delivery.ts")).toContain(
+        "@@ -3 +3 @@ export function connector() {",
+      );
+      expect(f.inspect(["--base", before]).checks[0].status).toBe(status);
+    },
+  );
+
+  it.each(["+", "-"])("retains the %s source marker for refinement patterns", (marker) => {
+    const f = connectorFixture();
+    f.manifest.diffSignalRefinements = [
+      {
+        signal: "[Cc]onnectors?\\b",
+        changed: `[${marker}]deliver\\(connector`,
+        fileContext: "MCP",
+      },
+    ];
+    f.saveManifest();
+    const source = "// MCP delivery\ndeliver(connector.url);\n";
+    if (marker === "-") f.write("delivery.ts", source);
+    const before = f.commit();
+    if (marker === "-") f.git("rm", "delivery.ts");
+    else f.write("delivery.ts", source);
+    expect(f.messages(f.inspect(["--base", before]))).toEqual([
+      "Changed path is not classified in scient-extensions-seams.json: delivery.ts",
+    ]);
+  });
+
+  it("requires the original signal even if a refinement's changed pattern is broader", () => {
+    const f = connectorFixture();
+    f.manifest.diffSignalRefinements = [{ signal: "[Cc]onnectors?\\b", changed: "Unrelated" }];
+    f.saveManifest();
+    f.write("unrelated.ts", "Unrelated();\n");
+    expect(f.inspect().checks[0].status).toBe("passed");
+  });
+
+  it("recognizes connector-only edits through an unchanged MCP import", () => {
+    const f = connectorFixture();
+    const context = 'import { deliver } from "./mcp";\n\n';
+    f.write("delivery.ts", `${context}deliver(connector.url);\n`);
+    const before = f.commit();
+    f.write("delivery.ts", `${context}deliver(connector.endpoint);\n`);
+    expect(f.messages(f.inspect(["--base", before]))).toEqual([
+      "Changed path is not classified in scient-extensions-seams.json: delivery.ts",
+    ]);
+  });
+
+  it.each(["file", "namespace-and-usage"])(
+    "recognizes removed connector code using base-only context: %s",
+    (removal) => {
+      const f = connectorFixture();
+      f.write("delivery.ts", 'import { deliver } from "./mcp";\ndeliver(connector.url);\n');
+      const before = f.commit();
+      if (removal === "file") f.git("rm", "delivery.ts");
+      else f.write("delivery.ts", "export const retired = true;\n");
+      expect(f.messages(f.inspect(["--base", before]))).toEqual([
+        "Changed path is not classified in scient-extensions-seams.json: delivery.ts",
+      ]);
+    },
+  );
+
+  it.each(["remove", "narrow", "remove-signal"])(
+    "retains base refinement evidence when current rules %s it",
+    (change) => {
+      const f = connectorFixture();
+      f.write("delivery.ts", 'import { deliver } from "./mcp";\ndeliver(connector.url);\n');
+      const before = f.commit();
+      if (change === "narrow")
+        f.manifest.diffSignalRefinements = [
+          { signal: "[Cc]onnectors?\\b", changed: "Replacement", fileContext: "NewNamespace" },
+        ];
+      else delete f.manifest.diffSignalRefinements;
+      if (change === "remove-signal") f.manifest.extensionsDiffSignals = ["Replacement"];
+      f.saveManifest();
+      f.git("rm", "delivery.ts");
+      expect(f.messages(f.inspect(["--base", before]))).toEqual([
+        "Changed path is not classified in scient-extensions-seams.json: delivery.ts",
+      ]);
+    },
+  );
+
+  it.each(
+    [
+      null,
+      {},
+      [{ signal: "absent", changed: "connector" }],
+      [{ signal: "[Cc]onnectors?\\b", changed: "" }],
+      [{ signal: "[Cc]onnectors?\\b", changed: "connector", fileContext: false }],
+      [{ signal: "[Cc]onnectors?\\b", changed: "connector", fileContex: "mcp" }],
+      [{ signal: "[Cc]onnectors?\\b", changed: "[" }],
+      [{ signal: "[Cc]onnectors?\\b", changed: "connector", fileContext: "[" }],
+    ].map((rules) => ({ rules })),
+  )("fails closed for an invalid refinement: $rules", ({ rules }) => {
+    const f = connectorFixture();
+    f.manifest.diffSignalRefinements = rules;
+    f.saveManifest();
+    expect(f.inspect().checks[0].status).toBe("unavailable");
   });
 
   it("refuses a conflicted local index but can still inspect an immutable committed candidate", () => {

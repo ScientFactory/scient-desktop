@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   EnvironmentId,
   MessageId,
@@ -14,6 +15,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Fiber from "effect/Fiber";
@@ -22,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import type * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -75,7 +79,19 @@ import { spawn } from "node:child_process";
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 const reply = (message, result) => send({ jsonrpc: "2.0", id: message.id, result });
 const update = (update) => send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "watcher-session", update } });
-fs.appendFileSync(process.env.PID_LOG, JSON.stringify({ kind: "peer", pid: process.pid }) + "\\n");
+const record = (entry) => {
+  fs.appendFileSync(process.env.PID_LOG, JSON.stringify(entry) + "\\n");
+  process.send?.(entry);
+};
+record({ kind: "peer", pid: process.pid });
+let watcher;
+let watcherExited = false;
+let stopping = false;
+process.on("SIGTERM", () => {
+  stopping = true;
+  process.send?.({ kind: "peer-sigterm", pid: process.pid });
+  if (watcher === undefined || watcherExited) process.exit(0);
+});
 let model = "gemini-test-low";
 let mode = "default";
 const configOptions = () => [
@@ -98,8 +114,13 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       reply(message, { configOptions: configOptions() }); break;
     case "session/prompt":
       if (message.params.prompt.some(part => part.text?.includes("Start a watcher"))) {
-        const watcher = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-        fs.appendFileSync(process.env.PID_LOG, JSON.stringify({ kind: "watcher", pid: watcher.pid }) + "\\n");
+        watcher = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+        record({ kind: "watcher", pid: watcher.pid });
+        watcher.once("exit", () => {
+          watcherExited = true;
+          record({ kind: "watcher-exit", pid: watcher.pid });
+          if (stopping) process.exit(0);
+        });
         update({ sessionUpdate: "tool_call", toolCallId: "watcher-1", kind: "execute", status: "in_progress", title: "Terminal", rawInput: { command: "tail -f synthetic.log" } });
       } else if (message.params.prompt.some(part => part.text?.includes("Short command"))) {
         update({ sessionUpdate: "tool_call", toolCallId: "short-1", kind: "execute", status: "in_progress", title: "Terminal", rawInput: { command: "echo synthetic" } });
@@ -126,6 +147,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     default: if (message.id !== undefined) reply(message, {});
   }
 });
+process.send?.({ kind: "ready", pid: process.pid });
 `;
 
 const collect = Effect.fnUntraced(function* (
@@ -152,14 +174,6 @@ const alive = (pid: number) => {
     throw error;
   }
 };
-const assertDead = (pids: ReadonlyArray<{ readonly pid: number }>) =>
-  Effect.gen(function* () {
-    yield* Effect.sleep("10 millis").pipe(
-      Effect.repeat({ until: () => pids.every(({ pid }) => !alive(pid)) }),
-      Effect.timeout("3 seconds"),
-    );
-    assert.isTrue(pids.every(({ pid }) => !alive(pid)));
-  });
 
 const harness = Effect.fnUntraced(function* (options?: {
   readonly blockPromptWrite?: boolean;
@@ -170,6 +184,29 @@ const harness = Effect.fnUntraced(function* (options?: {
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // The runtime owns the child scope; the test must outlive it to observe exit.
+  const observationScope = yield* Effect.scope;
+  const processExits = yield* Queue.unbounded<{
+    readonly pid: number;
+    readonly handle: ChildProcessSpawner.ChildProcessHandle;
+    readonly outcome: Exit.Exit<ChildProcessSpawner.ExitCode, PlatformError.PlatformError>;
+  }>();
+  const observedSpawner = ChildProcessSpawner.make((command) =>
+    childProcessSpawner.spawn(command).pipe(
+      Effect.flatMap((handle) =>
+        Effect.gen(function* () {
+          yield* handle.exitCode.pipe(
+            Effect.exit,
+            Effect.flatMap((outcome) =>
+              Queue.offer(processExits, { pid: Number(handle.pid), handle, outcome }),
+            ),
+            Effect.forkIn(observationScope),
+          );
+          return handle;
+        }),
+      ),
+    ),
+  );
   const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-antigravity-peer-" });
   const requestLog = path.join(cwd, "requests.ndjson");
   const mockAgentPath = yield* path.fromFileUrl(
@@ -227,7 +264,7 @@ await import(${encodeString(mockAgentPath)});`,
     makeRuntime: (input) =>
       makeAntigravityAcpRuntime({
         ...input,
-        childProcessSpawner,
+        childProcessSpawner: observedSpawner,
         ...(options?.blockPromptWrite
           ? {
               requestLogger: (event) =>
@@ -324,8 +361,44 @@ await import(${encodeString(mockAgentPath)});`,
       runtimePolicy: policy,
     });
   });
+  const assertDead = (owned: ReadonlyArray<{ readonly kind: string; readonly pid: number }>) =>
+    Effect.gen(function* () {
+      const peers = owned.filter(({ kind }) => kind === "peer");
+      const exited = new Set<number>();
+      yield* Effect.gen(function* () {
+        while (!peers.every((peer) => exited.has(peer.pid))) {
+          const receipt = yield* Queue.take(processExits);
+          if (Exit.isFailure(receipt.outcome)) {
+            // Node's exitCode fails with this typed platform error on a signal
+            // exit. Neither fiber interruption nor other errors prove death.
+            const reasons = receipt.outcome.cause.reasons;
+            const reason = reasons[0];
+            if (
+              reasons.length !== 1 ||
+              reason?._tag !== "Fail" ||
+              reason.error.reason._tag !== "Unknown" ||
+              reason.error.reason.module !== "ChildProcess" ||
+              reason.error.reason.method !== "exitCode"
+            ) {
+              return yield* Effect.failCause(receipt.outcome.cause);
+            }
+          }
+          assert.isFalse(yield* receipt.handle.isRunning);
+          assert.isFalse(alive(receipt.pid));
+          exited.add(receipt.pid);
+        }
+      }).pipe(Effect.timeout("3 seconds"));
+      const entries = pids();
+      for (const watcher of owned.filter(({ kind }) => kind === "watcher")) {
+        assert.isTrue(
+          entries.some(({ kind, pid }) => kind === "watcher-exit" && pid === watcher.pid),
+        );
+      }
+      assert.isTrue(owned.every(({ pid }) => !alive(pid)));
+    });
   return {
     adapter,
+    assertDead,
     writeBlocked,
     releaseWrite,
     heldSettlement,
@@ -351,6 +424,124 @@ await import(${encodeString(mockAgentPath)});`,
 });
 
 it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (it) => {
+  // Windows terminates on SIGTERM without running JavaScript signal handlers.
+  describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "POSIX signal handler ordering",
+    () => {
+      it.effect.each(["child-first", "parent-first"] as const)(
+        "the real background peer exits after %s POSIX SIGTERM",
+        (order) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const h = yield* harness({ backgroundPeer: true });
+              const receipts = yield* Queue.unbounded<unknown, Error>();
+              const exited = yield* Deferred.make<
+                {
+                  readonly code: number | null;
+                  readonly signal: NodeJS.Signals | null;
+                },
+                Error
+              >();
+              const peer = yield* Effect.acquireRelease(
+                Effect.sync(() => {
+                  const child = NodeChildProcess.spawn(
+                    process.execPath,
+                    ["--input-type=module", "-e", backgroundPeer],
+                    {
+                      stdio: ["pipe", "ignore", "inherit", "ipc"],
+                      env: {
+                        PID_LOG: `${h.cwd}/pids.ndjson`,
+                        T3_ACP_REQUEST_LOG_PATH: `${h.cwd}/requests.ndjson`,
+                      },
+                    },
+                  );
+                  child.on("message", (message) => Queue.offerUnsafe(receipts, message));
+                  child.once("error", (error) => {
+                    Queue.failCauseUnsafe(receipts, Cause.fail(error));
+                    Deferred.doneUnsafe(exited, Exit.fail(error));
+                  });
+                  child.once("exit", (code, signal) => {
+                    Deferred.doneUnsafe(exited, Exit.succeed({ code, signal }));
+                    Queue.failCauseUnsafe(
+                      receipts,
+                      Cause.fail(new Error(`Peer exited: ${code ?? signal}`)),
+                    );
+                  });
+                  return child;
+                }),
+                (child) =>
+                  Effect.gen(function* () {
+                    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+                    yield* Deferred.await(exited).pipe(Effect.orDie);
+                  }),
+              );
+              const wait = (kind: string) =>
+                Queue.take(receipts).pipe(
+                  Effect.map(
+                    Schema.decodeUnknownSync(
+                      Schema.Struct({ kind: Schema.String, pid: Schema.Number }),
+                    ),
+                  ),
+                  Effect.repeat({ until: (receipt) => receipt.kind === kind }),
+                );
+              yield* wait("ready");
+              peer.stdin!.write(
+                JSON.stringify({
+                  id: 1,
+                  method: "session/prompt",
+                  params: { prompt: [{ text: "Start a watcher" }] },
+                }) + "\n",
+              );
+              const watcher = yield* wait("watcher");
+              assert.isTrue(alive(watcher.pid));
+              if (order === "child-first") {
+                process.kill(watcher.pid, "SIGTERM");
+                yield* wait("watcher-exit");
+                assert.isTrue(alive(peer.pid!));
+                process.kill(peer.pid!, "SIGTERM");
+              } else {
+                process.kill(peer.pid!, "SIGTERM");
+                yield* wait("peer-sigterm");
+                assert.isTrue(alive(peer.pid!));
+                assert.isTrue(alive(watcher.pid));
+                process.kill(watcher.pid, "SIGTERM");
+              }
+              assert.deepEqual(yield* Deferred.await(exited), { code: 0, signal: null });
+              assert.isFalse(alive(peer.pid!));
+              assert.isFalse(alive(watcher.pid));
+              assert.isTrue(
+                h.pids().some(({ kind, pid }) => kind === "watcher-exit" && pid === watcher.pid),
+              );
+            }),
+          ),
+      );
+    },
+  );
+
+  it.effect.each(["scope-close", "SIGKILL"] as const)(
+    "observes real peer exit beyond its runtime scope after %s",
+    (termination) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness();
+          const runtimeScope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(runtimeScope, Exit.void));
+          const session = yield* h.open().pipe(Scope.provide(runtimeScope));
+          yield* session.ensureThread({
+            threadId: h.threadId,
+            modelSelection: h.modelSelection,
+            runtimePolicy: h.policy,
+          });
+          const owned = h.pids();
+          assert.lengthOf(owned, 1);
+          assert.isTrue(owned.every(({ pid }) => alive(pid)));
+          if (termination === "SIGKILL") process.kill(owned[0]!.pid, "SIGKILL");
+          yield* Scope.close(runtimeScope, Exit.void);
+          yield* h.assertDead(owned);
+        }),
+      ),
+  );
+
   it.effect(
     "runs native auth, resume, scoped Scient MCP, model confirmation, commands and streaming",
     () =>
@@ -366,6 +557,7 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
             endpoint: "http://127.0.0.1:12345/mcp",
             authorizationHeader: "Bearer synthetic-first-session",
             capabilities: new Set<never>(),
+            connectors: [],
           };
           yield* Effect.acquireRelease(mcpSessions.set(mcp), () => mcpSessions.clear(h.threadId));
           const firstScope = yield* Scope.make();
@@ -481,6 +673,7 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
             endpoint: "http://127.0.0.1:12345/mcp",
             authorizationHeader: "Bearer synthetic-disabled-session",
             capabilities: new Set<never>(),
+            connectors: [],
           }),
           () => mcpSessions.clear(h.threadId),
         );
@@ -635,9 +828,9 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
           assert.isUndefined(
             receipt?.type === "provider_turn.updated" ? receipt.providerTurn.acceptedAt : undefined,
           );
-          yield* assertDead(h.pids());
+          yield* h.assertDead(h.pids());
           yield* Deferred.succeed(h.releaseWrite, undefined);
-          yield* Effect.sleep("20 millis");
+          // interruptTurn completed cancelAndAwaitPrompt, which interrupts an unwritten prompt.
           assert.isFalse(h.readLog().some((request) => request.method === "session/prompt"));
           yield* h.send(session, providerThread, 2);
           const recovered = yield* c.wait((event) => event.type === "turn.terminal");
@@ -709,7 +902,7 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
             terminal.type === "turn.terminal" ? terminal.status : undefined,
             "interrupted",
           );
-          yield* assertDead(owned);
+          yield* h.assertDead(owned);
           const command = c.events.findLast(
             (event) =>
               event.type === "turn_item.updated" && event.turnItem.type === "command_execution",

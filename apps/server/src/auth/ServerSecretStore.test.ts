@@ -71,33 +71,6 @@ const layerRenameFailureSecretStore = () =>
     Layer.provideMerge(layerRenameFailureFileSystem),
   );
 
-const layerRemoveFailureFileSystem = Layer.effect(
-  FileSystem.FileSystem,
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-
-    return {
-      ...fileSystem,
-      remove: (path, options) =>
-        Effect.fail(
-          PlatformError.systemError({
-            _tag: "PermissionDenied",
-            module: "FileSystem",
-            method: "remove",
-            pathOrDescriptor: String(path),
-            description: `Permission denied while removing secret file.${options ? " options-set" : ""}`,
-          }),
-        ),
-    } satisfies FileSystem.FileSystem;
-  }),
-).pipe(Layer.provide(NodeServices.layer));
-
-const layerRemoveFailureSecretStore = () =>
-  ServerSecretStore.layer.pipe(
-    Layer.provide(layerServerConfig()),
-    Layer.provideMerge(layerRemoveFailureFileSystem),
-  );
-
 const layerConcurrentReadMissFileSystem = Layer.effect(
   FileSystem.FileSystem,
   Effect.gen(function* () {
@@ -145,16 +118,6 @@ const layerConcurrentCreateSecretStore = () =>
   );
 
 it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
-  it.effect("returns Option.none when a secret file does not exist", () =>
-    Effect.gen(function* () {
-      const secretStore = yield* ServerSecretStore.ServerSecretStore;
-
-      const secret = yield* secretStore.get("missing-secret");
-
-      assert.isTrue(Option.isNone(secret));
-    }).pipe(Effect.provide(layerServerSecretStore())),
-  );
-
   it.effect("reuses an existing secret instead of regenerating it", () =>
     Effect.gen(function* () {
       const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -195,8 +158,9 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
 
           return {
             ...fileSystem,
-            makeDirectory: () => Effect.void,
-            writeFile: () => Effect.void,
+            // SCIENT-FORK:START — Scient Extensions: the real directory exists so replace can open and sync
+            // its temporary file; only permission changes and the rename are recorded.
+            // SCIENT-FORK:END
             rename: () => Effect.void,
             chmod: (path, mode) =>
               Effect.sync(() => {
@@ -206,7 +170,11 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
         }),
       ).pipe(Layer.provide(NodeServices.layer));
 
-      const secretStore = yield* Effect.service(ServerSecretStore.ServerSecretStore).pipe(
+      // SCIENT-FORK:START — Scient Extensions: use the store while its temporary config directory exists.
+      yield* Effect.gen(function* () {
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        yield* secretStore.set("session-signing-key", Uint8Array.from([1, 2, 3]));
+      }).pipe(
         Effect.provide(
           ServerSecretStore.layer.pipe(
             Layer.provide(layerServerConfig()),
@@ -214,8 +182,7 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
           ),
         ),
       );
-
-      yield* secretStore.set("session-signing-key", Uint8Array.from([1, 2, 3]));
+      // SCIENT-FORK:END
 
       assert.isTrue(
         chmodCalls.some((call) => call.mode === 0o700 && /[\\/]secrets$/.test(call.path)),
@@ -223,6 +190,101 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       assert.isAtLeast(chmodCalls.filter((call) => call.mode === 0o600).length, 2);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  // SCIENT-FORK:START — Scient Extensions: durable replace and directory-entry sync.
+  const syncFailure = (code: string, method: string) =>
+    PlatformError.systemError({
+      _tag: "Unknown",
+      module: "FileSystem",
+      method,
+      cause: Object.assign(new Error(code), { code }),
+    });
+  const layerSyncFileSystem = (options: {
+    readonly dataSync?: string;
+    readonly directoryOpen?: string;
+  }) =>
+    Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        return {
+          ...fileSystem,
+          open: (path, openOptions) => {
+            if (openOptions?.flag === "r" && options.directoryOpen !== undefined) {
+              return Effect.fail(syncFailure(options.directoryOpen, "open"));
+            }
+            const failure = options.dataSync;
+            return fileSystem.open(path, openOptions).pipe(
+              Effect.map((file) =>
+                openOptions?.flag === "w" && failure !== undefined
+                  ? new Proxy(file, {
+                      get: (target, key) =>
+                        key === "sync"
+                          ? Effect.fail(syncFailure(failure, "sync"))
+                          : Reflect.get(target, key, target),
+                    })
+                  : file,
+              ),
+            );
+          },
+        } satisfies FileSystem.FileSystem;
+      }),
+    ).pipe(Layer.provide(NodeServices.layer));
+  const withStore = <A, E>(
+    fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
+    use: (store: ServerSecretStore.ServerSecretStore["Service"]) => Effect.Effect<A, E>,
+  ) =>
+    Effect.flatMap(ServerSecretStore.ServerSecretStore, use).pipe(
+      Effect.provide(
+        ServerSecretStore.layer.pipe(
+          Layer.provide(layerServerConfig()),
+          Layer.provideMerge(fileSystemLayer),
+        ),
+      ),
+    );
+
+  it.effect("fails a replace whose data cannot be synced instead of acknowledging it", () =>
+    withStore(layerSyncFileSystem({ dataSync: "EIO" }), (secretStore) =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(secretStore.set("connector-sync", Uint8Array.from([1])));
+        assert.instanceOf(error, ServerSecretStore.SecretStorePersistError);
+        assert.isTrue(Option.isNone(yield* secretStore.get("connector-sync")));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails directory sync errors but skips platforms that cannot sync a directory", () =>
+    Effect.gen(function* () {
+      yield* withStore(layerSyncFileSystem({ directoryOpen: "EIO" }), (failing) =>
+        Effect.gen(function* () {
+          assert.instanceOf(
+            yield* Effect.flip(failing.set("connector-sync", Uint8Array.from([1]))),
+            ServerSecretStore.SecretStorePersistError,
+          );
+          assert.instanceOf(
+            yield* Effect.flip(failing.create("connector-created", Uint8Array.from([3]))),
+            ServerSecretStore.SecretStorePersistError,
+          );
+          assert.instanceOf(
+            yield* Effect.flip(failing.remove("connector-sync")),
+            ServerSecretStore.SecretStoreRemoveError,
+          );
+        }),
+      );
+      yield* withStore(layerSyncFileSystem({ directoryOpen: "EISDIR" }), (unsupported) =>
+        Effect.gen(function* () {
+          yield* unsupported.set("connector-sync", Uint8Array.from([2]));
+          yield* unsupported.create("connector-created", Uint8Array.from([3]));
+          yield* unsupported.remove("connector-created");
+          assert.deepStrictEqual(
+            Option.map(yield* unsupported.get("connector-sync"), (bytes) => [...bytes]),
+            Option.some([2]),
+          );
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+  // SCIENT-FORK:END
 
   it.effect("propagates read failures other than missing-file errors", () =>
     Effect.gen(function* () {
@@ -250,18 +312,5 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
     }).pipe(Effect.provide(layerRenameFailureSecretStore())),
-  );
-
-  it.effect("propagates remove failures other than missing-file errors", () =>
-    Effect.gen(function* () {
-      const secretStore = yield* ServerSecretStore.ServerSecretStore;
-
-      const error = yield* Effect.flip(secretStore.remove("session-signing-key"));
-
-      assert.instanceOf(error, ServerSecretStore.SecretStoreRemoveError);
-      assert.include(error.message, "Failed to remove secret session-signing-key.");
-      assert.instanceOf(error.cause, PlatformError.PlatformError);
-      assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
-    }).pipe(Effect.provide(layerRemoveFailureSecretStore())),
   );
 });

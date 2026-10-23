@@ -5,6 +5,7 @@ import {
   completeDestructiveNativeInterrupt,
 } from "../scient-provider/NativeProducerLifecycle.ts";
 import {
+  type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
@@ -163,6 +164,8 @@ export interface NativeSession {
   readonly resume: (
     nativeId: string,
     resumeCursor?: unknown,
+    /** The thread's model, when it belongs to this provider instance. */
+    modelSelection?: ModelSelection,
   ) => Effect.Effect<void, NativeSessionOperationError>;
 }
 
@@ -205,8 +208,8 @@ export function makeNativeSessionAdapterV2(
           ? { type: "apply_on_next_turn" as const }
           : { type: "restart_session" as const },
       ),
-    openSession: (input) =>
-      Effect.gen(function* () {
+    openSession: Effect.fn("NativeSessionAdapterV2.openSession")(
+      function* (input) {
         if (input.modelSelection.instanceId !== options.instanceId)
           return yield* protocolError("The model selection belongs to another provider instance.");
         const ownerScope = yield* Effect.scope;
@@ -289,68 +292,68 @@ export function makeNativeSessionAdapterV2(
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => (options.eventQueueStorage ? budget.seal() : budget.release())),
         );
-        const emitBatch = (
+        const emitBatch = Effect.fn("NativeSessionAdapterV2.emitBatch")(function* (
           frames: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
           control: boolean,
-        ) =>
-          Effect.gen(function* () {
-            if (frames.length === 0) return;
-            yield* budget.admit(frames, control, frames.length, (charge) =>
-              events.offer(frames, charge),
-            );
-          });
+        ): Effect.fn.Return<void> {
+          if (frames.length === 0) return;
+          yield* budget.admit(frames, control, frames.length, (charge) =>
+            events.offer(frames, charge),
+          );
+        });
         const emit = (event: ProviderAdapter.ProviderAdapterV2Event) => emitBatch([event], true);
-        const updateSession = (status: typeof providerSession.status, publish = emit) =>
-          Effect.gen(function* () {
-            providerSession = { ...providerSession, status, updatedAt: yield* DateTime.now };
-            yield* publish({ type: "provider_session.updated", driver, providerSession });
-          });
-        const settleRequest = (
+        const updateSession = Effect.fn("NativeSessionAdapterV2.updateSession")(function* (
+          status: typeof providerSession.status,
+          publish: typeof emit = emit,
+        ) {
+          providerSession = { ...providerSession, status, updatedAt: yield* DateTime.now };
+          yield* publish({ type: "provider_session.updated", driver, providerSession });
+        });
+        const settleRequest = Effect.fn("NativeSessionAdapterV2.settleRequest")(function* (
           pending: {
             request: OrchestrationV2RuntimeRequest;
             readonly item: OrchestrationV2TurnItem;
           },
           status: "resolved" | "cancelled",
           now: DateTime.Utc,
-        ) =>
-          Effect.gen(function* () {
-            if (pending.request.status !== "pending") return;
-            pending.request = {
-              ...pending.request,
-              status,
-              resolvedAt: now,
-              ...(status === "cancelled"
-                ? {
-                    responseCapability: {
-                      type: "not_resumable" as const,
-                      reason: "The provider turn ended.",
-                    },
-                  }
-                : {}),
-            };
-            yield* emit({
-              type: "runtime_request.updated",
-              driver,
-              threadId: input.threadId,
-              runtimeRequest: pending.request,
-            });
-            const item = {
-              ...pending.item,
-              status: status === "resolved" ? ("completed" as const) : ("cancelled" as const),
-              completedAt: now,
-              updatedAt: now,
-            };
-            yield* emit({ type: "turn_item.updated", driver, turnItem: item });
-            for (const [key, stored] of items) if (stored.id === item.id) items.set(key, item);
-            const node = nodes.get(pending.request.nodeId);
-            if (node) {
-              const settled = { ...node, status: item.status, completedAt: now };
-              nodes.set(node.id, settled);
-              yield* emit({ type: "node.updated", driver, node: settled });
-            }
+        ) {
+          if (pending.request.status !== "pending") return;
+          pending.request = {
+            ...pending.request,
+            status,
+            resolvedAt: now,
+            ...(status === "cancelled"
+              ? {
+                  responseCapability: {
+                    type: "not_resumable" as const,
+                    reason: "The provider turn ended.",
+                  },
+                }
+              : {}),
+          };
+          yield* emit({
+            type: "runtime_request.updated",
+            driver,
+            threadId: input.threadId,
+            runtimeRequest: pending.request,
           });
-        const publishBackgroundRoster = (now: DateTime.Utc, publish = emit) =>
-          Effect.gen(function* () {
+          const item = {
+            ...pending.item,
+            status: status === "resolved" ? ("completed" as const) : ("cancelled" as const),
+            completedAt: now,
+            updatedAt: now,
+          };
+          yield* emit({ type: "turn_item.updated", driver, turnItem: item });
+          for (const [key, stored] of items) if (stored.id === item.id) items.set(key, item);
+          const node = nodes.get(pending.request.nodeId);
+          if (node) {
+            const settled = { ...node, status: item.status, completedAt: now };
+            nodes.set(node.id, settled);
+            yield* emit({ type: "node.updated", driver, node: settled });
+          }
+        });
+        const publishBackgroundRoster = Effect.fn("NativeSessionAdapterV2.publishBackgroundRoster")(
+          function* (now: DateTime.Utc, publish: typeof emit = emit) {
             if (!thread) return;
             const children = [...subagents.values()].filter((task) => task.status === "running");
             thread = {
@@ -375,13 +378,14 @@ export function makeNativeSessionAdapterV2(
               updatedAt: now,
             };
             yield* publish({ type: "provider_thread.updated", driver, providerThread: thread });
-          });
-        const stopBackgroundTasks = (
-          status: "failed" | "cancelled" | "interrupted",
-          now: DateTime.Utc,
-          clearWake = true,
-        ) =>
-          Effect.gen(function* () {
+          },
+        );
+        const stopBackgroundTasks = Effect.fn("NativeSessionAdapterV2.stopBackgroundTasks")(
+          function* (
+            status: "failed" | "cancelled" | "interrupted",
+            now: DateTime.Utc,
+            clearWake: boolean = true,
+          ) {
             backgroundPending = false;
             if (clearWake) {
               for (const buffered of wake) buffered.charge.release();
@@ -407,143 +411,144 @@ export function makeNativeSessionAdapterV2(
               }
             }
             yield* publishBackgroundRoster(now);
-          });
-        const finish = (update: Extract<NativeSessionUpdate, { type: "terminal" }>) =>
-          Effect.gen(function* () {
-            const running = active;
-            if (!running || !thread) return;
-            active = undefined;
-            const completedAt = yield* DateTime.now;
-            const status = running.interrupted ? "interrupted" : update.status;
-            if (update.broken)
-              yield* stopBackgroundTasks(status === "completed" ? "failed" : status, completedAt);
-            for (const pending of requests.values()) {
-              if (pending.request.providerTurnId === running.turn.id)
-                yield* settleRequest(pending, "cancelled", completedAt);
-            }
-            for (const [key, item] of items) {
-              if (item.providerTurnId !== running.turn.id || item.status !== "running") continue;
-              if (item.type === "subagent" && status === "completed") continue;
-              const completed: OrchestrationV2TurnItem =
-                item.type === "assistant_message" || item.type === "reasoning"
-                  ? {
-                      ...item,
-                      status: status === "completed" ? "completed" : status,
-                      streaming: false,
-                      completedAt,
-                      updatedAt: completedAt,
-                    }
-                  : {
-                      ...item,
-                      status: status === "completed" ? "completed" : status,
-                      completedAt,
-                      updatedAt: completedAt,
-                    };
-              items.set(key, completed);
-              yield* emit({ type: "turn_item.updated", driver, turnItem: completed });
-              if (completed.type === "assistant_message") {
-                const message = messages.get(completed.messageId);
-                if (message) {
-                  const settled = { ...message, streaming: false, updatedAt: completedAt };
-                  messages.set(settled.id, settled);
-                  yield* emit({ type: "message.updated", driver, message: settled });
-                }
+          },
+        );
+        const finish = Effect.fn("NativeSessionAdapterV2.finish")(function* (
+          update: Extract<NativeSessionUpdate, { type: "terminal" }>,
+        ) {
+          const running = active;
+          if (!running || !thread) return;
+          active = undefined;
+          const completedAt = yield* DateTime.now;
+          const status = running.interrupted ? "interrupted" : update.status;
+          if (update.broken)
+            yield* stopBackgroundTasks(status === "completed" ? "failed" : status, completedAt);
+          for (const pending of requests.values()) {
+            if (pending.request.providerTurnId === running.turn.id)
+              yield* settleRequest(pending, "cancelled", completedAt);
+          }
+          for (const [key, item] of items) {
+            if (item.providerTurnId !== running.turn.id || item.status !== "running") continue;
+            if (item.type === "subagent" && status === "completed") continue;
+            const completed: OrchestrationV2TurnItem =
+              item.type === "assistant_message" || item.type === "reasoning"
+                ? {
+                    ...item,
+                    status: status === "completed" ? "completed" : status,
+                    streaming: false,
+                    completedAt,
+                    updatedAt: completedAt,
+                  }
+                : {
+                    ...item,
+                    status: status === "completed" ? "completed" : status,
+                    completedAt,
+                    updatedAt: completedAt,
+                  };
+            items.set(key, completed);
+            yield* emit({ type: "turn_item.updated", driver, turnItem: completed });
+            if (completed.type === "assistant_message") {
+              const message = messages.get(completed.messageId);
+              if (message) {
+                const settled = { ...message, streaming: false, updatedAt: completedAt };
+                messages.set(settled.id, settled);
+                yield* emit({ type: "message.updated", driver, message: settled });
               }
             }
-            for (const [id, node] of nodes) {
-              if (node.providerTurnId !== running.turn.id || node.status !== "running") continue;
-              if (node.kind === "subagent" && status === "completed") continue;
-              const settled: OrchestrationV2ExecutionNode = {
-                ...node,
-                status: status === "completed" ? ("completed" as const) : status,
-                completedAt,
-              };
-              nodes.set(id, settled);
-              yield* emit({ type: "node.updated", driver, node: settled });
-            }
-            if (status === "completed" && update.stopReason === "length") {
-              yield* emit({
-                type: "turn_item.updated",
-                driver,
-                turnItem: {
-                  id: idAllocator.derive.turnItemFromProviderItem({
-                    driver,
-                    nativeItemId: `${running.turn.id}:output-truncated`,
-                  }),
-                  threadId: running.input.threadId,
-                  runId: running.input.runId,
-                  nodeId: running.input.rootNodeId,
-                  providerThreadId: thread.id,
-                  providerTurnId: running.turn.id,
-                  nativeItemRef: null,
-                  parentItemId: null,
-                  ordinal: running.nextOrdinal++,
-                  startedAt: completedAt,
-                  updatedAt: completedAt,
-                  completedAt,
-                  type: "notification",
-                  status: "completed",
-                  title: null,
-                  source: { kind: "output_truncated", stopReason: "length" },
-                  outcome: "completed",
-                  summary: MODEL_TOKEN_LIMIT_MESSAGE,
-                },
-              });
-            }
-            running.turn = { ...running.turn, status, completedAt };
-            turns.set(running.turn.id, running.turn);
+          }
+          for (const [id, node] of nodes) {
+            if (node.providerTurnId !== running.turn.id || node.status !== "running") continue;
+            if (node.kind === "subagent" && status === "completed") continue;
+            const settled: OrchestrationV2ExecutionNode = {
+              ...node,
+              status: status === "completed" ? ("completed" as const) : status,
+              completedAt,
+            };
+            nodes.set(id, settled);
+            yield* emit({ type: "node.updated", driver, node: settled });
+          }
+          if (status === "completed" && update.stopReason === "length") {
             yield* emit({
-              type: "provider_turn.updated",
+              type: "turn_item.updated",
               driver,
-              threadId: running.input.threadId,
-              providerTurn: running.turn,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver,
+                  nativeItemId: `${running.turn.id}:output-truncated`,
+                }),
+                threadId: running.input.threadId,
+                runId: running.input.runId,
+                nodeId: running.input.rootNodeId,
+                providerThreadId: thread.id,
+                providerTurnId: running.turn.id,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: running.nextOrdinal++,
+                startedAt: completedAt,
+                updatedAt: completedAt,
+                completedAt,
+                type: "notification",
+                status: "completed",
+                title: null,
+                source: { kind: "output_truncated", stopReason: "length" },
+                outcome: "completed",
+                summary: MODEL_TOKEN_LIMIT_MESSAGE,
+              },
             });
-            thread = {
-              ...thread,
-              status: update.broken ? "error" : "idle",
-              updatedAt: completedAt,
-            };
-            yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
-            providerSession = {
-              ...providerSession,
-              lastError:
-                status === "failed" ? (update.detail ?? "The native provider turn failed.") : null,
-            };
-            yield* updateSession(update.broken ? "error" : "ready");
-            const terminal = {
-              driver,
-              providerThreadId: thread.id,
-              providerTurnId: running.turn.id,
-              runOrdinal: running.input.runOrdinal,
-              threadDisposition: update.broken ? ("broken" as const) : ("reusable" as const),
-            };
-            yield* emit(
-              status === "failed"
-                ? {
-                    ...terminal,
-                    type: "turn.terminal",
-                    status,
-                    failureItemOrdinal: running.nextOrdinal++,
-                    failure: makeProviderFailure({
-                      message: update.detail ?? "The native provider turn failed.",
-                      class: update.failureClass ?? "provider_error",
-                    }),
-                  }
-                : { ...terminal, type: "turn.terminal", status, failure: null },
-            );
-            if (options.eventQueueLimits && !update.broken && backgroundPending)
-              yield* emitBatch(
-                [{ type: "provider_thread.updated", driver, providerThread: thread }],
-                false,
-              );
+          }
+          running.turn = { ...running.turn, status, completedAt };
+          turns.set(running.turn.id, running.turn);
+          yield* emit({
+            type: "provider_turn.updated",
+            driver,
+            threadId: running.input.threadId,
+            providerTurn: running.turn,
           });
+          thread = {
+            ...thread,
+            status: update.broken ? "error" : "idle",
+            updatedAt: completedAt,
+          };
+          yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
+          providerSession = {
+            ...providerSession,
+            lastError:
+              status === "failed" ? (update.detail ?? "The native provider turn failed.") : null,
+          };
+          yield* updateSession(update.broken ? "error" : "ready");
+          const terminal = {
+            driver,
+            providerThreadId: thread.id,
+            providerTurnId: running.turn.id,
+            runOrdinal: running.input.runOrdinal,
+            threadDisposition: update.broken ? ("broken" as const) : ("reusable" as const),
+          };
+          yield* emit(
+            status === "failed"
+              ? {
+                  ...terminal,
+                  type: "turn.terminal",
+                  status,
+                  failureItemOrdinal: running.nextOrdinal++,
+                  failure: makeProviderFailure({
+                    message: update.detail ?? "The native provider turn failed.",
+                    class: update.failureClass ?? "provider_error",
+                  }),
+                }
+              : { ...terminal, type: "turn.terminal", status, failure: null },
+          );
+          if (options.eventQueueLimits && !update.broken && backgroundPending)
+            yield* emitBatch(
+              [{ type: "provider_thread.updated", driver, providerThread: thread }],
+              false,
+            );
+        });
         // SCIENT-FORK: retain confirmed stopped receipts through consumer EOF.
         const stoppedProducer = makeStoppedNativeProducer({
-          cancelRequests: () =>
-            Effect.gen(function* () {
-              for (const pending of requests.values())
-                yield* settleRequest(pending, "cancelled", yield* DateTime.now);
-            }),
+          cancelRequests: Effect.fn("NativeSessionAdapterV2.cancelRequests")(function* () {
+            for (const pending of requests.values())
+              yield* settleRequest(pending, "cancelled", yield* DateTime.now);
+          }),
           publishStopped: () => updateSession("stopped"),
           sealBudget: () => budget.seal(),
           end: () => events.end,
@@ -1195,52 +1200,51 @@ export function makeNativeSessionAdapterV2(
             (existing.driver === driver &&
               existing.providerInstanceId === options.instanceId &&
               existing.appThreadId === appThreadId));
-        const register = (
+        const register = Effect.fn("NativeSessionAdapterV2.register")(function* (
           appThreadId: typeof input.threadId,
           existing?: OrchestrationV2ProviderThread,
-        ) =>
-          Effect.gen(function* () {
-            if (!validateThreadOwner(appThreadId, existing))
-              return yield* protocolError("The provider thread belongs to another session owner.");
-            const updatedAt = yield* DateTime.now;
-            const known = existing ?? thread;
-            thread = known
-              ? {
-                  ...known,
-                  nativeThreadRef:
-                    known.nativeThreadRef ??
-                    (native.nativeThreadKnown === false ? null : ref(native.nativeId)),
-                  nativeMetadata: { ...known.nativeMetadata, resumeCursor: native.resumeCursor },
-                  providerSessionId: input.providerSessionId,
-                  status: "idle",
-                  updatedAt,
-                }
-              : {
-                  id: idAllocator.derive.providerThread({
-                    driver,
-                    providerInstanceId: options.instanceId,
-                    nativeThreadId: native.nativeId,
-                  }),
+        ) {
+          if (!validateThreadOwner(appThreadId, existing))
+            return yield* protocolError("The provider thread belongs to another session owner.");
+          const updatedAt = yield* DateTime.now;
+          const known = existing ?? thread;
+          thread = known
+            ? {
+                ...known,
+                nativeThreadRef:
+                  known.nativeThreadRef ??
+                  (native.nativeThreadKnown === false ? null : ref(native.nativeId)),
+                nativeMetadata: { ...known.nativeMetadata, resumeCursor: native.resumeCursor },
+                providerSessionId: input.providerSessionId,
+                status: "idle",
+                updatedAt,
+              }
+            : {
+                id: idAllocator.derive.providerThread({
                   driver,
                   providerInstanceId: options.instanceId,
-                  providerSessionId: input.providerSessionId,
-                  appThreadId,
-                  ownerNodeId: null,
-                  nativeThreadRef: native.nativeThreadKnown === false ? null : ref(native.nativeId),
-                  nativeConversationHeadRef: null,
-                  nativeMetadata: { resumeCursor: native.resumeCursor },
-                  status: "idle",
-                  firstRunOrdinal: null,
-                  lastRunOrdinal: null,
-                  handoffIds: [],
-                  forkedFrom: null,
-                  pendingBackgroundTasks: [],
-                  createdAt: updatedAt,
-                  updatedAt,
-                };
-            yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
-            return thread;
-          });
+                  nativeThreadId: native.nativeId,
+                }),
+                driver,
+                providerInstanceId: options.instanceId,
+                providerSessionId: input.providerSessionId,
+                appThreadId,
+                ownerNodeId: null,
+                nativeThreadRef: native.nativeThreadKnown === false ? null : ref(native.nativeId),
+                nativeConversationHeadRef: null,
+                nativeMetadata: { resumeCursor: native.resumeCursor },
+                status: "idle",
+                firstRunOrdinal: null,
+                lastRunOrdinal: null,
+                handoffIds: [],
+                forkedFrom: null,
+                pendingBackgroundTasks: [],
+                createdAt: updatedAt,
+                updatedAt,
+              };
+          yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
+          return thread;
+        });
         const steer = native.steer;
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
@@ -1277,8 +1281,8 @@ export function makeNativeSessionAdapterV2(
                 providerThread.id === thread?.id &&
                 (providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
             ),
-          ensureThread: (request) =>
-            Effect.gen(function* () {
+          ensureThread: Effect.fn("NativeSessionAdapterV2.ensureThread")(
+            function* (request) {
               if (!validateThreadOwner(request.threadId, request.existingProviderThread))
                 return yield* protocolError(
                   "The provider thread belongs to another session owner.",
@@ -1291,18 +1295,21 @@ export function makeNativeSessionAdapterV2(
                 yield* native.ensureFresh();
               }
               return yield* register(request.threadId, request.existingProviderThread);
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterEnsureThreadError({
-                    driver,
-                    threadId: request.threadId,
-                    cause,
-                  }),
+            },
+            (effect, request) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterEnsureThreadError({
+                      driver,
+                      threadId: request.threadId,
+                      cause,
+                    }),
+                ),
               ),
-            ),
-          resumeThread: (request) =>
-            Effect.gen(function* () {
+          ),
+          resumeThread: Effect.fn("NativeSessionAdapterV2.resumeThread")(
+            function* (request) {
               if (!validateThreadOwner(request.threadId ?? input.threadId, request.providerThread))
                 return yield* protocolError(
                   "The provider thread belongs to another session owner.",
@@ -1313,21 +1320,30 @@ export function makeNativeSessionAdapterV2(
                 return yield* protocolError(
                   "The native thread reference belongs to another provider driver.",
                 );
-              yield* native.resume(nativeId, request.providerThread.nativeMetadata?.resumeCursor);
+              yield* native.resume(
+                nativeId,
+                request.providerThread.nativeMetadata?.resumeCursor,
+                request.modelSelection?.instanceId === options.instanceId
+                  ? request.modelSelection
+                  : undefined,
+              );
               return yield* register(request.threadId ?? input.threadId, request.providerThread);
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterResumeThreadError({
-                    driver,
-                    providerSessionId: input.providerSessionId,
-                    providerThreadId: request.providerThread.id,
-                    cause,
-                  }),
+            },
+            (effect, request) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterResumeThreadError({
+                      driver,
+                      providerSessionId: input.providerSessionId,
+                      providerThreadId: request.providerThread.id,
+                      cause,
+                    }),
+                ),
               ),
-            ),
-          startTurn: (request) =>
-            Effect.gen(function* () {
+          ),
+          startTurn: Effect.fn("NativeSessionAdapterV2.startTurn")(
+            function* (request) {
               if (
                 budget.closed ||
                 providerSession.status === "error" ||
@@ -1427,7 +1443,10 @@ export function makeNativeSessionAdapterV2(
                   }),
                 );
               }
-            }).pipe(Effect.mapError(turnStartErrorKeepingReceipt(driver, request))),
+            },
+            (effect, request) =>
+              effect.pipe(Effect.mapError(turnStartErrorKeepingReceipt(driver, request))),
+          ),
           steerTurn: (request) =>
             steer
               ? Effect.gen(function* () {
@@ -1477,8 +1496,8 @@ export function makeNativeSessionAdapterV2(
                     providerThreadId: request.providerThread.id,
                   }),
                 ),
-          interruptTurn: (request) =>
-            Effect.gen(function* () {
+          interruptTurn: Effect.fn("NativeSessionAdapterV2.interruptTurn")(
+            function* (request) {
               if (!active) {
                 const ownedTurn = turns.get(request.providerTurnId);
                 if (
@@ -1525,25 +1544,27 @@ export function makeNativeSessionAdapterV2(
                   if (native.interruptBreaksSession === true) yield* stoppedProducer.seal;
                 }),
               );
-            }).pipe(
-              // SCIENT-FORK: complete destructive cleanup despite a cancelled restart waiter.
-              (operation) =>
-                completeDestructiveNativeInterrupt(
-                  operation,
-                  native.interruptBreaksSession === true,
+            },
+            (effect, request) =>
+              effect.pipe(
+                (operation) =>
+                  completeDestructiveNativeInterrupt(
+                    operation,
+                    native.interruptBreaksSession === true,
+                  ),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterInterruptError({
+                      driver,
+                      providerThreadId: request.providerThread.id,
+                      providerTurnId: request.providerTurnId,
+                      cause,
+                    }),
                 ),
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterInterruptError({
-                    driver,
-                    providerThreadId: request.providerThread.id,
-                    providerTurnId: request.providerTurnId,
-                    cause,
-                  }),
               ),
-            ),
-          respondToRuntimeRequest: (response) =>
-            Effect.gen(function* () {
+          ),
+          respondToRuntimeRequest: Effect.fn("NativeSessionAdapterV2.respondToRuntimeRequest")(
+            function* (response) {
               const { pending, previous, submitted } = yield* eventPermit.withPermit(
                 Effect.gen(function* () {
                   const pending = requests.get(response.requestId);
@@ -1602,16 +1623,19 @@ export function makeNativeSessionAdapterV2(
                     yield* updateSession(active ? "running" : "ready");
                 }),
               );
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
-                    driver,
-                    requestId: response.requestId,
-                    cause,
-                  }),
+            },
+            (effect, response) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
+                      driver,
+                      requestId: response.requestId,
+                      cause,
+                    }),
+                ),
               ),
-            ),
+          ),
           readThreadSnapshot: (request) =>
             options.capabilities.threads.canReadThreadSnapshot
               ? Effect.succeed({
@@ -1646,15 +1670,18 @@ export function makeNativeSessionAdapterV2(
         };
         yield* emit({ type: "provider_session.updated", driver, providerSession });
         return runtime;
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapter.ProviderAdapterOpenSessionError({
-              driver,
-              providerSessionId: input.providerSessionId,
-              cause,
-            }),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
+                driver,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
+          ),
         ),
-      ),
+    ),
   };
 }

@@ -38,6 +38,11 @@ import desktopPackageJson from "../apps/desktop/package.json" with { type: "json
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
+import {
+  ReleasePackageManifestError,
+  releasePackageFiles,
+  updateReleasePackageVersions,
+} from "./update-release-package-versions.ts";
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
 import {
   BRAND_ASSET_PATHS,
@@ -45,11 +50,16 @@ import {
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
+import { windowsSystemTar } from "./lib/windows-tar.ts";
 import {
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
-import { analyzeWindowsPayloadInventory, windowsNativeIgnoreGlobs } from "./lib/windows-payload.ts";
+import {
+  analyzeWindowsPayloadInventory,
+  windowsNativeIgnoreGlobs,
+  WINDOWS_VOICE_FILES,
+} from "./lib/windows-payload.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import {
   buildConversationPreview,
@@ -64,7 +74,6 @@ import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { stageScientVoiceRuntimeForDesktopBuild } from "./lib/scient-voice-build.ts";
 import { stageScientSyncTexRuntimeForDesktopBuild } from "./lib/scient-synctex-build.ts";
 import {
-  FILE_EXCHANGE_RESOURCE,
   stageFileExchangeForDesktopBuild,
   validatePackagedFileExchange,
 } from "./lib/scient-file-exchange-build.ts";
@@ -74,6 +83,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -137,6 +147,9 @@ const STAGE_PACKAGE_EXTENSIONS = {
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
+const decodeReleasePackageManifest = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
 const encodeStageWorkspaceConfig = Schema.encodeEffect(fromYaml(StageWorkspaceConfig));
 
@@ -177,7 +190,7 @@ export function resolveResourceMonitorRustTargets(
 }
 
 export function resourceMonitorExecutableName(platform: typeof BuildPlatform.Type): string {
-  return platform === "win" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
+  return platform === "win" ? "scient-resource-monitor.exe" : "scient-resource-monitor";
 }
 
 const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
@@ -382,6 +395,15 @@ export class InvalidMockUpdateServerPortError extends Schema.TaggedError<Invalid
       inputLength: configuredPort.length,
       cause,
     });
+  }
+}
+
+export class DesktopBuildManifestRestoreError extends Schema.TaggedError<DesktopBuildManifestRestoreError>()(
+  "DesktopBuildManifestRestoreError",
+  { failures: Schema.Array(ReleasePackageManifestError) },
+) {
+  override get message(): string {
+    return `Failed to restore release manifests: ${this.failures.map((failure) => failure.filePath).join(", ")}`;
   }
 }
 
@@ -806,6 +828,7 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "sidecar-invalid",
   "unpacked-native-missing",
   "resource-monitor-missing",
+  "file-publication-missing",
   "synctex-runtime-missing",
   "wsl-runtime-missing",
   "wsl-runtime-invalid",
@@ -838,6 +861,9 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<Wi
     }
     if (this.reason === "resource-monitor-missing") {
       return "Windows packaged payload is missing the resource monitor executable.";
+    }
+    if (this.reason === "file-publication-missing") {
+      return "Windows packaged payload is missing the native file publication executable.";
     }
     if (this.reason === "synctex-runtime-missing") {
       return "Windows packaged payload is missing a verified SyncTeX runtime.";
@@ -1050,6 +1076,119 @@ interface StagePackageJson {
   };
 }
 
+export const WINDOWS_NATIVE_RESOURCE_FILES = [
+  "file-exchange/scient-file-publication.exe",
+  "file-exchange/publication-artifact.json",
+  ...WINDOWS_VOICE_FILES.map((file) => `whisper-runtime/${file}`),
+] as const;
+
+class WindowsNativeResourceError extends Schema.TaggedError<WindowsNativeResourceError>()(
+  "WindowsNativeResourceError",
+  { message: Schema.String },
+) {}
+
+const WindowsNativeResourceReceipt = Schema.fromJsonString(
+  Schema.Struct({
+    schemaVersion: Schema.Literal(1),
+    platform: Schema.Literal("win32"),
+    arch: Schema.Literals(["x64", "arm64"]),
+    sourceSha: Schema.String,
+    files: Schema.Record(Schema.String, Schema.String),
+  }),
+);
+
+/** Consume exact-source target-native prerequisites; never run Windows compilers on Linux. */
+export const stageWindowsNativeResources = Effect.fn("desktopArtifact.stageWindowsNativeResources")(
+  function* (input: {
+    readonly sourceDir: string;
+    readonly stageResourcesDir: string;
+    readonly arch: typeof BuildArch.Type;
+    readonly sourceCommit: string;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const receipt = yield* fs
+      .readFileString(path.join(input.sourceDir, "receipt.json"))
+      .pipe(Effect.flatMap(Schema.decodeUnknownEffect(WindowsNativeResourceReceipt)));
+    if (
+      receipt.arch !== input.arch ||
+      !/^[a-f0-9]{40}$/.test(receipt.sourceSha) ||
+      input.sourceCommit.length < 12 ||
+      !receipt.sourceSha.startsWith(input.sourceCommit)
+    )
+      return yield* Effect.fail(
+        new WindowsNativeResourceError({
+          message: "Windows native prerequisites do not match the target/source commit.",
+        }),
+      );
+    const expected = [...WINDOWS_NATIVE_RESOURCE_FILES].sort();
+    if (Object.keys(receipt.files).sort().join("\n") !== expected.join("\n"))
+      return yield* Effect.fail(
+        new WindowsNativeResourceError({
+          message: "Windows native prerequisite receipt has an unexpected inventory.",
+        }),
+      );
+    for (const file of expected) {
+      const source = path.join(input.sourceDir, file);
+      const info = yield* Effect.tryPromise(() => NodeFSP.lstat(source));
+      const parent = yield* Effect.tryPromise(() => NodeFSP.lstat(path.dirname(source)));
+      if (
+        !info.isFile() ||
+        info.isSymbolicLink() ||
+        !parent.isDirectory() ||
+        parent.isSymbolicLink()
+      )
+        return yield* Effect.fail(
+          new WindowsNativeResourceError({
+            message: `Windows native prerequisite is not a regular file: ${file}`,
+          }),
+        );
+      const bytes = yield* fs.readFile(source);
+      if (NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== receipt.files[file])
+        return yield* Effect.fail(
+          new WindowsNativeResourceError({
+            message: `Windows native prerequisite SHA-256 mismatch: ${file}`,
+          }),
+        );
+      if (/\.(exe|dll)$/.test(file)) {
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        const pe = bytes.length >= 64 ? view.getUint32(0x3c, true) : bytes.length;
+        if (
+          bytes[0] !== 0x4d ||
+          bytes[1] !== 0x5a ||
+          pe + 6 > bytes.length ||
+          view.getUint32(pe, true) !== 0x00004550 ||
+          view.getUint16(pe + 4, true) !== (input.arch === "x64" ? 0x8664 : 0xaa64)
+        )
+          return yield* Effect.fail(
+            new WindowsNativeResourceError({
+              message: `Windows native prerequisite has the wrong PE architecture: ${file}`,
+            }),
+          );
+      }
+    }
+    // Stale host helpers cannot leak into the target's exact loose inventories.
+    for (const directory of ["file-exchange", "whisper-runtime"]) {
+      const destination = path.join(input.stageResourcesDir, directory);
+      yield* fs.remove(destination, { recursive: true, force: true });
+      yield* fs.makeDirectory(destination, { recursive: true });
+    }
+    for (const file of expected)
+      yield* fs.copyFile(
+        path.join(input.sourceDir, file),
+        path.join(input.stageResourcesDir, file),
+      );
+  },
+  Effect.mapError(
+    (cause) =>
+      new BuildCommandFailedError({
+        command: "stage exact-source Windows native prerequisites",
+        exitCode: 1,
+        stderrTail: String(cause),
+      }),
+  ),
+);
+
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
 // SCIENT-FORK:START — Scient conversation file associations.
@@ -1072,6 +1211,9 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!**/node_modules/@cursor/sdk-*/**/*",
   "!apps/desktop/prod-resources/cursor-sdk",
   "!apps/desktop/prod-resources/cursor-sdk/**/*",
+  // Native publication is spawned only from the host resources path.
+  "!apps/server/dist/file-exchange",
+  "!apps/server/dist/file-exchange/**/*",
   // Packaged consumers use extraResources, not these staging copies. Keep
   // individual exclusions so prod-resources/icon.png remains available.
   "!apps/desktop/prod-resources/resource-monitor",
@@ -1122,6 +1264,10 @@ export const LINUX_FILE_EXCLUSIONS = [
 // every executable and DLL, so retaining either staging tree in app.asar would
 // create two additional loose copies of the same binaries and bloat installs.
 export const WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS = [
+  "!apps/desktop/resources/file-exchange",
+  "!apps/desktop/resources/file-exchange/**/*",
+  "!apps/desktop/prod-resources/file-exchange",
+  "!apps/desktop/prod-resources/file-exchange/**/*",
   "!apps/desktop/resources/resource-monitor",
   "!apps/desktop/resources/resource-monitor/**/*",
   "!apps/desktop/resources/whisper-runtime",
@@ -1258,6 +1404,10 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
+  },
+  {
+    from: "apps/desktop/prod-resources/file-exchange",
+    to: "file-exchange",
   },
   {
     from: "apps/desktop/prod-resources/whisper-runtime",
@@ -1560,6 +1710,12 @@ ${associatedDomains}
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- The hardened runtime denies camera and microphone to the app and every
+         child process, with no prompt, unless the app claims these. Terminals
+         and coding agents inherit the app's TCC identity, so without these a
+         command like ffmpeg or imagesnap gets silent access-denied. -->
+    <key>com.apple.security.device.camera</key>
     <true/>
     <key>com.apple.security.device.audio-input</key>
     <true/>
@@ -2026,6 +2182,113 @@ const runCommand = Effect.fn("runCommand")(function* (
   }
 });
 
+export class DesktopBuildAlreadyRunningError extends Schema.TaggedError<DesktopBuildAlreadyRunningError>()(
+  "DesktopBuildAlreadyRunningError",
+  { lockPath: Schema.String },
+) {
+  override get message(): string {
+    return `Another desktop build owns '${this.lockPath}'. Wait for it to finish. If a build was killed, confirm no desktop build is running, inspect and restore any changed release manifests, then remove this lock.`;
+  }
+}
+
+const withDesktopBuildLock = Effect.fn("withDesktopBuildLock")(function* <A, E, R>(
+  repoRoot: string,
+  build: Effect.Effect<A, E, R>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const lockPath = path.join(repoRoot, ".desktop-build.lock");
+  return yield* Effect.acquireUseRelease(
+    fs
+      .makeDirectory(lockPath)
+      .pipe(
+        Effect.mapError((error) =>
+          error.reason._tag === "AlreadyExists"
+            ? new DesktopBuildAlreadyRunningError({ lockPath })
+            : error,
+        ),
+      ),
+    // Stop packaging children and finish stage cleanup before another build can enter.
+    () => build.pipe(Effect.scoped),
+    (_, exit) =>
+      fs
+        .remove(lockPath, { recursive: true })
+        .pipe(
+          Effect.catch((error) =>
+            Exit.isFailure(exit) ? Effect.logError(error) : Effect.fail(error),
+          ),
+        ),
+  );
+});
+
+// The artifact entry point holds the checkout lock through staging/packaging,
+// so it calls this implementation without reacquiring its own lock.
+const buildDesktopBundlesUnlocked = Effect.fn("buildDesktopBundlesUnlocked")(function* (
+  repoRoot: string,
+  appVersion: string,
+  verbose: boolean,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
+  yield* Effect.acquireUseRelease(
+    Effect.forEach(releasePackageFiles, (relativePath) =>
+      Effect.gen(function* () {
+        const filePath = path.join(repoRoot, relativePath);
+        const contents = yield* fs.readFileString(filePath);
+        const needsRestore = yield* decodeReleasePackageManifest(contents).pipe(
+          Effect.map((manifest) => manifest.version !== appVersion),
+          // Let alignment report invalid manifests after any preceding writes.
+          Effect.orElseSucceed(() => false),
+        );
+        return { filePath, contents, needsRestore };
+      }),
+    ),
+    () =>
+      Effect.gen(function* () {
+        yield* updateReleasePackageVersions(appVersion, { rootDir: repoRoot });
+        // The compiler must stop reading the aligned manifests before restoration.
+        yield* runCommand(
+          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+            cwd: repoRoot,
+            shell: spawnCommand.shell,
+            env: { APP_VERSION: appVersion },
+            extendEnv: true,
+          }),
+          { label: "vp run build:desktop", verbose },
+        ).pipe(Effect.scoped);
+      }),
+    (originals, exit) =>
+      Effect.gen(function* () {
+        const [, failures] = yield* Effect.partition(
+          originals.filter(({ needsRestore }) => needsRestore),
+          ({ filePath, contents }) =>
+            fs
+              .writeFileString(filePath, contents)
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ReleasePackageManifestError({ operation: "write", filePath, cause }),
+                ),
+              ),
+        );
+        if (failures.length === 0) return;
+        const error = new DesktopBuildManifestRestoreError({ failures });
+        if (Exit.isFailure(exit)) {
+          // Cleanup must not hide the original build or alignment failure.
+          yield* Effect.logError(error);
+        } else {
+          return yield* error;
+        }
+      }),
+  );
+});
+
+export const buildDesktopBundles = Effect.fn("buildDesktopBundles")(
+  (repoRoot: string, appVersion: string, verbose: boolean) =>
+    withDesktopBuildLock(repoRoot, buildDesktopBundlesUnlocked(repoRoot, appVersion, verbose)),
+);
+
 const desktopBuildProbeSucceeds = Effect.fn("desktopBuildProbeSucceeds")(function* (
   command: ChildProcess.Command,
   label: string,
@@ -2299,11 +2562,11 @@ export const copyDirectoryPreservingSymlinks = Effect.fn("copyDirectoryPreservin
     // probe cannot resolve through staging and Windows needs no symlink privilege.
     yield* fs.copy(source, destination);
 
-    const restoreRelativeSymlinks = (
-      sourceDirectory: string,
-      destinationDirectory: string,
-    ): Effect.Effect<void, PlatformError | BundleNotSelfContainedError> =>
-      Effect.gen(function* () {
+    const restoreRelativeSymlinks = Effect.fn("build-desktop-artifact.restoreRelativeSymlinks")(
+      function* (
+        sourceDirectory: string,
+        destinationDirectory: string,
+      ): Effect.fn.Return<void, PlatformError | BundleNotSelfContainedError> {
         for (const entry of yield* fs.readDirectory(sourceDirectory)) {
           const sourceEntry = path.join(sourceDirectory, entry);
           const destinationEntry = path.join(destinationDirectory, entry);
@@ -2340,13 +2603,14 @@ export const copyDirectoryPreservingSymlinks = Effect.fn("copyDirectoryPreservin
             }
           }
         }
-      });
+      },
+    );
 
     yield* restoreRelativeSymlinks(source, destination);
   },
 );
 
-const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSelfContained")(
+export const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSelfContained")(
   function* (input: { readonly asarPath: string; readonly verbose: boolean }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -2446,7 +2710,7 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
     input.repoRoot,
     `native/${input.backend}-snap-shot/target`,
     rustTarget!,
-    `release/t3-${input.backend}-snap-shot`,
+    `release/scient-${input.backend}-snap-shot`,
   );
   if (!reuseHelpers) {
     const spawnCommand = yield* resolveSpawnCommand("cargo", [
@@ -2478,7 +2742,7 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
   }
   const destination = path.join(input.stageResourcesDir, `${input.backend}-capture`);
   yield* fs.makeDirectory(destination, { recursive: true });
-  const executable = path.join(destination, `t3-${input.backend}-snap-shot`);
+  const executable = path.join(destination, `scient-${input.backend}-snap-shot`);
   yield* fs.copyFile(binaryPath, executable);
   yield* fs.chmod(executable, 0o755);
   if (input.backend === "hyprland") {
@@ -2598,7 +2862,7 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
         "--arch",
         input.arch === "arm64" ? "arm64" : "x64",
         "--output",
-        path.join(input.stageResourcesDir, "browser-secret", "t3-browser-secret"),
+        path.join(input.stageResourcesDir, "browser-secret", "scient-browser-secret"),
       ],
       { cwd: input.repoRoot },
     ),
@@ -2606,69 +2870,69 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
   );
 });
 
-function generateMacIconSet(
+const generateMacIconSet = Effect.fn("build-desktop-artifact.generateMacIconSet")(function* (
   sourcePng: string,
   targetIcns: string,
   tmpRoot: string,
   path: Path.Path,
   verbose: boolean,
 ) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const iconsetDir = path.join(tmpRoot, "icon.iconset");
-    yield* fs.makeDirectory(iconsetDir, { recursive: true });
+  const fs = yield* FileSystem.FileSystem;
+  const iconsetDir = path.join(tmpRoot, "icon.iconset");
+  yield* fs.makeDirectory(iconsetDir, { recursive: true });
 
-    const iconSizes = [16, 32, 128, 256, 512] as const;
-    for (const size of iconSizes) {
-      yield* runCommand(
-        ChildProcess.make(
-          {},
-        )`sips -z ${size} ${size} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}.png`)}`,
-        { label: `sips icon ${size}x${size}`, verbose },
-      );
+  const iconSizes = [16, 32, 128, 256, 512] as const;
+  for (const size of iconSizes) {
+    yield* runCommand(
+      ChildProcess.make(
+        {},
+      )`sips -z ${size} ${size} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}.png`)}`,
+      { label: `sips icon ${size}x${size}`, verbose },
+    );
 
-      const retinaSize = size * 2;
-      yield* runCommand(
-        ChildProcess.make(
-          {},
-        )`sips -z ${retinaSize} ${retinaSize} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}@2x.png`)}`,
-        { label: `sips icon ${size}x${size}@2x`, verbose },
-      );
-    }
+    const retinaSize = size * 2;
+    yield* runCommand(
+      ChildProcess.make(
+        {},
+      )`sips -z ${retinaSize} ${retinaSize} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}@2x.png`)}`,
+      { label: `sips icon ${size}x${size}@2x`, verbose },
+    );
+  }
 
-    yield* runCommand(ChildProcess.make({})`iconutil -c icns ${iconsetDir} -o ${targetIcns}`, {
-      label: "iconutil icns",
-      verbose,
-    });
+  yield* runCommand(ChildProcess.make({})`iconutil -c icns ${iconsetDir} -o ${targetIcns}`, {
+    label: "iconutil icns",
+    verbose,
   });
-}
+});
 
-function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: boolean) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    if (!(yield* fs.exists(sourcePng))) {
-      return yield* new DesktopIconSourceMissingError({
-        platform: "mac",
-        sourcePath: sourcePng,
-      });
-    }
-
-    const tmpRoot = yield* fs.makeTempDirectoryScoped({
-      prefix: "t3code-icon-build-",
+const stageMacIcons = Effect.fn("build-desktop-artifact.stageMacIcons")(function* (
+  stageResourcesDir: string,
+  sourcePng: string,
+  verbose: boolean,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (!(yield* fs.exists(sourcePng))) {
+    return yield* new DesktopIconSourceMissingError({
+      platform: "mac",
+      sourcePath: sourcePng,
     });
+  }
 
-    const iconPngPath = path.join(stageResourcesDir, "icon.png");
-    const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
-
-    yield* runCommand(ChildProcess.make({})`sips -z 512 512 ${sourcePng} --out ${iconPngPath}`, {
-      label: "sips mac icon",
-      verbose,
-    });
-
-    yield* generateMacIconSet(sourcePng, iconIcnsPath, tmpRoot, path, verbose);
+  const tmpRoot = yield* fs.makeTempDirectoryScoped({
+    prefix: "t3code-icon-build-",
   });
-}
+
+  const iconPngPath = path.join(stageResourcesDir, "icon.png");
+  const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
+
+  yield* runCommand(ChildProcess.make({})`sips -z 512 512 ${sourcePng} --out ${iconPngPath}`, {
+    label: "sips mac icon",
+    verbose,
+  });
+
+  yield* generateMacIconSet(sourcePng, iconIcnsPath, tmpRoot, path, verbose);
+});
 
 export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(function* (
   stageResourcesDir: string,
@@ -2704,32 +2968,34 @@ export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(
   }
 });
 
-function stageLinuxIcons(stageResourcesDir: string, sourcePng: string, verbose: boolean) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    if (!(yield* fs.exists(sourcePng))) {
-      return yield* new DesktopIconSourceMissingError({
-        platform: "linux",
-        sourcePath: sourcePng,
-      });
-    }
+const stageLinuxIcons = Effect.fn("build-desktop-artifact.stageLinuxIcons")(function* (
+  stageResourcesDir: string,
+  sourcePng: string,
+  verbose: boolean,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (!(yield* fs.exists(sourcePng))) {
+    return yield* new DesktopIconSourceMissingError({
+      platform: "linux",
+      sourcePath: sourcePng,
+    });
+  }
 
-    const iconPath = path.join(stageResourcesDir, "icon.png");
-    yield* fs.copyFile(sourcePng, iconPath);
+  const iconPath = path.join(stageResourcesDir, "icon.png");
+  yield* fs.copyFile(sourcePng, iconPath);
 
-    const iconsDir = path.join(stageResourcesDir, "icons");
-    yield* fs.makeDirectory(iconsDir, { recursive: true });
-    for (const iconSize of LINUX_ICON_SIZES) {
-      yield* stageLinuxIconSize(
-        sourcePng,
-        path.join(iconsDir, `${iconSize}x${iconSize}.png`),
-        iconSize,
-        verbose,
-      );
-    }
-  });
-}
+  const iconsDir = path.join(stageResourcesDir, "icons");
+  yield* fs.makeDirectory(iconsDir, { recursive: true });
+  for (const iconSize of LINUX_ICON_SIZES) {
+    yield* stageLinuxIconSize(
+      sourcePng,
+      path.join(iconsDir, `${iconSize}x${iconSize}.png`),
+      iconSize,
+      verbose,
+    );
+  }
+});
 
 export function stageLinuxIconSize(
   sourcePng: string,
@@ -2765,24 +3031,25 @@ export function stageLinuxIconSize(
   );
 }
 
-function stageWindowsIcons(stageResourcesDir: string, sourceIco: string) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    if (!(yield* fs.exists(sourceIco))) {
-      return yield* new DesktopIconSourceMissingError({
-        platform: "win",
-        sourcePath: sourceIco,
-      });
-    }
+const stageWindowsIcons = Effect.fn("build-desktop-artifact.stageWindowsIcons")(function* (
+  stageResourcesDir: string,
+  sourceIco: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (!(yield* fs.exists(sourceIco))) {
+    return yield* new DesktopIconSourceMissingError({
+      platform: "win",
+      sourcePath: sourceIco,
+    });
+  }
 
-    const iconPath = path.join(stageResourcesDir, "icon.ico");
-    yield* fs.copyFile(sourceIco, iconPath);
-  });
-}
+  const iconPath = path.join(stageResourcesDir, "icon.ico");
+  yield* fs.copyFile(sourceIco, iconPath);
+});
 
-function validateBundledClientAssets(clientDir: string) {
-  return Effect.gen(function* () {
+const validateBundledClientAssets = Effect.fn("build-desktop-artifact.validateBundledClientAssets")(
+  function* (clientDir: string) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const indexPath = path.join(clientDir, "index.html");
@@ -2814,8 +3081,8 @@ function validateBundledClientAssets(clientDir: string) {
         missingFiles: missing,
       });
     }
-  });
-}
+  },
+);
 
 function resolveStagedRuntimeDependencies(
   dependencies: Record<string, string> | undefined,
@@ -2896,8 +3163,8 @@ export function resolveDesktopUpdateChannel(version: string): "latest" | "beta" 
   return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
 }
 
-function isDesktopPreviewVersion(version: string): boolean {
-  return /-pr\./.test(version);
+export function isDesktopPreviewVersion(version: string): boolean {
+  return /-pr\./.test(version) || /-preview\.\d{8}\.\d+$/.test(version);
 }
 
 export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
@@ -3026,7 +3293,6 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : { asarUnpack: [`${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`] }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
-      ...(platform === "mac" ? [FILE_EXCHANGE_RESOURCE] : []),
       ...(platform === "win" && nativePreviewPath
         ? [
             { from: nativePreviewPath, to: `conversation-preview/${WINDOWS_PREVIEW_DLL}` },
@@ -3041,7 +3307,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     ...(platform === "mac" && nativePreviewPath
       ? { extraFiles: [{ from: nativePreviewPath, to: `PlugIns/${MAC_PREVIEW_BUNDLE}` }] }
       : {}),
-    ...(publishConfig ? { publish: [publishConfig] } : {}),
+    // A missing `publish` makes electron-builder infer a GitHub feed from
+    // GH_TOKEN/GITHUB_TOKEN. The staged app has no repository to resolve it
+    // against, so writing update manifests then crashes on a null config.
+    publish: publishConfig ? [publishConfig] : null,
   };
   if (platform === "mac") {
     const path = yield* Path.Path;
@@ -3053,7 +3322,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         // macOS 26 offers Messages/Mail codes in every text field unless opted out.
         NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac: true,
-        NSMicrophoneUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} uses the microphone only while you dictate a message. Audio is transcribed on this device.`,
+        NSMicrophoneUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} uses the microphone when you dictate a message, transcribed on this device, and lets commands run by terminals and coding agents request microphone access.`,
         NSScreenCaptureUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} captures the active window when you use the window capture shortcut.`,
         // Files open wherever they live, so macOS needs a reason to show for
         // each protected location instead of silently denying the read.
@@ -3064,6 +3333,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         // SCIENT-FORK:END
         NSLocalNetworkUsageDescription:
           "Scient connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
+        NSCameraUsageDescription:
+          "Scient lets commands run by terminals and coding agents use the camera.",
       },
       // SCIENT-FORK:START — do not register http(s) or HTML associations while activation is held.
       protocols: [
@@ -3187,8 +3458,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // packaged executable with Electron's stock icon.
       signAndEditExecutable: true,
     };
-    if (signed) {
+    if (signed && (yield* HostProcess.Platform) === "win32") {
       winConfig.azureSignOptions = yield* AzureTrustedSigningOptionsConfig;
+    } else if (signed) {
+      const path = yield* Path.Path;
+      const { publisherName } = yield* AzureTrustedSigningOptionsConfig;
+      winConfig.signtoolOptions = {
+        sign: yield* path.fromFileUrl(new URL("./lib/windows-jsign.ts", import.meta.url)),
+        signingHashAlgorithms: ["sha256"],
+        publisherName: [publisherName],
+      };
     }
     buildConfig.win = winConfig;
   }
@@ -3253,10 +3532,15 @@ export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(functi
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(input.archivePath), { recursive: true });
   const tarTarget = wslRuntimeArchiveTarTarget(path.relative(input.sourceDir, input.archivePath));
+  const hostPlatform = yield* HostProcess.Platform;
   yield* runCommand(
-    ChildProcess.make("tar", buildWslRuntimeArchiveArgs(tarTarget), {
-      cwd: input.sourceDir,
-    }),
+    ChildProcess.make(
+      hostPlatform === "win32" ? windowsSystemTar() : "tar",
+      buildWslRuntimeArchiveArgs(tarTarget),
+      {
+        cwd: input.sourceDir,
+      },
+    ),
     { label: "tar WSL runtime", verbose: false },
   );
   const hash = NodeCrypto.createHash("sha256");
@@ -3370,6 +3654,10 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   const serverStageDir = path.join(input.stageRoot, "server");
   yield* fs.makeDirectory(path.join(serverStageDir, "apps/server"), { recursive: true });
   yield* fs.copy(input.serverDistDir, path.join(serverStageDir, "apps/server/dist"));
+  yield* fs.remove(path.join(serverStageDir, "apps/server/dist/file-exchange"), {
+    recursive: true,
+    force: true,
+  });
   if (input.wslSyncTexRuntimePath === undefined) {
     return yield* new MissingDesktopBuildInputError({
       artifact: "wsl-synctex-runtime",
@@ -3549,7 +3837,7 @@ export const validatePackagedDesktopRuntimeResources = Effect.fn(
         `whisper-runtime/whisper-server${input.platform === "win" ? ".exe" : ""}`,
         `synctex-runtime/synctex${input.platform === "win" ? ".exe" : ""}`,
         ...(input.platform === "linux"
-          ? ["kde-capture/t3-kde-snap-shot", "hyprland-capture/t3-hyprland-snap-shot"]
+          ? ["kde-capture/scient-kde-snap-shot", "hyprland-capture/scient-hyprland-snap-shot"]
           : []),
       ];
       for (const relative of requiredExecutables) {
@@ -3699,10 +3987,38 @@ export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
   );
 });
 
+/**
+ * The fff probe needs a host of the target's platform and architecture; the
+ * bundle self-check needs a Windows host. A cross build defers both to
+ * scripts/verify-windows-desktop-artifact.ts.
+ */
+export const verifyWindowsPackagedRuntime = Effect.fn(
+  "desktopArtifact.verifyWindowsPackagedRuntime",
+)(function* (input: {
+  readonly packagedAppDir: string;
+  readonly appExecutableName: string;
+  readonly targetArch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  const path = yield* Path.Path;
+  const asarPath = path.join(input.packagedAppDir, "resources", WINDOWS_SERVER_ASAR_RESOURCE);
+  yield* verifyWindowsPrimaryFffNativeLoad({ ...input, asarPath });
+  const hostPlatform = yield* HostProcess.Platform;
+  const hostArch = yield* HostProcess.Architecture;
+  if (hostPlatform !== "win32" || hostArch !== input.targetArch) {
+    yield* Effect.log(
+      `[desktop-artifact] Skipped the bundle self-check on a ${hostPlatform}/${hostArch} host for win32/${input.targetArch}.`,
+    );
+    return;
+  }
+  yield* verifyPackagedBundleIsSelfContained({ asarPath, verbose: input.verbose });
+});
+
 export const validateWindowsPackagedPayload = Effect.fn(
   "desktopArtifact.validateWindowsPackagedPayload",
 )(function* (input: {
   readonly stageDistDir: string;
+  readonly packagedAppDir?: string;
   readonly appExecutableName: string;
   readonly targetArch: typeof BuildArch.Type;
   readonly expectWslRuntime?: boolean;
@@ -3719,9 +4035,9 @@ export const validateWindowsPackagedPayload = Effect.fn(
       Effect.orElseSucceed(() => false),
     );
   const stageEntries = yield* fs.readDirectory(input.stageDistDir);
-  let packagedAppDir: string | undefined;
+  let packagedAppDir: string | undefined = input.packagedAppDir;
 
-  for (const entry of stageEntries) {
+  for (const entry of packagedAppDir === undefined ? stageEntries : []) {
     if (!entry.endsWith("-unpacked")) continue;
     const candidate = path.join(input.stageDistDir, entry);
     const stat = yield* fs.stat(candidate).pipe(Effect.orElseSucceed(() => null));
@@ -3807,7 +4123,19 @@ export const validateWindowsPackagedPayload = Effect.fn(
     return yield* new WindowsPackagedPayloadValidationError({
       reason: "resource-monitor-missing",
       packagedAppDir,
-      missingFiles: ["resource-monitor/t3-resource-monitor.exe"],
+      missingFiles: ["resource-monitor/scient-resource-monitor.exe"],
+    });
+  }
+  const filePublicationPath = path.join(
+    resourcesDir,
+    "file-exchange",
+    "scient-file-publication.exe",
+  );
+  if (!(yield* isFile(filePublicationPath))) {
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "file-publication-missing",
+      packagedAppDir,
+      missingFiles: ["file-exchange/scient-file-publication.exe"],
     });
   }
   const syncTexFiles = ["synctex.exe", "provenance.json", "LICENSE.synctex", "LICENSE.zlib"];
@@ -3873,13 +4201,18 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
 
+    const hostPlatform = yield* HostProcess.Platform;
     const listing = yield* spawnAndCollectOutput(
-      ChildProcess.make("tar", ["-tzf", WSL_RUNTIME_ARCHIVE_NAME], {
-        cwd: resourcesDir,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      }),
+      ChildProcess.make(
+        hostPlatform === "win32" ? windowsSystemTar() : "tar",
+        ["-tzf", WSL_RUNTIME_ARCHIVE_NAME],
+        {
+          cwd: resourcesDir,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      ),
     ).pipe(Effect.mapError(invalidWslRuntime));
     if (listing.exitCode !== 0) {
       return yield* invalidWslRuntime(
@@ -3952,16 +4285,10 @@ export const validateWindowsPackagedPayload = Effect.fn(
     });
   }
 
-  yield* verifyWindowsPrimaryFffNativeLoad({
+  yield* verifyWindowsPackagedRuntime({
     packagedAppDir,
-    asarPath,
     appExecutableName: input.appExecutableName,
     targetArch: input.targetArch,
-    verbose: input.verbose ?? false,
-  });
-
-  yield* verifyPackagedBundleIsSelfContained({
-    asarPath,
     verbose: input.verbose ?? false,
   });
 
@@ -3971,13 +4298,14 @@ export const validateWindowsPackagedPayload = Effect.fn(
   return { packagedAppDir, fileCount, unpackedFiles } as const;
 });
 
-const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
+const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(function* (
   options: ResolvedBuildOptions,
 ) {
   const repoRoot = yield* RepoRoot;
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcess.Platform;
+  const hostArch = yield* HostProcess.Architecture;
   if (hostPlatform === "linux" && options.platform === "linux") {
     yield* preflightLinuxDesktopBuild(options.arch);
   }
@@ -4072,14 +4400,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
-    const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
-    yield* runCommand(
-      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        cwd: repoRoot,
-        shell: spawnCommand.shell,
-      }),
-      { label: "vp run build:desktop", verbose: options.verbose },
-    );
+    yield* buildDesktopBundlesUnlocked(repoRoot, appVersion, options.verbose);
   }
 
   const requiredBuildInputs = [
@@ -4191,37 +4512,60 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     arch: options.arch,
     verbose: options.verbose,
   });
-  yield* Effect.tryPromise({
-    try: () =>
-      stageFileExchangeForDesktopBuild({
-        repoRoot,
-        stageResourcesDir,
-        platform: options.platform,
-        arch: options.arch,
-      }),
-    catch: (cause) =>
-      new BuildCommandFailedError({
-        command: `stage file exchange (${options.platform}/${options.arch})`,
-        exitCode: 1,
-        stderrTail: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
-  yield* Effect.tryPromise({
-    try: () =>
-      stageScientVoiceRuntimeForDesktopBuild({
-        repoRoot,
-        stageResourcesDir,
-        platform: options.platform,
-        arch: options.arch,
-        verbose: options.verbose,
-      }),
-    catch: (cause) =>
-      new BuildCommandFailedError({
-        command: `stage whisper.cpp (${options.platform}/${options.arch})`,
-        exitCode: 1,
-        stderrTail: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
+  if (options.platform === "win" && (hostPlatform !== "win32" || hostArch !== options.arch)) {
+    const sourceDir = yield* Config.String("SCIENT_WINDOWS_NATIVE_RESOURCES");
+    yield* stageWindowsNativeResources({
+      sourceDir,
+      stageResourcesDir,
+      arch: options.arch,
+      sourceCommit: commitHash,
+    });
+  } else {
+    yield* Effect.tryPromise({
+      try: () =>
+        stageFileExchangeForDesktopBuild({
+          repoRoot,
+          stageResourcesDir,
+          platform: options.platform,
+          arch: options.arch,
+        }),
+      catch: (cause) =>
+        new BuildCommandFailedError({
+          command: `stage file exchange (${options.platform}/${options.arch})`,
+          exitCode: 1,
+          stderrTail: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+    yield* runCommand(
+      ChildProcess.make(
+        process.execPath,
+        [
+          path.join(repoRoot, "scripts/stage-file-exchange.ts"),
+          `--platform=${options.platform === "mac" ? "darwin" : options.platform === "win" ? "win32" : "linux"}`,
+          `--arch=${options.arch === "universal" && options.platform !== "mac" ? "x64" : options.arch}`,
+          `--destination=${path.join(stageResourcesDir, "file-exchange")}`,
+        ],
+        { cwd: repoRoot },
+      ),
+      { label: "stage native file publication", verbose: options.verbose },
+    );
+    yield* Effect.tryPromise({
+      try: () =>
+        stageScientVoiceRuntimeForDesktopBuild({
+          repoRoot,
+          stageResourcesDir,
+          platform: options.platform,
+          arch: options.arch,
+          verbose: options.verbose,
+        }),
+      catch: (cause) =>
+        new BuildCommandFailedError({
+          command: `stage whisper.cpp (${options.platform}/${options.arch})`,
+          exitCode: 1,
+          stderrTail: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+  }
   yield* Effect.tryPromise({
     try: () =>
       stageScientSyncTexRuntimeForDesktopBuild({
@@ -4519,6 +4863,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       delete buildEnv[key];
     }
   }
+  if (options.platform === "linux") {
+    // fpm compresses the .deb with the system xz through tar. Threaded mode
+    // takes seconds on a many-core runner instead of about two minutes.
+    buildEnv.XZ_DEFAULTS = "-T0";
+  }
+  if (options.platform === "win") {
+    // Windows signs only through Azure Trusted Signing. Off Windows,
+    // electron-builder's signtool manager would read CSC_LINK (the macOS
+    // certificate) as a Windows certificate.
+    delete buildEnv.CSC_LINK;
+    delete buildEnv.CSC_KEY_PASSWORD;
+  }
   if (!options.signed) {
     buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
     delete buildEnv.CSC_LINK;
@@ -4750,6 +5106,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   );
 });
 
+const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
+  options: ResolvedBuildOptions,
+) {
+  const repoRoot = yield* RepoRoot;
+  return yield* withDesktopBuildLock(repoRoot, buildDesktopArtifactUnlocked(options));
+});
+
 const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   platform: Flag.Literals("platform", BuildPlatform.literals).pipe(
     Flag.withDescription("Build platform (env: T3CODE_DESKTOP_PLATFORM)."),
@@ -4766,7 +5129,9 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
   buildVersion: Flag.String("build-version").pipe(
-    Flag.withDescription("Artifact version metadata (env: T3CODE_DESKTOP_VERSION)."),
+    Flag.withDescription(
+      "Compiled bundle and desktop package version (env: T3CODE_DESKTOP_VERSION).",
+    ),
     Flag.optional,
   ),
   outputDir: Flag.String("output-dir").pipe(

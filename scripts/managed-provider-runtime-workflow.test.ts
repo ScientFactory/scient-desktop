@@ -71,7 +71,7 @@ function pathspecMatchesSomething(pathspec: string): boolean {
     return NodeFS.existsSync(NodePath.join(repositoryRoot, pathspec));
   }
   // Patterns here name files of one folder.
-  const folder = NodePath.dirname(pathspec.slice(GLOB_MAGIC.length));
+  const folder = NodePath.posix.dirname(pathspec.slice(GLOB_MAGIC.length));
   return NodeFS.readdirSync(NodePath.join(repositoryRoot, folder)).some((name) =>
     pathspecCovers(pathspec, `${folder}/${name}`),
   );
@@ -131,7 +131,8 @@ function qualificationInputs(roots: ReadonlyArray<string>) {
         addPackage(specifier.startsWith("@") ? `${scope}/${name}` : scope!, path);
         continue;
       }
-      const target = NodePath.join(NodePath.dirname(path), specifier);
+      // Repository paths keep `/` on every platform, as git pathspecs do.
+      const target = NodePath.posix.join(NodePath.posix.dirname(path), specifier);
       const resolved = [target, `${target}.ts`, `${target}.tsx`, `${target}/index.ts`].find(
         (candidate) => {
           const absolute = NodePath.join(repositoryRoot, candidate);

@@ -5,7 +5,92 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
-import { AcpMcpBridgeError, callAcpMcpTool, runAcpMcpStdioBridge } from "./AcpMcpStdioBridge.ts";
+import { mcpToolSession, runAcpMcpStdioBridge } from "./AcpMcpStdioBridge.ts";
+
+describe("scoped MCP tool session", () => {
+  it.effect("terminates its authenticated session without following redirects", () =>
+    Effect.gen(function* () {
+      const requests: Array<Request> = [];
+      const result = yield* Effect.gen(function* () {
+        const session = yield* mcpToolSession({
+          endpoint: "http://127.0.0.1:1/mcp",
+          authorization: "Bearer synthetic-cli-token",
+          clientName: "scient-thread-cli",
+          fetchImplementation: async (url, init) => {
+            const request = new Request(url, init);
+            requests.push(request);
+            if (request.method === "DELETE") return new Response(null, { status: 204 });
+            const body = JSON.parse(String(init?.body)) as { id?: string; method: string };
+            if (body.method === "notifications/initialized")
+              return new Response(null, { status: 202 });
+            return Response.json(
+              {
+                jsonrpc: "2.0",
+                id: body.id,
+                result:
+                  body.method === "initialize"
+                    ? { protocolVersion: "2025-06-18" }
+                    : { structuredContent: { accepted: true } },
+              },
+              { headers: { "mcp-session-id": "synthetic-session" } },
+            );
+          },
+        });
+        return yield* session.call("scient_thread_list", {});
+      }).pipe(Effect.scoped);
+
+      expect(result).toEqual({ structuredContent: { accepted: true } });
+      expect(requests.map((request) => request.method)).toEqual(["POST", "POST", "POST", "DELETE"]);
+      for (const request of requests) {
+        expect(request.url).toBe("http://127.0.0.1:1/mcp");
+        expect(request.redirect).toBe("error");
+        expect(request.headers.get("authorization")).toBe("Bearer synthetic-cli-token");
+      }
+      expect(requests.at(-1)?.headers.get("mcp-session-id")).toBe("synthetic-session");
+      expect(requests.at(-1)?.headers.get("mcp-protocol-version")).toBe("2025-06-18");
+    }),
+  );
+
+  it.effect.each(["initialize", "notifications/initialized", "tools/call"])(
+    "terminates an opened session when %s fails",
+    (failedMethod) =>
+      Effect.gen(function* () {
+        const requests: Array<Request> = [];
+        const result = yield* mcpToolSession({
+          endpoint: "http://127.0.0.1:1/mcp",
+          authorization: "Bearer synthetic-cli-token",
+          clientName: "scient-thread-cli",
+          fetchImplementation: async (url, init) => {
+            const request = new Request(url, init);
+            requests.push(request);
+            if (request.method === "DELETE") return new Response(null, { status: 204 });
+            const body = JSON.parse(String(init?.body)) as { id?: string; method: string };
+            if (body.method === failedMethod)
+              return new Response("synthetic failure", {
+                status: 503,
+                headers: { "mcp-session-id": "synthetic-session" },
+              });
+            if (body.method === "notifications/initialized")
+              return new Response(null, { status: 202 });
+            return Response.json(
+              { jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-06-18" } },
+              { headers: { "mcp-session-id": "synthetic-session" } },
+            );
+          },
+        }).pipe(
+          Effect.flatMap((session) => session.call("scient_thread_list", {})),
+          Effect.scoped,
+          Effect.exit,
+        );
+
+        expect(result._tag).toBe("Failure");
+        expect(requests.at(-1)?.method).toBe("DELETE");
+        expect(requests.at(-1)?.redirect).toBe("error");
+        expect(requests.at(-1)?.headers.get("authorization")).toBe("Bearer synthetic-cli-token");
+        expect(requests.at(-1)?.headers.get("mcp-session-id")).toBe("synthetic-session");
+      }),
+  );
+});
 
 function makeHarness(responder: (request: Request) => Promise<Response> | Response) {
   const input = new NodeStream.PassThrough();
@@ -30,66 +115,6 @@ function makeHarness(responder: (request: Request) => Promise<Response> | Respon
 }
 
 describe("AcpMcpStdioBridge", () => {
-  it.effect("preserves the original transport failure as the typed error cause", () =>
-    Effect.gen(function* () {
-      const source = new Error("fetch failed");
-      const failure = yield* callAcpMcpTool({
-        endpoint: "http://127.0.0.1:1/mcp",
-        authorization: "Bearer bridge-test",
-        tool: "orchestrator_capabilities",
-        arguments: {},
-        fetchImplementation: () => Promise.reject(source),
-      }).pipe(Effect.asVoid, Effect.flip);
-
-      expect(failure).toBeInstanceOf(AcpMcpBridgeError);
-      expect(failure.cause).toBe(source);
-    }),
-  );
-
-  it.effect("calls one tool through a fresh authenticated MCP session", () =>
-    Effect.gen(function* () {
-      const requests: Array<{ readonly body: unknown; readonly headers: Headers }> = [];
-      const result = yield* callAcpMcpTool({
-        endpoint: "http://127.0.0.1:1/mcp",
-        authorization: "Bearer bridge-test",
-        tool: "orchestrator_capabilities",
-        arguments: {},
-        fetchImplementation: async (_url, init) => {
-          const headers = new Headers(init?.headers);
-          const body: unknown = JSON.parse(String(init?.body ?? "{}"));
-          requests.push({ body, headers });
-          const request = body as { readonly id?: unknown; readonly method?: unknown };
-          if (request.method === "notifications/initialized") {
-            return new Response(null, { status: 202 });
-          }
-          return new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: request.id,
-              result:
-                request.method === "initialize"
-                  ? { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: {} }
-                  : { structuredContent: { providers: ["codex"] } },
-            }),
-            {
-              headers: { "content-type": "application/json", "mcp-session-id": "session-42" },
-            },
-          );
-        },
-      });
-
-      expect(result).toEqual({ structuredContent: { providers: ["codex"] } });
-      expect(requests).toHaveLength(3);
-      expect(requests[0]?.headers.get("authorization")).toBe("Bearer bridge-test");
-      expect(requests[1]?.headers.get("mcp-session-id")).toBe("session-42");
-      expect(requests[2]?.headers.get("mcp-protocol-version")).toBe("2025-06-18");
-      expect(requests[2]?.body).toMatchObject({
-        method: "tools/call",
-        params: { name: "orchestrator_capabilities", arguments: {} },
-      });
-    }),
-  );
-
   it.effect("forwards requests and replays the session id and protocol version", () =>
     Effect.gen(function* () {
       const { input, written, requests, bridge } = makeHarness((request) => {

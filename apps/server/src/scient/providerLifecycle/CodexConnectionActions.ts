@@ -111,113 +111,112 @@ export function makeCodexConnectionActionsFromOpen(
 ): ProviderConnectionActions {
   return {
     methods: ["codex_browser", "codex_device_code"],
-    start: (method) =>
-      Effect.gen(function* () {
-        if (method !== "codex_browser" && method !== "codex_device_code") {
-          return yield* connectionError("Codex does not support this sign-in method.");
-        }
-        const { client } = yield* open;
-        const completedNotifications =
-          yield* Queue.unbounded<CodexSchema.V2AccountLoginCompletedNotification>();
-        const accountUpdated = yield* Queue.unbounded<void>();
-        yield* client.handleServerNotification("account/login/completed", (notification) =>
-          Queue.offer(completedNotifications, notification).pipe(Effect.asVoid),
-        );
-        yield* client.handleServerNotification("account/updated", () =>
-          Queue.offer(accountUpdated, void 0).pipe(Effect.asVoid),
-        );
-        const response = yield* client
-          .request("account/login/start", methodParams(method))
-          .pipe(
-            Effect.mapError((cause) =>
-              connectionError("Codex did not start its secure sign-in flow.", cause),
-            ),
-          );
-
-        const expectedType = method === "codex_browser" ? "chatgpt" : "chatgptDeviceCode";
-        if (response.type !== expectedType) {
-          return yield* connectionError("Codex returned an unexpected sign-in response.");
-        }
-
-        const loginId = response.loginId;
-        const waitForCompletion = Effect.gen(function* () {
-          const completed = yield* waitForLogin(completedNotifications, loginId);
-          if (!completed.success) {
-            return yield* connectionError(completed.error ?? "Codex sign in was not completed.");
-          }
-          yield* waitForAuthenticatedAccount(client, accountUpdated);
-          // Fresh-process verification: notifications and the login process are
-          // wake-ups only. A new app-server must also observe the account.
-          // Retry briefly — OS credential stores can lag the in-process read.
-          const verifyFreshProcess = Effect.scoped(
-            open.pipe(
-              Effect.mapError((cause) =>
-                connectionError(
-                  "Codex signed in, but Scient could not start a fresh Codex process to confirm the account.",
-                  cause,
-                ),
-              ),
-              Effect.flatMap(({ client: freshClient }) => {
-                const readFresh = freshClient
-                  .request("account/read", { refreshToken: true })
-                  .pipe(
-                    Effect.mapError((cause) =>
-                      connectionError(
-                        "Codex signed in, but Scient could not confirm the account in a fresh Codex process.",
-                        cause,
-                      ),
-                    ),
-                  );
-                return Effect.gen(function* () {
-                  while (true) {
-                    const account = yield* readFresh;
-                    if (isAuthenticatedAccount(account)) return;
-                    yield* Effect.sleep(LOGIN_ACCOUNT_POLL_INTERVAL);
-                  }
-                });
-              }),
-            ),
-          );
-          // Bound fresh process startup and account propagation together.
-          // Only the timeout is re-labeled; open/read failures keep the more
-          // specific messages above.
-          yield* verifyFreshProcess.pipe(
-            Effect.timeoutOrElse({
-              duration: FRESH_PROCESS_VERIFY_TIMEOUT,
-              orElse: () =>
-                Effect.fail(
-                  connectionError(
-                    "Codex signed in, but a fresh Codex process did not observe the account in time.",
-                  ),
-                ),
-            }),
-          );
-        });
-
-        const cancel = client.request("account/login/cancel", { loginId }).pipe(
-          Effect.asVoid,
+    start: Effect.fn("CodexConnectionActions.start")(function* (method) {
+      if (method !== "codex_browser" && method !== "codex_device_code") {
+        return yield* connectionError("Codex does not support this sign-in method.");
+      }
+      const { client } = yield* open;
+      const completedNotifications =
+        yield* Queue.unbounded<CodexSchema.V2AccountLoginCompletedNotification>();
+      const accountUpdated = yield* Queue.unbounded<void>();
+      yield* client.handleServerNotification("account/login/completed", (notification) =>
+        Queue.offer(completedNotifications, notification).pipe(Effect.asVoid),
+      );
+      yield* client.handleServerNotification("account/updated", () =>
+        Queue.offer(accountUpdated, void 0).pipe(Effect.asVoid),
+      );
+      const response = yield* client
+        .request("account/login/start", methodParams(method))
+        .pipe(
           Effect.mapError((cause) =>
-            connectionError("Codex could not cancel the active sign-in flow.", cause),
+            connectionError("Codex did not start its secure sign-in flow.", cause),
           ),
         );
 
-        return response.type === "chatgpt"
-          ? {
-              authorizationUrl: response.authUrl,
-              authorizationUrlKind: "primary" as const,
-              initialStatus: "waiting_for_browser" as const,
-              waitForCompletion,
-              cancel,
-            }
-          : {
-              authorizationUrl: response.verificationUrl,
-              authorizationUrlKind: "primary" as const,
-              initialStatus: "waiting_for_device_code" as const,
-              userCode: response.userCode,
-              waitForCompletion,
-              cancel,
-            };
-      }),
+      const expectedType = method === "codex_browser" ? "chatgpt" : "chatgptDeviceCode";
+      if (response.type !== expectedType) {
+        return yield* connectionError("Codex returned an unexpected sign-in response.");
+      }
+
+      const loginId = response.loginId;
+      const waitForCompletion = Effect.gen(function* () {
+        const completed = yield* waitForLogin(completedNotifications, loginId);
+        if (!completed.success) {
+          return yield* connectionError(completed.error ?? "Codex sign in was not completed.");
+        }
+        yield* waitForAuthenticatedAccount(client, accountUpdated);
+        // Fresh-process verification: notifications and the login process are
+        // wake-ups only. A new app-server must also observe the account.
+        // Retry briefly — OS credential stores can lag the in-process read.
+        const verifyFreshProcess = Effect.scoped(
+          open.pipe(
+            Effect.mapError((cause) =>
+              connectionError(
+                "Codex signed in, but Scient could not start a fresh Codex process to confirm the account.",
+                cause,
+              ),
+            ),
+            Effect.flatMap(({ client: freshClient }) => {
+              const readFresh = freshClient
+                .request("account/read", { refreshToken: true })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    connectionError(
+                      "Codex signed in, but Scient could not confirm the account in a fresh Codex process.",
+                      cause,
+                    ),
+                  ),
+                );
+              return Effect.gen(function* () {
+                while (true) {
+                  const account = yield* readFresh;
+                  if (isAuthenticatedAccount(account)) return;
+                  yield* Effect.sleep(LOGIN_ACCOUNT_POLL_INTERVAL);
+                }
+              });
+            }),
+          ),
+        );
+        // Bound fresh process startup and account propagation together.
+        // Only the timeout is re-labeled; open/read failures keep the more
+        // specific messages above.
+        yield* verifyFreshProcess.pipe(
+          Effect.timeoutOrElse({
+            duration: FRESH_PROCESS_VERIFY_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                connectionError(
+                  "Codex signed in, but a fresh Codex process did not observe the account in time.",
+                ),
+              ),
+          }),
+        );
+      });
+
+      const cancel = client.request("account/login/cancel", { loginId }).pipe(
+        Effect.asVoid,
+        Effect.mapError((cause) =>
+          connectionError("Codex could not cancel the active sign-in flow.", cause),
+        ),
+      );
+
+      return response.type === "chatgpt"
+        ? {
+            authorizationUrl: response.authUrl,
+            authorizationUrlKind: "primary" as const,
+            initialStatus: "waiting_for_browser" as const,
+            waitForCompletion,
+            cancel,
+          }
+        : {
+            authorizationUrl: response.verificationUrl,
+            authorizationUrlKind: "primary" as const,
+            initialStatus: "waiting_for_device_code" as const,
+            userCode: response.userCode,
+            waitForCompletion,
+            cancel,
+          };
+    }),
     disconnect: Effect.gen(function* () {
       const { client } = yield* open;
       yield* client

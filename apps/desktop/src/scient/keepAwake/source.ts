@@ -49,35 +49,32 @@ export const layer = Layer.effect(
     const tokens = new Map<string, string>();
     const identities = new Map<string, string>();
     let generation = 0;
-    const fetchBatch = (
+    const fetchBatch = Effect.fn("KeepAwakeSource.fetchBatch")(function* (
       origin: string,
       token: string,
       ids: readonly ThreadId[],
       includeLocalWork: boolean,
       local = true,
-    ) =>
-      Effect.gen(function* () {
-        const requestGeneration = ++generation;
-        const request = yield* HttpClientRequest.post(
-          new URL(KEEP_AWAKE_OBSERVE_PATH, origin),
-        ).pipe(
-          HttpClientRequest.bearerToken(token),
-          HttpClientRequest.bodyJson({ threadIds: ids, includeLocalWork }),
-        );
-        const response = yield* http.execute(request);
-        if (response.status < 200 || response.status >= 300) {
-          if (response.status === 401) tokens.delete(origin);
-          return yield* new KeepAwakeSourceError({
-            cause: `Work observation unavailable (HTTP ${response.status})`,
-          });
-        }
-        const batch = yield* HttpClientResponse.schemaBodyJson(KeepAwakeWorkBatch)(response);
-        identities.set(origin, batch.environmentId);
-        return { local, batch, generation: requestGeneration };
-      });
+    ) {
+      const requestGeneration = ++generation;
+      const request = yield* HttpClientRequest.post(new URL(KEEP_AWAKE_OBSERVE_PATH, origin)).pipe(
+        HttpClientRequest.bearerToken(token),
+        HttpClientRequest.bodyJson({ threadIds: ids, includeLocalWork }),
+      );
+      const response = yield* http.execute(request);
+      if (response.status < 200 || response.status >= 300) {
+        if (response.status === 401) tokens.delete(origin);
+        return yield* new KeepAwakeSourceError({
+          cause: `Work observation unavailable (HTTP ${response.status})`,
+        });
+      }
+      const batch = yield* HttpClientResponse.schemaBodyJson(KeepAwakeWorkBatch)(response);
+      identities.set(origin, batch.environmentId);
+      return { local, batch, generation: requestGeneration };
+    });
     return KeepAwakeSource.of({
-      observe: (document) =>
-        Effect.gen(function* () {
+      observe: Effect.fn("KeepAwakeSource.observe")(
+        function* (document: KeepAwakeDocument) {
           const explicit = yield* Effect.forEach(
             document.threads.filter((thread) => thread.once || thread.startedAt !== null),
             (thread) => threadAddress(thread.key),
@@ -219,7 +216,9 @@ export const layer = Layer.effect(
           for (const origin of identities.keys())
             if (!retainedOrigins.has(origin)) identities.delete(origin);
           return results;
-        }).pipe(Effect.mapError((cause) => new KeepAwakeSourceError({ cause }))),
+        },
+        Effect.mapError((cause) => new KeepAwakeSourceError({ cause })),
+      ),
     });
   }),
 );

@@ -222,6 +222,22 @@ it.effect.each(["remove", "disable"] as const)(
           );
           assert.strictEqual(yield* registry.getInstance(bystander), untouched);
           assert.deepEqual(closed, [first]);
+          const strictSnapshot = yield* Effect.result(
+            settings.withSettingsSnapshot(Effect.succeed),
+          );
+          assert.equal(strictSnapshot._tag, "Failure");
+          if (strictSnapshot._tag === "Failure")
+            assert.equal(strictSnapshot.failure.operation, "read-secret");
+          const unresolvedSnapshot = yield* settings.withSettingsSnapshot(Effect.succeed, {
+            allowUnresolvedSecrets: true,
+          });
+          assert.equal(
+            unresolvedSnapshot.providerInstances[first]?.enabled,
+            revocation === "disable" ? false : undefined,
+          );
+          assert.deepEqual(unresolvedSnapshot.providerInstances[second]?.config, {
+            apiKey: SECRET_REDACTED,
+          });
           assert.equal(runtime.providerSession.status, "stopped");
           assert.equal(
             (yield* Effect.result(

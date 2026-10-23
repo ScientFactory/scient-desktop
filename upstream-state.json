@@ -6,23 +6,23 @@
   "officialDefaultBranch": "main",
   "updateMode": "thin-fork-merge",
   "candidateStatus": "active-public-desktop",
-  "integrationBase": "a7025639c0e16aad3081106c935bf3025f601a1e",
-  "reviewedThrough": "a7025639c0e16aad3081106c935bf3025f601a1e",
-  "reviewedAt": "2026-10-17",
-  "reviewRecord": "docs/internals/t3-upstream-sync-20261016-86f4a74c5d.md",
+  "integrationBase": "21da3061aa006fc852ea4bd84c31ec084a3afa26",
+  "reviewedThrough": "21da3061aa006fc852ea4bd84c31ec084a3afa26",
+  "reviewedAt": "2026-10-22",
+  "reviewRecord": "docs/internals/t3-upstream-sync-20261020-81dea7821d.md",
   "verifiedBaseline": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTipAtBootstrap": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTagAtBootstrap": "v0.0.32-nightly.20260806.1012",
   "bootstrapBranch": "agent/d4-bootstrap-20260806",
   "bootstrapMerge": "3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d",
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
-  "lastRefreshBase": "e983657a24a7e75db5920dd1ce8950d1b028ec19",
-  "lastRefreshPreviousOfficialTip": "86f4a74c5d789f2b4973616775a6adf19525bf4d",
-  "lastRefreshOfficialTip": "a7025639c0e16aad3081106c935bf3025f601a1e",
+  "lastRefreshBase": "80436ae5bead92d3cde82b90a6aa5b137aefde6b",
+  "lastRefreshPreviousOfficialTip": "81dea7821dca30b417182db6fa0cb99a0195bfd8",
+  "lastRefreshOfficialTip": "21da3061aa006fc852ea4bd84c31ec084a3afa26",
   "lastRefreshOfficialTag": null,
-  "lastRefreshRangeCount": 176,
-  "lastRefreshMerge": "0ebeec9e509336fc22bb107148dbecf64d9e9163",
-  "lastRefreshBranch": "codex/t3-sync-86f4a74c5d-20261016",
+  "lastRefreshRangeCount": 133,
+  "lastRefreshMerge": "a495ed55e0d5f5e2740b750121772dcf1327108c",
+  "lastRefreshBranch": "codex/t3-sync-81dea7821d-20261020",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -43,7 +43,5 @@
       "replacementMerge": null
     }
   ],
-  "lastRefreshOwnedMain": "5c94afd2385c390346efdef2158dc01590c73293",
-  "lastRefreshOwnedMainMerge": "a48eb408ffc3e5aa196ec9ac21c82cd12cb901d2",
-  "lastRefreshVerifiedAt": "2026-10-17T11:09:43.808Z"
+  "lastRefreshVerifiedAt": "2026-10-22T20:32:48.837037Z"
 }

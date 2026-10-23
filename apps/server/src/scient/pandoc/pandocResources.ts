@@ -388,25 +388,26 @@ export const securePandocDocument = Effect.fn("scient.pandoc.securePandocDocumen
       ).pipe(Effect.map((list) => list.filter(Predicate.isNotNull)))
     : [];
 
-  const readAllowedFile = (candidate: string) =>
-    Effect.gen(function* () {
-      const lexical = path.resolve(candidate);
-      if (!roots.some((root) => within(path, root.lexical, lexical))) {
-        return { ok: false, refusal: "outside-allowlist" } as const;
-      }
-      const real = yield* fileSystem.realPath(lexical).pipe(Effect.orElseSucceed(() => null));
-      if (real === null) return { ok: false, refusal: "missing" } as const;
-      if (!roots.some((root) => within(path, root.real, real))) {
-        return { ok: false, refusal: "symlink-outside-allowlist" } as const;
-      }
-      const info = yield* fileSystem.stat(real).pipe(Effect.orElseSucceed(() => null));
-      if (info === null) return { ok: false, refusal: "missing" } as const;
-      if (info.type !== "File") return { ok: false, refusal: "not-a-file" } as const;
-      if (Number(info.size) > maxImageBytes) return { ok: false, refusal: "too-large" } as const;
-      const bytes = yield* fileSystem.readFile(real).pipe(Effect.orElseSucceed(() => null));
-      if (bytes === null) return { ok: false, refusal: "missing" } as const;
-      return { ok: true, bytes } as const;
-    });
+  const readAllowedFile = Effect.fn("pandocResources.readAllowedFile")(function* (
+    candidate: string,
+  ) {
+    const lexical = path.resolve(candidate);
+    if (!roots.some((root) => within(path, root.lexical, lexical))) {
+      return { ok: false, refusal: "outside-allowlist" } as const;
+    }
+    const real = yield* fileSystem.realPath(lexical).pipe(Effect.orElseSucceed(() => null));
+    if (real === null) return { ok: false, refusal: "missing" } as const;
+    if (!roots.some((root) => within(path, root.real, real))) {
+      return { ok: false, refusal: "symlink-outside-allowlist" } as const;
+    }
+    const info = yield* fileSystem.stat(real).pipe(Effect.orElseSucceed(() => null));
+    if (info === null) return { ok: false, refusal: "missing" } as const;
+    if (info.type !== "File") return { ok: false, refusal: "not-a-file" } as const;
+    if (Number(info.size) > maxImageBytes) return { ok: false, refusal: "too-large" } as const;
+    const bytes = yield* fileSystem.readFile(real).pipe(Effect.orElseSucceed(() => null));
+    if (bytes === null) return { ok: false, refusal: "missing" } as const;
+    return { ok: true, bytes } as const;
+  });
 
   const asImage = (
     bytes: Uint8Array,
@@ -423,75 +424,76 @@ export const securePandocDocument = Effect.fn("scient.pandoc.securePandocDocumen
     return { ok: true, bytes, mediaType, png };
   };
 
-  const resolveImage = (url: string): Effect.Effect<ImageResolution> =>
-    Effect.gen(function* () {
-      if (url.startsWith(DOCUMENT_ASSET_URL_PREFIX)) {
-        const asset = assetsById.get(url.slice(DOCUMENT_ASSET_URL_PREFIX.length));
-        if (asset === undefined) return { ok: false, refusal: "missing" };
-        if (asset.content._tag !== "bytes") return { ok: false, refusal: "unavailable" };
-        const pngPath = asset.packagePath.replace(/\.svg$/iu, ".png");
-        const sibling = options.assets.find(
-          (candidate) =>
-            candidate.id !== asset.id &&
-            candidate.content._tag === "bytes" &&
-            pngPath !== asset.packagePath &&
-            candidate.packagePath === pngPath,
-        );
-        return asImage(
-          asset.content.bytes,
-          "not-an-image",
-          sibling !== undefined && sibling.content._tag === "bytes"
-            ? () => Effect.succeed(sibling.content._tag === "bytes" ? sibling.content.bytes : null)
-            : null,
-        );
-      }
-      if (/^data:/iu.test(url)) {
-        const bytes = decodeDataUri(url);
-        return bytes === null
-          ? { ok: false, refusal: "data-uri-not-image" }
-          : asImage(bytes, "data-uri-not-image", null);
-      }
-      // Any scheme at all (a drive letter is not one) is refused.
-      if (/^[a-z][a-z0-9+.-]*:/iu.test(url) && !/^[a-z]:[\\/]/iu.test(url)) {
-        return { ok: false, refusal: "remote-or-scheme" };
-      }
-      const relative = decodePathUrl(url).replaceAll("\\", "/");
-      if (
-        relative.includes("\0") ||
-        relative.startsWith("/") ||
-        /^[a-z]:\//iu.test(relative) ||
-        path.isAbsolute(relative)
-      ) {
-        return { ok: false, refusal: "absolute-path" };
-      }
-      const files = options.files;
-      if (options.imageSnapshot !== undefined) {
-        const captured = options.imageSnapshot.get(url);
-        if (captured === undefined) return { ok: false, refusal: "not-in-snapshot" };
-        if (!captured.ok) return { ok: false, refusal: captured.refusal };
-        return asImage(
-          captured.bytes,
-          "not-an-image",
-          captured.png === null ? null : () => Effect.succeed(captured.png),
-        );
-      }
-      if (files === null || relative.length === 0) return { ok: false, refusal: "missing" };
-      const candidate = path.join(files.baseDirectory, relative);
-      const read = yield* readAllowedFile(candidate);
-      if (!read.ok) return { ok: false, refusal: read.refusal };
-      // The rendering sits beside the SVG as written, and passes the same checks.
-      const siblingPath = candidate.replace(/\.svg$/iu, ".png");
-      return asImage(
-        read.bytes,
-        "not-an-image",
-        siblingPath === candidate
-          ? null
-          : () =>
-              readAllowedFile(siblingPath).pipe(
-                Effect.map((sibling) => (sibling.ok ? sibling.bytes : null)),
-              ),
+  const resolveImage = Effect.fn("pandocResources.resolveImage")(function* (
+    url: string,
+  ): Effect.fn.Return<ImageResolution> {
+    if (url.startsWith(DOCUMENT_ASSET_URL_PREFIX)) {
+      const asset = assetsById.get(url.slice(DOCUMENT_ASSET_URL_PREFIX.length));
+      if (asset === undefined) return { ok: false, refusal: "missing" };
+      if (asset.content._tag !== "bytes") return { ok: false, refusal: "unavailable" };
+      const pngPath = asset.packagePath.replace(/\.svg$/iu, ".png");
+      const sibling = options.assets.find(
+        (candidate) =>
+          candidate.id !== asset.id &&
+          candidate.content._tag === "bytes" &&
+          pngPath !== asset.packagePath &&
+          candidate.packagePath === pngPath,
       );
-    });
+      return asImage(
+        asset.content.bytes,
+        "not-an-image",
+        sibling !== undefined && sibling.content._tag === "bytes"
+          ? () => Effect.succeed(sibling.content._tag === "bytes" ? sibling.content.bytes : null)
+          : null,
+      );
+    }
+    if (/^data:/iu.test(url)) {
+      const bytes = decodeDataUri(url);
+      return bytes === null
+        ? { ok: false, refusal: "data-uri-not-image" }
+        : asImage(bytes, "data-uri-not-image", null);
+    }
+    // Any scheme at all (a drive letter is not one) is refused.
+    if (/^[a-z][a-z0-9+.-]*:/iu.test(url) && !/^[a-z]:[\\/]/iu.test(url)) {
+      return { ok: false, refusal: "remote-or-scheme" };
+    }
+    const relative = decodePathUrl(url).replaceAll("\\", "/");
+    if (
+      relative.includes("\0") ||
+      relative.startsWith("/") ||
+      /^[a-z]:\//iu.test(relative) ||
+      path.isAbsolute(relative)
+    ) {
+      return { ok: false, refusal: "absolute-path" };
+    }
+    const files = options.files;
+    if (options.imageSnapshot !== undefined) {
+      const captured = options.imageSnapshot.get(url);
+      if (captured === undefined) return { ok: false, refusal: "not-in-snapshot" };
+      if (!captured.ok) return { ok: false, refusal: captured.refusal };
+      return asImage(
+        captured.bytes,
+        "not-an-image",
+        captured.png === null ? null : () => Effect.succeed(captured.png),
+      );
+    }
+    if (files === null || relative.length === 0) return { ok: false, refusal: "missing" };
+    const candidate = path.join(files.baseDirectory, relative);
+    const read = yield* readAllowedFile(candidate);
+    if (!read.ok) return { ok: false, refusal: read.refusal };
+    // The rendering sits beside the SVG as written, and passes the same checks.
+    const siblingPath = candidate.replace(/\.svg$/iu, ".png");
+    return asImage(
+      read.bytes,
+      "not-an-image",
+      siblingPath === candidate
+        ? null
+        : () =>
+            readAllowedFile(siblingPath).pipe(
+              Effect.map((sibling) => (sibling.ok ? sibling.bytes : null)),
+            ),
+    );
+  });
 
   const images: Array<PandocNode> = [];
   collectNodes(document, "Image", images);

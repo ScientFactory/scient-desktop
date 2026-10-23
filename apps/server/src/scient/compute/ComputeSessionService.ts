@@ -592,81 +592,82 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const inspectRuntimes = (input: ComputeRuntimeInspectionRequest) =>
-    Effect.gen(function* () {
-      const workingDirectory = yield* runtimeDirectory("inspect", input.workingDirectory);
-      const projectRoot =
-        input.projectRoot === null ? null : yield* runtimeDirectory("inspect", input.projectRoot);
-      const { environment } = runtimeEnvironment();
-      return yield* Effect.forEach(bindings, (binding) =>
-        Effect.gen(function* () {
-          const managedRuntime =
-            binding.managedRuntime === undefined
-              ? null
-              : yield* binding.managedRuntime.status().pipe(
-                  Effect.catch((cause) =>
-                    Effect.logWarning("managed compute runtime status unavailable", {
-                      languageId: binding.adapter.languageId,
-                      cause,
-                    }).pipe(
-                      Effect.as({
-                        installed: false,
-                        selection: "existing" as const,
-                        updateAvailable: false,
-                        runtimeVersion: null,
-                        toolkitRevision: null,
-                        operation: null,
-                        failureMessage: shortText(cause.message),
-                      }),
-                    ),
+  const inspectRuntimes = Effect.fn("ComputeSessionService.inspectRuntimes")(function* (
+    input: ComputeRuntimeInspectionRequest,
+  ) {
+    const workingDirectory = yield* runtimeDirectory("inspect", input.workingDirectory);
+    const projectRoot =
+      input.projectRoot === null ? null : yield* runtimeDirectory("inspect", input.projectRoot);
+    const { environment } = runtimeEnvironment();
+    return yield* Effect.forEach(bindings, (binding) =>
+      Effect.gen(function* () {
+        const managedRuntime =
+          binding.managedRuntime === undefined
+            ? null
+            : yield* binding.managedRuntime.status().pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("managed compute runtime status unavailable", {
+                    languageId: binding.adapter.languageId,
+                    cause,
+                  }).pipe(
+                    Effect.as({
+                      installed: false,
+                      selection: "existing" as const,
+                      updateAvailable: false,
+                      runtimeVersion: null,
+                      toolkitRevision: null,
+                      operation: null,
+                      failureMessage: shortText(cause.message),
+                    }),
                   ),
-                );
-          if (!input.enabledLanguageIds.has(binding.adapter.languageId)) {
-            return {
-              descriptor: descriptorFor(binding),
-              managedRuntime,
-              toolkits: binding.toolkitSupport?.descriptors ?? [],
-              runtimes: [],
-            };
-          }
-          const profiles = yield* binding.adapter
-            .discover({
-              projectRoot,
-              configuredExecutable: input.configuredExecutables[binding.adapter.languageId] ?? null,
-              refresh: input.refresh,
-            })
-            .pipe(
-              Effect.mapError((cause) =>
-                computeError("inspect", "runtime-unusable", cause.message, cause),
-              ),
-            );
-          const runtimes = yield* Effect.forEach(profiles, (profile) =>
-            binding.adapter.verify({ profile, cwd: workingDirectory, environment }).pipe(
-              Effect.catch((cause) =>
-                Effect.succeed({
-                  profile,
-                  readiness: "unusable" as const,
-                  missingRequirements: [],
-                  message: shortText(cause.message),
-                  packages: [],
-                }),
-              ),
-              Effect.map((verification) => ({
-                profile,
-                verification,
-                toolkits: binding.toolkitSupport?.assess(verification) ?? [],
-              })),
-            ),
-          );
+                ),
+              );
+        if (!input.enabledLanguageIds.has(binding.adapter.languageId)) {
           return {
             descriptor: descriptorFor(binding),
             managedRuntime,
             toolkits: binding.toolkitSupport?.descriptors ?? [],
-            runtimes,
+            runtimes: [],
           };
-        }),
-      );
-    });
+        }
+        const profiles = yield* binding.adapter
+          .discover({
+            projectRoot,
+            configuredExecutable: input.configuredExecutables[binding.adapter.languageId] ?? null,
+            refresh: input.refresh,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              computeError("inspect", "runtime-unusable", cause.message, cause),
+            ),
+          );
+        const runtimes = yield* Effect.forEach(profiles, (profile) =>
+          binding.adapter.verify({ profile, cwd: workingDirectory, environment }).pipe(
+            Effect.catch((cause) =>
+              Effect.succeed({
+                profile,
+                readiness: "unusable" as const,
+                missingRequirements: [],
+                message: shortText(cause.message),
+                packages: [],
+              }),
+            ),
+            Effect.map((verification) => ({
+              profile,
+              verification,
+              toolkits: binding.toolkitSupport?.assess(verification) ?? [],
+            })),
+          ),
+        );
+        return {
+          descriptor: descriptorFor(binding),
+          managedRuntime,
+          toolkits: binding.toolkitSupport?.descriptors ?? [],
+          runtimes,
+        };
+      }),
+    );
+  });
 
   const managedController = (
     languageId: ComputeLanguageId,
@@ -685,12 +686,12 @@ const make = Effect.gen(function* () {
   const managedRuntimeStatus = (languageId: ComputeLanguageId) =>
     managedController(languageId).pipe(Effect.flatMap((controller) => controller.status()));
 
-  const manageRuntime = (
-    languageId: ComputeLanguageId,
-    action: ComputeManagedRuntimeAction,
-    options?: ComputeManagedRuntimeProvisionOptions,
-  ) =>
-    Effect.gen(function* () {
+  const manageRuntime = Effect.fn("ComputeSessionService.manageRuntime")(
+    function* (
+      languageId: ComputeLanguageId,
+      action: ComputeManagedRuntimeAction,
+      options?: ComputeManagedRuntimeProvisionOptions,
+    ) {
       const controller = yield* managedController(languageId);
       if (action === "remove" && !controller.tracksUsage) {
         const liveSessions = yield* Ref.get(sessionsRef);
@@ -706,13 +707,15 @@ const make = Effect.gen(function* () {
         }
       }
       return yield* controller.manage(action, options);
-    }).pipe(startLock.withPermits(1));
+    },
+    (effect) => effect.pipe(startLock.withPermits(1)),
+  );
 
   const cancelManagedRuntime = (languageId: ComputeLanguageId) =>
     managedController(languageId).pipe(Effect.flatMap((controller) => controller.cancel()));
 
-  const verifyRuntime = (input: ComputeRuntimeVerificationRequest) =>
-    Effect.gen(function* () {
+  const verifyRuntime = Effect.fn("ComputeSessionService.verifyRuntime")(
+    function* (input: ComputeRuntimeVerificationRequest) {
       const workspaceReceipt = yield* ComputeWorkspaceAdmission;
       if (workspaceReceipt) yield* workspaceReceipt.assertCurrent;
       const binding = bindings.find(
@@ -801,46 +804,56 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
-    }).pipe((verification) =>
-      Effect.acquireUseRelease(
-        startLock.withPermits(1)(
-          withComputeWorkspaceReservation(input.workingDirectory, (releaseWorkspace) =>
-            Effect.gen(function* () {
-              const binding = bindings.find(
-                (candidate) => candidate.adapter.languageId === input.languageId,
-              );
-              if (binding?.managedRuntime?.isRemoving() && !binding.managedRuntime.tracksUsage)
-                return yield* computeError(
-                  "verify",
-                  "runtime-unusable",
-                  "Wait for runtime removal to finish before verifying the connection.",
+    },
+    (effect, input: ComputeRuntimeVerificationRequest) =>
+      effect.pipe((verification) =>
+        Effect.acquireUseRelease(
+          startLock.withPermits(1)(
+            withComputeWorkspaceReservation(input.workingDirectory, (releaseWorkspace) =>
+              Effect.gen(function* () {
+                const binding = bindings.find(
+                  (candidate) => candidate.adapter.languageId === input.languageId,
                 );
-              const releaseCapacity = yield* hostCapacity.acquire();
-              yield* Ref.update(verifyingRef, (counts) =>
-                new Map(counts).set(input.languageId, (counts.get(input.languageId) ?? 0) + 1),
-              );
-              return { releaseCapacity, releaseWorkspace, scope: yield* Scope.make("sequential") };
-            }),
-          ),
-        ),
-        ({ scope }) =>
-          verification.pipe(Effect.provideService(Scope.Scope, scope), startupSlots.withPermits(1)),
-        ({ releaseCapacity, releaseWorkspace, scope }, exit) =>
-          Scope.close(scope, exit).pipe(
-            Effect.andThen(releaseWorkspace),
-            Effect.andThen(
-              Ref.update(verifyingRef, (counts) => {
-                const next = new Map(counts);
-                const count = (next.get(input.languageId) ?? 1) - 1;
-                if (count === 0) next.delete(input.languageId);
-                else next.set(input.languageId, count);
-                return next;
+                if (binding?.managedRuntime?.isRemoving() && !binding.managedRuntime.tracksUsage)
+                  return yield* computeError(
+                    "verify",
+                    "runtime-unusable",
+                    "Wait for runtime removal to finish before verifying the connection.",
+                  );
+                const releaseCapacity = yield* hostCapacity.acquire();
+                yield* Ref.update(verifyingRef, (counts) =>
+                  new Map(counts).set(input.languageId, (counts.get(input.languageId) ?? 0) + 1),
+                );
+                return {
+                  releaseCapacity,
+                  releaseWorkspace,
+                  scope: yield* Scope.make("sequential"),
+                };
               }),
             ),
-            Effect.andThen(releaseCapacity),
           ),
+          ({ scope }) =>
+            verification.pipe(
+              Effect.provideService(Scope.Scope, scope),
+              startupSlots.withPermits(1),
+            ),
+          ({ releaseCapacity, releaseWorkspace, scope }, exit) =>
+            Scope.close(scope, exit).pipe(
+              Effect.andThen(releaseWorkspace),
+              Effect.andThen(
+                Ref.update(verifyingRef, (counts) => {
+                  const next = new Map(counts);
+                  const count = (next.get(input.languageId) ?? 1) - 1;
+                  if (count === 0) next.delete(input.languageId);
+                  else next.set(input.languageId, count);
+                  return next;
+                }),
+              ),
+              Effect.andThen(releaseCapacity),
+            ),
+        ),
       ),
-    );
+  );
 
   const notificationOwner = (projectId: string, workspace?: ComputeSessionRecord["workspace"]) =>
     workspace
@@ -856,70 +869,69 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const publishExecution = (
+  const publishExecution = Effect.fn("ComputeSessionService.publishExecution")(function* (
     live: LiveComputeSession,
     execution: ComputeExecutionRecord,
     isNewExecution = false,
-  ) =>
-    Effect.gen(function* () {
-      yield* notifications.publish(
-        notificationOwner(live.projectId, live.workspaceReceipt?.scope),
-        (eventSequence) => ({
-          _tag: "execution-updated",
-          eventSequence,
-          projectId: live.projectId,
-          sessionId: live.sessionId,
-          execution,
-        }),
-      );
-      const result = execution.result;
-      const status = result?.status;
-      // Queue/phase changes must not recreate a start after consent is changed.
-      if (
-        !isNewExecution &&
-        (status === undefined || !TERMINAL_COMPUTE_EXECUTION_STATUSES.has(status))
-      )
-        return;
-      const key = analyticsExecutionKey(
-        live,
-        execution.request.executionId,
-        execution.request.generation,
-      );
-      yield* observeOperation({
-        // Local-only correlation; never serialized into the analytics payload.
-        key,
-        operationKind: "compute-run",
-        status:
-          status === "succeeded"
-            ? "completed"
-            : status === "cancelled"
-              ? "cancelled"
-              : status === "failed" || status === "lost"
-                ? "failed"
-                : "active",
-        startedAt: Date.parse(execution.request.submittedAt),
-        ...(result?.finishedAt ? { finishedAt: Date.parse(result.finishedAt) } : {}),
-        failureClass: status === "lost" ? "process-crash" : "unknown",
-      });
-      if (
-        status === "succeeded" ||
-        status === "failed" ||
-        status === "cancelled" ||
-        status === "lost"
-      ) {
-        yield* observeComputeOutputs({
-          key,
-          phase: "finished",
-          ...(result?.finishedAt ? { finishedAt: Date.parse(result.finishedAt) } : {}),
-        });
-      } else if (isNewExecution) {
-        yield* observeComputeOutputs({
-          key,
-          phase: "started",
-          startedAt: Date.parse(execution.request.submittedAt),
-        });
-      }
+  ) {
+    yield* notifications.publish(
+      notificationOwner(live.projectId, live.workspaceReceipt?.scope),
+      (eventSequence) => ({
+        _tag: "execution-updated",
+        eventSequence,
+        projectId: live.projectId,
+        sessionId: live.sessionId,
+        execution,
+      }),
+    );
+    const result = execution.result;
+    const status = result?.status;
+    // Queue/phase changes must not recreate a start after consent is changed.
+    if (
+      !isNewExecution &&
+      (status === undefined || !TERMINAL_COMPUTE_EXECUTION_STATUSES.has(status))
+    )
+      return;
+    const key = analyticsExecutionKey(
+      live,
+      execution.request.executionId,
+      execution.request.generation,
+    );
+    yield* observeOperation({
+      // Local-only correlation; never serialized into the analytics payload.
+      key,
+      operationKind: "compute-run",
+      status:
+        status === "succeeded"
+          ? "completed"
+          : status === "cancelled"
+            ? "cancelled"
+            : status === "failed" || status === "lost"
+              ? "failed"
+              : "active",
+      startedAt: Date.parse(execution.request.submittedAt),
+      ...(result?.finishedAt ? { finishedAt: Date.parse(result.finishedAt) } : {}),
+      failureClass: status === "lost" ? "process-crash" : "unknown",
     });
+    if (
+      status === "succeeded" ||
+      status === "failed" ||
+      status === "cancelled" ||
+      status === "lost"
+    ) {
+      yield* observeComputeOutputs({
+        key,
+        phase: "finished",
+        ...(result?.finishedAt ? { finishedAt: Date.parse(result.finishedAt) } : {}),
+      });
+    } else if (isNewExecution) {
+      yield* observeComputeOutputs({
+        key,
+        phase: "started",
+        startedAt: Date.parse(execution.request.submittedAt),
+      });
+    }
+  });
 
   const publishOutputs = (
     live: LiveComputeSession,
@@ -955,30 +967,27 @@ const make = Effect.gen(function* () {
       .writeExecutionResult(live.projectId, live.sessionId, result)
       .pipe(Effect.mapError(persistenceError(operation, "Unable to record the execution result.")));
 
-  const appendJournal = (
+  const appendJournal = Effect.fn("ComputeSessionService.appendJournal")(function* (
     operation: ComputeOperation,
     live: LiveComputeSession,
     event: ComputeSessionJournalEvent,
     detail: string | null,
     executionId: ComputeExecutionId | null,
-  ) =>
-    Effect.gen(function* () {
-      const record = yield* Ref.get(live.recordRef);
-      const sequence = yield* Ref.getAndUpdate(live.journalRef, (value) => value + 1);
-      const observedAt = yield* nowIso;
-      yield* store
-        .appendJournal(live.projectId, live.sessionId, {
-          sequence,
-          observedAt,
-          event,
-          generation: record.generation,
-          executionId,
-          detail: detail === null ? null : shortText(detail),
-        })
-        .pipe(
-          Effect.mapError(persistenceError(operation, "Unable to record what the session did.")),
-        );
-    });
+  ) {
+    const record = yield* Ref.get(live.recordRef);
+    const sequence = yield* Ref.getAndUpdate(live.journalRef, (value) => value + 1);
+    const observedAt = yield* nowIso;
+    yield* store
+      .appendJournal(live.projectId, live.sessionId, {
+        sequence,
+        observedAt,
+        event,
+        generation: record.generation,
+        executionId,
+        detail: detail === null ? null : shortText(detail),
+      })
+      .pipe(Effect.mapError(persistenceError(operation, "Unable to record what the session did.")));
+  });
 
   const measureStorage = (live: LiveComputeSession, fallback: ComputeSessionStorage) =>
     store.measureSessionStorage(live.projectId, live.sessionId).pipe(
@@ -994,26 +1003,30 @@ const make = Effect.gen(function* () {
 
   // State transitions, all taken with the session lease held
 
+  const setSessionStatusEffect = Effect.fn("ComputeSessionService.setSessionStatus")(function* (
+    operation: ComputeOperation,
+    live: LiveComputeSession,
+    next: ComputeSessionStatus,
+    change: (record: ComputeSessionRecord) => ComputeSessionRecord,
+  ) {
+    const current = yield* Ref.get(live.recordRef);
+    const status = yield* transitionComputeSessionStatus(current.status, next).pipe(
+      Effect.mapError((cause) => computeError(operation, "session-terminal", cause.message, cause)),
+    );
+    const lastActivityAt = yield* nowIso;
+    const record = change({ ...current, status, lastActivityAt });
+    yield* persistSession(operation, record);
+    yield* Ref.set(live.recordRef, record);
+    yield* publishSession(record);
+    return record;
+  });
+
   const setSessionStatus = (
     operation: ComputeOperation,
     live: LiveComputeSession,
     next: ComputeSessionStatus,
     change: (record: ComputeSessionRecord) => ComputeSessionRecord = (record) => record,
-  ) =>
-    Effect.gen(function* () {
-      const current = yield* Ref.get(live.recordRef);
-      const status = yield* transitionComputeSessionStatus(current.status, next).pipe(
-        Effect.mapError((cause) =>
-          computeError(operation, "session-terminal", cause.message, cause),
-        ),
-      );
-      const lastActivityAt = yield* nowIso;
-      const record = change({ ...current, status, lastActivityAt });
-      yield* persistSession(operation, record);
-      yield* Ref.set(live.recordRef, record);
-      yield* publishSession(record);
-      return record;
-    });
+  ) => setSessionStatusEffect(operation, live, next, change);
 
   /**
    * Moves one execution to a new status, or leaves it alone.
@@ -1023,6 +1036,58 @@ const make = Effect.gen(function* () {
    * transport settles what was in flight after a stop has already recorded it.
    * Such a report is logged and dropped instead of being forced through.
    */
+  const setExecutionStatusEffect = Effect.fn("ComputeSessionService.setExecutionStatus")(function* (
+    operation: ComputeOperation,
+    live: LiveComputeSession,
+    executionId: ComputeExecutionId,
+    next: ComputeExecutionStatus,
+    change: (result: ComputeExecutionResultRecord) => ComputeExecutionResultRecord,
+  ) {
+    const existing = (yield* Ref.get(live.pendingRef)).get(executionId);
+    if (existing === undefined || existing.result === null) return null;
+    const status = yield* transitionComputeExecutionStatus(existing.result.status, next).pipe(
+      Effect.tapError((cause) =>
+        Effect.logDebug("compute execution report ignored", {
+          projectId: live.projectId,
+          sessionId: live.sessionId,
+          executionId,
+          message: cause.message,
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    if (status === null) return null;
+    const observedAt = yield* nowIso;
+    const terminal = TERMINAL_COMPUTE_EXECUTION_STATUSES.has(status);
+    const result = change({
+      ...existing.result,
+      status,
+      outcome:
+        status === "succeeded" || status === "failed" || status === "cancelled"
+          ? status
+          : existing.result.outcome,
+      queuePosition: status === "queued" ? existing.result.queuePosition : null,
+      startedAt:
+        status === "running" && existing.result.startedAt === null
+          ? observedAt
+          : existing.result.startedAt,
+      finishedAt: terminal ? observedAt : existing.result.finishedAt,
+    });
+    const execution: ComputeExecutionRecord = { request: existing.request, result };
+    yield* persistResult(operation, live, result);
+    yield* Ref.update(live.pendingRef, (map) => {
+      const updated = new Map(map);
+      if (terminal) updated.delete(executionId);
+      else updated.set(executionId, execution);
+      return updated;
+    });
+    yield* publishExecution(live, execution);
+    if (terminal && live.startRequest.runOnce?.executionId === executionId) {
+      yield* Deferred.succeed(live.runOnceDone, undefined);
+    }
+    return execution;
+  });
+
   const setExecutionStatus = (
     operation: ComputeOperation,
     live: LiveComputeSession,
@@ -1030,52 +1095,7 @@ const make = Effect.gen(function* () {
     next: ComputeExecutionStatus,
     change: (result: ComputeExecutionResultRecord) => ComputeExecutionResultRecord = (result) =>
       result,
-  ) =>
-    Effect.gen(function* () {
-      const existing = (yield* Ref.get(live.pendingRef)).get(executionId);
-      if (existing === undefined || existing.result === null) return null;
-      const status = yield* transitionComputeExecutionStatus(existing.result.status, next).pipe(
-        Effect.tapError((cause) =>
-          Effect.logDebug("compute execution report ignored", {
-            projectId: live.projectId,
-            sessionId: live.sessionId,
-            executionId,
-            message: cause.message,
-          }),
-        ),
-        Effect.orElseSucceed(() => null),
-      );
-      if (status === null) return null;
-      const observedAt = yield* nowIso;
-      const terminal = TERMINAL_COMPUTE_EXECUTION_STATUSES.has(status);
-      const result = change({
-        ...existing.result,
-        status,
-        outcome:
-          status === "succeeded" || status === "failed" || status === "cancelled"
-            ? status
-            : existing.result.outcome,
-        queuePosition: status === "queued" ? existing.result.queuePosition : null,
-        startedAt:
-          status === "running" && existing.result.startedAt === null
-            ? observedAt
-            : existing.result.startedAt,
-        finishedAt: terminal ? observedAt : existing.result.finishedAt,
-      });
-      const execution: ComputeExecutionRecord = { request: existing.request, result };
-      yield* persistResult(operation, live, result);
-      yield* Ref.update(live.pendingRef, (map) => {
-        const updated = new Map(map);
-        if (terminal) updated.delete(executionId);
-        else updated.set(executionId, execution);
-        return updated;
-      });
-      yield* publishExecution(live, execution);
-      if (terminal && live.startRequest.runOnce?.executionId === executionId) {
-        yield* Deferred.succeed(live.runOnceDone, undefined);
-      }
-      return execution;
-    });
+  ) => setExecutionStatusEffect(operation, live, executionId, next, change);
 
   /**
    * Re-derives queue positions in memory after the queue moves.
@@ -1085,8 +1105,8 @@ const make = Effect.gen(function* () {
    * execution that survives a restart anyway. Rewriting N result files because
    * one execution was cancelled would buy nothing.
    */
-  const republishQueuePositions = (live: LiveComputeSession) =>
-    Effect.gen(function* () {
+  const republishQueuePositions = Effect.fn("ComputeSessionService.republishQueuePositions")(
+    function* (live: LiveComputeSession) {
       const queue = yield* Ref.get(live.queueRef);
       const positions = new Map(
         computeQueueEntries(queue).map((entry) => [entry.executionId, entry.position] as const),
@@ -1110,39 +1130,46 @@ const make = Effect.gen(function* () {
       yield* Effect.forEach(changed, (execution) => publishExecution(live, execution), {
         discard: true,
       });
-    });
+    },
+  );
 
   /** Brings the session record back in line with the queue after it moves. */
-  const syncQueueCounters = (operation: ComputeOperation, live: LiveComputeSession) =>
-    Effect.gen(function* () {
-      const queue = yield* Ref.get(live.queueRef);
-      const current = yield* Ref.get(live.recordRef);
-      const lastActivityAt = yield* nowIso;
-      const record: ComputeSessionRecord = {
-        ...current,
-        activity: queue.active === null ? "idle" : "busy",
-        activeExecutionId: queue.active,
-        pendingCount: queue.pending.length,
-        lastActivityAt,
-      };
-      yield* persistSession(operation, record);
-      yield* Ref.set(live.recordRef, record);
-      yield* publishSession(record);
-      yield* republishQueuePositions(live);
-      return record;
-    });
+  const syncQueueCounters = Effect.fn("ComputeSessionService.syncQueueCounters")(function* (
+    operation: ComputeOperation,
+    live: LiveComputeSession,
+  ) {
+    const queue = yield* Ref.get(live.queueRef);
+    const current = yield* Ref.get(live.recordRef);
+    const lastActivityAt = yield* nowIso;
+    const record: ComputeSessionRecord = {
+      ...current,
+      activity: queue.active === null ? "idle" : "busy",
+      activeExecutionId: queue.active,
+      pendingCount: queue.pending.length,
+      lastActivityAt,
+    };
+    yield* persistSession(operation, record);
+    yield* Ref.set(live.recordRef, record);
+    yield* publishSession(record);
+    yield* republishQueuePositions(live);
+    return record;
+  });
 
-  const completePendingReady = (live: LiveComputeSession, record: ComputeSessionRecord) =>
-    Effect.gen(function* () {
-      const ready = yield* Ref.getAndSet(live.readyRef, null);
-      if (ready !== null) yield* Deferred.succeed(ready, record);
-    });
+  const completePendingReady = Effect.fn("ComputeSessionService.completePendingReady")(function* (
+    live: LiveComputeSession,
+    record: ComputeSessionRecord,
+  ) {
+    const ready = yield* Ref.getAndSet(live.readyRef, null);
+    if (ready !== null) yield* Deferred.succeed(ready, record);
+  });
 
-  const failPendingReady = (live: LiveComputeSession, error: ComputeOperationError) =>
-    Effect.gen(function* () {
-      const ready = yield* Ref.getAndSet(live.readyRef, null);
-      if (ready !== null) yield* Deferred.fail(ready, error);
-    });
+  const failPendingReady = Effect.fn("ComputeSessionService.failPendingReady")(function* (
+    live: LiveComputeSession,
+    error: ComputeOperationError,
+  ) {
+    const ready = yield* Ref.getAndSet(live.readyRef, null);
+    if (ready !== null) yield* Deferred.fail(ready, error);
+  });
 
   const appendOutputs = (
     live: LiveComputeSession,
@@ -1158,30 +1185,32 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(persistenceError("outputs", "Unable to record compute output.")));
 
-  const readBudgets = (live: LiveComputeSession, executionId: ComputeExecutionId | null) =>
-    Effect.gen(function* () {
-      const spent = yield* Ref.get(live.sessionOutputRef);
-      const session: OutputBudget = {
-        bytes: spent.bytes,
-        truncated: spent.truncated,
-        ceiling: options.maximumSessionOutputBytes,
-      };
-      if (executionId === null) return { session, execution: null } satisfies OutputBudgets;
-      const execution =
-        (yield* Ref.get(live.pendingRef)).get(executionId) ??
-        (yield* store
-          .loadExecution(live.projectId, live.sessionId, executionId)
-          .pipe(Effect.mapError(persistenceError("outputs", "Unable to read output ownership."))));
-      if (execution === null || execution === undefined || execution.result === null) return null;
-      return {
-        session,
-        execution: {
-          bytes: execution.result.outputBytes,
-          truncated: execution.result.truncated,
-          ceiling: options.maximumExecutionOutputBytes,
-        },
-      } satisfies OutputBudgets;
-    });
+  const readBudgets = Effect.fn("ComputeSessionService.readBudgets")(function* (
+    live: LiveComputeSession,
+    executionId: ComputeExecutionId | null,
+  ) {
+    const spent = yield* Ref.get(live.sessionOutputRef);
+    const session: OutputBudget = {
+      bytes: spent.bytes,
+      truncated: spent.truncated,
+      ceiling: options.maximumSessionOutputBytes,
+    };
+    if (executionId === null) return { session, execution: null } satisfies OutputBudgets;
+    const execution =
+      (yield* Ref.get(live.pendingRef)).get(executionId) ??
+      (yield* store
+        .loadExecution(live.projectId, live.sessionId, executionId)
+        .pipe(Effect.mapError(persistenceError("outputs", "Unable to read output ownership."))));
+    if (execution === null || execution === undefined || execution.result === null) return null;
+    return {
+      session,
+      execution: {
+        bytes: execution.result.outputBytes,
+        truncated: execution.result.truncated,
+        ceiling: options.maximumExecutionOutputBytes,
+      },
+    } satisfies OutputBudgets;
+  });
 
   const chargeSessionOutput = (live: LiveComputeSession, bytes: number, truncated: boolean) =>
     Ref.update(live.sessionOutputRef, (session) => ({
@@ -1200,7 +1229,7 @@ const make = Effect.gen(function* () {
    * that were in flight, which is the only case where the counters could be
    * behind.
    */
-  const chargeBudget = (
+  const chargeBudget = Effect.fn("ComputeSessionService.chargeBudget")(function* (
     operation: ComputeOperation,
     live: LiveComputeSession,
     executionId: ComputeExecutionId | null,
@@ -1208,39 +1237,38 @@ const make = Effect.gen(function* () {
     count: number,
     imageCount: number,
     truncated: TruncatedScopes,
-  ) =>
-    Effect.gen(function* () {
-      // Every byte kept counts against the session, whether or not an execution
-      // claimed it. The session's counter is the only one that spans them.
-      yield* chargeSessionOutput(live, bytes, truncated.session);
-      if (executionId === null) return;
-      const pending = yield* Ref.get(live.pendingRef);
-      const wasPending = pending.has(executionId);
-      const existing =
-        pending.get(executionId) ??
-        (yield* store
-          .loadExecution(live.projectId, live.sessionId, executionId)
-          .pipe(Effect.mapError(persistenceError(operation, "Unable to read output ownership."))));
-      if (existing === null || existing === undefined || existing.result === null) return;
-      const result: ComputeExecutionResultRecord = {
-        ...existing.result,
-        outputCount: existing.result.outputCount + count,
-        imageCount: existing.result.imageCount + imageCount,
-        outputBytes: existing.result.outputBytes + bytes,
-        truncated: existing.result.truncated || truncated.execution,
-      };
-      if (wasPending) {
-        yield* Ref.update(live.pendingRef, (map) =>
-          new Map(map).set(executionId, { request: existing.request, result }),
-        );
-      }
-      // Saying the transcript is incomplete is worth a write of its own; the
-      // counters alone are not, and ride along with the next status change.
-      if (!wasPending || (truncated.execution && !existing.result.truncated)) {
-        yield* persistResult(operation, live, result);
-        yield* publishExecution(live, { request: existing.request, result });
-      }
-    });
+  ) {
+    // Every byte kept counts against the session, whether or not an execution
+    // claimed it. The session's counter is the only one that spans them.
+    yield* chargeSessionOutput(live, bytes, truncated.session);
+    if (executionId === null) return;
+    const pending = yield* Ref.get(live.pendingRef);
+    const wasPending = pending.has(executionId);
+    const existing =
+      pending.get(executionId) ??
+      (yield* store
+        .loadExecution(live.projectId, live.sessionId, executionId)
+        .pipe(Effect.mapError(persistenceError(operation, "Unable to read output ownership."))));
+    if (existing === null || existing === undefined || existing.result === null) return;
+    const result: ComputeExecutionResultRecord = {
+      ...existing.result,
+      outputCount: existing.result.outputCount + count,
+      imageCount: existing.result.imageCount + imageCount,
+      outputBytes: existing.result.outputBytes + bytes,
+      truncated: existing.result.truncated || truncated.execution,
+    };
+    if (wasPending) {
+      yield* Ref.update(live.pendingRef, (map) =>
+        new Map(map).set(executionId, { request: existing.request, result }),
+      );
+    }
+    // Saying the transcript is incomplete is worth a write of its own; the
+    // counters alone are not, and ride along with the next status change.
+    if (!wasPending || (truncated.execution && !existing.result.truncated)) {
+      yield* persistResult(operation, live, result);
+      yield* publishExecution(live, { request: existing.request, result });
+    }
+  });
 
   /**
    * Stands in for the output that would have crossed a ceiling.
@@ -1266,206 +1294,202 @@ const make = Effect.gen(function* () {
     ),
   });
 
-  const persistOutput = (
+  const persistOutput = Effect.fn("ComputeSessionService.persistOutput")(function* (
     live: LiveComputeSession,
     event: Extract<ComputeTransportEvent, { readonly _tag: "output" }>,
-  ) =>
-    Effect.gen(function* () {
-      const record = yield* Ref.get(live.recordRef);
-      // Output minted by a namespace that has been replaced belongs to nothing
-      // a client is looking at.
-      if (event.generation !== record.generation) return false;
-      const executionId =
-        event.requestId === null ? null : ComputeExecutionId.make(event.requestId);
-      const budgets = yield* readBudgets(live, executionId);
-      if (budgets === null) return false;
-      // A transcript that has already said it is incomplete says it once;
-      // everything after the marker is dropped in silence.
-      if (budgets.session.truncated || budgets.execution?.truncated === true) return false;
-      const size = computeOutputByteLength(event.output);
-      const crossed =
-        budgets.execution !== null && budgets.execution.bytes + size > budgets.execution.ceiling
-          ? { scope: "execution" as const, ceiling: budgets.execution.ceiling }
-          : budgets.session.bytes + size > budgets.session.ceiling
-            ? { scope: "session" as const, ceiling: budgets.session.ceiling }
-            : null;
-      if (crossed !== null) {
-        const marker = truncationMarker(event.output, crossed.scope, crossed.ceiling);
+  ) {
+    const record = yield* Ref.get(live.recordRef);
+    // Output minted by a namespace that has been replaced belongs to nothing
+    // a client is looking at.
+    if (event.generation !== record.generation) return false;
+    const executionId = event.requestId === null ? null : ComputeExecutionId.make(event.requestId);
+    const budgets = yield* readBudgets(live, executionId);
+    if (budgets === null) return false;
+    // A transcript that has already said it is incomplete says it once;
+    // everything after the marker is dropped in silence.
+    if (budgets.session.truncated || budgets.execution?.truncated === true) return false;
+    const size = computeOutputByteLength(event.output);
+    const crossed =
+      budgets.execution !== null && budgets.execution.bytes + size > budgets.execution.ceiling
+        ? { scope: "execution" as const, ceiling: budgets.execution.ceiling }
+        : budgets.session.bytes + size > budgets.session.ceiling
+          ? { scope: "session" as const, ceiling: budgets.session.ceiling }
+          : null;
+    if (crossed !== null) {
+      const marker = truncationMarker(event.output, crossed.scope, crossed.ceiling);
+      yield* appendOutputs(live, executionId, [marker]);
+      // A full session has also cut this execution's transcript short, so
+      // both are marked. A full execution has not filled the session.
+      yield* chargeBudget("outputs", live, executionId, computeOutputByteLength(marker), 1, 0, {
+        execution: true,
+        session: crossed.scope === "session",
+      });
+      yield* publishOutputs(live, executionId, [marker]);
+      return false;
+    }
+    // Image bytes are stored before the line that names them, so a transcript
+    // never points at bytes that are not there. Bytes the store refuses are
+    // the same kind of loss as a ceiling and are marked the same way -- and so
+    // is an image that arrives carrying no bytes at all. That last one is a
+    // transport breaking its own contract rather than a runtime producing more
+    // than we keep, but it costs a reader the same thing, a transcript line
+    // pointing at an image nobody can open, so it is refused the same way
+    // instead of trusted because it came from inside the process.
+    if (event.output._tag === "image") {
+      const carried = event.image;
+      if (carried === null) {
+        yield* Effect.logWarning("compute output image arrived without bytes", {
+          projectId: live.projectId,
+          sessionId: live.sessionId,
+          executionId,
+          contentHash: event.output.contentHash,
+        });
+        const scope = budgets.execution === null ? "session" : "execution";
+        const ceiling =
+          budgets.execution === null ? budgets.session.ceiling : budgets.execution.ceiling;
+        const marker = truncationMarker(event.output, scope, ceiling);
         yield* appendOutputs(live, executionId, [marker]);
-        // A full session has also cut this execution's transcript short, so
-        // both are marked. A full execution has not filled the session.
         yield* chargeBudget("outputs", live, executionId, computeOutputByteLength(marker), 1, 0, {
-          execution: true,
-          session: crossed.scope === "session",
+          execution: executionId !== null,
+          session: executionId === null,
         });
         yield* publishOutputs(live, executionId, [marker]);
         return false;
       }
-      // Image bytes are stored before the line that names them, so a transcript
-      // never points at bytes that are not there. Bytes the store refuses are
-      // the same kind of loss as a ceiling and are marked the same way -- and so
-      // is an image that arrives carrying no bytes at all. That last one is a
-      // transport breaking its own contract rather than a runtime producing more
-      // than we keep, but it costs a reader the same thing, a transcript line
-      // pointing at an image nobody can open, so it is refused the same way
-      // instead of trusted because it came from inside the process.
-      if (event.output._tag === "image") {
-        const carried = event.image;
-        if (carried === null) {
-          yield* Effect.logWarning("compute output image arrived without bytes", {
-            projectId: live.projectId,
-            sessionId: live.sessionId,
-            executionId,
-            contentHash: event.output.contentHash,
-          });
-          const scope = budgets.execution === null ? "session" : "execution";
-          const ceiling =
-            budgets.execution === null ? budgets.session.ceiling : budgets.execution.ceiling;
-          const marker = truncationMarker(event.output, scope, ceiling);
-          yield* appendOutputs(live, executionId, [marker]);
-          yield* chargeBudget("outputs", live, executionId, computeOutputByteLength(marker), 1, 0, {
-            execution: executionId !== null,
-            session: executionId === null,
-          });
-          yield* publishOutputs(live, executionId, [marker]);
-          return false;
-        }
-        yield* store
-          .writeOutputImage({
-            projectId: live.projectId,
-            sessionId: live.sessionId,
-            executionId,
-            contentHash: event.output.contentHash,
-            mediaType: event.output.mediaType,
-            bytes: carried.bytes,
-          })
-          .pipe(Effect.mapError(persistenceError("outputs", "Unable to record an output image.")));
-      }
-      if (
-        event.output._tag === "display-data" ||
-        event.output._tag === "execute-result" ||
-        event.output._tag === "display-update"
-      ) {
-        const expected = event.output.bundle.representations.flatMap((representation) =>
-          representation.data._tag === "resource"
-            ? [
-                {
-                  mediaType: representation.mediaType,
-                  contentHash: representation.data.contentHash,
-                  byteLength: representation.data.byteLength,
-                },
-              ]
-            : [],
-        );
-        const carried = new Map(
-          event.resources.map((resource) => [
-            `${resource.mediaType}\0${resource.contentHash}`,
-            resource,
-          ]),
-        );
-        const complete =
-          carried.size === event.resources.length &&
-          carried.size === expected.length &&
-          expected.every((resource) => {
-            const candidate = carried.get(`${resource.mediaType}\0${resource.contentHash}`);
-            return candidate !== undefined && candidate.bytes.byteLength === resource.byteLength;
-          });
-        if (!complete) {
-          yield* Effect.logWarning("compute representation resources did not match their bundle", {
-            projectId: live.projectId,
-            sessionId: live.sessionId,
-            executionId,
-            expected: expected.length,
-            carried: event.resources.length,
-          });
-          const scope = budgets.execution === null ? "session" : "execution";
-          const ceiling =
-            budgets.execution === null ? budgets.session.ceiling : budgets.execution.ceiling;
-          const marker = truncationMarker(event.output, scope, ceiling);
-          yield* appendOutputs(live, executionId, [marker]);
-          yield* chargeBudget("outputs", live, executionId, computeOutputByteLength(marker), 1, 0, {
-            execution: executionId !== null,
-            session: executionId === null,
-          });
-          yield* publishOutputs(live, executionId, [marker]);
-          return false;
-        }
-        for (const resource of event.resources) {
-          yield* store
-            .writeOutputResource({
-              projectId: live.projectId,
-              sessionId: live.sessionId,
-              executionId,
-              mediaType: resource.mediaType,
-              contentHash: resource.contentHash,
-              bytes: resource.bytes,
-            })
-            .pipe(
-              Effect.mapError(
-                persistenceError("outputs", "Unable to record a rich output resource."),
-              ),
-            );
-        }
-      } else if (event.resources.length > 0) {
-        return yield* persistenceError(
-          "outputs",
-          "A transport attached rich resources to an output that cannot name them.",
-        )(new Error("Unexpected compute output resources."));
-      }
-      yield* appendOutputs(live, executionId, [event.output]);
-      const richImageCount =
-        (event.output._tag === "display-data" || event.output._tag === "execute-result") &&
-        event.output.bundle.representations.some(
-          (representation) =>
-            representation.mediaType === "image/png" ||
-            representation.mediaType === "image/svg+xml",
-        )
-          ? 1
-          : 0;
-      yield* chargeBudget(
-        "outputs",
-        live,
-        executionId,
-        size,
-        1,
-        event.output._tag === "image" ? 1 : richImageCount,
-        {
-          execution: false,
-          session: false,
-        },
+      yield* store
+        .writeOutputImage({
+          projectId: live.projectId,
+          sessionId: live.sessionId,
+          executionId,
+          contentHash: event.output.contentHash,
+          mediaType: event.output.mediaType,
+          bytes: carried.bytes,
+        })
+        .pipe(Effect.mapError(persistenceError("outputs", "Unable to record an output image.")));
+    }
+    if (
+      event.output._tag === "display-data" ||
+      event.output._tag === "execute-result" ||
+      event.output._tag === "display-update"
+    ) {
+      const expected = event.output.bundle.representations.flatMap((representation) =>
+        representation.data._tag === "resource"
+          ? [
+              {
+                mediaType: representation.mediaType,
+                contentHash: representation.data.contentHash,
+                byteLength: representation.data.byteLength,
+              },
+            ]
+          : [],
       );
-      yield* publishOutputs(live, executionId, [event.output]);
-      return true;
-    });
+      const carried = new Map(
+        event.resources.map((resource) => [
+          `${resource.mediaType}\0${resource.contentHash}`,
+          resource,
+        ]),
+      );
+      const complete =
+        carried.size === event.resources.length &&
+        carried.size === expected.length &&
+        expected.every((resource) => {
+          const candidate = carried.get(`${resource.mediaType}\0${resource.contentHash}`);
+          return candidate !== undefined && candidate.bytes.byteLength === resource.byteLength;
+        });
+      if (!complete) {
+        yield* Effect.logWarning("compute representation resources did not match their bundle", {
+          projectId: live.projectId,
+          sessionId: live.sessionId,
+          executionId,
+          expected: expected.length,
+          carried: event.resources.length,
+        });
+        const scope = budgets.execution === null ? "session" : "execution";
+        const ceiling =
+          budgets.execution === null ? budgets.session.ceiling : budgets.execution.ceiling;
+        const marker = truncationMarker(event.output, scope, ceiling);
+        yield* appendOutputs(live, executionId, [marker]);
+        yield* chargeBudget("outputs", live, executionId, computeOutputByteLength(marker), 1, 0, {
+          execution: executionId !== null,
+          session: executionId === null,
+        });
+        yield* publishOutputs(live, executionId, [marker]);
+        return false;
+      }
+      for (const resource of event.resources) {
+        yield* store
+          .writeOutputResource({
+            projectId: live.projectId,
+            sessionId: live.sessionId,
+            executionId,
+            mediaType: resource.mediaType,
+            contentHash: resource.contentHash,
+            bytes: resource.bytes,
+          })
+          .pipe(
+            Effect.mapError(
+              persistenceError("outputs", "Unable to record a rich output resource."),
+            ),
+          );
+      }
+    } else if (event.resources.length > 0) {
+      return yield* persistenceError(
+        "outputs",
+        "A transport attached rich resources to an output that cannot name them.",
+      )(new Error("Unexpected compute output resources."));
+    }
+    yield* appendOutputs(live, executionId, [event.output]);
+    const richImageCount =
+      (event.output._tag === "display-data" || event.output._tag === "execute-result") &&
+      event.output.bundle.representations.some(
+        (representation) =>
+          representation.mediaType === "image/png" || representation.mediaType === "image/svg+xml",
+      )
+        ? 1
+        : 0;
+    yield* chargeBudget(
+      "outputs",
+      live,
+      executionId,
+      size,
+      1,
+      event.output._tag === "image" ? 1 : richImageCount,
+      {
+        execution: false,
+        session: false,
+      },
+    );
+    yield* publishOutputs(live, executionId, [event.output]);
+    return true;
+  });
 
-  const applyOutput = (
+  const applyOutput = Effect.fn("ComputeSessionService.applyOutput")(function* (
     live: LiveComputeSession,
     event: Extract<ComputeTransportEvent, { readonly _tag: "output" }>,
-  ) =>
-    Effect.gen(function* () {
-      const output = event.output;
-      const rich =
-        output._tag === "image" ||
-        ((output._tag === "display-data" ||
-          output._tag === "execute-result" ||
-          output._tag === "display-update") &&
-          output.bundle.representations.some(
-            (representation) => representation.mediaType !== "text/plain",
-          ));
-      if (!rich || event.requestId === null) return yield* persistOutput(live, event);
-      const record = yield* Ref.get(live.recordRef);
-      if (event.generation !== record.generation) return yield* persistOutput(live, event);
-      const key = analyticsExecutionKey(live, event.requestId, event.generation);
-      return yield* persistOutput(live, event).pipe(
-        Effect.onExit((exit) =>
-          observeComputeOutputs({
-            key,
-            phase: "output",
-            retained: Exit.isSuccess(exit) && exit.value,
-          }),
-        ),
-      );
-    });
+  ) {
+    const output = event.output;
+    const rich =
+      output._tag === "image" ||
+      ((output._tag === "display-data" ||
+        output._tag === "execute-result" ||
+        output._tag === "display-update") &&
+        output.bundle.representations.some(
+          (representation) => representation.mediaType !== "text/plain",
+        ));
+    if (!rich || event.requestId === null) return yield* persistOutput(live, event);
+    const record = yield* Ref.get(live.recordRef);
+    if (event.generation !== record.generation) return yield* persistOutput(live, event);
+    const key = analyticsExecutionKey(live, event.requestId, event.generation);
+    return yield* persistOutput(live, event).pipe(
+      Effect.onExit((exit) =>
+        observeComputeOutputs({
+          key,
+          phase: "output",
+          retained: Exit.isSuccess(exit) && exit.value,
+        }),
+      ),
+    );
+  });
 
   /**
    * Retains supported files observed changing during this execution. This is
@@ -1478,199 +1502,198 @@ const make = Effect.gen(function* () {
    * project workspace. A transport reports runtime messages only and never
    * scans the user's files or tries to infer meaning from printed paths.
    */
-  const collectProjectOutputs = (
+  const collectProjectOutputs = Effect.fn("ComputeSessionService.collectProjectOutputs")(function* (
     live: LiveComputeSession,
     event: Extract<ComputeTransportEvent, { readonly _tag: "completed" }>,
-  ) =>
-    Effect.gen(function* () {
-      const executionId = ComputeExecutionId.make(event.requestId);
-      const observations = yield* Ref.get(live.projectOutputObservationsRef);
-      const observation = observations.get(executionId);
-      if (observation === undefined) return;
-      yield* Ref.set(
-        live.projectOutputObservationsRef,
-        new Map([...observations].filter(([candidate]) => candidate !== executionId)),
-      );
-      const budgets = yield* readBudgets(live, executionId);
-      if (budgets === null || budgets.execution === null) return;
-      const maximumBytes = Math.max(
-        0,
-        Math.min(
-          budgets.execution.ceiling - budgets.execution.bytes,
-          budgets.session.ceiling - budgets.session.bytes,
-        ),
-      );
-      const collection = yield* projectOutputObserver.collect(observation, { maximumBytes }).pipe(
-        Effect.onExit((exit) =>
-          Exit.isFailure(exit)
-            ? observeComputeOutputs({
-                key: analyticsExecutionKey(live, event.requestId, event.generation),
-                phase: "output",
-                retained: false,
-              })
-            : Effect.void,
-        ),
-      );
-      if (collection.warnings.length > 0) {
-        yield* observeComputeOutputs({
-          key: analyticsExecutionKey(live, event.requestId, event.generation),
-          phase: "output",
-          retained: false,
-        });
-      }
-      for (const image of collection.images) {
-        yield* applyOutput(live, {
-          _tag: "output",
-          requestId: event.requestId,
-          generation: event.generation,
-          output: {
-            _tag: "image",
-            sequence: event.sequence,
-            observedAt: event.observedAt,
-            mediaType: image.mediaType,
-            contentHash: image.contentHash,
-            byteLength: image.bytes.byteLength,
-            width: image.width,
-            height: image.height,
-            origin: {
-              _tag: "project-file",
-              path: image.relativePath,
-              revision: image.contentHash,
-            },
+  ) {
+    const executionId = ComputeExecutionId.make(event.requestId);
+    const observations = yield* Ref.get(live.projectOutputObservationsRef);
+    const observation = observations.get(executionId);
+    if (observation === undefined) return;
+    yield* Ref.set(
+      live.projectOutputObservationsRef,
+      new Map([...observations].filter(([candidate]) => candidate !== executionId)),
+    );
+    const budgets = yield* readBudgets(live, executionId);
+    if (budgets === null || budgets.execution === null) return;
+    const maximumBytes = Math.max(
+      0,
+      Math.min(
+        budgets.execution.ceiling - budgets.execution.bytes,
+        budgets.session.ceiling - budgets.session.bytes,
+      ),
+    );
+    const collection = yield* projectOutputObserver.collect(observation, { maximumBytes }).pipe(
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit)
+          ? observeComputeOutputs({
+              key: analyticsExecutionKey(live, event.requestId, event.generation),
+              phase: "output",
+              retained: false,
+            })
+          : Effect.void,
+      ),
+    );
+    if (collection.warnings.length > 0) {
+      yield* observeComputeOutputs({
+        key: analyticsExecutionKey(live, event.requestId, event.generation),
+        phase: "output",
+        retained: false,
+      });
+    }
+    for (const image of collection.images) {
+      yield* applyOutput(live, {
+        _tag: "output",
+        requestId: event.requestId,
+        generation: event.generation,
+        output: {
+          _tag: "image",
+          sequence: event.sequence,
+          observedAt: event.observedAt,
+          mediaType: image.mediaType,
+          contentHash: image.contentHash,
+          byteLength: image.bytes.byteLength,
+          width: image.width,
+          height: image.height,
+          origin: {
+            _tag: "project-file",
+            path: image.relativePath,
+            revision: image.contentHash,
           },
-          image: { bytes: image.bytes },
-          resources: [],
-        });
-      }
-      for (const warning of collection.warnings) {
-        yield* applyOutput(live, {
-          _tag: "output",
-          requestId: event.requestId,
-          generation: event.generation,
-          output: {
-            _tag: "system",
-            sequence: event.sequence,
-            observedAt: event.observedAt,
-            event: "runtime-warning",
-            detail: shortText(warning),
-          },
-          image: null,
-          resources: [],
-        });
-      }
-    });
+        },
+        image: { bytes: image.bytes },
+        resources: [],
+      });
+    }
+    for (const warning of collection.warnings) {
+      yield* applyOutput(live, {
+        _tag: "output",
+        requestId: event.requestId,
+        generation: event.generation,
+        output: {
+          _tag: "system",
+          sequence: event.sequence,
+          observedAt: event.observedAt,
+          event: "runtime-warning",
+          detail: shortText(warning),
+        },
+        image: null,
+        resources: [],
+      });
+    }
+  });
 
-  const recordDiagnostics = (
+  const recordDiagnostics = Effect.fn("ComputeSessionService.recordDiagnostics")(function* (
     live: LiveComputeSession,
     executionId: ComputeExecutionId,
     diagnostics: ReadonlyArray<ComputeDiagnostic>,
-  ) =>
-    Effect.gen(function* () {
-      const pending = yield* Ref.get(live.pendingRef);
-      const wasPending = pending.has(executionId);
-      const existing =
-        pending.get(executionId) ??
-        (yield* store
-          .loadExecution(live.projectId, live.sessionId, executionId)
-          .pipe(
-            Effect.mapError(persistenceError("outputs", "Unable to read diagnostic ownership.")),
-          ));
-      if (existing === null || existing === undefined || existing.result === null) return;
-      const first = diagnostics[0];
-      const result: ComputeExecutionResultRecord = {
-        ...existing.result,
-        // Bounded by the schema at 64: the first errors are the ones that
-        // explain the failure, and a runtime that reports thousands is telling
-        // a client nothing more.
-        diagnostics: [...existing.result.diagnostics, ...diagnostics].slice(0, 64),
-        failureReason:
-          existing.result.failureReason ??
-          (first === undefined ? null : shortText(`${first.errorName}: ${first.message}`)),
-      };
-      if (wasPending) {
-        yield* Ref.update(live.pendingRef, (map) =>
-          new Map(map).set(executionId, { request: existing.request, result }),
-        );
-      }
-      yield* persistResult("outputs", live, result);
-      yield* publishExecution(live, { request: existing.request, result });
-    });
+  ) {
+    const pending = yield* Ref.get(live.pendingRef);
+    const wasPending = pending.has(executionId);
+    const existing =
+      pending.get(executionId) ??
+      (yield* store
+        .loadExecution(live.projectId, live.sessionId, executionId)
+        .pipe(
+          Effect.mapError(persistenceError("outputs", "Unable to read diagnostic ownership.")),
+        ));
+    if (existing === null || existing === undefined || existing.result === null) return;
+    const first = diagnostics[0];
+    const result: ComputeExecutionResultRecord = {
+      ...existing.result,
+      // Bounded by the schema at 64: the first errors are the ones that
+      // explain the failure, and a runtime that reports thousands is telling
+      // a client nothing more.
+      diagnostics: [...existing.result.diagnostics, ...diagnostics].slice(0, 64),
+      failureReason:
+        existing.result.failureReason ??
+        (first === undefined ? null : shortText(`${first.errorName}: ${first.message}`)),
+    };
+    if (wasPending) {
+      yield* Ref.update(live.pendingRef, (map) =>
+        new Map(map).set(executionId, { request: existing.request, result }),
+      );
+    }
+    yield* persistResult("outputs", live, result);
+    yield* publishExecution(live, { request: existing.request, result });
+  });
 
   /** Moves the queue forward under the session lease and says what to send. */
-  const takeNextDispatch = (operation: ComputeOperation, live: LiveComputeSession) =>
-    Effect.gen(function* () {
-      const record = yield* Ref.get(live.recordRef);
-      // A session that is still starting may hold a queue -- a user is allowed
-      // to type ahead of a kernel -- but nothing is sent until it is ready.
-      if (record.status !== "ready") return null;
-      const queue = yield* Ref.get(live.queueRef);
-      const advanced = startNextComputeExecution(queue);
-      if (advanced.started === null) return null;
-      const executionId = advanced.started;
-      const execution = (yield* Ref.get(live.pendingRef)).get(executionId);
-      if (execution === undefined || execution.result === null) {
-        yield* Ref.set(live.queueRef, finishComputeExecution(advanced.state, executionId));
-        return null;
-      }
-      yield* Ref.set(live.queueRef, advanced.state);
-      yield* setExecutionStatus(operation, live, executionId, "submitting");
-      yield* syncQueueCounters(operation, live);
-      if (execution.request.source._tag === "document") {
-        const source = execution.request.source;
-        yield* Ref.update(live.executionSourcesRef, (previous) => {
-          const next = new Map(previous);
-          next.set(executionId, {
-            relativePath: source.path,
-            startLine: source.range?.startLine ?? 0,
-            lineCount: execution.request.code.split("\n").length,
-          });
-          // Keep provenance after completion, not the full submitted code. Old
-          // functions can still fail; evicted entries must produce no guessed link.
-          if (next.size > 256) next.delete(next.keys().next().value!);
-          return next;
+  const takeNextDispatch = Effect.fn("ComputeSessionService.takeNextDispatch")(function* (
+    operation: ComputeOperation,
+    live: LiveComputeSession,
+  ) {
+    const record = yield* Ref.get(live.recordRef);
+    // A session that is still starting may hold a queue -- a user is allowed
+    // to type ahead of a kernel -- but nothing is sent until it is ready.
+    if (record.status !== "ready") return null;
+    const queue = yield* Ref.get(live.queueRef);
+    const advanced = startNextComputeExecution(queue);
+    if (advanced.started === null) return null;
+    const executionId = advanced.started;
+    const execution = (yield* Ref.get(live.pendingRef)).get(executionId);
+    if (execution === undefined || execution.result === null) {
+      yield* Ref.set(live.queueRef, finishComputeExecution(advanced.state, executionId));
+      return null;
+    }
+    yield* Ref.set(live.queueRef, advanced.state);
+    yield* setExecutionStatus(operation, live, executionId, "submitting");
+    yield* syncQueueCounters(operation, live);
+    if (execution.request.source._tag === "document") {
+      const source = execution.request.source;
+      yield* Ref.update(live.executionSourcesRef, (previous) => {
+        const next = new Map(previous);
+        next.set(executionId, {
+          relativePath: source.path,
+          startLine: source.range?.startLine ?? 0,
+          lineCount: execution.request.code.split("\n").length,
         });
-      }
-      return {
-        executionId,
-        generation: record.generation,
-        code: execution.request.code,
-        ...(execution.request.source._tag === "console"
-          ? {}
-          : {
-              sourceContext: {
-                kind: execution.request.source.origin,
-                filePath: execution.request.source.path,
-                sourceBytesHash: execution.request.codeHash,
-                ...(execution.request.source.revision === null
-                  ? {}
-                  : {
-                      sourceRevision: execution.request.source.revision,
-                    }),
-                saved: execution.request.source.bufferState === "saved",
-                ...execution.request.source.range,
-              },
-            }),
-      } satisfies ComputeDispatch;
-    });
+        // Keep provenance after completion, not the full submitted code. Old
+        // functions can still fail; evicted entries must produce no guessed link.
+        if (next.size > 256) next.delete(next.keys().next().value!);
+        return next;
+      });
+    }
+    return {
+      executionId,
+      generation: record.generation,
+      code: execution.request.code,
+      ...(execution.request.source._tag === "console"
+        ? {}
+        : {
+            sourceContext: {
+              kind: execution.request.source.origin,
+              filePath: execution.request.source.path,
+              sourceBytesHash: execution.request.codeHash,
+              ...(execution.request.source.revision === null
+                ? {}
+                : {
+                    sourceRevision: execution.request.source.revision,
+                  }),
+              saved: execution.request.source.bufferState === "saved",
+              ...execution.request.source.range,
+            },
+          }),
+    } satisfies ComputeDispatch;
+  });
 
-  const failDispatch = (
+  const failDispatch = Effect.fn("ComputeSessionService.failDispatch")(function* (
     live: LiveComputeSession,
     executionId: ComputeExecutionId,
     message: string,
-  ) =>
-    Effect.gen(function* () {
-      yield* Ref.update(live.projectOutputObservationsRef, (observations) => {
-        const next = new Map(observations);
-        next.delete(executionId);
-        return next;
-      });
-      yield* setExecutionStatus("submit", live, executionId, "failed", (result) => ({
-        ...result,
-        failureReason: shortText(message),
-      }));
-      yield* Ref.update(live.queueRef, (queue) => finishComputeExecution(queue, executionId));
-      yield* syncQueueCounters("submit", live);
+  ) {
+    yield* Ref.update(live.projectOutputObservationsRef, (observations) => {
+      const next = new Map(observations);
+      next.delete(executionId);
+      return next;
     });
+    yield* setExecutionStatus("submit", live, executionId, "failed", (result) => ({
+      ...result,
+      failureReason: shortText(message),
+    }));
+    yield* Ref.update(live.queueRef, (queue) => finishComputeExecution(queue, executionId));
+    yield* syncQueueCounters("submit", live);
+  });
 
   /** The short send lease orders wire admission against stop/restart, not result delivery. */
   const dispatch = (live: LiveComputeSession, next: ComputeDispatch | null) =>
@@ -1752,29 +1775,28 @@ const make = Effect.gen(function* () {
    * Empties the queue. Whatever was running ends as `activeStatus`; everything
    * waiting is cancelled, because it never reached the runtime at all.
    */
-  const cancelEverything = (
+  const cancelEverything = Effect.fn("ComputeSessionService.cancelEverything")(function* (
     operation: ComputeOperation,
     live: LiveComputeSession,
     reason: string,
     activeStatus: "lost" | "cancelled",
-  ) =>
-    Effect.gen(function* () {
-      const drained = drainComputeQueue(yield* Ref.get(live.queueRef));
-      yield* Ref.set(live.queueRef, drained.state);
-      yield* Ref.set(live.projectOutputObservationsRef, new Map());
-      // Restart already drained the admission queue while its active request
-      // awaits acknowledgement. Pending records, not the queue, own unsettled work.
-      for (const [executionId, execution] of yield* Ref.get(live.pendingRef)) {
-        yield* setExecutionStatus(
-          operation,
-          live,
-          executionId,
-          execution.result?.status === "queued" ? "cancelled" : activeStatus,
-          (result) => ({ ...result, failureReason: result.failureReason ?? shortText(reason) }),
-        );
-        yield* appendJournal(operation, live, "execution-cancelled", reason, executionId);
-      }
-    });
+  ) {
+    const drained = drainComputeQueue(yield* Ref.get(live.queueRef));
+    yield* Ref.set(live.queueRef, drained.state);
+    yield* Ref.set(live.projectOutputObservationsRef, new Map());
+    // Restart already drained the admission queue while its active request
+    // awaits acknowledgement. Pending records, not the queue, own unsettled work.
+    for (const [executionId, execution] of yield* Ref.get(live.pendingRef)) {
+      yield* setExecutionStatus(
+        operation,
+        live,
+        executionId,
+        execution.result?.status === "queued" ? "cancelled" : activeStatus,
+        (result) => ({ ...result, failureReason: result.failureReason ?? shortText(reason) }),
+      );
+      yield* appendJournal(operation, live, "execution-cancelled", reason, executionId);
+    }
+  });
 
   /**
    * Closes the book on a session, exactly once.
@@ -1786,50 +1808,48 @@ const make = Effect.gen(function* () {
    * and the stop command itself -- so the first one to take the lease decides
    * and the rest find a terminal record and leave it alone.
    */
-  const endSession = (live: LiveComputeSession, reason: string) =>
-    Effect.gen(function* () {
-      const current = yield* Ref.get(live.recordRef);
-      if (TERMINAL_COMPUTE_SESSION_STATUSES.has(current.status)) return current;
-      const stopping = current.status === "stopping";
-      yield* cancelEverything("stop", live, reason, stopping ? "cancelled" : "lost");
-      const settled = yield* Ref.get(live.recordRef);
-      const storage = yield* measureStorage(live, settled.storage);
-      const observedAt = yield* nowIso;
-      const status = yield* transitionComputeSessionStatus(
-        settled.status,
-        stopping ? "stopped" : "lost",
-      ).pipe(Effect.orDie);
-      const record: ComputeSessionRecord = {
-        ...settled,
-        status,
-        activity: "idle",
-        activeExecutionId: null,
-        pendingCount: 0,
-        storage,
-        lastActivityAt: observedAt,
-        closedAt: observedAt,
-        lostReason: stopping ? settled.lostReason : shortText(reason),
-      };
-      yield* persistSession("stop", record);
-      yield* appendJournal(
-        "stop",
-        live,
-        stopping ? "session-stopped" : "session-lost",
-        stopping ? null : reason,
-        null,
-      );
-      yield* Ref.set(live.recordRef, record);
-      yield* publishSession(record);
-      yield* failPendingReady(
-        live,
-        computeError(
-          "start",
-          stopping ? "session-terminal" : "transport-failed",
-          shortText(reason),
-        ),
-      );
-      return record;
-    });
+  const endSession = Effect.fn("ComputeSessionService.endSession")(function* (
+    live: LiveComputeSession,
+    reason: string,
+  ) {
+    const current = yield* Ref.get(live.recordRef);
+    if (TERMINAL_COMPUTE_SESSION_STATUSES.has(current.status)) return current;
+    const stopping = current.status === "stopping";
+    yield* cancelEverything("stop", live, reason, stopping ? "cancelled" : "lost");
+    const settled = yield* Ref.get(live.recordRef);
+    const storage = yield* measureStorage(live, settled.storage);
+    const observedAt = yield* nowIso;
+    const status = yield* transitionComputeSessionStatus(
+      settled.status,
+      stopping ? "stopped" : "lost",
+    ).pipe(Effect.orDie);
+    const record: ComputeSessionRecord = {
+      ...settled,
+      status,
+      activity: "idle",
+      activeExecutionId: null,
+      pendingCount: 0,
+      storage,
+      lastActivityAt: observedAt,
+      closedAt: observedAt,
+      lostReason: stopping ? settled.lostReason : shortText(reason),
+    };
+    yield* persistSession("stop", record);
+    yield* appendJournal(
+      "stop",
+      live,
+      stopping ? "session-stopped" : "session-lost",
+      stopping ? null : reason,
+      null,
+    );
+    yield* Ref.set(live.recordRef, record);
+    yield* publishSession(record);
+    yield* failPendingReady(
+      live,
+      computeError("start", stopping ? "session-terminal" : "transport-failed", shortText(reason)),
+    );
+    return record;
+  });
 
   const endSessionUnderLease = (live: LiveComputeSession, reason: string) =>
     live.mutation.withPermits(1)(endSession(live, reason));
@@ -1875,8 +1895,8 @@ const make = Effect.gen(function* () {
           Effect.ignore,
         );
 
-  const retireLiveSession = (live: LiveComputeSession) =>
-    Effect.gen(function* () {
+  const retireLiveSession = Effect.fn("ComputeSessionService.retireLiveSession")(
+    function* (live: LiveComputeSession) {
       // Keep ownership until physical cleanup finishes, including failed startup.
       // Removal and tab-close acknowledgement must not race a still-live process.
       yield* closeRuntimeScope(live);
@@ -1893,152 +1913,154 @@ const make = Effect.gen(function* () {
         return next;
       });
       yield* live.releaseCapacity;
-    }).pipe(
-      Effect.tapCause((cause) =>
-        Effect.logError("compute session retirement failed", {
-          projectId: live.projectId,
-          sessionId: live.sessionId,
-          cause,
-        }),
+    },
+    (effect, live: LiveComputeSession) =>
+      effect.pipe(
+        Effect.tapCause((cause) =>
+          Effect.logError("compute session retirement failed", {
+            projectId: live.projectId,
+            sessionId: live.sessionId,
+            cause,
+          }),
+        ),
       ),
-    );
+  );
 
-  const applyEvent = (
+  const applyEvent = Effect.fn("ComputeSessionService.applyEvent")(function* (
     live: LiveComputeSession,
     event: ComputeTransportEvent,
-  ): Effect.Effect<boolean, ComputeOperationError> =>
-    Effect.gen(function* () {
-      const current = yield* Ref.get(live.recordRef);
-      if (current.status === "stopping" || TERMINAL_COMPUTE_SESSION_STATUSES.has(current.status))
-        return false;
-      switch (event._tag) {
-        case "ready": {
-          const missing = missingComputeCapabilities(event.capabilities);
-          if (missing.length > 0) {
-            // Refusing here is better than discovering it from a stop button
-            // that does nothing.
-            yield* setSessionStatus("start", live, "failed", (record) => ({
-              ...record,
-              identity: event.runtime,
-            }));
-            yield* appendJournal(
+  ): Effect.fn.Return<boolean, ComputeOperationError> {
+    const current = yield* Ref.get(live.recordRef);
+    if (current.status === "stopping" || TERMINAL_COMPUTE_SESSION_STATUSES.has(current.status))
+      return false;
+    switch (event._tag) {
+      case "ready": {
+        const missing = missingComputeCapabilities(event.capabilities);
+        if (missing.length > 0) {
+          // Refusing here is better than discovering it from a stop button
+          // that does nothing.
+          yield* setSessionStatus("start", live, "failed", (record) => ({
+            ...record,
+            identity: event.runtime,
+          }));
+          yield* appendJournal(
+            "start",
+            live,
+            "session-failed",
+            `The runtime cannot ${missing.join(", ")}.`,
+            null,
+          );
+          yield* failPendingReady(
+            live,
+            computeError(
               "start",
-              live,
-              "session-failed",
-              `The runtime cannot ${missing.join(", ")}.`,
-              null,
-            );
-            yield* failPendingReady(
-              live,
-              computeError(
-                "start",
-                "capability-missing",
-                `This ${live.adapter.languageId} runtime cannot ${missing.join(", ")}, which a session needs.`,
-              ),
-            );
-            return false;
-          }
-          yield* Ref.set(live.capabilitiesRef, new Set(event.capabilities));
-          const record = yield* setSessionStatus("start", live, "ready", (current) => ({
-            ...current,
-            identity: event.runtime,
-          }));
-          yield* appendJournal("start", live, "session-ready", null, null);
-          yield* completePendingReady(live, record);
-          return true;
-        }
-        case "accepted": {
-          const record = yield* Ref.get(live.recordRef);
-          if (event.generation !== record.generation) return false;
-          const executionId = ComputeExecutionId.make(event.requestId);
-          yield* setExecutionStatus("submit", live, executionId, "running");
-          yield* appendJournal("submit", live, "execution-started", null, executionId);
+              "capability-missing",
+              `This ${live.adapter.languageId} runtime cannot ${missing.join(", ")}, which a session needs.`,
+            ),
+          );
           return false;
         }
-        case "output": {
-          yield* applyOutput(live, event);
-          return false;
-        }
-        case "runtime-error": {
-          const record = yield* Ref.get(live.recordRef);
-          if (event.generation !== record.generation) return false;
-          const executionId =
-            event.requestId === null ? null : ComputeExecutionId.make(event.requestId);
-          const execution =
-            executionId === null ? undefined : (yield* Ref.get(live.pendingRef)).get(executionId);
-          const source = execution?.request.source;
-          const diagnostics = live.adapter.normalizeDiagnostic(event.report, {
-            projectRoot: live.workingDirectory,
-            executionSources: yield* Ref.get(live.executionSourcesRef),
-            submittedSource:
-              source?._tag === "document"
-                ? {
-                    relativePath: source.path,
-                    startLine: source.range?.startLine ?? 0,
-                  }
-                : null,
-          });
-          if (diagnostics.length === 0) return false;
-          // The diagnostics land at the sequence the error happened at, so they
-          // read in the transcript where the failure actually occurred. When an
-          // adapter derives more than one they share that position rather than
-          // inventing sequence numbers the runtime never minted.
-          const outputs: ReadonlyArray<ComputeOutput> = diagnostics.map((diagnostic) => ({
-            _tag: "diagnostic" as const,
-            sequence: event.sequence,
-            observedAt: event.observedAt,
-            diagnostic,
-          }));
-          const retained: ComputeDiagnostic[] = [];
-          for (const [index, output] of outputs.entries()) {
-            const kept = yield* applyOutput(live, {
-              _tag: "output",
-              requestId: event.requestId,
-              generation: event.generation,
-              output,
-              image: null,
-              resources: [],
-            });
-            if (kept && diagnostics[index] !== undefined) retained.push(diagnostics[index]);
-          }
-          if (executionId !== null && retained.length > 0) {
-            yield* recordDiagnostics(live, executionId, retained);
-          }
-          return false;
-        }
-        case "completed": {
-          const record = yield* Ref.get(live.recordRef);
-          if (event.generation !== record.generation) return false;
-          const executionId = ComputeExecutionId.make(event.requestId);
-          yield* collectProjectOutputs(live, event);
-          yield* setExecutionStatus("submit", live, executionId, event.outcome);
-          yield* Ref.update(live.queueRef, (queue) => finishComputeExecution(queue, executionId));
-          yield* appendJournal("submit", live, "execution-finished", event.outcome, executionId);
-          yield* syncQueueCounters("submit", live);
-          return true;
-        }
-        case "restarted": {
-          // Whatever the old namespace was still holding is settled here; the
-          // restart command already cancelled everything that was waiting.
-          yield* cancelEverything("restart", live, RESTART_DETAIL, "cancelled");
-          yield* Ref.set(live.executionSourcesRef, new Map());
-          const current = yield* Ref.get(live.recordRef);
-          yield* Ref.set(live.recordRef, {
-            ...current,
-            generation: event.generation,
-            identity: event.runtime,
-          });
-          const record = yield* setSessionStatus("restart", live, "ready");
-          yield* appendJournal("restart", live, "session-restarted", null, null);
-          yield* completePendingReady(live, record);
-          return true;
-        }
-        case "lost": {
-          yield* endSession(live, event.reason);
-          return false;
-        }
+        yield* Ref.set(live.capabilitiesRef, new Set(event.capabilities));
+        const record = yield* setSessionStatus("start", live, "ready", (current) => ({
+          ...current,
+          identity: event.runtime,
+        }));
+        yield* appendJournal("start", live, "session-ready", null, null);
+        yield* completePendingReady(live, record);
+        return true;
       }
-    });
+      case "accepted": {
+        const record = yield* Ref.get(live.recordRef);
+        if (event.generation !== record.generation) return false;
+        const executionId = ComputeExecutionId.make(event.requestId);
+        yield* setExecutionStatus("submit", live, executionId, "running");
+        yield* appendJournal("submit", live, "execution-started", null, executionId);
+        return false;
+      }
+      case "output": {
+        yield* applyOutput(live, event);
+        return false;
+      }
+      case "runtime-error": {
+        const record = yield* Ref.get(live.recordRef);
+        if (event.generation !== record.generation) return false;
+        const executionId =
+          event.requestId === null ? null : ComputeExecutionId.make(event.requestId);
+        const execution =
+          executionId === null ? undefined : (yield* Ref.get(live.pendingRef)).get(executionId);
+        const source = execution?.request.source;
+        const diagnostics = live.adapter.normalizeDiagnostic(event.report, {
+          projectRoot: live.workingDirectory,
+          executionSources: yield* Ref.get(live.executionSourcesRef),
+          submittedSource:
+            source?._tag === "document"
+              ? {
+                  relativePath: source.path,
+                  startLine: source.range?.startLine ?? 0,
+                }
+              : null,
+        });
+        if (diagnostics.length === 0) return false;
+        // The diagnostics land at the sequence the error happened at, so they
+        // read in the transcript where the failure actually occurred. When an
+        // adapter derives more than one they share that position rather than
+        // inventing sequence numbers the runtime never minted.
+        const outputs: ReadonlyArray<ComputeOutput> = diagnostics.map((diagnostic) => ({
+          _tag: "diagnostic" as const,
+          sequence: event.sequence,
+          observedAt: event.observedAt,
+          diagnostic,
+        }));
+        const retained: ComputeDiagnostic[] = [];
+        for (const [index, output] of outputs.entries()) {
+          const kept = yield* applyOutput(live, {
+            _tag: "output",
+            requestId: event.requestId,
+            generation: event.generation,
+            output,
+            image: null,
+            resources: [],
+          });
+          if (kept && diagnostics[index] !== undefined) retained.push(diagnostics[index]);
+        }
+        if (executionId !== null && retained.length > 0) {
+          yield* recordDiagnostics(live, executionId, retained);
+        }
+        return false;
+      }
+      case "completed": {
+        const record = yield* Ref.get(live.recordRef);
+        if (event.generation !== record.generation) return false;
+        const executionId = ComputeExecutionId.make(event.requestId);
+        yield* collectProjectOutputs(live, event);
+        yield* setExecutionStatus("submit", live, executionId, event.outcome);
+        yield* Ref.update(live.queueRef, (queue) => finishComputeExecution(queue, executionId));
+        yield* appendJournal("submit", live, "execution-finished", event.outcome, executionId);
+        yield* syncQueueCounters("submit", live);
+        return true;
+      }
+      case "restarted": {
+        // Whatever the old namespace was still holding is settled here; the
+        // restart command already cancelled everything that was waiting.
+        yield* cancelEverything("restart", live, RESTART_DETAIL, "cancelled");
+        yield* Ref.set(live.executionSourcesRef, new Map());
+        const current = yield* Ref.get(live.recordRef);
+        yield* Ref.set(live.recordRef, {
+          ...current,
+          generation: event.generation,
+          identity: event.runtime,
+        });
+        const record = yield* setSessionStatus("restart", live, "ready");
+        yield* appendJournal("restart", live, "session-restarted", null, null);
+        yield* completePendingReady(live, record);
+        return true;
+      }
+      case "lost": {
+        yield* endSession(live, event.reason);
+        return false;
+      }
+    }
+  });
 
   const handleEvent = (live: LiveComputeSession, event: ComputeTransportEvent) =>
     live.mutation
@@ -2094,105 +2116,101 @@ const make = Effect.gen(function* () {
         Effect.mapError(persistenceError(operation, "Unable to read the compute session record.")),
       );
 
-  const recoverSession = (operation: ComputeOperation, record: ComputeSessionRecord) =>
-    Effect.gen(function* () {
-      const observedAt = yield* nowIso;
-      const executions = yield* store
-        .loadExecutions(record.projectId, record.sessionId)
-        .pipe(Effect.mapError(persistenceError(operation, "Unable to read the session history.")));
-      for (const execution of executions) {
-        const result = execution.result;
-        if (result !== null && TERMINAL_COMPUTE_EXECUTION_STATUSES.has(result.status)) continue;
-        // A queued execution never reached the runtime, so it is cancelled; a
-        // request with no result, or one that was running, was in flight and is
-        // lost. Neither is replayed: re-running code a user did not ask for
-        // again is worse than telling them it did not run.
-        const wasQueued = result !== null && result.status === "queued";
-        const status: ComputeExecutionStatus = wasQueued ? "cancelled" : "lost";
-        // The transcript is the durable truth for counters, so recount it here
-        // rather than trusting a result file that was being updated as the
-        // server stopped.
-        const counted = yield* store
-          .loadOutputs(record.projectId, record.sessionId, execution.request.executionId)
-          .pipe(
-            Effect.map((loaded) => ({
-              outputCount: loaded.outputs.length,
-              imageCount: loaded.outputs.filter((output) => output._tag === "image").length,
-              outputBytes: loaded.outputs.reduce(
-                (total, output) => total + computeOutputByteLength(output),
-                0,
-              ),
-              truncated: loaded.corruptLineCount > 0,
-            })),
-            Effect.orElseSucceed(() => ({
-              outputCount: result?.outputCount ?? 0,
-              imageCount: result?.imageCount ?? 0,
-              outputBytes: result?.outputBytes ?? 0,
-              truncated: true,
-            })),
-          );
-        yield* store
-          .writeExecutionResult(record.projectId, record.sessionId, {
-            executionId: execution.request.executionId,
-            status,
-            outcome: wasQueued ? "cancelled" : null,
-            queuePosition: null,
-            startedAt: result?.startedAt ?? null,
-            finishedAt: observedAt,
-            diagnostics: result?.diagnostics ?? [],
-            outputCount: counted.outputCount,
-            imageCount: counted.imageCount,
-            outputBytes: counted.outputBytes,
-            truncated: (result?.truncated ?? false) || counted.truncated,
-            failureReason: wasQueued
-              ? (result?.failureReason ?? null)
-              : shortText(SERVER_RESTART_REASON),
-          })
-          .pipe(
-            Effect.mapError(
-              persistenceError(operation, "Unable to record an interrupted execution."),
-            ),
-          );
-      }
-      const storage = yield* store
-        .measureSessionStorage(record.projectId, record.sessionId)
-        .pipe(Effect.orElseSucceed(() => record.storage));
-      const status = yield* transitionComputeSessionStatus(record.status, "lost").pipe(
-        Effect.orDie,
-      );
-      const recovered: ComputeSessionRecord = {
-        ...record,
-        status,
-        activity: "idle",
-        activeExecutionId: null,
-        pendingCount: 0,
-        storage,
-        lastActivityAt: observedAt,
-        closedAt: observedAt,
-        lostReason: shortText(SERVER_RESTART_REASON),
-      };
-      yield* store
-        .writeSession(recovered)
+  const recoverSession = Effect.fn("ComputeSessionService.recoverSession")(function* (
+    operation: ComputeOperation,
+    record: ComputeSessionRecord,
+  ) {
+    const observedAt = yield* nowIso;
+    const executions = yield* store
+      .loadExecutions(record.projectId, record.sessionId)
+      .pipe(Effect.mapError(persistenceError(operation, "Unable to read the session history.")));
+    for (const execution of executions) {
+      const result = execution.result;
+      if (result !== null && TERMINAL_COMPUTE_EXECUTION_STATUSES.has(result.status)) continue;
+      // A queued execution never reached the runtime, so it is cancelled; a
+      // request with no result, or one that was running, was in flight and is
+      // lost. Neither is replayed: re-running code a user did not ask for
+      // again is worse than telling them it did not run.
+      const wasQueued = result !== null && result.status === "queued";
+      const status: ComputeExecutionStatus = wasQueued ? "cancelled" : "lost";
+      // The transcript is the durable truth for counters, so recount it here
+      // rather than trusting a result file that was being updated as the
+      // server stopped.
+      const counted = yield* store
+        .loadOutputs(record.projectId, record.sessionId, execution.request.executionId)
         .pipe(
-          Effect.mapError(persistenceError(operation, "Unable to record a recovered session.")),
+          Effect.map((loaded) => ({
+            outputCount: loaded.outputs.length,
+            imageCount: loaded.outputs.filter((output) => output._tag === "image").length,
+            outputBytes: loaded.outputs.reduce(
+              (total, output) => total + computeOutputByteLength(output),
+              0,
+            ),
+            truncated: loaded.corruptLineCount > 0,
+          })),
+          Effect.orElseSucceed(() => ({
+            outputCount: result?.outputCount ?? 0,
+            imageCount: result?.imageCount ?? 0,
+            outputBytes: result?.outputBytes ?? 0,
+            truncated: true,
+          })),
         );
-      const journal = yield* store
-        .loadJournal(record.projectId, record.sessionId)
-        .pipe(Effect.orElseSucceed((): ReadonlyArray<ComputeSessionJournalEntry> => []));
       yield* store
-        .appendJournal(record.projectId, record.sessionId, {
-          sequence: (journal.at(-1)?.sequence ?? -1) + 1,
-          observedAt,
-          event: "session-recovered",
-          generation: record.generation,
-          executionId: null,
-          detail: shortText(SERVER_RESTART_REASON),
+        .writeExecutionResult(record.projectId, record.sessionId, {
+          executionId: execution.request.executionId,
+          status,
+          outcome: wasQueued ? "cancelled" : null,
+          queuePosition: null,
+          startedAt: result?.startedAt ?? null,
+          finishedAt: observedAt,
+          diagnostics: result?.diagnostics ?? [],
+          outputCount: counted.outputCount,
+          imageCount: counted.imageCount,
+          outputBytes: counted.outputBytes,
+          truncated: (result?.truncated ?? false) || counted.truncated,
+          failureReason: wasQueued
+            ? (result?.failureReason ?? null)
+            : shortText(SERVER_RESTART_REASON),
         })
         .pipe(
-          Effect.mapError(persistenceError(operation, "Unable to record a recovered session.")),
+          Effect.mapError(
+            persistenceError(operation, "Unable to record an interrupted execution."),
+          ),
         );
-      yield* publishSession(recovered);
-    });
+    }
+    const storage = yield* store
+      .measureSessionStorage(record.projectId, record.sessionId)
+      .pipe(Effect.orElseSucceed(() => record.storage));
+    const status = yield* transitionComputeSessionStatus(record.status, "lost").pipe(Effect.orDie);
+    const recovered: ComputeSessionRecord = {
+      ...record,
+      status,
+      activity: "idle",
+      activeExecutionId: null,
+      pendingCount: 0,
+      storage,
+      lastActivityAt: observedAt,
+      closedAt: observedAt,
+      lostReason: shortText(SERVER_RESTART_REASON),
+    };
+    yield* store
+      .writeSession(recovered)
+      .pipe(Effect.mapError(persistenceError(operation, "Unable to record a recovered session.")));
+    const journal = yield* store
+      .loadJournal(record.projectId, record.sessionId)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<ComputeSessionJournalEntry> => []));
+    yield* store
+      .appendJournal(record.projectId, record.sessionId, {
+        sequence: (journal.at(-1)?.sequence ?? -1) + 1,
+        observedAt,
+        event: "session-recovered",
+        generation: record.generation,
+        executionId: null,
+        detail: shortText(SERVER_RESTART_REASON),
+      })
+      .pipe(Effect.mapError(persistenceError(operation, "Unable to record a recovered session.")));
+    yield* publishSession(recovered);
+  });
 
   /**
    * Settles what a previous run of this server left behind, once per project.
@@ -2201,8 +2219,8 @@ const make = Effect.gen(function* () {
    * read fifty session histories to open one of them, and a project nobody
    * touches costs nothing.
    */
-  const ensureProjectRecovered = (operation: ComputeOperation, projectId: ComputeProjectId) =>
-    Effect.gen(function* () {
+  const ensureProjectRecovered = Effect.fn("ComputeSessionService.ensureProjectRecovered")(
+    function* (operation: ComputeOperation, projectId: ComputeProjectId) {
       if ((yield* Ref.get(recoveredProjectsRef)).has(projectId)) return;
       yield* recoveryLock.withPermits(1)(
         Effect.gen(function* () {
@@ -2221,38 +2239,38 @@ const make = Effect.gen(function* () {
           yield* Ref.update(recoveredProjectsRef, (projects) => new Set(projects).add(projectId));
         }),
       );
-    });
+    },
+  );
 
-  const requireLiveSession = (
+  const requireLiveSession = Effect.fn("ComputeSessionService.requireLiveSession")(function* (
     operation: ComputeOperation,
     projectId: ComputeProjectId,
     sessionId: ComputeSessionId,
-  ) =>
-    Effect.gen(function* () {
-      yield* ensureProjectRecovered(operation, projectId);
-      const live = (yield* Ref.get(sessionsRef)).get(sessionKey(projectId, sessionId));
-      if (live !== undefined) return live;
-      const stored = yield* loadStoredSession(operation, projectId, sessionId);
-      return yield* stored === null
-        ? computeError(
-            operation,
-            "session-not-found",
-            `There is no compute session '${sessionId}' in this project.`,
-          )
-        : computeError(
-            operation,
-            "session-terminal",
-            `Compute session '${sessionId}' is ${stored.status} and is not running.`,
-          );
-    });
+  ) {
+    yield* ensureProjectRecovered(operation, projectId);
+    const live = (yield* Ref.get(sessionsRef)).get(sessionKey(projectId, sessionId));
+    if (live !== undefined) return live;
+    const stored = yield* loadStoredSession(operation, projectId, sessionId);
+    return yield* stored === null
+      ? computeError(
+          operation,
+          "session-not-found",
+          `There is no compute session '${sessionId}' in this project.`,
+        )
+      : computeError(
+          operation,
+          "session-terminal",
+          `Compute session '${sessionId}' is ${stored.status} and is not running.`,
+        );
+  });
 
-  const requireCurrentGeneration = (
-    operation: ComputeOperation,
-    live: LiveComputeSession,
-    record: ComputeSessionRecord,
-    expectedGeneration: ComputeSessionGeneration,
-  ) =>
-    Effect.gen(function* () {
+  const requireCurrentGeneration = Effect.fn("ComputeSessionService.requireCurrentGeneration")(
+    function* (
+      operation: ComputeOperation,
+      live: LiveComputeSession,
+      record: ComputeSessionRecord,
+      expectedGeneration: ComputeSessionGeneration,
+    ) {
       const check = checkComputeSessionGeneration(record.generation, expectedGeneration);
       if (check._tag === "current") return;
       if (check._tag === "ahead") {
@@ -2270,138 +2288,131 @@ const make = Effect.gen(function* () {
         "generation-stale",
         `This session is now at generation ${check.currentGeneration} and the command was for generation ${expectedGeneration}; it has been restarted since you last saw it.`,
       );
-    });
+    },
+  );
 
-  const openLiveSession = (live: LiveComputeSession, input: ComputeStartSessionInput) =>
-    Effect.gen(function* () {
-      if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
-      const binding = bindings.find(
-        (candidate) => candidate.adapter.languageId === input.languageId,
+  const openLiveSession = Effect.fn("ComputeSessionService.openLiveSession")(function* (
+    live: LiveComputeSession,
+    input: ComputeStartSessionInput,
+  ) {
+    if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
+    const binding = bindings.find((candidate) => candidate.adapter.languageId === input.languageId);
+    if (binding === undefined) {
+      return yield* computeError(
+        "start",
+        "runtime-missing",
+        `No compute runtime is registered for '${input.languageId}'.`,
       );
-      if (binding === undefined) {
-        return yield* computeError(
-          "start",
-          "runtime-missing",
-          `No compute runtime is registered for '${input.languageId}'.`,
-        );
-      }
-      // Removal admission shares the start lock. Once admitted, its background
-      // operation must finish before another session can claim this runtime.
-      if (binding.managedRuntime?.isRemoving() && !binding.managedRuntime.tracksUsage) {
-        return yield* computeError(
+    }
+    // Removal admission shares the start lock. Once admitted, its background
+    // operation must finish before another session can claim this runtime.
+    if (binding.managedRuntime?.isRemoving() && !binding.managedRuntime.tracksUsage) {
+      return yield* computeError(
+        "start",
+        "runtime-unusable",
+        "The Scient-managed runtime is being removed. Wait for removal to finish, then refresh runtimes.",
+      );
+    }
+    const projectRoot = yield* Effect.try({
+      try: () => validateProjectRoot(input.workingDirectory),
+      catch: (cause) =>
+        computeError(
           "start",
           "runtime-unusable",
-          "The Scient-managed runtime is being removed. Wait for removal to finish, then refresh runtimes.",
-        );
-      }
-      const projectRoot = yield* Effect.try({
-        try: () => validateProjectRoot(input.workingDirectory),
-        catch: (cause) =>
-          computeError(
-            "start",
-            "runtime-unusable",
-            "A session working directory must be an absolute, canonical path.",
-            cause,
-          ),
-      });
-      const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
-      const profiles = yield* binding.adapter
-        .discover({
-          projectRoot,
-          configuredExecutable: input.requestedExecutable ?? input.configuredExecutable,
-        })
-        .pipe(
-          Effect.mapError((cause) =>
-            computeError("start", "runtime-missing", cause.message, cause),
-          ),
-        );
-      // A default may prefer the managed runtime; a deliberate session choice
-      // must not. The configured profile also covers an alias whose probe
-      // reports a different canonical executable path.
-      const candidate =
-        input.requestedExecutable === undefined
-          ? profiles[0]
-          : (profiles.find((profile) => profile.executable === input.requestedExecutable) ??
-            profiles.find((profile) => profile.source === "configured"));
-      if (candidate === undefined) {
-        return yield* computeError(
-          "start",
-          "runtime-missing",
-          input.requestedExecutable === undefined
-            ? `No ${input.languageId} runtime was found for this project.`
-            : "The selected runtime is no longer available. Refresh runtimes and choose it again.",
-        );
-      }
-      const verification = yield* binding.adapter
-        .verify({ profile: candidate, cwd: projectRoot, environment })
-        .pipe(
-          Effect.mapError((cause) =>
-            computeError("start", "runtime-unusable", cause.message, cause),
-          ),
-        );
-      if (verification.readiness !== "ready") {
-        return yield* computeError(
-          "start",
-          "runtime-unusable",
-          verification.message ??
-            `The ${input.languageId} runtime at ${candidate.executable} cannot be used.`,
-        );
-      }
-      const launch = yield* binding.adapter
-        .prepareLaunch({ profile: verification.profile, cwd: projectRoot, environment })
-        .pipe(
-          Effect.mapError((cause) =>
-            computeError("start", "runtime-unusable", cause.message, cause),
-          ),
-        );
-      // A fingerprint is a nicety rather than a precondition: a session whose
-      // environment cannot be summarized is still a session a user can work in.
-      const environmentFingerprint = yield* binding.adapter
-        .fingerprintEnvironment(verification.profile)
-        .pipe(
-          Effect.tapError((cause) =>
-            Effect.logWarning("compute environment fingerprint unavailable", {
-              sessionId: input.sessionId,
-              message: cause.message,
-            }),
-          ),
-          Effect.orElseSucceed(() => null),
-        );
-      if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
-      const channel = yield* binding.transport
-        .open({
-          sessionId: input.sessionId,
-          generation: INITIAL_COMPUTE_SESSION_GENERATION,
-          languageId: binding.adapter.languageId,
-          transportKind: binding.adapter.transportKind,
-          launch,
-          requiredCapabilities: [...REQUIRED_COMPUTE_CAPABILITIES],
-        })
-        .pipe(
-          Effect.provideService(Scope.Scope, live.scope),
-          Effect.mapError((cause) =>
-            computeError("start", "transport-failed", cause.message, cause),
-          ),
-        );
-      yield* live.mutation.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* Ref.get(live.recordRef);
-          if (current.status !== "starting") {
-            return yield* computeError("start", "session-terminal", STOP_DETAIL);
-          }
-          const record: ComputeSessionRecord = {
-            ...current,
-            runtime: verification.profile,
-            environmentFingerprint,
-          };
-          yield* persistSession("start", record);
-          yield* Ref.set(live.recordRef, record);
-          live.channel = channel;
-        }),
-      );
-      // Drain outside the session scope so retirement can safely close that scope.
-      yield* drain(live, channel).pipe(Effect.forkIn(serviceScope));
+          "A session working directory must be an absolute, canonical path.",
+          cause,
+        ),
     });
+    const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
+    const profiles = yield* binding.adapter
+      .discover({
+        projectRoot,
+        configuredExecutable: input.requestedExecutable ?? input.configuredExecutable,
+      })
+      .pipe(
+        Effect.mapError((cause) => computeError("start", "runtime-missing", cause.message, cause)),
+      );
+    // A default may prefer the managed runtime; a deliberate session choice
+    // must not. The configured profile also covers an alias whose probe
+    // reports a different canonical executable path.
+    const candidate =
+      input.requestedExecutable === undefined
+        ? profiles[0]
+        : (profiles.find((profile) => profile.executable === input.requestedExecutable) ??
+          profiles.find((profile) => profile.source === "configured"));
+    if (candidate === undefined) {
+      return yield* computeError(
+        "start",
+        "runtime-missing",
+        input.requestedExecutable === undefined
+          ? `No ${input.languageId} runtime was found for this project.`
+          : "The selected runtime is no longer available. Refresh runtimes and choose it again.",
+      );
+    }
+    const verification = yield* binding.adapter
+      .verify({ profile: candidate, cwd: projectRoot, environment })
+      .pipe(
+        Effect.mapError((cause) => computeError("start", "runtime-unusable", cause.message, cause)),
+      );
+    if (verification.readiness !== "ready") {
+      return yield* computeError(
+        "start",
+        "runtime-unusable",
+        verification.message ??
+          `The ${input.languageId} runtime at ${candidate.executable} cannot be used.`,
+      );
+    }
+    const launch = yield* binding.adapter
+      .prepareLaunch({ profile: verification.profile, cwd: projectRoot, environment })
+      .pipe(
+        Effect.mapError((cause) => computeError("start", "runtime-unusable", cause.message, cause)),
+      );
+    // A fingerprint is a nicety rather than a precondition: a session whose
+    // environment cannot be summarized is still a session a user can work in.
+    const environmentFingerprint = yield* binding.adapter
+      .fingerprintEnvironment(verification.profile)
+      .pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("compute environment fingerprint unavailable", {
+            sessionId: input.sessionId,
+            message: cause.message,
+          }),
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+    if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
+    const channel = yield* binding.transport
+      .open({
+        sessionId: input.sessionId,
+        generation: INITIAL_COMPUTE_SESSION_GENERATION,
+        languageId: binding.adapter.languageId,
+        transportKind: binding.adapter.transportKind,
+        launch,
+        requiredCapabilities: [...REQUIRED_COMPUTE_CAPABILITIES],
+      })
+      .pipe(
+        Effect.provideService(Scope.Scope, live.scope),
+        Effect.mapError((cause) => computeError("start", "transport-failed", cause.message, cause)),
+      );
+    yield* live.mutation.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(live.recordRef);
+        if (current.status !== "starting") {
+          return yield* computeError("start", "session-terminal", STOP_DETAIL);
+        }
+        const record: ComputeSessionRecord = {
+          ...current,
+          runtime: verification.profile,
+          environmentFingerprint,
+        };
+        yield* persistSession("start", record);
+        yield* Ref.set(live.recordRef, record);
+        live.channel = channel;
+      }),
+    );
+    // Drain outside the session scope so retirement can safely close that scope.
+    yield* drain(live, channel).pipe(Effect.forkIn(serviceScope));
+  });
 
   /** Reserve ownership before discovery or native startup, so Stop can always address it. */
   const reserveSession = Effect.fn("ComputeSessionService.reserveSession")(function* (
@@ -2539,237 +2550,238 @@ const make = Effect.gen(function* () {
     return { live, ready };
   });
 
-  const startSession = (input: ComputeStartSessionInput) =>
-    Effect.gen(function* () {
-      yield* ensureProjectRecovered("start", input.projectId);
-      // Serialize identity admission, not discovery or native startup. Registered
-      // starting sessions also exclude unsafe managed-runtime removal.
-      const admitted = yield* startLock.withPermits(1)(
-        Effect.gen(function* () {
-          const key = sessionKey(input.projectId, input.sessionId);
-          const existing = (yield* Ref.get(sessionsRef)).get(key);
-          // Idempotent by session id: a retried start must not leave a second
-          // runtime behind for the same panel. An entry that has already ended
-          // is on its way out of the registry and is a history rather than a
-          // session to hand back, so it falls through to the answer below.
-          if (existing !== undefined) {
-            const record = yield* Ref.get(existing.recordRef);
-            // Recheck under identity admission: a concurrent start can win after
-            // the outer read, including a new authority at the same path.
-            if (!ownsRecord(yield* ComputeWorkspaceAdmission, record))
+  const startSession = Effect.fn("ComputeSessionService.startSession")(function* (
+    input: ComputeStartSessionInput,
+  ) {
+    yield* ensureProjectRecovered("start", input.projectId);
+    // Serialize identity admission, not discovery or native startup. Registered
+    // starting sessions also exclude unsafe managed-runtime removal.
+    const admitted = yield* startLock.withPermits(1)(
+      Effect.gen(function* () {
+        const key = sessionKey(input.projectId, input.sessionId);
+        const existing = (yield* Ref.get(sessionsRef)).get(key);
+        // Idempotent by session id: a retried start must not leave a second
+        // runtime behind for the same panel. An entry that has already ended
+        // is on its way out of the registry and is a history rather than a
+        // session to hand back, so it falls through to the answer below.
+        if (existing !== undefined) {
+          const record = yield* Ref.get(existing.recordRef);
+          // Recheck under identity admission: a concurrent start can win after
+          // the outer read, including a new authority at the same path.
+          if (!ownsRecord(yield* ComputeWorkspaceAdmission, record))
+            return yield* computeError(
+              "start",
+              "workspace-changed",
+              "This session identifier belongs to another workspace.",
+            );
+          if (!TERMINAL_COMPUTE_SESSION_STATUSES.has(record.status)) {
+            if (
+              existing.startRequest.languageId !== input.languageId ||
+              existing.startRequest.workingDirectory !== input.workingDirectory ||
+              existing.startRequest.configuredExecutable !== input.configuredExecutable ||
+              existing.startRequest.requestedExecutable !== input.requestedExecutable ||
+              !sameRunOnce(existing.startRequest.runOnce, input.runOnce)
+            ) {
               return yield* computeError(
                 "start",
-                "workspace-changed",
-                "This session identifier belongs to another workspace.",
+                "session-conflict",
+                `Compute session '${input.sessionId}' is already live with a different start request.`,
               );
-            if (!TERMINAL_COMPUTE_SESSION_STATUSES.has(record.status)) {
-              if (
-                existing.startRequest.languageId !== input.languageId ||
-                existing.startRequest.workingDirectory !== input.workingDirectory ||
-                existing.startRequest.configuredExecutable !== input.configuredExecutable ||
-                existing.startRequest.requestedExecutable !== input.requestedExecutable ||
-                !sameRunOnce(existing.startRequest.runOnce, input.runOnce)
-              ) {
-                return yield* computeError(
-                  "start",
-                  "session-conflict",
-                  `Compute session '${input.sessionId}' is already live with a different start request.`,
-                );
-              }
-              return { live: existing, ready: yield* Ref.get(existing.readyRef) };
             }
+            return { live: existing, ready: yield* Ref.get(existing.readyRef) };
           }
-          const stored = yield* loadStoredSession("start", input.projectId, input.sessionId);
-          if (stored !== null) {
-            // Every stored session is terminal by now: recovery ran above. A
-            // name that has been used names a history, and reusing it would
-            // write a second session's output into the first one's transcript.
-            return yield* computeError(
-              "start",
-              "session-terminal",
-              `Compute session '${input.sessionId}' has already ended; start a new session rather than reusing its name.`,
-            );
-          }
-          const binding = bindings.find(
-            (candidate) => candidate.adapter.languageId === input.languageId,
-          );
-          if (binding === undefined) {
-            return yield* computeError(
-              "start",
-              "runtime-missing",
-              `No compute runtime is registered for '${input.languageId}'.`,
-            );
-          }
-          if (binding.managedRuntime?.isRemoving() && !binding.managedRuntime.tracksUsage) {
-            return yield* computeError(
-              "start",
-              "runtime-unusable",
-              "The Scient-managed runtime is being removed. Wait for removal to finish, then refresh runtimes.",
-            );
-          }
-          // Once ownership is persisted, interruption of the requesting RPC must
-          // not strand a reservation before its independent startup fiber exists.
-          return yield* Effect.gen(function* () {
-            const releaseCapacity = yield* hostCapacity.acquire();
-            return yield* withComputeWorkspaceReservation(
-              input.workingDirectory,
-              (releaseWorkspace) =>
-                reserveSession(input, binding, releaseCapacity, releaseWorkspace),
-            ).pipe(
-              Effect.onError(() =>
-                Effect.gen(function* () {
-                  if (!(yield* Ref.get(sessionsRef)).has(key)) yield* releaseCapacity;
-                }),
-              ),
-            );
-          }).pipe(Effect.uninterruptible);
-        }),
-      );
-      // Fresh execution is server-owned once admitted. Returning the starting
-      // record lets the owner cancel native startup without waiting for it.
-      return input.runOnce !== undefined || admitted.ready === null
-        ? yield* Ref.get(admitted.live.recordRef)
-        : yield* Deferred.await(admitted.ready);
-    });
-
-  const admitSubmission = (live: LiveComputeSession, input: ComputeSubmitExecutionInput) =>
-    Effect.gen(function* () {
-      const once = live.startRequest.runOnce;
-      if (
-        once !== undefined &&
-        (once.executionId !== input.executionId ||
-          once.code !== input.code ||
-          !sameExecutionSource(once.source, input.source))
-      ) {
-        return yield* computeError(
-          "submit",
-          "execution-conflict",
-          "A fresh session accepts only its original execution.",
-        );
-      }
-      const record = yield* Ref.get(live.recordRef);
-      yield* requireCurrentGeneration("submit", live, record, input.expectedGeneration);
-      if (record.status !== "starting" && record.status !== "ready") {
-        return yield* computeError(
-          "submit",
-          "session-not-running",
-          `This session is ${record.status} and cannot run code.`,
-        );
-      }
-      if (
-        record.languageId === "matlab" &&
-        input.source._tag === "document" &&
-        input.source.origin === "file"
-      ) {
-        const capability = classifyMatlabSource({ path: input.source.path, code: input.code });
-        if (!capability.runnableAsFile) {
+        }
+        const stored = yield* loadStoredSession("start", input.projectId, input.sessionId);
+        if (stored !== null) {
+          // Every stored session is terminal by now: recovery ran above. A
+          // name that has been used names a history, and reusing it would
+          // write a second session's output into the first one's transcript.
           return yield* computeError(
-            "submit",
-            "source-not-runnable",
-            capability.reason ?? "This MATLAB definition cannot be run as a script.",
+            "start",
+            "session-terminal",
+            `Compute session '${input.sessionId}' has already ended; start a new session rather than reusing its name.`,
           );
         }
-      }
-      const sameSubmission = (request: ComputeExecutionRequestRecord) =>
-        request.sessionId === live.sessionId &&
-        request.generation === record.generation &&
-        request.codeHash === codeHash(input.code) &&
-        request.code === input.code &&
-        JSON.stringify(request.source) === JSON.stringify(input.source);
-      // Idempotent only for the same immutable request. Reusing an identifier
-      // for different code would otherwise overwrite history or return the
-      // result of work the caller did not submit.
-      const existing = (yield* Ref.get(live.pendingRef)).get(input.executionId);
-      if (existing !== undefined) {
-        if (sameSubmission(existing.request)) return { execution: existing, dispatch: null };
-        return yield* computeError(
-          "submit",
-          "execution-conflict",
-          `Execution '${input.executionId}' already names different submitted code.`,
+        const binding = bindings.find(
+          (candidate) => candidate.adapter.languageId === input.languageId,
         );
-      }
-      const stored = yield* store
-        .loadExecution(live.projectId, live.sessionId, input.executionId)
-        .pipe(Effect.mapError(persistenceError("submit", "Unable to inspect the execution id.")));
-      if (stored !== null && !sameSubmission(stored.request)) {
-        return yield* computeError(
-          "submit",
-          "execution-conflict",
-          `Execution '${input.executionId}' already names different submitted code.`,
-        );
-      }
-      if (
-        stored?.result !== null &&
-        stored?.result !== undefined &&
-        TERMINAL_COMPUTE_EXECUTION_STATUSES.has(stored.result.status)
-      ) {
-        return { execution: stored, dispatch: null };
-      }
-      const admission = yield* admitComputeExecution(
-        yield* Ref.get(live.queueRef),
-        input.executionId,
-      ).pipe(
-        Effect.tapError((cause) =>
-          appendJournal("submit", live, "queue-rejected", cause.message, input.executionId),
-        ),
-        Effect.mapError((cause) => computeError("submit", "queue-full", cause.message, cause)),
-      );
-      const submittedAt = yield* nowIso;
-      const request: ComputeExecutionRequestRecord = stored?.request ?? {
-        executionId: input.executionId,
-        sessionId: live.sessionId,
-        generation: record.generation,
-        code: input.code,
-        codeHash: codeHash(input.code),
-        source: input.source,
-        submittedAt,
-        environmentFingerprint: record.environmentFingerprint,
-      };
-      const result: ComputeExecutionResultRecord = stored?.result ?? {
-        executionId: input.executionId,
-        status: "queued",
-        outcome: null,
-        queuePosition: admission.position,
-        startedAt: null,
-        finishedAt: null,
-        diagnostics: [],
-        outputCount: 0,
-        imageCount: 0,
-        outputBytes: 0,
-        truncated: false,
-        failureReason: null,
-      };
-      // The request is durable before anything is told it exists, so a crash
-      // leaves a request with no result -- which is exactly the shape recovery
-      // reads as an execution that was in flight.
-      if (stored === null) {
-        yield* store
-          .writeExecutionRequest(live.projectId, request)
-          .pipe(
-            Effect.mapError(persistenceError("submit", "Unable to record the submitted code.")),
+        if (binding === undefined) {
+          return yield* computeError(
+            "start",
+            "runtime-missing",
+            `No compute runtime is registered for '${input.languageId}'.`,
           );
-      }
-      yield* persistResult("submit", live, result);
-      const execution: ComputeExecutionRecord = { request, result };
-      yield* appendJournal("submit", live, "execution-submitted", null, input.executionId);
-      yield* Ref.set(live.queueRef, admission.state);
-      yield* Ref.update(live.pendingRef, (map) => new Map(map).set(input.executionId, execution));
-      yield* syncQueueCounters("submit", live);
-      yield* publishExecution(live, execution, stored === null);
-      const next = yield* takeNextDispatch("submit", live);
-      const current = (yield* Ref.get(live.pendingRef)).get(input.executionId) ?? execution;
-      return { execution: current, dispatch: next };
-    });
+        }
+        if (binding.managedRuntime?.isRemoving() && !binding.managedRuntime.tracksUsage) {
+          return yield* computeError(
+            "start",
+            "runtime-unusable",
+            "The Scient-managed runtime is being removed. Wait for removal to finish, then refresh runtimes.",
+          );
+        }
+        // Once ownership is persisted, interruption of the requesting RPC must
+        // not strand a reservation before its independent startup fiber exists.
+        return yield* Effect.gen(function* () {
+          const releaseCapacity = yield* hostCapacity.acquire();
+          return yield* withComputeWorkspaceReservation(
+            input.workingDirectory,
+            (releaseWorkspace) => reserveSession(input, binding, releaseCapacity, releaseWorkspace),
+          ).pipe(
+            Effect.onError(() =>
+              Effect.gen(function* () {
+                if (!(yield* Ref.get(sessionsRef)).has(key)) yield* releaseCapacity;
+              }),
+            ),
+          );
+        }).pipe(Effect.uninterruptible);
+      }),
+    );
+    // Fresh execution is server-owned once admitted. Returning the starting
+    // record lets the owner cancel native startup without waiting for it.
+    return input.runOnce !== undefined || admitted.ready === null
+      ? yield* Ref.get(admitted.live.recordRef)
+      : yield* Deferred.await(admitted.ready);
+  });
 
-  const submitExecution = (input: ComputeSubmitExecutionInput) =>
-    Effect.gen(function* () {
-      const live = yield* requireLiveSession("submit", input.projectId, input.sessionId);
-      const admitted = yield* live.mutation
-        .withPermits(1)(admitSubmission(live, input))
-        .pipe(Effect.tapError((error) => failClosedOnPersistenceError(live, error)));
-      yield* dispatch(live, admitted.dispatch);
-      return admitted.execution;
-    });
+  const admitSubmission = Effect.fn("ComputeSessionService.admitSubmission")(function* (
+    live: LiveComputeSession,
+    input: ComputeSubmitExecutionInput,
+  ) {
+    const once = live.startRequest.runOnce;
+    if (
+      once !== undefined &&
+      (once.executionId !== input.executionId ||
+        once.code !== input.code ||
+        !sameExecutionSource(once.source, input.source))
+    ) {
+      return yield* computeError(
+        "submit",
+        "execution-conflict",
+        "A fresh session accepts only its original execution.",
+      );
+    }
+    const record = yield* Ref.get(live.recordRef);
+    yield* requireCurrentGeneration("submit", live, record, input.expectedGeneration);
+    if (record.status !== "starting" && record.status !== "ready") {
+      return yield* computeError(
+        "submit",
+        "session-not-running",
+        `This session is ${record.status} and cannot run code.`,
+      );
+    }
+    if (
+      record.languageId === "matlab" &&
+      input.source._tag === "document" &&
+      input.source.origin === "file"
+    ) {
+      const capability = classifyMatlabSource({ path: input.source.path, code: input.code });
+      if (!capability.runnableAsFile) {
+        return yield* computeError(
+          "submit",
+          "source-not-runnable",
+          capability.reason ?? "This MATLAB definition cannot be run as a script.",
+        );
+      }
+    }
+    const sameSubmission = (request: ComputeExecutionRequestRecord) =>
+      request.sessionId === live.sessionId &&
+      request.generation === record.generation &&
+      request.codeHash === codeHash(input.code) &&
+      request.code === input.code &&
+      JSON.stringify(request.source) === JSON.stringify(input.source);
+    // Idempotent only for the same immutable request. Reusing an identifier
+    // for different code would otherwise overwrite history or return the
+    // result of work the caller did not submit.
+    const existing = (yield* Ref.get(live.pendingRef)).get(input.executionId);
+    if (existing !== undefined) {
+      if (sameSubmission(existing.request)) return { execution: existing, dispatch: null };
+      return yield* computeError(
+        "submit",
+        "execution-conflict",
+        `Execution '${input.executionId}' already names different submitted code.`,
+      );
+    }
+    const stored = yield* store
+      .loadExecution(live.projectId, live.sessionId, input.executionId)
+      .pipe(Effect.mapError(persistenceError("submit", "Unable to inspect the execution id.")));
+    if (stored !== null && !sameSubmission(stored.request)) {
+      return yield* computeError(
+        "submit",
+        "execution-conflict",
+        `Execution '${input.executionId}' already names different submitted code.`,
+      );
+    }
+    if (
+      stored?.result !== null &&
+      stored?.result !== undefined &&
+      TERMINAL_COMPUTE_EXECUTION_STATUSES.has(stored.result.status)
+    ) {
+      return { execution: stored, dispatch: null };
+    }
+    const admission = yield* admitComputeExecution(
+      yield* Ref.get(live.queueRef),
+      input.executionId,
+    ).pipe(
+      Effect.tapError((cause) =>
+        appendJournal("submit", live, "queue-rejected", cause.message, input.executionId),
+      ),
+      Effect.mapError((cause) => computeError("submit", "queue-full", cause.message, cause)),
+    );
+    const submittedAt = yield* nowIso;
+    const request: ComputeExecutionRequestRecord = stored?.request ?? {
+      executionId: input.executionId,
+      sessionId: live.sessionId,
+      generation: record.generation,
+      code: input.code,
+      codeHash: codeHash(input.code),
+      source: input.source,
+      submittedAt,
+      environmentFingerprint: record.environmentFingerprint,
+    };
+    const result: ComputeExecutionResultRecord = stored?.result ?? {
+      executionId: input.executionId,
+      status: "queued",
+      outcome: null,
+      queuePosition: admission.position,
+      startedAt: null,
+      finishedAt: null,
+      diagnostics: [],
+      outputCount: 0,
+      imageCount: 0,
+      outputBytes: 0,
+      truncated: false,
+      failureReason: null,
+    };
+    // The request is durable before anything is told it exists, so a crash
+    // leaves a request with no result -- which is exactly the shape recovery
+    // reads as an execution that was in flight.
+    if (stored === null) {
+      yield* store
+        .writeExecutionRequest(live.projectId, request)
+        .pipe(Effect.mapError(persistenceError("submit", "Unable to record the submitted code.")));
+    }
+    yield* persistResult("submit", live, result);
+    const execution: ComputeExecutionRecord = { request, result };
+    yield* appendJournal("submit", live, "execution-submitted", null, input.executionId);
+    yield* Ref.set(live.queueRef, admission.state);
+    yield* Ref.update(live.pendingRef, (map) => new Map(map).set(input.executionId, execution));
+    yield* syncQueueCounters("submit", live);
+    yield* publishExecution(live, execution, stored === null);
+    const next = yield* takeNextDispatch("submit", live);
+    const current = (yield* Ref.get(live.pendingRef)).get(input.executionId) ?? execution;
+    return { execution: current, dispatch: next };
+  });
+
+  const submitExecution = Effect.fn("ComputeSessionService.submitExecution")(function* (
+    input: ComputeSubmitExecutionInput,
+  ) {
+    const live = yield* requireLiveSession("submit", input.projectId, input.sessionId);
+    const admitted = yield* live.mutation
+      .withPermits(1)(admitSubmission(live, input))
+      .pipe(Effect.tapError((error) => failClosedOnPersistenceError(live, error)));
+    yield* dispatch(live, admitted.dispatch);
+    return admitted.execution;
+  });
 
   const loadStoredExecution = (
     operation: ComputeOperation,
@@ -2780,59 +2792,58 @@ const make = Effect.gen(function* () {
       .loadExecution(live.projectId, live.sessionId, executionId)
       .pipe(Effect.mapError(persistenceError(operation, "Unable to read the session history.")));
 
-  const applyInterruptOutcome = (
+  const applyInterruptOutcome = Effect.fn("ComputeSessionService.applyInterruptOutcome")(function* (
     operation: ComputeOperation,
     live: LiveComputeSession,
     executionId: ComputeExecutionId,
     outcome: ComputeInterruptOutcome,
-  ) =>
-    Effect.gen(function* () {
-      switch (outcome) {
-        case "interrupted":
-        case "terminal":
-          // What became of the execution arrives on the event stream; that the
-          // signal landed is all this answered.
-          break;
-        case "rejected": {
-          // The runtime refused the signal, so the execution is still running
-          // and saying otherwise would be a lie.
-          yield* setExecutionStatus(operation, live, executionId, "running");
-          break;
-        }
-        case "timeout": {
-          // The runtime did not answer at all. The execution is in an unknown
-          // state and it is the session that is wrong, not the cell: the next
-          // thing the runtime says will clear this.
-          const current = yield* Ref.get(live.recordRef);
-          const lastActivityAt = yield* nowIso;
-          const record: ComputeSessionRecord = {
-            ...current,
-            activity: "unresponsive",
-            lastActivityAt,
-          };
-          yield* persistSession(operation, record);
-          yield* Ref.set(live.recordRef, record);
-          yield* appendJournal(
-            operation,
-            live,
-            "session-unresponsive",
-            INTERRUPT_TIMEOUT_DETAIL,
-            executionId,
-          );
-          yield* publishSession(record);
-          break;
-        }
+  ) {
+    switch (outcome) {
+      case "interrupted":
+      case "terminal":
+        // What became of the execution arrives on the event stream; that the
+        // signal landed is all this answered.
+        break;
+      case "rejected": {
+        // The runtime refused the signal, so the execution is still running
+        // and saying otherwise would be a lie.
+        yield* setExecutionStatus(operation, live, executionId, "running");
+        break;
       }
-      const live_ = (yield* Ref.get(live.pendingRef)).get(executionId);
-      if (live_ !== undefined) return live_;
-      const stored = yield* loadStoredExecution(operation, live, executionId);
-      if (stored !== null) return stored;
-      return yield* computeError(
-        operation,
-        "execution-not-found",
-        `There is no execution '${executionId}' in this session.`,
-      );
-    });
+      case "timeout": {
+        // The runtime did not answer at all. The execution is in an unknown
+        // state and it is the session that is wrong, not the cell: the next
+        // thing the runtime says will clear this.
+        const current = yield* Ref.get(live.recordRef);
+        const lastActivityAt = yield* nowIso;
+        const record: ComputeSessionRecord = {
+          ...current,
+          activity: "unresponsive",
+          lastActivityAt,
+        };
+        yield* persistSession(operation, record);
+        yield* Ref.set(live.recordRef, record);
+        yield* appendJournal(
+          operation,
+          live,
+          "session-unresponsive",
+          INTERRUPT_TIMEOUT_DETAIL,
+          executionId,
+        );
+        yield* publishSession(record);
+        break;
+      }
+    }
+    const live_ = (yield* Ref.get(live.pendingRef)).get(executionId);
+    if (live_ !== undefined) return live_;
+    const stored = yield* loadStoredExecution(operation, live, executionId);
+    if (stored !== null) return stored;
+    return yield* computeError(
+      operation,
+      "execution-not-found",
+      `There is no execution '${executionId}' in this session.`,
+    );
+  });
 
   const interruptActive = (
     operation: ComputeOperation,
@@ -2854,201 +2865,205 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const decideCancellation = (live: LiveComputeSession, input: ComputeExecutionCommandInput) =>
-    Effect.gen(function* () {
-      const record = yield* Ref.get(live.recordRef);
-      yield* requireCurrentGeneration("cancel", live, record, input.expectedGeneration);
-      const outcome = cancelComputeExecution(yield* Ref.get(live.queueRef), input.executionId);
-      if (outcome.removed === "pending") {
-        // It never reached the runtime, so there is nothing to interrupt.
-        yield* Ref.set(live.queueRef, outcome.state);
-        const execution = yield* setExecutionStatus("cancel", live, input.executionId, "cancelled");
-        yield* appendJournal("cancel", live, "execution-cancelled", null, input.executionId);
-        yield* syncQueueCounters("cancel", live);
-        if (execution !== null) return { execution, interrupt: null };
-      } else if (outcome.removed === "active") {
-        const execution = yield* setExecutionStatus(
-          "cancel",
-          live,
-          input.executionId,
-          "interrupting",
-        );
-        if (execution !== null) {
-          return {
-            execution,
-            interrupt: {
-              executionId: input.executionId,
-              generation: record.generation,
-            } satisfies InterruptTarget,
-          };
-        }
+  const decideCancellation = Effect.fn("ComputeSessionService.decideCancellation")(function* (
+    live: LiveComputeSession,
+    input: ComputeExecutionCommandInput,
+  ) {
+    const record = yield* Ref.get(live.recordRef);
+    yield* requireCurrentGeneration("cancel", live, record, input.expectedGeneration);
+    const outcome = cancelComputeExecution(yield* Ref.get(live.queueRef), input.executionId);
+    if (outcome.removed === "pending") {
+      // It never reached the runtime, so there is nothing to interrupt.
+      yield* Ref.set(live.queueRef, outcome.state);
+      const execution = yield* setExecutionStatus("cancel", live, input.executionId, "cancelled");
+      yield* appendJournal("cancel", live, "execution-cancelled", null, input.executionId);
+      yield* syncQueueCounters("cancel", live);
+      if (execution !== null) return { execution, interrupt: null };
+    } else if (outcome.removed === "active") {
+      const execution = yield* setExecutionStatus(
+        "cancel",
+        live,
+        input.executionId,
+        "interrupting",
+      );
+      if (execution !== null) {
+        return {
+          execution,
+          interrupt: {
+            executionId: input.executionId,
+            generation: record.generation,
+          } satisfies InterruptTarget,
+        };
       }
-      const stored = yield* loadStoredExecution("cancel", live, input.executionId);
-      if (stored === null) {
-        return yield* computeError(
-          "cancel",
-          "execution-not-found",
-          `There is no execution '${input.executionId}' in this session.`,
-        );
-      }
+    }
+    const stored = yield* loadStoredExecution("cancel", live, input.executionId);
+    if (stored === null) {
       return yield* computeError(
         "cancel",
-        "execution-already-finished",
-        `Execution '${input.executionId}' has already ${stored.result?.status ?? "ended"}.`,
+        "execution-not-found",
+        `There is no execution '${input.executionId}' in this session.`,
       );
-    });
+    }
+    return yield* computeError(
+      "cancel",
+      "execution-already-finished",
+      `Execution '${input.executionId}' has already ${stored.result?.status ?? "ended"}.`,
+    );
+  });
 
-  const cancelExecution = (input: ComputeExecutionCommandInput) =>
-    Effect.gen(function* () {
-      const live = yield* requireLiveSession("cancel", input.projectId, input.sessionId);
-      const decision = yield* live.mutation
-        .withPermits(1)(decideCancellation(live, input))
-        .pipe(Effect.tapError((error) => failClosedOnPersistenceError(live, error)));
-      if (decision.interrupt === null) return decision.execution;
-      return yield* interruptActive("cancel", live, decision.interrupt).pipe(
-        Effect.tapError((error) => failClosedOnPersistenceError(live, error)),
-      );
-    });
+  const cancelExecution = Effect.fn("ComputeSessionService.cancelExecution")(function* (
+    input: ComputeExecutionCommandInput,
+  ) {
+    const live = yield* requireLiveSession("cancel", input.projectId, input.sessionId);
+    const decision = yield* live.mutation
+      .withPermits(1)(decideCancellation(live, input))
+      .pipe(Effect.tapError((error) => failClosedOnPersistenceError(live, error)));
+    if (decision.interrupt === null) return decision.execution;
+    return yield* interruptActive("cancel", live, decision.interrupt).pipe(
+      Effect.tapError((error) => failClosedOnPersistenceError(live, error)),
+    );
+  });
 
-  const interruptSession = (input: ComputeSessionCommandInput) =>
-    Effect.gen(function* () {
-      const live = yield* requireLiveSession("interrupt", input.projectId, input.sessionId);
-      const target = yield* live.mutation
-        .withPermits(1)(
-          Effect.gen(function* () {
-            const record = yield* Ref.get(live.recordRef);
-            yield* requireCurrentGeneration("interrupt", live, record, input.expectedGeneration);
-            const queue = yield* Ref.get(live.queueRef);
-            // Interrupting an idle session is not an error; there is simply
-            // nothing to interrupt.
-            if (queue.active === null) return null;
-            yield* setExecutionStatus("interrupt", live, queue.active, "interrupting");
-            return {
-              executionId: queue.active,
-              generation: record.generation,
-            } satisfies InterruptTarget;
-          }),
-        )
-        .pipe(Effect.tapError((error) => failClosedOnPersistenceError(live, error)));
-      if (target !== null) {
-        yield* interruptActive("interrupt", live, target).pipe(
-          Effect.tapError((error) => failClosedOnPersistenceError(live, error)),
-        );
-      }
-      return yield* Ref.get(live.recordRef);
-    });
-
-  const inspectVariables = (input: ComputeSessionCommandInput) =>
-    Effect.gen(function* () {
-      const live = yield* requireLiveSession("variables", input.projectId, input.sessionId);
-      const generation = yield* live.mutation.withPermits(1)(
+  const interruptSession = Effect.fn("ComputeSessionService.interruptSession")(function* (
+    input: ComputeSessionCommandInput,
+  ) {
+    const live = yield* requireLiveSession("interrupt", input.projectId, input.sessionId);
+    const target = yield* live.mutation
+      .withPermits(1)(
         Effect.gen(function* () {
           const record = yield* Ref.get(live.recordRef);
-          yield* requireCurrentGeneration("variables", live, record, input.expectedGeneration);
-          if (record.status !== "ready" || record.activity !== "idle") {
-            return yield* computeError(
-              "variables",
-              "session-not-running",
-              record.activity === "busy"
-                ? "Current variables are available after the running code finishes."
-                : `This session is ${record.status} and cannot inspect variables.`,
-            );
-          }
-          if (!(yield* Ref.get(live.capabilitiesRef)).has("variables")) {
-            return yield* computeError(
-              "variables",
-              "capability-missing",
-              `This ${live.adapter.languageId} runtime does not support variable inspection.`,
-            );
-          }
-          return record.generation;
+          yield* requireCurrentGeneration("interrupt", live, record, input.expectedGeneration);
+          const queue = yield* Ref.get(live.queueRef);
+          // Interrupting an idle session is not an error; there is simply
+          // nothing to interrupt.
+          if (queue.active === null) return null;
+          yield* setExecutionStatus("interrupt", live, queue.active, "interrupting");
+          return {
+            executionId: queue.active,
+            generation: record.generation,
+          } satisfies InterruptTarget;
         }),
+      )
+      .pipe(Effect.tapError((error) => failClosedOnPersistenceError(live, error)));
+    if (target !== null) {
+      yield* interruptActive("interrupt", live, target).pipe(
+        Effect.tapError((error) => failClosedOnPersistenceError(live, error)),
       );
-      // A slow runtime inspection must never hold the lifecycle lease and
-      // prevent Stop. The transport rechecks generation and stopping at send.
-      if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
-      return yield* (yield* channelFor(live, "variables"))
-        .inspectVariables({
-          requestId: ComputeRequestId.make(NodeCrypto.randomUUID()),
-          expectedGeneration: generation,
-        })
-        .pipe(
-          Effect.mapError((cause) =>
-            computeError("variables", "operation-failed", cause.message, cause),
-          ),
-        );
-    });
+    }
+    return yield* Ref.get(live.recordRef);
+  });
 
-  const restartSession = (input: ComputeSessionCommandInput) =>
-    Effect.gen(function* () {
-      const live = yield* requireLiveSession("restart", input.projectId, input.sessionId);
-      if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
-      if (live.startRequest.runOnce !== undefined) {
-        return yield* computeError(
-          "restart",
-          "session-conflict",
-          "Run fresh again to start a new runtime; a fresh run cannot be restarted.",
-        );
-      }
-      const plan = yield* live.mutation
-        .withPermits(1)(
-          Effect.gen(function* () {
-            const record = yield* Ref.get(live.recordRef);
-            yield* requireCurrentGeneration("restart", live, record, input.expectedGeneration);
-            if (record.status !== "ready") {
-              return yield* computeError(
-                "restart",
-                "session-not-running",
-                `This session is ${record.status} and cannot be restarted.`,
-              );
-            }
-            // Everything waiting is cancelled here, because it was written for a
-            // namespace that is about to stop existing and must not silently run
-            // in the one that replaces it. History is untouched.
-            const drained = drainComputeQueue(yield* Ref.get(live.queueRef));
-            yield* Ref.set(live.queueRef, drained.state);
-            for (const executionId of drained.cancelled) {
-              yield* setExecutionStatus("restart", live, executionId, "cancelled");
-              yield* appendJournal(
-                "restart",
-                live,
-                "execution-cancelled",
-                RESTART_DETAIL,
-                executionId,
-              );
-            }
-            yield* setSessionStatus("restart", live, "restarting");
-            yield* syncQueueCounters("restart", live);
-            const ready = yield* Deferred.make<ComputeSessionRecord, ComputeOperationError>();
-            yield* Ref.set(live.readyRef, ready);
-            return { ready, generation: record.generation };
-          }),
-        )
-        .pipe(
-          live.dispatchLock.withPermits(1),
-          Effect.tapError((error) => failClosedOnPersistenceError(live, error)),
-        );
-      yield* (yield* channelFor(live, "restart"))
-        .restart({
-          expectedGeneration: plan.generation,
-          nextGeneration: nextComputeSessionGeneration(plan.generation),
-        })
-        .pipe(
-          Effect.mapError((cause) =>
-            computeError("restart", "transport-failed", cause.message, cause),
-          ),
-          // Restart is destructive and a failed acknowledgement is ambiguous.
-          // The transport reports loss; never claim the old namespace is ready
-          // after asking it to be replaced.
-          Effect.tapError((error) =>
-            live.mutation.withPermits(1)(Deferred.fail(plan.ready, error)),
-          ),
-        );
-      return yield* Deferred.await(plan.ready);
-    });
+  const inspectVariables = Effect.fn("ComputeSessionService.inspectVariables")(function* (
+    input: ComputeSessionCommandInput,
+  ) {
+    const live = yield* requireLiveSession("variables", input.projectId, input.sessionId);
+    const generation = yield* live.mutation.withPermits(1)(
+      Effect.gen(function* () {
+        const record = yield* Ref.get(live.recordRef);
+        yield* requireCurrentGeneration("variables", live, record, input.expectedGeneration);
+        if (record.status !== "ready" || record.activity !== "idle") {
+          return yield* computeError(
+            "variables",
+            "session-not-running",
+            record.activity === "busy"
+              ? "Current variables are available after the running code finishes."
+              : `This session is ${record.status} and cannot inspect variables.`,
+          );
+        }
+        if (!(yield* Ref.get(live.capabilitiesRef)).has("variables")) {
+          return yield* computeError(
+            "variables",
+            "capability-missing",
+            `This ${live.adapter.languageId} runtime does not support variable inspection.`,
+          );
+        }
+        return record.generation;
+      }),
+    );
+    // A slow runtime inspection must never hold the lifecycle lease and
+    // prevent Stop. The transport rechecks generation and stopping at send.
+    if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
+    return yield* (yield* channelFor(live, "variables"))
+      .inspectVariables({
+        requestId: ComputeRequestId.make(NodeCrypto.randomUUID()),
+        expectedGeneration: generation,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          computeError("variables", "operation-failed", cause.message, cause),
+        ),
+      );
+  });
 
-  const closeLiveSession = (live: LiveComputeSession, generation: ComputeSessionGeneration) =>
-    Effect.gen(function* () {
+  const restartSession = Effect.fn("ComputeSessionService.restartSession")(function* (
+    input: ComputeSessionCommandInput,
+  ) {
+    const live = yield* requireLiveSession("restart", input.projectId, input.sessionId);
+    if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
+    if (live.startRequest.runOnce !== undefined) {
+      return yield* computeError(
+        "restart",
+        "session-conflict",
+        "Run fresh again to start a new runtime; a fresh run cannot be restarted.",
+      );
+    }
+    const plan = yield* live.mutation
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const record = yield* Ref.get(live.recordRef);
+          yield* requireCurrentGeneration("restart", live, record, input.expectedGeneration);
+          if (record.status !== "ready") {
+            return yield* computeError(
+              "restart",
+              "session-not-running",
+              `This session is ${record.status} and cannot be restarted.`,
+            );
+          }
+          // Everything waiting is cancelled here, because it was written for a
+          // namespace that is about to stop existing and must not silently run
+          // in the one that replaces it. History is untouched.
+          const drained = drainComputeQueue(yield* Ref.get(live.queueRef));
+          yield* Ref.set(live.queueRef, drained.state);
+          for (const executionId of drained.cancelled) {
+            yield* setExecutionStatus("restart", live, executionId, "cancelled");
+            yield* appendJournal(
+              "restart",
+              live,
+              "execution-cancelled",
+              RESTART_DETAIL,
+              executionId,
+            );
+          }
+          yield* setSessionStatus("restart", live, "restarting");
+          yield* syncQueueCounters("restart", live);
+          const ready = yield* Deferred.make<ComputeSessionRecord, ComputeOperationError>();
+          yield* Ref.set(live.readyRef, ready);
+          return { ready, generation: record.generation };
+        }),
+      )
+      .pipe(
+        live.dispatchLock.withPermits(1),
+        Effect.tapError((error) => failClosedOnPersistenceError(live, error)),
+      );
+    yield* (yield* channelFor(live, "restart"))
+      .restart({
+        expectedGeneration: plan.generation,
+        nextGeneration: nextComputeSessionGeneration(plan.generation),
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          computeError("restart", "transport-failed", cause.message, cause),
+        ),
+        // Restart is destructive and a failed acknowledgement is ambiguous.
+        // The transport reports loss; never claim the old namespace is ready
+        // after asking it to be replaced.
+        Effect.tapError((error) => live.mutation.withPermits(1)(Deferred.fail(plan.ready, error))),
+      );
+    return yield* Deferred.await(plan.ready);
+  });
+
+  const closeLiveSession = Effect.fn("ComputeSessionService.closeLiveSession")(
+    function* (live: LiveComputeSession, generation: ComputeSessionGeneration) {
       if (live.startupFiber !== null) yield* Fiber.interrupt(live.startupFiber);
       // A shutdown request that fails is not a reason to keep the process: the
       // scope closing below is what actually ends it.
@@ -3071,25 +3086,28 @@ const make = Effect.gen(function* () {
       const record = yield* endSessionUnderLease(live, STOP_DETAIL);
       yield* retireLiveSession(live);
       return record;
-    }).pipe(Effect.uninterruptible);
+    },
+    (effect) => effect.pipe(Effect.uninterruptible),
+  );
 
   /** Announces the stop, or reports that the session has already ended. */
-  const beginStop = (live: LiveComputeSession) =>
-    Effect.gen(function* () {
-      const record = yield* Ref.get(live.recordRef);
-      if (TERMINAL_COMPUTE_SESSION_STATUSES.has(record.status)) return null;
-      // A second stop while the first is in flight is not an error; it is a
-      // user pressing the button twice.
-      if (record.status !== "stopping") {
-        yield* setSessionStatus("stop", live, "stopping");
-        yield* appendJournal("stop", live, "session-stopping", null, null);
-        yield* cancelEverything("stop", live, STOP_DETAIL, "cancelled");
-      }
-      return record.generation;
-    });
+  const beginStop = Effect.fn("ComputeSessionService.beginStop")(function* (
+    live: LiveComputeSession,
+  ) {
+    const record = yield* Ref.get(live.recordRef);
+    if (TERMINAL_COMPUTE_SESSION_STATUSES.has(record.status)) return null;
+    // A second stop while the first is in flight is not an error; it is a
+    // user pressing the button twice.
+    if (record.status !== "stopping") {
+      yield* setSessionStatus("stop", live, "stopping");
+      yield* appendJournal("stop", live, "session-stopping", null, null);
+      yield* cancelEverything("stop", live, STOP_DETAIL, "cancelled");
+    }
+    return record.generation;
+  });
 
-  const stopSession = (input: ComputeStopSessionInput) =>
-    Effect.gen(function* () {
+  const stopSession = Effect.fn("ComputeSessionService.stopSession")(
+    function* (input: ComputeStopSessionInput) {
       const live = yield* requireLiveSession("stop", input.projectId, input.sessionId);
       const generation = yield* live.mutation
         .withPermits(1)(
@@ -3123,15 +3141,17 @@ const make = Effect.gen(function* () {
       return yield* closeLiveSession(live, generation).pipe(
         Effect.tapError((error) => failClosedOnPersistenceError(live, error)),
       );
-    }).pipe(Effect.uninterruptible);
+    },
+    (effect) => effect.pipe(Effect.uninterruptible),
+  );
 
   /** One owned lifetime using the ordinary transport, transcript and stop path. */
-  const runOnceSession = (
-    live: LiveComputeSession,
-    ready: Deferred.Deferred<ComputeSessionRecord, ComputeOperationError>,
-    request: NonNullable<ComputeStartSessionInput["runOnce"]>,
-  ): Effect.Effect<void, ComputeOperationError> =>
-    Effect.gen(function* () {
+  const runOnceSessionEffect = Effect.fn("ComputeSessionService.runOnceSession")(
+    function* (
+      live: LiveComputeSession,
+      ready: Deferred.Deferred<ComputeSessionRecord, ComputeOperationError>,
+      request: NonNullable<ComputeStartSessionInput["runOnce"]>,
+    ): Effect.fn.Return<void, ComputeOperationError> {
       const record = yield* Deferred.await(ready);
       yield* submitExecution({
         projectId: live.projectId,
@@ -3141,91 +3161,105 @@ const make = Effect.gen(function* () {
       });
       // Completion is signalled only after the result/output receipts are durable.
       yield* Deferred.await(live.runOnceDone);
-    }).pipe(
-      Effect.tapError((error) =>
-        live.mutation.withPermits(1)(
+    },
+    (effect, live) =>
+      effect.pipe(
+        Effect.tapError((error) =>
+          live.mutation.withPermits(1)(
+            Effect.gen(function* () {
+              const record = yield* Ref.get(live.recordRef);
+              if (
+                TERMINAL_COMPUTE_SESSION_STATUSES.has(record.status) ||
+                record.status === "stopping"
+              )
+                return;
+              const next = { ...record, lostReason: shortText(error.message) };
+              yield* persistSession("stop", next);
+              yield* Ref.set(live.recordRef, next);
+              yield* publishSession(next);
+            }),
+          ),
+        ),
+        Effect.ensuring(
           Effect.gen(function* () {
-            const record = yield* Ref.get(live.recordRef);
-            if (
-              TERMINAL_COMPUTE_SESSION_STATUSES.has(record.status) ||
-              record.status === "stopping"
-            )
-              return;
-            const next = { ...record, lostReason: shortText(error.message) };
-            yield* persistSession("stop", next);
-            yield* Ref.set(live.recordRef, next);
-            yield* publishSession(next);
-          }),
+            const generation = yield* live.mutation.withPermits(1)(beginStop(live));
+            if (generation === null) yield* retireLiveSession(live);
+            else yield* closeLiveSession(live, generation);
+          }).pipe(Effect.orDie),
         ),
       ),
-      Effect.ensuring(
-        Effect.gen(function* () {
-          const generation = yield* live.mutation.withPermits(1)(beginStop(live));
-          if (generation === null) yield* retireLiveSession(live);
-          else yield* closeLiveSession(live, generation);
-        }).pipe(Effect.orDie),
-      ),
+  );
+
+  const runOnceSession = (
+    live: LiveComputeSession,
+    ready: Deferred.Deferred<ComputeSessionRecord, ComputeOperationError>,
+    request: NonNullable<ComputeStartSessionInput["runOnce"]>,
+  ): Effect.Effect<void, ComputeOperationError> => runOnceSessionEffect(live, ready, request);
+
+  const listSessions = Effect.fn("ComputeSessionService.listSessions")(function* (
+    input: ComputeListSessionsInput,
+  ) {
+    yield* ensureProjectRecovered("list", input.projectId);
+    const stored = yield* store
+      .loadSessions(input.projectId)
+      .pipe(Effect.mapError(persistenceError("list", "Unable to read compute sessions.")));
+    const merged = new Map(stored.map((record) => [record.sessionId, record] as const));
+    for (const session of (yield* Ref.get(sessionsRef)).values()) {
+      if (session.projectId !== input.projectId) continue;
+      // A live record is fresher than the file by exactly the fields that are
+      // deliberately not written on every line of output.
+      merged.set(session.sessionId, yield* Ref.get(session.recordRef));
+    }
+    return [...merged.values()].toSorted((left, right) =>
+      left.createdAt.localeCompare(right.createdAt),
     );
+  });
 
-  const listSessions = (input: ComputeListSessionsInput) =>
-    Effect.gen(function* () {
-      yield* ensureProjectRecovered("list", input.projectId);
-      const stored = yield* store
-        .loadSessions(input.projectId)
-        .pipe(Effect.mapError(persistenceError("list", "Unable to read compute sessions.")));
-      const merged = new Map(stored.map((record) => [record.sessionId, record] as const));
-      for (const session of (yield* Ref.get(sessionsRef)).values()) {
-        if (session.projectId !== input.projectId) continue;
-        // A live record is fresher than the file by exactly the fields that are
-        // deliberately not written on every line of output.
-        merged.set(session.sessionId, yield* Ref.get(session.recordRef));
-      }
-      return [...merged.values()].toSorted((left, right) =>
-        left.createdAt.localeCompare(right.createdAt),
-      );
-    });
+  const getSession = Effect.fn("ComputeSessionService.getSession")(function* (
+    input: ComputeGetSessionInput,
+  ) {
+    yield* ensureProjectRecovered("get", input.projectId);
+    const live = (yield* Ref.get(sessionsRef)).get(sessionKey(input.projectId, input.sessionId));
+    if (live !== undefined) {
+      const record = yield* Ref.get(live.recordRef);
+      // Close acknowledgement may recover via this read after a lost RPC.
+      // A terminal answer must not precede physical owned-runtime cleanup.
+      if (TERMINAL_COMPUTE_SESSION_STATUSES.has(record.status)) yield* retireLiveSession(live);
+      return yield* Ref.get(live.recordRef);
+    }
+    return yield* loadStoredSession("get", input.projectId, input.sessionId);
+  });
 
-  const getSession = (input: ComputeGetSessionInput) =>
-    Effect.gen(function* () {
-      yield* ensureProjectRecovered("get", input.projectId);
-      const live = (yield* Ref.get(sessionsRef)).get(sessionKey(input.projectId, input.sessionId));
-      if (live !== undefined) {
-        const record = yield* Ref.get(live.recordRef);
-        // Close acknowledgement may recover via this read after a lost RPC.
-        // A terminal answer must not precede physical owned-runtime cleanup.
-        if (TERMINAL_COMPUTE_SESSION_STATUSES.has(record.status)) yield* retireLiveSession(live);
-        return yield* Ref.get(live.recordRef);
-      }
-      return yield* loadStoredSession("get", input.projectId, input.sessionId);
-    });
+  const listExecutions = Effect.fn("ComputeSessionService.listExecutions")(function* (
+    input: ComputeListExecutionsInput,
+  ) {
+    yield* ensureProjectRecovered("list", input.projectId);
+    const stored = yield* store
+      .loadExecutions(input.projectId, input.sessionId)
+      .pipe(Effect.mapError(persistenceError("list", "Unable to read the session history.")));
+    const live = (yield* Ref.get(sessionsRef)).get(sessionKey(input.projectId, input.sessionId));
+    if (live === undefined) return stored;
+    const pending = yield* Ref.get(live.pendingRef);
+    return stored.map((execution) => pending.get(execution.request.executionId) ?? execution);
+  });
 
-  const listExecutions = (input: ComputeListExecutionsInput) =>
-    Effect.gen(function* () {
-      yield* ensureProjectRecovered("list", input.projectId);
-      const stored = yield* store
-        .loadExecutions(input.projectId, input.sessionId)
-        .pipe(Effect.mapError(persistenceError("list", "Unable to read the session history.")));
-      const live = (yield* Ref.get(sessionsRef)).get(sessionKey(input.projectId, input.sessionId));
-      if (live === undefined) return stored;
-      const pending = yield* Ref.get(live.pendingRef);
-      return stored.map((execution) => pending.get(execution.request.executionId) ?? execution);
-    });
+  const listOutputs = Effect.fn("ComputeSessionService.listOutputs")(function* (
+    input: ComputeListOutputsInput,
+  ) {
+    yield* ensureProjectRecovered("outputs", input.projectId);
+    return yield* store
+      .loadOutputs(input.projectId, input.sessionId, input.executionId)
+      .pipe(Effect.mapError(persistenceError("outputs", "Unable to read the transcript.")));
+  });
 
-  const listOutputs = (input: ComputeListOutputsInput) =>
-    Effect.gen(function* () {
-      yield* ensureProjectRecovered("outputs", input.projectId);
-      return yield* store
-        .loadOutputs(input.projectId, input.sessionId, input.executionId)
-        .pipe(Effect.mapError(persistenceError("outputs", "Unable to read the transcript.")));
-    });
-
-  const listJournal = (input: ComputeGetSessionInput) =>
-    Effect.gen(function* () {
-      yield* ensureProjectRecovered("get", input.projectId);
-      return yield* store
-        .loadJournal(input.projectId, input.sessionId)
-        .pipe(Effect.mapError(persistenceError("get", "Unable to read what the session did.")));
-    });
+  const listJournal = Effect.fn("ComputeSessionService.listJournal")(function* (
+    input: ComputeGetSessionInput,
+  ) {
+    yield* ensureProjectRecovered("get", input.projectId);
+    return yield* store
+      .loadJournal(input.projectId, input.sessionId)
+      .pipe(Effect.mapError(persistenceError("get", "Unable to read what the session did.")));
+  });
 
   const resolveOutputImage = (ref: ComputeOutputResourceRef) =>
     store
@@ -3237,23 +3271,24 @@ const make = Effect.gen(function* () {
       .resolveOutputResource(ref)
       .pipe(Effect.mapError(persistenceError("resolve", "Unable to resolve the compute output.")));
 
-  const subscribeSessions = (input: ComputeSubscribeSessionsInput) =>
-    Effect.gen(function* () {
-      yield* ensureProjectRecovered("subscribe", input.projectId);
-      const receipt = yield* ComputeWorkspaceAdmission;
-      const changes = yield* notifications.subscribe(
-        notificationOwner(input.projectId, receipt?.scope),
-      );
-      // Subscribe before the durable read. Each subscription starts at zero,
-      // including one whose initial project has no sessions to snapshot.
-      const sessions = yield* listSessions({ projectId: input.projectId });
-      const snapshots = sessions.map((session) => ({
-        _tag: "session-snapshot" as const,
-        eventSequence: 0,
-        session,
-      }));
-      return Stream.concat(Stream.fromIterable(snapshots), changes);
-    });
+  const subscribeSessions = Effect.fn("ComputeSessionService.subscribeSessions")(function* (
+    input: ComputeSubscribeSessionsInput,
+  ) {
+    yield* ensureProjectRecovered("subscribe", input.projectId);
+    const receipt = yield* ComputeWorkspaceAdmission;
+    const changes = yield* notifications.subscribe(
+      notificationOwner(input.projectId, receipt?.scope),
+    );
+    // Subscribe before the durable read. Each subscription starts at zero,
+    // including one whose initial project has no sessions to snapshot.
+    const sessions = yield* listSessions({ projectId: input.projectId });
+    const snapshots = sessions.map((session) => ({
+      _tag: "session-snapshot" as const,
+      eventSequence: 0,
+      session,
+    }));
+    return Stream.concat(Stream.fromIterable(snapshots), changes);
+  });
 
   const idleTimeoutMs = options.idleTimeoutMs;
 
@@ -3361,51 +3396,54 @@ const make = Effect.gen(function* () {
           );
         return yield* action(input);
       });
-  const scopedList = (input: ComputeListSessionsInput) =>
-    Effect.gen(function* () {
-      const receipt = yield* ComputeWorkspaceAdmission;
-      if (receipt) yield* receipt.assertCurrent;
-      return (yield* listSessions(input)).filter((record) => ownsRecord(receipt, record));
-    });
-  const scopedSubscribe = (input: ComputeSubscribeSessionsInput) =>
-    Effect.gen(function* () {
-      const receipt = yield* ComputeWorkspaceAdmission;
-      if (receipt) yield* receipt.assertCurrent;
-      const stream = yield* subscribeSessions(input);
-      return stream.pipe(
-        // End a stale subscription instead of silently retaining a dead feed.
-        Stream.takeWhileEffect(() =>
-          receipt
-            ? receipt.assertCurrent.pipe(
-                Effect.as(true),
-                Effect.orElseSucceed(() => false),
-              )
-            : Effect.succeed(true),
-        ),
-        Stream.filterEffect((event) =>
-          Effect.gen(function* () {
-            const record =
-              "session" in event
-                ? event.session
-                : yield* getSession({ projectId: event.projectId, sessionId: event.sessionId });
-            return record !== null && ownsRecord(receipt, record);
-          }).pipe(Effect.orElseSucceed(() => false)),
-        ),
+  const scopedList = Effect.fn("ComputeSessionService.scopedList")(function* (
+    input: ComputeListSessionsInput,
+  ) {
+    const receipt = yield* ComputeWorkspaceAdmission;
+    if (receipt) yield* receipt.assertCurrent;
+    return (yield* listSessions(input)).filter((record) => ownsRecord(receipt, record));
+  });
+  const scopedSubscribe = Effect.fn("ComputeSessionService.scopedSubscribe")(function* (
+    input: ComputeSubscribeSessionsInput,
+  ) {
+    const receipt = yield* ComputeWorkspaceAdmission;
+    if (receipt) yield* receipt.assertCurrent;
+    const stream = yield* subscribeSessions(input);
+    return stream.pipe(
+      // End a stale subscription instead of silently retaining a dead feed.
+      Stream.takeWhileEffect(() =>
+        receipt
+          ? receipt.assertCurrent.pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            )
+          : Effect.succeed(true),
+      ),
+      Stream.filterEffect((event) =>
+        Effect.gen(function* () {
+          const record =
+            "session" in event
+              ? event.session
+              : yield* getSession({ projectId: event.projectId, sessionId: event.sessionId });
+          return record !== null && ownsRecord(receipt, record);
+        }).pipe(Effect.orElseSucceed(() => false)),
+      ),
+    );
+  });
+  const scopedStart = Effect.fn("ComputeSessionService.scopedStart")(function* (
+    input: ComputeStartSessionInput,
+  ) {
+    const receipt = yield* ComputeWorkspaceAdmission;
+    if (receipt) yield* receipt.assertCurrent;
+    const existing = yield* getSession(input);
+    if (existing && !ownsRecord(receipt, existing))
+      return yield* computeError(
+        "start",
+        "workspace-changed",
+        "This session identifier belongs to another workspace.",
       );
-    });
-  const scopedStart = (input: ComputeStartSessionInput) =>
-    Effect.gen(function* () {
-      const receipt = yield* ComputeWorkspaceAdmission;
-      if (receipt) yield* receipt.assertCurrent;
-      const existing = yield* getSession(input);
-      if (existing && !ownsRecord(receipt, existing))
-        return yield* computeError(
-          "start",
-          "workspace-changed",
-          "This session identifier belongs to another workspace.",
-        );
-      return yield* startSession(input);
-    });
+    return yield* startSession(input);
+  });
 
   return ComputeSessionService.of({
     runtimeDescriptors: bindings.map(descriptorFor),

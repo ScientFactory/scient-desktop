@@ -1,0 +1,19 @@
+/*
+ * A template's guidance in an empty place on the page: faint, beside the caret,
+ * gone once anything is written there. It is a LaTeX comment, never printed.
+ */
+.scient-latex-visual-paper p.scient-latex-guidance::before {
+  float: inline-start;
+  height: 0;
+  color: color-mix(in srgb, currentColor 38%, transparent);
+  content: attr(data-guidance);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Printing the page prints the document, not the template's guidance. */
+@media print {
+  .scient-latex-visual-paper p.scient-latex-guidance::before {
+    content: none;
+  }
+}

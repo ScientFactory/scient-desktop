@@ -2,6 +2,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+// SCIENT-FORK:START — sidecars left without their database are swept on every cleanup.
+import { removeOrphanedAntigravityConversationSidecars } from "../../scient/providerLifecycle/antigravityConversationSidecars.ts";
+// SCIENT-FORK:END
 
 const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
 const decodeSessionMetadata = Schema.decodeEffect(
@@ -15,6 +18,9 @@ export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySession
     readonly sessionId: string | undefined;
     readonly cwd: string;
   }) {
+    // SCIENT-FORK:START — also covers a session/new that failed before reporting its id.
+    yield* removeOrphanedAntigravityConversationSidecars(input.profileDirectory);
+    // SCIENT-FORK:END
     if (input.sessionId === undefined || !isNativeSessionId(input.sessionId)) {
       return;
     }

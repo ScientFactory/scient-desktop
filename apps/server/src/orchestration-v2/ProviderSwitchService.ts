@@ -74,8 +74,8 @@ export const layer: Layer.Layer<
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const fileSystem = yield* FileSystem.FileSystem;
     return ProviderSwitchServiceV2.of({
-      plan: ({ projection, targetModelSelection, targetThread = projection.thread }) =>
-        Effect.gen(function* () {
+      plan: Effect.fn("ProviderSwitchService.plan")(
+        function* ({ projection, targetModelSelection, targetThread = projection.thread }) {
           const targetPolicy = yield* runtimePolicy.resolve({
             thread: targetThread,
             modelSelection: targetModelSelection,
@@ -240,16 +240,19 @@ export const layer: Layer.Layer<
             releaseProviderSessionIds,
             transition,
           };
-        }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderSwitchPlanError({
-                threadId: projection.thread.id,
-                targetProviderInstanceId: targetModelSelection.instanceId,
-                cause,
-              }),
+        },
+        (effect, { projection, targetModelSelection }) =>
+          effect.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderSwitchPlanError({
+                  threadId: projection.thread.id,
+                  targetProviderInstanceId: targetModelSelection.instanceId,
+                  cause,
+                }),
+            ),
           ),
-        ),
+      ),
     });
   }),
 );

@@ -433,6 +433,7 @@ describe("Scient Sources MCP handlers", () => {
       const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] =
         [];
       const analytics = AnalyticsService.of({
+        recordOwners: () => Effect.void,
         record: (name, properties) =>
           Effect.sync(() => {
             events.push({ name, properties });

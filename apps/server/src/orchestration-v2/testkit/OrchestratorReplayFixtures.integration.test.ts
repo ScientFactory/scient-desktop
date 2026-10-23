@@ -1,12 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import type {
-  OrchestrationV2DomainEvent,
-  ProviderReplayEntry,
-  ProviderReplayTranscript,
+import {
+  type OrchestrationV2DomainEvent,
+  type ProviderReplayEntry,
+  type ProviderReplayTranscript,
 } from "@t3tools/contracts";
+
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+
 import * as Path from "effect/Path";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
@@ -30,7 +32,7 @@ import { PiOrchestratorReplayHarness } from "../Adapters/PiAdapterV2.testkit.ts"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
-import { materializeCodexOwnerReload } from "./CodexReplayOwnerReload.ts";
+import { materializeCodexFixtureOwnerReload } from "./CodexReplayOwnerReload.ts";
 import { messageRestartInput } from "./fixtures/message_steering/input.ts";
 import {
   assertProviderNativeSubagentRootTurns,
@@ -118,16 +120,8 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
         })
       : replayTranscript;
   const ownerReloadTranscript =
-    input.driver.driver === "codex" &&
-    [
-      "subagent_continue",
-      "multi_turn",
-      "queued_turn",
-      "thread_rollback",
-      "thread_rollback_after_restart",
-      "thread_rollback_to_stopped_turn",
-    ].includes(input.fixtureName)
-      ? materializeCodexOwnerReload(replayTranscript, 2)
+    input.driver.driver === "codex"
+      ? materializeCodexFixtureOwnerReload(replayTranscript, input.fixtureName)
       : replayTranscript;
   const transcript = yield* input.harness.decodeTranscript(
     input.driver.driver === "codex"

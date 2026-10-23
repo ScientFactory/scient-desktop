@@ -12,6 +12,8 @@ import {
   ProviderRuntimePlan,
   ProviderRuntimePlanInput,
   ProviderRuntimeStartInput,
+  ProviderSignInPageClaimInput,
+  ProviderSignInPageClaimResult,
 } from "../providerLifecycle.ts";
 import { ServerProviderUpdatedPayload } from "../server.ts";
 
@@ -19,6 +21,7 @@ import { ServerProviderUpdatedPayload } from "../server.ts";
 export const SCIENT_PROVIDER_CONNECTION_WS_METHODS = {
   serverStartProviderConnection: "server.startProviderConnection",
   serverCancelProviderConnection: "server.cancelProviderConnection",
+  serverClaimProviderSignInPage: "server.claimProviderSignInPage",
   serverSubmitProviderAuthorizationCode: "server.submitProviderAuthorizationCode",
   serverDisconnectProvider: "server.disconnectProvider",
   serverPlanProviderRuntime: "server.planProviderRuntime",
@@ -40,6 +43,15 @@ export const WsServerCancelProviderConnectionRpc = Rpc.make(
   {
     payload: ProviderConnectionCancelInput,
     success: ServerProviderUpdatedPayload,
+    error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerClaimProviderSignInPageRpc = Rpc.make(
+  SCIENT_PROVIDER_CONNECTION_WS_METHODS.serverClaimProviderSignInPage,
+  {
+    payload: ProviderSignInPageClaimInput,
+    success: ProviderSignInPageClaimResult,
     error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
   },
 );

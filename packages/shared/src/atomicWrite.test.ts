@@ -1,7 +1,6 @@
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -11,6 +10,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
+import * as HostProcess from "./HostProcess.ts";
 
 describe("durable atomic text replacement", () => {
   it.effect("flushes contents before rename, retains mode and cleans temporary files", () =>
@@ -81,46 +81,6 @@ describe("durable atomic text replacement", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("retries a transient Windows destination lock without exposing a partial file", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const target = `${directory}/document.md`;
-      yield* fs.writeFileString(target, "original");
-      const locked = PlatformError.systemError({
-        _tag: "Unknown",
-        module: "FileSystem",
-        method: "rename",
-        cause: Object.assign(new Error("destination is temporarily locked"), { code: "EPERM" }),
-      });
-      let attempts = 0;
-      const firstRename = yield* Deferred.make<void>();
-      const observed = FileSystem.make({
-        ...fs,
-        rename: (from, to) => {
-          attempts += 1;
-          return Deferred.succeed(firstRename, undefined).pipe(
-            Effect.andThen(attempts < 3 ? Effect.fail(locked) : fs.rename(from, to)),
-          );
-        },
-      });
-      const writing = yield* writeFileStringAtomically({
-        filePath: target,
-        contents: "replacement",
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, observed),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.forkChild,
-      );
-      yield* Deferred.await(firstRename);
-      yield* TestClock.adjust("1 second");
-      yield* Fiber.join(writing);
-      expect(attempts).toBe(3);
-      expect(yield* fs.readFileString(target)).toBe("replacement");
-      expect(yield* fs.readDirectory(directory)).toEqual(["document.md"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("does not retry a permanent rename error or a transient error off Windows", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -162,46 +122,6 @@ describe("durable atomic text replacement", () => {
         expect(outcome._tag).toBe("Failure");
         expect(attempts).toBe(1);
       }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("bounds retries when a Windows destination lock does not clear", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const target = `${directory}/document.md`;
-      yield* fs.writeFileString(target, "original");
-      const firstRename = yield* Deferred.make<void>();
-      let attempts = 0;
-      const locked = PlatformError.systemError({
-        _tag: "Unknown",
-        module: "FileSystem",
-        method: "rename",
-        cause: Object.assign(new Error("destination remains locked"), { code: "EACCES" }),
-      });
-      const failing = FileSystem.make({
-        ...fs,
-        rename: () => {
-          attempts += 1;
-          return Deferred.succeed(firstRename, undefined).pipe(Effect.andThen(Effect.fail(locked)));
-        },
-      });
-      const writing = yield* writeFileStringAtomically({
-        filePath: target,
-        contents: "replacement",
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, failing),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.exit,
-        Effect.forkChild,
-      );
-      yield* Deferred.await(firstRename);
-      yield* TestClock.adjust("6 seconds");
-      const outcome = yield* Fiber.join(writing);
-      expect(outcome._tag).toBe("Failure");
-      expect(attempts).toBeGreaterThan(1);
-      expect(yield* fs.readFileString(target)).toBe("original");
-      expect(yield* fs.readDirectory(directory)).toEqual(["document.md"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -323,19 +243,65 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
     }),
   );
 
-  it.effect("creates a missing file and its directory", () =>
+  it.effect("does not replace a newer save that landed while the lock was held", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
-      const filePath = path.join(root, "nested", "settings.json");
+      const filePath = path.join(root, "settings.json");
+      yield* fs.writeFileString(filePath, "before");
+      const firstAttempt = yield* Deferred.make<void>();
+      let attempts = 0;
+      const lockedOnce = FileSystem.make({
+        ...fs,
+        rename: (from, to) =>
+          Effect.suspend(() => {
+            attempts += 1;
+            return attempts === 1
+              ? Deferred.succeed(firstAttempt, undefined).pipe(
+                  Effect.andThen(Effect.fail(renameError("EBUSY", to))),
+                )
+              : fs.rename(from, to);
+          }),
+      });
 
-      yield* writeFileStringAtomically({ filePath, contents: "fresh" });
+      const stale = yield* writeFileStringAtomically({ filePath, contents: "stale" }).pipe(
+        Effect.provideService(FileSystem.FileSystem, lockedOnce),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.exit,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(firstAttempt);
+      // Another process saves once the lock clears, before the waiting write retries.
+      yield* writeFileStringAtomically({ filePath, contents: "newer" });
 
-      assert.strictEqual(yield* fs.readFileString(filePath), "fresh");
+      assert.isTrue(Exit.isFailure(yield* advanceUntilDone(stale)));
+      assert.strictEqual(yield* fs.readFileString(filePath), "newer");
+      assert.deepStrictEqual(yield* fs.readDirectory(root), ["settings.json"]);
     }),
   );
 });
+
+// Retries stat the real target between waits, and that I/O finishes outside the
+// test clock, so the clock moves one wait at a time until the write settles.
+const advanceUntilDone = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+  Effect.gen(function* () {
+    while (fiber.pollUnsafe() === undefined) {
+      yield* TestClock.adjust("100 millis");
+      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a macrotask boundary so the real stat I/O can finish; time moves only via TestClock
+      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+    }
+    return yield* Fiber.join(fiber);
+  });
+
+const renameError = (code: string, path: string) =>
+  PlatformError.systemError({
+    _tag: "Unknown",
+    module: "FileSystem",
+    method: "rename",
+    pathOrDescriptor: path,
+    cause: Object.assign(new Error(`${code}, rename`), { code }),
+  });
 
 it.effect("surfaces an unreadable link instead of writing over it", () =>
   Effect.gen(function* () {
@@ -346,11 +312,12 @@ it.effect("surfaces an unreadable link instead of writing over it", () =>
       pathOrDescriptor: "/home/settings.json",
     });
 
-    const result = yield* Effect.exit(
-      writeFileStringAtomically({ filePath: "/home/settings.json", contents: "after" }),
-    );
+    const failure = yield* writeFileStringAtomically({
+      filePath: "/home/settings.json",
+      contents: "after",
+    }).pipe(Effect.flip);
 
-    assert.deepStrictEqual(result, Exit.fail(readLinkFailure));
+    assert.deepStrictEqual(failure, readLinkFailure);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

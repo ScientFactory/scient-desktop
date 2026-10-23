@@ -1,4 +1,6 @@
-import { setUnreadAnswerCount } from "../scient/answerAttention/ipc.ts";
+// SCIENT-FORK:START — the unread-answer badge owns the app icon (docs/internals/answer-attention.md).
+import { installUnreadAnswerBadge } from "../scient/answerAttention/ipc.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — spelling dictionaries follow the language being written.
 import { noteSpellingSample } from "../scient/spelling/ipc.ts";
 // SCIENT-FORK:END
@@ -19,7 +21,6 @@ import { keepAwake } from "../scient/keepAwake/DesktopKeepAwake.ts";
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
-import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import {
   clearConnectionCatalog,
@@ -64,6 +65,7 @@ import {
   getAppBranding,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
+  getRelayTelemetryEnabled,
   getSystemLocale,
   getWindowFullscreenState,
   openExternal,
@@ -72,6 +74,7 @@ import {
   pasteAsText,
   reloadMainWindow,
   probeRemoteEditors,
+  revealWindow,
   pickFolder,
   pickProjectFavicon,
   pickThemeFiles,
@@ -110,10 +113,11 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(keepAwake);
 
   // SCIENT-FORK:END
-  yield* installNotificationBadge();
+  // SCIENT-FORK:START — replaces upstream's installNotificationBadge(): one owner for the app icon.
+  yield* installUnreadAnswerBadge();
+  // SCIENT-FORK:END
   yield* PreviewIpc.installPreviewEventForwarding();
 
-  yield* ipc.handle(setUnreadAnswerCount);
   // SCIENT-FORK:START — spelling dictionaries follow the language being written.
   yield* ipc.handle(noteSpellingSample);
   // SCIENT-FORK:END
@@ -128,6 +132,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(WebLinksIpc.setReady);
 
   yield* ipc.handleSync(getAppBranding);
+  yield* ipc.handleSync(getRelayTelemetryEnabled);
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getWindowFullscreenState);
   yield* ipc.handleSync(getLocalEnvironmentBootstraps);
@@ -189,6 +194,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(checkSystemPermission);
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(reloadMainWindow);
+  yield* ipc.handle(revealWindow);
   yield* ipc.handle(probeRemoteEditors);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);
@@ -205,7 +211,11 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(VoiceIpc.requestMicrophoneAccess);
 
   for (const previewMethod of PreviewIpc.methods) {
-    yield* ipc.handle(previewMethod);
+    // Explicit types preserve the error/service union of these heterogeneous preview methods.
+    yield* ipc.handle<
+      Effect.Error<ReturnType<(typeof PreviewIpc.methods)[number]["handler"]>>,
+      Effect.Services<ReturnType<(typeof PreviewIpc.methods)[number]["handler"]>>
+    >(previewMethod);
   }
   yield* ipc.handle(PreviewIpc.listBrowserImportSources);
   yield* ipc.handle(PreviewIpc.importBrowserCookies);

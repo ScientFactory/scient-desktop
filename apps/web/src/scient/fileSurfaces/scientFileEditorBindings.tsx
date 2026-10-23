@@ -1,12 +1,11 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { EditorSelection } from "@pierre/diffs/edit";
 import type { GetHoveredLineResult, SelectedLineRange } from "@pierre/diffs";
 import type { Editor } from "@pierre/diffs/edit";
 import { MessageSquarePlus } from "lucide-react";
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   type KeyboardEvent,
   type MutableRefObject,
@@ -17,6 +16,7 @@ import {
 import { MathInputTools } from "~/scient/math/input/MathInputTools";
 import type { MathInputController } from "~/scient/math/input/controller";
 import { sourceMathController, sourceMathOwnsEvent } from "~/scient/math/input/sourceAdapter";
+import { installLatexFileCompletion } from "~/scient/latex/latexFileCompletion";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 
 import { SCIENT_FILE_UNSAFE_CSS } from "./StaticTextFileSurface";
@@ -54,6 +54,9 @@ export function useScientFileEditorBindings<Annotation>({
   onEditorSelectionChange: ((selection: EditorSelection | null) => void) | undefined;
   onRunShortcut: ((selection: EditorSelection | null) => void) | undefined;
 }) {
+  const reportExternalVersion = useStableCallback((version: number) =>
+    externalBindings.current.onExternalVersionApplied?.(version),
+  );
   useLayoutEffect(
     () =>
       externalPersistence?.registerExternalProjection((update) => {
@@ -69,18 +72,21 @@ export function useScientFileEditorBindings<Annotation>({
         if (!prepared) return null;
         return () => {
           applyingExternal.current = true;
-          try {
-            prepared();
-            externalBindings.current.onExternalVersionApplied?.(update.editVersion);
-          } finally {
-            applyingExternal.current = false;
-          }
+          applyExternalProjection(
+            () => {
+              prepared();
+              reportExternalVersion(update.editVersion);
+            },
+            () => {
+              applyingExternal.current = false;
+            },
+          );
         };
       }),
-    [applyingExternal, editor, externalPersistence],
+    [applyingExternal, editor, externalPersistence, reportExternalVersion],
   );
 
-  const reportEditorSelection = useCallback(() => {
+  const reportEditorSelection = () => {
     if (onEditorSelectionChange === undefined) return;
     if (editorSelectionFrameRef.current !== null) {
       cancelAnimationFrame(editorSelectionFrameRef.current);
@@ -89,25 +95,33 @@ export function useScientFileEditorBindings<Annotation>({
       editorSelectionFrameRef.current = null;
       onEditorSelectionChange(editor?.getViewState().selections?.at(-1) ?? null);
     });
-  }, [editor, editorSelectionFrameRef, onEditorSelectionChange]);
+  };
   const mathEditable = useRef(!editingBlocked);
-  mathEditable.current = !editingBlocked;
-  const mathInput = useMemo(() => {
+  useLayoutEffect(() => {
+    mathEditable.current = !editingBlocked;
+  });
+  const canEditMath = useStableCallback(() => mathEditable.current);
+  const mathInput = (() => {
     const format = /\.tex$/iu.test(relativePath)
       ? "latex"
       : /\.(?:md|markdown)$/iu.test(relativePath)
         ? "markdown"
         : null;
-    return format && editor
-      ? sourceMathController(editor, format, () => mathEditable.current)
-      : null;
-  }, [editor, relativePath]);
+    return format && editor ? sourceMathController(editor, format, canEditMath) : null;
+  })();
   useEffect(() => {
     const host = surfaceRef.current;
     if (!host || !mathInput) return;
     return mathInput.attach(host, sourceMathOwnsEvent);
   }, [mathInput, surfaceRef]);
-  reportEditorSelectionRef.current = reportEditorSelection;
+  useEffect(() => {
+    const host = surfaceRef.current;
+    if (!host || !editor || !/\.tex$/iu.test(relativePath)) return;
+    return installLatexFileCompletion(editor, host, () => mathEditable.current);
+  }, [editor, relativePath, surfaceRef]);
+  useLayoutEffect(() => {
+    reportEditorSelectionRef.current = reportEditorSelection;
+  });
 
   useEffect(() => {
     if (onEditorSelectionChange === undefined) return;
@@ -179,9 +193,19 @@ const FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS = `
 
 /** The editor's styles; compute actions stay quiet until their source line is engaged. */
 export function scientFileEditorUnsafeCss(gutterUtilityVisibility: "always" | "hover"): string {
-  return gutterUtilityVisibility === "hover"
-    ? FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS
-    : SCIENT_FILE_UNSAFE_CSS;
+  const base =
+    gutterUtilityVisibility === "hover"
+      ? FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS
+      : SCIENT_FILE_UNSAFE_CSS;
+  return `${base}
+    :host([data-scient-retained-selection]) [data-caret] {
+      visibility: visible !important;
+    }
+    :host([data-scient-retained-selection]:not(:focus-within)) [data-caret] {
+      animation: none;
+      opacity: 0.65;
+    }
+  `;
 }
 
 /**
@@ -222,4 +246,12 @@ export function scientEditorGutterUtility(
           </div>
         ),
       };
+}
+
+function applyExternalProjection(apply: () => void, finish: () => void) {
+  try {
+    apply();
+  } finally {
+    finish();
+  }
 }

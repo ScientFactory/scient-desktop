@@ -15,7 +15,7 @@ export interface Rename {
   readonly to: string;
 }
 
-export type ConflictOrigin = "merge" | "guard" | "interrupted";
+export type ConflictOrigin = "merge" | "guard" | "interrupted" | "collision";
 
 export interface ConflictGroup {
   /** Every path this one decision covers, sorted. */
@@ -94,6 +94,12 @@ export function conflictGroups(input: {
   readonly merge: ReadonlyArray<{ readonly type: string; readonly paths: ReadonlyArray<string> }>;
   readonly guarded: ReadonlyArray<string>;
   readonly interrupted: ReadonlyArray<ReadonlyArray<string>>;
+  /**
+   * Local files that were never synchronized (local-only or unchecked) where
+   * Overleaf has content, with the Overleaf paths they meet. Capturing them
+   * preserves their bytes; only an explicit choice may publish or replace them.
+   */
+  readonly collisions?: ReadonlyArray<ReadonlyArray<string>>;
   readonly renames: ReadonlyArray<Rename>;
   readonly trees: {
     readonly base: FileTree;
@@ -122,6 +128,11 @@ export function conflictGroups(input: {
       paths,
       type: "interrupted earlier",
       origin: "interrupted" as const,
+    })),
+    ...(input.collisions ?? []).map((paths) => ({
+      paths,
+      type: "local file never synchronized",
+      origin: "collision" as const,
     })),
   ];
   const knownPaths = new Set([

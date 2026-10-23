@@ -1,5 +1,5 @@
 import "vite-plus/test/config";
-import { defineConfig } from "vite-plus";
+import { defaultExclude, defaultInclude, defineConfig } from "vite-plus";
 
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
@@ -20,6 +20,7 @@ const publicConfigDefine = {
       : "",
   ),
 };
+const preloadTests = ["src/scient/spelling/preloadSampler.test.ts"];
 
 export default defineConfig({
   run: {
@@ -33,7 +34,9 @@ export default defineConfig({
       dev: {
         command:
           "node scripts/build-browser-secret.mjs && node scripts/build-preview-annotation-css.mjs && cross-env T3CODE_DESKTOP_DEV=1 vp pack --watch",
-        dependsOn: ["t3#build"],
+        // SCIENT-FORK:START — see t3#build:dev in apps/server/vite.config.ts.
+        dependsOn: ["t3#build:dev"],
+        // SCIENT-FORK:END
         cache: false,
       },
       "dev:bundle": {
@@ -43,8 +46,15 @@ export default defineConfig({
       },
       "dev:electron": {
         command: "node scripts/dev-electron.mjs",
-        dependsOn: ["t3#build"],
+        // SCIENT-FORK:START — see t3#build:dev in apps/server/vite.config.ts.
+        dependsOn: ["t3#build:dev"],
+        // SCIENT-FORK:END
         cache: false,
+      },
+      // tsc-rs rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
+      typecheck: {
+        command: "tsc-rs --noEmit",
+        cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
       },
     },
   },
@@ -155,6 +165,28 @@ export default defineConfig({
     // The Windows lane runs workspace suites concurrently; filesystem-heavy
     // desktop integration tests can exceed Vitest's 5 second default there.
     testTimeout: 15_000,
-    setupFiles: ["../../packages/shared/src/testing/longTempDir.ts"],
+    setupFiles: [
+      "../../packages/shared/src/testing/longTempDir.ts",
+      "../../packages/shared/src/testing/providerEnv.ts",
+    ],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          include: [...defaultInclude, "../../native/kde-snap-shot/src/*.test.ts"],
+          exclude: [...defaultExclude, ...preloadTests],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "preload",
+          include: preloadTests,
+          // The sampler runs inside Electron's isolated preload, not the web renderer.
+          environment: "happy-dom",
+        },
+      },
+    ],
   },
 });

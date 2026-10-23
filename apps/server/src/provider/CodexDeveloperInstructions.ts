@@ -10,6 +10,13 @@ import {
 import { buildScientRuntimeInstructions } from "./ScientRuntimeInstructions.ts";
 // SCIENT-FORK:END Scient instruction owners
 
+/**
+ * Codex cuts the middle out of any `additionalContext` value over 1,000 tokens,
+ * which it counts as UTF-8 bytes divided by four. It does this silently, so
+ * every value built here has to fit.
+ */
+export const CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES = 4_000;
+
 const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -156,7 +163,7 @@ In Default mode, strongly prefer making reasonable assumptions and executing the
 export interface CodexRuntimeInfo {
   readonly model: string;
   readonly modelName?: string | undefined;
-  readonly reasoningEffort: string;
+  readonly reasoningEffort?: string | undefined;
 }
 
 export function buildCodexDeveloperInstructions(interactionMode: ProviderInteractionMode): string {
@@ -165,8 +172,24 @@ export function buildCodexDeveloperInstructions(interactionMode: ProviderInterac
     : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
 }
 
+// SCIENT-FORK:START split Scient-authored paragraphs at the provider's byte boundary.
+function scientCodexContextSections(text: string): ReadonlyArray<string> {
+  const sections: string[] = [];
+  for (const paragraph of text.trim().split("\n\n")) {
+    const previous = sections.at(-1);
+    const combined = previous === undefined ? paragraph : previous + "\n\n" + paragraph;
+    if (Buffer.byteLength(combined, "utf8") <= CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES) {
+      if (previous === undefined) sections.push(combined);
+      else sections[sections.length - 1] = combined;
+    } else {
+      sections.push(paragraph);
+    }
+  }
+  return sections;
+}
+// SCIENT-FORK:END
+
 /**
- * Harness context for `turn/start.additionalContext`. Codex renders each entry
  * This must stay out of the collaboration mode: when the model catalog ships
  * its own text for a mode, as newer models do, Codex uses that text and drops
  * the client's `developer_instructions` entirely.
@@ -179,16 +202,28 @@ export function buildCodexAdditionalContext(
    */
   capabilities?: ReadonlySet<McpCapability>,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
-  // Separate keys keep each value under Codex's per-entry token cap.
+  // Separate keys keep each value under Codex's per-entry cap. Codex emits
+  // entries in key order, so the numbering preserves the authored order.
   return {
     // SCIENT-FORK:START Scient additional context entries
-    t3_code_orchestration: { kind: "application", value: SCIENT_ORCHESTRATION_SCOPE_INSTRUCTIONS },
-    t3_code_workspace: { kind: "application", value: SCIENT_ORCHESTRATION_WORKSPACE_INSTRUCTIONS },
+    ...Object.fromEntries(
+      scientCodexContextSections(
+        SCIENT_ORCHESTRATION_SCOPE_INSTRUCTIONS + SCIENT_ORCHESTRATION_WORKSPACE_INSTRUCTIONS,
+      ).map((section, index) => [
+        `t3_code_orchestration_${String(index + 1).padStart(2, "0")}`,
+        { kind: "application" as const, value: section },
+      ]),
+    ),
     t3_code_runtime: {
       kind: "application",
       value: buildScientRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
-    scient_awareness: { kind: "application", value: buildScientAwareness(capabilities) },
+    ...Object.fromEntries(
+      scientCodexContextSections(buildScientAwareness(capabilities)).map((value, index) => [
+        index === 0 ? "scient_awareness" : `scient_awareness_${String(index + 1).padStart(2, "0")}`,
+        { kind: "application" as const, value },
+      ]),
+    ),
     // SCIENT-FORK:END Scient additional context entries
   };
 }

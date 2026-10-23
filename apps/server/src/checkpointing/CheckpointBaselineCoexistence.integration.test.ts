@@ -311,6 +311,7 @@ it.live.each(["historical", "workspace-bound"] as const)(
                         toCheckpointRef: expected.endpointRef,
                         fallbackFromToHead: false,
                         ignoreWhitespace: false,
+                        maxOutputBytes: 10_000_001,
                       });
                       return store.diffCheckpoints(input);
                     },

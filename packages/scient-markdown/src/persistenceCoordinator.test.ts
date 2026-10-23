@@ -167,18 +167,46 @@ describe("MarkdownPersistenceCoordinator", () => {
   it("does not resurrect an undone ambiguous write underneath an external appendix", async () => {
     vi.useFakeTimers();
     const h = fixture({ source: mergeBase, retryDelaysMs: [1] });
+    const attempted = mergeBase.replace("First", "First!");
     h.write.mockImplementationOnce(async (intent) => {
       h.setDisk(intent.source + "\nAgent\n", "external");
       throw "transient";
     });
-    h.coordinator.change(mergeBase.replace("First", "First!"));
+    h.coordinator.change(attempted);
     const flushed = h.coordinator.flushNow();
     await settleMicrotasks();
     h.coordinator.change(mergeBase);
     await vi.runAllTimersAsync();
     expect(await flushed).toBe(false);
-    expect(h.coordinator.getSnapshot().draftSource).toBe(mergeBase);
-    expect(h.coordinator.getSnapshot().conflict).not.toBeNull();
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      baselineSource: mergeBase,
+      draftSource: mergeBase,
+      pending: true,
+      attention: "outcome_unknown",
+      conflict: null,
+      publicationSource: attempted,
+    });
+    expect(h.write).toHaveBeenCalledTimes(2);
+    const intent = h.write.mock.calls[0]?.[0];
+    expect(h.write.mock.calls[1]?.[0]).toBe(intent);
+    expect(h.coordinator.getSnapshot().publicationIntent).toBe(intent);
+    expect(h.read).not.toHaveBeenCalled();
+    expect(h.disk()).toEqual({ source: attempted + "\nAgent\n", revision: "external" });
+
+    h.coordinator.noteFreshnessHint();
+    h.coordinator.setConnected(false);
+    h.coordinator.setConnected(true);
+    expect(await h.coordinator.retry()).toBe(false);
+    await vi.runAllTimersAsync();
+    expect(h.write).toHaveBeenCalledTimes(2);
+    expect(h.read).not.toHaveBeenCalled();
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      draftSource: mergeBase,
+      pending: true,
+      attention: "outcome_unknown",
+      publicationIntent: intent,
+    });
+    expect(h.disk()).toEqual({ source: attempted + "\nAgent\n", revision: "external" });
   });
   it("defers a merge during composition and resumes with current text", async () => {
     let composing = true;
@@ -302,7 +330,7 @@ describe("MarkdownPersistenceCoordinator", () => {
     setDisk("B");
     held.resolve({ revision: "rB" });
     await flushed;
-    expect(write.mock.calls[1]?.[0]).toEqual({
+    expect(write.mock.calls[1]?.[0]).toMatchObject({
       source: "C",
       expectedRevision: "rB",
       editVersion: 2,
@@ -331,7 +359,7 @@ describe("MarkdownPersistenceCoordinator", () => {
     expect(coordinator.getSnapshot().pending).toBe(true);
     held.resolve({ revision: "rB" });
     await saved;
-    expect(write.mock.calls[1]?.[0]).toEqual({
+    expect(write.mock.calls[1]?.[0]).toMatchObject({
       source: "A",
       expectedRevision: "rB",
       editVersion: 2,
@@ -365,7 +393,7 @@ describe("MarkdownPersistenceCoordinator", () => {
     expect(write.mock.calls[0]?.[0]).toBe(write.mock.calls[1]?.[0]);
   });
 
-  it("settles a lost response against an older strict-CAS server with an ordered read", async () => {
+  it("does not turn a replay conflict after lost acknowledgement into an equality-based save receipt", async () => {
     vi.useFakeTimers();
     const { coordinator, write, read, setDisk } = fixture();
     write.mockImplementationOnce(async () => {
@@ -376,13 +404,25 @@ describe("MarkdownPersistenceCoordinator", () => {
     coordinator.change("B");
     const saved = coordinator.flushNow();
     await vi.advanceTimersByTimeAsync(250);
-    expect(await saved).toBe(true);
-    expect(read).toHaveBeenCalledOnce();
+    expect(await saved).toBe(false);
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(write.mock.calls[0]?.[0]).toBe(write.mock.calls[1]?.[0]);
+    expect(read).not.toHaveBeenCalled();
     expect(coordinator.getSnapshot()).toMatchObject({
-      baselineSource: "B",
-      baselineRevision: "rB",
-      conflict: null,
+      baselineSource: "A",
+      draftSource: "B",
+      attention: "outcome_unknown",
+      pending: true,
+      publicationIntent: { source: "B", expectedRevision: "rA" },
     });
+    coordinator.noteFreshnessHint();
+    coordinator.change("C");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(coordinator.getSnapshot()).toMatchObject({
+      draftSource: "C",
+      attention: "outcome_unknown",
+    });
+    expect(write).toHaveBeenCalledTimes(2);
   });
 
   it("does not retire compensating A from an old read while B can publish", async () => {
@@ -564,7 +604,7 @@ describe("MarkdownPersistenceCoordinator", () => {
     expect(coordinator.getSnapshot().draftSource).toBe("C");
   });
 
-  it.each(["transient", "operation"] as const)(
+  it.each(["transient"] as const)(
     "does not discard typing made while Use disk version waits for a %s retry",
     async (failure) => {
       vi.useFakeTimers();
@@ -590,7 +630,7 @@ describe("MarkdownPersistenceCoordinator", () => {
     },
   );
 
-  it.each(["transient", "operation"] as const)(
+  it.each(["transient"] as const)(
     "bounds automatic %s retries and preserves the draft on exhaustion",
     async (failure) => {
       vi.useFakeTimers();
@@ -600,7 +640,7 @@ describe("MarkdownPersistenceCoordinator", () => {
       const saved = coordinator.flushNow();
       await vi.runAllTimersAsync();
       expect(await saved).toBe(false);
-      expect(write).toHaveBeenCalledTimes(failure === "operation" ? 3 : 4);
+      expect(write).toHaveBeenCalledTimes(4);
       expect(coordinator.getSnapshot()).toMatchObject({
         draftSource: "B",
         pending: true,
@@ -610,6 +650,26 @@ describe("MarkdownPersistenceCoordinator", () => {
     },
   );
 
+  it("does not replay an operation failure without proven unchanged outcome metadata", async () => {
+    vi.useFakeTimers();
+    const { coordinator, write } = fixture();
+    write.mockRejectedValue("operation");
+    coordinator.change("B");
+    expect(await coordinator.flushNow()).toBe(false);
+    coordinator.change("C");
+    coordinator.noteFreshnessHint();
+    coordinator.setConnected(false);
+    coordinator.setConnected(true);
+    await vi.runAllTimersAsync();
+    expect(write).toHaveBeenCalledOnce();
+    expect(coordinator.getSnapshot()).toMatchObject({
+      attention: "outcome_unknown",
+      draftSource: "C",
+      publicationSource: "B",
+      pending: true,
+    });
+    expect(await coordinator.retry()).toBe(false);
+  });
   it("never retries terminal policy failures automatically", async () => {
     vi.useFakeTimers();
     const failure = new Error("read-only policy");

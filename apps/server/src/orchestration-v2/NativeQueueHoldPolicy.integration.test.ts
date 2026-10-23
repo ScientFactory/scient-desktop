@@ -96,10 +96,7 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import {
-  ThreadCommandExecutor,
-  layer as threadCommandExecutorLayer,
-} from "./ThreadCommandExecutor.ts";
+import { layer as threadCommandExecutorLayer } from "./ThreadCommandExecutor.ts";
 
 import * as NetAddress from "effect/net/NetAddress";
 import { HttpServer } from "effect/http";
@@ -750,6 +747,67 @@ const send = (
     creationSource: "web",
     dispatchMode: { type: queue ? "queue_after_active" : "start_immediately" },
   });
+
+it.live(
+  "queues automatic input after current Stop without releasing held work or accepting explicit Steer",
+  () =>
+    withNativeQueue(
+      "stopping-auto-input",
+      ({
+        orchestrator,
+        threadId,
+        takeOffer,
+        waitFor,
+        interruptEntered,
+        releaseInterrupt,
+        steers,
+      }) =>
+        Effect.gen(function* () {
+          yield* send(orchestrator, threadId, "foreground");
+          const foreground = yield* takeOffer;
+          yield* waitFor((projection) =>
+            projection.providerTurns.some(
+              (turn) =>
+                turn.runAttemptId === foreground.input.attemptId && turn.status === "running",
+            ),
+          );
+          yield* send(orchestrator, threadId, "held-tail", true);
+          yield* orchestrator.dispatch({
+            type: "run.interrupt",
+            threadId,
+            runId: foreground.input.runId,
+            commandId: CommandId.make(`${threadId}:stop`),
+            holdQueue: true,
+          });
+          yield* interruptEntered;
+          const dispatch = (intent: "auto" | "steer") =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              threadId,
+              commandId: CommandId.make(`${threadId}:${intent}`),
+              messageId: MessageId.make(`${threadId}:message:${intent}`),
+              text: intent,
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+              deliveryIntent: intent,
+              dispatchMode: { type: "steer_active", targetRunId: foreground.input.runId },
+            });
+          yield* dispatch("auto");
+          const queued = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            queued.runs.filter((run) => run.status === "queued" && run.queueHeld).length,
+            2,
+          );
+          assert.equal((yield* Effect.result(dispatch("steer")))._tag, "Failure");
+          assert.lengthOf(steers, 0);
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.isFalse(after.messages.some((message) => message.text === "steer"));
+          yield* releaseInterrupt;
+        }),
+      { holdInterrupt: true },
+    ),
+);
 
 it.live.each(
   [
@@ -4252,6 +4310,17 @@ it.live(
                 const second = yield* trace.at("B-offer", takeOffer);
                 assert.equal(second.input.runId, queuedB.id);
                 assert.equal(second.input.runtimePolicy.cwd, workspaceB);
+                assert.notEqual(
+                  second.input.providerThread.providerSessionId,
+                  first.input.providerThread.providerSessionId,
+                );
+                assert.isTrue(
+                  Option.isNone(
+                    yield* (yield* ProviderSessionManagerV2).get(
+                      first.input.providerThread.providerSessionId!,
+                    ),
+                  ),
+                );
                 assert.lengthOf(offers, 2);
                 const startedB = yield* orchestrator.getThreadProjection(threadId);
                 const checkpointA = startedB.checkpoints.find(

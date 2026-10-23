@@ -34,7 +34,6 @@ export type CursorCliArgumentResolver = (
 ) => ReadonlyArray<string>;
 import {
   isCursorAboutJsonFormatUnsupported,
-  parseCursorAboutOutput,
   toTitleCaseWords,
   type CursorAboutResult,
 } from "./about.ts";
@@ -50,46 +49,44 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 
 const CURSOR_SDK_CATALOG_TIMEOUT_MS = 15_000;
 
-export function buildInitialCursorProviderSnapshot(
-  cursorSettings: CursorSettings,
-): Effect.Effect<ServerProviderDraft> {
-  return Effect.gen(function* () {
-    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const models = getCursorFallbackModels(cursorSettings);
+export const buildInitialCursorProviderSnapshot = Effect.fn(
+  "CursorProviderStatus.buildInitialCursorProviderSnapshot",
+)(function* (cursorSettings: CursorSettings): Effect.fn.Return<ServerProviderDraft> {
+  const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+  const models = getCursorFallbackModels(cursorSettings);
 
-    if (!cursorSettings.enabled) {
-      return buildServerProvider({
-        presentation: CURSOR_PRESENTATION,
-        slashCommands: [COMPACT_SLASH_COMMAND],
-        enabled: false,
-        checkedAt,
-        models,
-        probe: {
-          installed: false,
-          version: null,
-          status: "warning",
-          auth: { status: "unknown" },
-          message: "Cursor is disabled in Scient settings.",
-        },
-      });
-    }
-
+  if (!cursorSettings.enabled) {
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
       slashCommands: [COMPACT_SLASH_COMMAND],
-      enabled: true,
+      enabled: false,
       checkedAt,
       models,
       probe: {
-        installed: true,
+        installed: false,
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Checking Cursor SDK availability...",
+        message: "Cursor is disabled in Scient settings.",
       },
     });
+  }
+
+  return buildServerProvider({
+    presentation: CURSOR_PRESENTATION,
+    slashCommands: [COMPACT_SLASH_COMMAND],
+    enabled: true,
+    checkedAt,
+    models,
+    probe: {
+      installed: true,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "Checking Cursor SDK availability...",
+    },
   });
-}
+});
 
 function getCursorFallbackModels(
   cursorSettings: Pick<CursorSettings, "customModels">,
@@ -221,54 +218,52 @@ function joinProviderMessages(...messages: ReadonlyArray<string | undefined>): s
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
-const runCursorCommand = (
+const runCursorCommand = Effect.fn("status.runCursorCommand")(function* (
   cursorSettings: CursorSettings,
   args: ReadonlyArray<string>,
   environment?: NodeJS.ProcessEnv,
   resolveArgs: CursorCliArgumentResolver = (value) => value,
-) =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const spawnCommand = yield* resolveSpawnCommand(
-      cursorSettings.binaryPath || "cursor-agent",
-      resolveArgs(args, environment),
-      environment ? { env: environment } : {},
-    );
-    const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-      ...(environment ? { env: environment, extendEnv: false } : { extendEnv: true }),
-      shell: spawnCommand.shell,
-    });
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const spawnCommand = yield* resolveSpawnCommand(
+    cursorSettings.binaryPath || "cursor-agent",
+    resolveArgs(args, environment),
+    environment ? { env: environment } : {},
+  );
+  const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+    ...(environment ? { env: environment, extendEnv: false } : { extendEnv: true }),
+    shell: spawnCommand.shell,
+  });
 
-    const child = yield* spawner.spawn(command);
-    const [stdout, stderr, exitCode] = yield* Effect.all(
-      [
-        collectStreamAsString(child.stdout),
-        collectStreamAsString(child.stderr),
-        child.exitCode.pipe(Effect.map(Number)),
-      ],
-      { concurrency: "unbounded" },
-    );
+  const child = yield* spawner.spawn(command);
+  const [stdout, stderr, exitCode] = yield* Effect.all(
+    [
+      collectStreamAsString(child.stdout),
+      collectStreamAsString(child.stderr),
+      child.exitCode.pipe(Effect.map(Number)),
+    ],
+    { concurrency: "unbounded" },
+  );
 
-    return { stdout, stderr, code: exitCode } satisfies CommandResult;
-  }).pipe(Effect.scoped);
+  return { stdout, stderr, code: exitCode } satisfies CommandResult;
+}, Effect.scoped);
 
-export const runCursorAboutCommand = (
+export const runCursorAboutCommand = Effect.fn("status.runCursorAboutCommand")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
   resolveArgs?: CursorCliArgumentResolver,
-) =>
-  Effect.gen(function* () {
-    const jsonResult = yield* runCursorCommand(
-      cursorSettings,
-      ["about", "--format", "json"],
-      environment,
-      resolveArgs,
-    );
-    if (!isCursorAboutJsonFormatUnsupported(jsonResult)) {
-      return jsonResult;
-    }
-    return yield* runCursorCommand(cursorSettings, ["about"], environment, resolveArgs);
-  });
+) {
+  const jsonResult = yield* runCursorCommand(
+    cursorSettings,
+    ["about", "--format", "json"],
+    environment,
+    resolveArgs,
+  );
+  if (!isCursorAboutJsonFormatUnsupported(jsonResult)) {
+    return jsonResult;
+  }
+  return yield* runCursorCommand(cursorSettings, ["about"], environment, resolveArgs);
+});
 
 export function buildCursorProviderSnapshot(input: {
   readonly checkedAt: string;
@@ -351,7 +346,19 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     yield* Effect.logWarning("Cursor SDK catalog probe failed", {
       cause: catalogResult.failure.cause,
     });
-    const authenticationFailure = catalogResult.failure.authenticationFailure;
+    const failure = catalogResult.failure;
+    let message = "Cursor SDK catalog request failed. Check server logs for details.";
+    if (failure.authenticationFailure) {
+      message =
+        authenticationType === "browser"
+          ? "Cursor sign-in expired or was rejected. Sign in again in provider settings."
+          : "Cursor SDK authentication failed. Check CURSOR_API_KEY.";
+    } else if (failure.planRequired) {
+      message =
+        authenticationType === "browser"
+          ? "Cursor needs a paid plan to run in Scient. Upgrade this account or sign in with a different one."
+          : "Cursor needs a paid plan to run in Scient. Upgrade the account that owns CURSOR_API_KEY or use a key from a paid account.";
+    }
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
       slashCommands: [COMPACT_SLASH_COMMAND],
@@ -362,12 +369,8 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         installed: true,
         version: null,
         status: "error",
-        auth: { status: authenticationFailure ? "unauthenticated" : "unknown" },
-        message: authenticationFailure
-          ? authenticationType === "browser"
-            ? "Cursor sign-in expired or was rejected. Sign in again in provider settings."
-            : "Cursor SDK authentication failed. Check CURSOR_API_KEY."
-          : "Cursor SDK catalog request failed. Check server logs for details.",
+        auth: { status: failure.authenticationFailure ? "unauthenticated" : "unknown" },
+        message,
       },
     });
   }

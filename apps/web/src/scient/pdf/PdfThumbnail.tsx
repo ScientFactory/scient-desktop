@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { ScientPdfRuntime } from "./pdfRuntime";
+import { ReaderPageThumbnail } from "../writing/ReaderPageThumbnail";
 
 export function PdfThumbnail(props: {
   readonly active: boolean;
@@ -72,22 +73,16 @@ export function PdfThumbnail(props: {
   }, [props.pageNumber, props.runtime, props.runtime.viewer.pagesRotation, visible]);
 
   return (
-    <button
+    <ReaderPageThumbnail
       ref={rootRef}
-      type="button"
-      className="scient-pdf-thumbnail"
-      data-active={props.active || undefined}
-      aria-label={`Go to page ${props.pageNumber}`}
-      aria-current={props.active ? "page" : undefined}
-      onClick={() => props.onSelect(props.pageNumber)}
+      pageNumber={props.pageNumber}
+      active={props.active}
+      onSelect={props.onSelect}
     >
-      <span className="scient-pdf-thumbnail-canvas">
-        {failed ? (
-          <span className="text-[10px] text-muted-foreground">Preview unavailable</span>
-        ) : null}
-        <canvas ref={canvasRef} className={failed ? "hidden" : undefined} aria-hidden="true" />
-      </span>
-      <span>{props.pageNumber}</span>
-    </button>
+      {failed ? (
+        <span className="text-[10px] text-muted-foreground">Preview unavailable</span>
+      ) : null}
+      <canvas ref={canvasRef} className={failed ? "hidden" : undefined} aria-hidden="true" />
+    </ReaderPageThumbnail>
   );
 }

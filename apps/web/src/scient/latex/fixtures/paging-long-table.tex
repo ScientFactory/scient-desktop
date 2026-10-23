@@ -1,0 +1,29 @@
+\documentclass{article}
+\usepackage[a5paper,margin=18mm]{geometry}
+\usepackage{longtable,booktabs}
+\newcommand{\testrow}[1]{#1 & Synthetic record #1 & Pending\\}
+\begin{document}
+\section{A table spanning pages}
+The small page size makes this table continue onto another page.
+\begin{longtable}{rll}
+\caption{Synthetic records with repeated headers.}\label{tab:long}\\
+\toprule ID & Description & Status\\\midrule
+\endfirsthead
+\multicolumn{3}{l}{\small Table \thetable{} continued}\\
+\toprule ID & Description & Status\\\midrule
+\endhead
+\midrule\multicolumn{3}{r}{\small Continued on next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+1 & Synthetic record 1 & Pending\\\testrow{2}\testrow{3}\testrow{4}\testrow{5}
+\testrow{6}\testrow{7}\testrow{8}\testrow{9}\testrow{10}
+\testrow{11}\testrow{12}\testrow{13}\testrow{14}\testrow{15}
+\testrow{16}\testrow{17}\testrow{18}\testrow{19}\testrow{20}
+\testrow{21}\testrow{22}\testrow{23}\testrow{24}\testrow{25}
+\testrow{26}\testrow{27}\testrow{28}\testrow{29}\testrow{30}
+\testrow{31}\testrow{32}\testrow{33}\testrow{34}\testrow{35}
+\testrow{36}\testrow{37}\testrow{38}\testrow{39}\testrow{40}
+\end{longtable}
+Table~\ref{tab:long} is not a float. Inspect the first, middle, and final table rules.
+\end{document}

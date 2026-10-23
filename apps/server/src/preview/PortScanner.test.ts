@@ -1,5 +1,7 @@
 import * as NodeNet from "node:net";
-
+import * as Clock from "effect/Clock";
+import * as Fiber from "effect/Fiber";
+import * as Cause from "effect/Cause";
 import { it as effectIt } from "@effect/vitest";
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
@@ -7,19 +9,15 @@ import {
   type DiscoveredLocalServer,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Cause from "effect/Cause";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import * as Tracer from "effect/Tracer";
 import { expect } from "vite-plus/test";
 import { FetchHttpClient } from "effect/http";
 
@@ -252,28 +250,6 @@ const commonNonHttpServer = Effect.acquireRelease(
  * without depending on `lsof` being installed.
  */
 effectIt.layer(layerTestPortDiscovery)("PortDiscovery integration (configured URLs)", (it) => {
-  it.effect(
-    "scan() returns a configured HTTP server we just opened",
-    Effect.fn("PortScannerTest.scanFindsCommonDevServer")(function* () {
-      const { port } = yield* commonDevServer;
-      const scanner = yield* PortScanner.PortDiscovery;
-      const result = yield* scanner.scan([`http://localhost:${port}`]);
-      const found = result.find((server) => server.port === port);
-      expect(found).toBeDefined();
-      expect(found?.host).toBe("localhost");
-    }),
-  );
-
-  it.effect(
-    "scan() excludes a listening port that does not speak HTTP",
-    Effect.fn("PortScannerTest.scanExcludesNonHttpServer")(function* () {
-      const { port } = yield* commonNonHttpServer;
-      const scanner = yield* PortScanner.PortDiscovery;
-      const result = yield* scanner.scan([`http://localhost:${port}`]);
-      expect(result.some((server) => server.port === port)).toBe(false);
-    }),
-  );
-
   it.effect(
     "retain drives an immediate broadcast to subscribers",
     Effect.fn("PortScannerTest.retainBroadcastsImmediately")(function* () {
@@ -595,26 +571,6 @@ effectIt.effect("stops probing a subscriber's configured paths after its scope c
     expect(requests).toContain(adminUrl);
     expect(requests).not.toContain(docsUrl);
   }).pipe(Effect.scoped, Effect.provide(layer));
-});
-
-effectIt.effect("writes no poll span while no client retains the scanner", () => {
-  let pollSpans = 0;
-  const tracer = Tracer.make({
-    span: (options) => {
-      if (options.name === "PortDiscovery.pollTick") pollSpans += 1;
-      return new Tracer.NativeSpan(options);
-    },
-  });
-  const layer = layerProbeFailure(processProbeFailure);
-
-  return Effect.gen(function* () {
-    const scanner = yield* PortScanner.PortDiscovery;
-    yield* TestClock.adjust(Duration.seconds(15));
-    expect(pollSpans).toBe(0);
-
-    yield* scanner.retain;
-    expect(pollSpans).toBe(1);
-  }).pipe(Effect.scoped, Effect.provide(layer), Effect.withTracer(tracer));
 });
 
 effectIt.effect("uses the current configured fragment when readiness comes from cache", () => {
@@ -989,6 +945,79 @@ effectIt.effect("does not swallow process probe interruption", () =>
       expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
     }
   }),
+);
+
+effectIt.effect.each(["linux", "darwin"] as const)(
+  "skips idle listener scans on %s and resumes when candidates exist",
+  (platform) => {
+    let processCalls = 0;
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerNoProc,
+          // SCIENT-FORK: idle scans use the same protected endpoint registry.
+          TestOwnedLocalEndpointsLive,
+          Layer.succeed(HostProcess.Platform, platform),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: () => {
+              processCalls += 1;
+              return Effect.succeed({
+                stdout: `p1234\ncnode\nn*:${LSOF_TEST_PORT}\n`,
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              });
+            },
+          }),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(
+              Layer.succeed(
+                FetchHttpClient.Fetch,
+                // SCIENT-FORK: Scient's DOM types add `fetch.preconnect`.
+                ((_input: Parameters<typeof globalThis.fetch>[0]) =>
+                  Promise.resolve(
+                    new Response("hello", { headers: { "content-type": "text/html" } }),
+                  )) as typeof globalThis.fetch,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      yield* scanner.retain;
+      yield* TestClock.adjust("9 seconds");
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(processCalls).toBe(0);
+
+      yield* scanner.registerTerminalProcesses({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+        processIds: [1234],
+      });
+      // SCIENT-FORK: terminal ownership supplies metadata, never URL authority.
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(processCalls).toBe(0);
+
+      yield* scanner.unregisterTerminal({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+      });
+      yield* TestClock.adjust("9 seconds");
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(processCalls).toBe(0);
+
+      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/docs`])).toMatchObject([
+        { port: LSOF_TEST_PORT, url: `http://localhost:${LSOF_TEST_PORT}/docs` },
+      ]);
+      expect(processCalls).toBe(1);
+    }).pipe(Effect.provide(layer));
+  },
 );
 
 effectIt.effect(

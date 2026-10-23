@@ -1,17 +1,21 @@
 import {
+  getEnvironmentCurrentDocument,
   getEnvironmentLatexBuild,
   getEnvironmentLatexCancel,
   getEnvironmentLatexForwardSync,
   getEnvironmentLatexInstallToolchain,
   getEnvironmentLatexInverseSync,
+  getEnvironmentLatexPageAnchors,
   getEnvironmentLatexResolution,
   getEnvironmentLatexStatus,
   getEnvironmentLatexToolchain,
 } from "@t3tools/client-runtime/state/scient-latex";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type {
+  ScientCurrentDocumentRequest,
   ScientLatexForwardSyncRequest,
   ScientLatexInverseSyncRequest,
+  ScientLatexPageAnchorsRequest,
   ScientLatexResolveRequest,
 } from "@t3tools/contracts";
 
@@ -28,6 +32,19 @@ function prepared(environmentId: EnvironmentId) {
   const connection = readPreparedConnection(environmentId);
   if (connection === null) throw new Error("The selected environment is not connected.");
   return connection;
+}
+
+/** The current revision of a generated document, or null when this environment has none. */
+export function readCurrentGeneratedDocument(
+  environmentId: EnvironmentId,
+  logicalDocumentKey: ScientCurrentDocumentRequest["logicalDocumentKey"],
+) {
+  return runtime.runPromise(
+    getEnvironmentCurrentDocument({
+      prepared: prepared(environmentId),
+      request: { logicalDocumentKey },
+    }),
+  );
 }
 
 export function requestLatexBuild(environmentId: EnvironmentId, input: ScientLatexDocumentRef) {
@@ -72,6 +89,19 @@ export function requestLatexInverseSync(
 ) {
   return runtime.runPromise(
     getEnvironmentLatexInverseSync({ prepared: prepared(environmentId), request }),
+  );
+}
+
+/** Where the pages of one compiled PDF begin in one of its sources. */
+/** One SyncTeX query per page; `signal` stops it when the answer is no longer wanted. */
+export function requestLatexPageAnchors(
+  environmentId: EnvironmentId,
+  request: ScientLatexPageAnchorsRequest,
+  signal?: AbortSignal,
+) {
+  return runtime.runPromise(
+    getEnvironmentLatexPageAnchors({ prepared: prepared(environmentId), request }),
+    signal ? { signal } : undefined,
   );
 }
 

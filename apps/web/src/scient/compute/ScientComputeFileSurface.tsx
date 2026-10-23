@@ -10,7 +10,7 @@ import type {
 import { classifyMatlabSource } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Columns2, Play, Rows2 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { EditableFileSurface } from "~/components/files/FilePreviewPanel";
 import type { DraftId } from "~/composerDraftStore";
@@ -78,6 +78,7 @@ interface ScientComputeFileSurfaceProps {
   readonly relativePath: string;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
   readonly contents: string;
+  readonly initialSource: string;
   readonly revision: string;
   readonly resolvedTheme: "light" | "dark";
   readonly revealRequestId: number;
@@ -250,39 +251,32 @@ function ComputeFileSurfaceContent(
   } | null>(null);
   const actionsRef = useRef<ComputeFileActionsHandle>(null);
 
-  const activeCellRange = useMemo<SelectedLineRange | null>(() => {
+  const activeCellRange: SelectedLineRange | null = (() => {
     const cell = computeActiveCell(props.contents, editorSelection, props.language.cellMarker);
     return cell === null ? null : { start: cell.range.startLine + 1, end: cell.range.endLine + 1 };
-  }, [editorSelection, props.contents, props.language.cellMarker]);
-  const hasExplicitCells = useMemo(
-    () => props.contents.split(/\r?\n/).some((line) => props.language.cellMarker.test(line)),
-    [props.contents, props.language.cellMarker],
-  );
-  const sourceRunUnavailableReason = useMemo(
-    () =>
-      props.language.languageId === "matlab"
-        ? classifyMatlabSource({ path: props.relativePath, code: props.contents }).reason
-        : null,
-    [props.contents, props.language.languageId, props.relativePath],
-  );
+  })();
+  const hasExplicitCells = props.contents
+    .split(/\r?\n/)
+    .some((line) => props.language.cellMarker.test(line));
+  const sourceRunUnavailableReason =
+    props.language.languageId === "matlab"
+      ? classifyMatlabSource({ path: props.relativePath, code: props.contents }).reason
+      : null;
 
-  const selectView = useCallback(
-    (next: ComputeFileView) => {
-      setFileView(props.contextId, next);
-      if (next === "code") return;
-      setPreferredResultsView(next);
-      persist(COMPUTE_FILE_RESULTS_VIEW_STORAGE_KEY, next, Schema.String);
-    },
-    [props.contextId, setFileView],
-  );
-  const selectSplitLayout = useCallback((next: ComputeFileSplitLayout) => {
+  const selectView = (next: ComputeFileView) => {
+    setFileView(props.contextId, next);
+    if (next === "code") return;
+    setPreferredResultsView(next);
+    persist(COMPUTE_FILE_RESULTS_VIEW_STORAGE_KEY, next, Schema.String);
+  };
+  const selectSplitLayout = (next: ComputeFileSplitLayout) => {
     setSplitLayout(next);
     persist(COMPUTE_FILE_SPLIT_LAYOUT_STORAGE_KEY, next, Schema.String);
-  }, []);
-  const commitSplit = useCallback((next: number) => {
+  };
+  const commitSplit = (next: number) => {
     setSplit(next);
     persist(COMPUTE_FILE_SPLIT_STORAGE_KEY, next, Schema.Number);
-  }, []);
+  };
   const isStacked = view === "split" && splitLayout === "stacked";
   const { containerRef, primaryPaneRef, separatorHandlers } = useScientSplit({
     active: view === "split",
@@ -293,28 +287,25 @@ function ComputeFileSurfaceContent(
     keyboardStep: COMPUTE_FILE_SPLIT_KEYBOARD_STEP,
     onCommit: commitSplit,
   });
-  const handleRunRequested = useCallback(() => {
+  const handleRunRequested = () => {
     useComputeFilePresentationStore.getState().setResultsContext(props.contextId, null);
     const currentView = getComputeFilePresentation(props.contextId).view;
     setFileView(props.contextId, computeFileViewAfterRun(currentView, preferredResultsView));
     setPanelView(props.contextId, "results");
-  }, [preferredResultsView, props.contextId, setFileView, setPanelView]);
-  const handleEmptyResultsRun = useCallback(() => {
+  };
+  const handleEmptyResultsRun = () => {
     actionsRef.current?.runFile();
-  }, []);
-  const handlePanelViewChange = useCallback(
-    (next: ComputePanelView) => setPanelView(props.contextId, next),
-    [props.contextId, setPanelView],
-  );
-  const handleExecutionSubmitted = useCallback(
-    (sessionId: ComputeSessionId, executionId: ComputeExecutionId) => {
-      setFocusExecution({ sessionId, executionId });
-    },
-    [],
-  );
-  const handleFocusConsumed = useCallback((executionId: string) => {
+  };
+  const handlePanelViewChange = (next: ComputePanelView) => setPanelView(props.contextId, next);
+  const handleExecutionSubmitted = (
+    sessionId: ComputeSessionId,
+    executionId: ComputeExecutionId,
+  ) => {
+    setFocusExecution({ sessionId, executionId });
+  };
+  const handleFocusConsumed = (executionId: string) => {
     setFocusExecution((current) => (current?.executionId === executionId ? null : current));
-  }, []);
+  };
 
   const showEditor = view !== "results";
   const showResults = view !== "code";
@@ -424,6 +415,7 @@ function ComputeFileSurfaceContent(
               relativePath={props.relativePath}
               composerDraftTarget={props.composerDraftTarget}
               contents={props.contents}
+              initialSource={props.initialSource}
               revision={props.revision}
               resolvedTheme={props.resolvedTheme}
               revealRequestId={props.revealRequestId}

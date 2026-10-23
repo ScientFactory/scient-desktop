@@ -1,8 +1,4 @@
-import type {
-  DesktopUpdateActionResult,
-  DesktopUpdateState,
-  DesktopUpdateChannel,
-} from "@t3tools/contracts";
+import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 import {
   SCIENT_DESKTOP_RELEASE_REPOSITORY,
   SCIENT_DESKTOP_BETA_RELEASE_REPOSITORY,
@@ -12,7 +8,36 @@ import { isWindowsPlatform } from "~/lib/utils";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
-const DESKTOP_RELEASE_HISTORY_URL = `https://github.com/${SCIENT_DESKTOP_RELEASE_REPOSITORY}/releases`;
+// SCIENT-FORK: invalid configuration must remain in Scient's release authority.
+const DEFAULT_DESKTOP_RELEASE_REPOSITORY = SCIENT_DESKTOP_RELEASE_REPOSITORY;
+const GITHUB_REPOSITORY_SEGMENT = /^[A-Za-z0-9._-]+$/u;
+
+function isValidRepositorySegment(value: string | undefined): value is string {
+  return (
+    value !== undefined && value !== "." && value !== ".." && GITHUB_REPOSITORY_SEGMENT.test(value)
+  );
+}
+
+function desktopReleaseRepositoryUrl(
+  repository: string | undefined,
+  // SCIENT-FORK: exact builds can select the isolated Beta repository.
+  fallback = DEFAULT_DESKTOP_RELEASE_REPOSITORY,
+): string {
+  const configuredRepository = repository?.trim() ?? "";
+  const [owner, name, ...extra] = configuredRepository.split("/");
+  const releaseRepository =
+    isValidRepositorySegment(owner) && isValidRepositorySegment(name) && extra.length === 0
+      ? configuredRepository
+      : fallback;
+  // SCIENT-FORK:START — stable and Beta builds keep their owning distribution repository.
+  const owningRepository =
+    releaseRepository === SCIENT_DESKTOP_RELEASE_REPOSITORY ||
+    releaseRepository === SCIENT_DESKTOP_BETA_RELEASE_REPOSITORY
+      ? fallback
+      : releaseRepository;
+  return `https://github.com/${owningRepository}/releases`;
+  // SCIENT-FORK:END
+}
 
 /**
  * The main process fills `downloadedVersion` from the updater's `update-downloaded`
@@ -23,20 +48,34 @@ export function getDesktopUpdateDownloadedVersion(state: DesktopUpdateState): st
   return state.downloadedVersion ?? state.availableVersion;
 }
 
-/** Release notes for the exact build in its owning distribution repository. */
-export function getDesktopUpdateReleaseUrl(version: string | null): string | null {
+export function getDesktopUpdateReleaseUrl(
+  version: string | null,
+  repository: string | undefined = import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY,
+): string | null {
   const normalizedVersion = version?.trim();
   if (!normalizedVersion) return null;
-  return `https://github.com/${scientReleaseRepository(normalizedVersion)}/releases/tag/v${encodeURIComponent(normalizedVersion)}`;
+  // SCIENT-FORK: release notes belong to the exact build's distribution.
+  return `${desktopReleaseRepositoryUrl(repository, scientReleaseRepository(normalizedVersion))}/tag/v${encodeURIComponent(normalizedVersion)}`;
 }
 
+// SCIENT-FORK:START — existing callers select stable/Beta history by update channel.
 export function getDesktopUpdateReleaseHistoryUrl(
-  channel: DesktopUpdateChannel = "latest",
+  channelOrRepository?: string,
+  repository: string | undefined = import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY,
 ): string {
-  return channel === "beta"
-    ? `https://github.com/${SCIENT_DESKTOP_BETA_RELEASE_REPOSITORY}/releases`
-    : DESKTOP_RELEASE_HISTORY_URL;
+  const isChannel =
+    channelOrRepository === undefined ||
+    channelOrRepository === "latest" ||
+    channelOrRepository === "beta" ||
+    channelOrRepository === "nightly";
+  return desktopReleaseRepositoryUrl(
+    isChannel ? repository : channelOrRepository,
+    channelOrRepository === "beta"
+      ? SCIENT_DESKTOP_BETA_RELEASE_REPOSITORY
+      : SCIENT_DESKTOP_RELEASE_REPOSITORY,
+  );
 }
+// SCIENT-FORK:END
 
 export function resolveDesktopUpdateButtonAction(
   state: DesktopUpdateState,
@@ -158,4 +197,20 @@ export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
   return (
     state.status !== "checking" && state.status !== "downloading" && state.status !== "disabled"
   );
+}
+
+export function getDesktopUpdateDisabledReason(
+  state: Pick<DesktopUpdateState, "enabled" | "status" | "message"> | null,
+): string | null {
+  if (!state || (state.enabled && state.status !== "disabled")) return null;
+  return state.message?.trim() || "Automatic updates are not available in this build.";
+}
+
+export function getDesktopUpdateIdleTooltip(
+  state: Pick<DesktopUpdateState, "enabled" | "status" | "message"> | null,
+) {
+  const disabledReason = getDesktopUpdateDisabledReason(state);
+  return disabledReason
+    ? { title: "Updates unavailable", detail: disabledReason }
+    : { title: "Check for updates", detail: null };
 }

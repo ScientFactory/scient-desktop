@@ -9,46 +9,7 @@ import {
   EnvironmentHttpInternalServerError,
   EnvironmentHttpUnauthorizedError,
 } from "@t3tools/contracts";
-import {
-  RelayCloudEnvironmentHealthProofPayload,
-  RelayCloudEnvironmentHealthRequest,
-  RelayCloudMintCredentialProofPayload,
-  RelayCloudMintCredentialRequest,
-  RelayEnvironmentHealthResponseProofPayload,
-  type RelayEnvironmentHealthResponse as RelayEnvironmentHealthResponseShape,
-  RelayEnvironmentConfigRequest,
-  RelayEnvironmentLinkChallengeResponse,
-  RelayEnvironmentLinkResponse,
-  RelayEnvironmentMintResponseProofPayload,
-  type RelayEnvironmentMintResponse as RelayEnvironmentMintResponseShape,
-  RelayEnvironmentLinkProof,
-  RelayEnvironmentLinkProofPayload,
-  RelayLinkProofRequest,
-  RelayManagedEndpointOrigin,
-  RelayManagedEndpointRecoveryProofPayload,
-  RelayManagedEndpointRecoveryRegistrationResponse,
-  RelayManagedEndpointRecoveryResponse,
-  type RelayManagedEndpointRuntimeConfig,
-  RelayOkResponse,
-} from "@t3tools/contracts/relay";
-import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
-import {
-  normalizeRelayIssuer,
-  RELAY_HEALTH_REQUEST_TYP,
-  RELAY_HEALTH_RESPONSE_TYP,
-  RELAY_LINK_PROOF_TYP,
-  RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
-  RELAY_MINT_REQUEST_TYP,
-  RELAY_MINT_RESPONSE_TYP,
-  signRelayJwt,
-  verifyRelayJwt,
-} from "@t3tools/shared/relayJwt";
-import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
-import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
-import * as Crypto from "effect/Crypto";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -57,9 +18,11 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as CloudLink from "./CloudLink.ts";
+import * as ConnectReachability from "./ConnectReachability.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
 
+// SCIENT-FORK:START — inherited cloud routes stay dormant without explicit owner opt-in.
 export const isScientCloudIntegrationDisabled = (
   env: Readonly<Record<string, string | undefined>> = process.env,
 ) => {
@@ -75,6 +38,8 @@ const cloudIntegrationDisabled = () =>
       message: "Cloud integration is disabled by the current Scient safety policy.",
     }),
   );
+
+// SCIENT-FORK:END
 
 const CLOUD_CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -162,11 +127,13 @@ export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "connect",
   Effect.fnUntraced(function* (handlers) {
+    // SCIENT-FORK:START — new upstream routes must not bypass the dormant cloud guard.
     if (isScientCloudIntegrationDisabled()) {
       return handlers
         .handle("linkProof", () => cloudIntegrationDisabled())
         .handle("relayConfig", () => cloudIntegrationDisabled())
         .handle("linkState", () => cloudIntegrationDisabled())
+        .handle("checkReachability", () => cloudIntegrationDisabled())
         .handle("unlink", () => cloudIntegrationDisabled())
         .handle("preferences", () => cloudIntegrationDisabled())
         .handle("health", () => cloudIntegrationDisabled())
@@ -174,7 +141,10 @@ export const layer = HttpApiBuilder.group(
         .handle("t3MintCredential", () => cloudIntegrationDisabled());
     }
 
+    // SCIENT-FORK:END
+
     const cloudLink = yield* CloudLink.CloudLink;
+    const reachability = yield* ConnectReachability.ConnectReachability;
     return handlers
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
@@ -194,6 +164,9 @@ export const layer = HttpApiBuilder.group(
         requireEnvironmentScope(AuthRelayReadScope).pipe(
           Effect.andThen(toHttpError(cloudLink.linkState())),
         ),
+      )
+      .handle("checkReachability", () =>
+        requireEnvironmentScope(AuthRelayReadScope).pipe(Effect.andThen(reachability.check)),
       )
       .handle("unlink", () =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(

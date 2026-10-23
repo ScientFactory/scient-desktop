@@ -23,7 +23,23 @@ export interface McpCredentialRequest {
   readonly browserToolsAvailable?: boolean;
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
   readonly skillScope?: McpInvocationContext.McpScientSkillScope;
+  // SCIENT-FORK:START Scient Extensions connectors
+  /**
+   * Connectors delivered with this credential. The registry derives each
+   * proxy URL from its own endpoint; the set is bound into the scope so the
+   * connector proxy honors exactly what the session received. Defaults to none.
+   */
+  readonly connectors?: ReadonlyArray<McpCredentialConnector>;
+  // SCIENT-FORK:END
 }
+
+// SCIENT-FORK:START Scient Extensions connectors
+export interface McpCredentialConnector {
+  readonly connectorId: string;
+  readonly serverName: string;
+  readonly displayName: string;
+}
+// SCIENT-FORK:END
 
 export interface McpIssuedCredential {
   readonly config: McpProviderSession.McpProviderSessionConfig;
@@ -66,10 +82,9 @@ export interface McpSessionRegistryOptions {
 }
 
 /**
- * The bound matters because `/mcp` is mounted outside the environment auth
- * stack and is reachable on whatever host the server binds to, so this token is
- * the authority guarding every provider-scoped MCP capability on a
- * remote-reachable server.
+ * `/mcp` is outside environment auth, so idle tokens stop authenticating.
+ * Keep expired records until explicit revocation: a trusted provider turn can
+ * refresh the token its subprocess still holds; MCP requests cannot.
  */
 const DEFAULT_LIVENESS_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
@@ -82,6 +97,12 @@ const getHttpMcpEndpointHost = (address: NetAddress.IpAddress): string =>
   NetAddress.isUnspecified(address)
     ? "127.0.0.1"
     : NetAddress.formatUrlHostString(NetAddress.formatIp(address));
+
+// SCIENT-FORK:START Scient Extensions connectors
+/** The connector proxy endpoint beside the Scient MCP endpoint, same origin and bearer. */
+export const connectorProxyUrl = (endpoint: string, connectorId: string): string =>
+  new URL(`/mcp/connectors/${encodeURIComponent(connectorId)}`, endpoint).toString();
+// SCIENT-FORK:END
 
 const copySkillScope = (
   skillScope: McpInvocationContext.McpScientSkillScope,
@@ -112,15 +133,6 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       .digest("SHA-256", new TextEncoder().encode(token))
       .pipe(Effect.map(bytesToHex), Effect.orDie);
 
-  const pruneDead = (records: ReadonlyMap<string, CredentialRecord>, timestamp: number) => {
-    const next = new Map(
-      Array.from(records).filter(
-        ([, record]) => timestamp - record.lastAliveAt <= livenessWindowMs,
-      ),
-    );
-    return next.size === records.size ? records : next;
-  };
-
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
@@ -128,6 +140,16 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
       const browserToolsAvailable = request.browserToolsAvailable ?? true;
+      // SCIENT-FORK:START Scient Extensions connectors
+      const connectors = (request.connectors ?? []).map(
+        (connector): McpProviderSession.McpProviderSessionConnector => ({
+          connectorId: connector.connectorId,
+          serverName: connector.serverName,
+          displayName: connector.displayName,
+          url: connectorProxyUrl(endpoint, connector.connectorId),
+        }),
+      );
+      // SCIENT-FORK:END
       const scope: McpInvocationContext.McpThreadInvocationScope = {
         environmentId,
         requestNamespace: providerSessionId,
@@ -140,11 +162,14 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         capabilities: new Set<McpInvocationContext.McpCapability>(
           request.capabilities ?? (browserToolsAvailable ? (["preview"] as const) : []),
         ),
+        // SCIENT-FORK:START Scient Extensions connectors
+        connectorIds: new Set(connectors.map((connector) => connector.connectorId)),
+        // SCIENT-FORK:END
         ...(request.skillScope ? { skillScope: copySkillScope(request.skillScope) } : {}),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
-        const next = new Map(pruneDead(records, issuedAt));
+        const next = new Map(records);
         next.set(tokenHash, { tokenHash, scope, lastAliveAt: issuedAt });
         return { records: next };
       });
@@ -160,6 +185,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           // authorization record. `ReadonlySet` is compile-time only; sharing
           // one mutable Set would let an adapter accidentally widen its token.
           capabilities: new Set(scope.capabilities),
+          // SCIENT-FORK:START Scient Extensions connectors
+          connectors,
+          // SCIENT-FORK:END
         },
       };
     },
@@ -171,15 +199,19 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const tokenHash = yield* hashToken(rawToken);
       const timestamp = yield* currentTimeMillis;
       return yield* SynchronizedRef.modify(state, ({ records }) => {
-        const current = pruneDead(records, timestamp);
-        const record = current.get(tokenHash);
-        if (!record) return [undefined, { records: current }] as const;
-        const next = new Map(current);
+        const record = records.get(tokenHash);
+        if (!record || timestamp - record.lastAliveAt > livenessWindowMs) {
+          return [undefined, { records }] as const;
+        }
+        const next = new Map(records);
         next.set(tokenHash, { ...record, lastAliveAt: timestamp });
         return [
           {
             ...record.scope,
             capabilities: new Set(record.scope.capabilities),
+            // SCIENT-FORK:START Scient Extensions connectors
+            connectorIds: new Set(record.scope.connectorIds),
+            // SCIENT-FORK:END
             ...(record.scope.skillScope
               ? {
                   skillScope: {
@@ -198,9 +230,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     function* (threadId) {
       const timestamp = yield* currentTimeMillis;
       yield* SynchronizedRef.update(state, ({ records }) => {
-        const current = pruneDead(records, timestamp);
-        const next = new Map(current);
-        for (const [tokenHash, record] of current) {
+        const next = new Map(records);
+        for (const [tokenHash, record] of records) {
           if (record.scope.thread.threadId === threadId) {
             next.set(tokenHash, { ...record, lastAliveAt: timestamp });
           }
@@ -277,15 +308,6 @@ const make = Effect.acquireRelease(
 );
 
 export const layer = Layer.effect(McpSessionRegistry, make);
-
-export const issueActiveMcpCredential = (
-  request: McpCredentialRequest,
-): Effect.Effect<McpIssuedCredential | undefined> =>
-  activeMcpSessionRegistry
-    ? activeMcpSessionRegistry
-        .revokeThread(request.threadId)
-        .pipe(Effect.andThen(activeMcpSessionRegistry.issue(request)))
-    : Effect.undefined;
 
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;

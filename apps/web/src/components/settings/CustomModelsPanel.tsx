@@ -254,18 +254,23 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
   const checkAgain = async (connection: CustomModelConnection, model: CustomModel) => {
     setBusy(true);
     setNotice(null);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await onSave({ revision: catalog.revision, connection, refreshModelId: model.id });
-    } catch (error) {
-      setNotice({
-        key: connection.id + ":" + model.id,
-        revision: catalog.revision,
-        text: error instanceof Error ? error.message : "Could not check this model.",
-        error: true,
-      });
-    } finally {
-      setBusy(false);
+      try {
+        await onSave({ revision: catalog.revision, connection, refreshModelId: model.id });
+      } catch (error) {
+        setNotice({
+          key: connection.id + ":" + model.id,
+          revision: catalog.revision,
+          text: error instanceof Error ? error.message : "Could not check this model.",
+          error: true,
+        });
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setBusy(false);
+    if (actionFailure) throw actionFailure.cause;
   };
   const runTest = async (
     connection: CustomModelConnection,
@@ -277,37 +282,42 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
     setBusy(true);
     setTesting(key);
     setNotice(null);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      resultValue(
-        await test({
-          environmentId,
-          input: {
-            revision: catalog.revision,
-            connectionId: connection.id,
-            modelId: model.id,
-            instanceId: target,
-          },
-        }),
-      );
-      setNotice({
-        key,
-        revision: catalog.revision,
-        text: name + " · Test passed",
-        error: false,
-        agent: target,
-      });
+      try {
+        resultValue(
+          await test({
+            environmentId,
+            input: {
+              revision: catalog.revision,
+              connectionId: connection.id,
+              modelId: model.id,
+              instanceId: target,
+            },
+          }),
+        );
+        setNotice({
+          key,
+          revision: catalog.revision,
+          text: name + " · Test passed",
+          error: false,
+          agent: target,
+        });
+      } catch (cause) {
+        setNotice({
+          key,
+          revision: catalog.revision,
+          text: namedTestFailure(name, cause instanceof Error ? cause.message : "Test failed."),
+          error: true,
+          agent: target,
+        });
+      }
     } catch (cause) {
-      setNotice({
-        key,
-        revision: catalog.revision,
-        text: namedTestFailure(name, cause instanceof Error ? cause.message : "Test failed."),
-        error: true,
-        agent: target,
-      });
-    } finally {
-      setBusy(false);
-      setTesting(null);
+      actionFailure = { cause };
     }
+    setBusy(false);
+    setTesting(null);
+    if (actionFailure) throw actionFailure.cause;
   };
   const openAdd = () => setEditor({ target: {}, settings: catalog });
   return (

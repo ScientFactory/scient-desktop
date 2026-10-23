@@ -24,9 +24,13 @@ export type SettingsPath =
   | "/settings/custom-models"
   | "/settings/voice"
   | "/settings/skills"
+  // SCIENT-FORK:START — Scient Extensions
+  | "/settings/extensions"
+  // SCIENT-FORK:END
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/scientific-computing"
+  | "/settings/documents"
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
@@ -87,7 +91,11 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/custom-models": "Custom models",
   "/settings/voice": "Voice",
   "/settings/skills": "Skills",
+  // SCIENT-FORK:START — Scient Extensions
+  "/settings/extensions": "Extensions",
+  // SCIENT-FORK:END
   "/settings/scientific-computing": "Scientific Computing",
+  "/settings/documents": "Documents",
   "/settings/keybindings": "Shortcuts",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
@@ -176,10 +184,95 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["scientific computing languages"],
   },
   {
+    id: "documents",
+    title: "Documents",
+    to: "/settings/documents",
+    searchTerms: ["documents", "latex", "tex", "markdown", "writing"],
+  },
+  {
+    id: "latex-installation",
+    title: "LaTeX tools",
+    to: "/settings/documents",
+    targetId: "latex-installation",
+    searchTerms: [
+      "installation",
+      "install latex",
+      "additional compilers",
+      "tinytex",
+      "tex live",
+      "miktex",
+      "tectonic",
+      "pdf build",
+    ],
+  },
+  {
+    id: "latex-compilers",
+    title: "LaTeX compiler status and technical details",
+    to: "/settings/documents",
+    targetId: "latex-compilers",
+    searchTerms: [
+      "available compilers",
+      "compiler status",
+      "latexmk",
+      "compiler versions",
+      "executable paths",
+      "engine capabilities",
+    ],
+  },
+  {
+    id: "new-document-compiler",
+    title: "Default LaTeX compiler for new documents",
+    to: "/settings/documents",
+    targetId: "new-document-compiler",
+    searchTerms: ["compiler", "pdflatex", "xelatex", "lualatex", "hebrew compiler", "automatic"],
+  },
+  {
+    id: "latex-compilation",
+    title: "PDF compilation",
+    to: "/settings/documents",
+    targetId: "latex-compilation",
+    searchTerms: [
+      "latex",
+      "auto-compile",
+      "autocompile",
+      "rebuild",
+      "on save",
+      "manual",
+      "pdf compilation",
+    ],
+  },
+  {
+    id: "new-document-template",
+    title: "Templates and language for new documents",
+    to: "/settings/documents",
+    targetId: "new-document-template",
+    searchTerms: [
+      "template",
+      "manage templates",
+      "default template",
+      "hide",
+      "arrange",
+      "restore defaults",
+      "new document",
+      "article",
+      "thesis",
+      "lab report",
+      "hebrew",
+    ],
+  },
+  {
+    id: "document-open-view",
+    title: "Open documents in Visual, Source, or Rich",
+    to: "/settings/documents",
+    targetId: "documents",
+    searchTerms: ["visual", "split", "source", "rich", "view", "open in"],
+  },
+  {
     id: "word-export",
     title: "Word export (Pandoc)",
-    to: "/settings/scientific-computing",
-    searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "latex", "reinstall"],
+    to: "/settings/documents",
+    targetId: "word-export",
+    searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "reinstall"],
   },
   {
     id: "storage-worktree-keep-when",
@@ -389,6 +482,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
   },
   {
+    id: "compact-idle-threads",
+    title: "Compact idle Claude threads (beta)",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["context compaction idle cache tokens usage summary beta experimental"],
+  },
+  {
     id: "auto-settle-merged-threads",
     title: "Auto-settle merged threads",
     to: "/settings/general",
@@ -440,6 +540,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["notification toast popup completion input approval failure"],
   },
+  // SCIENT-FORK:START — the unread-answer app icon badge.
+  {
+    id: "app-icon-badge",
+    title: "App icon badge",
+    to: "/settings/general",
+    desktopOnly: true,
+    searchTerms: ["unread answers count dock taskbar badge notification"],
+  },
+  // SCIENT-FORK:END
   {
     id: "time-format",
     title: "Time format",
@@ -548,10 +657,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "start-from-origin",
-    title: "Start from origin",
+    title: "Start from remote",
     to: "/settings/general",
     scope: "project-defaults",
-    searchTerms: ["new worktrees latest matching remote branch local"],
+    searchTerms: ["new worktrees start remote origin latest fetched branch local"],
   },
   {
     id: "add-project-starts-in",
@@ -740,6 +849,38 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Skills",
     to: "/settings/skills",
   },
+  // SCIENT-FORK:START — Scient Extensions
+  {
+    id: "extensions",
+    title: "Extensions",
+    to: "/settings/extensions",
+    searchTerms: ["plugins connectors mcp servers add-ons tools"],
+  },
+  {
+    id: "extensions-connected-services",
+    title: "Connected services",
+    to: "/settings/extensions",
+    searchTerms: ["connectors remote mcp server oauth sign in api key token linear notion"],
+  },
+  {
+    id: "extensions-scient-plugins",
+    title: "Scient plugins",
+    to: "/settings/extensions",
+    searchTerms: ["bundle install built-in sources documents compute skills"],
+  },
+  {
+    id: "extensions-provider-plugins",
+    title: "Provider plugins",
+    to: "/settings/extensions",
+    searchTerms: ["codex claude marketplace mcp servers uninstall provider sign in"],
+  },
+  {
+    id: "extensions-discover",
+    title: "Discover MCP servers",
+    to: "/settings/extensions",
+    searchTerms: ["registry browse search install remote connector"],
+  },
+  // SCIENT-FORK:END
   {
     id: "agent-browser-access",
     title: "Agent browser access",
@@ -826,6 +967,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Open links in",
     to: "/settings/integrations",
     searchTerms: ["links default browser in-app browser external open"],
+  },
+  {
+    id: "browser-search-engine",
+    title: "Search engine",
+    to: "/settings/integrations",
+    searchTerms: ["address bar duckduckgo google bing brave kagi ecosia custom"],
   },
   {
     id: "pull-request-links-open-in-app",
@@ -1080,9 +1227,13 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/custom-models": null,
   "/settings/voice": null,
   "/settings/skills": null,
+  // SCIENT-FORK:START — Scient Extensions
+  "/settings/extensions": null,
+  // SCIENT-FORK:END
   "/settings/integrations": null,
   "/settings/scheduled-tasks": null,
   "/settings/scientific-computing": null,
+  "/settings/documents": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",

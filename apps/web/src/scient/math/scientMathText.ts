@@ -1,7 +1,8 @@
-import { createContext, useMemo } from "react";
+import { createContext } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
 import { remarkScientMathRefinements, type ScientMathRefinementOptions } from "./remarkScientMath";
+import { protectScientMathTablePipes } from "./scientMathTablePipes";
 
 export {
   findScientBackslashMathSpans,
@@ -11,9 +12,9 @@ export {
 } from "@scientfactory/conversation/chat-math-delimiters";
 import { normalizeScientMathDelimiters } from "@scientfactory/conversation/chat-math-delimiters";
 
-/** Memoized per message text, since streaming re-renders the same string repeatedly. */
-export function useScientMathMarkdownText(text: string): string {
-  return useMemo(() => normalizeScientMathDelimiters(text), [text]);
+/** The compiler caches this normalization by the message text at its render call site. */
+export function scientMathMarkdownText(text: string): string {
+  return protectScientMathTablePipes(normalizeScientMathDelimiters(text), text);
 }
 
 type ScientRemarkPlugins = NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
@@ -43,19 +44,16 @@ export function scientMathRemarkPlugins(
 }
 
 function needsAuthoredMathIntent(sourceText: string): boolean {
-  return sourceText.includes("\\(") || sourceText.includes("\\[");
+  return sourceText.includes("\\(") || sourceText.includes("\\[") || sourceText.includes("|");
 }
 
-/** `scientMathRemarkPlugins`, memoized for a rendered message. */
-export function useScientMathRemarkPlugins(
+/** Messages without authored math intent retain the shared plugin array. */
+export function scientMathRemarkPluginsForMessage(
   basePlugins: ScientRemarkPlugins,
   sourceText: string,
 ): ScientRemarkPlugins {
   const needsAuthoredIntent = needsAuthoredMathIntent(sourceText);
-  return useMemo(
-    () => (needsAuthoredIntent ? scientMathRemarkPlugins(basePlugins, sourceText) : basePlugins),
-    [basePlugins, needsAuthoredIntent, sourceText],
-  );
+  return needsAuthoredIntent ? scientMathRemarkPlugins(basePlugins, sourceText) : basePlugins;
 }
 
 /**

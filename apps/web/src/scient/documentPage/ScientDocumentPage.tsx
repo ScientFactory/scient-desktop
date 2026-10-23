@@ -9,7 +9,6 @@ import {
   isValidElement,
   use,
   useEffect,
-  useMemo,
   useState,
   type ReactNode,
   type SyntheticEvent,
@@ -28,7 +27,7 @@ import { isMermaidSyntaxError } from "../diagrams/mermaidRecovery";
 import { MermaidRenderError, renderMermaidDiagram } from "../diagrams/mermaidRuntime";
 import { isScientMathCodeClassName } from "../math/remarkScientMath";
 import { renderCachedScientMath } from "../math/ScientMath";
-import { useScientMathMarkdownText, useScientMathRemarkPlugins } from "../math/scientMathText";
+import { scientMathMarkdownText, scientMathRemarkPluginsForMessage } from "../math/scientMathText";
 import { resolveScientRichFenceKind } from "../presentation/scientRichFenceKind";
 import { scientMarkdownRemarkPlugins } from "../markdown/scientMarkdownProfiles";
 import type { DocumentPageTracker } from "./documentPageReadiness";
@@ -175,11 +174,14 @@ function PrintMath({ tex, display }: { readonly tex: string; readonly display: b
 
 type DiagramState =
   | { readonly status: "pending" }
-  | { readonly status: "rendered"; readonly svg: string }
-  /** The source is not a diagram Mermaid can draw: a content limitation. */
-  | { readonly status: "failed" }
-  /** Mermaid itself failed (for example, its code could not load): an execution failure. */
-  | { readonly status: "error" };
+  | ({
+      readonly source: string;
+      readonly tracker: DocumentPageTracker;
+      readonly finish: () => void;
+    } & (
+      | { readonly status: "rendered"; readonly svg: string }
+      | { readonly status: "failed" | "error" }
+    ));
 
 /**
  * Whether Mermaid refused the diagram's content (syntax, unknown diagram
@@ -190,6 +192,11 @@ function isMermaidContentError(cause: unknown): boolean {
   if (cause instanceof MermaidRenderError) {
     return (
       isMermaidSyntaxError(cause.cause) ||
+      (cause.cause instanceof Error &&
+        "code" in cause.cause &&
+        ["syntax", "unsupported-diagram", "semantic", "limit"].includes(
+          String(cause.cause.code),
+        )) ||
       /\b(?:edge limit|maximum text size)\b/iu.test(cause.details)
     );
   }
@@ -206,13 +213,17 @@ function mermaidErrorDetail(cause: unknown): string {
 
 function PrintMermaid({ source }: { readonly source: string }) {
   const { tracker } = useDocumentPage();
-  const [finish] = useState(() => tracker.track());
   const [state, setState] = useState<DiagramState>({ status: "pending" });
+  const current =
+    "source" in state && state.source === source && state.tracker === tracker
+      ? state
+      : { status: "pending" as const };
   useEffect(() => {
     let active = true;
-    // The document page already runs with no network access, so it draws in place.
-    renderMermaidDiagram(source, "light", "page").then(
+    const finish = tracker.track();
+    renderMermaidDiagram(source, "light").then(
       (rendered) => {
+        if (!active) return;
         // The page never loads what the capture does not hold; the diagram prints without it.
         for (const address of rendered.blocked ?? []) {
           tracker.warn(
@@ -220,43 +231,45 @@ function PrintMermaid({ source }: { readonly source: string }) {
             `Outside content "${address}" named by a Mermaid diagram was not loaded into the PDF.`,
           );
         }
-        if (active) setState({ status: "rendered", svg: rendered.svg });
+        setState({ status: "rendered", svg: rendered.svg, source, tracker, finish });
       },
       (cause: unknown) => {
+        if (!active) return;
         const detail = mermaidErrorDetail(cause);
         if (isMermaidContentError(cause)) {
           tracker.warn("diagram-failed", `A Mermaid diagram could not be rendered: ${detail}`);
-          if (active) setState({ status: "failed" });
+          setState({ status: "failed", source, tracker, finish });
         } else {
           tracker.fatal(
             "diagram-incomplete",
             `Mermaid failed while rendering a diagram: ${detail}`,
           );
-          if (active) setState({ status: "error" });
+          setState({ status: "error", source, tracker, finish });
         }
       },
     );
     return () => {
       active = false;
+      finish();
     };
   }, [source, tracker]);
   useEffect(() => {
-    if (state.status !== "pending") finish();
-  }, [finish, state.status]);
+    if ("finish" in state) state.finish();
+  }, [state]);
 
-  if (state.status === "rendered") {
+  if (current.status === "rendered") {
     return (
       <figure
         className="scient-document-diagram"
         data-scient-diagram="rendered"
-        // Mermaid renders with its strict security level; the SVG carries no script.
-        dangerouslySetInnerHTML={{ __html: state.svg }}
+        // Chat and exports share the upstream resource-disabled, sanitized Pele mount.
+        dangerouslySetInnerHTML={{ __html: current.svg }}
       />
     );
   }
   return (
-    <figure className="scient-document-diagram" data-scient-diagram={state.status}>
-      {state.status === "failed" ? (
+    <figure className="scient-document-diagram" data-scient-diagram={current.status}>
+      {current.status === "failed" ? (
         <figcaption className="scient-document-placeholder-label">
           Diagram could not be rendered; its Mermaid source follows.
         </figcaption>
@@ -479,35 +492,26 @@ export interface ScientDocumentPageProps {
 
 export function ScientDocumentPage(props: ScientDocumentPageProps) {
   const { input, tracker } = props;
-  const markdown = useScientMathMarkdownText(input.markdown);
-  const remarkPlugins = useScientMathRemarkPlugins(
+  const markdown = scientMathMarkdownText(input.markdown);
+  const remarkPlugins = scientMathRemarkPluginsForMessage(
     // A chat bundle writes its hard breaks explicitly, so both parse as documents.
-    useMemo(() => [remarkDocumentFrontMatter, ...scientMarkdownRemarkPlugins("document")], []),
+    [remarkDocumentFrontMatter, ...scientMarkdownRemarkPlugins("document")],
     input.markdown,
   );
-  const direction = useMemo(
-    () => resolveMarkdownDirection(input.markdown, input.direction),
-    [input.direction, input.markdown],
-  );
-  const context = useMemo<DocumentPageContext>(
-    () => ({
-      assets: new Map(input.assets.map((asset) => [asset.id, asset])),
-      assetBaseUrl: props.inputUrl,
-      katex: props.katex,
-      tracker,
-    }),
-    [input.assets, props.inputUrl, props.katex, tracker],
-  );
-  const rehypePlugins = useMemo(
-    (): NonNullable<ReactMarkdownOptions["rehypePlugins"]> => [
-      rehypeRaw,
-      [rehypeReportUnsupportedHtml, { tracker }],
-      [rehypeSanitize, DOCUMENT_SANITIZE_SCHEMA],
-      [rehypeEnsureTitle, { title: input.title }],
-      [rehypeScientBidi, { direction, requestedDirection: input.direction }],
-    ],
-    [direction, input.direction, input.title, tracker],
-  );
+  const direction = resolveMarkdownDirection(input.markdown, input.direction);
+  const context = {
+    assets: new Map(input.assets.map((asset) => [asset.id, asset])),
+    assetBaseUrl: props.inputUrl,
+    katex: props.katex,
+    tracker,
+  };
+  const rehypePlugins: NonNullable<ReactMarkdownOptions["rehypePlugins"]> = [
+    rehypeRaw,
+    [rehypeReportUnsupportedHtml, { tracker }],
+    [rehypeSanitize, DOCUMENT_SANITIZE_SCHEMA],
+    [rehypeEnsureTitle, { title: input.title }],
+    [rehypeScientBidi, { direction, requestedDirection: input.direction }],
+  ];
   const notes = [...input.warnings.map((warning) => warning.message), ...props.renderWarnings];
 
   return (

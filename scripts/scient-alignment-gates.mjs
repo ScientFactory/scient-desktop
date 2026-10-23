@@ -14,10 +14,12 @@ const WINDOWS_TESTS =
 const GATES = [
   { id: "fmt", argv: ["pnpm", "exec", "vp", "fmt", "--check"] },
   { id: "lint", argv: ["pnpm", "exec", "vp", "lint", "--report-unused-disable-directives"] },
-  // pnpm reports every failing package in one run; `vp run -r` stops scheduling after the first.
+  // Hosted CI's check for unused files, dependencies and exports.
+  { id: "knip", argv: ["pnpm", "run", "knip:check"] },
+  // Includes Vite+ tasks, which no longer need matching package.json scripts.
   {
     id: "typecheck",
-    argv: ["pnpm", "-r", "--no-bail", "--workspace-concurrency=2", "run", "typecheck"],
+    argv: ["pnpm", "run", "typecheck"],
   },
   { id: "test", argv: ["pnpm", "run", "test"], windows: WINDOWS_TESTS },
   { id: "build", argv: ["pnpm", "run", "build"] },

@@ -1,5 +1,5 @@
 /**
- * Diagrams drawn in the page itself (the PDF document page) against the real Mermaid, in a
+ * Diagrams drawn in the page itself (the PDF document page) against the real Pele renderer, in a
  * real browser: a picture a diagram names outside the capture is never requested, the
  * diagram draws without it, and the address is reported for the export notes.
  */
@@ -22,17 +22,15 @@ describe("Mermaid drawn in the page", () => {
     const rendered = await renderMermaidDiagram(
       `flowchart LR\nA@{ img: "${address}", label: "Picture node", h: 40 } --> B`,
       "light",
-      "page",
     );
     expect(rendered.svg).toContain("Picture node");
     expect(rendered.svg).not.toContain(PROBE);
     expect(rendered.blocked).toEqual([address]);
-    await new Promise((resolve) => setTimeout(resolve, 300));
     expect(probeRequests()).toEqual([]);
   });
 
   it("gives the page its own image loading back after the draw", async () => {
-    await renderMermaidDiagram("flowchart LR\nA --> B", "light", "page");
+    await renderMermaidDiagram("flowchart LR\nA --> B", "light");
     const image = new Image();
     image.src = "/scient-page-own-image.png";
     expect(image.getAttribute("src")).toBe("/scient-page-own-image.png");

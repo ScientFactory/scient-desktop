@@ -10,6 +10,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  VcsProcessExitError,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -20,11 +21,10 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
+import * as CheckpointService from "./CheckpointService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
@@ -38,9 +38,6 @@ import * as ServerSettings from "../serverSettings.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
 const oldSessionId = ProviderSessionId.make("provider-session:effect-worker-restart:old");
-const replacementSessionId = ProviderSessionId.make(
-  "provider-session:effect-worker-restart:replacement",
-);
 const providerThreadId = ProviderThreadId.make("provider-thread:effect-worker-restart");
 const providerTurnId = ProviderTurnId.make("provider-turn:effect-worker-restart");
 const attemptId = RunAttemptId.make("run-attempt:effect-worker-restart");
@@ -129,6 +126,7 @@ function makeExecutorLayer(input: {
   readonly continueAfterRestart?: boolean;
   readonly threads?: Partial<ThreadManagementService.ThreadManagementServiceShape>;
   readonly pendingInterrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interruptPendingStart"];
+  readonly rollback?: CheckpointRollbackService.CheckpointRollbackServiceV2Shape["execute"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const dependencies = Layer.mergeAll(
@@ -190,21 +188,23 @@ function makeExecutorLayer(input: {
     Layer.succeed(
       CheckpointRollbackService.CheckpointRollbackServiceV2,
       CheckpointRollbackService.CheckpointRollbackServiceV2.of({
-        execute: (request) =>
-          record("rollback").pipe(
-            Effect.andThen(
-              input.rollbackFails
-                ? Effect.fail(
-                    new CheckpointRollbackService.CheckpointRollbackExecutionError({
-                      reason: "unexpected-failure",
-                      threadId: request.threadId,
-                      providerThreadId: request.providerThreadId,
-                      checkpointId: request.checkpointId,
-                    }),
-                  )
-                : Effect.void,
-            ),
-          ),
+        execute:
+          input.rollback ??
+          ((request) =>
+            record("rollback").pipe(
+              Effect.andThen(
+                input.rollbackFails
+                  ? Effect.fail(
+                      new CheckpointRollbackService.CheckpointRollbackExecutionError({
+                        reason: "unexpected-failure",
+                        threadId: request.threadId,
+                        providerThreadId: request.providerThreadId,
+                        checkpointId: request.checkpointId,
+                      }),
+                    )
+                  : Effect.void,
+              ),
+            )),
       }),
     ),
     Layer.succeed(
@@ -264,38 +264,110 @@ it.effect(
     }),
 );
 
-it("does not retry pure interrupt races where the turn is already gone", () => {
-  assert.isTrue(
-    EffectWorker.isNonRetryableProviderTurnControlFailure(
-      "provider-turn.interrupt",
-      "ProviderAdapterInterruptError: ... ACP provider turn provider-turn:x is not active",
-    ),
-  );
-  assert.isTrue(
-    EffectWorker.isNonRetryableProviderTurnControlFailure(
-      "provider-turn.interrupt",
-      "Provider session provider-session:x is not active.",
-    ),
-  );
-  assert.isFalse(
-    EffectWorker.isNonRetryableProviderTurnControlFailure(
-      "provider-turn.restart",
-      "Provider session provider-session:x is not active.",
-    ),
-  );
-  assert.isFalse(
-    EffectWorker.isNonRetryableProviderTurnControlFailure(
-      "provider-turn.start",
-      "Provider session provider-session:x is not active.",
-    ),
-  );
-  assert.isFalse(
-    EffectWorker.isNonRetryableProviderTurnControlFailure(
-      "provider-turn.interrupt",
-      "ACP hard teardown failed unexpectedly; the session is poisoned",
-    ),
-  );
-});
+it.effect("settles a stopped run when its adapter has already lost the native turn", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const layer = makeExecutorLayer({
+      events,
+      interrupt: () =>
+        new ProviderTurnControlService.ProviderTurnControlError({
+          threadId,
+          operation: "interrupt",
+          providerTurnId,
+          cause: "Provider turn is not active.",
+        }),
+      threads: {
+        dispatch: (command) =>
+          Ref.update(events, (current) => [...current, command.type]).pipe(
+            Effect.as({ sequence: 1, storedEvents: [] }),
+          ),
+      },
+    });
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      yield* executor.execute({
+        ...restartEffect(now, { type: "detach" }),
+        request: {
+          type: "provider-turn.interrupt",
+          providerSessionId: oldSessionId,
+          providerThreadId,
+          providerTurnId,
+        },
+      });
+    }).pipe(Effect.provide(layer));
+    assert.deepEqual(yield* Ref.get(events), ["thread.background-work.settle"]);
+  }),
+);
+
+const lockedIndexMessage =
+  "Git's index is locked. Wait for other Git operations to finish, then try again.";
+const rollbackCheckpointId = CheckpointId.make("checkpoint:effect-worker-rollback");
+const rollbackScopeId = CheckpointScopeId.make("checkpoint-scope:effect-worker-rollback");
+const restoreFailure = (detail: string) =>
+  new CheckpointRollbackService.CheckpointRollbackExecutionError({
+    reason: "unexpected-failure",
+    threadId,
+    providerThreadId,
+    checkpointId: rollbackCheckpointId,
+    cause: new CheckpointService.CheckpointRestoreError({
+      scopeId: rollbackScopeId,
+      checkpointId: rollbackCheckpointId,
+      cause: new VcsProcessExitError({
+        operation: "GitVcsDriverCore.restoreCheckpoint",
+        command: "git",
+        cwd: "/private/repo",
+        exitCode: 128,
+        detail,
+        failureKind: "command-failed",
+      }),
+    }),
+  });
+
+it.effect.each([
+  {
+    name: "a held Git index lock",
+    failure: restoreFailure(lockedIndexMessage),
+    message: lockedIndexMessage,
+  },
+  {
+    name: "raw Git output",
+    failure: restoreFailure("error: could not clean /private/repo/secret.txt"),
+    message: CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
+  },
+])("reports a rollback blocked by $name only after the last attempt", ({ failure, message }) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const failures = yield* Ref.make<ReadonlyArray<string>>([]);
+    const layer = makeExecutorLayer({
+      events: yield* Ref.make<ReadonlyArray<string>>([]),
+      rollback: () => Effect.fail(failure),
+      threads: {
+        dispatch: (command) =>
+          Ref.update(failures, (current) =>
+            command.type === "checkpoint.rollback.fail" ? [...current, command.message] : current,
+          ).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
+      },
+    });
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      const rollback: EffectOutbox.OrchestrationEffectV2 = {
+        ...restartEffect(now, { type: "detach" }),
+        request: {
+          type: "provider-thread.rollback",
+          providerThreadId,
+          checkpointId: rollbackCheckpointId,
+          scopeId: rollbackScopeId,
+          restoreFiles: true,
+        },
+      };
+      yield* Effect.flip(executor.execute(rollback, { willRetry: true }));
+      assert.deepEqual(yield* Ref.get(failures), []);
+      yield* Effect.flip(executor.execute(rollback, { willRetry: false }));
+    }).pipe(Effect.provide(layer));
+    assert.deepEqual(yield* Ref.get(failures), [message]);
+  }),
+);
 
 it.effect("requeues a claim when a pre-execution worker check fails", () =>
   Effect.gen(function* () {
@@ -708,125 +780,8 @@ it.effect("keeps a max-attempt replay-safe failure terminal when fail settlement
   }),
 );
 
-it.effect("uses durable deadlines, notifications, and a slow liveness poll", () =>
-  Effect.gen(function* () {
-    const attempts = yield* Ref.make(0);
-    const available = yield* Queue.unbounded<void>();
-    const now = yield* DateTime.now;
-    const nextClaimableAt = yield* Ref.make<Option.Option<DateTime.Utc>>(
-      Option.some(DateTime.add(now, { milliseconds: 100 })),
-    );
-    const worker = EffectWorker.OrchestrationEffectWorkerV2.of({
-      isExecutingThread: () => Effect.succeed(false),
-      awaitWork: Queue.take(available),
-      runRecoveryOnce: Effect.succeed(false),
-      runOnce: Effect.gen(function* () {
-        const count = yield* Ref.updateAndGet(attempts, (current) => current + 1);
-        if (count === 2) {
-          yield* Ref.set(nextClaimableAt, Option.some(DateTime.add(now, { milliseconds: 5_000 })));
-        }
-        if (count === 3) yield* Ref.set(nextClaimableAt, Option.none());
-        return false;
-      }),
-      nextClaimableAt: Ref.get(nextClaimableAt),
-      drain: () => Effect.succeed(0),
-    });
-    const awaitAttempts = Effect.fnUntraced(function* (expected: number) {
-      while ((yield* Ref.get(attempts)) < expected) {
-        yield* Effect.yieldNow;
-      }
-    });
-
-    yield* EffectWorker.runDaemonWithOptions({
-      concurrency: 1,
-      livenessPollIntervalMs: 1_000,
-    }).pipe(
-      Effect.provideService(EffectWorker.OrchestrationEffectWorkerV2, worker),
-      Effect.forkScoped,
-    );
-
-    yield* awaitAttempts(1);
-    yield* TestClock.adjust("99 millis");
-    assert.equal(yield* Ref.get(attempts), 1);
-
-    yield* TestClock.adjust("1 millis");
-    yield* awaitAttempts(2);
-    yield* TestClock.adjust("999 millis");
-    assert.equal(yield* Ref.get(attempts), 2);
-
-    yield* Queue.offer(available, undefined);
-    yield* awaitAttempts(3);
-    yield* TestClock.adjust("999 millis");
-    assert.equal(yield* Ref.get(attempts), 3);
-
-    yield* TestClock.adjust("1 millis");
-    yield* awaitAttempts(4);
-  }).pipe(Effect.provide(TestClock.layer())),
-);
-
-it.effect("does not hot-loop when a claim fails", () =>
-  Effect.gen(function* () {
-    const attempts = yield* Ref.make(0);
-    const now = yield* DateTime.now;
-    const worker = EffectWorker.OrchestrationEffectWorkerV2.of({
-      isExecutingThread: () => Effect.succeed(false),
-      awaitWork: Effect.never,
-      runRecoveryOnce: Effect.succeed(false),
-      runOnce: Ref.update(attempts, (count) => count + 1).pipe(
-        Effect.andThen(
-          new EffectWorker.OrchestrationEffectWorkerError({
-            operation: "claim",
-            cause: "simulated database failure",
-          }),
-        ),
-      ),
-      nextClaimableAt: Effect.succeed(Option.some(now)),
-      drain: () => Effect.succeed(0),
-    });
-
-    yield* EffectWorker.runDaemonWithOptions({
-      concurrency: 1,
-      livenessPollIntervalMs: 1_000,
-    }).pipe(
-      Effect.provideService(EffectWorker.OrchestrationEffectWorkerV2, worker),
-      Effect.forkScoped,
-    );
-
-    while ((yield* Ref.get(attempts)) < 1) yield* Effect.yieldNow;
-    yield* TestClock.adjust("999 millis");
-    assert.equal(yield* Ref.get(attempts), 1);
-    yield* TestClock.adjust("1 millis");
-    while ((yield* Ref.get(attempts)) < 2) yield* Effect.yieldNow;
-  }).pipe(Effect.provide(TestClock.layer())),
-);
-
-it.effect("backs off briefly when a due deadline loses a claim race", () =>
-  Effect.gen(function* () {
-    const attempts = yield* Ref.make(0);
-    const now = yield* DateTime.now;
-    const worker = EffectWorker.OrchestrationEffectWorkerV2.of({
-      isExecutingThread: () => Effect.succeed(false),
-      awaitWork: Effect.never,
-      runRecoveryOnce: Effect.succeed(false),
-      runOnce: Ref.update(attempts, (count) => count + 1).pipe(Effect.as(false)),
-      nextClaimableAt: Effect.succeed(Option.some(now)),
-      drain: () => Effect.succeed(0),
-    });
-
-    yield* EffectWorker.runDaemonWithOptions({
-      concurrency: 1,
-      livenessPollIntervalMs: 1_000,
-    }).pipe(
-      Effect.provideService(EffectWorker.OrchestrationEffectWorkerV2, worker),
-      Effect.forkScoped,
-    );
-
-    while ((yield* Ref.get(attempts)) < 1) yield* Effect.yieldNow;
-    yield* TestClock.adjust("24 millis");
-    assert.equal(yield* Ref.get(attempts), 1);
-    yield* TestClock.adjust("1 millis");
-    while ((yield* Ref.get(attempts)) < 2) yield* Effect.yieldNow;
-  }).pipe(Effect.provide(TestClock.layer())),
+const replacementSessionId = ProviderSessionId.make(
+  "provider-session:effect-worker-restart:replacement",
 );
 
 it.effect("safely retries after replacement cleanup succeeds and start fails", () =>

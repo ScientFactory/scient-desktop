@@ -91,6 +91,7 @@ function analyticsFixture(consent: AnalyticsStatus["consent"] = "product") {
     return status;
   };
   const service = AnalyticsService.of({
+    recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });

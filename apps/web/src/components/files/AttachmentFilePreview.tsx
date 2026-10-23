@@ -16,12 +16,17 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { toastManager } from "~/components/ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import {
   MEDIA_FAILURE_COPY,
   UNSUPPORTED_PREVIEW_TITLE,
 } from "~/scient/fileSurfaces/fileFailureCopy";
+
+// SCIENT-FORK:START — attachment PDFs open in Scient's reader
+import { AttachmentPdfPreview } from "~/scient/pdf/AttachmentPdfPreview";
+import { attachmentPdfMount } from "~/scient/pdf/attachmentPdfMount";
+// SCIENT-FORK:END
 
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
@@ -53,26 +58,6 @@ function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: bool
   return rendered ? "Show HTML source" : "Show rendered page";
 }
 
-// useAssetUrlRefresh keys its callback on these objects, so they must stay cached.
-function useAttachmentResources(
-  attachmentId: string | undefined,
-  fileName: string,
-  mimeType: string,
-) {
-  "use memo";
-  const resource = attachmentId
-    ? {
-        _tag: "attachment" as const,
-        attachmentId,
-        fileName,
-        mimeType,
-        disposition: "inline" as const,
-      }
-    : null;
-  const downloadResource = resource ? { ...resource, disposition: "attachment" as const } : null;
-  return { resource, downloadResource };
-}
-
 export function AttachmentFilePreview(props: {
   name: string;
   mimeType: string;
@@ -81,6 +66,9 @@ export function AttachmentFilePreview(props: {
   asset?: { environmentId: EnvironmentId; attachmentId: string };
   htmlRender?: boolean;
   threadRef?: ScopedThreadRef;
+  // SCIENT-FORK:START — names a draft attachment to Scient's PDF reader
+  draftPdf?: { threadRef: ScopedThreadRef; contextId: string };
+  // SCIENT-FORK:END
   origin?: string;
   onRemove?: () => void;
   onClose?: () => void;
@@ -91,11 +79,17 @@ export function AttachmentFilePreview(props: {
     kind === "markdown" ? "markdown" : kind === "html" ? "html" : delimiter ? "table" : null;
   const attachmentId = props.asset?.attachmentId;
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: props.name });
-  const { resource, downloadResource } = useAttachmentResources(
-    attachmentId,
-    props.name,
-    props.mimeType,
-  );
+  // useAssetUrlRefresh keys its callback on these objects, so they must stay cached.
+  const resource = attachmentId
+    ? {
+        _tag: "attachment" as const,
+        attachmentId,
+        fileName: props.name,
+        mimeType: props.mimeType,
+        disposition: "inline" as const,
+      }
+    : null;
+  const downloadResource = resource ? { ...resource, disposition: "attachment" as const } : null;
   const refresh = useAssetUrlRefresh(
     props.file ? null : (props.asset?.environmentId ?? null),
     props.file ? null : resource,
@@ -182,7 +176,6 @@ export function AttachmentFilePreview(props: {
   const failure: AttachmentFailure | null =
     error ?? (needsText && contentError !== null ? { kind: "load", message: contentError } : null);
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
-  const updateClientSettings = useUpdateClientSettings();
   const showsRawText =
     failure === null &&
     needsText &&
@@ -223,7 +216,17 @@ export function AttachmentFilePreview(props: {
     });
   };
 
-  const body = failure ? (
+  // SCIENT-FORK:START — PDFs open in Scient's reader (find, outline, zoom, Ask in chat)
+  const scientPdf = kind === "pdf" ? attachmentPdfMount(props) : null;
+  // SCIENT-FORK:END
+  const body = scientPdf ? (
+    <AttachmentPdfPreview
+      environmentId={scientPdf.environmentId}
+      fileName={props.name}
+      locator={scientPdf.locator}
+      file={props.file ?? null}
+    />
+  ) : failure ? (
     <FileSurfaceFailure
       {...(failure.kind === "media" && (kind === "image" || kind === "audio" || kind === "video")
         ? MEDIA_FAILURE_COPY[kind]

@@ -23,20 +23,11 @@ import {
   hasNotificationSound,
   playNotificationSound,
   setNotificationBadge,
+  threadNotificationTag,
   unlockNotificationAudio,
 } from "../threadNotifications";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 import { toastManager } from "./ui/toast";
-
-// SCIENT-FORK:START — Scient's unread-answer coordinator owns the macOS dock badge so it
-// remains durable until the user visits the completed thread. Keep upstream's badge
-// behavior for the web client and the Windows/Linux desktop implementations.
-function setThreadNotificationBadge(count: number) {
-  const bridge = window.desktopBridge;
-  if (bridge?.setUnreadAnswerCount && bridge.getClientPlatform?.() === "darwin") return;
-  setNotificationBadge(count);
-}
-// SCIENT-FORK:END
 
 export function ThreadNotificationCoordinator() {
   const environmentIds = useEnvironmentIds();
@@ -50,7 +41,7 @@ export function ThreadNotificationCoordinator() {
   const onNotification = (environmentId: EnvironmentId, notification: Notification) => {
     pending.current.get(notification.tag)?.notification.close();
     pending.current.set(notification.tag, { environmentId, notification });
-    setThreadNotificationBadge(pending.current.size);
+    setNotificationBadge(pending.current.size);
   };
 
   useEffect(() => {
@@ -61,14 +52,14 @@ export function ThreadNotificationCoordinator() {
       entry.notification.close();
       pending.current.delete(tag);
     }
-    if (count !== pending.current.size) setThreadNotificationBadge(pending.current.size);
+    if (count !== pending.current.size) setNotificationBadge(pending.current.size);
   }, [environmentIds]);
 
   useEffect(() => {
     const clear = () => {
       for (const { notification } of pending.current.values()) notification.close();
       pending.current.clear();
-      setThreadNotificationBadge(0);
+      setNotificationBadge(0);
     };
     clear();
     if (!hasDesktopNotifications(mode)) return;
@@ -163,7 +154,9 @@ function EnvironmentNotifications({
       const kind =
         attention && attention !== prior.attention
           ? "input"
-          : completion !== null && (prior.completion === null || completion > prior.completion)
+          : !rawThread.latestRunStopRequested &&
+              completion !== null &&
+              (prior.completion === null || completion > prior.completion)
             ? "completion"
             : null;
       if (!kind) continue;
@@ -228,13 +221,14 @@ function EnvironmentNotifications({
       try {
         const notification = new Notification(title, {
           body: thread.title,
-          tag: `${environmentId}:${thread.id}`,
+          tag: threadNotificationTag(environmentId, thread.id),
           silent: true,
         });
         onNotification(environmentId, notification);
         notification.addEventListener("click", () => {
           notification.close();
           window.focus();
+          void window.desktopBridge?.revealWindow?.().catch(() => undefined);
           void navigate({
             to: "/$environmentId/$threadId",
             params: { environmentId, threadId: thread.id },

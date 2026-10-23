@@ -122,7 +122,9 @@ export const providerWorkMessageCommand = (
 
 /** Thread → native generation → SQL. The cached planning owner is rechecked
  * inside the fence; physical shutdown never runs while that fence is held. */
-export const commitProviderWorkAdmission = <A, E, R>({
+export const commitProviderWorkAdmission = Effect.fn(
+  "ProviderWorkAdmission.commitProviderWorkAdmission",
+)(function* <A, E, R>({
   DispatchError,
   providerSessions,
   command,
@@ -134,20 +136,19 @@ export const commitProviderWorkAdmission = <A, E, R>({
   readonly command: ProviderWorkAdmitCommand;
   readonly owner: ProviderAdapterV2SessionRuntime | undefined;
   readonly commit: Effect.Effect<A, E, R>;
-}) =>
-  Effect.gen(function* () {
-    if (owner === undefined)
-      return yield* new DispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "Provider-initiated work has no native admission owner.",
-      });
-    const result = yield* providerSessions.withProviderWorkAdmission(command, owner, commit);
-    if (Option.isNone(result))
-      return yield* new DispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "Provider-initiated work lost its native generation before admission.",
-      });
-    return result.value;
-  });
+}) {
+  if (owner === undefined)
+    return yield* new DispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: "Provider-initiated work has no native admission owner.",
+    });
+  const result = yield* providerSessions.withProviderWorkAdmission(command, owner, commit);
+  if (Option.isNone(result))
+    return yield* new DispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: "Provider-initiated work lost its native generation before admission.",
+    });
+  return result.value;
+});

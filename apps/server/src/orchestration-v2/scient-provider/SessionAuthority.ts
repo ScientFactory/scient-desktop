@@ -116,41 +116,44 @@ export const makeSessionAuthority = <Entry extends AuthoritySessionEntry, E>(inp
 }) => {
   const { sessions, sessionKey, releasingRuntimes } = input;
   return {
-    withProviderWorkAdmission: <A, E2, R>(
+    withProviderWorkAdmission: Effect.fn("SessionAuthority.withProviderWorkAdmission")(function* <
+      A,
+      E2,
+      R,
+    >(
       identity: ProviderAdapterV2InitiatedWorkIdentity,
       expectedRuntime: ProviderAdapterV2SessionRuntime,
       commit: Effect.Effect<A, E2, R>,
-    ) =>
-      Effect.gen(function* () {
-        const key = sessionKey(identity.providerSessionId);
-        const entry = (yield* Ref.get(sessions)).get(key);
-        if (
-          entry === undefined ||
-          entry.exposedRuntime !== expectedRuntime ||
-          !entry.attachedThreadIds.has(identity.threadId) ||
-          entry.runtime.driver !== identity.driver ||
-          entry.runtime.instanceId !== identity.providerInstanceId ||
-          entry.runtime.withInitiatedWorkAdmission === undefined
+    ) {
+      const key = sessionKey(identity.providerSessionId);
+      const entry = (yield* Ref.get(sessions)).get(key);
+      if (
+        entry === undefined ||
+        entry.exposedRuntime !== expectedRuntime ||
+        !entry.attachedThreadIds.has(identity.threadId) ||
+        entry.runtime.driver !== identity.driver ||
+        entry.runtime.instanceId !== identity.providerInstanceId ||
+        entry.runtime.withInitiatedWorkAdmission === undefined
+      )
+        return Option.none<A>();
+      return yield* entry.runtime
+        .withInitiatedWorkAdmission(
+          identity,
+          Effect.gen(function* () {
+            const current = (yield* Ref.get(sessions)).get(key);
+            if (
+              current?.runtime !== entry.runtime ||
+              current.scope !== entry.scope ||
+              current.exposedRuntime !== expectedRuntime ||
+              !current.attachedThreadIds.has(identity.threadId) ||
+              releasingRuntimes.has(current.runtime)
+            )
+              return Option.none<A>();
+            return Option.some(yield* commit);
+          }),
         )
-          return Option.none<A>();
-        return yield* entry.runtime
-          .withInitiatedWorkAdmission(
-            identity,
-            Effect.gen(function* () {
-              const current = (yield* Ref.get(sessions)).get(key);
-              if (
-                current?.runtime !== entry.runtime ||
-                current.scope !== entry.scope ||
-                current.exposedRuntime !== expectedRuntime ||
-                !current.attachedThreadIds.has(identity.threadId) ||
-                releasingRuntimes.has(current.runtime)
-              )
-                return Option.none<A>();
-              return Option.some(yield* commit);
-            }),
-          )
-          .pipe(Effect.map(Option.flatten));
-      }),
+        .pipe(Effect.map(Option.flatten));
+    }),
     resolveMcpInvocationPolicy: Effect.fn("ProviderSessionManagerV2.resolveMcpInvocationPolicy")(
       function* (
         invocation: Pick<McpThreadCaller, "threadId" | "providerInstanceId" | "providerSessionId">,

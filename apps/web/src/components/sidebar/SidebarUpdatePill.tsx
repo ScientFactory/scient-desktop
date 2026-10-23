@@ -16,6 +16,7 @@ import {
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateDownloadedVersion,
   getScientDesktopUpdateLabel,
+  getDesktopUpdateIdleTooltip,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
@@ -39,9 +40,7 @@ import {
   shouldShowDesktopUpdateCheckIcon,
 } from "./DesktopUpdateStatusIcon";
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
-import { SidebarUpdateCapsule } from "./SidebarUpdateCapsule";
-import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
-import type { UpdateEverythingRun, UpdateRunLocalState } from "./updateEverything.logic";
+import type { UpdateEverythingRun } from "./updateEverything.logic";
 import {
   clearSavedUpdateEverythingResult,
   saveUpdateEverythingResult,
@@ -51,13 +50,27 @@ import { type ReportLocalUpdateError, useUpdateEverything } from "./useUpdateEve
 // SCIENT-FORK:START — explicit Restart does not acquire another confirmation.
 import { shouldRunUpdateEverything } from "./updateEverything.logic";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — other machines and providers have their own circle beside the pill.
+import { isUpdateRunActive } from "../../scient/desktopUpdate/otherUpdates.logic";
+import { SidebarOtherUpdates } from "../../scient/desktopUpdate/SidebarOtherUpdates";
+import type { ServerUpdateTarget } from "../ServerUpdateAction";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — a pass's restart countdown sits above the Restart pill, which restarts now.
+import { UpdateRestartCountdown } from "../../scient/desktopUpdate/UpdateRestartCountdown";
+import { restartUpdateNow } from "./updateEverythingRun";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — replaces upstream's UpdateEverythingDialog: a pass asks beside the pill,
+// and only when it would stop running threads.
+import { UpdateEverythingAsk } from "../../scient/desktopUpdate/UpdateEverythingAsk";
+import { confirmServerStops } from "../../scient/desktopUpdate/useOtherUpdates";
+// SCIENT-FORK:END
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
   NonNullable<ComponentProps<typeof Popover>["onOpenChange"]>
 >[1];
 type SidebarUpdatePopoverHandle = ReturnType<typeof PopoverCreateHandle>;
 
-export function shouldUseSidebarUpdateReleaseNotesPopover(
+function shouldUseSidebarUpdateReleaseNotesPopover(
   showUpdateDetails: boolean,
   state: DesktopUpdateState | null,
 ): boolean {
@@ -72,14 +85,14 @@ export function shouldShowSidebarUpdateRestartIcon(state: DesktopUpdateState | n
   return state?.status === "error" && state.errorContext === "install";
 }
 
-export function handleSidebarUpdateReleaseNotesPopoverOpenChange(
+function handleSidebarUpdateReleaseNotesPopoverOpenChange(
   _open: boolean,
   details: Pick<SidebarUpdatePopoverChangeDetails, "reason" | "cancel">,
 ): void {
   if (details.reason === "trigger-press") details.cancel();
 }
 
-export function openSidebarUpdateReleaseNotesPopoverOnForwardTab(
+function openSidebarUpdateReleaseNotesPopoverOnForwardTab(
   event: { readonly key: string; readonly shiftKey: boolean },
   handle: Pick<SidebarUpdatePopoverHandle, "open">,
   triggerId: string,
@@ -186,7 +199,10 @@ export function SidebarUpdatePill() {
 function SidebarUpdateControl() {
   const state = useDesktopUpdateState();
   const [isActionPending, setIsActionPending] = useState(false);
-  const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
+  // SCIENT-FORK:START — replaces upstream's dialog open state: the pass waiting on its
+  // question, with what it stops and what it admits.
+  const [askingPass, setAskingPass] = useState<ReturnType<typeof confirmServerStops> | null>(null);
+  // SCIENT-FORK:END
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
   const suppressReleaseNotesFocusOpen = useRef(false);
@@ -235,9 +251,18 @@ function SidebarUpdateControl() {
   const localUpdateVersion =
     state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
   const everything = useUpdateEverything(localUpdateVersion);
-  const runsEverything = shouldRunUpdateEverything(everything.hasUpdates, isDownloading, action);
+  // SCIENT-FORK:START — the pill is this app's own update. Other updates join it only in a pass
+  // that downloads this app, never in a running one, and only such a pass holds the pill.
   const run = useUpdateEverythingRun();
-  const isRunningEverything = run !== null;
+  const runsEverything = shouldRunUpdateEverything(
+    everything.hasUpdates && !isUpdateRunActive(run),
+    isDownloading,
+    action,
+  );
+  const isRunningEverything = run !== null && run.localVersion !== null;
+  // The question lasts only while Update would still run the pass; the next press asks again.
+  if (!runsEverything && askingPass !== null) setAskingPass(null);
+  // SCIENT-FORK:END
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
     isChecking: state?.status === "checking",
@@ -245,11 +270,15 @@ function SidebarUpdateControl() {
   });
   const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
     action,
-    showsEverything: runsEverything,
-    run,
+    // SCIENT-FORK:START — the pill presents this app's own update state only.
+    showsEverything: false,
+    run: null,
+    // SCIENT-FORK:END
     isDownloading,
     showCheckIcon,
   });
+  const idleTooltip =
+    !showUpdateDetails && !showCheckIcon ? getDesktopUpdateIdleTooltip(state) : null;
   const tooltip = runsEverything
     ? everything.summary
     : showUpdateDetails
@@ -258,7 +287,7 @@ function SidebarUpdateControl() {
         : "Update available"
       : showCheckIcon
         ? "Checking for updates…"
-        : "Check for updates";
+        : (idleTooltip?.title ?? "Check for updates");
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -266,7 +295,10 @@ function SidebarUpdateControl() {
       : showUpdateDetails
         ? isDesktopUpdateButtonDisabled(state)
         : !canCheckForUpdate(state);
-  const isInteractionDisabled = disabled || isActionPending || isRunningEverything;
+  // SCIENT-FORK:START — under a pass's restart countdown, the Restart pill restarts now.
+  const isInteractionDisabled =
+    run?.phase !== "countdown" && (disabled || isActionPending || isRunningEverything);
+  // SCIENT-FORK:END
   const showReleaseNotesPopover =
     !isRunningEverything && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
 
@@ -284,10 +316,29 @@ function SidebarUpdateControl() {
 
   const handleAction = async () => {
     const bridge = window.desktopBridge;
+    // SCIENT-FORK:START — under a pass's restart countdown, the Restart pill restarts now.
+    if (run?.phase === "countdown") {
+      restartUpdateNow();
+      return;
+    }
+    // SCIENT-FORK:END
     if (isInteractionDisabled) return;
 
     if (runsEverything) {
-      setIsConfirmingEverything(true);
+      // SCIENT-FORK:START — ask only when the pass would stop running threads elsewhere. This
+      // app's own restart keeps its countdown with Later. Pressing the pill again cancels.
+      if (askingPass !== null) {
+        setAskingPass(null);
+        return;
+      }
+      const pass = confirmServerStops(everything.otherServers.map((server) => server.target));
+      if (pass.stops === 0) {
+        void runEverything(pass.admitServer);
+      } else {
+        releaseNotesPopoverHandle.close();
+        setAskingPass(pass);
+      }
+      // SCIENT-FORK:END
       return;
     }
 
@@ -329,8 +380,22 @@ function SidebarUpdateControl() {
     }
 
     if (action === "install") {
-      // SCIENT-FORK:START — Restart is explicit; no second confirmation.
-      void installFromFooter(bridge);
+      // SCIENT-FORK:START — Restart is explicit; no second confirmation. A running pass for
+      // other machines is saved first, so its summary and restarting servers follow the relaunch.
+      if (isUpdateRunActive(run)) {
+        saveUpdateEverythingResult({
+          localVersion: localUpdateVersion,
+          updatedServers: 0,
+          updatedProviders: 0,
+          failures: [],
+          restarting: [],
+        });
+        void installFromFooter(bridge).then((installed) => {
+          if (!installed) clearSavedUpdateEverythingResult();
+        });
+      } else {
+        void installFromFooter(bridge);
+      }
       // SCIENT-FORK:END
       return;
     }
@@ -364,9 +429,11 @@ function SidebarUpdateControl() {
       .finally(() => setIsActionPending(false));
   };
 
-  const runEverything = async () => {
+  // SCIENT-FORK:START — servers restart only while they stop no more threads than agreed.
+  const runEverything = async (admitServer: (target: ServerUpdateTarget) => boolean) => {
     const bridge = window.desktopBridge;
-    setIsConfirmingEverything(false);
+    setAskingPass(null);
+    // SCIENT-FORK:END
     setIsActionPending(true);
     const result = await settlePromise(() =>
       everything.run({
@@ -377,6 +444,7 @@ function SidebarUpdateControl() {
         ...(bridge && action !== "none"
           ? { installLocal: (reportError) => installFromFooter(bridge, reportError) }
           : {}),
+        admitServer,
         // SCIENT-FORK:END
       }),
     );
@@ -402,17 +470,20 @@ function SidebarUpdateControl() {
     );
   };
 
-  // SCIENT-FORK:START — compact labels; remote orchestration preserves local updater state.
-  // A running pass shows the update capsule below, so the pill never labels a run.
-  const updateLabel = runsEverything
-    ? "Update"
-    : showUpdateIconState && state
+  // SCIENT-FORK:START — compact labels for this app's own update. Other machines and providers
+  // have their own circle, which is all a browser shows.
+  const updateLabel =
+    showUpdateIconState && state
       ? getScientDesktopUpdateLabel({ ...state, downloadPercent: displayedDownloadPercent })
       : null;
-  // The shared "Update" label for other machines and providers sizes the pill.
-  const sizesToLabel = iconStatus === "everything";
+  const updateOthers = (admitServer: (target: ServerUpdateTarget) => boolean) =>
+    everything.run({ admitServer });
+  if (!isElectron) {
+    return (
+      <SidebarOtherUpdates servers={everything.otherServers} standalone updateAll={updateOthers} />
+    );
+  }
   // SCIENT-FORK:END
-  if (!isElectron && !runsEverything && !isRunningEverything) return null;
 
   const statusIcon = (
     <DesktopUpdateStatusIcon
@@ -424,55 +495,6 @@ function SidebarUpdateControl() {
       status={iconStatus}
     />
   );
-  const confirmDialog = (
-    <UpdateEverythingDialog
-      open={isConfirmingEverything}
-      onOpenChange={setIsConfirmingEverything}
-      summary={everything.summary}
-      lines={everything.lines}
-      restarts={everything.restarts}
-      skipped={everything.skipped}
-      onConfirm={() => void runEverything()}
-    />
-  );
-
-  if (run !== null) {
-    const local: UpdateRunLocalState =
-      run.localVersion === null
-        ? null
-        : state?.status === "downloading"
-          ? { status: "downloading", percent: state.downloadPercent }
-          : { status: "waiting" };
-    return (
-      <SidebarMenuItem className="ml-auto flex min-w-0 flex-1">
-        <SidebarUpdateCapsule
-          run={run}
-          local={local}
-          icon={statusIcon}
-          {...(run.localVersion === null && action === "install" && window.desktopBridge
-            ? {
-                onRestart: async () => {
-                  saveUpdateEverythingResult({
-                    localVersion: localUpdateVersion,
-                    updatedServers: 0,
-                    updatedProviders: 0,
-                    failures: [],
-                    restarting: [],
-                  });
-                  // SCIENT-FORK:START — the footer's single installer owner.
-                  if (!(await installFromFooter(window.desktopBridge!))) {
-                    clearSavedUpdateEverythingResult();
-                  }
-                  // SCIENT-FORK:END
-                },
-              }
-            : {})}
-        />
-        {confirmDialog}
-      </SidebarMenuItem>
-    );
-  }
-
   const updateButton = (
     <button
       type="button"
@@ -491,9 +513,7 @@ function SidebarUpdateControl() {
           ? cn(
               // SCIENT-FORK: lab-verified compact pill dimensions, type and spacing.
               "h-5 rounded-(--control-radius) bg-primary text-2xs font-medium whitespace-nowrap text-primary-foreground",
-              // This app's states fit the fixed width; "Update" for other machines
-              // and providers grows to its label with even insets.
-              sizesToLabel ? "min-w-16 gap-1 px-1.5" : "w-16 gap-0.5 px-0.5",
+              "w-16 gap-0.5 px-0.5",
               !isInteractionDisabled && "hover:bg-primary/90",
             )
           : cn(
@@ -562,9 +582,14 @@ function SidebarUpdateControl() {
 
   return (
     <SidebarMenuItem
-      className="ml-auto shrink-0"
+      // SCIENT-FORK:START — the circle for other machines and providers sits beside the pill.
+      className="ml-auto flex shrink-0 items-center"
+      // SCIENT-FORK:END
       data-update-active={showUpdateDetails || undefined}
     >
+      {/* SCIENT-FORK:START */}
+      <SidebarOtherUpdates servers={everything.otherServers} updateAll={updateOthers} />
+      {/* SCIENT-FORK:END */}
       <Popover
         handle={releaseNotesPopoverHandle}
         onOpenChange={(open, details) => {
@@ -602,9 +627,14 @@ function SidebarUpdateControl() {
               side="top"
               variant={showUpdateDetails ? "glass" : "default"}
             >
-              <span className={cn("whitespace-pre-line", showUpdateDetails && "text-wrap")}>
-                {tooltip}
-              </span>
+              {idleTooltip?.detail ? (
+                <div className="text-left">
+                  <div className="font-medium">{idleTooltip.title}</div>
+                  <div className="text-muted-foreground">{idleTooltip.detail}</div>
+                </div>
+              ) : (
+                <span className="whitespace-pre-line">{tooltip}</span>
+              )}
             </TooltipPopup>
           ) : null}
         </Tooltip>
@@ -633,7 +663,17 @@ function SidebarUpdateControl() {
           </PopoverPopup>
         ) : null}
       </Popover>
-      {confirmDialog}
+      {/* SCIENT-FORK:START — replaces upstream's confirmation dialog mount. */}
+      <UpdateEverythingAsk
+        anchorId={releaseNotesTriggerId}
+        stops={askingPass?.stops ?? null}
+        onCancel={() => setAskingPass(null)}
+        onUpdate={() => {
+          if (askingPass !== null) void runEverything(askingPass.admitServer);
+        }}
+      />
+      <UpdateRestartCountdown anchorId={releaseNotesTriggerId} run={run} />
+      {/* SCIENT-FORK:END */}
     </SidebarMenuItem>
   );
 }

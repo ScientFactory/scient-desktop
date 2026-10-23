@@ -2,7 +2,7 @@ import { NodeViewContent, NodeViewWrapper, type NodeViewProps } from "@tiptap/re
 
 import { languageOfInfoString, withInfoStringLanguage } from "~/composer-code-languages";
 
-import { useTheme } from "../../hooks/useTheme";
+import { useRenderedAppearance } from "../../hooks/useTheme";
 // SCIENT-FORK:START — composer and rendered code share Scient’s extracted frame.
 import { MarkdownCodeBlockFrame } from "~/scient/presentation/MarkdownCodeBlock";
 // SCIENT-FORK:END
@@ -14,7 +14,7 @@ export function ComposerCodeBlockNodeView({
   getPos,
   updateAttributes,
 }: NodeViewProps) {
-  const { resolvedTheme } = useTheme();
+  const resolvedTheme = useRenderedAppearance();
   const info = typeof node.attrs.language === "string" ? node.attrs.language : "";
   const language = languageOfInfoString(info);
 

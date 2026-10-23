@@ -1,8 +1,8 @@
 import {
   forwardRef,
   useEffect,
+  useLayoutEffect,
   useImperativeHandle,
-  useMemo,
   useRef,
   type HTMLAttributes,
 } from "react";
@@ -72,14 +72,16 @@ export const VegaLiteView = forwardRef<VegaLiteViewController, VegaLiteViewProps
     const preservedThemeStateRef = useRef<VegaLiteViewState | null>(null);
     const resizeQueueRef = useRef<Promise<void>>(Promise.resolve());
     const resizeFrameRef = useRef<number | null>(null);
-    const renderPlan = useMemo(() => buildVegaLiteRenderPlan(parsed.spec), [parsed]);
+    const renderPlan = buildVegaLiteRenderPlan(parsed.spec);
     const latestMountIdentityRef = useRef<VegaLiteViewMountIdentity>({
       initialState,
       parsed,
       theme,
       title,
     });
-    latestMountIdentityRef.current = { initialState, parsed, theme, title };
+    useLayoutEffect(() => {
+      latestMountIdentityRef.current = { initialState, parsed, theme, title };
+    }, [initialState, parsed, theme, title]);
 
     useEffect(() => {
       onErrorRef.current = onError;

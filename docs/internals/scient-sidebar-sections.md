@@ -90,9 +90,11 @@ looking. The catalog's home is a property of the data, not of the viewer.
   unchanged. Order _between_ environments is not stored: a section dragged
   past another environment's sections returns to its environment's block.
   Move up/down steps only over General and sections of the same environment.
-- **Names:** a section header names its machine only while sections from more
-  than one environment are listed. Two environments' sections with the same
-  name are separate sections; they are never merged by name.
+- **Names:** a section header marks its machine with the machine's icon (its name in
+  the tooltip) only while sections from more than one environment are listed. An icon
+  rather than the name keeps a narrow sidebar's width for the section name. Two
+  environments' sections with the same name are separate sections; they are never
+  merged by name.
 - **What was given up:** one section can no longer hold threads from two
   environments. Creating a section for threads on several environments creates
   a section of that name on each, and reports any environment where creation
@@ -219,29 +221,37 @@ section when un-settled or woken.
   and Woke have equal placement priority. No execution or read semantics change.
   Unread is judged from the same visit as the sidebar rows: the server's when it
   tracks visits, so a thread read on another client leaves the upper group.
-- **State:** `automaticPlacement.ts` reconciles complete synchronized section membership,
+- **State:** `automaticPlacement.ts` reconciles complete section membership,
   independently of project filtering and collapse. Scoped environment/thread keys
-  prevent collisions. An arrival appends below existing upper members; transitions
-  that remain eligible keep their place. Departures prepend to inactive rows, with
-  simultaneous departures preserving their visible order.
+  prevent collisions. An arrival appends below existing upper members, then re-forms the
+  upper group at the top; transitions that remain eligible keep their place. Departures
+  prepend to inactive rows, with simultaneous departures preserving their visible order.
+- **Unsynchronized environments:** placement waits only until the catalog lists every
+  environment (`frozenPlacementEnvironmentsKeyAtom`). After that, an enabled environment
+  without a live thread list is frozen: its rows keep their saved eligibility and order
+  key, and stay in place while missing, so neither a stale cached copy nor a gap moves
+  them. Other environments keep reconciling. Once live, its rows are judged afresh.
 - **Reading:** an open thread that loses eligibility retains placement. Leaving starts
   one three-second deadline; reopening or renewed eligibility cancels it. Timers pause
-  during drags, acknowledged drop writes, native menus, and unsynchronized snapshots.
-  Resume revalidates current state rather than replaying stale decisions.
+  during drags, acknowledged drop writes, native menus, and before the catalog is
+  complete. Resume revalidates current state rather than replaying stale decisions.
 - **Manual moves:** the existing lifecycle and membership-first drop transaction stays
   intact. The planner projects only the dragged row onto canonical manual neighbours,
   without writing automatically promoted positions of other rows. After successful
   writes, local presentation records the exact drop slot and bridges the old shell values
   until membership and order echoes arrive. A newer external value releases that bridge.
-  An explicit inactive-above-active
-  exception is allowed and survives until that row's own next eligibility transition.
-  Remotely acknowledged order-key changes are deliberate placement too.
+  An inactive row dropped above active ones holds until the next arrival re-forms the
+  upper group. An active row dropped within or just below the upper group joins it;
+  dropped lower, below inactive rows, it is set aside (`aside`): it stays put and later
+  arrivals ignore it until it goes inactive, after which its next activation is an
+  ordinary arrival. Remotely acknowledged order-key changes are deliberate placement too.
 - **Persistence:** positions live under `scient:sidebar:placement-order:sections`, keyed
   by section group ids, so they no longer depend on which environment is primary.
   The one entry saved under the former `placement-order:<primary environment>` key moves
   there once, its group ids qualified with that environment (`placementMigration.ts`);
   anything ambiguous reseeds.
-  Storage contains scoped IDs, eligibility and order keys only. Read defensively;
+  Storage contains scoped IDs, eligibility, order keys and set-aside rows only; placement
+  saved before set-aside existed loads with none. Read defensively;
   unavailable storage still permits in-memory operation. Restart discards deadlines,
   then reconciles current synchronized membership. Turning placement off cancels timers
   and reveals canonical manual order. The settings action also clears saved presentation

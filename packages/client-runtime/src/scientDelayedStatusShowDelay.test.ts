@@ -1,11 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  createDelayedStatus,
-  STATUS_MIN_VISIBLE_MS,
-  STATUS_SHOW_DELAY_MS,
-  type ShownStatus,
-} from "./delayedStatus.ts";
+import { createDelayedStatus, type ShownStatus } from "./delayedStatus.ts";
 
 // SCIENT-OWNED: the optional show delay used by the queue strip's "Queuing…".
 describe("createDelayedStatus show delay option", () => {
@@ -28,7 +23,7 @@ describe("createDelayedStatus show delay option", () => {
     expect(changes).toEqual([{ key: "row", value: "queuing" }]);
 
     status.update("row", null);
-    vi.advanceTimersByTime(STATUS_MIN_VISIBLE_MS - 1);
+    vi.advanceTimersByTime(399);
     expect(changes.at(-1)).toEqual({ key: "row", value: "queuing" });
     vi.advanceTimersByTime(1);
     expect(changes.at(-1)).toBeNull();
@@ -50,7 +45,7 @@ describe("createDelayedStatus show delay option", () => {
     const changes: Array<ShownStatus<string> | null> = [];
     const status = createDelayedStatus<string>((shown) => changes.push(shown));
     status.update("row", "syncing");
-    vi.advanceTimersByTime(STATUS_SHOW_DELAY_MS);
+    vi.advanceTimersByTime(400);
     expect(changes).toEqual([{ key: "row", value: "syncing" }]);
   });
 });

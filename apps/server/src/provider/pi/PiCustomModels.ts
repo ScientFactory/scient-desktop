@@ -493,19 +493,18 @@ export const makePiCustomModelsClientFactory = Effect.fn("PiCustomModels.make")(
               ...(state.model ? { model: annotate(state.model) } : {}),
             })),
           ),
-        getThinkingLevels: () =>
-          Effect.gen(function* () {
-            const state = yield* client.getState();
-            const metadata =
-              state.model && reasoningMetadata.get(modelKey(state.model.provider, state.model.id));
-            const reported = yield* client.getThinkingLevels();
-            return metadata
-              ? {
-                  ...reported,
-                  levels: reported.levels.filter((level) => metadata.levels.includes(level)),
-                }
-              : reported;
-          }),
+        getThinkingLevels: Effect.fn("PiCustomModels.getThinkingLevels")(function* () {
+          const state = yield* client.getState();
+          const metadata =
+            state.model && reasoningMetadata.get(modelKey(state.model.provider, state.model.id));
+          const reported = yield* client.getThinkingLevels();
+          return metadata
+            ? {
+                ...reported,
+                levels: reported.levels.filter((level) => metadata.levels.includes(level)),
+              }
+            : reported;
+        }),
         getCommands: () =>
           client.getCommands().pipe(
             Effect.map((commands) => ({

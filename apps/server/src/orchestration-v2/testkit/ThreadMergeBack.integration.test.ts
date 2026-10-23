@@ -1,3 +1,7 @@
+import { THREAD_MERGE_BACK_SOURCE_PROMPT } from "./fixtures/shared.ts";
+import { THREAD_MERGE_BACK_FORK_PROMPT } from "./fixtures/shared.ts";
+import { THREAD_MERGE_BACK_RECALL_PROMPT } from "./fixtures/shared.ts";
+import { THREAD_MERGE_BACK_HANDOFF_PROMPT } from "./fixtures/shared.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -24,10 +28,6 @@ import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { materializeCodexOwnerReload } from "./CodexReplayOwnerReload.ts";
 import {
   CODEX_MODEL_SELECTION,
-  THREAD_MERGE_BACK_FORK_PROMPT,
-  THREAD_MERGE_BACK_HANDOFF_PROMPT,
-  THREAD_MERGE_BACK_RECALL,
-  THREAD_MERGE_BACK_RECALL_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_FIRST_HANDOFF_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_RECALL,
@@ -35,7 +35,6 @@ import {
   THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_SECOND_HANDOFF_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_SOURCE_PROMPT,
-  THREAD_MERGE_BACK_SOURCE_PROMPT,
 } from "./fixtures/shared.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
 import { makeCheckpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -68,11 +67,12 @@ const CodexHistoryReplayHarness: typeof CodexOrchestratorReplayHarness = {
                             .map((message) => message.text);
                           assert.lengthOf(userTexts, 1);
                           assert.include(
-                            [
-                              THREAD_MERGE_BACK_FORK_PROMPT,
-                              THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
-                              THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
-                            ],
+                            transcript.scenario === "thread_merge_back_continue"
+                              ? [THREAD_MERGE_BACK_FORK_PROMPT]
+                              : [
+                                  THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
+                                  THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
+                                ],
                             userTexts[0],
                           );
                           assert.isTrue(
@@ -100,8 +100,6 @@ const CLAUDE_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-sonnet-4-6",
 } as const;
-const MERGE_BACK_USER_TEXT =
-  "Retain the transferred fork marker for later. Respond with exactly: merge delta stored";
 const FIRST_SIBLING_MERGE_USER_TEXT =
   "Retain the first transferred marker for later. Respond with exactly: first merge delta stored";
 const SECOND_SIBLING_MERGE_USER_TEXT =
@@ -126,7 +124,9 @@ const PROVIDERS: ReadonlyArray<ProviderVariant> = [
 
 function transcriptPath(scenario: string, driver: ProviderDriverKind): string {
   const fileName = driver === "codex" ? "codex_transcript.ndjson" : "claude_transcript.ndjson";
-  return `${import.meta.dirname}/fixtures/${scenario}/${fileName}`;
+  const fixtureRoot =
+    scenario === "thread_merge_back_continue" ? "../scient-fork/fixtures" : "fixtures";
+  return `${import.meta.dirname}/${fixtureRoot}/${scenario}/${fileName}`;
 }
 
 function readTranscript(scenario: string, driver: ProviderDriverKind) {
@@ -253,6 +253,9 @@ function makeCreateCommand(input: {
     worktreePath: null,
   };
 }
+
+const MERGE_BACK_USER_TEXT =
+  "Retain the transferred fork marker for later. Respond with exactly: merge delta stored";
 
 describe("orchestration V2 merge-back provider replay", () => {
   it.effect.each(PROVIDERS)(
@@ -451,7 +454,7 @@ describe("orchestration V2 merge-back provider replay", () => {
         assert.equal(mergeTransfer.resolution?.strategy, "fork_delta_context");
         assert.include(
           normalizePipeSpacing(visibleConversationText(source)),
-          THREAD_MERGE_BACK_RECALL,
+          "merge-source-4H8Q|merge-fork-7T2W",
         );
         assert.notInclude(visibleConversationText(source), "Context handoff (");
         assert.include(visibleConversationText(fork), "merge fork stored");

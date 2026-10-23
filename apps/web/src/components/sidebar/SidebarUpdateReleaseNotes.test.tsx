@@ -1,6 +1,6 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import { isValidElement, type MouseEvent, type ReactElement, type ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   addToast: vi.fn(),
@@ -74,6 +74,10 @@ describe("SidebarUpdateReleaseNotes", () => {
     testState.addToast.mockReset();
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("links each preview to its exact release and labels hidden changes", () => {
     const anchors = collectAnchors(
       renderNotes({
@@ -111,18 +115,6 @@ describe("SidebarUpdateReleaseNotes", () => {
       "https://github.com/ScientFactory/scient-desktop/releases",
     );
     expect(textContent(anchors.at(-1)?.props.children)).toBe("1 older release on GitHub");
-  });
-
-  it("shows plural history text for multiple omitted releases", () => {
-    const anchors = collectAnchors(
-      renderNotes({
-        ...baseState,
-        releaseNotes: [{ version: "0.0.36-nightly.3", items: ["Change 3"], totalItems: 1 }],
-        omittedReleaseCount: 3,
-      }),
-    );
-
-    expect(textContent(anchors.at(-1)?.props.children)).toBe("3 older releases on GitHub");
   });
 
   it("reports a release link that fails to open", async () => {

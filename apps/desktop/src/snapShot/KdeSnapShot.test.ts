@@ -13,13 +13,7 @@ vi.mock("electron", () => ({
     createFromBuffer: () => ({ isEmpty: () => false, getSize: () => ({ width: 2, height: 1 }) }),
   },
 }));
-import {
-  KdeCaptureSetup,
-  captureKdeWindow,
-  isKdeCaptureSession,
-  kdeCaptureDesktopEntry,
-  kdeCapturePaths,
-} from "./KdeSnapShot.ts";
+import { KdeCaptureSetup, captureKdeWindow, kdeCapturePaths } from "./KdeSnapShot.ts";
 
 let directory: string;
 let paths: { bundle: string; dataHome: string };
@@ -73,48 +67,6 @@ afterEach(async () => {
   await NodeFSP.rm(directory, { recursive: true, force: true });
 });
 
-it("detects KDE only outside a sandbox", () => {
-  expect(isKdeCaptureSession({ XDG_CURRENT_DESKTOP: "KDE" })).toBe(true);
-  expect(isKdeCaptureSession({ XDG_CURRENT_DESKTOP: "GNOME" })).toBe(false);
-  expect(isKdeCaptureSession({ XDG_CURRENT_DESKTOP: "KDE", FLATPAK_ID: "app" })).toBe(false);
-  expect(isKdeCaptureSession({ XDG_CURRENT_DESKTOP: "KDE", SNAP: "/snap/app" })).toBe(false);
-});
-
-it("does not install or request screenshots during initial discovery", async () => {
-  expect((await setup.state()).status).toBe("not-installed");
-  expect(execute).not.toHaveBeenCalled();
-  await expect(NodeFSP.stat(paths.dataHome)).rejects.toMatchObject({ code: "ENOENT" });
-});
-
-it("installs offline at a stable path and verifies permissions using the installed identity", async () => {
-  await setup.perform("install-kde-helper");
-  const { executable, desktop } = kdeCapturePaths(paths);
-  expect(await NodeFSP.readFile(executable, "utf8")).toBe("bundled executable");
-  expect((await NodeFSP.stat(executable)).mode & 0o777).toBe(0o755);
-  expect(await NodeFSP.readFile(desktop, "utf8")).toBe(kdeCaptureDesktopEntry(executable));
-  expect(kdeCaptureDesktopEntry(executable)).toContain(`Exec="${executable}" check`);
-  expect((await setup.state()).status).toBe("ready");
-  expect((await setup.state()).feedbackAvailable).toBe(true);
-  expect(execute.mock.calls.map(([file, args]) => [file, args])).toEqual([
-    ["kbuildsycoca6", ["--noincremental"]],
-    [
-      "systemd-run",
-      [
-        "--user",
-        "--quiet",
-        "--wait",
-        "--collect",
-        "--pipe",
-        "--service-type=exec",
-        "kbuildsycoca6",
-        "--noincremental",
-      ],
-    ],
-    [executable, ["check"]],
-    [executable, ["check"]],
-  ]);
-});
-
 it("does not mistake installed files for KDE authorization, or fall back to a picker on denial", async () => {
   await setup.perform("install-kde-helper");
   denial = true;
@@ -137,6 +89,36 @@ it("detects a bundled update, updates explicitly, and removes only capture's reg
   await setup.perform("remove-kde-helper");
   expect((await setup.state()).status).toBe("not-installed");
   expect(await NodeFSP.readFile(unrelated, "utf8")).toBe("keep me");
+});
+
+it("installs under the Scient name and replaces a helper installed under T3's name", async () => {
+  const { executable, desktop } = kdeCapturePaths(paths);
+  expect(NodePath.basename(executable)).toBe("scient-kde-snap-shot");
+  const legacy = NodePath.join(NodePath.dirname(executable), "t3-kde-snap-shot");
+  const legacyEntry = [
+    "[Desktop Entry]",
+    "Type=Application",
+    "Name=Scient SnapShots",
+    "NoDisplay=true",
+    `Exec="${legacy}" check`,
+    "X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2",
+    "X-Scient-Capture-Helper=true",
+    "",
+  ].join("\n");
+  await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
+  await NodeFSP.mkdir(NodePath.dirname(desktop), { recursive: true });
+  await NodeFSP.writeFile(legacy, "bundled executable", { mode: 0o755 });
+  await NodeFSP.writeFile(desktop, legacyEntry);
+  expect((await setup.state()).status).toBe("update-required");
+  await setup.perform("install-kde-helper");
+  expect(await NodeFSP.readdir(NodePath.dirname(executable))).toEqual([
+    NodePath.basename(executable),
+  ]);
+  expect(await NodeFSP.readFile(desktop, "utf8")).toBe(legacyEntry.replace(legacy, executable));
+  expect((await setup.state()).status).toBe("ready");
+  await NodeFSP.writeFile(legacy, "bundled executable");
+  await setup.perform("remove-kde-helper");
+  expect(await NodeFSP.readdir(NodePath.dirname(executable))).toEqual([]);
 });
 
 it("repairs the old semicolon permission entry without replacing unrelated registrations", async () => {

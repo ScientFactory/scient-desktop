@@ -11,9 +11,7 @@ import {
   type KeyboardEvent,
   type RefObject,
   type SetStateAction,
-  useCallback,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -30,7 +28,8 @@ import type { CommandPaletteContent } from "~/components/CommandPaletteContent";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useProjectFolderDrop } from "~/hooks/useProjectFolderDrop";
 import { useScientProjectInitialization } from "~/hooks/useScientProjectInitialization";
-import { ensureBrowseDirectoryPath, isFilesystemBrowseQuery } from "~/lib/projectPaths";
+import { ensureBrowseDirectoryPath } from "~/lib/projectPaths";
+import { isFilesystemBrowseQuery } from "@t3tools/client-runtime/state/projects";
 import type { ScientProjectInitializationDecision } from "~/lib/scientProjectInitialization";
 import { getAvailableNewFolderName, getAvailableNewProjectPath } from "~/lib/projectEntry";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
@@ -74,14 +73,11 @@ export function useScientCommandPaletteProjectInitialization(open: boolean) {
   useLayoutEffect(() => {
     if (!open) resolveProjectInitializationDecision("cancel");
   }, [open, resolveProjectInitializationDecision]);
-  const handleProjectInitializationDecision = useCallback(
-    (decision: ScientProjectInitializationDecision) => {
-      // The opening attempt closes the picker at handoff, after registration
-      // and draft preparation. A setup choice alone isn't a navigation handoff.
-      resolveProjectInitializationDecision(decision);
-    },
-    [resolveProjectInitializationDecision],
-  );
+  const handleProjectInitializationDecision = (decision: ScientProjectInitializationDecision) => {
+    // The opening attempt closes the picker at handoff, after registration
+    // and draft preparation. A setup choice alone isn't a navigation handoff.
+    resolveProjectInitializationDecision(decision);
+  };
   return {
     initializeProjectWithFeedback,
     projectInitializationInspection,
@@ -98,20 +94,17 @@ export function useScientCommandPaletteProjectInitialization(open: boolean) {
  */
 export function useScientNewThreadAddProjectItem(openAddProjectFlow: () => void) {
   const projectSnapshotsReady = useAtomValue(allEnvironmentProjectSnapshotsReadyAtom);
-  const newThreadAddProjectItem = useMemo(
-    (): CommandPaletteActionItem => ({
-      kind: "action",
-      value: "action:new-thread-in:add-project",
-      searchTerms: ["add project", "new project", "folder", "clone", "repository"],
-      title: "Add project",
-      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
-      keepOpen: true,
-      run: async () => {
-        openAddProjectFlow();
-      },
-    }),
-    [openAddProjectFlow],
-  );
+  const newThreadAddProjectItem: CommandPaletteActionItem = {
+    kind: "action",
+    value: "action:new-thread-in:add-project",
+    searchTerms: ["add project", "new project", "folder", "clone", "repository"],
+    title: "Add project",
+    icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+    keepOpen: true,
+    run: async () => {
+      openAddProjectFlow();
+    },
+  };
   return { projectSnapshotsReady, newThreadAddProjectItem };
 }
 
@@ -211,35 +204,32 @@ export function useScientAddProjectBrowseScope() {
   const [addProjectBrowseScope, setAddProjectBrowseScope] =
     useState<AddProjectBrowseScopeState | null>(null);
   const addProjectBrowseSession = useRef(0);
-  const resetAddProjectBrowseScope = useCallback((): void => {
+  const resetAddProjectBrowseScope = (): void => {
     addProjectBrowseSession.current += 1;
     setAddProjectBrowseScope(null);
-  }, []);
-  const filesystemBrowseScope = useMemo(
-    () =>
-      addProjectBrowseScope === null
-        ? null
-        : {
-            baseDirectoryPath: addProjectBrowseScope.baseDirectoryPath,
-            ...(addProjectBrowseScope.resolvedInitialPath
-              ? {
-                  alias: {
-                    path: addProjectBrowseScope.initialPath,
-                    resolvedPath: addProjectBrowseScope.resolvedInitialPath,
-                  },
-                }
-              : {}),
-          },
-    [addProjectBrowseScope],
-  );
-  const updateAddProjectBrowseBase = useCallback((baseDirectoryPath: string | null): void => {
+  };
+  const filesystemBrowseScope =
+    addProjectBrowseScope === null
+      ? null
+      : {
+          baseDirectoryPath: addProjectBrowseScope.baseDirectoryPath,
+          ...(addProjectBrowseScope.resolvedInitialPath
+            ? {
+                alias: {
+                  path: addProjectBrowseScope.initialPath,
+                  resolvedPath: addProjectBrowseScope.resolvedInitialPath,
+                },
+              }
+            : {}),
+        };
+  const updateAddProjectBrowseBase = (baseDirectoryPath: string | null): void => {
     if (baseDirectoryPath === null) return;
     setAddProjectBrowseScope((current) =>
       current === null || current.baseDirectoryPath === baseDirectoryPath
         ? current
         : { ...current, baseDirectoryPath },
     );
-  }, []);
+  };
 
   /** Follows the folder a typed path moves to. */
   function followAddProjectBrowseQuery(nextQuery: string, browseEnvironmentPlatform: string): void {
@@ -266,47 +256,41 @@ export function useScientAddProjectBrowseScope() {
   }
 
   /** Starts a browse session at the initial folder; returns its session. */
-  const beginAddProjectBrowseScope = useCallback(
-    (initialQuery: string, initialBrowsePath: string): number => {
-      const session = addProjectBrowseSession.current + 1;
-      addProjectBrowseSession.current = session;
-      setAddProjectBrowseScope({
-        baseDirectoryPath: initialBrowsePath,
-        initialPath: initialQuery,
-        resolvedInitialPath: null,
-      });
-      return session;
-    },
-    [],
-  );
+  const beginAddProjectBrowseScope = (initialQuery: string, initialBrowsePath: string): number => {
+    const session = addProjectBrowseSession.current + 1;
+    addProjectBrowseSession.current = session;
+    setAddProjectBrowseScope({
+      baseDirectoryPath: initialBrowsePath,
+      initialPath: initialQuery,
+      resolvedInitialPath: null,
+    });
+    return session;
+  };
 
   /** Records where the environment resolved the initial folder, if still browsing it. */
-  const resolveAddProjectBrowseScope = useCallback(
-    (
-      session: number,
-      result: FilesystemBrowseResult | null,
-      initialQuery: string,
-      setQuery: Dispatch<SetStateAction<string>>,
-    ): void => {
-      if (result === null || addProjectBrowseSession.current !== session) return;
-      const resolvedInitialPath = ensureBrowseDirectoryPath(result.parentPath);
-      setAddProjectBrowseScope((current) =>
-        current === null
-          ? current
-          : {
-              ...current,
-              resolvedInitialPath,
-            },
-      );
-      // Canonicalize an untouched symbolic default (notably `~/` on
-      // Windows), but never replace text the user entered while the
-      // environment was resolving it in the background.
-      setQuery((current) =>
-        canonicalizeUneditedBrowseQuery(current, initialQuery, resolvedInitialPath),
-      );
-    },
-    [],
-  );
+  const resolveAddProjectBrowseScope = (
+    session: number,
+    result: FilesystemBrowseResult | null,
+    initialQuery: string,
+    setQuery: Dispatch<SetStateAction<string>>,
+  ): void => {
+    if (result === null || addProjectBrowseSession.current !== session) return;
+    const resolvedInitialPath = ensureBrowseDirectoryPath(result.parentPath);
+    setAddProjectBrowseScope((current) =>
+      current === null
+        ? current
+        : {
+            ...current,
+            resolvedInitialPath,
+          },
+    );
+    // Canonicalize an untouched symbolic default (notably `~/` on
+    // Windows), but never replace text the user entered while the
+    // environment was resolving it in the background.
+    setQuery((current) =>
+      canonicalizeUneditedBrowseQuery(current, initialQuery, resolvedInitialPath),
+    );
+  };
 
   return {
     addProjectBrowseScope,
@@ -335,12 +319,12 @@ export function useScientBrowseHighlight(
   const highlightedItemReasonRef = useRef<BrowseHighlightReason | null>(null);
   const [isNewProjectFolderDraft, setIsNewProjectFolderDraft] = useState(false);
 
-  const clearHighlightedItem = useCallback((): void => {
+  const clearHighlightedItem = (): void => {
     highlightedItemValueRef.current = null;
     highlightedItemReasonRef.current = null;
     setHighlightedItemValue(null);
     setHighlightedItemReason(null);
-  }, [setHighlightedItemValue]);
+  };
 
   const handleItemHighlighted: NonNullable<
     ComponentProps<typeof CommandPaletteContent>["onItemHighlighted"]
@@ -465,20 +449,17 @@ export function useScientProjectFolderActions({
     browseEnvironmentId === primaryEnvironmentId &&
     isMatchingLocalPlatform(browseEnvironmentPlatform, navigator.platform) &&
     typeof window.desktopBridge?.getPathForFile === "function";
-  const handleDroppedProjectFolder = useCallback(
-    (path: string) => {
-      setIsNewProjectFolderDraft(false);
-      setQuery(path);
-      void handleAddProject(path, "drag-drop");
-    },
-    [handleAddProject, setIsNewProjectFolderDraft, setQuery],
-  );
+  const handleDroppedProjectFolder = (path: string) => {
+    setIsNewProjectFolderDraft(false);
+    setQuery(path);
+    void handleAddProject(path, "drag-drop");
+  };
   const projectFolderDrop = useProjectFolderDrop({
     enabled: canDropProjectFolder,
     onFolder: handleDroppedProjectFolder,
   });
 
-  const beginNewProjectFolder = useCallback(() => {
+  const beginNewProjectFolder = () => {
     if (!isBrowsing || isCloneDestinationStep || relativePathNeedsActiveProject) return;
     if (!browseDirectoryPath) return;
     const directoryNames = browseEntries.map((entry) => entry.name);
@@ -494,17 +475,7 @@ export function useScientProjectFolderActions({
         nextQuery.length,
       );
     });
-  }, [
-    browseDirectoryPath,
-    browseEntries,
-    clearHighlightedItem,
-    isBrowsing,
-    isCloneDestinationStep,
-    projectPathInputRef,
-    relativePathNeedsActiveProject,
-    setIsNewProjectFolderDraft,
-    setQuery,
-  ]);
+  };
 
   const canBeginNewProjectFolder =
     isBrowsing && !isCloneDestinationStep && !relativePathNeedsActiveProject;

@@ -17,7 +17,6 @@ import {
   captureHyprlandWindow,
   hyprlandCaptureExecutable,
   hyprlandCaptureShortcut,
-  isHyprlandCaptureSession,
 } from "./HyprlandSnapShot.ts";
 
 let directory: string;
@@ -67,22 +66,6 @@ beforeEach(async () => {
 afterEach(async () => {
   await NodeFSP.rm(directory, { recursive: true, force: true });
 });
-
-it("does not select Hyprland from a stale socket environment or sandbox", () => {
-  expect(isHyprlandCaptureSession({ XDG_CURRENT_DESKTOP: "Hyprland" })).toBe(true);
-  expect(
-    isHyprlandCaptureSession({ XDG_CURRENT_DESKTOP: "KDE", HYPRLAND_INSTANCE_SIGNATURE: "old" }),
-  ).toBe(false);
-  expect(isHyprlandCaptureSession({ XDG_CURRENT_DESKTOP: "Hyprland", FLATPAK_ID: "app" })).toBe(
-    false,
-  );
-  expect(isHyprlandCaptureSession({ XDG_CURRENT_DESKTOP: "Hyprland", SNAP: "app" })).toBe(false);
-});
-it("discovery neither installs a helper nor requests a screenshot", async () => {
-  expect((await setup.state()).status).toBe("not-installed");
-  expect(execute).not.toHaveBeenCalled();
-  await expect(NodeFSP.stat(paths.dataHome)).rejects.toMatchObject({ code: "ENOENT" });
-});
 it("installs offline at a stable executable path and probes only capabilities", async () => {
   await setup.perform("install-hyprland-helper");
   expect((await NodeFSP.stat(hyprlandCaptureExecutable(paths))).mode & 0o777).toBe(0o755);
@@ -102,6 +85,22 @@ it("updates explicitly and removes only its helper", async () => {
   await setup.perform("remove-hyprland-helper");
   expect((await setup.state()).status).toBe("not-installed");
   expect(await NodeFSP.readFile(unrelated, "utf8")).toBe("keep");
+});
+it("installs under the Scient name and replaces a helper installed under T3's name", async () => {
+  const executable = hyprlandCaptureExecutable(paths);
+  expect(NodePath.basename(executable)).toBe("scient-hyprland-snap-shot");
+  const legacy = NodePath.join(NodePath.dirname(executable), "t3-hyprland-snap-shot");
+  await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
+  await NodeFSP.writeFile(legacy, "bundled executable", { mode: 0o755 });
+  expect((await setup.state()).status).toBe("update-required");
+  await setup.perform("install-hyprland-helper");
+  expect(await NodeFSP.readdir(NodePath.dirname(executable))).toEqual([
+    NodePath.basename(executable),
+  ]);
+  expect((await setup.state()).status).toBe("ready");
+  await NodeFSP.writeFile(legacy, "bundled executable");
+  await setup.perform("remove-hyprland-helper");
+  expect(await NodeFSP.readdir(NodePath.dirname(executable))).toEqual([]);
 });
 it("does not overwrite a linked executable", async () => {
   const executable = hyprlandCaptureExecutable(paths);

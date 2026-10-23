@@ -42,7 +42,7 @@ const request = (requestId: string, connectionId: string): ScientDocumentHostStr
     requestId,
     threadId: ThreadId.make("thread-1"),
     operation: "documentLatexPresent",
-    input: { rootSourcePath: "papers/main.tex" },
+    input: { sourcePath: "papers/main.tex", rootSourcePath: "papers/main.tex" },
     timeoutMs: 15_000,
   },
 });
@@ -120,29 +120,22 @@ describe("document host requests", () => {
     ),
   );
 
-  it.effect(
-    "reconnects after the server ends the host stream",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const host = yield* observeHostRequests([
-            Stream.make(connected("evicted")),
-            Stream.concat(Stream.make(connected("replacement")), Stream.never),
-          ]);
+  it.effect("reconnects after the server ends the host stream", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const host = yield* observeHostRequests([
+          Stream.make(connected("evicted")),
+          Stream.concat(Stream.make(connected("replacement")), Stream.never),
+        ]);
 
-          yield* Effect.promise(() =>
-            vi.waitFor(() => expect(host.events.at(-1)).toEqual(connected("replacement")), {
-              timeout: 5_000,
-            }),
-          );
-          expect(host.subscriptions()).toBe(2);
-          expect(host.events.map((event) => event.connectionId)).toEqual([
-            "evicted",
-            "replacement",
-          ]);
-        }),
-      ),
-    // The reconnect delay runs on the atom runtime's real clock.
-    15_000,
+        yield* Effect.promise(() =>
+          vi.waitFor(() => expect(host.events.at(-1)).toEqual(connected("replacement")), {
+            timeout: 5_000,
+          }),
+        );
+        expect(host.subscriptions()).toBe(2);
+        expect(host.events.map((event) => event.connectionId)).toEqual(["evicted", "replacement"]);
+      }),
+    ),
   );
 });

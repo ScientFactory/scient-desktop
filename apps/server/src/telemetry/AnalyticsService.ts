@@ -11,6 +11,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type { TelemetryOwner } from "./Identify.ts";
 
 // SCIENT-FORK:START — Scient first-party analytics replaces the PostHog client
 import { disabledAnalyticsService, make, type ScientAnalyticsControls } from "./ScientAnalytics.ts";
@@ -28,6 +29,12 @@ export class AnalyticsService extends Context.Service<
 
     /** Attempt delivery of the currently due local outbox batch. */
     readonly flush: Effect.Effect<void>;
+
+    /** Compatibility only: Scient never records provider or installation owner identities. */
+    readonly recordOwners: (
+      owners: ReadonlyArray<TelemetryOwner>,
+      observedBy: "server" | "client",
+    ) => Effect.Effect<void>;
     // SCIENT-FORK:START — consent and deletion controls
   } & ScientAnalyticsControls
   // SCIENT-FORK:END

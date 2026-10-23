@@ -1,9 +1,10 @@
+import { ProjectSearchEntriesInput } from "./project.ts";
+import { ProjectSearchContentsInput } from "./project.ts";
 import { assert, it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ProjectId } from "./baseSchemas.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 
 import {
@@ -13,7 +14,6 @@ import {
   ProjectReadFileError,
   ProjectCreatePayload,
   ProjectFileWatchEvent,
-  ProjectIconOverride,
   ProjectListDirectoryError,
   ProjectListDirectoryInput,
   ProjectListDirectoryResult,
@@ -22,21 +22,241 @@ import {
   ProjectRenameFileInput,
   ProjectUpdatePayload,
   ProjectSearchContentsError,
-  ProjectSearchContentsInput,
   ProjectSearchEntriesError,
-  ProjectSearchEntriesInput,
   ProjectWriteFileError,
+  ProjectWriteFileInput,
+  ProjectDeleteFileInput,
+  ProjectDeleteFileError,
+  ProjectRenameFileError,
+  ProjectListFileVersionsResult,
+  ProjectResolveFileMutationInput,
+  ProjectResolveFileMutationResult,
+  ProjectReadFileResult,
 } from "./project.ts";
 
 const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
 const decodeProjectUpdatePayload = Schema.decodeUnknownSync(ProjectUpdatePayload);
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const encodeProjectMutation = Schema.encodeSync(ProjectMutation);
-const decodeSearchEntriesInput = Schema.decodeUnknownSync(ProjectSearchEntriesInput);
-const decodeSearchContentsInput = Schema.decodeUnknownSync(ProjectSearchContentsInput);
+
 const decodeFileWatchEvent = Schema.decodeUnknownSync(ProjectFileWatchEvent);
 const decodeListDirectoryInput = Schema.decodeUnknownSync(ProjectListDirectoryInput);
 const decodeListDirectoryResult = Schema.decodeUnknownSync(ProjectListDirectoryResult);
+
+describe("retained file mutation contracts", () => {
+  it("rejects empty mutation identities while allowing callers without an identity", () => {
+    const common = { cwd: "/workspace", relativePath: "notes.md" };
+    const write = Schema.decodeUnknownSync(ProjectWriteFileInput);
+    const rename = Schema.decodeUnknownSync(ProjectRenameFileInput);
+    const remove = Schema.decodeUnknownSync(ProjectDeleteFileInput);
+    const writeInput = { ...common, contents: "saved" };
+    const renameInput = { ...common, destinationRelativePath: "renamed.md" };
+    const deleteInput = { ...common, expectedRevision: "revision-1" };
+    expect(write(writeInput)).toEqual(writeInput);
+    expect(rename(renameInput)).toEqual(renameInput);
+    expect(remove(deleteInput)).toEqual(deleteInput);
+    expect(() => write({ ...writeInput, mutationId: " " })).toThrow();
+    expect(() => rename({ ...renameInput, mutationId: " " })).toThrow();
+    expect(() => remove({ ...deleteInput, mutationId: " " })).toThrow();
+  });
+
+  it("round trips recovery viewer paths through mutation errors", () => {
+    const context = {
+      cwd: "/workspace",
+      relativePath: "notes.md",
+      failure: "recovery_required" as const,
+      mutationId: "mutation-1",
+      publicationOutcome: "retained-attention" as const,
+      recoveryId: "recovery-1",
+      retainedPaths: ["/workspace/.scient/retained/one", "/workspace/.scient/retained/two"],
+    };
+    expect(
+      Schema.decodeUnknownSync(ProjectReadFileError)(
+        Schema.encodeSync(ProjectReadFileError)(new ProjectReadFileError(context)),
+      ),
+    ).toMatchObject(context);
+    expect(
+      Schema.decodeUnknownSync(ProjectWriteFileError)(
+        Schema.encodeSync(ProjectWriteFileError)(new ProjectWriteFileError(context)),
+      ),
+    ).toMatchObject(context);
+    expect(
+      Schema.decodeUnknownSync(ProjectDeleteFileError)(
+        Schema.encodeSync(ProjectDeleteFileError)(new ProjectDeleteFileError(context)),
+      ),
+    ).toMatchObject(context);
+    const rename = new ProjectRenameFileError({
+      ...context,
+      destinationRelativePath: "renamed.md",
+    });
+    expect(
+      Schema.decodeUnknownSync(ProjectRenameFileError)(
+        Schema.encodeSync(ProjectRenameFileError)(rename),
+      ),
+    ).toMatchObject(context);
+  });
+
+  it.each([
+    "target_changed",
+    "recovery_required",
+    "mutation_unavailable",
+    "mutation_intent_conflict",
+  ] as const)("does not invent publication authority while decoding %s", (failure) => {
+    const decode = Schema.decodeUnknownSync(ProjectWriteFileError);
+    const legacy = decode({
+      _tag: "ProjectWriteFileError",
+      cwd: "/workspace",
+      relativePath: "notes.md",
+      failure,
+      message: "Publication refused.",
+    });
+    expect(legacy.publicationOutcome).toBeUndefined();
+    for (const publicationOutcome of ["unchanged", "retained-attention"] as const) {
+      const encoded = Schema.encodeSync(ProjectWriteFileError)(
+        new ProjectWriteFileError({
+          cwd: "/workspace",
+          relativePath: "notes.md",
+          failure,
+          mutationId: "owned-intent",
+          publicationOutcome,
+        }),
+      );
+      expect(decode(encoded)).toMatchObject({
+        failure,
+        mutationId: "owned-intent",
+        publicationOutcome,
+      });
+    }
+    expect(() =>
+      decode({
+        ...legacy,
+        publicationOutcome: "probably-unchanged",
+      }),
+    ).toThrow();
+  });
+
+  it("preserves retained revisions and an unlimited quota without inventing a limit", () => {
+    const result = {
+      versions: [
+        {
+          versionId: "version-1",
+          mutationId: "mutation-1",
+          retainedPath: "/workspace/.scient/retained/one",
+          revision: null,
+          byteLength: 7,
+          retainedAt: 123,
+        },
+      ],
+      retainedBytes: 7,
+      limitBytes: null,
+      attention: null,
+    };
+    expect(Schema.decodeUnknownSync(ProjectListFileVersionsResult)(result)).toEqual(result);
+  });
+
+  it("carries durable attention on both authoritative reads and version inventory", () => {
+    const attention = {
+      recoveryId: "recovery-1",
+      mutationId: "mutation-1",
+      retainedPaths: ["/workspace/.scient/retained/one"],
+      message: "Review the retained publication.",
+    };
+    expect(
+      Schema.decodeUnknownSync(ProjectReadFileResult)({
+        relativePath: "notes.md",
+        contents: "current",
+        byteLength: 7,
+        truncated: false,
+        revision: "revision-1",
+        publicationAttention: attention,
+      }).publicationAttention,
+    ).toEqual(attention);
+    expect(
+      Schema.decodeUnknownSync(ProjectListFileVersionsResult)({
+        versions: [],
+        retainedBytes: 0,
+        limitBytes: null,
+        attention,
+      }).attention,
+    ).toEqual(attention);
+  });
+
+  it.each(["revision-1", null])(
+    "requires an explicit reviewed current revision or absence for acceptance: %s",
+    (currentRevision) => {
+      const input = {
+        cwd: "/workspace",
+        relativePath: "notes.md",
+        recoveryId: "recovery-1",
+        currentRevision,
+        choice: "accept-current" as const,
+      };
+      const decode = Schema.decodeUnknownSync(ProjectResolveFileMutationInput);
+      expect(decode(Schema.encodeSync(ProjectResolveFileMutationInput)(input))).toEqual(input);
+      const result = { recoveryId: input.recoveryId, revision: currentRevision };
+      expect(
+        Schema.decodeUnknownSync(ProjectResolveFileMutationResult)(
+          Schema.encodeSync(ProjectResolveFileMutationResult)(result),
+        ),
+      ).toEqual(result);
+      expect(() => decode({ ...input, recoveryId: undefined })).toThrow();
+      expect(() => decode({ ...input, currentRevision: undefined })).toThrow();
+      expect(() => decode({ ...input, currentRevision: " " })).toThrow();
+      expect(() => decode({ ...input, choice: "overwrite" })).toThrow();
+      expect(() =>
+        Schema.decodeUnknownSync(ProjectResolveFileMutationResult)({
+          ...result,
+          revision: undefined,
+        }),
+      ).toThrow();
+      expect(() =>
+        Schema.decodeUnknownSync(ProjectResolveFileMutationResult)({
+          ...result,
+          revision: "",
+        }),
+      ).toThrow();
+    },
+  );
+
+  it("does not extend reviewed absence to source reads or revision-conflict metadata", () => {
+    expect(() =>
+      Schema.decodeUnknownSync(ProjectReadFileResult)({
+        relativePath: "notes.md",
+        contents: "",
+        byteLength: 0,
+        truncated: false,
+        revision: null,
+      }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeUnknownSync(ProjectWriteFileError)({
+        _tag: "ProjectWriteFileError",
+        cwd: "/workspace",
+        relativePath: "notes.md",
+        failure: "revision_conflict",
+        message: "Current file differs.",
+        currentRevision: null,
+      }),
+    ).toThrow();
+  });
+
+  it("distinguishes authoritative pathname absence from ordinary not-found read failures", () => {
+    const input = {
+      cwd: "/workspace",
+      relativePath: "notes.md",
+      failure: "operation_failed" as const,
+      reason: "not_found" as const,
+    };
+    const decode = Schema.decodeUnknownSync(ProjectReadFileError);
+    const encode = Schema.encodeSync(ProjectReadFileError);
+    expect(decode(encode(new ProjectReadFileError(input))).currentMissing).toBeUndefined();
+    const missing = new ProjectReadFileError({ ...input, currentMissing: true });
+    expect(decode(encode(missing))).toMatchObject({ ...input, currentMissing: true });
+    for (const currentMissing of [false, null]) {
+      expect(() => decode({ ...encode(missing), currentMissing })).toThrow();
+    }
+  });
+});
 
 describe("project file watch events", () => {
   it("carries only a readiness or change hint and never file contents", () => {
@@ -55,30 +275,6 @@ describe("project file watch events", () => {
         contents: "must not cross the watcher stream",
       }),
     ).toEqual({ _tag: "file-changed", relativePath: "analysis.m" });
-  });
-});
-
-describe("project search inputs", () => {
-  it("allows an empty entries query for bounded frecency browsing", () => {
-    const decoded = decodeSearchEntriesInput({
-      cwd: "/workspace",
-      query: "   ",
-      limit: 10,
-      kind: "file",
-    });
-    expect(decoded.query).toBe("");
-  });
-
-  it("preserves whitespace in content search queries", () => {
-    const decoded = decodeSearchContentsInput({
-      cwd: "/workspace",
-      query: " foo ",
-      limit: 10,
-      caseSensitive: false,
-      wholeWord: false,
-      useRegex: false,
-    });
-    expect(decoded.query).toBe(" foo ");
   });
 });
 
@@ -353,63 +549,9 @@ effectIt.effect("project favicon paths accept only supported image files", () =>
   }),
 );
 
-const decodeProjectUpdateEffect = Schema.decodeUnknownEffect(ProjectUpdatePayload);
-const decodeUpdateIcon = (projectIcon: unknown) =>
-  Effect.map(decodeProjectUpdateEffect({ projectIcon }), (update) => update.projectIcon);
-
-effectIt.effect("project icon overrides accept Lucide icons, colors, and emoji", () =>
-  Effect.gen(function* () {
-    const lucide = { kind: "lucide", name: "alarm-clock", color: "violet" } as const;
-    assert.deepEqual(yield* decodeUpdateIcon(lucide), lucide);
-    const emoji = { kind: "emoji", emoji: "👩🏽‍💻" } as const;
-    assert.deepEqual(yield* decodeUpdateIcon(emoji), emoji);
-    const invalid = yield* Effect.exit(
-      decodeUpdateIcon({ kind: "lucide", name: "Alarm Clock", color: "ultraviolet" }),
-    );
-    assert.strictEqual(invalid._tag, "Failure");
-  }),
-);
-
-effectIt.effect("project monograms validate text and palette colors", () =>
-  Effect.gen(function* () {
-    for (const text of ["A", "T3", "É", "文書", "कि", "किखि", "e\u0301"]) {
-      assert.deepEqual(yield* decodeUpdateIcon({ kind: "monogram", color: "violet", text }), {
-        kind: "monogram",
-        text,
-        color: "violet",
-      });
-    }
-    for (const projectIcon of [
-      { kind: "monogram", text: "", color: "blue" },
-      { kind: "monogram", text: "\u0301", color: "blue" },
-      { kind: "monogram", text: "A B", color: "blue" },
-      { kind: "monogram", text: "🚀", color: "blue" },
-      { kind: "monogram", text: "T3", color: "ultraviolet" },
-    ]) {
-      assert.strictEqual((yield* Effect.exit(decodeUpdateIcon(projectIcon)))._tag, "Failure");
-    }
-  }),
-);
-
 const decodeStoredIcon = Schema.decodeUnknownEffect(StoredProjectIcon);
-const encodeStoredIcon = Schema.encodeEffect(StoredProjectIcon);
 const decodeReceivedIcon = Schema.decodeUnknownEffect(ReceivedProjectIcon);
-const encodeReceivedIcon = Schema.encodeEffect(ReceivedProjectIcon);
 const decodeProjectShell = Schema.decodeUnknownEffect(OrchestrationProjectShell);
-
-effectIt.effect("sends and stores icons in their plain shape", () =>
-  Effect.gen(function* () {
-    for (const icon of [
-      { kind: "monogram", text: "क्ष्म", color: "violet" },
-      { kind: "lucide", name: "alarm-clock", color: "blue" },
-      { kind: "emoji", emoji: "🚀" },
-    ] as const) {
-      assert.deepEqual(yield* encodeReceivedIcon(icon), icon);
-      assert.deepEqual(yield* encodeStoredIcon(icon), icon);
-      assert.deepEqual(yield* decodeReceivedIcon(icon), icon);
-    }
-  }),
-);
 
 effectIt.effect("reads monograms stored in the pre-v2 fallback shape", () =>
   Effect.gen(function* () {

@@ -125,9 +125,8 @@ export function makeAntigravityAcpAdapterFlavor(
 ): AcpAdapterV2Flavor {
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
-  const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
-    Effect.gen(function* () {
-      // process by closing it, and the adapter respawns on the next turn.
+  const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
+    function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
       const platform = yield* HostProcess.Platform;
       const runtime = yield* options
@@ -168,14 +167,14 @@ export function makeAntigravityAcpAdapterFlavor(
               ),
             ),
       };
-    }).pipe(
-      Effect.provideService(Crypto.Crypto, options.crypto),
-      Effect.mapError((cause): EffectAcpErrors.AcpError =>
-        cause._tag === "ProviderSetupError"
-          ? new EffectAcpErrors.AcpTransportError({ detail: cause.detail, cause })
-          : cause,
-      ),
-    );
+    },
+    Effect.provideService(Crypto.Crypto, options.crypto),
+    Effect.mapError((cause): EffectAcpErrors.AcpError =>
+      cause._tag === "ProviderSetupError"
+        ? new EffectAcpErrors.AcpTransportError({ detail: cause.detail, cause })
+        : cause,
+    ),
+  );
 
   return {
     driver: ANTIGRAVITY_PROVIDER,
@@ -200,17 +199,19 @@ export function makeAntigravityAcpAdapterFlavor(
         ? toolCall.toolCallId
         : undefined,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
-    applyModelSelection: ({ runtime, modelSelection }) =>
-      Effect.gen(function* () {
-        const defaultModel = yield* options.defaultModel;
-        return yield* applyAntigravityAcpModelSelection({
-          runtime,
-          model:
-            modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL ? undefined : modelSelection.model,
-          defaultModel,
-          mapError: (cause) => cause,
-        });
-      }),
+    applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
+      runtime,
+      modelSelection,
+    }) {
+      const defaultModel = yield* options.defaultModel;
+      return yield* applyAntigravityAcpModelSelection({
+        runtime,
+        model:
+          modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL ? undefined : modelSelection.model,
+        defaultModel,
+        mapError: (cause) => cause,
+      });
+    }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
     clientFileSystem: {
       readTextFile: (request, cwd) =>

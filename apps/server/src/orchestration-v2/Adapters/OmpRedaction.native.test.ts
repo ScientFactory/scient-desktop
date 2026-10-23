@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { createModelSelection } from "@t3tools/shared/model";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -22,6 +23,20 @@ const toJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 /** A custom-model key only the process knows: the adapter never sees it. */
 const KEY = "customlivekey-0123456789abcdef";
 const ECHO = `401 Incorrect API key provided: ${KEY}. (type=invalid_request_error)`;
+const isFinalToolResultLog = Schema.is(
+  Schema.Struct({
+    event: Schema.Struct({
+      kind: Schema.Literal("notification"),
+      method: Schema.Literal("message_end"),
+      payload: Schema.TaggedStruct("Event", {
+        event: Schema.Struct({
+          type: Schema.Literal("message_end"),
+          message: Schema.Struct({ role: Schema.Literal("toolResult") }),
+        }),
+      }),
+    }),
+  }),
+);
 
 const failedAssistant = {
   role: "assistant",
@@ -95,6 +110,7 @@ describe("native OMP process redaction", () => {
             Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
           );
           const logged: Array<unknown> = [];
+          const finalLogWritten = yield* Deferred.make<void>();
           const instanceId = ProviderInstanceId.make("native-omp-redaction");
           let sessionDirectory: string | undefined;
           let ordinal = 0;
@@ -171,7 +187,14 @@ describe("native OMP process redaction", () => {
             environment: { HOME: "/tmp/home" },
             nativeEventLogger: {
               filePath: "/dev/null",
-              write: (event, threadId) => Effect.sync(() => logged.push({ event, threadId })),
+              write: (event, threadId) =>
+                Effect.sync(() => logged.push({ event, threadId })).pipe(
+                  Effect.andThen(
+                    isFinalToolResultLog(event)
+                      ? Deferred.succeed(finalLogWritten, undefined)
+                      : Effect.void,
+                  ),
+                ),
               close: () => Effect.void,
             },
             makeProcess: (options) =>
@@ -218,7 +241,7 @@ describe("native OMP process redaction", () => {
           yield* session.start({ text: "Say hello." });
           while (!events.some((event) => event.type === "turn.terminal" && event.runOrdinal === 2))
             yield* Queue.take(queue).pipe(Effect.timeout("5 seconds"));
-          yield* Effect.sleep("50 millis");
+          yield* Deferred.await(finalLogWritten).pipe(Effect.timeout("5 seconds"));
           const terminal = events.findLast((event) => event.type === "turn.terminal");
           if (terminal?.type !== "turn.terminal") throw new Error("No native redaction terminal");
           expect(terminal.status).toBe("failed");

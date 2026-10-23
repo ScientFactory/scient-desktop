@@ -35,39 +35,41 @@ export const makeScientProviderTransientState = Effect.fnUntraced(function* () {
   >(new Map());
 
   /** Reads one instance's transient states. */
-  const read = (instanceId: ProviderInstanceId) =>
-    Effect.gen(function* () {
-      const connectionOperation = (yield* Ref.get(connectionOperationStatesRef)).get(instanceId);
-      const authenticationFailure = (yield* Ref.get(authenticationFailuresRef)).get(instanceId);
-      const managedRuntime = (yield* Ref.get(managedRuntimeStatesRef)).get(instanceId);
-      return { connectionOperation, authenticationFailure, managedRuntime };
-    });
+  const read = Effect.fn("ScientProviderTransientState.read")(function* (
+    instanceId: ProviderInstanceId,
+  ) {
+    const connectionOperation = (yield* Ref.get(connectionOperationStatesRef)).get(instanceId);
+    const authenticationFailure = (yield* Ref.get(authenticationFailuresRef)).get(instanceId);
+    const managedRuntime = (yield* Ref.get(managedRuntimeStatesRef)).get(instanceId);
+    return { connectionOperation, authenticationFailure, managedRuntime };
+  });
 
   /** Forgets the transient states of instances that no longer exist. */
-  const prune = (knownInstanceIds: ReadonlySet<ProviderInstanceId>) =>
-    Effect.gen(function* () {
-      yield* Ref.update(connectionOperationStatesRef, (previous) => {
-        const next = new Map(previous);
-        for (const instanceId of previous.keys()) {
-          if (!knownInstanceIds.has(instanceId)) next.delete(instanceId);
-        }
-        return next;
-      });
-      yield* Ref.update(authenticationFailuresRef, (previous) => {
-        const next = new Map(previous);
-        for (const instanceId of previous.keys()) {
-          if (!knownInstanceIds.has(instanceId)) next.delete(instanceId);
-        }
-        return next;
-      });
-      yield* Ref.update(managedRuntimeStatesRef, (previous) => {
-        const next = new Map(previous);
-        for (const instanceId of previous.keys()) {
-          if (!knownInstanceIds.has(instanceId)) next.delete(instanceId);
-        }
-        return next;
-      });
+  const prune = Effect.fn("ScientProviderTransientState.prune")(function* (
+    knownInstanceIds: ReadonlySet<ProviderInstanceId>,
+  ) {
+    yield* Ref.update(connectionOperationStatesRef, (previous) => {
+      const next = new Map(previous);
+      for (const instanceId of previous.keys()) {
+        if (!knownInstanceIds.has(instanceId)) next.delete(instanceId);
+      }
+      return next;
     });
+    yield* Ref.update(authenticationFailuresRef, (previous) => {
+      const next = new Map(previous);
+      for (const instanceId of previous.keys()) {
+        if (!knownInstanceIds.has(instanceId)) next.delete(instanceId);
+      }
+      return next;
+    });
+    yield* Ref.update(managedRuntimeStatesRef, (previous) => {
+      const next = new Map(previous);
+      for (const instanceId of previous.keys()) {
+        if (!knownInstanceIds.has(instanceId)) next.delete(instanceId);
+      }
+      return next;
+    });
+  });
 
   /** The setters ProviderRegistry serves; each re-applies the overlay to its instance. */
   const makeSetters = (deps: {

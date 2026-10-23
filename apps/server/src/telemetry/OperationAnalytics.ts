@@ -59,14 +59,14 @@ export const makeOperationAnalytics = Effect.gen(function* () {
 });
 
 /** For operations whose Effect completion really is the product outcome. */
-export function observeAnalyticsEffect<A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-  measurement:
-    | { readonly kind: "pdf-export"; readonly trigger: "agent" }
-    | { readonly kind: "server-startup" }
-    | { readonly kind: "provider-sign-out"; readonly provider: string; readonly source: string },
-): Effect.Effect<A, E, R> {
-  return Effect.gen(function* () {
+export const observeAnalyticsEffect = Effect.fn("OperationAnalytics.observeAnalyticsEffect")(
+  function* <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    measurement:
+      | { readonly kind: "pdf-export"; readonly trigger: "agent" }
+      | { readonly kind: "server-startup" }
+      | { readonly kind: "provider-sign-out"; readonly provider: string; readonly source: string },
+  ): Effect.fn.Return<A, E, R> {
     const service = yield* Effect.serviceOption(AnalyticsService);
     if (Option.isNone(service)) return yield* effect;
     const analytics = service.value;
@@ -79,11 +79,8 @@ export function observeAnalyticsEffect<A, E, R>(
     if (observation === null) return yield* effect;
     const { epoch } = observation;
     const startedAt = yield* Clock.currentTimeMillis;
-    const record = (
-      outcome: "started" | "completed" | "failed" | "cancelled",
-      durationMs?: number,
-    ) =>
-      Effect.gen(function* () {
+    const record = Effect.fn("OperationAnalytics.record")(
+      function* (outcome: "started" | "completed" | "failed" | "cancelled", durationMs?: number) {
         if ((yield* analytics.collectionEpoch) !== epoch) return;
         if (measurement.kind === "server-startup") {
           yield* analytics.record("app.health", {
@@ -107,7 +104,9 @@ export function observeAnalyticsEffect<A, E, R>(
             reviewRequired: true,
           });
         }
-      }).pipe(Effect.ignoreCause());
+      },
+      (effect) => effect.pipe(Effect.ignoreCause()),
+    );
     yield* record("started");
     return yield* effect.pipe(
       Effect.onExit((exit) =>
@@ -124,5 +123,5 @@ export function observeAnalyticsEffect<A, E, R>(
         }).pipe(Effect.ignoreCause()),
       ),
     );
-  });
-}
+  },
+);

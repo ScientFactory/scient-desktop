@@ -99,7 +99,7 @@ export const layer = Layer.effect(
     );
     let cached: { revision: string; value: Effect.Success<typeof load> } | undefined;
     return KeepAwakeService.of({
-      observe: (request) =>
+      observe: Effect.fn("KeepAwakeService.observe")((request: KeepAwakeObserveRequest) =>
         lock.withPermits(1)(
           Effect.gen(function* () {
             const sequence = yield* events.latestApplicationSequence;
@@ -226,6 +226,7 @@ export const layer = Layer.effect(
             Effect.mapError((cause) => new KeepAwakeObservationError({ cause })),
           ),
         ),
+      ),
     });
   }),
 );

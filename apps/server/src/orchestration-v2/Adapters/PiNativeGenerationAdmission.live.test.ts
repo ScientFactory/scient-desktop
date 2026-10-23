@@ -200,25 +200,8 @@ void (async () => { while (true) {
             assert.isTrue(Number.isSafeInteger(pid));
             assert.isAbove(pid, 1);
             process.kill(pid, 0);
-            const awaitPidExit = (ownedPid: number): Effect.Effect<void> =>
-              Effect.sync(() => {
-                try {
-                  process.kill(ownedPid, 0);
-                  return false;
-                } catch (error) {
-                  assert.match(String(error), /ESRCH/);
-                  return true;
-                }
-              }).pipe(
-                Effect.flatMap((exited) =>
-                  exited
-                    ? Effect.void
-                    : Effect.sleep("10 millis").pipe(
-                        Effect.andThen(Effect.suspend(() => awaitPidExit(ownedPid))),
-                      ),
-                ),
-              );
-            const awaitPhysicalExit = awaitPidExit(pid);
+            // Capture this generation's real child exit before a replacement can open.
+            const awaitPhysicalExit = nativeExited;
             assert.isTrue(ctx.wire.some((record) => record.type === "get_state"));
             assert.lengthOf(ctx.foreground.runs, 1);
             assert.equal(ctx.foreground.runs[0]?.status, "completed");
@@ -482,7 +465,7 @@ void (async () => { while (true) {
                   yield* ctx.manager
                     .close(runtime.providerSessionId)
                     .pipe(Effect.timeout("10 seconds"));
-                  yield* awaitPidExit(replacementPid).pipe(Effect.timeout("10 seconds"));
+                  yield* nativeExited.pipe(Effect.timeout("10 seconds"));
                   assert.throws(() => process.kill(replacementPid, 0), /ESRCH/);
                 }
               } else {

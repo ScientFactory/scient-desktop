@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { useLayoutEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { renderMermaidDiagram } from "~/scient/diagrams/mermaidRuntime";
 import type {
@@ -93,7 +95,7 @@ export function ScientEditableRichFence(props: ScientEditableRichFenceProps) {
     };
   }, []);
 
-  const schedulePendingValidation = useCallback(() => {
+  const schedulePendingValidation = useStableCallback(() => {
     if (validationTimerRef.current != null) {
       clearTimeout(validationTimerRef.current);
       validationTimerRef.current = null;
@@ -112,9 +114,9 @@ export function ScientEditableRichFence(props: ScientEditableRichFenceProps) {
       validationTimerRef.current = null;
       runPendingValidationRef.current();
     }, delay);
-  }, []);
+  });
 
-  const runPendingValidation = useCallback(() => {
+  const runPendingValidation = useStableCallback(() => {
     if (!mountedRef.current || !isNearViewportRef.current || validationRunningRef.current != null) {
       return;
     }
@@ -151,10 +153,14 @@ export function ScientEditableRichFence(props: ScientEditableRichFenceProps) {
       () => finish(true),
       (cause: unknown) => finish(false, cause),
     );
-  }, []);
+  });
 
-  runPendingValidationRef.current = runPendingValidation;
-  schedulePendingValidationRef.current = schedulePendingValidation;
+  useLayoutEffect(() => {
+    runPendingValidationRef.current = runPendingValidation;
+  });
+  useLayoutEffect(() => {
+    schedulePendingValidationRef.current = schedulePendingValidation;
+  });
 
   useEffect(() => {
     isNearViewportRef.current = isNearViewport;

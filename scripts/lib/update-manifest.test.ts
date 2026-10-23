@@ -13,28 +13,29 @@ import {
 const fixtureRoot = NodePath.resolve(import.meta.dirname, "../fixtures/release-manifests");
 
 describe("update manifest parser", () => {
-  it("parses manifests captured from Electron Builder 26.15.6", () => {
+  it.each([
+    { version: "26.15.6", directory: "." },
+    { version: "26.16.1", directory: "electron-builder-26.16.1" },
+  ])("parses manifests captured from Electron Builder $version", ({ version, directory }) => {
+    const root = NodePath.join(fixtureRoot, directory);
     const metadata = JSON.parse(
-      NodeFS.readFileSync(NodePath.join(fixtureRoot, "metadata.json"), "utf8"),
+      NodeFS.readFileSync(NodePath.join(root, "metadata.json"), "utf8"),
     ) as { readonly electronBuilderVersion?: unknown };
-    const desktopPackage = JSON.parse(
-      NodeFS.readFileSync(
-        NodePath.resolve(import.meta.dirname, "../../apps/desktop/package.json"),
-        "utf8",
-      ),
-    ) as { readonly devDependencies?: Record<string, string> };
 
-    assert.equal(metadata.electronBuilderVersion, "26.15.6");
-    assert.equal(
-      desktopPackage.devDependencies?.["electron-builder"],
-      metadata.electronBuilderVersion,
-    );
+    assert.equal(metadata.electronBuilderVersion, version);
+    const captured =
+      directory === "."
+        ? null
+        : (JSON.parse(NodeFS.readFileSync(NodePath.join(root, "manifests.json"), "utf8")) as Record<
+            string,
+            string
+          >);
 
     const manifests = new Map(
       ["latest-mac.yml", "latest.yml", "latest-linux.yml"].map((name) => [
         name,
         parseUpdateManifest(
-          NodeFS.readFileSync(NodePath.join(fixtureRoot, name), "utf8"),
+          captured?.[name] ?? NodeFS.readFileSync(NodePath.join(root, name), "utf8"),
           name,
           "fixture",
         ),

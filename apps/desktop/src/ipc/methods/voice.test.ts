@@ -40,10 +40,28 @@ describe("requestMicrophoneAccessForPlatform", () => {
     assert.equal(result, "denied");
   });
 
-  it("leaves non-macOS hosts on the existing browser permission path", async () => {
+  it("reports the Windows privacy switch without prompting", async () => {
+    for (const [status, expected] of [
+      ["granted", "granted"],
+      ["denied", "denied"],
+      ["not-determined", "unavailable"],
+      ["unknown", "unavailable"],
+    ] as const) {
+      const askForMediaAccess = vi.fn().mockResolvedValue(true);
+      const result = await requestMicrophoneAccessForPlatform("win32", {
+        getMediaAccessStatus: () => status,
+        askForMediaAccess,
+      });
+
+      assert.equal(result, expected);
+      assert.equal(askForMediaAccess.mock.calls.length, 0);
+    }
+  });
+
+  it("leaves other hosts on the existing browser permission path", async () => {
     const askForMediaAccess = vi.fn().mockResolvedValue(true);
-    const result = await requestMicrophoneAccessForPlatform("win32", {
-      getMediaAccessStatus: () => "not-determined",
+    const result = await requestMicrophoneAccessForPlatform("linux", {
+      getMediaAccessStatus: () => "denied",
       askForMediaAccess,
     });
 

@@ -56,7 +56,6 @@ const ThreadOrganizeTool = Tool.make("scient_thread_organize", {
   dependencies: [
     ProviderSessionManagerV2,
     McpInvocationContext.McpInvocationContext,
-    ProviderSessionManagerV2,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
   ],
@@ -72,7 +71,6 @@ const commandTool = {
   dependencies: [
     ProviderSessionManagerV2,
     McpInvocationContext.McpInvocationContext,
-    ProviderSessionManagerV2,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
   ],
@@ -264,7 +262,7 @@ const ThreadSearchTool = Tool.make("scient_thread_search", {
 const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   ...commandTool,
   description:
-    "Run a scheduled task now through the existing scheduler. Requires a full-access/default caller. Each call is a new manual run; completion means dispatch/bookkeeping completed, not that the provider turn finished.",
+    "Run a scheduled task now through the existing scheduler. Requires a full-access/default caller. Returns the thread this run dispatched to, or null if dispatch failed. Each call is a new manual run; completion means dispatch/bookkeeping completed, not that the provider turn finished.",
   parameters: Schema.Struct({ taskId: ScheduledTaskId }),
   success: Schema.Struct({
     taskId: ScheduledTaskId,

@@ -46,15 +46,16 @@ export interface StickyModelSelection {
  * provider can run a chat here.
  */
 export function newChatModelSelection(input: {
-  readonly config: ServerConfig | undefined;
+  /** The environment's provider statuses; undefined while it is not connected. */
+  readonly providers: ServerConfig["providers"] | undefined;
   readonly settings: UnifiedSettings;
   readonly project: ImportProject | null;
   /** What a new thread carries from the chat in view (`readCarriedModelSelection`). */
   readonly carrySelection: ModelSelection | null;
   readonly sticky: StickyModelSelection;
 }): ModelSelection | null {
-  const { config, settings, project, sticky } = input;
-  if (config === undefined || project === null) return null;
+  const { providers, settings, project, sticky } = input;
+  if (providers === undefined || project === null) return null;
   const projectDefault =
     resolveProjectSettings(settings, project.id, project).settings.defaultModelSelection ?? null;
   const override = resolveNewThreadModelSelectionOverride({
@@ -75,11 +76,7 @@ export function newChatModelSelection(input: {
   // A draft thread's own selection, as the chat view builds it.
   const threadModelSelection = projectDefault ?? NO_PROVIDER_MODEL_SELECTION;
   const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(config.providers),
-      settings,
-      project.id,
-    ),
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, project.id),
   );
   const { selectedProviderEntry } = resolveComposerProviderSelection({
     entries,
@@ -100,7 +97,7 @@ export function newChatModelSelection(input: {
   );
   const { selectedModel } = deriveEffectiveComposerModelState({
     draft,
-    providers: config.providers,
+    providers,
     selectedProvider: selectedProviderEntry.driverKind,
     selectedInstanceId: selectedProviderEntry.instanceId,
     threadModelSelection,

@@ -105,7 +105,8 @@ function disabledRuntime(outboxPath: string): AnalyticsRuntime {
 
 function packagedAnalyticsWorkerUrl(): URL {
   const moduleUrl = new URL(import.meta.url);
-  return moduleUrl.pathname.endsWith("/dist/bin.mjs")
+  // Lazy CLI chunks and the entry bundle share the emitted worker's directory.
+  return moduleUrl.pathname.endsWith(".mjs")
     ? new URL("./analytics-worker.mjs", moduleUrl)
     : new URL("../../dist/analytics-worker.mjs", moduleUrl);
 }
@@ -141,6 +142,7 @@ async function writeStoredConsent(path: string, consent: AnalyticsConsent): Prom
 /** No-op analytics for tests and callers that intentionally disable analytics. */
 export const disabledAnalyticsService: AnalyticsService["Service"] = {
   record: () => Effect.void,
+  recordOwners: () => Effect.void,
   flush: Effect.void,
   status: Effect.succeed({ available: false, consent: "off" }),
   collectionEpoch: Effect.succeed(0),
@@ -265,8 +267,10 @@ export const make = Effect.gen(function* () {
     consent: analyticsConfig.enabled ? consent : "off",
   }));
 
-  const setConsent: AnalyticsService["Service"]["setConsent"] = (nextConsent) =>
-    Effect.gen(function* () {
+  const setConsent: AnalyticsService["Service"]["setConsent"] = Effect.fn(
+    "ScientAnalytics.setConsent",
+  )(
+    function* (nextConsent: AnalyticsConsent) {
       const nextSessionStartedAt = yield* Clock.currentTimeMillis;
       return yield* Effect.tryPromise({
         try: () =>
@@ -313,10 +317,10 @@ export const make = Effect.gen(function* () {
           }),
         catch: () => "analytics-consent-update-failed" as const,
       });
-    }).pipe(
-      Effect.tapError(() => Effect.logWarning("Scient analytics consent could not be updated")),
-      Effect.orDie,
-    );
+    },
+    Effect.tapError(() => Effect.logWarning("Scient analytics consent could not be updated")),
+    Effect.orDie,
+  );
 
   const deleteData: AnalyticsService["Service"]["deleteData"] = Effect.gen(function* () {
     const nextSessionStartedAt = yield* Clock.currentTimeMillis;
@@ -365,6 +369,8 @@ export const make = Effect.gen(function* () {
 
   return {
     record,
+    // Provider and installation owner identities are outside Scient's analytics contract.
+    recordOwners: disabledAnalyticsService.recordOwners,
     flush,
     status,
     setConsent,

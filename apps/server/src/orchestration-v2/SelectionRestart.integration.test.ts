@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { awaitThreadProjection } from "./testkit/awaitThreadProjection.testkit.ts";
 import {
   CommandId,
   EventId,
@@ -50,12 +51,6 @@ const replacementSelection = {
 const seedSelection = {
   instanceId: providerInstanceId,
   model: "seed-model",
-} satisfies ModelSelection;
-const handoffDriver = ProviderDriverKind.make("claudeAgent");
-const handoffProviderInstanceId = ProviderInstanceId.make("claude-handoff-test");
-const handoffSelection = {
-  instanceId: handoffProviderInstanceId,
-  model: "handoff-model",
 } satisfies ModelSelection;
 const pooledCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 const exclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
@@ -285,109 +280,6 @@ function makeRestartAdapter(
                 yield* Ref.update(state, (current) => ({ ...current, activeTurn: null }));
               }
             }),
-          respondToRuntimeRequest: () => Effect.void,
-          readThreadSnapshot: () => Effect.die("unused readThreadSnapshot"),
-          rollbackThread: () => Effect.die("unused rollbackThread"),
-          forkThread: () => Effect.die("unused forkThread"),
-        };
-      }),
-  };
-}
-
-function makeCompletingHandoffAdapter(
-  startCount: Ref.Ref<number>,
-): ProviderAdapter.ProviderAdapterV2["Service"] {
-  return {
-    instanceId: handoffProviderInstanceId,
-    driver: handoffDriver,
-    getCapabilities: () => Effect.succeed(exclusiveCapabilities),
-    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-    openSession: (sessionInput) =>
-      Effect.gen(function* () {
-        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-        const now = yield* DateTime.now;
-        return {
-          instanceId: handoffProviderInstanceId,
-          driver: handoffDriver,
-          providerSessionId: sessionInput.providerSessionId,
-          providerSession: {
-            id: sessionInput.providerSessionId,
-            driver: handoffDriver,
-            providerInstanceId: handoffProviderInstanceId,
-            status: "ready",
-            cwd: sessionInput.runtimePolicy.cwd ?? "/fallback",
-            model: sessionInput.modelSelection.model,
-            capabilities: exclusiveCapabilities,
-            createdAt: now,
-            updatedAt: now,
-            lastError: null,
-          },
-          events: Stream.fromQueue(events),
-          ensureThread: (threadInput) =>
-            Effect.gen(function* () {
-              const createdAt = yield* DateTime.now;
-              return {
-                id: ProviderThreadId.make(`provider-thread:handoff:${threadInput.threadId}`),
-                driver: handoffDriver,
-                providerInstanceId: handoffProviderInstanceId,
-                providerSessionId: sessionInput.providerSessionId,
-                appThreadId: threadInput.threadId,
-                ownerNodeId: null,
-                nativeThreadRef: {
-                  driver: handoffDriver,
-                  nativeId: `native-thread:handoff:${threadInput.threadId}`,
-                  strength: "strong",
-                },
-                nativeConversationHeadRef: null,
-                status: "idle",
-                firstRunOrdinal: null,
-                lastRunOrdinal: null,
-                handoffIds: [],
-                forkedFrom: null,
-                createdAt,
-                updatedAt: createdAt,
-              } satisfies OrchestrationV2ProviderThread;
-            }),
-          resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
-          startTurn: (input) =>
-            Effect.gen(function* () {
-              yield* Ref.update(startCount, (count) => count + 1);
-              const occurredAt = yield* DateTime.now;
-              const providerTurnId = ProviderTurnId.make(
-                `provider-turn:handoff:${input.attemptId}`,
-              );
-              yield* Queue.offer(events, {
-                type: "provider_turn.updated",
-                driver: handoffDriver,
-                providerTurn: {
-                  id: providerTurnId,
-                  providerThreadId: input.providerThread.id,
-                  nodeId: input.rootNodeId,
-                  runAttemptId: input.attemptId,
-                  nativeTurnRef: {
-                    driver: handoffDriver,
-                    nativeId: `native:${providerTurnId}`,
-                    strength: "strong",
-                  },
-                  ordinal: input.providerTurnOrdinal,
-                  status: "completed",
-                  startedAt: occurredAt,
-                  completedAt: occurredAt,
-                },
-              });
-              yield* Queue.offer(events, {
-                type: "turn.terminal",
-                driver: handoffDriver,
-                providerThreadId: input.providerThread.id,
-                providerTurnId,
-                runOrdinal: input.runOrdinal,
-                status: "completed",
-                failure: null,
-                threadDisposition: "reusable",
-              });
-            }),
-          steerTurn: () => Effect.void,
-          interruptTurn: () => Effect.void,
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => Effect.die("unused readThreadSnapshot"),
           rollbackThread: () => Effect.die("unused rollbackThread"),
@@ -725,6 +617,118 @@ it.live.each(
   ),
 );
 
+const handoffProviderInstanceId = ProviderInstanceId.make("claude-handoff-test");
+
+const handoffDriver = ProviderDriverKind.make("claudeAgent");
+
+function makeCompletingHandoffAdapter(
+  startCount: Ref.Ref<number>,
+): ProviderAdapter.ProviderAdapterV2["Service"] {
+  return {
+    instanceId: handoffProviderInstanceId,
+    driver: handoffDriver,
+    getCapabilities: () => Effect.succeed(exclusiveCapabilities),
+    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+    openSession: (sessionInput) =>
+      Effect.gen(function* () {
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        const now = yield* DateTime.now;
+        return {
+          instanceId: handoffProviderInstanceId,
+          driver: handoffDriver,
+          providerSessionId: sessionInput.providerSessionId,
+          providerSession: {
+            id: sessionInput.providerSessionId,
+            driver: handoffDriver,
+            providerInstanceId: handoffProviderInstanceId,
+            status: "ready",
+            cwd: sessionInput.runtimePolicy.cwd ?? "/fallback",
+            model: sessionInput.modelSelection.model,
+            capabilities: exclusiveCapabilities,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+          events: Stream.fromQueue(events),
+          ensureThread: (threadInput) =>
+            Effect.gen(function* () {
+              const createdAt = yield* DateTime.now;
+              return {
+                id: ProviderThreadId.make(`provider-thread:handoff:${threadInput.threadId}`),
+                driver: handoffDriver,
+                providerInstanceId: handoffProviderInstanceId,
+                providerSessionId: sessionInput.providerSessionId,
+                appThreadId: threadInput.threadId,
+                ownerNodeId: null,
+                nativeThreadRef: {
+                  driver: handoffDriver,
+                  nativeId: `native-thread:handoff:${threadInput.threadId}`,
+                  strength: "strong",
+                },
+                nativeConversationHeadRef: null,
+                status: "idle",
+                firstRunOrdinal: null,
+                lastRunOrdinal: null,
+                handoffIds: [],
+                forkedFrom: null,
+                createdAt,
+                updatedAt: createdAt,
+              } satisfies OrchestrationV2ProviderThread;
+            }),
+          resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+          startTurn: (input) =>
+            Effect.gen(function* () {
+              yield* Ref.update(startCount, (count) => count + 1);
+              const occurredAt = yield* DateTime.now;
+              const providerTurnId = ProviderTurnId.make(
+                `provider-turn:handoff:${input.attemptId}`,
+              );
+              yield* Queue.offer(events, {
+                type: "provider_turn.updated",
+                driver: handoffDriver,
+                providerTurn: {
+                  id: providerTurnId,
+                  providerThreadId: input.providerThread.id,
+                  nodeId: input.rootNodeId,
+                  runAttemptId: input.attemptId,
+                  nativeTurnRef: {
+                    driver: handoffDriver,
+                    nativeId: `native:${providerTurnId}`,
+                    strength: "strong",
+                  },
+                  ordinal: input.providerTurnOrdinal,
+                  status: "completed",
+                  startedAt: occurredAt,
+                  completedAt: occurredAt,
+                },
+              });
+              yield* Queue.offer(events, {
+                type: "turn.terminal",
+                driver: handoffDriver,
+                providerThreadId: input.providerThread.id,
+                providerTurnId,
+                runOrdinal: input.runOrdinal,
+                status: "completed",
+                failure: null,
+                threadDisposition: "reusable",
+              });
+            }),
+          steerTurn: () => Effect.void,
+          interruptTurn: () => Effect.void,
+          respondToRuntimeRequest: () => Effect.void,
+          readThreadSnapshot: () => Effect.die("unused readThreadSnapshot"),
+          rollbackThread: () => Effect.die("unused rollbackThread"),
+          forkThread: () => Effect.die("unused forkThread"),
+        };
+      }),
+  };
+}
+
+const handoffSelection = {
+  instanceId: handoffProviderInstanceId,
+  model: "handoff-model",
+} satisfies ModelSelection;
+
 it.live("detaches the old provider session after an active provider handoff", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -771,15 +775,10 @@ it.live("detaches the old provider session after an active provider handoff", ()
           modelSelection: initialSelection,
           dispatchMode: { type: "start_immediately" },
         });
-        let activeRunId: RunId | null = null;
-        for (let index = 0; index < 1_000; index += 1) {
-          const current = yield* orchestrator.getThreadProjection(threadId);
-          if (current.providerTurns.some((turn) => turn.status === "running")) {
-            activeRunId = current.runs[0]?.id ?? null;
-            break;
-          }
-          yield* Effect.sleep("5 millis");
-        }
+        const active = yield* awaitThreadProjection(threadId, (projection) =>
+          projection.providerTurns.some((turn) => turn.status === "running"),
+        );
+        const activeRunId = active.runs[0]?.id ?? null;
         if (activeRunId === null) {
           return yield* Effect.die("active provider-handoff run is missing");
         }
@@ -796,30 +795,12 @@ it.live("detaches the old provider session after an active provider handoff", ()
           modelSelection: handoffSelection,
           dispatchMode: { type: "restart_active", targetRunId: activeRunId },
         });
-        for (let index = 0; index < 1_000; index += 1) {
-          const current = yield* orchestrator.getThreadProjection(threadId);
-          if (current.attempts.length === 2 && current.attempts[1]?.status === "completed") {
-            const captured = yield* Ref.get(state);
-            return { projection: current, captured };
-          }
-          yield* Effect.sleep("5 millis");
-        }
-        const current = yield* orchestrator.getThreadProjection(threadId);
-        const adapterState = yield* Ref.get(state);
-        const capturedTargetStartCount = yield* Ref.get(targetStartCount);
-        yield* Effect.logError("active provider handoff did not complete", {
-          runs: current.runs.map((run) => [run.status, run.activeAttemptId]),
-          attempts: current.attempts.map((attempt) => [attempt.id, attempt.status]),
-          providerTurns: current.providerTurns.map((turn) => [turn.id, turn.status]),
-          providerThreads: current.providerThreads.map((thread) => [
-            thread.providerInstanceId,
-            thread.providerSessionId,
-            thread.status,
-          ]),
-          targetStartCount: capturedTargetStartCount,
-          adapterState,
-        });
-        return yield* Effect.die("active provider handoff did not complete");
+        const current = yield* awaitThreadProjection(
+          threadId,
+          (projection) =>
+            projection.attempts.length === 2 && projection.attempts[1]?.status === "completed",
+        );
+        return { projection: current, captured: yield* Ref.get(state) };
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(

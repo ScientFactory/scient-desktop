@@ -76,6 +76,37 @@ export const providerProjectionForSession = (currentSession: {
         providers.map(redactProviderAuthorizationForReadOnlyClient);
 
 /** The managed-runtime part of an explicit `serverRefreshProviders` request. */
+const refreshManagedRuntimesEffect = Effect.fn(
+  "ProviderConnectionRpcHandlers.refreshManagedRuntimes",
+)(function* (
+  input: { readonly instanceId?: ProviderInstanceId | undefined },
+  {
+    providerInstances,
+    providerRuntimeManager,
+    managedRuntimeCatalog,
+  }: {
+    readonly providerInstances: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"];
+    readonly providerRuntimeManager: ProviderRuntimeManager.ProviderRuntimeManager["Service"];
+    readonly managedRuntimeCatalog: ManagedRuntimeCatalog.ManagedRuntimeCatalogService;
+  },
+) {
+  // An explicit runtime refresh re-checks a runtime that fell back
+  // after a failed check; switching back waits for running work.
+  const reselectInstances = yield* providerInstances.listInstances;
+  yield* Effect.forEach(
+    reselectInstances.filter(
+      (instance) => input.instanceId === undefined || input.instanceId === instance.instanceId,
+    ),
+    (instance) => providerRuntimeManager.reselect(instance.instanceId).pipe(Effect.forkDetach),
+    { discard: true },
+  );
+  yield* managedRuntimeCatalog.refreshNow;
+  // Refresh publishes an async event for the process reconciler. Reconcile
+  // here too so this explicit RPC returns new actions and the check's
+  // freshness without a UI race.
+  yield* reconcileManagedRuntimeProviders(MANAGED_RUNTIME_CATALOG_PROVIDERS);
+});
+
 export const refreshManagedRuntimes = (
   input: { readonly instanceId?: ProviderInstanceId | undefined },
   {
@@ -88,22 +119,10 @@ export const refreshManagedRuntimes = (
     readonly managedRuntimeCatalog: ManagedRuntimeCatalog.ManagedRuntimeCatalogService;
   },
 ) =>
-  Effect.gen(function* () {
-    // An explicit runtime refresh re-checks a runtime that fell back
-    // after a failed check; switching back waits for running work.
-    const reselectInstances = yield* providerInstances.listInstances;
-    yield* Effect.forEach(
-      reselectInstances.filter(
-        (instance) => input.instanceId === undefined || input.instanceId === instance.instanceId,
-      ),
-      (instance) => providerRuntimeManager.reselect(instance.instanceId).pipe(Effect.forkDetach),
-      { discard: true },
-    );
-    yield* managedRuntimeCatalog.refreshNow;
-    // Refresh publishes an async event for the process reconciler. Reconcile
-    // here too so this explicit RPC returns new actions and the check's
-    // freshness without a UI race.
-    yield* reconcileManagedRuntimeProviders(MANAGED_RUNTIME_CATALOG_PROVIDERS);
+  refreshManagedRuntimesEffect(input, {
+    providerInstances,
+    providerRuntimeManager,
+    managedRuntimeCatalog,
   });
 
 export const makeProviderConnectionRpcHandlers = ({
@@ -125,6 +144,12 @@ export const makeProviderConnectionRpcHandlers = ({
       observeRpcEffect(
         WS_METHODS.serverCancelProviderConnection,
         providerConnectionManager.cancel(input),
+        { "rpc.aggregate": "server" },
+      ),
+    [WS_METHODS.serverClaimProviderSignInPage]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.serverClaimProviderSignInPage,
+        providerConnectionManager.claimSignInPage(input),
         { "rpc.aggregate": "server" },
       ),
     [WS_METHODS.serverSubmitProviderAuthorizationCode]: (input) =>
@@ -157,6 +182,7 @@ export const makeProviderConnectionRpcHandlers = ({
     typeof WsServerManagementRpcGroup,
     | typeof WS_METHODS.serverStartProviderConnection
     | typeof WS_METHODS.serverCancelProviderConnection
+    | typeof WS_METHODS.serverClaimProviderSignInPage
     | typeof WS_METHODS.serverSubmitProviderAuthorizationCode
     | typeof WS_METHODS.serverDisconnectProvider
     | typeof WS_METHODS.serverPlanProviderRuntime

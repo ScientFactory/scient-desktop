@@ -30,6 +30,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import { ServerConfig } from "../config.ts";
 import { openZipArchive } from "../zipArchive.ts";
@@ -47,7 +48,9 @@ import {
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const DOWNLOAD_TIMEOUT = "45 minutes";
-const VALIDATION_TIMEOUT = "90 seconds";
+// SCIENT-FORK:START — Antigravity unpacks itself (~320 MiB) on every start; slow disks need minutes.
+const VALIDATION_TIMEOUT = "5 minutes";
+// SCIENT-FORK:END
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
 const RELEASE_RECORD = ".install-complete.json";
@@ -78,6 +81,7 @@ export class AntigravityInstallationError extends Schema.TaggedError<Antigravity
   }
 }
 const isInstallationError = Schema.is(AntigravityInstallationError);
+const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError);
 
 export interface AntigravityExecutable {
   readonly executablePath: string;
@@ -150,6 +154,20 @@ const installationError = (operation: string, detail: string, cause?: unknown) =
 
 const wrapFailure = (operation: string, detail: string) => (cause: unknown) =>
   isInstallationError(cause) ? cause : installationError(operation, detail, cause);
+
+// SCIENT-FORK:START — a check that runs out of time says so, instead of the
+// install's catch-all advice to check disk space.
+const validationTimeout = Effect.timeoutOrElse({
+  duration: VALIDATION_TIMEOUT,
+  orElse: () =>
+    Effect.fail(
+      installationError(
+        "verify",
+        `Antigravity didn't finish starting within ${VALIDATION_TIMEOUT} while Scient was checking it. Starting it can take a while on some computers. Try again.`,
+      ),
+    ),
+});
+// SCIENT-FORK:END
 
 function executableNames(platform: NodeJS.Platform) {
   return platform === "win32"
@@ -453,12 +471,15 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.provideService(Path.Path, path),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(Crypto.Crypto, crypto),
-      Effect.mapError(
-        wrapFailure(
-          "verify",
-          "The downloaded Antigravity runtime could not start in this environment.",
-        ),
-      ),
+      Effect.mapError((cause) => {
+        if (isInstallationError(cause)) return cause;
+        const detail =
+          isAcpProcessExitedError(cause) &&
+          /\b(?:AF_INET6|enforce_kernel_ipv6_support)\b/.test(cause.stderr ?? "")
+            ? "Antigravity requires IPv6 socket support. Enable IPv6 in this environment. On WSL, remove ipv6.disable=1 from .wslconfig and run wsl --shutdown."
+            : "The downloaded Antigravity runtime could not start in this environment.";
+        return installationError("verify", detail, cause);
+      }),
     );
 
   const install = Effect.fn("AntigravityInstallation.install")(
@@ -712,7 +733,12 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           managedVersionDirectory: pairDirectory,
         },
         asset.version,
-      ).pipe(Effect.scoped, Effect.timeout(VALIDATION_TIMEOUT));
+      ).pipe(
+        Effect.scoped,
+        // SCIENT-FORK:START
+        validationTimeout,
+        // SCIENT-FORK:END
+      );
       const record: InstalledRelease = {
         releaseId: asset.sha256,
         version: asset.version,

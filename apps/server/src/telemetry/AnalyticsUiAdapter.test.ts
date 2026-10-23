@@ -9,6 +9,7 @@ function fixture() {
   let epoch = 0;
   const events: unknown[] = [];
   const service = AnalyticsService.of({
+    recordOwners: () => Effect.void,
     status: Effect.sync(() => status),
     collectionEpoch: Effect.sync(() => epoch),
     record: (name, properties) =>
@@ -31,6 +32,26 @@ function fixture() {
 }
 
 describe("UI operation consent context", () => {
+  it.effect("accepts Visual LaTeX outcomes only within the current collection context", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      const ui = makeAnalyticsUiAdapter(f.service);
+      const current = yield* ui.status;
+      const event = {
+        name: "scient.operation.completed" as const,
+        properties: { operationKind: "latex-visual-edit", trigger: "user" },
+      };
+      expect(yield* ui.record(event)).toEqual({ accepted: false });
+      expect(yield* ui.record({ ...event, collectionContext: current.collectionContext })).toEqual({
+        accepted: true,
+      });
+      yield* f.service.deleteData;
+      expect(yield* ui.record({ ...event, collectionContext: current.collectionContext })).toEqual({
+        accepted: false,
+      });
+      expect(f.events).toEqual([event]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   it.effect("strips the context before recording and rejects absent or wrong contexts", () =>
     Effect.gen(function* () {
       const f = fixture();
@@ -82,7 +103,7 @@ describe("UI operation consent context", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps the legacy UI protocol and restricts new operations to UI-owned exports", () =>
+  it.effect("keeps the legacy UI protocol and restricts new operations to UI-owned kinds", () =>
     Effect.gen(function* () {
       const f = fixture();
       const ui = makeAnalyticsUiAdapter(f.service);

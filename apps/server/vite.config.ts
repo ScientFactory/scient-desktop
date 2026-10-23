@@ -29,8 +29,12 @@ const cliBuildChannel = packageJson.version.includes("-beta.")
     ? "nightly"
     : "latest";
 
+// The root config's `projects` route repo-root runs to package configs,
+// including this one. Inheriting them would make this config a container.
+const { projects: _rootTestProjects, ...baseTestConfig } = baseConfig.test ?? {};
+
 export default mergeConfig(
-  baseConfig,
+  { ...baseConfig, test: baseTestConfig },
   defineConfig({
     run: {
       tasks: {
@@ -39,6 +43,13 @@ export default mergeConfig(
           dependsOn: ["@t3tools/web#build"],
           cache: false,
         },
+        // SCIENT-FORK:START — desktop development renders from the Vite dev server, so its
+        // server build skips the web production build and its copy (minutes per launch).
+        "build:dev": {
+          command: "node scripts/cli.ts build --skip-web-client",
+          cache: false,
+        },
+        // SCIENT-FORK:END
       },
     },
     pack: {
@@ -102,8 +113,16 @@ export default mergeConfig(
       // runtimes heavily. Running files in parallel introduces load-sensitive flakes.
       fileParallelism: false,
       sequence: { sequencer: WeightedShardSequencer },
+      // SCIENT-FORK:START — real measurements run in the maintained benchmark lane.
+      benchmark: { include: ["src/**/*.bench.ts"] },
+      // SCIENT-FORK:END
       // Appended to the root setup, which mergeConfig concatenates.
-      setupFiles: ["./src/testUtils/gitConfig.setup.ts"],
+      setupFiles: [
+        "./src/testUtils/gitConfig.setup.ts",
+        // SCIENT-FORK:START — Git cannot reach the source checkout from a test.
+        "./src/testUtils/checkoutIsolation.setup.ts",
+        // SCIENT-FORK:END
+      ],
       hookTimeout: 120_000,
       testTimeout: 120_000,
     },

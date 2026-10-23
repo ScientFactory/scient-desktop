@@ -146,7 +146,8 @@ it.layer(NodeServices.layer)("Cursor SDK connection actions", (it) => {
       yield* Effect.sync(() => harness.finish.reject(new Error("synthetic login failure")));
       const result = yield* Effect.result(attempt.waitForCompletion);
       expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") expect(result.failure.message).toContain("failed or expired");
+      if (result._tag === "Failure")
+        expect(result.failure.message).toBe("Cursor sign-in failed. Start sign-in again.");
       expect(yield* harness.auth.readApiKey).toBeUndefined();
     }).pipe(Effect.scoped),
   );

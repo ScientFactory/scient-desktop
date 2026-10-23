@@ -147,58 +147,57 @@ export const makeDroidHeldSteer = ({
   readonly dispatchWithReceipt: OrchestratorV2Shape["dispatch"];
 }) => {
   // SCIENT-FORK:START — terminal drop is visible without fabricating a provider failure or ACK.
-  const emitDroidSteerDropped = (
+  const emitDroidSteerDropped = Effect.fn("DroidHeldSteer.emitDroidSteerDropped")(function* (
     command: OrchestrationV2ServerCommand,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     run: OrchestrationV2Run,
     held: NonNullable<OrchestrationV2Run["heldDroidSteer"]>,
     projection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems">,
-  ) =>
-    Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "turn-item.updated",
+  ) {
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: run.threadId,
+      runId: run.id,
+      nodeId: held.sourceRootNodeId,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: idAllocator.derive.userTurnItem({
+          messageId: MessageId.make(`droid-not-delivered:${held.revision}`),
+        }),
         threadId: run.threadId,
         runId: run.id,
         nodeId: held.sourceRootNodeId,
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          id: idAllocator.derive.userTurnItem({
-            messageId: MessageId.make(`droid-not-delivered:${held.revision}`),
-          }),
-          threadId: run.threadId,
-          runId: run.id,
-          nodeId: held.sourceRootNodeId,
-          providerThreadId: run.providerThreadId,
-          providerTurnId: held.sourceProviderTurnId,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: yield* nextTurnItemOrdinal(projection),
-          status: "completed",
-          title: null,
-          startedAt: now,
-          completedAt: now,
-          updatedAt: now,
-          type: "system_notice",
-          message: "Your waiting message was not delivered. Send it again to continue.",
-          createdBy: "system",
-          creationSource: "server",
-        },
-      });
+        providerThreadId: run.providerThreadId,
+        providerTurnId: held.sourceProviderTurnId,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: yield* nextTurnItemOrdinal(projection),
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "system_notice",
+        message: "Your waiting message was not delivered. Send it again to continue.",
+        createdBy: "system",
+        creationSource: "server",
+      },
     });
+  });
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START — thread lock + canonical revision precede all external interruption.
-  const dispatchDroidSteerAdmission = (
-    command: Extract<OrchestrationV2ServerCommand, { readonly type: "droid-steer.admission" }>,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-  ) =>
-    Effect.gen(function* () {
+  const dispatchDroidSteerAdmission = Effect.fn("DroidHeldSteer.dispatchDroidSteerAdmission")(
+    function* (
+      command: Extract<OrchestrationV2ServerCommand, { readonly type: "droid-steer.admission" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    ) {
       const projection = yield* loadProjectionForCommand(command, [
         "runs",
         "messages",
@@ -317,13 +316,14 @@ export const makeDroidHeldSteer = ({
                 },
         },
       });
-    });
+    },
+  );
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START — accepted intent does not supersede a busy native owner.
   /** Hold a Steer for a busy Droid turn: record the intent on the run, show the waiting
    * notice once, append the steering message, and ask Droid to restart at a safe boundary. */
-  const holdDroidSteer = (
+  const holdDroidSteer = Effect.fn("DroidHeldSteer.holdDroidSteer")(function* (
     input: {
       readonly command: Extract<
         OrchestrationV2Command,
@@ -352,157 +352,156 @@ export const makeDroidHeldSteer = ({
         readonly providerInstanceId: ProviderInstanceId;
       }) => Effect.Effect<void, OrchestratorDispatchError | OrchestratorProjectionError>;
     },
-  ) =>
-    Effect.gen(function* () {
-      const {
-        targetRun,
-        rootNodeId,
-        providerThread,
-        providerSessionId,
-        providerTurn,
-        session,
-        executionThread,
-        now,
-        emitEvent,
-        appendSteeringMessage,
-      } = steer;
-      if (targetRun.activeAttemptId === null || session.reserveDroidSteer === undefined)
-        return yield* new DispatchError({
-          commandId: input.command.commandId,
-          commandType: input.command.type,
-          cause: "Droid has no live held-Steer owner.",
-        });
-      if (session.droidSteerConsumed?.() === true)
-        return yield* new DispatchError({
-          commandId: input.command.commandId,
-          commandType: input.command.type,
-          cause: "The prior Droid Steer has already entered native admission.",
-        });
-      session.invalidateDroidSteer?.();
-      const policy = yield* runtimePolicy
-        .resolve({ thread: executionThread, modelSelection: input.modelSelection })
-        .pipe(mapDispatchError(input.command));
-      const held: NonNullable<OrchestrationV2Run["heldDroidSteer"]> = {
-        revision: input.command.commandId,
-        messageId: input.messageId,
-        sourceAttemptId: targetRun.activeAttemptId,
-        sourceRootNodeId: rootNodeId,
-        sourceProviderTurnId: providerTurn.id,
-        sourceProviderSessionId: providerSessionId,
-        modelSelection: input.modelSelection,
-        runtimePolicy: {
-          ...policy,
-          cwd: policy.cwd ?? executionThread.worktreePath ?? session.providerSession.cwd,
-        },
-        phase: "held",
-      };
-      const readHeld = projectionStore.getThreadRecords(input.command.threadId, ["runs"]).pipe(
-        Effect.map(
-          (p) =>
-            p.runs.find(
-              (run) => run.id === targetRun.id && run.activeAttemptId === held.sourceAttemptId,
-            )?.heldDroidSteer,
-        ),
-        Effect.orDie,
-      );
-      yield* (
-        session.configureDroidSteerOwner?.({
-          attemptId: held.sourceAttemptId,
-          held: readHeld.pipe(Effect.map((intent) => intent !== undefined)),
-          drop: readHeld.pipe(
-            Effect.flatMap((intent) =>
-              intent === undefined
-                ? Effect.void
-                : dispatchWithReceipt({
-                    type: "droid-steer.admission",
-                    commandId: CommandId.make(`droid-drop:${intent.revision}`),
-                    threadId: input.command.threadId,
-                    runId: targetRun.id,
-                    revision: intent.revision,
-                    operation: "drop",
-                  }).pipe(Effect.asVoid, Effect.orDie),
-            ),
-          ),
-        }) ?? Effect.void
-      );
-      if (
-        !input.projection.turnItems.some(
-          (item) =>
-            item.runId === targetRun.id &&
-            item.type === "system_notice" &&
-            item.message === "Follow-up held until Droid reaches a safe boundary.",
-        )
-      ) {
-        yield* emitEvent({
-          type: "turn-item.updated",
-          threadId: input.command.threadId,
-          runId: targetRun.id,
-          nodeId: rootNodeId,
-          providerInstanceId: targetRun.providerInstanceId,
-          occurredAt: now,
-          payload: {
-            id: idAllocator.derive.turnItemFromProviderItem({
-              driver: session.driver,
-              nativeItemId: `held-steer:${targetRun.id}`,
-            }),
-            threadId: input.command.threadId,
-            runId: targetRun.id,
-            nodeId: rootNodeId,
-            providerThreadId: providerThread.id,
-            providerTurnId: providerTurn.id,
-            nativeItemRef: null,
-            parentItemId: null,
-            ordinal: (yield* nextTurnItemOrdinal(input.projection)) + 1,
-            status: "completed",
-            title: null,
-            startedAt: now,
-            completedAt: now,
-            updatedAt: now,
-            type: "system_notice",
-            message: "Follow-up held until Droid reaches a safe boundary.",
-            createdBy: "system",
-            creationSource: "server",
-          },
-        });
-      }
-      yield* appendSteeringMessage({
-        runId: targetRun.id,
-        nodeId: rootNodeId,
-        providerTurnId: providerTurn.id,
-        providerThreadId: providerThread.id,
-        providerInstanceId: targetRun.providerInstanceId,
+  ) {
+    const {
+      targetRun,
+      rootNodeId,
+      providerThread,
+      providerSessionId,
+      providerTurn,
+      session,
+      executionThread,
+      now,
+      emitEvent,
+      appendSteeringMessage,
+    } = steer;
+    if (targetRun.activeAttemptId === null || session.reserveDroidSteer === undefined)
+      return yield* new DispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause: "Droid has no live held-Steer owner.",
       });
+    if (session.droidSteerConsumed?.() === true)
+      return yield* new DispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause: "The prior Droid Steer has already entered native admission.",
+      });
+    session.invalidateDroidSteer?.();
+    const policy = yield* runtimePolicy
+      .resolve({ thread: executionThread, modelSelection: input.modelSelection })
+      .pipe(mapDispatchError(input.command));
+    const held: NonNullable<OrchestrationV2Run["heldDroidSteer"]> = {
+      revision: input.command.commandId,
+      messageId: input.messageId,
+      sourceAttemptId: targetRun.activeAttemptId,
+      sourceRootNodeId: rootNodeId,
+      sourceProviderTurnId: providerTurn.id,
+      sourceProviderSessionId: providerSessionId,
+      modelSelection: input.modelSelection,
+      runtimePolicy: {
+        ...policy,
+        cwd: policy.cwd ?? executionThread.worktreePath ?? session.providerSession.cwd,
+      },
+      phase: "held",
+    };
+    const readHeld = projectionStore.getThreadRecords(input.command.threadId, ["runs"]).pipe(
+      Effect.map(
+        (p) =>
+          p.runs.find(
+            (run) => run.id === targetRun.id && run.activeAttemptId === held.sourceAttemptId,
+          )?.heldDroidSteer,
+      ),
+      Effect.orDie,
+    );
+    yield* (
+      session.configureDroidSteerOwner?.({
+        attemptId: held.sourceAttemptId,
+        held: readHeld.pipe(Effect.map((intent) => intent !== undefined)),
+        drop: readHeld.pipe(
+          Effect.flatMap((intent) =>
+            intent === undefined
+              ? Effect.void
+              : dispatchWithReceipt({
+                  type: "droid-steer.admission",
+                  commandId: CommandId.make(`droid-drop:${intent.revision}`),
+                  threadId: input.command.threadId,
+                  runId: targetRun.id,
+                  revision: intent.revision,
+                  operation: "drop",
+                }).pipe(Effect.asVoid, Effect.orDie),
+          ),
+        ),
+      }) ?? Effect.void
+    );
+    if (
+      !input.projection.turnItems.some(
+        (item) =>
+          item.runId === targetRun.id &&
+          item.type === "system_notice" &&
+          item.message === "Follow-up held until Droid reaches a safe boundary.",
+      )
+    ) {
       yield* emitEvent({
-        type: "run.updated",
+        type: "turn-item.updated",
         threadId: input.command.threadId,
         runId: targetRun.id,
         nodeId: rootNodeId,
         providerInstanceId: targetRun.providerInstanceId,
         occurredAt: now,
-        payload: { ...targetRun, heldDroidSteer: held },
-      });
-      yield* Ref.update(input.effects, (existing) => [
-        ...existing,
-        {
-          id: `effect:${input.command.commandId}:droid-held-steer:${providerTurn.id}`,
-          commandId: input.command.commandId,
+        payload: {
+          id: idAllocator.derive.turnItemFromProviderItem({
+            driver: session.driver,
+            nativeItemId: `held-steer:${targetRun.id}`,
+          }),
           threadId: input.command.threadId,
-          request: {
-            type: "provider-turn.restart",
-            providerSessionId,
-            providerThreadId: providerThread.id,
-            providerTurnId: providerTurn.id,
-            interruptedAttemptId: held.sourceAttemptId,
-            runId: targetRun.id,
-          },
-        } satisfies PendingOrchestrationEffectV2,
-      ]);
+          runId: targetRun.id,
+          nodeId: rootNodeId,
+          providerThreadId: providerThread.id,
+          providerTurnId: providerTurn.id,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: (yield* nextTurnItemOrdinal(input.projection)) + 1,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "system_notice",
+          message: "Follow-up held until Droid reaches a safe boundary.",
+          createdBy: "system",
+          creationSource: "server",
+        },
+      });
+    }
+    yield* appendSteeringMessage({
+      runId: targetRun.id,
+      nodeId: rootNodeId,
+      providerTurnId: providerTurn.id,
+      providerThreadId: providerThread.id,
+      providerInstanceId: targetRun.providerInstanceId,
     });
+    yield* emitEvent({
+      type: "run.updated",
+      threadId: input.command.threadId,
+      runId: targetRun.id,
+      nodeId: rootNodeId,
+      providerInstanceId: targetRun.providerInstanceId,
+      occurredAt: now,
+      payload: { ...targetRun, heldDroidSteer: held },
+    });
+    yield* Ref.update(input.effects, (existing) => [
+      ...existing,
+      {
+        id: `effect:${input.command.commandId}:droid-held-steer:${providerTurn.id}`,
+        commandId: input.command.commandId,
+        threadId: input.command.threadId,
+        request: {
+          type: "provider-turn.restart",
+          providerSessionId,
+          providerThreadId: providerThread.id,
+          providerTurnId: providerTurn.id,
+          interruptedAttemptId: held.sourceAttemptId,
+          runId: targetRun.id,
+        },
+      } satisfies PendingOrchestrationEffectV2,
+    ]);
+  });
   // SCIENT-FORK:END
 
   // SCIENT: Stop invalidates the private lease before canonical cancellation can race native consumption.
   /** Returns the run without its held intent, after recording the drop. */
-  const dropHeldSteerOnStop = (
+  const dropHeldSteerOnStop = Effect.fn("DroidHeldSteer.dropHeldSteerOnStop")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "run.interrupt" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     run: OrchestrationV2Run,
@@ -510,28 +509,27 @@ export const makeDroidHeldSteer = ({
     rootNodeId: OrchestrationV2ExecutionNode["id"],
     projection: Pick<OrchestrationV2ThreadProjection, "thread" | "turnItems">,
     now: DateTime.Utc,
-  ) =>
-    Effect.gen(function* () {
-      const owner = yield* providerSessions
-        .get(held.sourceProviderSessionId)
-        .pipe(mapDispatchError(command));
-      if (Option.isSome(owner)) owner.value.invalidateDroidSteer?.();
-      yield* emitDroidSteerDropped(command, events, run, held, projection);
-      const released: OrchestrationV2Run = { ...run, heldDroidSteer: undefined };
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "run.updated",
-        threadId: command.threadId,
-        runId: released.id,
-        nodeId: rootNodeId,
-        providerInstanceId: released.providerInstanceId,
-        occurredAt: now,
-        payload: released,
-      });
-      return released;
+  ) {
+    const owner = yield* providerSessions
+      .get(held.sourceProviderSessionId)
+      .pipe(mapDispatchError(command));
+    if (Option.isSome(owner)) owner.value.invalidateDroidSteer?.();
+    yield* emitDroidSteerDropped(command, events, run, held, projection);
+    const released: OrchestrationV2Run = { ...run, heldDroidSteer: undefined };
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "run.updated",
+      threadId: command.threadId,
+      runId: released.id,
+      nodeId: rootNodeId,
+      providerInstanceId: released.providerInstanceId,
+      occurredAt: now,
+      payload: released,
     });
+    return released;
+  });
 
   return {
     emitDroidSteerDropped,

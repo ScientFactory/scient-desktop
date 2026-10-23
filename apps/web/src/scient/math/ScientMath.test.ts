@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
+import katex from "katex";
 
 import { renderScientTexToHtml } from "./katexRuntime";
 import {
@@ -69,3 +70,34 @@ it.each(["x_{cache_unique}", "\\badcmd_{cache_unique}"])(
     expect(render).toHaveBeenCalledOnce();
   },
 );
+
+it.each([ScientInlineMath, ScientDisplayMath])(
+  "keeps keyboard scrolling in messages without adding a nested preview tab stop",
+  (Component) => {
+    const message = renderToStaticMarkup(createElement(Component, { tex: "x^2" }));
+    expect(message).toContain('tabindex="0"');
+    expect(message).toContain('role="group"');
+    const preview = renderToStaticMarkup(
+      createElement(Component, { tex: "x^2", focusable: false }),
+    );
+    expect(preview).not.toContain("tabindex");
+    expect(preview).not.toContain('role="group"');
+    expect(preview).toContain("data-markdown-copy");
+  },
+);
+
+it.each([
+  String.raw`\href{https://example.test}{x}`,
+  String.raw`\includegraphics{https://example.test/a.png}`,
+])("keeps active TeX commands inert: %s", (tex) => {
+  const html = renderScientTexToHtml(tex, false);
+  expect(html).not.toBeNull();
+  expect(html).toContain("katex");
+  expect(html).toContain("<math");
+  expect(html).not.toMatch(/<(?:a|img)\b/u);
+  expect(html).not.toMatch(/(?:href|src)=["']https:/u);
+
+  // The same active command would create a resource/link if trust were enabled.
+  const trusted = katex.renderToString(tex, { trust: true, throwOnError: true, strict: "ignore" });
+  expect(trusted).toMatch(/(?:href|src)=["']https:\/\/example\.test/u);
+});

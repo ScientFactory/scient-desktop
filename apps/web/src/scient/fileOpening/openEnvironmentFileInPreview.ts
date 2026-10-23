@@ -39,12 +39,14 @@ export async function openEnvironmentFileInPreview<AssetError, PreviewError>(inp
     readonly input: { readonly resource: AssetResource };
   }) => Promise<AtomCommandResult<AssetCreateUrlResult, AssetError>>;
   readonly openPreview: OpenPreviewMutation<PreviewError>;
+  readonly isCurrent?: () => boolean;
 }): Promise<
   AtomCommandResult<
     void,
     AssetError | PreviewError | BrowserPreviewUnavailableError | BrowserSettingsReadError
   >
 > {
+  if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
   if (!isPreviewAvailableFor(input.threadRef.environmentId)) {
     return AsyncResult.failure(
       Cause.fail(
@@ -63,6 +65,7 @@ export async function openEnvironmentFileInPreview<AssetError, PreviewError>(inp
       }),
     },
   });
+  if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
   if (assetResult._tag === "Failure") return AsyncResult.failure(assetResult.cause);
   const assetUrl = resolveAssetUrl(input.httpBaseUrl, assetResult.value.relativeUrl);
   if (assetUrl === null) {
@@ -74,6 +77,7 @@ export async function openEnvironmentFileInPreview<AssetError, PreviewError>(inp
     threadRef: input.threadRef,
     url: assetUrl,
     openPreview: input.openPreview,
+    ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
     onOpened: (snapshot) => {
       useHtmlPdfSourceStore.getState().bind({
         threadRef: input.threadRef,

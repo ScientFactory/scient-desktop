@@ -1,13 +1,5 @@
 import { Maximize2Icon } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-  type Ref,
-} from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 
 import { PreviewImageSurface } from "~/components/preview/PreviewImageSurface";
 import { Button } from "~/components/ui/button";
@@ -92,7 +84,7 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
   const [pendingViewerAction, setPendingViewerAction] = useState<ScientImageAction | null>(null);
   const onBackgroundChange = props.onBackgroundChange;
   const resolveViewerSource = props.resolveViewerSource;
-  const loadViewer = useCallback(() => {
+  const loadViewer = () => {
     const request = ++viewerRequest.current;
     if (!resolveViewerSource) {
       setViewer({
@@ -119,16 +111,16 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
           });
         },
       );
-  }, [props.imageURL, resolveViewerSource]);
-  const expand = useCallback(() => {
+  };
+  const expand = () => {
     if (!props.imageURL || !props.loaded) return;
     setExpanded(true);
     loadViewer();
-  }, [loadViewer, props.imageURL, props.loaded]);
-  const closeViewer = useCallback(() => {
+  };
+  const closeViewer = () => {
     viewerRequest.current += 1;
     setExpanded(false);
-  }, []);
+  };
   useImperativeHandle(ref, () => ({ expand }), [expand]);
   useEffect(() => {
     mounted.current = true;
@@ -144,82 +136,67 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
     return () => props.anchor?.classList.remove("group/scient-image");
   }, [props.anchor]);
 
-  const actions = useMemo<readonly ScientImageAction[]>(
-    () => [
-      {
-        id: "expand-image",
-        label: "Expand image",
-        disabled: !props.loaded || !props.imageURL,
-        run: expand,
-      },
-      ...props.actions,
-      {
-        id: "image-background",
-        label: `Background: ${background}`,
-        run: () =>
-          setBackground((value) =>
-            value === "automatic" ? "light" : value === "light" ? "dark" : "automatic",
-          ),
-      },
-      ...(props.onRetry
-        ? [
-            {
-              id: "retry-image",
-              label: "Refresh image",
-              run: expanded ? loadViewer : props.onRetry,
-            },
-          ]
-        : []),
-    ],
-    [
-      background,
-      expand,
-      expanded,
-      loadViewer,
-      props.actions,
-      props.imageURL,
-      props.loaded,
-      props.onRetry,
-    ],
-  );
-
-  const run = useCallback(
-    (action: ScientImageAction | undefined) => {
-      if (!mounted.current || !action || action.disabled || actionRunning.current) return;
-      if (expanded && action.closeViewer) {
-        closeViewer();
-        if (!action.requiresUserActivation) {
-          setPendingViewerAction(action);
-          return;
-        }
-      }
-      actionRunning.current = true;
-      setActiveAction(action.id);
-      setMessage(null);
-      // Invoke synchronously: browser clipboard writes must begin in this gesture.
-      let result: void | Promise<void>;
-      try {
-        result = action.run();
-      } catch (cause) {
-        result = Promise.reject(cause);
-      }
-      void Promise.resolve(result)
-        .then(
-          () => {
-            if (mounted.current && /copy/.test(action.id)) setMessage("Copied");
-          },
-          (cause: unknown) => {
-            if (mounted.current)
-              setMessage(cause instanceof Error ? cause.message : "The image action failed.");
-          },
-        )
-        .finally(() => {
-          actionRunning.current = false;
-          if (mounted.current) setActiveAction(null);
-        });
+  const actions: readonly ScientImageAction[] = [
+    {
+      id: "expand-image",
+      label: "Expand image",
+      disabled: !props.loaded || !props.imageURL,
+      run: expand,
     },
-    [closeViewer, expanded],
-  );
+    ...props.actions,
+    {
+      id: "image-background",
+      label: `Background: ${background}`,
+      run: () =>
+        setBackground((value) =>
+          value === "automatic" ? "light" : value === "light" ? "dark" : "automatic",
+        ),
+    },
+    ...(props.onRetry
+      ? [
+          {
+            id: "retry-image",
+            label: "Refresh image",
+            run: expanded ? loadViewer : props.onRetry,
+          },
+        ]
+      : []),
+  ];
+
+  const run = (action: ScientImageAction | undefined) => {
+    if (!mounted.current || !action || action.disabled || actionRunning.current) return;
+    if (expanded && action.closeViewer) {
+      closeViewer();
+      if (!action.requiresUserActivation) {
+        setPendingViewerAction(action);
+        return;
+      }
+    }
+    actionRunning.current = true;
+    setActiveAction(action.id);
+    setMessage(null);
+    // Invoke synchronously: browser clipboard writes must begin in this gesture.
+    let result: void | Promise<void>;
+    try {
+      result = action.run();
+    } catch (cause) {
+      result = Promise.reject(cause);
+    }
+    void Promise.resolve(result)
+      .then(
+        () => {
+          if (mounted.current && /copy/.test(action.id)) setMessage("Copied");
+        },
+        (cause: unknown) => {
+          if (mounted.current)
+            setMessage(cause instanceof Error ? cause.message : "The image action failed.");
+        },
+      )
+      .finally(() => {
+        actionRunning.current = false;
+        if (mounted.current) setActiveAction(null);
+      });
+  };
 
   useEffect(() => {
     if (message !== "Copied") return;

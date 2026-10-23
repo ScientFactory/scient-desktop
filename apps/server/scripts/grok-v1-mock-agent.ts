@@ -147,105 +147,106 @@ const program = Effect.gen(function* () {
           }
           return { configOptions: configOptions() };
         }),
-      "session/prompt": (request) =>
-        Effect.gen(function* () {
-          beginAcpMockPrompt(cancelledSessions, request.sessionId);
-          cancelled = yield* Deferred.make<void>();
-          if (
-            process.env.T3_ACP_CRASH_PROMPT === "1" &&
-            request.prompt.some((part) => part.type === "text" && part.text === "crash now")
-          ) {
-            return yield* Effect.sync(() => process.exit(23));
-          }
-          const promptId =
-            typeof request._meta?.promptId === "string"
-              ? request._meta.promptId
-              : "mock-xai-prompt-1";
-          if (process.env.T3_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG === "1") {
-            yield* notify("_x.ai/session/prompt_complete", {
-              sessionId,
-              promptId,
-              stopReason: "rate_limit",
-              agentResult: null,
-            });
-            return yield* Deferred.await(cancelled).pipe(
-              Effect.as({ stopReason: "cancelled" as const }),
-            );
-          }
-          if (process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1") {
-            yield* update({
-              sessionUpdate: "plan",
-              entries: [
-                { content: "Wait for more ACP progress", priority: "high", status: "in_progress" },
-              ],
-            });
-            return yield* Deferred.await(cancelled).pipe(
-              Effect.as({ stopReason: "cancelled" as const }),
-            );
-          }
-          if (process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL === "1") {
-            const taskId = "01a05f41-5107-7550-821e-79e8d1cd7687";
-            const description = "Watch count-sheet Typst unit until done";
-            yield* update({
-              sessionUpdate: "tool_call",
-              toolCallId: "call-monitor-1",
-              title: "monitor",
-              kind: "other",
-              status: "pending",
-              rawInput: { description },
-              _meta: {
-                "x.ai/tool": { version: 1, name: "monitor", kind: "task", namespace: "grok_build" },
-              },
-            });
-            yield* update({
-              sessionUpdate: "tool_call_update",
-              toolCallId: "call-monitor-1",
-              status: "completed",
-              rawInput: { description },
-              rawOutput: { type: "Monitor", taskId, timeoutMs: 36_000_000 },
-            });
-            yield* notify("_x.ai/session/prompt_complete", {
-              sessionId,
-              promptId,
-              stopReason: "end_turn",
-              agentResult: null,
-            });
-            yield* Effect.sleep("120 millis");
-            yield* update({
-              sessionUpdate: "tool_call",
-              toolCallId: "call-monitor-poll-1",
-              title: "get_command_or_subagent_output",
-              kind: "other",
-              status: "completed",
-              rawInput: { variant: "TaskOutput", task_ids: [taskId], timeout_ms: 0 },
-              rawOutput: {
-                type: "TaskOutput",
-                Result: {
-                  task_id: taskId,
-                  command: `[monitor] ${description}`,
-                  status: "completed",
-                  exit_code: 0,
-                  output: "Monitor finished.",
-                },
-              },
-            });
-            return yield* Deferred.await(cancelled).pipe(
-              Effect.as({ stopReason: "cancelled" as const }),
-            );
-          }
-          yield* update({
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: "hello from mock" },
+      "session/prompt": Effect.fn("GrokMockAgent.prompt")(function* (
+        request: AcpSchema.PromptRequest,
+      ) {
+        beginAcpMockPrompt(cancelledSessions, request.sessionId);
+        cancelled = yield* Deferred.make<void>();
+        if (
+          process.env.T3_ACP_CRASH_PROMPT === "1" &&
+          request.prompt.some((part) => part.type === "text" && part.text === "crash now")
+        ) {
+          return yield* Effect.sync(() => process.exit(23));
+        }
+        const promptId =
+          typeof request._meta?.promptId === "string"
+            ? request._meta.promptId
+            : "mock-xai-prompt-1";
+        if (process.env.T3_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG === "1") {
+          yield* notify("_x.ai/session/prompt_complete", {
+            sessionId,
+            promptId,
+            stopReason: "rate_limit",
+            agentResult: null,
           });
-          if (nativeV2) {
-            yield* notify("session/update", {
-              sessionId,
-              update: { sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" },
-            });
-            return emptyPromptAcknowledgement;
-          }
-          return { stopReason: "end_turn" as const };
-        }),
+          return yield* Deferred.await(cancelled).pipe(
+            Effect.as({ stopReason: "cancelled" as const }),
+          );
+        }
+        if (process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1") {
+          yield* update({
+            sessionUpdate: "plan",
+            entries: [
+              { content: "Wait for more ACP progress", priority: "high", status: "in_progress" },
+            ],
+          });
+          return yield* Deferred.await(cancelled).pipe(
+            Effect.as({ stopReason: "cancelled" as const }),
+          );
+        }
+        if (process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL === "1") {
+          const taskId = "01a05f41-5107-7550-821e-79e8d1cd7687";
+          const description = "Watch count-sheet Typst unit until done";
+          yield* update({
+            sessionUpdate: "tool_call",
+            toolCallId: "call-monitor-1",
+            title: "monitor",
+            kind: "other",
+            status: "pending",
+            rawInput: { description },
+            _meta: {
+              "x.ai/tool": { version: 1, name: "monitor", kind: "task", namespace: "grok_build" },
+            },
+          });
+          yield* update({
+            sessionUpdate: "tool_call_update",
+            toolCallId: "call-monitor-1",
+            status: "completed",
+            rawInput: { description },
+            rawOutput: { type: "Monitor", taskId, timeoutMs: 36_000_000 },
+          });
+          yield* notify("_x.ai/session/prompt_complete", {
+            sessionId,
+            promptId,
+            stopReason: "end_turn",
+            agentResult: null,
+          });
+          yield* Effect.sleep("120 millis");
+          yield* update({
+            sessionUpdate: "tool_call",
+            toolCallId: "call-monitor-poll-1",
+            title: "get_command_or_subagent_output",
+            kind: "other",
+            status: "completed",
+            rawInput: { variant: "TaskOutput", task_ids: [taskId], timeout_ms: 0 },
+            rawOutput: {
+              type: "TaskOutput",
+              Result: {
+                task_id: taskId,
+                command: `[monitor] ${description}`,
+                status: "completed",
+                exit_code: 0,
+                output: "Monitor finished.",
+              },
+            },
+          });
+          return yield* Deferred.await(cancelled).pipe(
+            Effect.as({ stopReason: "cancelled" as const }),
+          );
+        }
+        yield* update({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "hello from mock" },
+        });
+        if (nativeV2) {
+          yield* notify("session/update", {
+            sessionId,
+            update: { sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" },
+          });
+          return emptyPromptAcknowledgement;
+        }
+        return { stopReason: "end_turn" as const };
+      }),
     }),
   );
   yield* RpcServer.make(rpcs).pipe(

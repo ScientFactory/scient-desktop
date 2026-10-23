@@ -39,7 +39,11 @@ vi.mock("../assets/assetUrls", () => ({
     };
   },
 }));
-vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock("../hooks/useTheme", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hooks/useTheme")>()),
+  useTheme: () => ({ resolvedTheme: "dark" }),
+  useRenderedAppearance: () => "dark",
+}));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../state/session", async (importOriginal) => ({
@@ -66,7 +70,8 @@ vi.mock("~/lib/openPullRequestLink", () => ({
   useOpenChangeRequestLink: () => vi.fn(),
 }));
 
-import ChatMarkdown, { ChatMarkdownAssetImage } from "./ChatMarkdown";
+import ChatMarkdown from "./ChatMarkdown";
+import { ChatMarkdownAssetImage } from "./chat/ChatMarkdownMedia";
 import { FileMarkdownPreview } from "./files/FileMarkdownPreview";
 
 const threadRef = {
@@ -96,7 +101,13 @@ function renderWithoutThread(markdown: string): string {
 
 function renderFilePreview(cwd: string, relativePath: string, text: string): string {
   return renderToStaticMarkup(
-    <FileMarkdownPreview cwd={cwd} relativePath={relativePath} text={text} threadRef={threadRef} />,
+    <FileMarkdownPreview
+      cwd={cwd}
+      relativePath={relativePath}
+      text={text}
+      threadRef={threadRef}
+      workspaceMutationId={null}
+    />,
   );
 }
 

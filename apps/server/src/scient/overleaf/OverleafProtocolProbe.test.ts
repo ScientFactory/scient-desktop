@@ -209,5 +209,5 @@ describe("Cloud probe boundaries", () => {
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }
-  }, 70_000);
+  });
 });

@@ -13,7 +13,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { AlertTriangle, Download, Globe, LoaderCircle, Music2 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -107,19 +107,28 @@ function useEnvironmentTextAsset(input: {
     refreshAsset();
   }, [input.refreshToken, refreshAsset]);
 
+  const readInputs = [
+    assetFailed,
+    assetUrl,
+    input.file.byteLength,
+    input.file.presentation.textEncoding,
+    readAttempt,
+    refreshAsset,
+  ] as const;
+  const [previousReadInputs, setPreviousReadInputs] = useState(readInputs);
+  if (readInputs.some((value, index) => value !== previousReadInputs[index])) {
+    setPreviousReadInputs(readInputs);
+    setState(
+      assetFailed
+        ? { _tag: "Failure", message: "Scient could not authorize this file." }
+        : { _tag: "Loading" },
+    );
+  }
   useEffect(() => {
-    if (assetFailed) {
-      setState({ _tag: "Failure", message: "Scient could not authorize this file." });
-      return;
-    }
-    if (assetUrl === null) {
-      setState({ _tag: "Loading" });
-      return;
-    }
+    if (assetFailed || assetUrl === null) return;
 
     const controller = new AbortController();
     const url = assetUrl;
-    setState({ _tag: "Loading" });
     void fetch(url, {
       signal: controller.signal,
       ...(input.file.byteLength === 0
@@ -162,13 +171,17 @@ function useEnvironmentTextAsset(input: {
 
   // A failed authorization is renewed; a failed read is simply read again,
   // which shows loading at once, so neither can be requested twice.
-  const retry = useCallback(() => {
+  const retry = () => {
     if (assetFailed) refreshAsset();
     else setReadAttempt((attempt) => attempt + 1);
-  }, [assetFailed, refreshAsset]);
+  };
 
   return {
-    state,
+    state: assetFailed
+      ? { _tag: "Failure", message: "Scient could not authorize this file." }
+      : assetUrl === null
+        ? { _tag: "Loading" }
+        : state,
     refresh: retry,
     refreshing: asset._tag === "Failure" && asset.waiting === true,
   };
@@ -191,12 +204,12 @@ function EnvironmentImageSurface(props: {
   // A newer revision failed while the last good image stays on screen.
   const [refreshFailed, setRefreshFailed] = useState(false);
   const refreshAsset = asset.refresh;
-  const retry = useCallback(() => {
+  const retry = () => {
     autoRetriedRef.current = false;
     setFailedUrl(null);
     setRefreshFailed(false);
     refreshAsset();
-  }, [refreshAsset]);
+  };
   useEffect(() => {
     if (previousRefreshTokenRef.current === props.refreshToken) return;
     previousRefreshTokenRef.current = props.refreshToken;
@@ -387,23 +400,20 @@ function EnvironmentTextSurface(props: {
   const { resolvedTheme } = useTheme();
   const revealedTargetRef = useRef<string | null>(null);
   const revealTarget = `${props.file.canonicalPath}:${props.line ?? "none"}:${props.refreshToken}`;
-  const onPostRender = useCallback<NonNullable<FileOptions<unknown, undefined>["onPostRender"]>>(
-    (container, _instance, phase) => {
-      if (
-        phase === "unmount" ||
-        props.line === null ||
-        revealedTargetRef.current === revealTarget
-      ) {
-        return;
-      }
-      const root = container.shadowRoot ?? container;
-      const target = root.querySelector<HTMLElement>(`[data-line="${props.line}"]`);
-      if (!target) return;
-      target.scrollIntoView({ block: "center" });
-      revealedTargetRef.current = revealTarget;
-    },
-    [props.line, revealTarget],
-  );
+  const onPostRender: NonNullable<FileOptions<unknown, undefined>["onPostRender"]> = (
+    container,
+    _instance,
+    phase,
+  ) => {
+    if (phase === "unmount" || props.line === null || revealedTargetRef.current === revealTarget) {
+      return;
+    }
+    const root = container.shadowRoot ?? container;
+    const target = root.querySelector<HTMLElement>(`[data-line="${props.line}"]`);
+    if (!target) return;
+    target.scrollIntoView({ block: "center" });
+    revealedTargetRef.current = revealTarget;
+  };
 
   if (load._tag === "Loading") return <CenteredLoading label="Reading file…" />;
   if (load._tag === "Failure") {
@@ -493,6 +503,7 @@ function EnvironmentFileBody(props: {
           <ScientPdfReader
             refreshKey={props.refreshToken}
             readerScope={props.threadRef.threadId}
+            citeThread={props.threadRef}
             source={environmentPdfSource({
               environmentId: props.environmentId,
               canonicalPath: props.file.canonicalPath,
@@ -555,7 +566,7 @@ export default function EnvironmentFilePreview(props: {
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const file = freshness.file;
 
-  const openHtml = useCallback(() => {
+  const openHtml = () => {
     if (!file || !httpBaseUrl) return;
     void (async () => {
       try {
@@ -585,10 +596,10 @@ export default function EnvironmentFilePreview(props: {
         );
       }
     })();
-  }, [createAssetUrl, file, httpBaseUrl, openPreview, props.threadRef]);
+  };
 
   // Works for a viewer on any machine, unlike the editor picker, which acts on the host.
-  const saveCopy = useCallback(() => {
+  const saveCopy = () => {
     if (!file || !httpBaseUrl) return;
     void (async () => {
       const notice = fileCopyNotice(
@@ -601,7 +612,7 @@ export default function EnvironmentFilePreview(props: {
       );
       if (notice) toastManager.add(stackedThreadToast(notice));
     })();
-  }, [createCopyUrl, file, httpBaseUrl, props.environmentId]);
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">

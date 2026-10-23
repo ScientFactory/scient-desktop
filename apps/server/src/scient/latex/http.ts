@@ -12,23 +12,24 @@ import {
   failEnvironmentInternal,
   requireEnvironmentScope,
 } from "../../auth/http.ts";
+import { uploadWorkspaceLatexImage } from "../assets/WorkspaceImageFiles.ts";
+import { GeneratedDocumentStore } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import { LatexBuildService } from "./LatexBuildService.ts";
 import { LatexManagedToolchain } from "./LatexManagedToolchain.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
+import { LatexTikzPreview } from "./LatexTikzPreview.ts";
 
-function handle<A, E>(
+const handle = Effect.fn("ScientLatexHttp.handle")(function* <A, E>(
   endpointName: string,
   scope: typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope,
   reason: EnvironmentInternalErrorReason,
   run: Effect.Effect<A, E>,
 ) {
-  return Effect.gen(function* () {
-    yield* annotateEnvironmentRequest(endpointName);
-    yield* requireEnvironmentScope(scope);
-    return yield* run.pipe(Effect.catch((cause) => failEnvironmentInternal(reason, cause)));
-  });
-}
+  yield* annotateEnvironmentRequest(endpointName);
+  yield* requireEnvironmentScope(scope);
+  return yield* run.pipe(Effect.catch((cause) => failEnvironmentInternal(reason, cause)));
+});
 
 export const scientLatexHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -38,25 +39,55 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
     const toolchain = yield* LatexToolchain;
     const managed = yield* LatexManagedToolchain;
     const syncTex = yield* LatexSyncTex;
+    const artwork = yield* LatexTikzPreview;
+    const documents = yield* GeneratedDocumentStore;
 
-    /** The probe result plus what this server can do about a missing engine. */
-    const toolchainReport = (refresh: boolean) =>
-      Effect.gen(function* () {
-        // Read the install state first. A finished install drops the probe
-        // cache before it reports itself ready, so probing afterwards means a
-        // report that says `ready` has already seen the engine it installed —
-        // which is what lets the client rebuild the moment it reads that.
-        const managedInstall = yield* managed.status;
-        const status = yield* toolchain.probe(refresh);
-        return {
-          ...status,
-          canInstallManaged: managed.canInstall,
-          // An install nobody has started yet is not news for the client.
-          ...(managedInstall.state === "idle" ? {} : { managedInstall }),
-        };
-      });
+    /** Cached driver/compiler probes plus this server's managed-install facts. */
+    const toolchainReport = Effect.fn("http.toolchainReport")(function* (refresh: boolean) {
+      // Read the install state first. A finished install drops the probe
+      // cache before it reports itself ready, so probing afterwards means a
+      // report that says `ready` has already seen the engine it installed —
+      // which is what lets the client rebuild the moment it reads that.
+      const managedInstall = yield* managed.status;
+      const status = yield* toolchain.probe(refresh);
+      return {
+        ...status,
+        canInstallManaged: managed.canInstall,
+        downloadBytes: managed.downloadBytes,
+        // An install nobody has started yet is not news for the client.
+        ...(managedInstall.state === "idle" ? {} : { managedInstall }),
+      };
+    });
 
     return handlers
+      .handle("artwork", (args) =>
+        handle(
+          args.endpoint.name,
+          AuthOrchestrationOperateScope,
+          "scient_latex_build_failed",
+          artwork.render(args.payload),
+        ),
+      )
+      .handle("imageUpload", (args) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* uploadWorkspaceLatexImage({
+            cwd: args.payload.cwd,
+            documentRelativePath: args.payload.documentRelativePath,
+            temporaryPath: args.payload.file.path,
+            fileName: args.payload.file.name,
+            ...(args.payload.assetDirectory === undefined
+              ? {}
+              : { assetDirectory: args.payload.assetDirectory }),
+          }).pipe(
+            Effect.catchTags({
+              WorkspaceImageOperationError: (cause) =>
+                failEnvironmentInternal("scient_latex_build_failed", cause.cause),
+            }),
+          );
+        }),
+      )
       .handle("resolve", (args) =>
         handle(
           args.endpoint.name,
@@ -103,6 +134,31 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
           AuthOrchestrationReadScope,
           "scient_latex_navigation_failed",
           syncTex.inverse(args.payload),
+        ),
+      )
+      .handle("pageAnchors", (args) =>
+        handle(
+          args.endpoint.name,
+          AuthOrchestrationReadScope,
+          "scient_latex_navigation_failed",
+          syncTex.pageAnchors(args.payload),
+        ),
+      )
+      .handle("currentDocument", (args) =>
+        handle(
+          args.endpoint.name,
+          AuthOrchestrationReadScope,
+          "scient_latex_build_failed",
+          documents.getDescriptor(args.payload.logicalDocumentKey).pipe(
+            Effect.map((descriptor) => ({ descriptor })),
+            // An unknown document is an answer, not a failure.
+            Effect.catchTags({
+              GeneratedDocumentStoreError: (error) =>
+                error.reason === "missing-binding" || error.reason === "missing-revision"
+                  ? Effect.succeed({ descriptor: null })
+                  : Effect.fail(error),
+            }),
+          ),
         ),
       )
       .handle("toolchain", (args) =>

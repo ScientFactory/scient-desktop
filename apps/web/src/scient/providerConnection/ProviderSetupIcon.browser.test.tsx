@@ -1,3 +1,4 @@
+import { act as _fixtureAct, render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import {
@@ -8,9 +9,8 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { ReactNode } from "react";
-import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const runtime = vi.hoisted(() => ({ plan: vi.fn(), start: vi.fn() }));
 const atoms = vi.hoisted(() => ({ plan: Symbol("planRuntime"), start: Symbol("startRuntime") }));
@@ -41,6 +41,7 @@ vi.mock("./useProviderLifecycleController", () => {
     cancelConnection: never,
     submitAuthorizationCode: never,
     disconnect: never,
+    signInKey: { environmentId: "environment-test", instanceId: "sign-in-test" },
     openAuthorizationPage: never,
     planRuntime: runtime.plan,
     startRuntime: runtime.start,
@@ -169,22 +170,19 @@ function Container(props: { readonly picker: boolean; readonly children: ReactNo
   );
 }
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
   runtime.plan.mockReset();
   runtime.start.mockReset();
-});
+}
 
 const isVisible = (element: Element | null) =>
   element !== null && element.getBoundingClientRect().width > 0;
-const visibleButton = (label: string) =>
-  [...host!.querySelectorAll("button")].find(
+const visibleButton = (_fixture: _Fixture, label: string) =>
+  [..._fixture.host!.querySelectorAll("button")].find(
     (button) =>
       isVisible(button) &&
       button.closest("details")?.open !== false &&
@@ -197,18 +195,23 @@ describe("optional provider runtime summaries", () => {
     ["droid", "Droid", ["droid_device_pairing"]],
   ] as const)(
     "keeps %s hook order when a summary appears and disappears",
-    (driver, name, methods) => {
+    async (driver, name, methods) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
       const provider = snapshot(driver, name, [...methods]);
       const withoutRuntime: ServerProvider = {
         ...provider,
         connection: { methods: [...methods], canDisconnect: false, operation: null },
       };
-      host = document.createElement("div");
-      document.body.append(host);
-      root = createRoot(host);
-      const render = (next: ServerProvider) => {
-        flushSync(() => {
-          root!.render(
+      _fixture.host = document.createElement("div");
+      document.body.append(_fixture.host);
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: _fixture.host, router: false }),
+      );
+      const render = async (next: ServerProvider) => {
+        await _fixtureAct(async () => {
+          await _fixture.root0!.rerender(
             <ProviderRuntimeSection
               displayName={name}
               environmentId={EnvironmentId.make("local")}
@@ -218,15 +221,15 @@ describe("optional provider runtime summaries", () => {
         });
       };
 
-      render(withoutRuntime);
-      expect(host.childElementCount).toBe(0);
-      render(provider);
-      expect(host.textContent).toContain(
+      await render(withoutRuntime);
+      expect(_fixture.host.childElementCount).toBe(0);
+      await render(provider);
+      expect(_fixture.host.textContent).toContain(
         driver === "cursor" ? "Cursor CLI managed by Scient" : "Managed by Scient",
       );
-      expect(visibleButton("Repair")).toBeTruthy();
-      render(withoutRuntime);
-      expect(host.childElementCount).toBe(0);
+      expect(visibleButton(_fixture, "Repair")).toBeTruthy();
+      await render(withoutRuntime);
+      expect(_fixture.host.childElementCount).toBe(0);
       expect(runtime.plan).not.toHaveBeenCalled();
       expect(runtime.start).not.toHaveBeenCalled();
     },
@@ -242,11 +245,16 @@ describe.each(PROVIDERS)("%s setup mark", (driver, name, methods) => {
   it.each(states)(
     "shows the provider logo in the model picker's %s state, and the shield elsewhere",
     async (_state, provider) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
       for (const picker of [true, false]) {
-        host = document.createElement("div");
-        document.body.append(host);
-        root = createRoot(host);
-        root.render(
+        _fixture.host = document.createElement("div");
+        document.body.append(_fixture.host);
+        _fixture.root0 = _fixture.stack.use(
+          await _fixtureRender(null, { container: _fixture.host, router: false }),
+        );
+        await _fixture.root0.rerender(
           <Container picker={picker}>
             <AssistedProviderSetupHost
               displayName={name}
@@ -257,19 +265,19 @@ describe.each(PROVIDERS)("%s setup mark", (driver, name, methods) => {
           </Container>,
         );
         await expect
-          .poll(() => host!.querySelector("[data-assisted-setup-icon=true]"))
+          .poll(() => _fixture.host!.querySelector("[data-assisted-setup-icon=true]"))
           .toBeTruthy();
 
-        const logo = host.querySelector('[data-provider-setup-mark="logo"]');
-        const shield = host.querySelector('[data-provider-setup-mark="shield"]');
+        const logo = _fixture.host.querySelector('[data-provider-setup-mark="logo"]');
+        const shield = _fixture.host.querySelector('[data-provider-setup-mark="shield"]');
         expect(isVisible(logo), `logo in ${picker ? "picker" : "other host"}`).toBe(picker);
         expect(isVisible(shield), `shield in ${picker ? "picker" : "other host"}`).toBe(!picker);
         if (picker) expect(logo!.querySelector("svg")!.getBoundingClientRect().width).toBe(32);
 
-        root.unmount();
-        host.remove();
-        root = undefined;
-        host = undefined;
+        await _fixture.root0.unmount();
+        _fixture.host.remove();
+        _fixture.root0 = undefined;
+        _fixture.host = undefined;
       }
     },
   );
@@ -295,12 +303,17 @@ describe.each(PROVIDERS.filter(([driver, , methods]) => driver !== "cursor" && m
     it.each([true, false])(
       "starts from its blue action without another frame (model picker: %s)",
       async (picker) => {
+        await using _fixture = _createFixture();
+        _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
         runtime.plan.mockResolvedValue(plan);
         runtime.start.mockResolvedValue(provider);
-        host = document.createElement("div");
-        document.body.append(host);
-        root = createRoot(host);
-        root.render(
+        _fixture.host = document.createElement("div");
+        document.body.append(_fixture.host);
+        _fixture.root0 = _fixture.stack.use(
+          await _fixtureRender(null, { container: _fixture.host, router: false }),
+        );
+        await _fixture.root0.rerender(
           <Container picker={picker}>
             <AssistedProviderSetupHost
               displayName={name}
@@ -310,12 +323,12 @@ describe.each(PROVIDERS.filter(([driver, , methods]) => driver !== "cursor" && m
             />
           </Container>,
         );
-        await expect.poll(() => host!.querySelector("details")).toBeTruthy();
-        host.querySelector("details")!.open = true;
-        await expect.poll(() => visibleButton(`Use Scient-managed ${name}`)).toBeTruthy();
-        const action = visibleButton(`Use Scient-managed ${name}`)!;
+        await expect.poll(() => _fixture.host!.querySelector("details")).toBeTruthy();
+        _fixture.host.querySelector("details")!.open = true;
+        await expect.poll(() => visibleButton(_fixture, `Use Scient-managed ${name}`)).toBeTruthy();
+        const action = visibleButton(_fixture, `Use Scient-managed ${name}`)!;
         expect(action.className).toContain("text-primary");
-        const container = host.querySelector("[data-container]")!.getBoundingClientRect();
+        const container = _fixture.host.querySelector("[data-container]")!.getBoundingClientRect();
         const box = action.getBoundingClientRect();
         expect(box.left).toBeGreaterThanOrEqual(container.left);
         expect(box.right).toBeLessThanOrEqual(container.right);
@@ -323,9 +336,11 @@ describe.each(PROVIDERS.filter(([driver, , methods]) => driver !== "cursor" && m
 
         await expect.poll(() => runtime.start.mock.calls.length).toBe(1);
         expect(runtime.start).toHaveBeenCalledExactlyOnceWith(plan);
-        expect(visibleButton("Back")).toBeUndefined();
-        expect(host.textContent).not.toContain(plan.message);
-        const frames = [...host.querySelectorAll("[data-provider-onboarding-view=assisted]")];
+        expect(visibleButton(_fixture, "Back")).toBeUndefined();
+        expect(_fixture.host.textContent).not.toContain(plan.message);
+        const frames = [
+          ..._fixture.host.querySelectorAll("[data-provider-onboarding-view=assisted]"),
+        ];
         expect(frames).toHaveLength(1);
         expect(frames.filter(isVisible)).toHaveLength(1);
       },
@@ -353,12 +368,17 @@ describe("Cursor CLI single-click Scient-managed installation", () => {
   it.each([true, false])(
     "starts from its blue action without a version review (compact: %s)",
     async (compact) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
       runtime.plan.mockResolvedValue(plan);
       runtime.start.mockResolvedValue({ providers: [provider] });
-      host = document.createElement("div");
-      document.body.append(host);
-      root = createRoot(host);
-      root.render(
+      _fixture.host = document.createElement("div");
+      document.body.append(_fixture.host);
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: _fixture.host, router: false }),
+      );
+      await _fixture.root0.rerender(
         <Container picker={false}>
           <ProviderRuntimeSection
             compact={compact}
@@ -368,14 +388,33 @@ describe("Cursor CLI single-click Scient-managed installation", () => {
           />
         </Container>,
       );
-      await expect.poll(() => visibleButton("Use Scient-managed")).toBeTruthy();
-      const action = visibleButton("Use Scient-managed")!;
+      await expect.poll(() => visibleButton(_fixture, "Use Scient-managed")).toBeTruthy();
+      const action = visibleButton(_fixture, "Use Scient-managed")!;
       expect(action.className).toContain("text-primary");
-      expect(host.textContent).toContain("Conversations use the bundled Cursor SDK.");
+      expect(_fixture.host.textContent).toContain("Conversations use the bundled Cursor SDK.");
       action.click();
       await expect.poll(() => runtime.start.mock.calls.length).toBe(1);
-      expect(visibleButton("Back")).toBeUndefined();
-      expect(host.textContent).not.toContain(plan.message);
+      expect(visibleButton(_fixture, "Back")).toBeUndefined();
+      expect(_fixture.host.textContent).not.toContain(plan.message);
     },
   );
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

@@ -68,8 +68,8 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
         supportsStructuredQuestions: false,
       },
     },
-    open: (input, onUpdate) =>
-      Effect.gen(function* () {
+    open: Effect.fn("LegacyAntigravityAdapterV2.open")(
+      function* (input, onUpdate) {
         const scope = yield* Scope.fork(yield* Scope.Scope);
         scopes.add(scope);
         yield* Scope.addFinalizer(
@@ -115,8 +115,8 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
           nativeId: conversationId ?? `${input.threadId}:agy:${input.providerSessionId}`,
           nativeThreadKnown: conversationId !== undefined,
           interruptBreaksSession: true,
-          send: (turnInput, nativeTurnId) =>
-            Effect.gen(function* () {
+          send: Effect.fn("LegacyAntigravityAdapterV2.send")(
+            function* (turnInput, nativeTurnId) {
               const attachmentLines: string[] = [];
               for (const attachment of turnInput.message.attachments) {
                 const attachmentPath = resolveAttachmentPath({
@@ -231,7 +231,9 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
                   ),
                   Effect.forkIn(scope),
                 );
-            }).pipe(Effect.mapError(nativeSessionFailure)),
+            },
+            (effect, _argument0, _argument1) => effect.pipe(Effect.mapError(nativeSessionFailure)),
+          ),
           interrupt: Effect.suspend(() => session.cancel).pipe(
             Effect.mapError(nativeSessionFailure),
           ),
@@ -241,16 +243,20 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
                 detail: "Legacy Antigravity does not expose approval callbacks in headless mode.",
               }),
             ),
-          resume: (nativeId) =>
-            Effect.gen(function* () {
+          resume: Effect.fn("LegacyAntigravityAdapterV2.resume")(
+            function* (nativeId) {
               if (nativeId === conversationId) return;
               yield* session.close;
               session = yield* launch(nativeId);
               conversationId = nativeId;
-            }).pipe(Effect.mapError(nativeSessionFailure)),
+            },
+            (effect, _argument0) => effect.pipe(Effect.mapError(nativeSessionFailure)),
+          ),
         };
         return native;
-      }).pipe(Effect.mapError(nativeSessionFailure)),
+      },
+      (effect, _argument0, _argument1) => effect.pipe(Effect.mapError(nativeSessionFailure)),
+    ),
   });
   return {
     ...adapter,

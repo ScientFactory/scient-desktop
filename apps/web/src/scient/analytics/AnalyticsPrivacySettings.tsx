@@ -1,6 +1,7 @@
 import type { ScientAnalyticsConsent, ScientAnalyticsStatus } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { readPreparedConnection } from "../../state/session";
 import { Button } from "../../components/ui/button";
@@ -31,15 +32,16 @@ export function AnalyticsPrivacySettings() {
   const [status, setStatus] = useState<ScientAnalyticsStatus | null>(null);
   const [pending, setPending] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const clearStatus = useStableCallback(() => setStatus(null));
 
   useEffect(() => {
     if (environmentId === null) {
-      setStatus(null);
+      clearStatus();
       return;
     }
     const prepared = readPreparedConnection(environmentId);
     if (prepared === null) {
-      setStatus(null);
+      clearStatus();
       return;
     }
     let active = true;
@@ -53,7 +55,7 @@ export function AnalyticsPrivacySettings() {
     return () => {
       active = false;
     };
-  }, [environmentId]);
+  }, [environmentId, clearStatus]);
 
   useEffect(() => {
     if (status?.available !== true) return;
@@ -68,18 +70,23 @@ export function AnalyticsPrivacySettings() {
     const previous = status;
     setPending(true);
     setStatus({ available: true, consent });
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      setStatus(await setScientAnalyticsConsent(prepared, consent));
-    } catch {
-      setStatus(previous);
-      toastManager.add({
-        type: "error",
-        title: "Analytics preference was not saved",
-        description: "Your new choice could not be confirmed. Please try again.",
-      });
-    } finally {
-      setPending(false);
+      try {
+        setStatus(await setScientAnalyticsConsent(prepared, consent));
+      } catch {
+        setStatus(previous);
+        toastManager.add({
+          type: "error",
+          title: "Analytics preference was not saved",
+          description: "Your new choice could not be confirmed. Please try again.",
+        });
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPending(false);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   const deleteData = async () => {
@@ -88,23 +95,29 @@ export function AnalyticsPrivacySettings() {
     if (prepared === null) return;
     setConfirmDelete(false);
     setPending(true);
+    let actionFailure: { readonly cause: unknown } | undefined;
     try {
-      await deleteScientAnalyticsData(prepared);
-      toastManager.add({
-        type: "success",
-        title: "Analytics deletion requested",
-        description: "Local analytics data was cleared and the analytics identifier was replaced.",
-      });
-    } catch {
-      toastManager.add({
-        type: "error",
-        title: "Analytics data was not deleted",
-        description:
-          "Deletion could not be confirmed. Please try again; an accepted request may still be processing.",
-      });
-    } finally {
-      setPending(false);
+      try {
+        await deleteScientAnalyticsData(prepared);
+        toastManager.add({
+          type: "success",
+          title: "Analytics deletion requested",
+          description:
+            "Local analytics data was cleared and the analytics identifier was replaced.",
+        });
+      } catch {
+        toastManager.add({
+          type: "error",
+          title: "Analytics data was not deleted",
+          description:
+            "Deletion could not be confirmed. Please try again; an accepted request may still be processing.",
+        });
+      }
+    } catch (cause) {
+      actionFailure = { cause };
     }
+    setPending(false);
+    if (actionFailure) throw actionFailure.cause;
   };
 
   return (

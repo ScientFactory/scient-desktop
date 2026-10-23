@@ -1,4 +1,4 @@
-import { MessageId, ProviderInstanceId, TurnId } from "@t3tools/contracts";
+import { MessageId, ProviderInstanceId, RunId, TurnId } from "@t3tools/contracts";
 import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/models";
 import { expect, it } from "vitest";
 import { placementEligible } from "./placementEligibility";
@@ -69,4 +69,21 @@ it("reads visits as the sidebar rows do: the server's when it tracks them", () =
   // Same for wake events.
   const woke = { ...base, snoozedUntil: now };
   expect(placementEligible({ ...woke, lastVisitedAt: now }, earlier, now)).toBe(false);
+});
+
+it("reads an older server's completed run as its answer, as the sidebar's unread dot does", () => {
+  const { latestCompletedAnswer: _, ...legacy } = base;
+  const completed = {
+    ...legacy,
+    latestRun: {
+      runId: RunId.make("run"),
+      assistantMessageId: null,
+      status: "completed" as const,
+      requestedAt: earlier,
+      startedAt: earlier,
+      completedAt: now,
+    },
+  } as unknown as Parameters<typeof placementEligible>[0];
+  expect(placementEligible(completed, earlier, now)).toBe(true);
+  expect(placementEligible(completed, now, now)).toBe(false);
 });

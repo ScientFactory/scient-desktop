@@ -814,28 +814,27 @@ const readFailure = (cause: unknown) =>
  * given). On failure these may hold partial output; the caller removes it
  * with the rest of the staging area.
  */
-export const readScicPackage = (
+export const readScicPackage = Effect.fn("ScicReader.readScicPackage")(function* (
   input: ScicReadInput,
-): Effect.Effect<ValidatedConversationImport, ScicRejection | ScicReadError> =>
-  Effect.gen(function* () {
-    let active: Promise<ValidatedConversationImport> | null = null;
-    return yield* Effect.acquireUseRelease(
-      Effect.void,
-      () =>
-        Effect.tryPromise({
-          try: (signal) => {
-            active = readPackage(input, signal);
-            return active;
-          },
-          catch: readFailure,
-        }),
-      () =>
-        Effect.promise(
-          () =>
-            active?.then(
-              () => {},
-              () => {},
-            ) ?? Promise.resolve(),
-        ),
-    );
-  });
+): Effect.fn.Return<ValidatedConversationImport, ScicRejection | ScicReadError> {
+  let active: Promise<ValidatedConversationImport> | null = null;
+  return yield* Effect.acquireUseRelease(
+    Effect.void,
+    () =>
+      Effect.tryPromise({
+        try: (signal) => {
+          active = readPackage(input, signal);
+          return active;
+        },
+        catch: readFailure,
+      }),
+    () =>
+      Effect.promise(
+        () =>
+          active?.then(
+            () => {},
+            () => {},
+          ) ?? Promise.resolve(),
+      ),
+  );
+});

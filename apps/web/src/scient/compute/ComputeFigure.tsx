@@ -124,14 +124,16 @@ function ComputeFigurePreview(
     setMessage(null);
     // Invoke in the click itself: clipboard APIs may require user activation.
     void (async () => {
-      try {
+      return await (async () => {
         await action.run();
-      } catch (cause) {
-        setMessage(cause instanceof Error ? cause.message : "The image action failed.");
-      } finally {
-        running.current = false;
-        setBusy(false);
-      }
+      })()
+        .catch(async (cause) => {
+          setMessage(cause instanceof Error ? cause.message : "The image action failed.");
+        })
+        .finally(() => {
+          running.current = false;
+          setBusy(false);
+        });
     })();
   };
   return (

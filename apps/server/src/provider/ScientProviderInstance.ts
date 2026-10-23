@@ -2,7 +2,8 @@
  * App-owned extensions carried by live provider instances.
  *
  * The provider-core SPI stays provider-agnostic. Scient attaches lifecycle,
- * skill, and voice actions at the server boundary where their authority lives.
+ * skill, plugin, and voice actions at the server boundary where their
+ * authority lives.
  */
 import type {
   ProviderDriver,
@@ -12,9 +13,13 @@ import type {
 import type { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
+import type * as Stream from "effect/Stream";
 import type {
   ProviderConnectionActions,
   ProviderManagedRuntimeActions,
+  ProviderNativeInventory,
+  ProviderPluginActions,
+  ProviderWorkspaceInventory,
   ProviderSkillActions,
   ProviderVoiceTranscriptCorrection,
 } from "./ScientProviderInstanceSeams.ts";
@@ -23,6 +28,10 @@ export interface ScientProviderInstance extends ProviderInstance {
   readonly connectionActions?: ProviderConnectionActions | undefined;
   readonly managedRuntimeActions?: ProviderManagedRuntimeActions | undefined;
   readonly skillActions?: ProviderSkillActions | undefined;
+  readonly pluginActions?: ProviderPluginActions | undefined;
+  /** Inventory reported by live sessions or enrichment; the registry publishes it. */
+  readonly nativeInventoryChanges?: Stream.Stream<ProviderNativeInventory> | undefined;
+  readonly workspaceInventory?: ProviderWorkspaceInventory | undefined;
   readonly voiceTranscriptCorrection?: ProviderVoiceTranscriptCorrection | undefined;
 }
 

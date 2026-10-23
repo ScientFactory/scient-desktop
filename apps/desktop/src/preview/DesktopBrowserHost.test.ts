@@ -1,12 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off - Stands in for an Electron debugger.
 import { describe, expect, it } from "@effect/vitest";
 import { DesktopBrowserEvent } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as NodeEvents from "node:events";
-import { vi } from "vite-plus/test";
 
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 
@@ -45,11 +45,16 @@ const makeDebuggee = () => {
   };
 };
 
-const takeEvents = (host: DesktopBrowserHost.DesktopBrowserHost["Service"], count: number) =>
+const takeEvents = (
+  host: DesktopBrowserHost.DesktopBrowserHost["Service"],
+  count: number,
+  onEvent: (event: DesktopBrowserEvent) => Effect.Effect<unknown> = () => Effect.void,
+) =>
   host.events.pipe(
+    Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
+    Stream.tap(onEvent),
     Stream.take(count),
     Stream.runCollect,
-    Effect.map((lines) => lines.map((line) => decodeEvent(new TextDecoder().decode(line)))),
   );
 
 describe("DesktopBrowserHost", () => {
@@ -68,9 +73,12 @@ describe("DesktopBrowserHost", () => {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
-      const reader = yield* takeEvents(host, 2).pipe(Effect.forkScoped);
+      const attached = yield* Deferred.make<void>();
+      const reader = yield* takeEvents(host, 2, (event) =>
+        event.type === "attached" ? Deferred.succeed(attached, undefined) : Effect.void,
+      ).pipe(Effect.forkScoped);
 
-      yield* Effect.yieldNow;
+      yield* Deferred.await(attached);
       const command = (id: number, method: string) =>
         host.handleCommandLine(
           encodeJson({
@@ -83,7 +91,6 @@ describe("DesktopBrowserHost", () => {
       yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
       yield* command(2, "DOM.enable");
       debuggee.release();
-      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
       const [, reply] = yield* Fiber.join(reader);
 
       expect(reply).toMatchObject({ type: "cdp" });
@@ -172,6 +179,23 @@ describe("DesktopBrowserHost", () => {
       const debuggee = makeDebuggee();
       const webContents = debuggee.tab.webContents;
       host.attach(key, debuggee.tab);
+      const attached = yield* Deferred.make<void>();
+      const configured = Promise.withResolvers<void>();
+      const inputsCompleted = Promise.withResolvers<void>();
+      const inputReplyIds = new Set<number>();
+      const reader = yield* takeEvents(host, 4, (event) => {
+        if (event.type === "attached") return Deferred.succeed(attached, undefined);
+        if (event.type === "cdp")
+          return Effect.sync(() => {
+            const id = decodeCdpReply(event.message).id;
+            if (id === 1) configured.resolve();
+            if (id === 2 || id === 3) inputReplyIds.add(id);
+            if (inputReplyIds.size === 2) inputsCompleted.resolve();
+          });
+        return Effect.void;
+      }).pipe(Effect.forkScoped);
+      // Subscribing announces the tab and resets its relay; finish that before sending commands.
+      yield* Deferred.await(attached);
       const encodeCommand = (message: unknown) =>
         encodeJson({
           type: "cdp",
@@ -186,7 +210,7 @@ describe("DesktopBrowserHost", () => {
         }),
       );
       debuggee.release();
-      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+      yield* Effect.promise(() => configured.promise);
 
       yield* host.handleCommandLine(
         encodeCommand({
@@ -219,12 +243,22 @@ describe("DesktopBrowserHost", () => {
       expect(paths).toEqual(["/srv/downloads/agent-download"]);
 
       debuggee.release();
-      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+      // Reply publication precedes CdpRelay's synchronous onComplete. The reply's
+      // Promise receipt resumes after that callback, when input permission is restored.
+      yield* Effect.promise(() => inputsCompleted.promise);
+      const events = yield* Fiber.join(reader);
+      expect(
+        events
+          .filter((event) => event.type === "cdp")
+          .map((event) => decodeCdpReply(event.message).id)
+          .toSorted(),
+      ).toEqual([1, 2, 3]);
       expect(host.canReportHumanInput(webContents, "pointer")).toBe(true);
+      expect(host.canReportHumanInput(webContents, "key")).toBe(true);
 
       host.noteHumanInput(webContents);
       debuggee.emit("Browser.downloadWillBegin", { guid: "human-download" });
       expect(host.pendingDownloadWasHuman(webContents)).toBe(true);
-    }),
+    }).pipe(Effect.scoped),
   );
 });

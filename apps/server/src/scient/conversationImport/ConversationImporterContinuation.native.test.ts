@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 
 import {
@@ -65,6 +66,7 @@ import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1Th
 
 import { ServerConfig } from "../../config.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
+import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 
 const retainedMessages = Effect.fn("ImportTest.retainedMessages")(function* (
   handoff: OrchestrationV2ContextHandoff,
@@ -77,6 +79,7 @@ const retainedMessages = Effect.fn("ImportTest.retainedMessages")(function* (
   })).messages;
 });
 import { layer as resourceCleanupLayer } from "../../orchestration-v2/ResourceCleanupService.ts";
+import { ScheduledTaskService } from "../../scheduledTasks/ScheduledTaskService.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
 import {
@@ -1112,6 +1115,23 @@ describe("native import continuation and forks", () => {
         assert.isTrue(
           first.contextHandoffs.every((handoff) => (handoff.history?.omittedItems ?? 0) === 0),
         );
+        // The continued run checkpoints the imported project's own repository.
+        const project = Option.getOrThrow(
+          yield* Effect.flatMap(ProjectStoreV2, (projects) => projects.get(PROJECT_ID)),
+        );
+        const run = first.runs.at(-1);
+        const scope = first.checkpointScopes.find((candidate) => candidate.runId === run?.id);
+        assert.strictEqual(scope?.cwd, project.workspaceRoot);
+        const checkpoint = first.checkpoints.find(
+          (candidate) => candidate.id === run?.checkpointId,
+        );
+        assert.strictEqual(checkpoint?.status, "ready");
+        assert.strictEqual(
+          NodeChildProcess.spawnSync("git", ["rev-parse", "--verify", "--quiet", checkpoint!.ref], {
+            cwd: project.workspaceRoot,
+          }).status,
+          0,
+        );
         const firstProvider = first.providerThreads.find(
           (thread) => thread.id === first.thread.activeProviderThreadId,
         )!;
@@ -1150,6 +1170,55 @@ describe("native import continuation and forks", () => {
         );
       }),
     ),
+  );
+  it.live(
+    "continues an import whose project folder is not a repository, without a checkpoint",
+    () =>
+      withImporter(
+        Effect.gen(function* () {
+          const folder = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+            prefix: "scient-native-import-plain-",
+          });
+          const now = DateTime.formatIso(yield* DateTime.now);
+          yield* (yield* EventSinkV2).commitProjectCommand({
+            commandId: CommandId.make("plain-folder-project"),
+            projectId: PROJECT_ID,
+            commandType: "project.meta-updated",
+            acceptedAt: yield* DateTime.now,
+            event: {
+              eventId: EventId.make("plain-folder-project"),
+              type: "project.meta-updated",
+              aggregateKind: "project",
+              aggregateId: PROJECT_ID,
+              occurredAt: now,
+              commandId: null,
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+              payload: { projectId: PROJECT_ID, workspaceRoot: folder, updatedAt: now },
+            },
+          });
+          const { lease } = yield* leaseFor(importFixture({ turns: 1 }));
+          const { result } = yield* importOnce(lease);
+          yield* continueImport(
+            result.threadId,
+            MessageId.make("plain-folder-continuation"),
+            "Continue without a repository",
+          );
+          const projection = yield* (yield* ProjectionStoreV2).getThreadProjection(result.threadId);
+          const run = projection.runs.at(-1);
+          assert.strictEqual(run?.status, "completed");
+          assert.strictEqual(
+            projection.checkpointScopes.find((scope) => scope.runId === run?.id)?.cwd,
+            folder,
+          );
+          assert.isFalse(
+            projection.checkpoints.some(
+              (checkpoint) => checkpoint.runId === run?.id && checkpoint.status === "ready",
+            ),
+          );
+        }),
+      ),
   );
   it.live(
     "forks an inherited imported answer after revert without losing history or provenance",
@@ -1992,6 +2061,8 @@ it.live(
         const resumed: string[] = [];
         const options = {
           runtimeOptions,
+          // The persisted project folder must outlive both runtime connections.
+          projectScope: yield* Scope.Scope,
           nativeIdFactory: () => `uncertain-native-${generation++}`,
           beforeFresh: () =>
             pauseReplacement
@@ -2921,11 +2992,22 @@ it.live(
           workspaceMode: "local",
         };
         const peer = yield* ImportPeer;
-        yield* Effect.sleep("1 second").pipe(
-          Effect.andThen(peer.setTime(Date.parse("2026-09-28T09:31:00.000Z"))),
-          Effect.forkScoped,
-        );
+        const outbox = yield* EffectOutboxV2;
+        const completion = yield* Stream.toPull(yield* outbox.subscribeCompletions);
+        const awaitEffects = Effect.fn("test.awaitEffects")(function* (commandId: CommandId) {
+          while (true) {
+            const jobs = yield* outbox.listByCommandId(commandId);
+            if (jobs.every((job) => ["succeeded", "failed", "cancelled"].includes(job.status))) {
+              assert.isTrue(jobs.every((job) => job.status === "succeeded"));
+              return;
+            }
+            yield* completion;
+          }
+        });
         const receipt = yield* forks.dispatch(command);
+        yield* awaitEffects(command.commandId);
+        // Advancing past an active provisioning lease would manufacture a takeover.
+        yield* peer.setTime(Date.parse("2026-09-28T09:31:00.000Z"));
         const frozen = yield* store.getThreadProjection(childId);
         const baseline = (yield* readThread(childId))!;
         const inherited = frozen.visibleTurnItems
@@ -3079,21 +3161,10 @@ it.live(
             yield* (yield* CommandReceiptStoreV2).getByCommandId(failedCommand.commandId),
           ),
         );
-        const outbox = yield* EffectOutboxV2;
-        const completion = yield* Stream.toPull(
-          Stream.merge(yield* outbox.subscribeCompletions, Stream.tick("10 millis")),
-        );
         const deleteThread = Effect.fn("test.deleteThread")(function* (threadId: ThreadId) {
           const commandId = CommandId.make(`durable-delete-${threadId}`);
           yield* orchestrator.dispatch({ type: "thread.delete", commandId, threadId });
-          while (true) {
-            const jobs = yield* outbox.listByCommandId(commandId);
-            if (jobs.every((job) => ["succeeded", "failed", "cancelled"].includes(job.status))) {
-              assert.isTrue(jobs.every((job) => job.status === "succeeded"));
-              return;
-            }
-            yield* completion;
-          }
+          yield* awaitEffects(commandId);
         });
         yield* deleteThread(sourceId);
         assert.isNotNull((yield* store.getThreadProjection(sourceId)).thread.deletedAt);
@@ -3233,6 +3304,7 @@ it.live(
               Layer.mergeAll(
                 Layer.mock(TerminalManager)({ close: () => Effect.void }),
                 Layer.mock(PreviewManager)({ close: () => Effect.void }),
+                Layer.mock(ScheduledTaskService)({ deleteForThread: () => Effect.void }),
               ),
             ),
           ),

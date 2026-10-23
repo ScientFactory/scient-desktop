@@ -16,11 +16,13 @@ import {
   portableImageStem,
   uploadWorkspaceMarkdownImage,
 } from "./WorkspaceMarkdownFiles.ts";
+import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 
 const WorkspaceEntriesLayer = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(
     WorkspaceFileSystem.layer.pipe(
+      Layer.provide(layerKnownWorkspacesAllowAll),
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(WorkspaceEntriesLayer),
     ),

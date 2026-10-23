@@ -56,8 +56,8 @@ export const layer = Layer.effect(
     });
     yield* Effect.addFinalizer(() => controller.stop);
     return DesktopKeepAwake.of({
-      handle: (request) =>
-        Effect.gen(function* () {
+      handle: Effect.fn("DesktopKeepAwake.handle")(
+        function* (request: Request) {
           if (request.type === "choose" && request.choice === "once") {
             const document = yield* controller.document;
             const proposed = {
@@ -101,7 +101,9 @@ export const layer = Layer.effect(
             return yield* controller.handle({ type: "get" });
           }
           return state;
-        }).pipe(Effect.mapError((cause) => new KeepAwakeError({ cause }))),
+        },
+        Effect.mapError((cause) => new KeepAwakeError({ cause })),
+      ),
     });
   }),
 ).pipe(

@@ -302,15 +302,14 @@ const contextCandidates = Effect.fn("ContextHistory.candidates")(function* (
       itemId: row.item_id,
       role: row.role,
       bytes: row.bytes,
-      read: () =>
-        Effect.gen(function* () {
-          if (row.raw_bytes > readLimit) return null;
-          const body = yield* sql<{ readonly payload_json: string }>`
+      read: Effect.fn("ContextHistorySource.read")(function* () {
+        if (row.raw_bytes > readLimit) return null;
+        const body = yield* sql<{ readonly payload_json: string }>`
           SELECT payload_json FROM scient_handoff_legacy_messages
           WHERE source_id = ${source.id} AND position = ${row.position}
         `;
-          return yield* decodeMessage(body[0]!.payload_json);
-        }),
+        return yield* decodeMessage(body[0]!.payload_json);
+      }),
     }));
   }
   const index = yield* sql<{
@@ -347,10 +346,9 @@ const contextCandidates = Effect.fn("ContextHistory.candidates")(function* (
     // The full row includes metadata, so it is not a context-cost estimate.
     // Its bounded read is followed by the shared exact serialized-cost check.
     bytes: 0,
-    read: () =>
-      Effect.gen(function* () {
-        if (row.bytes! > readLimit) return null;
-        const body = yield* sql<{ readonly payload_json: string }>`
+    read: Effect.fn("ContextHistorySource.read")(function* () {
+      if (row.bytes! > readLimit) return null;
+      const body = yield* sql<{ readonly payload_json: string }>`
         SELECT ${contextItemSql(sql, sql`COALESCE(frozen.item_json, body.item_json, item.payload_json)`)} AS payload_json
         FROM scient_handoff_history AS history
         LEFT JOIN scient_handoff_frozen_items AS body ON body.body_id = history.body_id
@@ -360,16 +358,16 @@ const contextCandidates = Effect.fn("ContextHistory.candidates")(function* (
           ON item.turn_item_id = history.source_item_id AND item.thread_id = history.source_thread_id
         WHERE history.source_id = ${source.id} AND history.position = ${row.position}
       `;
-        const original = yield* decodeTurnItemRow(body[0]!.payload_json);
-        const item =
-          row.fork_position === null || original.threadId === row.view_thread_id
-            ? original
-            : presentInheritedItem(original, row.fork_position, ThreadId.make(row.view_thread_id));
-        const message = historicalMessage(item);
-        return message === null
-          ? null
-          : { ...message, ...(row.run_status === null ? {} : { runStatus: row.run_status }) };
-      }),
+      const original = yield* decodeTurnItemRow(body[0]!.payload_json);
+      const item =
+        row.fork_position === null || original.threadId === row.view_thread_id
+          ? original
+          : presentInheritedItem(original, row.fork_position, ThreadId.make(row.view_thread_id));
+      const message = historicalMessage(item);
+      return message === null
+        ? null
+        : { ...message, ...(row.run_status === null ? {} : { runStatus: row.run_status }) };
+    }),
   }));
 });
 
@@ -385,21 +383,20 @@ const readContextSummaryPage = Effect.fn("ContextHistory.readSummaryPage")(funct
     offset,
     maxChars,
     ...(onPage === undefined ? {} : { onPage }),
-    read: (byteOffset, length) =>
-      Effect.gen(function* () {
-        const rows = yield* sql<{ readonly chunk: Uint8Array }>`
+    read: Effect.fn("ContextHistorySource.read")(function* (byteOffset, length) {
+      const rows = yield* sql<{ readonly chunk: Uint8Array }>`
         SELECT substr(CAST(COALESCE(source.payload_json, event.payload_json) AS BLOB),
           ${byteOffset + 1}, ${length}) AS chunk FROM scient_handoff_legacy_sources AS source
         LEFT JOIN orchestration_events AS event ON event.event_id = source.event_id
         WHERE source.source_id = ${sourceId}
       `;
-        if (rows[0] === undefined)
-          return yield* new ContextHistoryReadError({
-            sourceId,
-            detail: "The legacy summary source is missing.",
-          });
-        return rows[0].chunk;
-      }),
+      if (rows[0] === undefined)
+        return yield* new ContextHistoryReadError({
+          sourceId,
+          detail: "The legacy summary source is missing.",
+        });
+      return rows[0].chunk;
+    }),
   });
 });
 

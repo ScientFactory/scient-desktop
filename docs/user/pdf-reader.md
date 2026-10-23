@@ -3,9 +3,11 @@
 Use the PDF reader to study papers, reports, books, and other project documents
 while keeping them beside the conversation and related files.
 
-Selecting a PDF anywhere that opens a file in Scient opens it in the Files side
+Opening a workspace or environment PDF uses the Scient reader in the Files side
 panel. The reader uses the full panel by default; the project file explorer and
-the PDF pages/outline sidebar remain optional.
+the PDF pages/outline sidebar remain optional. PDFs attached to a chat message,
+including attachments you are still composing, open in the same reader. Browser
+tabs keep their own viewer.
 
 The first time a PDF opens, it starts fit to width with the PDF sidebar closed.
 Each conversation keeps its own PDF reading position. A fork starts from the
@@ -15,17 +17,16 @@ not move the other.
 When you return to the same document, Scient restores its page, exact reading
 position, zoom or fit mode, rotation, and sidebar mode. This survives leaving and
 returning to the conversation, restarting Scient, and refreshed versions that
-keep the same document identity. Opening the same
-workspace path from another conversation in the same environment shares that
-reading session. Files at different worktree paths remain separate. Search text
-and PDF passwords are not restored.
+keep the same document identity. Reading state stays separate between
+conversations, even for the same workspace path. Files at different worktree
+paths also remain separate. Search text and PDF passwords are not restored.
 
 The reader supports:
 
 - continuous, fit-to-width reading that remains responsive in long documents;
 - previous/next navigation and direct page-number entry;
-- zoom in five-percent steps, one-click actual size, fit width, smooth trackpad
-  pinch zoom, and clockwise rotation;
+- zoom in five-percent steps, fit width by clicking the zoom percentage, actual
+  size, smooth trackpad pinch zoom, and clockwise rotation;
 - text selection and copy when the PDF contains a text layer;
 - responsive document search after each key, with previous/next result navigation;
 - internal document links and external links opened in a separate context;
@@ -36,6 +37,25 @@ The reader supports:
 - saving a copy from the secondary actions menu. In the desktop app, Scient
   opens a native Save dialog and confirms when the copy has been written;
   cancelling the dialog leaves the PDF unchanged.
+
+## Ask in chat about a passage
+
+Select text in a PDF and choose **Ask in chat**, as in code and Markdown files.
+The quote becomes a chip in the message you are writing, with an optional
+comment. The agent receives the PDF's path or name, the page, the quoted text
+and a little text around it.
+
+- A selection can span up to four consecutive pages. When a selection can't be
+  quoted (diagonal text, a page still loading, more than four pages, or a quote
+  too long for one message), the button says why instead.
+- Click a quote chip, in your message or a sent one, to reopen the PDF at the
+  quote with it highlighted. If the PDF has changed since, Scient looks for the
+  quoted text and tells you whether it found it, found it more than once, or
+  couldn't find it; then it opens the page where the quote was.
+- PDFs in the Files panel, LaTeX output, generated PDFs, Sources papers, files
+  outside the project and sent chat attachments can be quoted. An attachment
+  you are still composing can't be quoted yet; ask about it in words, or quote
+  it once the message is sent.
 
 The reader does not yet add Scient annotations or OCR. Scanned PDFs without a
 text layer can be read visually, but text selection and search may be limited.

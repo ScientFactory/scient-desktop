@@ -1,3 +1,4 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import {
@@ -22,8 +23,13 @@ import { CustomModelConnectionDialog } from "../settings/CustomModelConnectionDi
 import { createPortal } from "react-dom";
 import { isInsideRestingComposerControlScope } from "./composerEventScope";
 import { ProviderOnboardingPicker } from "../../scient/providerConnection/ProviderOnboardingPicker";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  observeProviderSignInSnapshots,
+  resetProviderSignInForTests,
+} from "../../scient/providerConnection/providerSignInFlow";
+
+import * as Cause from "effect/Cause";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 import { ModelPickerContent } from "./ModelPickerContent";
 import { ProviderModelPicker } from "./ProviderModelPicker";
@@ -47,6 +53,7 @@ vi.mock("../../scient/providerConnection/useProviderLifecycleController", () => 
     cancelConnection: vi.fn(),
     submitAuthorizationCode: vi.fn(),
     disconnect: vi.fn(),
+    signInKey: { environmentId: "environment-test", instanceId: "sign-in-test" },
     openAuthorizationPage: vi.fn(),
     updateExternalRuntime: vi.fn(),
     refresh: vi.fn(),
@@ -112,10 +119,10 @@ function snapshot(driver: (typeof DRIVERS)[number], installed = false): ServerPr
     },
   };
 }
-let host: HTMLDivElement;
-let root: Root;
+
 const selectModel = vi.fn();
-function render(
+async function render(
+  _fixture: _Fixture,
   provider: ServerProvider,
   options = provider.models,
   locked = false,
@@ -126,11 +133,13 @@ function render(
   composerOwned = false,
   resting = true,
 ) {
-  if (!host) {
-    host = document.createElement("div");
-    host.style.padding = "16px";
-    document.body.append(host);
-    root = createRoot(host);
+  if (!_fixture.host) {
+    _fixture.host = document.createElement("div");
+    _fixture.host.style.padding = "16px";
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
   }
   const Picker = composed ? ProviderModelPicker : ModelPickerContent;
   const picker = (
@@ -163,7 +172,7 @@ function render(
       }
     />
   );
-  root.render(
+  await _fixture.root0.rerender(
     composerOwned ? (
       <ComposerPortalFixture resting={resting}>{picker}</ComposerPortalFixture>
     ) : (
@@ -171,15 +180,15 @@ function render(
     ),
   );
 }
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  host = undefined!;
-  root = undefined!;
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.host = undefined!;
+  _fixture.root0 = undefined!;
   document.documentElement.classList.remove("dark");
   __resetClientSettingsPersistenceForTests();
   vi.clearAllMocks();
-});
+}
 function reachable(button: HTMLElement) {
   const box = button.getBoundingClientRect();
   const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
@@ -200,25 +209,34 @@ async function setupButton() {
 
 describe("actual picker provider setup", () => {
   it.each(DRIVERS)("keeps %s installation visible with no model rows", async (driver) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     await page.viewport(1280, 720);
-    render(snapshot(driver));
+    await render(_fixture, snapshot(driver));
     await setupButton();
-    expect(host.querySelector("[data-model-picker-models]")).toBeNull();
+    expect(_fixture.host.querySelector("[data-model-picker-models]")).toBeNull();
     expect(commands.planRuntime).not.toHaveBeenCalled();
     expect(commands.startConnection).not.toHaveBeenCalled();
   });
 
   it.each(DRIVERS)("keeps %s model connection visible after installation", async (driver) => {
-    render(snapshot(driver, true));
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    await render(_fixture, snapshot(driver, true));
     await setupButton();
   });
 
   it("centers setup beside the full provider rail without relying on model rows", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     await page.viewport(1280, 720);
     const providers = DRIVERS.map((driver) => snapshot(driver));
-    render(providers[0]!, [], false, providers);
+    await render(_fixture, providers[0]!, [], false, providers);
     await setupButton();
-    const body = host.querySelector<HTMLElement>("[data-model-picker-setup]")!;
+    const body = _fixture.host.querySelector<HTMLElement>("[data-model-picker-setup]")!;
     const frame = body.querySelector<HTMLElement>("[data-provider-onboarding-view]")!;
     await expect.poll(() => frame.getBoundingClientRect().height).toBeGreaterThan(200);
     expect(
@@ -227,27 +245,36 @@ describe("actual picker provider setup", () => {
   });
 
   it("opens the active Scient setup rather than unrelated favorites", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const provider = snapshot("scient");
     __setClientSettingsForTests({
       ...DEFAULT_CLIENT_SETTINGS,
       favorites: [{ provider: ProviderInstanceId.make("codex"), model: "cached-model" }],
     });
-    render(provider);
+    await render(_fixture, provider);
     await setupButton();
   });
 
   it("starts Cursor browser sign-in once from the reachable button", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const provider = snapshot("cursor", true);
     commands.startConnection.mockResolvedValue(provider);
-    render(provider);
+    await render(_fixture, provider);
     const button = await setupButton();
     await page.getByRole("button", { name: button.textContent!.trim(), exact: true }).click();
     expect(commands.startConnection).toHaveBeenCalledExactlyOnceWith("cursor_browser");
   });
 
   it("remounts and remeasures models after setup, then reveals sign-in with cached models", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const provider = snapshot("cursor", true);
-    render(provider);
+    await render(_fixture, provider);
     await setupButton();
     const models = Array.from({ length: 30 }, (_, i) => ({
       slug: `model-${i}`,
@@ -261,32 +288,40 @@ describe("actual picker provider setup", () => {
       auth: { status: "authenticated" as const },
       models,
     };
-    render(ready);
+    await render(_fixture, ready);
     await expect
       .poll(
-        () => host.querySelector("[data-model-picker-models]")?.getBoundingClientRect().height ?? 0,
+        () =>
+          _fixture.host.querySelector("[data-model-picker-models]")?.getBoundingClientRect()
+            .height ?? 0,
       )
       .toBeGreaterThan(100);
-    expect(host.querySelector("[data-model-picker-setup]")).toBeNull();
+    expect(_fixture.host.querySelector("[data-model-picker-setup]")).toBeNull();
     await page.getByText("Model 0", { exact: true }).click();
     expect(selectModel).toHaveBeenCalledExactlyOnceWith(provider.instanceId, "model-0");
-    render({ ...ready, auth: { status: "unauthenticated" } });
+    await render(_fixture, { ...ready, auth: { status: "unauthenticated" } });
     await setupButton();
-    render({ ...ready, models: models.slice(0, 1) });
+    await render(_fixture, { ...ready, models: models.slice(0, 1) });
     await expect
       .poll(
-        () => host.querySelector("[data-model-picker-models]")?.getBoundingClientRect().height ?? 0,
+        () =>
+          _fixture.host.querySelector("[data-model-picker-models]")?.getBoundingClientRect()
+            .height ?? 0,
       )
       .toBeGreaterThan(30);
     await expect
       .poll(
         () =>
-          host.querySelector("[data-model-picker-models]")?.getBoundingClientRect().height ?? 999,
+          _fixture.host.querySelector("[data-model-picker-models]")?.getBoundingClientRect()
+            .height ?? 999,
       )
       .toBeLessThan(100);
   });
 
   it("offers Scient Agent accounts and keeps the same dialog during browser wait", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const base = snapshot("scient", true);
     const provider: ServerProvider = {
       ...base,
@@ -307,7 +342,7 @@ describe("actual picker provider setup", () => {
       _tag: "Success",
       value: { providers: [provider] },
     });
-    render(provider);
+    await render(_fixture, provider);
     await setupButton();
     expect(commands.accountCommand).not.toHaveBeenCalled();
     await page.getByRole("button", { name: "Connect models", exact: true }).click();
@@ -321,6 +356,7 @@ describe("actual picker provider setup", () => {
         instanceId: provider.instanceId,
         method: "scient_agent_account",
         account: "openai-codex",
+        signInRequestId: expect.stringMatching(/^[A-Za-z0-9-]{8,64}$/),
       },
     });
     const waiting: ServerProvider = {
@@ -338,7 +374,7 @@ describe("actual picker provider setup", () => {
         },
       },
     };
-    render(waiting);
+    await render(_fixture, waiting);
     await expect
       .poll(() => document.querySelector("[role=dialog]")?.textContent)
       .toContain("Finish signing in securely");
@@ -346,9 +382,77 @@ describe("actual picker provider setup", () => {
     expect(commands.accountCommand).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a Scient Agent sign-in recoverable when its start reply is lost", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const base = snapshot("scient", true);
+    const provider: ServerProvider = {
+      ...base,
+      connection: {
+        ...base.connection!,
+        accounts: [
+          {
+            id: "openai-codex",
+            name: "ChatGPT Plus/Pro",
+            kind: "account",
+            connected: false,
+            canDisconnect: false,
+          },
+        ],
+      },
+    };
+    const openPage = vi.fn(async () => undefined);
+    resetProviderSignInForTests({
+      open: openPage,
+      claim: async () => ({
+        granted: true,
+        authorizationUrl: "https://auth.openai.com/oauth/authorize?client_id=synthetic",
+      }),
+    });
+    // A dropped connection: the outcome is unknown, not a server rejection.
+    commands.accountCommand.mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(new Error("The environment connection closed.")),
+    });
+    await render(_fixture, provider);
+    await setupButton();
+    await page.getByRole("button", { name: "Connect models", exact: true }).click();
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect.poll(() => commands.accountCommand.mock.calls.length).toBe(1);
+    const signInRequestId = commands.accountCommand.mock.calls[0]![0].input.signInRequestId;
+
+    observeProviderSignInSnapshots(EnvironmentId.make("synthetic"), [
+      {
+        ...provider,
+        connection: {
+          ...provider.connection!,
+          accountOperation: {
+            operationId: "account-1",
+            method: "scient_agent_account",
+            account: "openai-codex",
+            status: "waiting_for_browser",
+            startedAt: provider.checkedAt,
+            finishedAt: null,
+            message: "Finish signing in securely in your browser.",
+            authorizationUrl: "https://auth.openai.com/oauth/authorize?client_id=synthetic",
+            authorizationUrlKind: "primary",
+            signInRequestId,
+          },
+        },
+      },
+    ]);
+    await expect.poll(() => openPage.mock.calls.length).toBe(1);
+    resetProviderSignInForTests();
+  });
+
   it("does not turn hidden ready models into installation or sign-in", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const provider = snapshot("cursor", true);
-    render(
+    await render(
+      _fixture,
       {
         ...provider,
         status: "ready",
@@ -357,11 +461,14 @@ describe("actual picker provider setup", () => {
       },
       [],
     );
-    await expect.poll(() => host.querySelector("[data-model-picker-models]")).toBeTruthy();
-    expect(host.querySelector("[data-model-picker-setup]")).toBeNull();
+    await expect.poll(() => _fixture.host.querySelector("[data-model-picker-models]")).toBeTruthy();
+    expect(_fixture.host.querySelector("[data-model-picker-setup]")).toBeNull();
   });
 
   it("keeps long setup scrollable within a short viewport", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     await page.viewport(380, 240);
     const provider = snapshot("cursor", true);
     const installing: ServerProvider = {
@@ -383,17 +490,17 @@ describe("actual picker provider setup", () => {
         },
       },
     };
-    render(installing);
+    await render(_fixture, installing);
     await expect
-      .poll(() => host.querySelector<HTMLElement>("[data-model-picker-setup]"))
+      .poll(() => _fixture.host.querySelector<HTMLElement>("[data-model-picker-setup]"))
       .toBeTruthy();
-    const body = host.querySelector<HTMLElement>("[data-model-picker-setup]")!;
+    const body = _fixture.host.querySelector<HTMLElement>("[data-model-picker-setup]")!;
     await expect.poll(() => body.scrollHeight > body.clientHeight).toBe(true);
     const button = body.querySelector<HTMLElement>("button")!;
     button.scrollIntoView({ block: "nearest" });
     await expect.poll(() => reachable(button)).toBe(true);
     expect(
-      host.querySelector("[data-model-picker-content]")!.getBoundingClientRect().height,
+      _fixture.host.querySelector("[data-model-picker-content]")!.getBoundingClientRect().height,
     ).toBeLessThanOrEqual(240);
     await page.viewport(1280, 720);
   });
@@ -476,8 +583,8 @@ function longAccounts(): ServerProvider {
     },
   };
 }
-async function openComposed(provider: ServerProvider) {
-  render(provider, provider.models, false, [provider], true);
+async function openComposed(_fixture: _Fixture, provider: ServerProvider) {
+  await render(_fixture, provider, provider.models, false, [provider], true);
   await page.getByRole("button", { name: "Choose test model", exact: true }).click();
   await setupButton();
   await page.getByRole("button", { name: "Connect models", exact: true }).click();
@@ -497,7 +604,10 @@ function scrollEvent(target: Element, type: "wheel" | "touchmove") {
 }
 describe("composed picker Connect models overlay", () => {
   it("allows portaled account scrolling while refusing background wheel and touch", async () => {
-    const dialog = await openComposed(longAccounts());
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const dialog = await openComposed(_fixture, longAccounts());
     const list = dialog.querySelector<HTMLElement>(
       "section[aria-label='Model accounts'] .overflow-y-auto",
     )!;
@@ -505,17 +615,20 @@ describe("composed picker Connect models overlay", () => {
     await userEvent.wheel(list, { delta: { y: 150 } });
     await expect.poll(() => list.scrollTop).toBeGreaterThan(0);
     for (const type of ["wheel", "touchmove"] as const) {
-      expect(scrollEvent(host, type)).toBe(true);
+      expect(scrollEvent(_fixture.host, type)).toBe(true);
       expect(scrollEvent(list, type)).toBe(false);
     }
   });
   it("keeps the dialog above the parent card and returns focus through nested Escape", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const provider = longAccounts();
     commands.accountCommand.mockResolvedValue({
       _tag: "Success",
       value: { providers: [provider] },
     });
-    const dialog = await openComposed(provider);
+    const dialog = await openComposed(_fixture, provider);
     const search = dialog.querySelector<HTMLInputElement>("input[type=search]")!;
     await expect.poll(() => reachable(search)).toBe(true);
     const close = dialog.querySelector<HTMLElement>("button[aria-label=Close]")!;
@@ -533,6 +646,7 @@ describe("composed picker Connect models overlay", () => {
         instanceId: ProviderInstanceId.make("scient_work"),
         method: "scient_agent_account",
         account: "account-39",
+        signInRequestId: expect.stringMatching(/^[A-Za-z0-9-]{8,64}$/),
       },
     });
     await page.getByRole("searchbox", { name: "Search model accounts" }).fill("");
@@ -549,10 +663,13 @@ describe("composed picker Connect models overlay", () => {
   it.each(["pi", "omp", "droid"] as const)(
     "suspends %s setup through a ready catalog and closes its dialog",
     async (driver) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
       await page.viewport(380, 480);
       document.documentElement.classList.add("dark");
       const provider = { ...snapshot(driver, true), auth: { status: "authenticated" as const } };
-      const dialog = await openComposed(provider);
+      const dialog = await openComposed(_fixture, provider);
       const close = dialog.querySelector<HTMLElement>("button[aria-label=Close]")!;
       await expect.poll(() => reachable(close)).toBe(true);
       expect(dialog.getBoundingClientRect().width).toBeLessThanOrEqual(380);
@@ -563,7 +680,7 @@ describe("composed picker Connect models overlay", () => {
           { slug: "custom-model", name: "Custom model", isCustom: true, capabilities: null },
         ],
       };
-      render(ready, ready.models, false, [ready], true);
+      await render(_fixture, ready, ready.models, false, [ready], true);
       await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBe(dialog);
       await page.getByRole("button", { name: "Close", exact: true }).click();
       await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBeNull();
@@ -574,11 +691,15 @@ describe("composed picker Connect models overlay", () => {
     },
   );
   it("resets the dialog when execution environment identity changes", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     await page.viewport(1280, 720);
     const provider = longAccounts();
-    await openComposed(provider);
+    await openComposed(_fixture, provider);
     await page.getByRole("searchbox", { name: "Search model accounts" }).fill("account 39");
-    render(
+    await render(
+      _fixture,
       provider,
       provider.models,
       false,
@@ -598,9 +719,13 @@ describe("composed picker Connect models overlay", () => {
       .toBe("");
   });
   it("allows a nested production custom-model editor portal without admitting background scrolling", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     await page.viewport(380, 480);
     const provider = snapshot("pi", true);
-    render(
+    await render(
+      _fixture,
       provider,
       [],
       false,
@@ -618,7 +743,7 @@ describe("composed picker Connect models overlay", () => {
     expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
     for (const type of ["wheel", "touchmove"] as const) {
       expect(scrollEvent(viewport, type)).toBe(false);
-      expect(scrollEvent(host, type)).toBe(true);
+      expect(scrollEvent(_fixture.host, type)).toBe(true);
     }
     await userEvent.wheel(viewport, { delta: { y: 150 } });
     await expect.poll(() => viewport.scrollTop).toBeGreaterThan(0);
@@ -633,8 +758,12 @@ describe("composed picker Connect models overlay", () => {
     await page.viewport(1280, 720);
   });
   it("returns focus to the opener after nested production model editor Escape", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const provider = snapshot("pi", true);
-    render(
+    await render(
+      _fixture,
       provider,
       [],
       false,
@@ -653,8 +782,12 @@ describe("composed picker Connect models overlay", () => {
     expect(saveCustomModel).not.toHaveBeenCalled();
   });
   it("restores focus to the retained dialog when nested production model save removes its opener", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const provider = snapshot("pi", true);
-    render(
+    await render(
+      _fixture,
       provider,
       [],
       false,
@@ -676,6 +809,9 @@ describe("composed picker Connect models overlay", () => {
     expect(document.body.textContent).not.toContain("Add synthetic model");
   });
   it("retains an operation draft and search across ready snapshot updates", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const base = longAccounts();
     const provider: ServerProvider = {
       ...base,
@@ -693,7 +829,7 @@ describe("composed picker Connect models overlay", () => {
         },
       },
     };
-    const dialog = await openComposed(provider);
+    const dialog = await openComposed(_fixture, provider);
     await page
       .getByLabelText("Answer for Synthetic account 39", { exact: true })
       .fill("synthetic-draft");
@@ -704,7 +840,7 @@ describe("composed picker Connect models overlay", () => {
       models: [{ slug: "ready-model", name: "Ready model", isCustom: false, capabilities: null }],
     };
     const probing = { ...ready, probePending: true };
-    render(probing, probing.models, false, [probing], true);
+    await render(_fixture, probing, probing.models, false, [probing], true);
     await expect
       .poll(
         () =>
@@ -712,17 +848,17 @@ describe("composed picker Connect models overlay", () => {
             ?.value,
       )
       .toBe("synthetic-draft");
-    render(ready, ready.models, false, [ready], true);
+    await render(_fixture, ready, ready.models, false, [ready], true);
     await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBe(dialog);
     expect(dialog.querySelector<HTMLInputElement>("input[type=password]")?.value).toBe(
       "synthetic-draft",
     );
     expect(commands.accountCommand).not.toHaveBeenCalled();
     const completed = { ...ready, connection: { ...ready.connection!, accountOperation: null } };
-    render(completed, completed.models, false, [completed], true);
+    await render(_fixture, completed, completed.models, false, [completed], true);
     await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBe(dialog);
     await page.getByRole("searchbox", { name: "Search model accounts" }).fill("account 39");
-    render(completed, completed.models, false, [completed], true);
+    await render(_fixture, completed, completed.models, false, [completed], true);
     expect(dialog.querySelector<HTMLInputElement>("input[type=search]")?.value).toBe("account 39");
   });
 });
@@ -752,14 +888,16 @@ function ComposerPortalFixture({
     </form>
   );
 }
-function renderOnboarding(provider: ServerProvider) {
-  if (!host) {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
+async function renderOnboarding(_fixture: _Fixture, provider: ServerProvider) {
+  if (!_fixture.host) {
+    _fixture.host = document.createElement("div");
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
   }
   const entry = deriveProviderInstanceEntries([provider])[0]!;
-  root.render(
+  await _fixture.root0.rerender(
     <ComposerPortalFixture>
       <ProviderOnboardingPicker
         environmentId={EnvironmentId.make("synthetic")}
@@ -773,20 +911,38 @@ function renderOnboarding(provider: ServerProvider) {
 }
 describe("composer-owned setup portals", () => {
   it("keeps collapsed composer controls mounted when the account dialog takes focus", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     await page.viewport(1280, 720);
     const provider = longAccounts();
-    render(provider, [], false, [provider], true, EnvironmentId.make("synthetic"), undefined, true);
+    await render(
+      _fixture,
+      provider,
+      [],
+      false,
+      [provider],
+      true,
+      EnvironmentId.make("synthetic"),
+      undefined,
+      true,
+    );
     await page.getByRole("button", { name: "Choose test model", exact: true }).click();
     await page.getByRole("button", { name: "Connect models", exact: true }).click();
     await page.getByRole("searchbox", { name: "Search model accounts" }).fill("account 39");
     const dialog = document.querySelector<HTMLElement>("[data-slot=dialog-popup]")!;
     expect(dialog.querySelector<HTMLInputElement>("input[type=search]")?.value).toBe("account 39");
     expect(
-      host.querySelector("[data-chat-composer-resting-controls] [data-chat-provider-model-picker]"),
+      _fixture.host.querySelector(
+        "[data-chat-composer-resting-controls] [data-chat-provider-model-picker]",
+      ),
     ).toBeTruthy();
     expect(commands.accountCommand).not.toHaveBeenCalled();
   });
   it("submits only the authorization form without submitting the containing composer", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     await page.viewport(1280, 720);
     const base = longAccounts();
     const provider: ServerProvider = {
@@ -809,7 +965,8 @@ describe("composer-owned setup portals", () => {
       _tag: "Success",
       value: { providers: [provider] },
     });
-    render(
+    await render(
+      _fixture,
       provider,
       [],
       false,
@@ -839,9 +996,12 @@ describe("composer-owned setup portals", () => {
   it.each(["scient", "pi", "omp", "droid"] as const)(
     "retains %s onboarding's owned modal until dismissal before choosing ready models",
     async (driver) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
       await page.viewport(1280, 720);
       const provider = driver === "scient" ? longAccounts() : snapshot(driver, true);
-      renderOnboarding(provider);
+      await renderOnboarding(_fixture, provider);
       await page.getByRole("button", { name: `Reconnect ${driver}`, exact: true }).click();
       await page.getByRole("button", { name: "Connect models", exact: true }).click();
       await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBeTruthy();
@@ -852,7 +1012,7 @@ describe("composer-owned setup portals", () => {
         auth: { status: "authenticated" },
         models: [{ slug: "ready-model", name: "Ready model", isCustom: false, capabilities: null }],
       };
-      renderOnboarding(ready);
+      await renderOnboarding(_fixture, ready);
       await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBe(dialog);
       expect(selectModel).not.toHaveBeenCalled();
       await page.getByRole("button", { name: "Close", exact: true }).click();
@@ -890,9 +1050,13 @@ function NestedAgentMenuSetup() {
   );
 }
 it("scrolls the owned custom-model agent menu without admitting background events", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   await page.viewport(1280, 720);
   const provider = snapshot("pi", true);
-  render(
+  await render(
+    _fixture,
     provider,
     [],
     false,
@@ -911,9 +1075,28 @@ it("scrolls the owned custom-model agent menu without admitting background event
   await expect.poll(() => viewport.scrollTop).toBeGreaterThan(0);
   for (const type of ["wheel", "touchmove"] as const) {
     expect(scrollEvent(viewport, type)).toBe(false);
-    expect(scrollEvent(host, type)).toBe(true);
+    expect(scrollEvent(_fixture.host, type)).toBe(true);
   }
   expect(testAgent).not.toHaveBeenCalled();
   await page.getByRole("menuitem", { name: "Synthetic agent 39", exact: true }).click();
   expect(testAgent).toHaveBeenCalledExactlyOnceWith(ProviderInstanceId.make("pi_review_39"));
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement,
+    stack,
+    cleanup,
+    root0: undefined! as Screen,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

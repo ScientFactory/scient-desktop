@@ -160,6 +160,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
   const releaseAcknowledgement = yield* Deferred.make<void>();
   const processed = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
   const events: ProviderAdapterV2Event[] = [];
+  const nativeContentDeltas: string[] = [];
   const opened: ClaudeAgentSdkQueryOpenInput[] = [];
   const offered: SDKUserMessage[] = [];
   let interruptions = 0;
@@ -253,7 +254,20 @@ function onPrompt(message) {
           }),
           environment: { PATH: process.env.PATH },
           sensitiveEnvironmentValues: [],
-          makeRuntime: makeDroidAcpRuntime,
+          makeRuntime: (input) =>
+            makeDroidAcpRuntime(input).pipe(
+              Effect.map((runtime) => ({
+                ...runtime,
+                getEvents: () =>
+                  runtime.getEvents().pipe(
+                    Stream.tap((event) =>
+                      Effect.sync(() => {
+                        if (event._tag === "ContentDelta") nativeContentDeltas.push(event.text);
+                      }),
+                    ),
+                  ),
+              })),
+            ),
           childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
           selfInvocation: yield* resolveSelfInvocation(),
           onAuthenticationRejected: () => Effect.die("No authentication in reading peer"),
@@ -348,6 +362,7 @@ function onPrompt(message) {
     create,
     reopen,
     nativeLog: droid?.readLog(),
+    nativeContentDeltas,
     offers,
     offerAndWait,
     events,
@@ -359,86 +374,80 @@ function onPrompt(message) {
   };
 });
 
-it.live(
-  "partial native Claude reply survives acknowledged Stop, own close and SQLite reopen",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const h = yield* makeFixture();
-        const partial = "A partial scientific answer.\n\nIts exact unfinished continuation…\n\n";
-        const saved = yield* Effect.scoped(
-          Effect.gen(function* () {
-            yield* h.create;
-            yield* send(1);
-            const offered = yield* Queue.take(h.offers);
-            assert.equal(offered.message.content, "Read turn 1");
-            yield* h.offerAndWait(assistantFrame(partial));
-            const running = yield* waitFor(
-              (p) =>
-                p.messages.some(
-                  (message) => message.role === "assistant" && message.text === partial,
-                ) && p.runs[0]?.status === "running",
-            );
-            const reply = running.messages.find((message) => message.role === "assistant")!;
-            const run = running.runs[0]!;
-            yield* (yield* OrchestratorV2).dispatch({
-              type: "run.interrupt",
-              commandId: CommandId.make("reading:stop"),
-              threadId,
-              runId: run.id,
-            });
-            yield* h.interruptEntered.pipe(Effect.timeout("10 seconds"));
-            const pending = yield* (yield* OrchestratorV2).getThreadProjection(threadId);
-            assert.equal(pending.runs[0]?.status, "running");
-            assert.equal(h.counts().closes, 0);
-            assert.lengthOf(
-              h.events.filter((event) => event.type === "turn.terminal"),
-              0,
-            );
-            yield* h.acknowledge;
-            const settled = yield* waitFor(
-              (p) => p.runs[0]?.status === "interrupted" && p.runs[0]?.checkpointId !== null,
-            );
-            assert.equal(h.counts().interruptions, 1);
-            assert.equal(h.counts().closes, 1);
-            assert.equal(h.counts().processedFrames, 2);
-            assert.lengthOf(h.opened, 1);
-            assert.lengthOf(h.offered, 1);
-            assert.isTrue(settled.providerSessions.every((session) => session.status !== "error"));
-            const terminals = h.events.filter((event) => event.type === "turn.terminal");
-            assert.lengthOf(terminals, 1);
-            assert.equal(terminals[0]?.status, "interrupted");
-            assert.equal(terminals[0]?.providerTurnId, settled.providerTurns[0]?.id);
-            assert.isFalse(settled.turnItems.some((item) => item.type === "error"));
-            assert.isTrue(settled.messages.every((message) => !message.streaming));
-            assert.equal(
-              settled.messages.find((message) => message.id === reply.id)?.text,
-              partial,
-            );
-            const snapshot = yield* (yield* ProjectionStoreV2).getThreadSnapshot(threadId);
-            assert.deepEqual(
-              snapshot.projection.messages.find((message) => message.id === reply.id),
-              settled.messages.find((message) => message.id === reply.id),
-            );
-            assert.equal(reply.runId, run.id);
-            return { id: reply.id, runId: run.id, text: partial };
-          }).pipe(Effect.provide(h.layer)),
-        );
-        const reopened = yield* h.reopen;
-        const reply = reopened.projection.messages.find((message) => message.id === saved.id)!;
-        assert.deepEqual(
-          { id: reply.id, runId: reply.runId, text: reply.text },
-          { id: saved.id, runId: saved.runId, text: saved.text },
-        );
-        assert.isFalse(reply.streaming);
-        assert.equal(
-          reopened.projection.runs.find((run) => run.id === saved.runId)?.status,
-          "interrupted",
-        );
-        assert.isFalse(reopened.projection.turnItems.some((item) => item.type === "error"));
-      }).pipe(Effect.provide(outer)),
-    ),
-  { timeout: 60_000 },
+it.live("partial native Claude reply survives acknowledged Stop, own close and SQLite reopen", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const h = yield* makeFixture();
+      const partial = "A partial scientific answer.\n\nIts exact unfinished continuation…\n\n";
+      const saved = yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* h.create;
+          yield* send(1);
+          const offered = yield* Queue.take(h.offers);
+          assert.equal(offered.message.content, "Read turn 1");
+          yield* h.offerAndWait(assistantFrame(partial));
+          const running = yield* waitFor(
+            (p) =>
+              p.messages.some(
+                (message) => message.role === "assistant" && message.text === partial,
+              ) && p.runs[0]?.status === "running",
+          );
+          const reply = running.messages.find((message) => message.role === "assistant")!;
+          const run = running.runs[0]!;
+          yield* (yield* OrchestratorV2).dispatch({
+            type: "run.interrupt",
+            commandId: CommandId.make("reading:stop"),
+            threadId,
+            runId: run.id,
+          });
+          yield* h.interruptEntered.pipe(Effect.timeout("10 seconds"));
+          const pending = yield* (yield* OrchestratorV2).getThreadProjection(threadId);
+          assert.equal(pending.runs[0]?.status, "running");
+          assert.equal(h.counts().closes, 0);
+          assert.lengthOf(
+            h.events.filter((event) => event.type === "turn.terminal"),
+            0,
+          );
+          yield* h.acknowledge;
+          const settled = yield* waitFor(
+            (p) => p.runs[0]?.status === "interrupted" && p.runs[0]?.checkpointId !== null,
+          );
+          assert.equal(h.counts().interruptions, 1);
+          assert.equal(h.counts().closes, 1);
+          assert.equal(h.counts().processedFrames, 2);
+          assert.lengthOf(h.opened, 1);
+          assert.lengthOf(h.offered, 1);
+          assert.isTrue(settled.providerSessions.every((session) => session.status !== "error"));
+          const terminals = h.events.filter((event) => event.type === "turn.terminal");
+          assert.lengthOf(terminals, 1);
+          assert.equal(terminals[0]?.status, "interrupted");
+          assert.equal(terminals[0]?.providerTurnId, settled.providerTurns[0]?.id);
+          assert.isFalse(settled.turnItems.some((item) => item.type === "error"));
+          assert.isTrue(settled.messages.every((message) => !message.streaming));
+          assert.equal(settled.messages.find((message) => message.id === reply.id)?.text, partial);
+          const snapshot = yield* (yield* ProjectionStoreV2).getThreadSnapshot(threadId);
+          assert.deepEqual(
+            snapshot.projection.messages.find((message) => message.id === reply.id),
+            settled.messages.find((message) => message.id === reply.id),
+          );
+          assert.equal(reply.runId, run.id);
+          return { id: reply.id, runId: run.id, text: partial };
+        }).pipe(Effect.provide(h.layer)),
+      );
+      const reopened = yield* h.reopen;
+      const reply = reopened.projection.messages.find((message) => message.id === saved.id)!;
+      assert.deepEqual(
+        { id: reply.id, runId: reply.runId, text: reply.text },
+        { id: saved.id, runId: saved.runId, text: saved.text },
+      );
+      assert.isFalse(reply.streaming);
+      assert.equal(
+        reopened.projection.runs.find((run) => run.id === saved.runId)?.status,
+        "interrupted",
+      );
+      assert.isFalse(reopened.projection.turnItems.some((item) => item.type === "error"));
+    }).pipe(Effect.provide(outer)),
+  ),
 );
 
 it.live(
@@ -491,6 +500,28 @@ it.live(
               assert.ok(reply);
               assert.equal(reply.text, text);
               assert.isFalse(reply.streaming);
+              // ACP coalesces snapshots, not native content or reading identities.
+              assert.deepEqual(h.nativeContentDeltas.slice((ordinal - 1) * 40), chunks);
+              const updates = h.events.flatMap((event) =>
+                event.type === "message.updated" &&
+                event.message.role === "assistant" &&
+                event.message.runId === run.id
+                  ? [event.message]
+                  : [],
+              );
+              assert.isNotEmpty(updates);
+              assert.equal(updates[0]!.text, chunks[0]);
+              assert.isTrue(updates[0]!.streaming);
+              let previousText = "";
+              for (const update of updates) {
+                assert.equal(update.id, reply.id);
+                assert.equal(update.threadId, threadId);
+                assert.isTrue(text.startsWith(update.text));
+                assert.isTrue(update.text.startsWith(previousText));
+                previousText = update.text;
+              }
+              assert.equal(updates.at(-1)!.text, text);
+              assert.isFalse(updates.at(-1)!.streaming);
               triples.push({ id: reply.id, runId: reply.runId, text: reply.text });
               const fresh = yield* (yield* ProjectionStoreV2).getThreadSnapshot(threadId);
               for (const saved of triples) {
@@ -514,12 +545,7 @@ it.live(
                 `Read turn ${index + 1}`,
               );
             }
-            assert.isAtLeast(
-              h.events.filter(
-                (event) => event.type === "message.updated" && event.message.role === "assistant",
-              ).length,
-              12 * 40,
-            );
+            assert.lengthOf(h.nativeContentDeltas, 12 * 40);
             assert.equal(h.counts().interruptions, 0);
             assert.lengthOf(
               h.events.filter((event) => event.type === "turn.terminal"),
@@ -548,5 +574,4 @@ it.live(
         }
       }).pipe(Effect.provide(outer)),
     ),
-  { timeout: 60_000 },
 );

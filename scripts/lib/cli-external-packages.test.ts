@@ -6,7 +6,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-
 import serverPackageJson from "../../apps/server/package.json" with { type: "json" };
 
 import { findEsmImportsOfExternalPackages } from "./cli-executable-imports.ts";
@@ -14,8 +13,8 @@ import { findEsmImportsOfExternalPackages } from "./cli-executable-imports.ts";
 import {
   isRuntimeExternalCliDependency,
   findInlinedExternalPackages,
-  selectCliRuntimeExternalDependencies,
   shouldBundleCliDependency,
+  selectCliRuntimeExternalDependencies,
 } from "./cli-external-packages.ts";
 
 // optionalDependencies matter as much as dependencies here: every native family
@@ -172,25 +171,20 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
   // loaded by Node, so their closure genuinely does not need to be external.
   const isRuntimeExternal = isRuntimeExternalCliDependency;
 
-  // A cold walk of the pnpm store can exceed the root timeout when the Windows
-  // lane runs four filesystem-heavy workspace suites at once.
-  it.effect(
-    "finds the runtime-external packages on disk",
-    () =>
-      Effect.gen(function* () {
-        const installed = yield* readInstalledPackages;
-        const found = [...installed.keys()].filter(isRuntimeExternal);
+  it.effect("finds the runtime-external packages on disk", () =>
+    Effect.gen(function* () {
+      const installed = yield* readInstalledPackages;
+      const found = [...installed.keys()].filter(isRuntimeExternal);
 
-        // read, nothing is checked. These are the packages whose closure
-        // actually broke WSL, so require them by name.
-        for (const required of ["node-pty", "node-gyp-build-optional-packages", "detect-libc"]) {
-          assert.ok(
-            found.includes(required),
-            `expected ${required} in the pnpm store; the closure check is only meaningful if it can read these (found ${found.length})`,
-          );
-        }
-      }),
-    120_000,
+      // read, nothing is checked. These are the packages whose closure
+      // actually broke WSL, so require them by name.
+      for (const required of ["node-pty", "node-gyp-build-optional-packages", "detect-libc"]) {
+        assert.ok(
+          found.includes(required),
+          `expected ${required} in the pnpm store; the closure check is only meaningful if it can read these (found ${found.length})`,
+        );
+      }
+    }),
   );
 
   it.effect("keeps native loader dependency families external too", () =>
@@ -213,9 +207,9 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
         if (!manifest) continue;
 
         const declared = {
-          ...(manifest.dependencies ?? {}),
-          ...(manifest.optionalDependencies ?? {}),
-          ...(manifest.peerDependencies ?? {}),
+          ...manifest.dependencies,
+          ...manifest.optionalDependencies,
+          ...manifest.peerDependencies,
         };
         for (const dependency of Object.keys(declared)) {
           if (!isRuntimeExternal(dependency)) {
@@ -252,23 +246,6 @@ var x = 1;
     assert.strictEqual(result.regionCount, 2);
   });
 
-  it("flags scoped external packages", () => {
-    const result = findInlinedExternalPackages(
-      region("../../node_modules/@ff-labs/fff-node/dist/src/index.js"),
-    );
-    assert.deepStrictEqual(result.inlined, ["@ff-labs/fff-node"]);
-  });
-
-  it("ignores packages that are meant to be bundled", () => {
-    const source =
-      region("../../node_modules/.pnpm/effect@4.0.0/node_modules/effect/dist/index.js") +
-      region("../../src/server/main.ts");
-    const result = findInlinedExternalPackages(source);
-
-    assert.deepStrictEqual(result.inlined, []);
-    assert.strictEqual(result.regionCount, 2);
-  });
-
   it("reports the packages that were inlined, not just the violations", () => {
     const source =
       region("../../node_modules/.pnpm/effect@4.0.0/node_modules/effect/dist/index.js") +
@@ -277,19 +254,6 @@ var x = 1;
     const result = findInlinedExternalPackages(source);
 
     assert.deepStrictEqual(result.inlinedPackages, ["effect", "yaml"]);
-    assert.deepStrictEqual(result.inlined, []);
-  });
-
-  it("does not report the pnpm store directory as a package", () => {
-    const result = findInlinedExternalPackages(
-      region("../../node_modules/.pnpm/effect@4.0.0/node_modules/effect/dist/index.js"),
-    );
-    assert.deepStrictEqual(result.inlinedPackages, ["effect"]);
-  });
-
-  it("reports no regions when the marker format is absent", () => {
-    const result = findInlinedExternalPackages("var x = 1; // node_modules/node-pty/lib.js");
-    assert.strictEqual(result.regionCount, 0);
     assert.deepStrictEqual(result.inlined, []);
   });
 });

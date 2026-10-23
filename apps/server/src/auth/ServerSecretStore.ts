@@ -10,6 +10,9 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+// SCIENT-FORK:START — Scient Extensions: platform-specific directory sync support.
+import * as HostProcess from "@t3tools/shared/HostProcess";
+// SCIENT-FORK:END
 
 const secretStoreErrorContext = {
   resource: Schema.String,
@@ -170,6 +173,27 @@ export const make = Effect.gen(function* () {
 
   const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
 
+  // SCIENT-FORK:START — Scient Extensions: directory-entry durability for create, replace and remove.
+  const platform = yield* HostProcess.Platform;
+  /** Only a platform that cannot open or sync a directory (Windows) skips the sync. */
+  const directorySyncUnsupported = (error: PlatformError.PlatformError) => {
+    const cause = error.reason.cause;
+    const code =
+      typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+    return (
+      code === "EINVAL" ||
+      code === "ENOTSUP" ||
+      code === "EISDIR" ||
+      (platform === "win32" && code === "EPERM")
+    );
+  };
+  const syncSecretsDirectory = Effect.scoped(
+    fileSystem
+      .open(serverConfig.secretsDir, { flag: "r" })
+      .pipe(Effect.flatMap((directory) => directory.sync)),
+  ).pipe(Effect.catchIf(directorySyncUnsupported, () => Effect.void));
+  // SCIENT-FORK:END
+
   const get: ServerSecretStore["Service"]["get"] = (name) =>
     fileSystem.readFile(resolveSecretPath(name)).pipe(
       Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
@@ -199,10 +223,22 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((uuid) => {
         const tempPath = `${secretPath}.${uuid}.tmp`;
         return Effect.gen(function* () {
-          yield* fileSystem.writeFile(tempPath, value);
+          // SCIENT-FORK:START — Scient Extensions: durable replace: the data is synced before the rename
+          // and the directory entry after it; a failed sync fails the write.
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const file = yield* fileSystem.open(tempPath, { flag: "w", mode: 0o600 });
+              yield* file.writeAll(value);
+              yield* file.sync;
+            }),
+          );
+          // SCIENT-FORK:END
           yield* fileSystem.chmod(tempPath, 0o600);
           yield* fileSystem.rename(tempPath, secretPath);
           yield* fileSystem.chmod(secretPath, 0o600);
+          // SCIENT-FORK:START — Scient Extensions: persist the rename itself.
+          yield* syncSecretsDirectory;
+          // SCIENT-FORK:END
         }).pipe(
           Effect.catch((cause) =>
             fileSystem.remove(tempPath).pipe(
@@ -223,26 +259,44 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  // `link` publishes the fully written temp file under the final name, or fails with
+  // AlreadyExists, so a concurrent reader never observes a partially written secret.
   const create: ServerSecretStore["Service"]["create"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const file = yield* fileSystem.open(secretPath, {
-          flag: "wx",
-          mode: 0o600,
-        });
-        yield* file.writeAll(value);
-        yield* file.sync;
-        yield* fileSystem.chmod(secretPath, 0o600);
-      }),
-    ).pipe(
+    return crypto.randomUUIDv4().pipe(
       Effect.mapError(
         (cause) =>
-          new SecretStorePersistError({
+          new SecretStoreTemporaryPathError({
             resource: `secret ${name}`,
             cause,
           }),
       ),
+      Effect.flatMap((uuid) => {
+        const tempPath = `${secretPath}.${uuid}.tmp`;
+        return Effect.gen(function* () {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const file = yield* fileSystem.open(tempPath, { flag: "wx", mode: 0o600 });
+              yield* file.writeAll(value);
+              yield* file.sync;
+            }),
+          );
+          yield* fileSystem.chmod(tempPath, 0o600);
+          yield* fileSystem.link(tempPath, secretPath);
+          // SCIENT-FORK:START — durably publish the completed secret without exposing partial bytes.
+          yield* syncSecretsDirectory;
+          // SCIENT-FORK:END
+        }).pipe(
+          Effect.ensuring(fileSystem.remove(tempPath).pipe(Effect.ignore)),
+          Effect.mapError(
+            (cause) =>
+              new SecretStorePersistError({
+                resource: `secret ${name}`,
+                cause,
+              }),
+          ),
+        );
+      }),
     );
   };
 
@@ -300,6 +354,15 @@ export const make = Effect.gen(function* () {
               }),
             ),
       ),
+      // SCIENT-FORK:START — Scient Extensions: persist the removed directory entry.
+      Effect.andThen(
+        syncSecretsDirectory.pipe(
+          Effect.mapError(
+            (cause) => new SecretStoreRemoveError({ resource: `secret ${name}`, cause }),
+          ),
+        ),
+      ),
+      // SCIENT-FORK:END
       Effect.withSpan("ServerSecretStore.remove"),
     );
 

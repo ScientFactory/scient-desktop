@@ -1,5 +1,5 @@
 import { mediaReferenceFileName, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { copyStaticImage, downloadStaticImage } from "~/components/preview/staticImageActions";
 import { Button } from "~/components/ui/button";
@@ -34,31 +34,25 @@ export function ScientDirectImageFigure(props: {
   const reference = mediaUrlReference(props.authoredSource);
   const fileName = (reference && mediaReferenceFileName(reference)) || "image";
   const displayName = props.alt.trim() || fileName;
-  const retryImage = useCallback(() => setRetry((value) => value + 1), []);
-  const showContextMenu = useCallback<ScientImageContextMenuHandler>(
-    async (items, position) =>
-      (await readLocalApi()?.contextMenu.show([...items], position)) ?? null,
-    [],
-  );
-  const actions = useMemo<readonly ScientImageAction[]>(
-    () => [
-      { id: "copy-image", label: "Copy image", run: () => copyStaticImage(props.src) },
-      {
-        id: "download",
-        label: "Download original",
-        run: () => downloadStaticImage(props.src, fileName),
+  const retryImage = () => setRetry((value) => value + 1);
+  const showContextMenu: ScientImageContextMenuHandler = async (items, position) =>
+    (await readLocalApi()?.contextMenu.show([...items], position)) ?? null;
+  const actions: readonly ScientImageAction[] = [
+    { id: "copy-image", label: "Copy image", run: () => copyStaticImage(props.src) },
+    {
+      id: "download",
+      label: "Download original",
+      run: () => downloadStaticImage(props.src, fileName),
+    },
+    {
+      id: "copy-source",
+      label: "Copy image source",
+      run: () => {
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable.");
+        return navigator.clipboard.writeText(props.authoredSource);
       },
-      {
-        id: "copy-source",
-        label: "Copy image source",
-        run: () => {
-          if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable.");
-          return navigator.clipboard.writeText(props.authoredSource);
-        },
-      },
-    ],
-    [fileName, props.authoredSource, props.src],
-  );
+    },
+  ];
 
   return (
     <span

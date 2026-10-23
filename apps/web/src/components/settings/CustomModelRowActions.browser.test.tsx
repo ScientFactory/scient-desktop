@@ -1,8 +1,9 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import { ProviderInstanceId } from "@t3tools/contracts";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
 import {
@@ -12,20 +13,18 @@ import {
 } from "./CustomModelRowActions";
 import { MISSING_KEY_STATUS } from "./customModels";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
-});
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 
 const pi = { id: ProviderInstanceId.make("pi"), name: "Pi" };
 const droid = { id: ProviderInstanceId.make("droid"), name: "Droid" };
 
-function render(
+async function render(
+  _fixture: _Fixture,
   props: {
     testAgents?: ReadonlyArray<typeof pi>;
     statuses?: ReadonlyArray<string | undefined>;
@@ -36,11 +35,13 @@ function render(
   const onTest = vi.fn();
   const onCheckAgain = vi.fn();
   const onReenterKey = vi.fn();
-  host = document.createElement("div");
-  host.className = "flex items-center gap-2";
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(
+  _fixture.host = document.createElement("div");
+  _fixture.host.className = "flex items-center gap-2";
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(
     <CustomModelRowActions
       busy={false}
       testing={false}
@@ -57,7 +58,10 @@ function render(
 }
 
 it("opens the agent menu for a model attached to several agents and tests through the choice", async () => {
-  const { onTest } = render();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const { onTest } = await render(_fixture);
   await userEvent.click(page.getByRole("button", { name: "Test" }));
   await expect.element(page.getByRole("menuitem", { name: "Pi" })).toBeVisible();
   await expect.element(page.getByText("API charges may apply.")).toBeVisible();
@@ -66,8 +70,14 @@ it("opens the agent menu for a model attached to several agents and tests throug
 });
 
 it("offers Re-enter key when the key is missing and the agent reporting it is signed out", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   // The row's only label is the agent's own problem; the key is still missing.
-  const { onReenterKey, onCheckAgain } = render({ statuses: ["Check agent"], keyMissing: true });
+  const { onReenterKey, onCheckAgain } = await render(_fixture, {
+    statuses: ["Check agent"],
+    keyMissing: true,
+  });
   await userEvent.click(page.getByRole("button", { name: "Re-enter key" }));
   expect(onReenterKey).toHaveBeenCalledOnce();
   await userEvent.click(page.getByRole("button", { name: "Check again" }));
@@ -75,7 +85,10 @@ it("offers Re-enter key when the key is missing and the agent reporting it is si
 });
 
 it("offers Re-enter key for a missing key even when another agent needs a recheck", async () => {
-  const { onReenterKey, onCheckAgain } = render({
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const { onReenterKey, onCheckAgain } = await render(_fixture, {
     statuses: [MISSING_KEY_STATUS, "Check agent"],
     keyMissing: true,
   });
@@ -86,7 +99,10 @@ it("offers Re-enter key for a missing key even when another agent needs a rechec
 });
 
 it("keeps the agent choice after a failed Test", async () => {
-  const { onTest } = render({
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const { onTest } = await render(_fixture, {
     notice: { text: "Pi: No response within 45 s.", error: true, agent: pi.id },
   });
   // The failure stays visible and can be retried through the same agent...
@@ -99,7 +115,10 @@ it("keeps the agent choice after a failed Test", async () => {
 });
 
 it("retries a failed Test of a single-agent model through that agent", async () => {
-  const { onTest } = render({
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const { onTest } = await render(_fixture, {
     testAgents: [droid],
     notice: { text: "Droid: 401 Incorrect API key provided", error: true, agent: droid.id },
   });
@@ -109,16 +128,24 @@ it("retries a failed Test of a single-agent model through that agent", async () 
 });
 
 it("tests through the only agent directly", async () => {
-  const { onTest } = render({ testAgents: [droid] });
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const { onTest } = await render(_fixture, { testAgents: [droid] });
   await userEvent.click(page.getByRole("button", { name: "Test" }));
   expect(onTest).toHaveBeenCalledExactlyOnceWith(droid.id);
 });
 
 it("says how to make the model testable when no enabled agent can run a Test", async () => {
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  root.render(<CustomModelTestGuidance testAgents={[]} agents={[pi, droid]} />);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(<CustomModelTestGuidance testAgents={[]} agents={[pi, droid]} />);
   await expect
     .element(
       page.getByText(
@@ -126,6 +153,27 @@ it("says how to make the model testable when no enabled agent can run a Test", a
       ),
     )
     .toBeVisible();
-  root.render(<CustomModelTestGuidance testAgents={[droid]} agents={[pi, droid]} />);
-  await expect.poll(() => host?.textContent).toBe("");
+  await _fixture.root0.rerender(
+    <CustomModelTestGuidance testAgents={[droid]} agents={[pi, droid]} />,
+  );
+  await expect.poll(() => _fixture.host?.textContent).toBe("");
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

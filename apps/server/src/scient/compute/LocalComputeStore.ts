@@ -341,23 +341,28 @@ const make = Effect.gen(function* () {
       ? sessionDirectory(projectId, sessionId)
       : executionDirectory(projectId, sessionId, executionId);
 
-  const appendLine = (filePath: string, operation: string, line: string) =>
-    Effect.gen(function* () {
-      yield* fs
-        .makeDirectory(path.dirname(filePath), { recursive: true })
-        .pipe(mapStoreError(`${operation}-directory`, filePath));
-      yield* Effect.tryPromise({
-        try: () => NodeFSP.appendFile(filePath, `${line}\n`, "utf8"),
-        catch: (cause) => storeError(operation, filePath, cause),
-      });
+  const appendLine = Effect.fn("LocalComputeStore.appendLine")(function* (
+    filePath: string,
+    operation: string,
+    line: string,
+  ) {
+    yield* fs
+      .makeDirectory(path.dirname(filePath), { recursive: true })
+      .pipe(mapStoreError(`${operation}-directory`, filePath));
+    yield* Effect.tryPromise({
+      try: () => NodeFSP.appendFile(filePath, `${line}\n`, "utf8"),
+      catch: (cause) => storeError(operation, filePath, cause),
     });
+  });
 
-  const readLines = (filePath: string, operation: string) =>
-    Effect.gen(function* () {
-      if (!(yield* fs.exists(filePath).pipe(mapStoreError("exists", filePath)))) return [];
-      const contents = yield* fs.readFileString(filePath).pipe(mapStoreError(operation, filePath));
-      return contents.split("\n").filter((line) => line.length > 0);
-    });
+  const readLines = Effect.fn("LocalComputeStore.readLines")(function* (
+    filePath: string,
+    operation: string,
+  ) {
+    if (!(yield* fs.exists(filePath).pipe(mapStoreError("exists", filePath)))) return [];
+    const contents = yield* fs.readFileString(filePath).pipe(mapStoreError(operation, filePath));
+    return contents.split("\n").filter((line) => line.length > 0);
+  });
 
   const writeSession = (record: ComputeSessionRecord) =>
     writeLock.withPermits(1)(
@@ -372,19 +377,18 @@ const make = Effect.gen(function* () {
     );
 
   /** Appends without taking the write lease, for a caller that already holds it. */
-  const appendJournalEntry = (
+  const appendJournalEntry = Effect.fn("LocalComputeStore.appendJournalEntry")(function* (
     projectId: ComputeProjectId,
     sessionId: ComputeSessionId,
     entry: ComputeSessionJournalEntry,
-  ) =>
-    Effect.gen(function* () {
-      const directory = yield* sessionDirectory(projectId, sessionId);
-      const filePath = path.join(directory, "journal.ndjson");
-      const line = yield* encodeJournalEntry(entry).pipe(
-        mapStoreError("encode-journal-entry", filePath),
-      );
-      yield* appendLine(filePath, "append-journal", line);
-    });
+  ) {
+    const directory = yield* sessionDirectory(projectId, sessionId);
+    const filePath = path.join(directory, "journal.ndjson");
+    const line = yield* encodeJournalEntry(entry).pipe(
+      mapStoreError("encode-journal-entry", filePath),
+    );
+    yield* appendLine(filePath, "append-journal", line);
+  });
 
   const appendJournal = (
     projectId: ComputeProjectId,
@@ -460,17 +464,17 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const writeOutputResourceBytes = (input: {
-    readonly projectId: ComputeProjectId;
-    readonly sessionId: ComputeSessionId;
-    readonly executionId: ComputeExecutionId | null;
-    readonly contentHash: string;
-    readonly mediaType: string;
-    readonly bytes: Uint8Array;
-    readonly maximumBytes: number;
-    readonly operation: "write-output-image" | "write-output-resource";
-  }) =>
-    Effect.gen(function* () {
+  const writeOutputResourceBytes = Effect.fn("LocalComputeStore.writeOutputResourceBytes")(
+    function* (input: {
+      readonly projectId: ComputeProjectId;
+      readonly sessionId: ComputeSessionId;
+      readonly executionId: ComputeExecutionId | null;
+      readonly contentHash: string;
+      readonly mediaType: string;
+      readonly bytes: Uint8Array;
+      readonly maximumBytes: number;
+      readonly operation: "write-output-image" | "write-output-resource";
+    }) {
       const owner = yield* outputOwnerDirectory(
         input.projectId,
         input.sessionId,
@@ -542,7 +546,8 @@ const make = Effect.gen(function* () {
         );
       }
       return { fileName };
-    });
+    },
+  );
 
   const writeOutputImage = (input: {
     readonly projectId: ComputeProjectId;
@@ -573,36 +578,37 @@ const make = Effect.gen(function* () {
     });
 
   /** Every project with a compute directory, for a sweep that has to visit them all. */
-  const loadProjectIds = () =>
-    Effect.gen(function* () {
-      if (!(yield* fs.exists(sessionsRoot).pipe(mapStoreError("exists", sessionsRoot)))) return [];
-      const entries = yield* fs
-        .readDirectory(sessionsRoot)
-        .pipe(mapStoreError("read-sessions-root", sessionsRoot));
-      return entries.filter(isSafeSegment).map((entry) => ComputeProjectId.make(entry));
-    });
+  const loadProjectIds = Effect.fn("LocalComputeStore.loadProjectIds")(function* () {
+    if (!(yield* fs.exists(sessionsRoot).pipe(mapStoreError("exists", sessionsRoot)))) return [];
+    const entries = yield* fs
+      .readDirectory(sessionsRoot)
+      .pipe(mapStoreError("read-sessions-root", sessionsRoot));
+    return entries.filter(isSafeSegment).map((entry) => ComputeProjectId.make(entry));
+  });
 
-  const loadSession = (projectId: ComputeProjectId, sessionId: ComputeSessionId) =>
-    Effect.gen(function* () {
-      const directory = yield* sessionDirectory(projectId, sessionId);
-      const filePath = path.join(directory, "session.json");
-      if (!(yield* fs.exists(filePath).pipe(mapStoreError("exists", filePath)))) return null;
-      const contents = yield* fs
-        .readFileString(filePath)
-        .pipe(mapStoreError("read-session", filePath));
-      const decoded = decodeSession(contents);
-      if (Option.isNone(decoded)) {
-        // Not treated as an absent session: "there is no session here" and "I
-        // cannot read the session that is here" are different facts, and only
-        // the first is safe to overwrite.
-        return yield* storeError(
-          "decode-session",
-          filePath,
-          new Error("The stored compute session record is unreadable."),
-        );
-      }
-      return decoded.value;
-    });
+  const loadSession = Effect.fn("LocalComputeStore.loadSession")(function* (
+    projectId: ComputeProjectId,
+    sessionId: ComputeSessionId,
+  ) {
+    const directory = yield* sessionDirectory(projectId, sessionId);
+    const filePath = path.join(directory, "session.json");
+    if (!(yield* fs.exists(filePath).pipe(mapStoreError("exists", filePath)))) return null;
+    const contents = yield* fs
+      .readFileString(filePath)
+      .pipe(mapStoreError("read-session", filePath));
+    const decoded = decodeSession(contents);
+    if (Option.isNone(decoded)) {
+      // Not treated as an absent session: "there is no session here" and "I
+      // cannot read the session that is here" are different facts, and only
+      // the first is safe to overwrite.
+      return yield* storeError(
+        "decode-session",
+        filePath,
+        new Error("The stored compute session record is unreadable."),
+      );
+    }
+    return decoded.value;
+  });
 
   /**
    * Every session of a project that can still be read.
@@ -613,279 +619,281 @@ const make = Effect.gen(function* () {
    * file is left untouched so a later version can still read it, and the
    * warning is what an operator needs to find it.
    */
-  const loadSessions = (projectId: ComputeProjectId) =>
-    Effect.gen(function* () {
-      const projectRoot = yield* joinSegments("load-sessions", projectId);
-      if (!(yield* fs.exists(projectRoot).pipe(mapStoreError("exists", projectRoot)))) return [];
-      const entries = yield* fs
-        .readDirectory(projectRoot)
-        .pipe(mapStoreError("read-project-sessions", projectRoot));
-      const sessions: ComputeSessionRecord[] = [];
-      for (const entry of entries) {
-        if (!isSafeSegment(entry)) continue;
-        const record = yield* loadSession(projectId, ComputeSessionId.make(entry)).pipe(
-          Effect.tapError((cause) =>
-            Effect.logWarning("compute session record skipped as unreadable", {
-              projectId,
-              sessionId: entry,
-              operation: cause.operation,
-            }),
-          ),
-          Effect.orElseSucceed(() => null),
-        );
-        if (record !== null) sessions.push(record);
-      }
-      return sessions.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
-    });
-
-  const loadExecutions = (projectId: ComputeProjectId, sessionId: ComputeSessionId) =>
-    Effect.gen(function* () {
-      const directory = yield* sessionDirectory(projectId, sessionId);
-      const executionsRoot = path.join(directory, "executions");
-      if (!(yield* fs.exists(executionsRoot).pipe(mapStoreError("exists", executionsRoot)))) {
-        return [];
-      }
-      const entries = yield* fs
-        .readDirectory(executionsRoot)
-        .pipe(mapStoreError("read-executions", executionsRoot));
-      const executions: ComputeExecutionRecord[] = [];
-      for (const entry of entries) {
-        if (!isSafeSegment(entry)) continue;
-        const requestPath = path.join(executionsRoot, entry, "request.json");
-        if (!(yield* fs.exists(requestPath).pipe(mapStoreError("exists", requestPath)))) continue;
-        const requestText = yield* fs
-          .readFileString(requestPath)
-          .pipe(mapStoreError("read-execution-request", requestPath));
-        const request = decodeRequest(requestText);
-        if (Option.isNone(request)) {
-          // Skipped, not fatal, for the same reason as `loadSessions`: one
-          // unreadable request must not make a whole session's history
-          // unreadable, and there is nothing else to be done with a request
-          // that cannot be decoded -- it cannot even be marked lost.
-          yield* Effect.logWarning("compute execution request skipped as unreadable", {
+  const loadSessions = Effect.fn("LocalComputeStore.loadSessions")(function* (
+    projectId: ComputeProjectId,
+  ) {
+    const projectRoot = yield* joinSegments("load-sessions", projectId);
+    if (!(yield* fs.exists(projectRoot).pipe(mapStoreError("exists", projectRoot)))) return [];
+    const entries = yield* fs
+      .readDirectory(projectRoot)
+      .pipe(mapStoreError("read-project-sessions", projectRoot));
+    const sessions: ComputeSessionRecord[] = [];
+    for (const entry of entries) {
+      if (!isSafeSegment(entry)) continue;
+      const record = yield* loadSession(projectId, ComputeSessionId.make(entry)).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("compute session record skipped as unreadable", {
             projectId,
-            sessionId,
-            executionId: entry,
-          });
-          continue;
-        }
-        if (request.value.sessionId !== sessionId || request.value.executionId !== entry) {
-          yield* Effect.logWarning("compute execution request identity did not match its path", {
-            projectId,
-            sessionId,
-            executionId: entry,
-          });
-          continue;
-        }
-        const resultPath = path.join(executionsRoot, entry, "result.json");
-        const hasResult = yield* fs.exists(resultPath).pipe(mapStoreError("exists", resultPath));
-        // A missing or unreadable result is the same fact: the execution was in
-        // flight when writing stopped. Recovery repairs it; reading it must not
-        // fail, or one torn file would make a whole session unreadable.
-        const result = hasResult
-          ? decodeResult(
-              yield* fs
-                .readFileString(resultPath)
-                .pipe(mapStoreError("read-execution-result", resultPath)),
-            )
-          : Option.none<ComputeExecutionResultRecord>();
-        const decodedResult = Option.getOrNull(result);
-        if (decodedResult !== null && decodedResult.executionId !== request.value.executionId) {
-          yield* Effect.logWarning("compute execution result identity did not match its path", {
-            projectId,
-            sessionId,
-            executionId: entry,
-          });
-          executions.push({ request: request.value, result: null });
-        } else {
-          executions.push({ request: request.value, result: decodedResult });
-        }
-      }
-      return executions.toSorted((left, right) =>
-        left.request.submittedAt.localeCompare(right.request.submittedAt),
+            sessionId: entry,
+            operation: cause.operation,
+          }),
+        ),
+        Effect.orElseSucceed(() => null),
       );
-    });
+      if (record !== null) sessions.push(record);
+    }
+    return sessions.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+  });
 
-  const loadExecution = (
+  const loadExecutions = Effect.fn("LocalComputeStore.loadExecutions")(function* (
     projectId: ComputeProjectId,
     sessionId: ComputeSessionId,
-    executionId: ComputeExecutionId,
-  ) =>
-    Effect.gen(function* () {
-      const directory = yield* executionDirectory(projectId, sessionId, executionId);
-      const requestPath = path.join(directory, "request.json");
-      if (!(yield* fs.exists(requestPath).pipe(mapStoreError("exists", requestPath)))) return null;
+  ) {
+    const directory = yield* sessionDirectory(projectId, sessionId);
+    const executionsRoot = path.join(directory, "executions");
+    if (!(yield* fs.exists(executionsRoot).pipe(mapStoreError("exists", executionsRoot)))) {
+      return [];
+    }
+    const entries = yield* fs
+      .readDirectory(executionsRoot)
+      .pipe(mapStoreError("read-executions", executionsRoot));
+    const executions: ComputeExecutionRecord[] = [];
+    for (const entry of entries) {
+      if (!isSafeSegment(entry)) continue;
+      const requestPath = path.join(executionsRoot, entry, "request.json");
+      if (!(yield* fs.exists(requestPath).pipe(mapStoreError("exists", requestPath)))) continue;
       const requestText = yield* fs
         .readFileString(requestPath)
         .pipe(mapStoreError("read-execution-request", requestPath));
       const request = decodeRequest(requestText);
-      if (
-        Option.isNone(request) ||
-        request.value.sessionId !== sessionId ||
-        request.value.executionId !== executionId
-      ) {
-        return yield* storeError(
-          "decode-execution-request",
-          requestPath,
-          new Error("The stored execution request identity does not match its path."),
-        );
+      if (Option.isNone(request)) {
+        // Skipped, not fatal, for the same reason as `loadSessions`: one
+        // unreadable request must not make a whole session's history
+        // unreadable, and there is nothing else to be done with a request
+        // that cannot be decoded -- it cannot even be marked lost.
+        yield* Effect.logWarning("compute execution request skipped as unreadable", {
+          projectId,
+          sessionId,
+          executionId: entry,
+        });
+        continue;
       }
-      const resultPath = path.join(directory, "result.json");
-      if (!(yield* fs.exists(resultPath).pipe(mapStoreError("exists", resultPath)))) {
-        return { request: request.value, result: null };
+      if (request.value.sessionId !== sessionId || request.value.executionId !== entry) {
+        yield* Effect.logWarning("compute execution request identity did not match its path", {
+          projectId,
+          sessionId,
+          executionId: entry,
+        });
+        continue;
       }
-      const result = decodeResult(
-        yield* fs
-          .readFileString(resultPath)
-          .pipe(mapStoreError("read-execution-result", resultPath)),
-      );
-      if (Option.isNone(result)) return { request: request.value, result: null };
-      if (result.value.executionId !== executionId) {
-        return yield* storeError(
-          "decode-execution-result",
-          resultPath,
-          new Error("The stored execution result identity does not match its path."),
-        );
+      const resultPath = path.join(executionsRoot, entry, "result.json");
+      const hasResult = yield* fs.exists(resultPath).pipe(mapStoreError("exists", resultPath));
+      // A missing or unreadable result is the same fact: the execution was in
+      // flight when writing stopped. Recovery repairs it; reading it must not
+      // fail, or one torn file would make a whole session unreadable.
+      const result = hasResult
+        ? decodeResult(
+            yield* fs
+              .readFileString(resultPath)
+              .pipe(mapStoreError("read-execution-result", resultPath)),
+          )
+        : Option.none<ComputeExecutionResultRecord>();
+      const decodedResult = Option.getOrNull(result);
+      if (decodedResult !== null && decodedResult.executionId !== request.value.executionId) {
+        yield* Effect.logWarning("compute execution result identity did not match its path", {
+          projectId,
+          sessionId,
+          executionId: entry,
+        });
+        executions.push({ request: request.value, result: null });
+      } else {
+        executions.push({ request: request.value, result: decodedResult });
       }
-      return { request: request.value, result: result.value };
-    });
+    }
+    return executions.toSorted((left, right) =>
+      left.request.submittedAt.localeCompare(right.request.submittedAt),
+    );
+  });
 
-  const loadOutputs = (
+  const loadExecution = Effect.fn("LocalComputeStore.loadExecution")(function* (
+    projectId: ComputeProjectId,
+    sessionId: ComputeSessionId,
+    executionId: ComputeExecutionId,
+  ) {
+    const directory = yield* executionDirectory(projectId, sessionId, executionId);
+    const requestPath = path.join(directory, "request.json");
+    if (!(yield* fs.exists(requestPath).pipe(mapStoreError("exists", requestPath)))) return null;
+    const requestText = yield* fs
+      .readFileString(requestPath)
+      .pipe(mapStoreError("read-execution-request", requestPath));
+    const request = decodeRequest(requestText);
+    if (
+      Option.isNone(request) ||
+      request.value.sessionId !== sessionId ||
+      request.value.executionId !== executionId
+    ) {
+      return yield* storeError(
+        "decode-execution-request",
+        requestPath,
+        new Error("The stored execution request identity does not match its path."),
+      );
+    }
+    const resultPath = path.join(directory, "result.json");
+    if (!(yield* fs.exists(resultPath).pipe(mapStoreError("exists", resultPath)))) {
+      return { request: request.value, result: null };
+    }
+    const result = decodeResult(
+      yield* fs.readFileString(resultPath).pipe(mapStoreError("read-execution-result", resultPath)),
+    );
+    if (Option.isNone(result)) return { request: request.value, result: null };
+    if (result.value.executionId !== executionId) {
+      return yield* storeError(
+        "decode-execution-result",
+        resultPath,
+        new Error("The stored execution result identity does not match its path."),
+      );
+    }
+    return { request: request.value, result: result.value };
+  });
+
+  const loadOutputs = Effect.fn("LocalComputeStore.loadOutputs")(function* (
     projectId: ComputeProjectId,
     sessionId: ComputeSessionId,
     executionId: ComputeExecutionId | null,
-  ) =>
-    Effect.gen(function* () {
-      const owner = yield* outputOwnerDirectory(projectId, sessionId, executionId);
-      const filePath = path.join(owner, "output.ndjson");
-      const lines = yield* readLines(filePath, "read-output");
-      const outputs: ComputeOutput[] = [];
-      let corruptLineCount = 0;
-      for (const line of lines) {
-        const decoded = decodeOutput(line);
-        if (Option.isSome(decoded)) outputs.push(decoded.value);
-        else corruptLineCount += 1;
+  ) {
+    const owner = yield* outputOwnerDirectory(projectId, sessionId, executionId);
+    const filePath = path.join(owner, "output.ndjson");
+    const lines = yield* readLines(filePath, "read-output");
+    const outputs: ComputeOutput[] = [];
+    let corruptLineCount = 0;
+    for (const line of lines) {
+      const decoded = decodeOutput(line);
+      if (Option.isSome(decoded)) outputs.push(decoded.value);
+      else corruptLineCount += 1;
+    }
+    return { outputs, corruptLineCount } satisfies LoadedComputeOutputs;
+  });
+
+  const loadJournal = Effect.fn("LocalComputeStore.loadJournal")(function* (
+    projectId: ComputeProjectId,
+    sessionId: ComputeSessionId,
+  ) {
+    const directory = yield* sessionDirectory(projectId, sessionId);
+    const filePath = path.join(directory, "journal.ndjson");
+    const lines = yield* readLines(filePath, "read-journal");
+    const entries: ComputeSessionJournalEntry[] = [];
+    for (const line of lines) {
+      const decoded = decodeJournalEntry(line);
+      if (Option.isSome(decoded)) entries.push(decoded.value);
+    }
+    return entries;
+  });
+
+  const resolveOutputResource = Effect.fn("LocalComputeStore.resolveOutputResource")(function* (
+    ref: ComputeOutputResourceRef,
+  ) {
+    const digest = CONTENT_HASH_PATTERN.exec(ref.contentHash);
+    if (digest?.[1] === undefined) return null;
+    const owner = yield* outputOwnerDirectory(ref.projectId, ref.sessionId, ref.executionId);
+
+    // The record decides, not the request. Everything below is a check
+    // against what was stored, so a caller cannot name a file the transcript
+    // never mentioned.
+    const { outputs } = yield* loadOutputs(ref.projectId, ref.sessionId, ref.executionId);
+    type ResourceMetadata = {
+      readonly mediaType: ComputeMediaType;
+      readonly contentHash: string;
+      readonly byteLength: number;
+    };
+    const matches: ResourceMetadata[] = [];
+    for (const output of outputs) {
+      if (output._tag === "image" && output.contentHash === ref.contentHash) {
+        matches.push(output);
+        continue;
       }
-      return { outputs, corruptLineCount } satisfies LoadedComputeOutputs;
-    });
-
-  const loadJournal = (projectId: ComputeProjectId, sessionId: ComputeSessionId) =>
-    Effect.gen(function* () {
-      const directory = yield* sessionDirectory(projectId, sessionId);
-      const filePath = path.join(directory, "journal.ndjson");
-      const lines = yield* readLines(filePath, "read-journal");
-      const entries: ComputeSessionJournalEntry[] = [];
-      for (const line of lines) {
-        const decoded = decodeJournalEntry(line);
-        if (Option.isSome(decoded)) entries.push(decoded.value);
+      if (
+        output._tag !== "display-data" &&
+        output._tag !== "execute-result" &&
+        output._tag !== "display-update"
+      ) {
+        continue;
       }
-      return entries;
-    });
-
-  const resolveOutputResource = (ref: ComputeOutputResourceRef) =>
-    Effect.gen(function* () {
-      const digest = CONTENT_HASH_PATTERN.exec(ref.contentHash);
-      if (digest?.[1] === undefined) return null;
-      const owner = yield* outputOwnerDirectory(ref.projectId, ref.sessionId, ref.executionId);
-
-      // The record decides, not the request. Everything below is a check
-      // against what was stored, so a caller cannot name a file the transcript
-      // never mentioned.
-      const { outputs } = yield* loadOutputs(ref.projectId, ref.sessionId, ref.executionId);
-      type ResourceMetadata = {
-        readonly mediaType: ComputeMediaType;
-        readonly contentHash: string;
-        readonly byteLength: number;
-      };
-      const matches: ResourceMetadata[] = [];
-      for (const output of outputs) {
-        if (output._tag === "image" && output.contentHash === ref.contentHash) {
-          matches.push(output);
-          continue;
-        }
+      for (const representation of output.bundle.representations) {
         if (
-          output._tag !== "display-data" &&
-          output._tag !== "execute-result" &&
-          output._tag !== "display-update"
+          representation.data._tag !== "resource" ||
+          representation.data.contentHash !== ref.contentHash
         ) {
           continue;
         }
-        for (const representation of output.bundle.representations) {
-          if (
-            representation.data._tag !== "resource" ||
-            representation.data.contentHash !== ref.contentHash
-          ) {
-            continue;
-          }
-          matches.push({
-            mediaType: representation.mediaType,
-            contentHash: representation.data.contentHash,
-            byteLength: representation.data.byteLength,
-          });
+        matches.push({
+          mediaType: representation.mediaType,
+          contentHash: representation.data.contentHash,
+          byteLength: representation.data.byteLength,
+        });
+      }
+    }
+    const metadata = matches[0];
+    if (metadata === undefined) return null;
+    if (
+      matches.some(
+        (candidate) =>
+          candidate.mediaType !== metadata.mediaType ||
+          candidate.byteLength !== metadata.byteLength,
+      )
+    ) {
+      // A hash proves bytes, not how those bytes should be interpreted.
+      // Serving the first MIME type encountered would make transcript order
+      // decide security-sensitive presentation semantics.
+      return null;
+    }
+
+    const fileName = `${digest[1]}${resourceFileExtension(metadata.mediaType)}`;
+    const filePath = path.join(owner, "outputs", fileName);
+    const info = yield* Effect.tryPromise({
+      try: async () => {
+        try {
+          // `lstat`, not `stat`: a symlink here would let a corrupted or
+          // hostile store hand out a signed URL for an arbitrary file.
+          return await NodeFSP.lstat(filePath);
+        } catch (cause) {
+          if ((cause as NodeJS.ErrnoException).code === "ENOENT") return null;
+          throw cause;
         }
-      }
-      const metadata = matches[0];
-      if (metadata === undefined) return null;
-      if (
-        matches.some(
-          (candidate) =>
-            candidate.mediaType !== metadata.mediaType ||
-            candidate.byteLength !== metadata.byteLength,
-        )
-      ) {
-        // A hash proves bytes, not how those bytes should be interpreted.
-        // Serving the first MIME type encountered would make transcript order
-        // decide security-sensitive presentation semantics.
-        return null;
-      }
-
-      const fileName = `${digest[1]}${resourceFileExtension(metadata.mediaType)}`;
-      const filePath = path.join(owner, "outputs", fileName);
-      const info = yield* Effect.tryPromise({
-        try: async () => {
-          try {
-            // `lstat`, not `stat`: a symlink here would let a corrupted or
-            // hostile store hand out a signed URL for an arbitrary file.
-            return await NodeFSP.lstat(filePath);
-          } catch (cause) {
-            if ((cause as NodeJS.ErrnoException).code === "ENOENT") return null;
-            throw cause;
-          }
-        },
-        catch: (cause) => storeError("inspect-output-resource", filePath, cause),
-      });
-      if (info === null || !info.isFile()) return null;
-      if (info.size !== metadata.byteLength) return null;
-
-      const actualHash = yield* Effect.tryPromise({
-        try: () => sha256File(filePath),
-        catch: (cause) => storeError("hash-output-resource", filePath, cause),
-      });
-      if (actualHash !== ref.contentHash) return null;
-
-      // Belt and braces after the symlink check: the parent directories could
-      // themselves be links, and containment is the property that matters.
-      const [canonicalRoot, canonicalFile] = yield* Effect.all([
-        fs.realPath(config.computeDir),
-        fs.realPath(filePath),
-      ]).pipe(mapStoreError("canonicalize-output-resource", filePath));
-      const relative = path.relative(canonicalRoot, canonicalFile);
-      if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return null;
-
-      return {
-        path: canonicalFile,
-        fileName,
-        mediaType: metadata.mediaType,
-        contentHash: metadata.contentHash,
-        byteLength: metadata.byteLength,
-        // The HTTP asset layer compares whole milliseconds from Effect's
-        // FileSystem stat. Node's Date#getTime() rounds, while the Effect
-        // adapter truncates sub-millisecond filesystem precision; use the
-        // same normalized value here so an unchanged output is not rejected
-        // as changed merely because its mtime fell on a fractional millisecond.
-        revision: { size: info.size, mtimeMs: Math.trunc(info.mtimeMs) },
-      } satisfies ResolvedComputeOutputResource;
+      },
+      catch: (cause) => storeError("inspect-output-resource", filePath, cause),
     });
+    if (info === null || !info.isFile()) return null;
+    if (info.size !== metadata.byteLength) return null;
+
+    const actualHash = yield* Effect.tryPromise({
+      try: () => sha256File(filePath),
+      catch: (cause) => storeError("hash-output-resource", filePath, cause),
+    });
+    if (actualHash !== ref.contentHash) return null;
+
+    // Belt and braces after the symlink check: the parent directories could
+    // themselves be links, and containment is the property that matters.
+    const [canonicalRoot, canonicalFile] = yield* Effect.all([
+      fs.realPath(config.computeDir),
+      fs.realPath(filePath),
+    ]).pipe(mapStoreError("canonicalize-output-resource", filePath));
+    const relative = path.relative(canonicalRoot, canonicalFile);
+    if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+
+    return {
+      path: canonicalFile,
+      fileName,
+      mediaType: metadata.mediaType,
+      contentHash: metadata.contentHash,
+      byteLength: metadata.byteLength,
+      // The HTTP asset layer compares whole milliseconds from Effect's
+      // FileSystem stat. Node's Date#getTime() rounds, while the Effect
+      // adapter truncates sub-millisecond filesystem precision; use the
+      // same normalized value here so an unchanged output is not rejected
+      // as changed merely because its mtime fell on a fractional millisecond.
+      revision: { size: info.size, mtimeMs: Math.trunc(info.mtimeMs) },
+    } satisfies ResolvedComputeOutputResource;
+  });
 
   const resolveOutputImage = (ref: ComputeOutputResourceRef) =>
     resolveOutputResource(ref).pipe(
@@ -897,36 +905,38 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const measureSessionStorage = (projectId: ComputeProjectId, sessionId: ComputeSessionId) =>
-    Effect.gen(function* () {
-      const directory = yield* sessionDirectory(projectId, sessionId);
-      const executionsRoot = path.join(directory, "executions");
-      return yield* Effect.tryPromise({
-        try: async (): Promise<ComputeSessionStorage> => {
-          let outputBytes = await fileByteLength(`${directory}/output.ndjson`);
-          let imageBytes = await directoryByteLength(`${directory}/outputs`);
-          let entries: ReadonlyArray<string> = [];
-          try {
-            entries = await NodeFSP.readdir(executionsRoot);
-          } catch (cause) {
-            if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
-          }
-          for (const entry of entries) {
-            if (!isSafeSegment(entry)) continue;
-            outputBytes += await fileByteLength(`${executionsRoot}/${entry}/output.ndjson`);
-            imageBytes += await directoryByteLength(`${executionsRoot}/${entry}/outputs`);
-          }
-          return {
-            status: "retained",
-            outputBytes,
-            imageBytes,
-            totalBytes: outputBytes + imageBytes,
-            removedAt: null,
-          };
-        },
-        catch: (cause) => storeError("measure-session-storage", directory, cause),
-      });
+  const measureSessionStorage = Effect.fn("LocalComputeStore.measureSessionStorage")(function* (
+    projectId: ComputeProjectId,
+    sessionId: ComputeSessionId,
+  ) {
+    const directory = yield* sessionDirectory(projectId, sessionId);
+    const executionsRoot = path.join(directory, "executions");
+    return yield* Effect.tryPromise({
+      try: async (): Promise<ComputeSessionStorage> => {
+        let outputBytes = await fileByteLength(`${directory}/output.ndjson`);
+        let imageBytes = await directoryByteLength(`${directory}/outputs`);
+        let entries: ReadonlyArray<string> = [];
+        try {
+          entries = await NodeFSP.readdir(executionsRoot);
+        } catch (cause) {
+          if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+        }
+        for (const entry of entries) {
+          if (!isSafeSegment(entry)) continue;
+          outputBytes += await fileByteLength(`${executionsRoot}/${entry}/output.ndjson`);
+          imageBytes += await directoryByteLength(`${executionsRoot}/${entry}/outputs`);
+        }
+        return {
+          status: "retained",
+          outputBytes,
+          imageBytes,
+          totalBytes: outputBytes + imageBytes,
+          removedAt: null,
+        };
+      },
+      catch: (cause) => storeError("measure-session-storage", directory, cause),
     });
+  });
 
   /**
    * Reclaims a finished session's bulky data and keeps its history.

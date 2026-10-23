@@ -21,24 +21,27 @@ import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { ensureLocalApi } from "../../localApi";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
 import {
   isActiveProviderConnectionOperation,
-  isSafeProviderAuthorizationUrl,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
+import { startProviderSignIn } from "./providerSignInFlow";
+import { useProviderSignInBrowser } from "./useProviderSignInBrowser";
 import {
   type ScientAgentAnswerDraft,
   scientAgentAccountOperation,
   scientAgentAccounts,
   scientAgentAccountSections,
   scientAgentAnswerFor,
+  scientAgentAnswerInput,
 } from "./scientAgentAccountList";
 
 const ACCOUNT_METHOD = "scient_agent_account";
+
+class SignInInterrupted extends Error {}
 
 type Pending =
   | { readonly kind: "sign-in" | "sign-out"; readonly account: string }
@@ -67,10 +70,15 @@ export function ScientAgentAccounts(props: {
     reportFailure: false,
   });
   const [query, setQuery] = useState("");
-  // What was typed belongs to the sign-in it was typed for. Another client can
-  // replace that sign-in with one for a different account; the draft must not
+  // What was typed belongs to the sign-in and question it was typed for.
+  // Another client can replace that sign-in with one for a different account,
+  // or answer the question so the agent asks the next; the draft must not
   // follow it there.
-  const [draft, setDraft] = useState<ScientAgentAnswerDraft>({ operationId: "", value: "" });
+  const [draft, setDraft] = useState<ScientAgentAnswerDraft>({
+    operationId: "",
+    questionId: undefined,
+    value: "",
+  });
   const [pending, setPending] = useState<Pending>(null);
   const [error, setError] = useState<string | null>(null);
   const { copyToClipboard } = useCopyToClipboard();
@@ -80,7 +88,12 @@ export function ScientAgentAccounts(props: {
   const active = isActiveProviderConnectionOperation(operation) ? operation : null;
   const failed = operation?.status === "failed" ? operation : null;
   const answer = scientAgentAnswerFor(draft, active);
-  const setAnswer = (value: string) => setDraft({ operationId: active?.operationId ?? "", value });
+  const setAnswer = (value: string) =>
+    setDraft({ operationId: active?.operationId ?? "", questionId: active?.questionId, value });
+  const signInKey = { environmentId: props.environmentId, instanceId: props.provider.instanceId };
+  const providerName = props.provider.displayName?.trim() || "Scient Agent";
+  const browser = useProviderSignInBrowser(signInKey, active, providerName);
+  const shownError = error ?? (browser.opening?.status === "failed" ? browser.opening.error : null);
   // Without a list there is nothing to choose from, but a sign-in that is
   // running or just failed is still shown.
   if (listed === undefined && active === null && failed === null) return null;
@@ -94,39 +107,37 @@ export function ScientAgentAccounts(props: {
   const fail = (failure: unknown, fallback: string) =>
     setError(providerLifecycleFailureMessage(failure, fallback));
 
-  const openPage = async (url: string) => {
-    if (!isSafeProviderAuthorizationUrl(url)) {
-      setError("Scient refused a sign-in link that is not secure.");
-      return;
-    }
-    try {
-      await ensureLocalApi().shell.openExternal(url);
-    } catch (failure) {
-      fail(failure, "Scient could not open the sign-in page.");
-    }
-  };
-
   const signIn = async (account: ProviderConnectionAccount) => {
     setError(null);
     setPending({ kind: "sign-in", account: account.id });
-    const result = await startConnection({
-      environmentId: props.environmentId,
-      input: { instanceId, method: ACCOUNT_METHOD, account: account.id },
-    });
+    // Opens the account's sign-in page for this client once, even if this view
+    // closes. A failure is thrown into the opener unwrapped, so it can keep the
+    // request id when the outcome is unknown (a lost reply) and release it when
+    // the server rejected the start.
+    const failure = await startProviderSignIn({
+      key: signInKey,
+      providerName,
+      previousOperationId: operation?.operationId ?? null,
+      start: async (signInRequestId) => {
+        const result = await startConnection({
+          environmentId: props.environmentId,
+          input: { instanceId, method: ACCOUNT_METHOD, account: account.id, signInRequestId },
+        });
+        if (result._tag === "Success") return result.value;
+        throw isAtomCommandInterrupted(result)
+          ? new SignInInterrupted()
+          : squashAtomCommandFailure(result);
+      },
+      operationOf: (started) =>
+        started.providers.find((provider) => provider.instanceId === instanceId)?.connection
+          ?.accountOperation,
+    }).then(
+      () => null,
+      (cause: unknown) => cause,
+    );
     setPending(null);
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        fail(
-          squashAtomCommandFailure(result),
-          `Scient could not start the ${account.name} sign-in.`,
-        );
-      }
-      return;
-    }
-    const started = result.value.providers.find((provider) => provider.instanceId === instanceId)
-      ?.connection?.accountOperation;
-    if (started?.authorizationUrl && started.authorizationUrlKind !== "manual_fallback") {
-      await openPage(started.authorizationUrl);
+    if (failure !== null && !(failure instanceof SignInInterrupted)) {
+      fail(failure, `Scient could not start the ${account.name} sign-in.`);
     }
   };
 
@@ -149,7 +160,7 @@ export function ScientAgentAccounts(props: {
     setPending({ kind: "answer" });
     const result = await submitAnswer({
       environmentId: props.environmentId,
-      input: { instanceId, operationId: current.operationId, authorizationCode: answer },
+      input: scientAgentAnswerInput(instanceId, current, answer),
     });
     setPending(null);
     if (result._tag === "Failure") {
@@ -242,7 +253,7 @@ export function ScientAgentAccounts(props: {
                 type="button"
                 size="sm"
                 variant="ghost-primary"
-                onClick={() => void openPage(active.authorizationUrl!)}
+                onClick={() => void browser.reopen()}
               >
                 <ExternalLinkIcon />
                 Open the sign-in page
@@ -311,13 +322,13 @@ export function ScientAgentAccounts(props: {
           {nameOf(failed.account)}: {failed.message}
         </p>
       ) : null}
-      {error ? (
+      {shownError ? (
         <div
           role="alert"
           className="flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-xs leading-relaxed text-destructive"
         >
           <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <span>{error}</span>
+          <span>{shownError}</span>
         </div>
       ) : null}
     </section>

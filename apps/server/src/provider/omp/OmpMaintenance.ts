@@ -150,8 +150,8 @@ export const ompMaintenance: ProviderMaintenanceCapabilitiesResolver = {
     ),
 };
 
-const fetchLatest = (url: string, parse: (body: string) => string | null) =>
-  Effect.gen(function* () {
+const fetchLatest = Effect.fn("OmpMaintenance.fetchLatest")(
+  function* (url: string, parse: (body: string) => string | null) {
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
       HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader("accept", "application/json")),
@@ -162,10 +162,10 @@ const fetchLatest = (url: string, parse: (body: string) => string | null) =>
       maxBytes: LATEST_VERSION_MAX_BYTES,
     });
     return body.truncated ? null : parse(body.text);
-  }).pipe(
-    Effect.timeout(LATEST_VERSION_TIMEOUT),
-    Effect.orElseSucceed(() => null),
-  );
+  },
+  Effect.timeout(LATEST_VERSION_TIMEOUT),
+  Effect.orElseSucceed(() => null),
+);
 
 const primarySource = (
   channel: OmpInstallChannel,

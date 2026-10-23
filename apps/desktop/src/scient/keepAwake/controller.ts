@@ -113,25 +113,27 @@ export const make = Effect.gen(function* () {
       };
     }),
   });
-  const persist = (next: KeepAwakeDocument, explicit: boolean) =>
-    Effect.gen(function* () {
-      // Memory follows the user's choice even when disk writes fail. The fault blocks reacquisition.
-      document = next;
-      if (storageError !== null && !explicit) return;
-      yield* storage.save(next).pipe(
-        Effect.match({
-          onSuccess: () => {
-            if (explicit) storageError = null;
-          },
-          onFailure: () => {
-            storageError =
-              "Could not save keep-awake preferences. Protection is disabled until a save succeeds.";
-          },
-        }),
-      );
-      if (storageError !== null) yield* release;
-    });
-  const accept = (results: readonly WorkSourceResult[]) =>
+  const persist = Effect.fn("KeepAwakeController.persist")(function* (
+    next: KeepAwakeDocument,
+    explicit: boolean,
+  ) {
+    // Memory follows the user's choice even when disk writes fail. The fault blocks reacquisition.
+    document = next;
+    if (storageError !== null && !explicit) return;
+    yield* storage.save(next).pipe(
+      Effect.match({
+        onSuccess: () => {
+          if (explicit) storageError = null;
+        },
+        onFailure: () => {
+          storageError =
+            "Could not save keep-awake preferences. Protection is disabled until a save succeeds.";
+        },
+      }),
+    );
+    if (storageError !== null) yield* release;
+  });
+  const accept = Effect.fn("KeepAwakeController.accept")((results: readonly WorkSourceResult[]) =>
     lock.withPermits(1)(
       Effect.gen(function* () {
         sourceError = null;
@@ -224,45 +226,48 @@ export const make = Effect.gen(function* () {
           }
         yield* reconcile;
       }),
-    );
-  const handle = (
-    request: KeepAwakeRequest,
-    selection?: Pick<KeepAwakeObservation, "unfinished" | "latestRunId">,
-  ) =>
-    lock.withPermits(1)(
-      Effect.gen(function* () {
-        if (request.type === "configure")
-          yield* persist(
-            { ...document, settings: { mode: request.settings.mode ?? document.settings.mode } },
-            true,
-          );
-        if (request.type === "choose") {
-          const thread = document.threads.find((entry) => entry.key === request.key) ?? {
-            key: request.key,
-            title: request.title,
-            once: false,
-            startedAt: null,
-          };
-          const observation = observations.get(request.key);
-          const next = selectKeepAwakeSession(
-            thread,
-            request.choice,
-            selection ?? (fresh(observation) ? observation : undefined),
-            clock.currentTimeMillisUnsafe(),
-          );
-          if (next !== thread) finishing.delete(request.key);
-          yield* persist(
-            {
-              ...document,
-              threads: [...document.threads.filter((entry) => entry.key !== request.key), next],
-            },
-            true,
-          );
-        }
-        yield* reconcile;
-        return state();
-      }),
-    );
+    ),
+  );
+  const handle = Effect.fn("KeepAwakeController.handle")(
+    (
+      request: KeepAwakeRequest,
+      selection?: Pick<KeepAwakeObservation, "unfinished" | "latestRunId">,
+    ) =>
+      lock.withPermits(1)(
+        Effect.gen(function* () {
+          if (request.type === "configure")
+            yield* persist(
+              { ...document, settings: { mode: request.settings.mode ?? document.settings.mode } },
+              true,
+            );
+          if (request.type === "choose") {
+            const thread = document.threads.find((entry) => entry.key === request.key) ?? {
+              key: request.key,
+              title: request.title,
+              once: false,
+              startedAt: null,
+            };
+            const observation = observations.get(request.key);
+            const next = selectKeepAwakeSession(
+              thread,
+              request.choice,
+              selection ?? (fresh(observation) ? observation : undefined),
+              clock.currentTimeMillisUnsafe(),
+            );
+            if (next !== thread) finishing.delete(request.key);
+            yield* persist(
+              {
+                ...document,
+                threads: [...document.threads.filter((entry) => entry.key !== request.key), next],
+              },
+              true,
+            );
+          }
+          yield* reconcile;
+          return state();
+        }),
+      ),
+  );
   return {
     handle,
     accept,

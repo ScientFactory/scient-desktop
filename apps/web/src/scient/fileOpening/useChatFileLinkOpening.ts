@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentFileLinkResolution,
@@ -6,7 +7,6 @@ import type {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback } from "react";
 
 import {
   BrowserPreviewUnavailableError,
@@ -16,7 +16,7 @@ import { workspaceFileHostPath } from "~/components/files/filePath";
 import { useRightPanelStore } from "~/rightPanelStore";
 import type { usePreparedConnection } from "~/state/session";
 import { isAbsolutePath } from "@t3tools/shared/path";
-import { claimWorkspaceBasenameLookup } from "~/workspaceBasenameLookup";
+import { claimWorkspaceBasenameLookup } from "@t3tools/client-runtime/workspace-basename-lookup";
 
 import {
   chatFileLinkResolveInput,
@@ -59,30 +59,28 @@ export function useChatEnvironmentHtmlPreview<AssetError, PreviewError>(input: {
   readonly openPreview: OpenPreviewMutation<PreviewError>;
 }) {
   const { threadRef, preparedConnection, createAssetUrl, openPreview } = input;
-  const openEnvironmentHtmlInPreview = useCallback(
-    (path: string) => {
-      if (!threadRef || preparedConnection._tag === "None") {
-        return Promise.resolve(
-          AsyncResult.failure<void, BrowserPreviewUnavailableError>(
-            Cause.fail(
-              new BrowserPreviewUnavailableError({
-                message: "Environment is not connected.",
-              }),
-            ),
+  const openEnvironmentHtmlInPreview = (path: string, isCurrent?: () => boolean) => {
+    if (!threadRef || preparedConnection._tag === "None") {
+      return Promise.resolve(
+        AsyncResult.failure<void, BrowserPreviewUnavailableError>(
+          Cause.fail(
+            new BrowserPreviewUnavailableError({
+              message: "Environment is not connected.",
+            }),
           ),
-        );
-      }
-      return openEnvironmentFileInPreview({
-        threadRef,
-        path,
-        httpBaseUrl: preparedConnection.value.httpBaseUrl,
-        createAssetUrl,
-        openPreview,
-      });
-    },
-    [createAssetUrl, openPreview, preparedConnection, threadRef],
-  );
-  return openEnvironmentHtmlInPreview;
+        ),
+      );
+    }
+    return openEnvironmentFileInPreview({
+      threadRef,
+      path,
+      ...(isCurrent ? { isCurrent } : {}),
+      httpBaseUrl: preparedConnection.value.httpBaseUrl,
+      createAssetUrl,
+      openPreview,
+    });
+  };
+  return useStableCallback(openEnvironmentHtmlInPreview);
 }
 
 /**
@@ -102,8 +100,12 @@ export function useChatFileLinkOpening(input: {
   readonly openMarkdownFileInPreview: (
     path: string,
     workspaceRelativePath: string,
+    isCurrent?: () => boolean,
   ) => OpenInPreviewResult;
-  readonly openEnvironmentHtmlInPreview: (path: string) => OpenInPreviewResult;
+  readonly openEnvironmentHtmlInPreview: (
+    path: string,
+    isCurrent?: () => boolean,
+  ) => OpenInPreviewResult;
 }) {
   const {
     threadRef,
@@ -120,130 +122,152 @@ export function useChatFileLinkOpening(input: {
   // opens when it opens as written: the client's own placement, except for a
   // home-relative link, which opens where the environment says it is. When
   // the environment could not be asked, the link opens as the client placed it.
-  const planFileLinkOpen = useCallback(
-    async (
-      askedPath: string,
-      clientPath: string,
-    ): Promise<{ readonly plan: ChatFileOpenPlan; readonly location: string }> => {
-      const input = chatFileLinkResolveInput({
-        linkPath: askedPath,
-        workspaceRoot: cwd,
-        changedPaths: changedFiles?.map((file) => file.path) ?? [],
-      });
-      if (input === null || environmentId === null) {
-        return { plan: chatFileOpenPlan(null), location: clientPath };
-      }
-      const resolution = await settleWithin(
-        resolveEnvironmentFileLink({ environmentId, input }).then((result) =>
-          result._tag === "Success" ? result.value : null,
-        ),
-        FILE_LINK_RESOLVE_WAIT_MS,
-        null,
-      );
-      return {
-        plan: chatFileOpenPlan(resolution),
-        location: linkOpenLocation({ resolution, askedPath, clientPath, workspaceRoot: cwd }),
-      };
-    },
-    [changedFiles, cwd, environmentId, resolveEnvironmentFileLink],
-  );
+  const planFileLinkOpen = async (
+    askedPath: string,
+    clientPath: string,
+    waitMs = FILE_LINK_RESOLVE_WAIT_MS,
+  ): Promise<{ readonly plan: ChatFileOpenPlan; readonly location: string }> => {
+    const input = chatFileLinkResolveInput({
+      linkPath: askedPath,
+      workspaceRoot: cwd,
+      changedPaths: changedFiles?.map((file) => file.path) ?? [],
+    });
+    if (input === null || environmentId === null) {
+      return { plan: chatFileOpenPlan(null), location: clientPath };
+    }
+    const resolution = await settleWithin(
+      resolveEnvironmentFileLink({ environmentId, input }).then((result) =>
+        result._tag === "Success" ? result.value : null,
+      ),
+      waitMs,
+      null,
+    );
+    return {
+      plan: chatFileOpenPlan(resolution),
+      location: linkOpenLocation({ resolution, askedPath, clientPath, workspaceRoot: cwd }),
+    };
+  };
   // Opens the file a chat link means. A link whose location does not exist
   // opens the one workspace file it meant, when there is exactly one; without
   // a single answer it opens as written and the file panel offers the choices.
   // `panelPath` is the client's placement of the link: a workspace locator or
   // a host path. For a link authored from the home folder it is that authored
   // `~/` spelling instead, which only the environment can place.
-  const openLinkInPanel = useCallback(
-    (panelPath: string, line: number | undefined, authoredHomeRelative: boolean) => {
-      if (!threadRef) return;
-      const isCurrentClick = claimFileLinkClick(threadRef);
-      void (async () => {
-        const { plan, location } = await planFileLinkOpen(
-          authoredHomeRelative ? panelPath : workspaceLocatorAskPath(panelPath, cwd),
-          authoredHomeRelative ? clientPlacedLinkPath(panelPath, cwd) : panelPath,
-        );
-        if (!isCurrentClick()) return;
-        useRightPanelStore
-          .getState()
-          .openFile(threadRef, plan.kind === "resolved" ? plan.path : location, line);
-      })();
-    },
-    [cwd, planFileLinkOpen, threadRef],
-  );
-  const openFileInPanel = useCallback(
-    (panelPath: string, line: number | undefined) => openLinkInPanel(panelPath, line, false),
-    [openLinkInPanel],
-  );
-  const openHomeRelativeLinkInPanel = useCallback(
-    (panelPath: string, line: number | undefined) => openLinkInPanel(panelPath, line, true),
-    [openLinkInPanel],
-  );
+  const openLinkInPanel = (
+    panelPath: string,
+    line: number | undefined,
+    authoredHomeRelative: boolean,
+    findWorkspaceMatch?: () => Promise<string | null>,
+  ) => {
+    if (!threadRef) return;
+    const isCurrentClick = claimFileLinkClick(threadRef);
+    void (async () => {
+      const deadline = Date.now() + FILE_LINK_RESOLVE_WAIT_MS;
+      const match = findWorkspaceMatch
+        ? await settleWithin(findWorkspaceMatch(), FILE_LINK_RESOLVE_WAIT_MS, null)
+        : null;
+      if (!isCurrentClick()) return;
+      const target = match ?? panelPath;
+      const { plan, location } = await planFileLinkOpen(
+        authoredHomeRelative ? target : workspaceLocatorAskPath(target, cwd),
+        authoredHomeRelative ? clientPlacedLinkPath(target, cwd) : target,
+        Math.max(0, deadline - Date.now()),
+      );
+      if (!isCurrentClick()) return;
+      useRightPanelStore
+        .getState()
+        .openFile(threadRef, plan.kind === "resolved" ? plan.path : location, line);
+    })();
+  };
+  const openFileInPanel = (
+    panelPath: string,
+    line: number | undefined,
+    findWorkspaceMatch?: () => Promise<string | null>,
+  ) => openLinkInPanel(panelPath, line, false, findWorkspaceMatch);
+  const openHomeRelativeLinkInPanel = (panelPath: string, line: number | undefined) =>
+    openLinkInPanel(panelPath, line, true);
   // Outside media opens in the media viewer when its file exists. A missing
   // one gets the same treatment as any other link, in the file panel.
-  const openMarkdownMediaLink = useCallback(
-    (mediaPath: string, filePath: string, homeRelativePath?: string) => {
-      if (!threadRef) {
-        openMarkdownMedia(mediaPath, filePath);
+  const openMarkdownMediaLink = (
+    mediaPath: string,
+    filePath: string,
+    homeRelativePath?: string,
+  ) => {
+    if (!threadRef) {
+      openMarkdownMedia(mediaPath, filePath);
+      return;
+    }
+    const isCurrentClick = claimFileLinkClick(threadRef);
+    void (async () => {
+      const { plan, location } = await planFileLinkOpen(homeRelativePath ?? filePath, filePath);
+      if (!isCurrentClick()) return;
+      if (plan.kind === "as-written") {
+        // A home-relative link opens from where the environment says it is:
+        // in the files panel when that is inside the workspace, like any
+        // other workspace media, otherwise in the media viewer.
+        if (location === filePath) openMarkdownMedia(mediaPath, filePath);
+        else if (isAbsolutePath(location)) openMarkdownMedia(location, location);
+        else useRightPanelStore.getState().openFile(threadRef, location);
         return;
       }
-      const isCurrentClick = claimFileLinkClick(threadRef);
-      void (async () => {
-        const { plan, location } = await planFileLinkOpen(homeRelativePath ?? filePath, filePath);
-        if (!isCurrentClick()) return;
-        if (plan.kind === "as-written") {
-          // A home-relative link opens from where the environment says it is:
-          // in the files panel when that is inside the workspace, like any
-          // other workspace media, otherwise in the media viewer.
-          if (location === filePath) openMarkdownMedia(mediaPath, filePath);
-          else if (isAbsolutePath(location)) openMarkdownMedia(location, location);
-          else useRightPanelStore.getState().openFile(threadRef, location);
-          return;
-        }
-        useRightPanelStore
-          .getState()
-          .openFile(threadRef, plan.kind === "resolved" ? plan.path : location);
-      })();
-    },
-    [openMarkdownMedia, planFileLinkOpen, threadRef],
-  );
+      useRightPanelStore
+        .getState()
+        .openFile(threadRef, plan.kind === "resolved" ? plan.path : location);
+    })();
+  };
   // An HTML link opens in the integrated browser: the page the link names, or
   // the one workspace page it meant. With no single answer it goes to the file
   // panel, which explains and offers the choices.
-  const openHtmlLinkInBrowser = useCallback(
-    async (
-      filePath: string,
-      workspaceRelativePath: string | null,
-      homeRelativePath?: string,
-    ): Promise<AtomCommandResult<unknown, unknown>> => {
-      const superseded = AsyncResult.success<void, never>(undefined);
-      if (!threadRef) return openEnvironmentHtmlInPreview(filePath);
-      const isCurrentClick = claimFileLinkClick(threadRef);
-      const clientPath = workspaceRelativePath ?? filePath;
-      const { plan, location } = await planFileLinkOpen(homeRelativePath ?? filePath, clientPath);
-      if (!isCurrentClick()) return superseded;
-      if (plan.kind === "missing") {
-        useRightPanelStore.getState().openFile(threadRef, location);
-        return superseded;
-      }
+  const openHtmlLinkInBrowser = async (
+    filePath: string,
+    workspaceRelativePath: string | null,
+    homeRelativePath?: string,
+  ): Promise<AtomCommandResult<unknown, unknown>> => {
+    const superseded = AsyncResult.success<void, never>(undefined);
+    if (!threadRef) return openEnvironmentHtmlInPreview(filePath);
+    const isCurrentClick = claimFileLinkClick(threadRef);
+    const clientPath = workspaceRelativePath ?? filePath;
+    const { plan, location } = await planFileLinkOpen(homeRelativePath ?? filePath, clientPath);
+    if (!isCurrentClick()) return superseded;
+    if (plan.kind === "missing") {
+      useRightPanelStore.getState().openFile(threadRef, location);
+      return superseded;
+    }
+    try {
+      let opening: OpenInPreviewResult;
       if (plan.kind === "resolved" && cwd) {
-        return openMarkdownFileInPreview(workspaceFileHostPath(plan.path, cwd), plan.path);
+        opening = openMarkdownFileInPreview(
+          workspaceFileHostPath(plan.path, cwd),
+          plan.path,
+          isCurrentClick,
+        );
+      } else if (location !== clientPath) {
+        opening =
+          cwd && !isAbsolutePath(location)
+            ? openMarkdownFileInPreview(
+                workspaceFileHostPath(location, cwd),
+                location,
+                isCurrentClick,
+              )
+            : openEnvironmentHtmlInPreview(location, isCurrentClick);
+      } else {
+        opening =
+          cwd && workspaceRelativePath
+            ? openMarkdownFileInPreview(filePath, workspaceRelativePath, isCurrentClick)
+            : openEnvironmentHtmlInPreview(filePath, isCurrentClick);
       }
-      if (location !== clientPath) {
-        // A home-relative page, opened where the environment says it is.
-        return cwd && !isAbsolutePath(location)
-          ? openMarkdownFileInPreview(workspaceFileHostPath(location, cwd), location)
-          : openEnvironmentHtmlInPreview(location);
-      }
-      return cwd && workspaceRelativePath
-        ? openMarkdownFileInPreview(filePath, workspaceRelativePath)
-        : openEnvironmentHtmlInPreview(filePath);
-    },
-    [cwd, openEnvironmentHtmlInPreview, openMarkdownFileInPreview, planFileLinkOpen, threadRef],
-  );
+      const result = await opening;
+      return isCurrentClick() ? result : superseded;
+    } catch (cause) {
+      // A stale failure must not start the file-preview fallback as a new click.
+      if (!isCurrentClick()) return superseded;
+      throw cause;
+    }
+  };
   return {
-    openFileInPanel,
-    openHomeRelativeLinkInPanel,
-    openMarkdownMediaLink,
-    openHtmlLinkInBrowser,
+    openFileInPanel: useStableCallback(openFileInPanel),
+    openHomeRelativeLinkInPanel: useStableCallback(openHomeRelativeLinkInPanel),
+    openMarkdownMediaLink: useStableCallback(openMarkdownMediaLink),
+    openHtmlLinkInBrowser: useStableCallback(openHtmlLinkInBrowser),
   };
 }

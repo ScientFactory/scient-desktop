@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { formatEnvironmentQueryError } from "~/state/query";
 
@@ -83,10 +83,10 @@ export function useEnvironmentFileRefresh(input: {
     event: null,
   });
 
-  const refreshPreview = useCallback(() => {
+  const refreshPreview = () => {
     refreshPreparation();
     setRefreshToken((current) => current + 1);
-  }, [refreshPreparation]);
+  };
 
   useEffect(() => {
     const observation = advanceEnvironmentFileChangeCursor(
@@ -99,10 +99,10 @@ export function useEnvironmentFileRefresh(input: {
   }, [fileChange, refreshPreview, watchedPath]);
 
   const automaticRefreshUnavailable = fileChangeResult._tag === "Failure";
-  const refresh = useCallback(() => {
+  const refresh = () => {
     refreshPreview();
     refreshFileChanges();
-  }, [refreshFileChanges, refreshPreview]);
+  };
 
   return {
     automaticRefreshUnavailable,

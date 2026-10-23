@@ -84,9 +84,10 @@ describe("native Markdown source projection", () => {
     expect(projection.linkSources).toEqual([
       { url: first, source: `[first](${first})` },
       { url: second, source: `[second](${second})` },
+      { url: first, source: `[shot.png](<${first}>)` },
     ]);
     expect(projection.markdown).toBe(
-      `[first](${first.replaceAll("\\", "\\\\")}) [second](${second.replaceAll("\\", "\\\\")})\n\n\`${first}\``,
+      `[first](${first.replaceAll("\\", "\\\\")}) [second](${second.replaceAll("\\", "\\\\")})\n\n[${first.replaceAll("\\", "\\\\")}](<${first.replaceAll("\\", "\\\\")}>)`,
     );
     expect(parseMarkdownDocument(source).children[0]).toMatchObject({
       type: "paragraph",
@@ -106,11 +107,42 @@ describe("native Markdown source projection", () => {
     const source =
       "`/tmp/frame.png` and `/tmp/frame.png`\n\n```text\n/tmp/example.png\n```\n\n`[example](/tmp/example.png)`";
     const projection = nativeMarkdownProjection(source);
-    expect(projection.markdown).toBe(source);
+    expect(projection.markdown).toBe(
+      source.replaceAll("`/tmp/frame.png`", "[/tmp/frame.png](</tmp/frame.png>)"),
+    );
     expect(projection.recognizedLinkTextByUrl).toEqual({
       "/tmp/frame.png": "[frame.png](</tmp/frame.png>)",
     });
-    expect(projection.linkSources).toEqual([]);
+    expect(projection.linkSources).toEqual([
+      { url: "/tmp/frame.png", source: "[frame.png](</tmp/frame.png>)" },
+      { url: "/tmp/frame.png", source: "[frame.png](</tmp/frame.png>)" },
+    ]);
+  });
+
+  it("does not nest a file-code link inside an existing authored link", () => {
+    const source = "[`src/math.ts`](https://example.com)";
+    expect(nativeMarkdownProjection(source)).toEqual({
+      markdown: source,
+      recognizedLinkTextByUrl: {},
+      linkSources: [{ url: "https://example.com", source: null }],
+    });
+  });
+
+  it("keeps TeX source intact for the opt-in native math renderer and plain-text fallback", () => {
+    const source = String.raw`Inline $x^2$ and \(y + 1\).
+
+$$
+\frac{a}{b}
+$$
+
+\[
+\int_0^1 x\,dx
+\]`;
+    expect(nativeMarkdownProjection(source)).toEqual({
+      markdown: source,
+      recognizedLinkTextByUrl: {},
+      linkSources: [],
+    });
   });
 
   it("preserves Windows image and definition destinations without rewriting URL/code examples", () => {

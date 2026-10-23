@@ -79,6 +79,7 @@ test("one failing gate does not stop the rest, and host variables never reach a 
   NodeAssert.deepEqual(result.statuses, [
     ["fmt", "passed"],
     ["lint", "failed"],
+    ["knip", "passed"],
     ["typecheck", "passed"],
     ["test", "passed"],
     ["build", "passed"],
@@ -87,6 +88,14 @@ test("one failing gate does not stop the rest, and host variables never reach a 
     ["diff-index", "passed"],
     ["diff-worktree", "passed"],
   ]);
+  NodeAssert.equal(
+    result.record.gates.find((gate) => gate.id === "knip").command,
+    "pnpm run knip:check",
+  );
+  NodeAssert.equal(
+    result.record.gates.find((gate) => gate.id === "typecheck").command,
+    "pnpm run typecheck",
+  );
   NodeAssert.equal(result.record.pnpm, "11.10.0");
   NodeAssert.equal(result.record.dirty, false);
   NodeAssert.match(result.stdout, /\| lint \| failed, \d+ s \|/u);

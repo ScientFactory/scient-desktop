@@ -33,6 +33,7 @@
  */
 import * as NodeCrypto from "node:crypto";
 
+import { ArtifactId, ArtifactRevisionId } from "@scientfactory/document-artifacts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -85,9 +86,89 @@ export const LatexBuildEvidence = Schema.Struct({
 });
 export type LatexBuildEvidence = typeof LatexBuildEvidence.Type;
 
+/**
+ * Durable evidence is meaningful only for the immutable PDF revision whose
+ * compile produced it. Keeping that identity in the file prevents a crash
+ * between two publications from lending the previous PDF's source evidence to
+ * the newly bound revision.
+ */
+export const PublishedLatexBuildEvidence = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  artifactId: ArtifactId,
+  revisionId: ArtifactRevisionId,
+  evidence: LatexBuildEvidence,
+  /** Legacy hash-only evidence cannot establish freshness across first-party source ABA. */
+  mutationEpoch: Schema.optional(Schema.NonEmptyString),
+  compiledBibliography: Schema.optional(Schema.String.check(Schema.isMaxLength(1_000_000))),
+  /** Pre/post-compile-qualified source identities; absence cannot authorize source navigation. */
+  sourceRevisions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+export type PublishedLatexBuildEvidence = typeof PublishedLatexBuildEvidence.Type;
+
+/** Current-source export requires stable inputs across the compile, not merely a post-build stat. */
+export function latexVisualSourceRevisions(
+  before: LatexBuildEvidence,
+  after: LatexBuildEvidence,
+): Readonly<Record<string, string>> {
+  if (before.truncated || after.truncated) return {};
+  const prior = new Map(before.dependencies.map((item) => [item.path, item.sha256]));
+  if (
+    after.dependencies.some(
+      (item) => prior.get(item.path) !== item.sha256 || !/^[a-f0-9]{64}$/u.test(item.sha256),
+    )
+  )
+    return {};
+  return Object.fromEntries(
+    after.dependencies
+      .filter((item) => /\.(?:tex|latex|ltx)$/iu.test(item.path))
+      .map((item) => [item.path, `sha256:${item.sha256}`]),
+  );
+}
+
+/**
+ * A complete recorder may discover workspace inputs that were not available to
+ * the pre-compile snapshot. One bounded second compile can then observe that
+ * now-known set on both sides; transient changes and incomplete evidence never
+ * qualify for an automatic retry here.
+ */
+export function latexVisualNeedsRequalification(
+  before: LatexBuildEvidence,
+  after: LatexBuildEvidence,
+): boolean {
+  if (after.truncated) return false;
+  if (!after.dependencies.every((item) => /^[a-f0-9]{64}$/u.test(item.sha256))) return false;
+  if (before.truncated) return true;
+  const prior = new Map(before.dependencies.map((item) => [item.path, item.sha256]));
+  return (
+    before.dependencies.length !== after.dependencies.length ||
+    after.dependencies.some((item) => prior.get(item.path) !== item.sha256)
+  );
+}
+
+/** A definite source-set or content change observed across one engine run. */
+export function latexBuildInputsChangedDuringCompile(
+  before: LatexBuildEvidence,
+  after: LatexBuildEvidence,
+): boolean {
+  if (before.truncated || after.truncated) return false;
+  if (
+    !before.dependencies.every((item) => /^[a-f0-9]{64}$/u.test(item.sha256)) ||
+    !after.dependencies.every((item) => /^[a-f0-9]{64}$/u.test(item.sha256))
+  )
+    return false;
+  const prior = new Map(before.dependencies.map((item) => [item.path, item.sha256]));
+  return (
+    before.dependencies.length !== after.dependencies.length ||
+    after.dependencies.some((item) => prior.get(item.path) !== item.sha256)
+  );
+}
+
 const EvidenceJson = Schema.fromJsonString(LatexBuildEvidence);
 const encodeEvidence = Schema.encodeSync(EvidenceJson);
 const decodeEvidence = Schema.decodeUnknownSync(EvidenceJson);
+const PublishedEvidenceJson = Schema.fromJsonString(PublishedLatexBuildEvidence);
+const encodePublishedEvidence = Schema.encodeSync(PublishedEvidenceJson);
+const decodePublishedEvidence = Schema.decodeUnknownSync(PublishedEvidenceJson);
 
 export function encodeLatexBuildEvidence(evidence: LatexBuildEvidence): string {
   return encodeEvidence(evidence);
@@ -102,6 +183,21 @@ export function encodeLatexBuildEvidence(evidence: LatexBuildEvidence): string {
 export function decodeLatexBuildEvidence(source: string): LatexBuildEvidence | null {
   try {
     return decodeEvidence(source);
+  } catch {
+    return null;
+  }
+}
+
+export function encodePublishedLatexBuildEvidence(evidence: PublishedLatexBuildEvidence): string {
+  return encodePublishedEvidence(evidence);
+}
+
+/** Legacy unscoped evidence deliberately decodes to `null` and earns one rebuild. */
+export function decodePublishedLatexBuildEvidence(
+  source: string,
+): PublishedLatexBuildEvidence | null {
+  try {
+    return decodePublishedEvidence(source);
   } catch {
     return null;
   }
@@ -149,41 +245,39 @@ const classifyError = (error: {
   readonly reason: { readonly _tag: string };
 }): ReadOutcome<never> => (error.reason._tag === "NotFound" ? ABSENT : UNREADABLE);
 
-const statOf = (absolutePath: string) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    return yield* fileSystem.stat(absolutePath).pipe(
-      Effect.map((info) =>
-        info.type === "File"
-          ? OK<StatSnapshot>({
-              size: Number(info.size),
-              mtimeMs: Option.match(info.mtime, {
-                onNone: () => null,
-                onSome: (mtime) => mtime.getTime(),
-              }),
-            })
-          : // A directory where a `.tex` file used to be is not a transient
-            // condition; the file the compile read is gone either way.
-            ABSENT,
-      ),
-      Effect.catchTags({ PlatformError: (error) => Effect.succeed(classifyError(error)) }),
-      Effect.orElseSucceed(() => UNREADABLE),
-    );
-  });
+const statOf = Effect.fn("latexBuildEvidence.statOf")(function* (absolutePath: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.stat(absolutePath).pipe(
+    Effect.map((info) =>
+      info.type === "File"
+        ? OK<StatSnapshot>({
+            size: Number(info.size),
+            mtimeMs: Option.match(info.mtime, {
+              onNone: () => null,
+              onSome: (mtime) => mtime.getTime(),
+            }),
+          })
+        : // A directory where a `.tex` file used to be is not a transient
+          // condition; the file the compile read is gone either way.
+          ABSENT,
+    ),
+    Effect.catchTags({ PlatformError: (error) => Effect.succeed(classifyError(error)) }),
+    Effect.orElseSucceed(() => UNREADABLE),
+  );
+});
 
-const digestOf = (absolutePath: string) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    return yield* fileSystem.stream(absolutePath).pipe(
-      Stream.runFold(
-        () => NodeCrypto.createHash("sha256"),
-        (hash, chunk) => hash.update(chunk),
-      ),
-      Effect.map((hash) => OK(hash.digest("hex"))),
-      Effect.catchTags({ PlatformError: (error) => Effect.succeed(classifyError(error)) }),
-      Effect.orElseSucceed(() => UNREADABLE),
-    );
-  });
+const digestOf = Effect.fn("latexBuildEvidence.digestOf")(function* (absolutePath: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.stream(absolutePath).pipe(
+    Stream.runFold(
+      () => NodeCrypto.createHash("sha256"),
+      (hash, chunk) => hash.update(chunk),
+    ),
+    Effect.map((hash) => OK(hash.digest("hex"))),
+    Effect.catchTags({ PlatformError: (error) => Effect.succeed(classifyError(error)) }),
+    Effect.orElseSucceed(() => UNREADABLE),
+  );
+});
 
 /**
  * The dependency list this lane will stand behind. The root document is always
@@ -212,18 +306,18 @@ function boundedDependencies(input: {
  * closing it — hashing every input before and after the compile and rejecting a
  * mismatch — is paid by every build of every document forever.
  */
-export const collectLatexBuildEvidence = (input: {
-  readonly workspaceRoot: string;
-  readonly rootRelativePath: string;
-  readonly dependencies: ReadonlyArray<string>;
-  readonly truncated: boolean;
-  readonly nowEpochMs: number;
-}): Effect.Effect<
-  { readonly evidence: LatexBuildEvidence; readonly marks: LatexEvidenceMarks },
-  never,
-  FileSystem.FileSystem | Path.Path
-> =>
-  Effect.gen(function* () {
+export const collectLatexBuildEvidence = Effect.fn("latexBuildEvidence.collectLatexBuildEvidence")(
+  function* (input: {
+    readonly workspaceRoot: string;
+    readonly rootRelativePath: string;
+    readonly dependencies: ReadonlyArray<string>;
+    readonly truncated: boolean;
+    readonly nowEpochMs: number;
+  }): Effect.fn.Return<
+    { readonly evidence: LatexBuildEvidence; readonly marks: LatexEvidenceMarks },
+    never,
+    FileSystem.FileSystem | Path.Path
+  > {
     const path = yield* Path.Path;
     const { paths, truncated } = boundedDependencies(input);
     const dependencies: LatexDependencyEvidence[] = [];
@@ -272,7 +366,8 @@ export const collectLatexBuildEvidence = (input: {
       },
       marks,
     };
-  });
+  },
+);
 
 /**
  * Whether two evidence records describe the same document identity — same
@@ -319,18 +414,18 @@ export interface LatexEvidenceProbe {
  * and mtime together leave the question open. The first disagreement ends the
  * probe — the answer is already known and every further read is waste.
  */
-export const probeLatexEvidence = (input: {
-  readonly workspaceRoot: string;
-  readonly evidence: LatexBuildEvidence;
-  readonly marks: LatexEvidenceMarks;
-  /**
-   * Unverified dependencies that already earned their one rebuild in this
-   * process. If evidence collection after that build hit the same transient
-   * lock, a later readable poll must not start a 15-second rebuild loop.
-   */
-  readonly reverifiedUnverifiedPaths?: ReadonlySet<string>;
-}): Effect.Effect<LatexEvidenceProbe, never, FileSystem.FileSystem | Path.Path> =>
-  Effect.gen(function* () {
+export const probeLatexEvidence = Effect.fn("latexBuildEvidence.probeLatexEvidence")(
+  function* (input: {
+    readonly workspaceRoot: string;
+    readonly evidence: LatexBuildEvidence;
+    readonly marks: LatexEvidenceMarks;
+    /**
+     * Unverified dependencies that already earned their one rebuild in this
+     * process. If evidence collection after that build hit the same transient
+     * lock, a later readable poll must not start a 15-second rebuild loop.
+     */
+    readonly reverifiedUnverifiedPaths?: ReadonlySet<string>;
+  }): Effect.fn.Return<LatexEvidenceProbe, never, FileSystem.FileSystem | Path.Path> {
     const path = yield* Path.Path;
     const marks = new Map(input.marks);
     const verdict = (changedPath: string | null): LatexEvidenceProbe => ({
@@ -397,4 +492,5 @@ export const probeLatexEvidence = (input: {
     }
 
     return verdict(null);
-  });
+  },
+);

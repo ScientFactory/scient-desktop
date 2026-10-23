@@ -1456,6 +1456,7 @@ const analyticsFixture = () => {
   let status: AnalyticsStatus = { available: true, consent: "product" };
   let epoch = 0;
   const service = AnalyticsService.of({
+    recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
@@ -1723,6 +1724,7 @@ describe("compute outcome analytics", () => {
       let status: AnalyticsStatus = { available: true, consent: initialConsent };
       let epoch = 0;
       const analytics = AnalyticsService.of({
+        recordOwners: () => Effect.void,
         record: (name, properties) =>
           Effect.sync(() => {
             events.push({ name, properties });
@@ -4251,7 +4253,15 @@ describe("compute session under load", () => {
             yield* waitUntil(executionAt(executionId, "succeeded"));
           }
 
-          const session = yield* waitUntil(sessionAt("ready"));
+          // A result is recorded before the session goes idle, and the session
+          // stays ready throughout, so wait for idle itself. A stalled session
+          // never gets there and fails at the deadline.
+          const session = yield* waitUntil(
+            Effect.gen(function* () {
+              const current = yield* sessionAt("ready");
+              return current?.activity === "idle" ? current : null;
+            }),
+          );
           expect(session.activity).toBe("idle");
         }),
       );

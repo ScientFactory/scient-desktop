@@ -1,9 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { Atom } from "effect/reactivity";
-import { type ReactNode, useCallback, useMemo, useSyncExternalStore } from "react";
+import { type ReactNode, useSyncExternalStore } from "react";
 
 import { cn } from "~/lib/utils";
-import { serverEnvironment } from "~/state/server";
+import { environmentIdsKey } from "~/state/environmentAtomList";
+import { environmentUpdateStatesAtom } from "~/state/server";
 import { useServerUpdate } from "../ServerUpdateAction";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -21,36 +21,31 @@ import {
   postponeUpdateRestart,
   retryFailedUpdateRunServers,
 } from "./updateEverythingRun";
+// SCIENT-FORK:START — Retry follows each failed server's current eligibility.
+import { offerEligibleUpdateRetry } from "~/scient/desktopUpdate/updateEverythingRetry";
+import { useQualifiedUpdateRunServers } from "./updateEverythingRun";
+// SCIENT-FORK:END
 
 function useNow(intervalMs: number | null): number {
   const step = intervalMs ?? 60_000;
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      if (intervalMs === null) return () => {};
-      const timer = setInterval(onChange, intervalMs);
-      return () => clearInterval(timer);
-    },
-    [intervalMs],
-  );
+  const subscribe = (onChange: () => void) => {
+    if (intervalMs === null) return () => {};
+    const timer = setInterval(onChange, intervalMs);
+    return () => clearInterval(timer);
+  };
   return useSyncExternalStore(subscribe, () => Math.floor(Date.now() / step) * step);
 }
 
 function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<UpdateRunMachineView> {
-  const viewsAtom = useMemo(
-    () =>
-      Atom.make((get) =>
-        run.machines.map((machine) => ({
-          machine,
-          status: resolveUpdateRunMachineStatus(
-            machine,
-            run.phase,
-            get(serverEnvironment.updateStateAtom(machine.environmentId)),
-          ),
-        })),
-      ),
-    [run],
+  const updateStates = useAtomValue(
+    environmentUpdateStatesAtom(
+      environmentIdsKey(run.machines.map(({ environmentId }) => environmentId)),
+    ),
   );
-  return useAtomValue(viewsAtom);
+  return run.machines.map((machine, index) => ({
+    machine,
+    status: resolveUpdateRunMachineStatus(machine, run.phase, updateStates[index]!),
+  }));
 }
 
 function localStatusLabel(run: UpdateEverythingRun, local: UpdateRunLocalState, now: number) {
@@ -80,7 +75,14 @@ export function SidebarUpdateCapsule({
     ({ status }) => status !== "done" && status !== "failed" && status !== "waiting",
   );
   const now = useNow(run.phase === "countdown" ? 1_000 : hasActiveMachine ? 30_000 : null);
-  const view = describeUpdateCapsule(run, machines, local, now);
+  // SCIENT-FORK:START — Retry follows each failed server's current eligibility.
+  const qualifiedServers = useQualifiedUpdateRunServers();
+  const view = offerEligibleUpdateRetry(
+    describeUpdateCapsule(run, machines, local, now),
+    run.machines,
+    qualifiedServers,
+  );
+  // SCIENT-FORK:END
   const updateServer = useServerUpdate();
   const failed = machines.some(({ status }) => status === "failed");
   const settled = !hasActiveMachine && run.localVersion === null;

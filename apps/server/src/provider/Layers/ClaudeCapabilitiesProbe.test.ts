@@ -15,7 +15,6 @@ import * as Schema from "effect/Schema";
 
 import {
   buildClaudeCapabilitiesProbeQueryOptions,
-  CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
   probeClaudeCapabilities,
 } from "../ClaudeProvider.ts";
 
@@ -40,7 +39,7 @@ it("isolates Claude capability probes without dropping workspace setting sources
   assert.deepEqual(options.mcpServers, {});
   assert.equal(options.strictMcpConfig, true);
   assert.equal(options.cwd, "/workspace/project");
-  assert.deepEqual(options.settingSources, [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES]);
+  assert.deepEqual(options.settingSources, ["user", "project", "local"]);
   assert.deepEqual(options.settings, { disableAllHooks: true });
   assert.deepEqual(options.allowedTools, []);
   assert.equal(options.persistSession, false);
@@ -184,6 +183,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           rate_limits_available: true,
           rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },
         },
+        usageCheckedAt: "1970-01-01T00:00:00.000Z",
       });
 
       const invocation = JSON.parse(yield* fs.readFileString(invocationPath)) as {

@@ -47,6 +47,7 @@ import {
   extractXAiBackgroundTaskCompletion,
   extractXAiKilledBackgroundTasks,
   extractXAiMonitorTaskId,
+  xAiBackgroundShellTaskId,
   isXAiPersistentMonitor,
   extractXAiExitPlanMarkdown,
   registerXAiSubagentFinished,
@@ -60,6 +61,7 @@ import {
 } from "./xaiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
+import { sessionModelStateFromInitialize } from "@t3tools/provider-acp/server/runtimeModel";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { collectSessionConfigOptionValues } from "@t3tools/provider-acp/server/runtimeModel";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -86,6 +88,7 @@ export const GROK_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(GROK_DRIVER_K
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
+// SCIENT-FORK: retained Grok access-mode/session replacement integration consumes these capabilities.
 export const GrokProviderCapabilitiesV2 = {
   ...AcpProviderCapabilitiesV2,
   sessions: {
@@ -194,9 +197,7 @@ const registerGrokAskUserQuestionExtensions = ({
       runtime.handleExtRequest(method, XAiAskUserQuestionRequest, (params, requestContext) => {
         const identity = extractXAiAskUserQuestionIdentity(params);
         const questions = extractXAiAskUserQuestions(params).map((question) => ({
-          id: question.id,
-          header: question.header,
-          question: question.question,
+          ...question,
           options: [...question.options],
         }));
         return requestUserInput(
@@ -258,110 +259,126 @@ export function makeGrokAcpAdapterFlavor(
     supportsImagePrompts: true,
     supportsCompaction: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
-    applyModelSelection: ({ runtime, startResult, modelSelection }) =>
-      Effect.gen(function* () {
-        // `protocolVersion` is the initialize advertisement; the runtime's
-        // negotiated generation is authoritative (Grok may advertise v2 but
-        // negotiate the v1 session shape).
-        const generation = yield* runtime.getProtocolGeneration;
-        const requestedModelId = resolveGrokAcpBaseModelId(modelSelection.model);
-        const requestedReasoningEffort = getModelSelectionStringOptionValue(
-          modelSelection,
-          "reasoningEffort",
+    getModelContextWindow: (selection, session) => {
+      if (selection.instanceId !== options.instanceId) return undefined;
+      const modelId = resolveGrokAcpBaseModelId(selection.model);
+      const models =
+        session.sessionSetupResult.models ??
+        sessionModelStateFromInitialize(session.initializeResult);
+      const window = models?.availableModels.find((model) => model.modelId === modelId)?._meta
+        ?.totalContextTokens;
+      // contextWindows includes selectable larger windows; totalContextTokens is the default.
+      return typeof window === "number" && Number.isSafeInteger(window) && window > 0
+        ? window
+        : undefined;
+    },
+    applyModelSelection: Effect.fn("GrokAdapter.applyModelSelection")(function* ({
+      runtime,
+      startResult,
+      modelSelection,
+    }) {
+      // `protocolVersion` is the initialize advertisement; the runtime's
+      // negotiated generation is authoritative (Grok may advertise v2 but
+      // negotiate the v1 session shape).
+      const generation = yield* runtime.getProtocolGeneration;
+      const requestedModelId = resolveGrokAcpBaseModelId(modelSelection.model);
+      const requestedReasoningEffort = getModelSelectionStringOptionValue(
+        modelSelection,
+        "reasoningEffort",
+      );
+      if (
+        requestedReasoningEffort !== undefined &&
+        normalizeGrokReasoningEffort(requestedReasoningEffort) === undefined
+      ) {
+        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+          "Grok cannot apply an invalid reasoning effort.",
         );
+      }
+
+      if (generation === 1) {
+        const currentModelId = currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult);
         if (
           requestedReasoningEffort !== undefined &&
-          normalizeGrokReasoningEffort(requestedReasoningEffort) === undefined
+          requestedModelId === GROK_DEFAULT_MODEL_SLUG &&
+          currentModelId === undefined
         ) {
           return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-            "Grok cannot apply an invalid reasoning effort.",
+            "Grok has not advertised a model for the requested reasoning effort.",
           );
         }
+        return yield* applyGrokAcpModelSelection({
+          runtime,
+          currentModelId,
+          currentReasoningEffort: currentGrokReasoningEffortFromSessionSetup(
+            startResult.sessionSetupResult,
+          ),
+          requestedModelId,
+          requestedReasoningEffort,
+          mapError: (cause) => cause,
+        });
+      }
+      if (generation !== 2) {
+        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+          "Grok has not negotiated an ACP wire generation.",
+        );
+      }
 
-        if (generation === 1) {
-          const currentModelId = currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult);
-          if (
-            requestedReasoningEffort !== undefined &&
-            requestedModelId === GROK_DEFAULT_MODEL_SLUG &&
-            currentModelId === undefined
-          ) {
-            return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-              "Grok has not advertised a model for the requested reasoning effort.",
-            );
-          }
-          return yield* applyGrokAcpModelSelection({
-            runtime,
-            currentModelId,
-            currentReasoningEffort: currentGrokReasoningEffortFromSessionSetup(
-              startResult.sessionSetupResult,
-            ),
-            requestedModelId,
-            requestedReasoningEffort,
-            mapError: (cause) => cause,
-          });
-        }
-        if (generation !== 2) {
+      let options = yield* runtime.getConfigOptions;
+      const modelOption = options.find((option) => option.category === "model");
+      if (requestedModelId !== GROK_DEFAULT_MODEL_SLUG) {
+        if (modelOption?.type !== "select") {
           return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-            "Grok has not negotiated an ACP wire generation.",
+            "Grok does not advertise a model selection option.",
           );
         }
-
-        let options = yield* runtime.getConfigOptions;
-        const modelOption = options.find((option) => option.category === "model");
-        if (requestedModelId !== GROK_DEFAULT_MODEL_SLUG) {
-          if (modelOption?.type !== "select") {
-            return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-              "Grok does not advertise a model selection option.",
-            );
-          }
-          if (modelOption.currentValue !== requestedModelId) {
-            yield* runtime.setConfigOption(modelOption.id, requestedModelId);
-          }
-          options = yield* runtime.getConfigOptions;
-          const applied = options.find((option) => option.id === modelOption.id)?.currentValue;
-          if (applied !== requestedModelId) {
-            return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-              "Grok did not confirm the requested model.",
-            );
-          }
+        if (modelOption.currentValue !== requestedModelId) {
+          yield* runtime.setConfigOption(modelOption.id, requestedModelId);
         }
-
-        if (requestedReasoningEffort !== undefined) {
-          const effort = normalizeGrokReasoningEffort(requestedReasoningEffort);
-          const effortOption = options.find(
-            (option) =>
-              option.category === "thought_level" ||
-              option.id === "reasoningEffort" ||
-              option.id === "reasoning_effort",
+        options = yield* runtime.getConfigOptions;
+        const applied = options.find((option) => option.id === modelOption.id)?.currentValue;
+        if (applied !== requestedModelId) {
+          return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+            "Grok did not confirm the requested model.",
           );
-          if (effort === undefined || effortOption?.type !== "select") {
-            return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-              "Grok does not advertise the requested reasoning effort.",
-            );
-          }
-          if (!collectSessionConfigOptionValues(effortOption).includes(effort)) {
-            return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-              "Grok does not advertise the requested reasoning effort.",
-            );
-          }
-          if (effortOption.currentValue !== effort) {
-            yield* runtime.setConfigOption(effortOption.id, effort);
-          }
-          const applied = (yield* runtime.getConfigOptions).find(
-            (option) => option.id === effortOption.id,
-          )?.currentValue;
-          if (applied !== effort) {
-            return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-              "Grok did not confirm the requested reasoning effort.",
-            );
-          }
         }
+      }
 
-        const appliedModel = (yield* runtime.getConfigOptions).find(
-          (option) => option.category === "model",
+      if (requestedReasoningEffort !== undefined) {
+        const effort = normalizeGrokReasoningEffort(requestedReasoningEffort);
+        const effortOption = options.find(
+          (option) =>
+            option.category === "thought_level" ||
+            option.id === "reasoningEffort" ||
+            option.id === "reasoning_effort",
+        );
+        if (effort === undefined || effortOption?.type !== "select") {
+          return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+            "Grok does not advertise the requested reasoning effort.",
+          );
+        }
+        if (!collectSessionConfigOptionValues(effortOption).includes(effort)) {
+          return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+            "Grok does not advertise the requested reasoning effort.",
+          );
+        }
+        if (effortOption.currentValue !== effort) {
+          yield* runtime.setConfigOption(effortOption.id, effort);
+        }
+        const applied = (yield* runtime.getConfigOptions).find(
+          (option) => option.id === effortOption.id,
         )?.currentValue;
-        return typeof appliedModel === "string" ? appliedModel : undefined;
-      }),
+        if (applied !== effort) {
+          return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+            "Grok did not confirm the requested reasoning effort.",
+          );
+        }
+      }
+
+      const appliedModel = (yield* runtime.getConfigOptions).find(
+        (option) => option.category === "model",
+      )?.currentValue;
+      return typeof appliedModel === "string" ? appliedModel : undefined;
+    }),
     makeRuntime:
       options.makeRuntime ??
       (({ runtimePolicy, scientAwareness, ...input }) => {
@@ -407,6 +424,7 @@ export function makeGrokAcpAdapterFlavor(
         homeDirectory,
       }),
     extractBackgroundTaskId: extractXAiMonitorTaskId,
+    isBackgroundCommandTool: (toolCall) => xAiBackgroundShellTaskId(toolCall) !== undefined,
     extractBackgroundToolMutation: extractXAiAcpBackgroundToolMutation,
     extractBackgroundTaskCompletion: (toolCall) => [
       ...extractXAiBackgroundTaskCompletion(toolCall),
@@ -491,6 +509,11 @@ export const makeGrokAdapterV2ForInstance = Effect.fn("makeGrokAdapterV2ForInsta
     ),
 );
 
+/**
+ * Default native Grok adapter for hosts without an application bridge.
+ *
+ * @public
+ */
 export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapterV2DriverEnv> = {
   driverKind: GROK_DRIVER_KIND,
   configSchema: GrokSettings,

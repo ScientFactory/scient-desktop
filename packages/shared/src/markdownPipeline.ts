@@ -15,6 +15,7 @@ import { isWindowsDrivePathHref } from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 // SCIENT-FORK:START — shared quote protocol owner.
 import { FILE_CITATION_PROTOCOL } from "./composerCitations.ts";
+import { PDF_CITATION_PROTOCOL } from "./pdfCitations.ts";
 // SCIENT-FORK:END
 
 type MarkdownImageHastNode = {
@@ -135,7 +136,12 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
-    code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    // Fence languages plus the two math classes the web chat's math plugin emits.
+    code: [
+      ["className", /^language-./, "math-inline", "math-display"],
+      "dataCodeMeta",
+      "dataInlineCode",
+    ],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
@@ -155,6 +161,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
       // SCIENT-FORK:START — retain quote data for the validated citation renderer/index.
       // Protocol preservation is not navigation authority; consumers still parse the payload.
       FILE_CITATION_PROTOCOL,
+      PDF_CITATION_PROTOCOL,
       // SCIENT-FORK:END
       "t3-context",
       THREAD_LINK_PROTOCOL,
@@ -165,7 +172,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
-  remarkKeepWindowsPathDestinations,
+  remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -175,7 +182,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
-  remarkKeepWindowsPathDestinations,
+  remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -262,17 +269,37 @@ function keepWindowsPathDestination(this: DestinationCompileContext, token: unkn
     node.url = isWindowsAbsolutePath(authored) && !authored.includes("&") ? authored : decoded;
 }
 
+// A drive path that has not reached whitespace yet: `C:`, `C:\Users\me`, `C:/work`.
+const UNFINISHED_DRIVE_PATH = /(?:^|\W)[A-Za-z]:(?:[\\/]\S*)?$/;
+
+interface EscapeCompileContext {
+  readonly stack: ReadonlyArray<{
+    readonly type: string;
+    children?: Array<{ type: string; value?: string }>;
+  }>;
+}
+
+function keepWindowsPathEscape(this: EscapeCompileContext) {
+  const text = this.stack.at(-1)?.children?.at(-1);
+  if (text?.type !== "text" || text.value === undefined) return;
+  const before = text.value.slice(0, -1);
+  if (UNFINISHED_DRIVE_PATH.test(before)) text.value = `${before}\\${text.value.slice(-1)}`;
+}
+
 /**
- * CommonMark reads the `\.` in `C:\me\.t3\shot.png` as an escape, even in a link
- * destination. Every backslash in a Windows path is a separator, so link, image, and
- * definition destinations that are Windows paths keep the text as written.
+ * CommonMark reads the `\.` in `C:\me\.t3\shot.png` as an escape. Every backslash in a
+ * Windows path is a separator, so link, image, and definition destinations that are
+ * Windows paths keep the text as written, and so do escapes inside drive paths in prose.
+ * Prose paths end at whitespace: past that, nothing tells a path from a sentence, and
+ * `C:\x and \*this\*` must still read `*this*`.
  */
-function remarkKeepWindowsPathDestinations(this: Processor) {
+function remarkKeepWindowsPaths(this: Processor) {
   const data = this.data();
   (data.fromMarkdownExtensions ??= []).push({
     exit: {
       resourceDestinationString: keepWindowsPathDestination,
       definitionDestinationString: keepWindowsPathDestination,
+      characterEscape: keepWindowsPathEscape,
     },
   });
 }
@@ -286,6 +313,6 @@ export function shouldPreserveAssistantLineBreaks(text: string): boolean {
 export {
   CHAT_MARKDOWN_SANITIZE_SCHEMA,
   rehypePreserveImageSourceMeta,
-  remarkKeepWindowsPathDestinations,
+  remarkKeepWindowsPaths as remarkKeepWindowsPathDestinations,
 };
 // SCIENT-FORK:END

@@ -2,7 +2,7 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as Deferred from "effect/Deferred";
 import * as Ref from "effect/Ref";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { assert, it, vi } from "@effect/vitest";
+import { it, vi } from "@effect/vitest";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect } from "@effect/vitest";
 import { type OrchestrationProject, type TerminalEvent } from "@t3tools/contracts";
@@ -50,6 +50,7 @@ const makeTerminalManagerLayer = (overrides: TerminalOverrides) =>
   Layer.succeed(TerminalManager.TerminalManager, {
     attachStream: () => Effect.die(new Error("unused")),
     observeStream: () => Effect.die(new Error("unused")),
+    resyncStream: () => Effect.die(new Error("unused")),
     resize: () => Effect.void,
     clear: () => Effect.void,
     restart: () => Effect.die(new Error("unused")),
@@ -115,7 +116,7 @@ describe("ProjectSetupScriptRunner", () => {
       expect(write).toHaveBeenCalledWith({
         threadId: "thread-1",
         terminalId: "setup-default-setup",
-        data: "npm install\r",
+        data: " npm install\r",
       });
     }).pipe(
       Effect.provide(
@@ -219,7 +220,7 @@ describe("ProjectSetupScriptRunner", () => {
         expect(write).toHaveBeenCalledWith({
           threadId: "thread-1",
           terminalId: "setup-setup",
-          data: "bun install\r",
+          data: " bun install\r",
         });
       }).pipe(Effect.provide(testLayer(project, { open, write })));
     },
@@ -295,7 +296,7 @@ describe("ProjectSetupScriptRunner", () => {
         const written = writes[0] ?? "";
         const sentinel = /__T3_SETUP_DONE___[0-9a-f]{32}:/.exec(written)?.[0];
         expect(sentinel).toBeDefined();
-        expect(written).toBe(`( bun install\r); printf '\\n${sentinel}%s\\n' "$?"\r`);
+        expect(written).toBe(` ( bun install\r); printf '\\n${sentinel}%s\\n' "$?"\r`);
 
         // Output arrives in chunks; partial lines are buffered until a newline,
         // control sequences are stripped, and the echoed wrapper is hidden.
@@ -450,11 +451,11 @@ describe("ProjectSetupScriptRunner", () => {
     {
       shell: "/usr/bin/fish",
       expected:
-        /^begin\rbun install\rend; printf '\\n__T3_SETUP_DONE___[0-9a-f]{32}:%s\\n' \$status\r$/,
+        /^ begin\rbun install\rend; printf '\\n__T3_SETUP_DONE___[0-9a-f]{32}:%s\\n' \$status\r$/,
     },
     {
       shell: "/bin/bash",
-      expected: /^\( bun install\r\); printf '\\n__T3_SETUP_DONE___[0-9a-f]{32}:%s\\n' "\$\?"\r$/,
+      expected: /^ \( bun install\r\); printf '\\n__T3_SETUP_DONE___[0-9a-f]{32}:%s\\n' "\$\?"\r$/,
     },
   ])("wraps the command for the $shell syntax", ({ shell, expected }) => {
     const open = vi.fn(() =>

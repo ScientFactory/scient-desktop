@@ -1,7 +1,8 @@
 import { LRUCache } from "~/lib/lruCache";
 import { dependencies } from "../../../package.json";
-import { sharedIsolatedMermaid } from "./isolatedMermaid";
-import { substituteMeasuredImages, substituteSvgImageLinks } from "./measuredImages";
+import { renderMermaidSvg } from "../../components/chat/MermaidDiagram";
+import { blockedMermaidResources } from "./blockedMermaidResources";
+import { applyMermaidPalette } from "./mermaidPalette";
 import {
   isMermaidSyntaxError,
   planMermaidRecovery,
@@ -11,18 +12,9 @@ import {
 import { stripSvgExternalResources } from "./svgExternalResources";
 export { MAX_MERMAID_SOURCE_LENGTH } from "./mermaidRecovery";
 
-export const MERMAID_VERSION = dependencies.mermaid;
+export const MERMAID_RENDERER = `Pele ${dependencies.pele} (Mermaid syntax)`;
 
 export type MermaidTheme = "light" | "dark";
-
-/**
- * Where Mermaid draws. `frame` is the shared no-network frame (`isolatedMermaid.ts`).
- * `page` draws in this document; only a page that itself cannot fetch (the PDF document
- * page) uses it, and a picture Mermaid measures there gets the frame's local stand-in, so
- * the draw does not wait on a load the page refuses. Either way the SVG is stripped of
- * anything that would load from outside before it is returned, and `blocked` names it.
- */
-export type MermaidIsolation = "frame" | "page";
 
 export interface RenderedMermaidDiagram {
   readonly svg: string;
@@ -32,7 +24,6 @@ export interface RenderedMermaidDiagram {
   readonly blocked?: ReadonlyArray<string>;
 }
 
-const MAX_MERMAID_EDGES = 500;
 const MAX_RENDER_CACHE_ENTRIES = 100;
 const MAX_RENDER_CACHE_MEMORY_BYTES = 20 * 1024 * 1024;
 
@@ -43,7 +34,6 @@ interface CachedMermaidDiagram {
   readonly blocked?: ReadonlyArray<string>;
 }
 
-let mermaidRuntimePromise: Promise<typeof import("mermaid")> | null = null;
 let renderQueue: Promise<void> = Promise.resolve();
 let renderSequence = 0;
 
@@ -52,12 +42,6 @@ const renderCache = new LRUCache<CachedMermaidDiagram>(
   MAX_RENDER_CACHE_MEMORY_BYTES,
 );
 const inFlightRenders = new Map<string, Promise<CachedMermaidDiagram>>();
-
-/** Mermaid is a large dependency, so it is requested only after a settled diagram enters view. */
-export function getMermaidRuntimePromise(): Promise<typeof import("mermaid")> {
-  mermaidRuntimePromise ??= import("mermaid");
-  return mermaidRuntimePromise;
-}
 
 function nextRenderId(prefix: string): string {
   renderSequence += 1;
@@ -123,8 +107,8 @@ function validateSource(source: string): string {
   return source;
 }
 
-function renderCacheKey(source: string, theme: MermaidTheme, isolation: MermaidIsolation): string {
-  return `${isolation}\u0000${theme}\u0000${source}`;
+function renderCacheKey(source: string, theme: MermaidTheme): string {
+  return `${theme}\u0000${source}`;
 }
 
 function estimateDiagramSize(source: string, rendered: CachedMermaidDiagram): number {
@@ -160,96 +144,39 @@ function enqueueRender<T>(operation: () => Promise<T>): Promise<T> {
   return result;
 }
 
-/** The settings every Scient Mermaid render uses, in chat and in exports alike. */
-export function mermaidRenderConfig(theme: MermaidTheme): import("mermaid").MermaidConfig {
-  return {
-    startOnLoad: false,
-    securityLevel: "strict",
-    suppressErrorRendering: true,
-    // Mermaid 12 changes these defaults. Preserve existing diagrams' appearance;
-    // authors can still opt into ELK/neo through valid Mermaid frontmatter.
-    layout: "dagre",
-    look: "classic",
-    theme: theme === "dark" ? "dark" : "default",
-    darkMode: theme === "dark",
-    maxTextSize: MAX_MERMAID_SOURCE_LENGTH,
-    maxEdges: MAX_MERMAID_EDGES,
-    htmlLabels: true,
-    forceLegacyMathML: true,
-    fontFamily:
-      'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    logLevel: "fatal",
-  };
-}
-
-async function renderIsolatedTemplate(
-  source: string,
-  theme: MermaidTheme,
-): Promise<CachedMermaidDiagram> {
-  const frame = await sharedIsolatedMermaid();
-  const result = await frame.render(source, { theme, awaitRefusals: false });
-  if (!result.svg.includes("<svg")) {
-    throw new Error("Mermaid returned an invalid diagram.");
-  }
-  // The note names what the SVG itself referred to. The frame's own refusal reports arrive
-  // later and could belong to the previous draw, so they are not used here.
-  const stripped = stripSvgExternalResources(result.svg);
-  return {
-    svgTemplate: stripped.svg,
-    diagramType: result.diagramType,
-    ...(stripped.blocked.length > 0 ? { blocked: stripped.blocked } : {}),
-  };
-}
-
 async function renderNativeTemplate(
   source: string,
   theme: MermaidTheme,
-  isolation: MermaidIsolation,
 ): Promise<CachedMermaidDiagram> {
-  if (isolation === "frame") return renderIsolatedTemplate(source, theme);
-  const { default: mermaid } = await getMermaidRuntimePromise();
-  mermaid.initialize(mermaidRenderConfig(theme));
-
-  // Draws are queued one at a time, so only this draw sees the stand-ins.
-  const substituted: string[] = [];
-  const record = (address: string) => substituted.push(address);
-  const restoreMeasured = substituteMeasuredImages(window, record);
-  const restoreLinks = substituteSvgImageLinks(window, record);
-  let result: Awaited<ReturnType<typeof mermaid.render>>;
-  try {
-    result = await mermaid.render(nextRenderId("render"), source);
-  } finally {
-    restoreLinks();
-    restoreMeasured();
-  }
-  if (!result.svg.includes("<svg")) {
-    throw new Error("Mermaid returned an invalid diagram.");
-  }
+  const result = await renderMermaidSvg(source);
   const stripped = stripSvgExternalResources(result.svg);
-  const blocked = [...new Set([...substituted, ...stripped.blocked])];
+  const blocked = [
+    ...new Set([...blockedMermaidResources(source, result.resources), ...stripped.blocked]),
+  ];
   return {
-    svgTemplate: stripped.svg,
+    svgTemplate: applyMermaidPalette(stripped.svg, theme),
     diagramType: result.diagramType,
     ...(blocked.length > 0 ? { blocked } : {}),
   };
 }
 
-async function renderTemplate(
-  source: string,
-  theme: MermaidTheme,
-  isolation: MermaidIsolation,
-): Promise<CachedMermaidDiagram> {
+async function renderTemplate(source: string, theme: MermaidTheme): Promise<CachedMermaidDiagram> {
   return enqueueRender(async () => {
     try {
-      return await renderNativeTemplate(source, theme, isolation);
+      return await renderNativeTemplate(source, theme);
     } catch (originalError) {
-      if (isMermaidSyntaxError(originalError)) {
+      if (
+        isMermaidSyntaxError(originalError) ||
+        (originalError instanceof Error &&
+          "code" in originalError &&
+          (originalError.code === "syntax" || originalError.code === "unsupported-diagram"))
+      ) {
         try {
           const recovery = planMermaidRecovery(source);
           if (recovery) {
             // One atomic candidate, containing every compatible edit. A later
             // parse/layout failure must not expose partial repairs or its error.
-            const rendered = await renderNativeTemplate(recovery.source, theme, isolation);
+            const rendered = await renderNativeTemplate(recovery.source, theme);
             return { ...rendered, recovery };
           }
         } catch {
@@ -261,19 +188,15 @@ async function renderTemplate(
   });
 }
 
-async function getTemplate(
-  source: string,
-  theme: MermaidTheme,
-  isolation: MermaidIsolation,
-): Promise<CachedMermaidDiagram> {
-  const key = renderCacheKey(source, theme, isolation);
+async function getTemplate(source: string, theme: MermaidTheme): Promise<CachedMermaidDiagram> {
+  const key = renderCacheKey(source, theme);
   const cached = renderCache.get(key);
   if (cached != null) return cached;
 
   const existing = inFlightRenders.get(key);
   if (existing != null) return existing;
 
-  const pending = renderTemplate(source, theme, isolation)
+  const pending = renderTemplate(source, theme)
     .then((rendered) => {
       renderCache.set(key, rendered, estimateDiagramSize(source, rendered));
       return rendered;
@@ -285,16 +208,15 @@ async function getTemplate(
   return pending;
 }
 
-/** Draws a diagram in the no-network frame unless `isolation` says otherwise. */
+/** All consumers use the upstream lazy renderer; no parallel Mermaid runtime is loaded. */
 export async function renderMermaidDiagram(
   unvalidatedSource: string,
   theme: MermaidTheme,
-  isolation: MermaidIsolation = "frame",
 ): Promise<RenderedMermaidDiagram> {
   const source = validateSource(unvalidatedSource);
 
   try {
-    const template = await getTemplate(source, theme, isolation);
+    const template = await getTemplate(source, theme);
     return {
       svg: rebaseMermaidSvgIds(template.svgTemplate, nextRenderId("instance")),
       diagramType: template.diagramType,

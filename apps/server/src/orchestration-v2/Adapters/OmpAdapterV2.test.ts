@@ -503,6 +503,15 @@ const decodeNativeBootstrap = Schema.decodeUnknownSync(
       endpoint: Schema.NullOr(Schema.String),
       authorization: Schema.NullOr(Schema.String),
       awareness: Schema.String,
+      connectors: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            serverName: Schema.String,
+            displayName: Schema.String,
+            url: Schema.String,
+          }),
+        ),
+      ),
     }),
   ),
 );
@@ -2290,6 +2299,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                   authorizationHeader: token,
                   capabilities: new Set(["preview", "skills:read", "sources:read"]),
                   agentDeviceEnvironment: { PATH: "/scient/device-shim", PATH_SEPARATOR: ":" },
+                  connectors: [],
                 })
               : Effect.void,
           makeProcess: (options) =>
@@ -2331,6 +2341,83 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.equal(bootstrap.value.awareness.includes("preview_status"), granted);
         assert.equal(bootstrap.value.awareness.includes("scient_skill_load"), granted);
         assert.isFalse(NodeFS.existsSync(bootstrap.path));
+        // A session without connectors keeps the bootstrap's original shape.
+        assert.isUndefined(bootstrap.value.connectors);
+      }),
+    ),
+  );
+
+  it.effect("delivers every connector in the private OMP bootstrap under the session bearer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("native-bootstrap-connectors");
+        const token = "Bearer synthetic-scient-omp-connector-token";
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+        });
+        const connectors = [
+          {
+            connectorId: "connector-github",
+            serverName: "github",
+            displayName: "GitHub",
+            url: "http://127.0.0.1:43123/mcp/connectors/connector-github",
+          },
+          {
+            connectorId: "connector-linear",
+            serverName: "linear_work",
+            displayName: "Linear",
+            url: "http://127.0.0.1:43123/mcp/connectors/connector-linear",
+          },
+        ];
+        let launch: Parameters<typeof peer.makeProcess>[0] | undefined;
+        let source: string | undefined;
+        let bootstrap: ReturnType<typeof decodeNativeBootstrap> | undefined;
+        yield* harness(false, {
+          threadId,
+          prepareOpen: (input) =>
+            mcpSessions.set({
+              environmentId: EnvironmentId.make("connector-bootstrap-environment"),
+              threadId,
+              providerSessionId: "connector-bootstrap-session",
+              providerInstanceId: input.modelSelection.instanceId,
+              endpoint: "http://127.0.0.1:43123/mcp",
+              authorizationHeader: token,
+              capabilities: new Set(["preview"]),
+              connectors,
+            }),
+          makeProcess: (options) =>
+            Effect.gen(function* () {
+              launch = options;
+              const args = options.extraArgs ?? [];
+              const extension = args[args.indexOf("--extension") + 1];
+              if (!extension) return yield* Effect.die("Missing native Scient extension");
+              source = NodeFS.readFileSync(extension, "utf8");
+              const embedded = /\bSCIENT_BOOTSTRAP_PATH = ("(?:[^"\\]|\\.)*");/u.exec(source)?.[1];
+              if (!embedded) return yield* Effect.die("Missing native private bootstrap path");
+              const bootstrapPath = decodeImagePath(embedded);
+              assert.equal(NodeFS.statSync(bootstrapPath).mode & 0o777, 0o600);
+              bootstrap = decodeNativeBootstrap(NodeFS.readFileSync(bootstrapPath, "utf8"));
+              NodeFS.unlinkSync(bootstrapPath);
+              return yield* peer.makeProcess(options);
+            }),
+        });
+        if (!launch || !source || !bootstrap)
+          return yield* Effect.die("Native bootstrap was not observed");
+        assert.equal(bootstrap.authorization, token);
+        assert.deepEqual(
+          bootstrap.connectors,
+          connectors.map(({ serverName, displayName, url }) => ({ serverName, displayName, url })),
+        );
+        // The connectors share the session bearer; no secret reaches argv, env or the source.
+        assert.notInclude(encodeDiagnostic(bootstrap.connectors), "synthetic-scient-omp");
+        assert.notInclude(encodeDiagnostic(launch.extraArgs), "synthetic-scient-omp");
+        assert.notInclude(encodeDiagnostic(launch.env), "synthetic-scient-omp");
+        assert.notInclude(source, "synthetic-scient-omp");
+        assert.notInclude(source, "/mcp/connectors/");
+        assert.include(launch.secrets ?? [], token);
       }),
     ),
   );
@@ -2363,6 +2450,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                   endpoint: "http://127.0.0.1:43123/mcp",
                   authorizationHeader: "Bearer synthetic-foreign-native-token",
                   capabilities: new Set(["preview"]),
+                  connectors: [],
                 });
               }),
             makeProcess: (options) => {
@@ -2692,6 +2780,123 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.equal(firstPeer.state.shutdowns, 1);
       }),
     ),
+  );
+
+  it.effect.each([
+    {
+      caseTitle:
+        "resumes on the thread's model when OMP cannot restore the conversation's saved one (18.6.3+)",
+      version: "18.8.4",
+      selected: "test/selected",
+      unrestorable: true,
+      switches: [{ provider: "test", modelId: "selected" }],
+    },
+    {
+      caseTitle: "resumes on the saved model when OMP does not know the thread's model",
+      version: "18.8.4",
+      selected: "test/gone",
+      unrestorable: false,
+      switches: [{ provider: "test", modelId: "gone" }, {}],
+    },
+    {
+      caseTitle: "resumes without a model before OMP 18.6.3",
+      version: "18.4.8",
+      selected: "test/selected",
+      unrestorable: false,
+      switches: [{}],
+    },
+    {
+      caseTitle: "resumes without a model on the default selection",
+      version: "18.8.4",
+      selected: "default",
+      unrestorable: false,
+      switches: [{}],
+    },
+  ])("$caseTitle", ({ version, selected, unrestorable, switches }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const owned = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(owned, Exit.void));
+        const models = [{ provider: "test", id: "selected" }];
+        const initial = { provider: "test", id: "selected" };
+        const firstPeer = scriptedOmpRpc({ models, initial, version });
+        const first = yield* harness(false, { makeProcess: firstPeer.makeProcess }).pipe(
+          Effect.provideService(Scope.Scope, owned),
+        );
+        yield* Scope.close(owned, Exit.void);
+        const secondPeer = scriptedOmpRpc({
+          models,
+          initial,
+          version,
+          savedModelUnrestorable: unrestorable,
+        });
+        const second = yield* harness(false, {
+          threadId: first.openInput.threadId,
+          makeProcess: secondPeer.makeProcess,
+        });
+        const resumed = yield* second.runtime.resumeThread({
+          providerThread: first.input.providerThread,
+          modelSelection: { instanceId: second.input.modelSelection.instanceId, model: selected },
+        });
+        assert.equal(
+          resumed.nativeThreadRef?.nativeId,
+          first.input.providerThread.nativeThreadRef?.nativeId,
+        );
+        assert.deepEqual(
+          secondPeer.state.frames
+            .filter((frame) => frame.type === "switch_session")
+            .map((frame) => ({
+              ...(frame.provider === undefined ? {} : { provider: frame.provider }),
+              ...(frame.modelId === undefined ? {} : { modelId: frame.modelId }),
+            })),
+          switches,
+        );
+      }),
+    ),
+  );
+
+  it.effect(
+    "fails a resume whose bound switch errs after changing sessions, without switching again",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const owned = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(owned, Exit.void));
+          const models = [{ provider: "test", id: "selected" }];
+          const initial = { provider: "test", id: "selected" };
+          const firstPeer = scriptedOmpRpc({ models, initial, version: "18.8.4" });
+          const first = yield* harness(false, { makeProcess: firstPeer.makeProcess }).pipe(
+            Effect.provideService(Scope.Scope, owned),
+          );
+          yield* Scope.close(owned, Exit.void);
+          const secondPeer = scriptedOmpRpc({
+            models,
+            initial,
+            version: "18.8.4",
+            switchErrorAfterChange: "Session switched but its model could not be set",
+          });
+          const second = yield* harness(false, {
+            threadId: first.openInput.threadId,
+            makeProcess: secondPeer.makeProcess,
+          });
+          const result = yield* second.runtime
+            .resumeThread({
+              providerThread: first.input.providerThread,
+              modelSelection: {
+                instanceId: second.input.modelSelection.instanceId,
+                model: "test/selected",
+              },
+            })
+            .pipe(Effect.result);
+          assert.equal(result._tag, "Failure");
+          assert.deepEqual(
+            secondPeer.state.frames
+              .filter((frame) => frame.type === "switch_session")
+              .map((frame) => ({ provider: frame.provider, modelId: frame.modelId })),
+            [{ provider: "test", modelId: "selected" }],
+          );
+        }),
+      ),
   );
 
   it.effect.each(

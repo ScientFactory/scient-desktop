@@ -55,6 +55,7 @@ import {
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { ProjectionStoreV2, layerMemory } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
+import { observeCheckpointOwnership } from "./checkpointOwnershipCompletion.testkit.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
@@ -898,6 +899,7 @@ it.live.each(
       const persistence = makeSqlitePersistenceLive(database).pipe(
         Layer.provide(NodeServices.layer),
       );
+      const ownership = yield* observeCheckpointOwnership();
       const runtime = () =>
         Layer.merge(
           persistence,
@@ -992,7 +994,7 @@ it.live.each(
               databaseLayer: persistence,
             },
           ),
-        );
+        ).pipe(Layer.provideMerge(ownership.layer));
       const evidence: Record<string, unknown> = {
         mode,
         transcript,
@@ -1714,12 +1716,12 @@ it.live.each(
                   Effect.provide(VcsProcess.layer.pipe(Layer.provide(NodeServices.layer))),
                 );
               let released = false;
-              for (let poll = 0; poll < 300 && !released; poll++) {
+              while (!released) {
                 const reservations = yield* sql`SELECT * FROM scient_fork_checkpoint_ownership`;
                 released =
                   reservations.length === 0 &&
                   JSON.stringify(yield* snapshots()) === JSON.stringify([accepted]);
-                if (!released) yield* Effect.sleep("50 millis");
+                if (!released) yield* ownership.reconciled;
               }
               assert.isTrue(released, "only the accepted snapshot may remain");
               yield* Fiber.interrupt(forking);

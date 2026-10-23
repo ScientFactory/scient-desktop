@@ -25,18 +25,19 @@ import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "
 // exactly where the rule says no, with the server's own refusal text.
 
 const instanceId = ProviderInstanceId.make("codex");
+const alternateInstanceId = ProviderInstanceId.make("codex-alternate");
 const modelSelection = { instanceId, model: "test-model" };
 const testLayer = makeOrchestratorV2ReplayLayerWithRegistry(
   { name: "queued-run-send-rule" },
-  makeLayer([
-    {
+  makeLayer(
+    [instanceId, alternateInstanceId].map((instanceId) => ({
       instanceId,
       driver: ProviderDriverKind.make("codex"),
       getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
       planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
       openSession: () => Effect.die("Provider execution is not part of this rule"),
-    },
-  ]),
+    })),
+  ),
   { runEffectWorker: false },
 );
 
@@ -176,6 +177,68 @@ it.effect("refuses Send after the usage limit, as the rule says", () =>
     const after = yield* orchestrator.getThreadProjection(threadId);
     assert.equal(after.runs.find((run) => run.id === queuedRun.id)?.status, "queued");
   }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect.each([false, true])(
+  "checks the delivered queue head's provider after Send reordering: limited=%s",
+  (selectedLimited) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const sink = yield* EventSinkV2;
+      const threadId = ThreadId.make(`queued-send-target-provider:${selectedLimited}`);
+      const limitedRun = yield* usageLimitedThread(threadId);
+      yield* orchestrator.dispatch({
+        type: "legacy-queue.import",
+        commandId: CommandId.make(`${threadId}:alternate`),
+        threadId,
+        queueItemId: `${threadId}:alternate`,
+        messageId: MessageId.make(`${threadId}:alternate`),
+        text: "Use another provider",
+        attachments: [],
+        modelSelection: { instanceId: alternateInstanceId, model: "test-model" },
+        createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+      });
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const alternateRun = projection.runs.find(
+        (run) => run.providerInstanceId === alternateInstanceId,
+      );
+      assert.isDefined(alternateRun);
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [limitedRun, alternateRun].map((run, index) => ({
+          id: EventId.make(`${threadId}:order:${index}`),
+          type: "run.updated" as const,
+          threadId,
+          runId: run.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...run,
+            queueHeld: true,
+            queuePosition: selectedLimited ? 2 - index : index + 1,
+          },
+        })),
+      });
+      const selectedRun = selectedLimited ? limitedRun : alternateRun;
+      const send = orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make(`${threadId}:send`),
+        threadId,
+        runId: selectedRun.id,
+      });
+      if (selectedLimited) {
+        const refused = yield* send.pipe(Effect.flip);
+        assert.include(
+          refusalText(refused),
+          "Continue the limited thread before resuming its queue.",
+        );
+      } else {
+        yield* send;
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(after.runs.find((run) => run.id === selectedRun.id)?.status, "starting");
+        assert.equal(after.runs.find((run) => run.id === limitedRun.id)?.status, "queued");
+      }
+    }).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("keeps Send on a windowed snapshot that misses the session lifting the limit", () =>

@@ -10,7 +10,7 @@ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import { ChevronsDownUp, ChevronsUpDown } from "lucide";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 
@@ -98,18 +98,6 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
 
 function areSamePaths(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   return left.size === right.size && [...left].every((path) => right.has(path));
-}
-
-function useDragMentionController(
-  cwd: string,
-  hostFolder: boolean,
-  treeModelRef: RefObject<ReturnType<typeof useFileTree>["model"] | null>,
-) {
-  "use memo";
-  return createFileTreeDragMentionController({
-    deselect: (path) => treeModelRef.current?.getItem(path)?.deselect(),
-    ...(hostFolder ? { mentionPath: (path: string) => joinHostPath(cwd, path) } : {}),
-  });
 }
 
 export default function FileBrowserPanel({
@@ -257,8 +245,9 @@ export default function FileBrowserPanel({
   );
 
   const loadingDirectoriesRef = useRef(treeSnapshot.loadingDirectories);
-  const treeModelRef = useRef<ReturnType<typeof useFileTree>["model"] | null>(null);
-  const dragMention = useDragMentionController(cwd, hostFolder, treeModelRef);
+  const dragMention = createFileTreeDragMentionController(
+    hostFolder ? { mentionPath: (path: string) => joinHostPath(cwd, path) } : {},
+  );
   const { model } = useFileTree({
     composition: {
       contextMenu: {
@@ -438,22 +427,20 @@ export default function FileBrowserPanel({
   // the dragged row, so the drag flag is up before that selection emits.
   const panelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    treeModelRef.current = model;
-  }, [model]);
-  useEffect(() => {
     const panel = panelRef.current;
     if (panel === null) {
       return;
     }
     const handleDragStart = (event: DragEvent) => dragMention.handleDragStart(event);
-    const handleDragEnd = () => dragMention.handleDragEnd();
+    const handleDragEnd = () =>
+      dragMention.handleDragEnd((path) => model.getItem(path)?.deselect());
     panel.addEventListener("dragstart", handleDragStart, true);
     panel.addEventListener("dragend", handleDragEnd);
     return () => {
       panel.removeEventListener("dragstart", handleDragStart, true);
       panel.removeEventListener("dragend", handleDragEnd);
     };
-  }, [dragMention]);
+  }, [dragMention, model]);
 
   const currentSearchError = hasCurrentSearch ? pathSearch.error : null;
   const hideTreeForSearch = isSearching && treeSearch.matchingPaths.length === 0;

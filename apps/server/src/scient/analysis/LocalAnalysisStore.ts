@@ -474,48 +474,49 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const loadOutput = (outputPath: string) =>
-    Effect.gen(function* () {
-      if (!(yield* fs.exists(outputPath).pipe(mapStoreError("exists", outputPath)))) {
-        return { chunks: [] as OutputChunk[], corruptLineCount: 0 };
+  const loadOutput = Effect.fn("LocalAnalysisStore.loadOutput")(function* (outputPath: string) {
+    if (!(yield* fs.exists(outputPath).pipe(mapStoreError("exists", outputPath)))) {
+      return { chunks: [] as OutputChunk[], corruptLineCount: 0 };
+    }
+    const contents = yield* fs
+      .readFileString(outputPath)
+      .pipe(mapStoreError("read-output", outputPath));
+    const chunks: OutputChunk[] = [];
+    let corruptLineCount = 0;
+    for (const line of contents.split("\n")) {
+      if (line.length === 0) continue;
+      const decoded = decodeOutput(line);
+      if (decoded._tag === "Some") {
+        chunks.push(decoded.value);
+      } else {
+        corruptLineCount += 1;
       }
-      const contents = yield* fs
-        .readFileString(outputPath)
-        .pipe(mapStoreError("read-output", outputPath));
-      const chunks: OutputChunk[] = [];
-      let corruptLineCount = 0;
-      for (const line of contents.split("\n")) {
-        if (line.length === 0) continue;
-        const decoded = decodeOutput(line);
-        if (decoded._tag === "Some") {
-          chunks.push(decoded.value);
-        } else {
-          corruptLineCount += 1;
-        }
-      }
-      return { chunks, corruptLineCount };
-    });
+    }
+    return { chunks, corruptLineCount };
+  });
 
-  const loadMetadata = (projectId: string, runId: string) =>
-    Effect.gen(function* () {
-      const metadataPath = path.join(runDirectory(projectId, runId), "run.json");
-      if (!(yield* fs.exists(metadataPath).pipe(mapStoreError("exists", metadataPath)))) {
-        return null;
-      }
-      const metadataText = yield* fs
-        .readFileString(metadataPath)
-        .pipe(mapStoreError("read-run", metadataPath));
-      const metadata = decodeMetadata(metadataText);
-      if (metadata._tag === "None") {
-        return yield* storeError(
-          "decode-run",
-          metadataPath,
-          new Error("The persisted analysis run receipt is unreadable."),
-        );
-      }
-      yield* recoverCleanupStaging(projectId, runId, metadata.value.localStorage.status);
-      return metadata.value;
-    });
+  const loadMetadata = Effect.fn("LocalAnalysisStore.loadMetadata")(function* (
+    projectId: string,
+    runId: string,
+  ) {
+    const metadataPath = path.join(runDirectory(projectId, runId), "run.json");
+    if (!(yield* fs.exists(metadataPath).pipe(mapStoreError("exists", metadataPath)))) {
+      return null;
+    }
+    const metadataText = yield* fs
+      .readFileString(metadataPath)
+      .pipe(mapStoreError("read-run", metadataPath));
+    const metadata = decodeMetadata(metadataText);
+    if (metadata._tag === "None") {
+      return yield* storeError(
+        "decode-run",
+        metadataPath,
+        new Error("The persisted analysis run receipt is unreadable."),
+      );
+    }
+    yield* recoverCleanupStaging(projectId, runId, metadata.value.localStorage.status);
+    return metadata.value;
+  });
 
   const removeDisposableRunData = (run: AnalysisRunSnapshotType, removedAt: string) =>
     writeLock
@@ -581,96 +582,94 @@ const make = Effect.gen(function* () {
       )
       .pipe(Effect.map((value) => value.run));
 
-  const loadRuns = (projectId: string) =>
-    Effect.gen(function* () {
-      const projectRunsRoot = path.join(runsRoot, projectId);
-      if (!(yield* fs.exists(projectRunsRoot).pipe(mapStoreError("exists", projectRunsRoot)))) {
-        return [];
-      }
-      const runIds = yield* fs
-        .readDirectory(projectRunsRoot)
-        .pipe(mapStoreError("read-run-directory", projectRunsRoot));
-      const runs: AnalysisRunSnapshotType[] = [];
-      for (const runId of runIds) {
-        const metadata = yield* loadMetadata(projectId, runId);
-        if (metadata !== null) runs.push(metadata);
-      }
-      return runs;
-    });
-
-  const loadRun = (projectId: string, runId: string) =>
-    Effect.gen(function* () {
+  const loadRuns = Effect.fn("LocalAnalysisStore.loadRuns")(function* (projectId: string) {
+    const projectRunsRoot = path.join(runsRoot, projectId);
+    if (!(yield* fs.exists(projectRunsRoot).pipe(mapStoreError("exists", projectRunsRoot)))) {
+      return [];
+    }
+    const runIds = yield* fs
+      .readDirectory(projectRunsRoot)
+      .pipe(mapStoreError("read-run-directory", projectRunsRoot));
+    const runs: AnalysisRunSnapshotType[] = [];
+    for (const runId of runIds) {
       const metadata = yield* loadMetadata(projectId, runId);
-      if (metadata === null) return null;
-      const { chunks, corruptLineCount } = yield* loadOutput(
-        path.join(runDirectory(projectId, runId), "output.ndjson"),
-      );
-      if (corruptLineCount > 0) {
-        chunks.push({
-          sequence: (chunks.at(-1)?.sequence ?? -1) + 1,
-          stream: "system",
-          text: `${corruptLineCount} persisted output record${corruptLineCount === 1 ? " was" : "s were"} unreadable.\n`,
-          observedAt: metadata.receipt.finishedAt ?? metadata.receipt.startedAt,
-        });
-      }
-      const outputByteLength = chunks.reduce(
-        (total, chunk) =>
-          chunk.stream === "system"
-            ? total
-            : total + new TextEncoder().encode(chunk.text).byteLength,
-        0,
-      );
-      const metadataOnly = metadata.localStorage.status === "metadata-only";
-      return {
-        ...metadata,
-        receipt: {
-          ...metadata.receipt,
-          output: chunks,
-          outputTruncated: metadata.receipt.outputTruncated || corruptLineCount > 0,
-          outputByteLength: metadataOnly ? metadata.receipt.outputByteLength : outputByteLength,
-          outputContentHash:
-            metadataOnly || corruptLineCount === 0 ? metadata.receipt.outputContentHash : null,
-        },
-      } satisfies AnalysisRunSnapshotType;
-    });
+      if (metadata !== null) runs.push(metadata);
+    }
+    return runs;
+  });
 
-  const resolveArtifact = (input: {
+  const loadRun = Effect.fn("LocalAnalysisStore.loadRun")(function* (
+    projectId: string,
+    runId: string,
+  ) {
+    const metadata = yield* loadMetadata(projectId, runId);
+    if (metadata === null) return null;
+    const { chunks, corruptLineCount } = yield* loadOutput(
+      path.join(runDirectory(projectId, runId), "output.ndjson"),
+    );
+    if (corruptLineCount > 0) {
+      chunks.push({
+        sequence: (chunks.at(-1)?.sequence ?? -1) + 1,
+        stream: "system",
+        text: `${corruptLineCount} persisted output record${corruptLineCount === 1 ? " was" : "s were"} unreadable.\n`,
+        observedAt: metadata.receipt.finishedAt ?? metadata.receipt.startedAt,
+      });
+    }
+    const outputByteLength = chunks.reduce(
+      (total, chunk) =>
+        chunk.stream === "system" ? total : total + new TextEncoder().encode(chunk.text).byteLength,
+      0,
+    );
+    const metadataOnly = metadata.localStorage.status === "metadata-only";
+    return {
+      ...metadata,
+      receipt: {
+        ...metadata.receipt,
+        output: chunks,
+        outputTruncated: metadata.receipt.outputTruncated || corruptLineCount > 0,
+        outputByteLength: metadataOnly ? metadata.receipt.outputByteLength : outputByteLength,
+        outputContentHash:
+          metadataOnly || corruptLineCount === 0 ? metadata.receipt.outputContentHash : null,
+      },
+    } satisfies AnalysisRunSnapshotType;
+  });
+
+  const resolveArtifact = Effect.fn("LocalAnalysisStore.resolveArtifact")(function* (input: {
     readonly projectId: string;
     readonly runId: string;
     readonly artifactId: AnalysisArtifactId;
     readonly representationId: AnalysisArtifactRepresentationId;
-  }) =>
-    Effect.gen(function* () {
-      const metadata = yield* loadMetadata(input.projectId, input.runId);
-      const artifact = metadata?.artifacts.find(
-        (candidate) => candidate.artifactId === input.artifactId,
-      );
-      const representation = artifact?.representations.find(
-        (candidate) => candidate.representationId === input.representationId,
-      );
-      if (!artifact || !representation) return null;
-      const artifactPath = path.join(
-        artifactsDirectory(input.projectId, input.runId),
-        representation.fileName,
-      );
-      const info = yield* fs.stat(artifactPath).pipe(
-        Effect.map((value) => Option.some(value)),
-        Effect.orElseSucceed(() => Option.none()),
-      );
-      if (Option.isNone(info) || info.value.type !== "File") return null;
-      return {
-        artifact,
-        representation,
-        path: artifactPath,
-        revision: {
-          size: Number(info.value.size),
-          mtimeMs: Option.match(info.value.mtime, {
-            onNone: () => null,
-            onSome: (mtime) => mtime.getTime(),
-          }),
-        },
-      } satisfies ResolvedAnalysisArtifactRepresentation;
-    });
+  }) {
+    const metadata = yield* loadMetadata(input.projectId, input.runId);
+    const artifact = metadata?.artifacts.find(
+      (candidate) => candidate.artifactId === input.artifactId,
+    );
+    const representation = artifact?.representations.find(
+      (candidate) => candidate.representationId === input.representationId,
+    );
+    if (!artifact || !representation) return null;
+    const artifactPath = path.join(
+      artifactsDirectory(input.projectId, input.runId),
+      representation.fileName,
+    );
+    const info = yield* fs.stat(artifactPath).pipe(
+      Effect.map((value) => Option.some(value)),
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (Option.isNone(info) || info.value.type !== "File") return null;
+    return {
+      artifact,
+      representation,
+      path: artifactPath,
+      revision: {
+        size: Number(info.value.size),
+        mtimeMs: Option.match(info.value.mtime, {
+          onNone: () => null,
+          onSome: (mtime) => mtime.getTime(),
+        }),
+      },
+    } satisfies ResolvedAnalysisArtifactRepresentation;
+  });
 
   return LocalAnalysisStore.of({
     readRuntimeExecutablePath,

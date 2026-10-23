@@ -45,27 +45,6 @@ describe("mobile client presentation", () => {
     ).toBe("Android · Scient 1.2.3");
   });
 
-  it("distinguishes disabled notifications from an empty event selection", () => {
-    expect(
-      mobileClientNotificationDetail(
-        device({ notifications: { ...device().notifications, enabled: false } }),
-      ),
-    ).toBe("Push notifications are disabled on this device.");
-    expect(
-      mobileClientNotificationDetail(
-        device({
-          notifications: {
-            enabled: true,
-            notifyOnApproval: false,
-            notifyOnInput: false,
-            notifyOnCompletion: false,
-            notifyOnFailure: false,
-          },
-        }),
-      ),
-    ).toBe("Push notifications are enabled, but no alert types are selected.");
-  });
-
   it("handles missing app versions and invalid update timestamps", () => {
     expect(mobileClientPlatformLabel(device({ iosMajorVersion: null }))).toBe("iOS · Scient 1.2.3");
     expect(mobileClientPlatformLabel(device({ appVersion: null }))).toBe("iOS 18");

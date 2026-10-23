@@ -90,6 +90,61 @@ function runtimeFixture(): {
   };
 }
 
+describe("Plotly runtime loading", () => {
+  it("shares pending consumers, retries a rejection, and caches the strict module's default", async () => {
+    const { runtime } = runtimeFixture();
+    const first = Promise.withResolvers<PlotlyRuntime>();
+    const retry = Promise.withResolvers<PlotlyRuntime>();
+    const attempt = vi
+      .fn<() => Promise<PlotlyRuntime>>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(retry.promise);
+    vi.resetModules();
+    // A deferred default controls module readiness. The getter also observes repeated
+    // import consumers even when the test runner has cached the module namespace.
+    vi.doMock("plotly.js-strict-dist-min", () => ({
+      get default() {
+        return attempt();
+      },
+    }));
+    using _module = {
+      [Symbol.dispose]() {
+        first.resolve(runtime);
+        retry.resolve(runtime);
+        vi.doUnmock("plotly.js-strict-dist-min");
+        vi.resetModules();
+      },
+    };
+    const { getPlotlyRuntimePromise } = await import("./plotlyRuntime");
+    expect(attempt).not.toHaveBeenCalled();
+
+    const consumers = [getPlotlyRuntimePromise(), getPlotlyRuntimePromise()];
+    let settled = false;
+    const rejected = Promise.allSettled(consumers).then((outcomes) => {
+      settled = true;
+      return outcomes;
+    });
+    await vi.waitFor(() => expect(attempt).toHaveBeenCalledOnce());
+    expect(settled).toBe(false);
+    const failure = new Error("Synthetic strict distribution load failed");
+    first.reject(failure);
+    expect(await rejected).toEqual([
+      { status: "rejected", reason: failure },
+      { status: "rejected", reason: failure },
+    ]);
+
+    const next = getPlotlyRuntimePromise();
+    const concurrentRetry = getPlotlyRuntimePromise();
+    await vi.waitFor(() => expect(attempt).toHaveBeenCalledTimes(2));
+    retry.resolve(runtime);
+    expect(await next).toBe(runtime);
+    expect(await concurrentRetry).toBe(runtime);
+    expect(await getPlotlyRuntimePromise()).toBe(runtime);
+    expect(await getPlotlyRuntimePromise()).toBe(runtime);
+    expect(attempt).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("Plotly runtime", () => {
   it("restores network-backed state through the renderer", async () => {
     const { runtime, spies } = runtimeFixture();

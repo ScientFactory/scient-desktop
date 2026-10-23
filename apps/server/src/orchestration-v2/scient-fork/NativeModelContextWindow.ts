@@ -181,7 +181,9 @@ export const resolveNativeModelContextWindow = Effect.fn("resolveNativeModelCont
 
 /** The context window an accepted Codex turn reports, read inside the write transaction.
  * Undefined unless the captured launch owner still owns the run; the write must then not commit. */
-export const readOwnedNativeModelCapacity = (
+export const readOwnedNativeModelCapacity = Effect.fn(
+  "NativeModelContextWindow.readOwnedNativeModelCapacity",
+)(function* (
   sql: SqlClient.SqlClient,
   input: {
     readonly threadId: ThreadId;
@@ -190,29 +192,28 @@ export const readOwnedNativeModelCapacity = (
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   },
   capacityOwner: NativeModelCapacityOwner,
-) =>
-  Effect.gen(function* () {
-    const usage = input.events.find((event) => event.type === "provider-turn.updated");
-    const turn = usage?.type === "provider-turn.updated" ? usage.payload : undefined;
-    if (
-      turn?.nativeTurnRef?.driver !== "codex" ||
-      turn.nativeTurnRef.nativeId === null ||
-      turn.nativeAcceptance !== "accepted" ||
-      turn.status !== "running" ||
-      turn.tokenUsage?.maxTokens == null ||
-      !Number.isFinite(turn.tokenUsage.maxTokens) ||
-      turn.tokenUsage.maxTokens <= 0 ||
-      turn.runAttemptId !== input.activeAttemptId ||
-      turn.providerThreadId !== capacityOwner.providerThreadId ||
-      usage?.threadId !== input.threadId ||
-      usage.runId !== input.runId ||
-      usage.nodeId !== turn.nodeId ||
-      usage.providerInstanceId !== capacityOwner.modelSelection.instanceId ||
-      usage.driver !== "codex" ||
-      !/^codex-launch:v1:[a-f0-9]{64}$/.test(capacityOwner.launchFingerprint)
-    )
-      return undefined;
-    const owners = yield* sql<{ readonly payload_json: string }>`
+) {
+  const usage = input.events.find((event) => event.type === "provider-turn.updated");
+  const turn = usage?.type === "provider-turn.updated" ? usage.payload : undefined;
+  if (
+    turn?.nativeTurnRef?.driver !== "codex" ||
+    turn.nativeTurnRef.nativeId === null ||
+    turn.nativeAcceptance !== "accepted" ||
+    turn.status !== "running" ||
+    turn.tokenUsage?.maxTokens == null ||
+    !Number.isFinite(turn.tokenUsage.maxTokens) ||
+    turn.tokenUsage.maxTokens <= 0 ||
+    turn.runAttemptId !== input.activeAttemptId ||
+    turn.providerThreadId !== capacityOwner.providerThreadId ||
+    usage?.threadId !== input.threadId ||
+    usage.runId !== input.runId ||
+    usage.nodeId !== turn.nodeId ||
+    usage.providerInstanceId !== capacityOwner.modelSelection.instanceId ||
+    usage.driver !== "codex" ||
+    !/^codex-launch:v1:[a-f0-9]{64}$/.test(capacityOwner.launchFingerprint)
+  )
+    return undefined;
+  const owners = yield* sql<{ readonly payload_json: string }>`
       SELECT r.payload_json FROM orchestration_v2_projection_runs r
       JOIN orchestration_v2_projection_run_attempts a ON a.attempt_id = ${input.activeAttemptId}
         AND a.run_id = r.run_id AND a.thread_id = r.thread_id
@@ -248,13 +249,13 @@ export const readOwnedNativeModelCapacity = (
           AND json_extract(v.payload_json, '$.nativeTurnRef.driver') = 'codex'
           AND json_extract(v.payload_json, '$.nativeTurnRef.nativeId') = ${turn.nativeTurnRef.nativeId}))
       LIMIT 1`;
-    if (
-      owners[0] === undefined ||
-      !modelSelectionsEqual(
-        (yield* decodeRunRow(owners[0].payload_json)).modelSelection,
-        capacityOwner.modelSelection,
-      )
+  if (
+    owners[0] === undefined ||
+    !modelSelectionsEqual(
+      (yield* decodeRunRow(owners[0].payload_json)).modelSelection,
+      capacityOwner.modelSelection,
     )
-      return undefined;
-    return turn.tokenUsage.maxTokens;
-  });
+  )
+    return undefined;
+  return turn.tokenUsage.maxTokens;
+});

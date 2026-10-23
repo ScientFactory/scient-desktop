@@ -82,7 +82,7 @@ Quitting the app releases its native request.
 
 There is no maximum session duration and no configurable timeout. Protection
 expires after 120 seconds without fresh execution observations. Repeated saved
-?running? status alone cannot renew an operation with no live owner and no
+"running" status alone cannot renew an operation with no live owner and no
 progress for 120 seconds. The temporary choice remains selected, and recovered
 execution or new progress can restore protection. Silent connected operations
 have no duration limit. A connected deadlock cannot always be distinguished
@@ -94,7 +94,7 @@ laptops on battery, system/execution requests can end five minutes after the
 normal sleep timeout. Scient displays the limitation on Windows and does not
 keep the display on, change power plans, or change lid-close settings. Closing
 a lid configured to sleep, choosing Sleep, and critical-power handling can
-still pause local work. ?Requested? describes Scient's native request; it is
+still pause local work. "Requested" describes Scient's native request; it is
 not a guarantee that the operating system will honor it. macOS and Linux native
 behavior also depends on system power policy and desktop-service availability.
 
@@ -114,7 +114,7 @@ On web and desktop, unpinning, settling, snoozing, and archiving a thread each s
 a notification with **Undo** for five seconds. Undo restores the thread's previous
 state, including its pinned position, and reopens an archived thread you were
 viewing. Discarding an unsent draft from the sidebar works the same way: Undo brings
-back its text and attachments. `mod+z` triggers the most recent Undo when no text field is focused; see
+back its text and attachments. `mod+z` triggers the most recent Undo, even from the composer; see
 [Keybindings](./keybindings.md#commands-with-special-behavior).
 
 On web and desktop, you can also drag files from your computer onto any thread row:
@@ -148,7 +148,7 @@ spot where the thread will land. Drops into either section keep the position you
 mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
 settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
-or **Settled** to drag a parked thread back into either live section. Each drop saves; **Done** returns to the thread list.
+or **Settled** to drag a parked thread back into either live section. Each drop saves; close the sheet to return to the thread list.
 **Move up** and **Move down** are also available in the thread menu. The server
 saves the order, so it survives a refresh and appears on your other connected devices.
 
@@ -191,12 +191,23 @@ position, below the upper group. Reopening it restarts that delay; new work canc
 it. Other newly inactive threads can subsequently land above it.
 
 You can still drag threads within or between sections, and move whole sections. A
-manual drop keeps the exact place you choose, including an inactive thread above
-working threads. Automatic updates do not undo the drop. Its next entry into or exit
-from the upper group resumes automatic placement. For example, if no thread is active
-and you drag X first, a newly working Y goes above X. If you deliberately drag X above
-an already working A, a later working B joins after A, preserving your explicit move.
-Movement pauses during a drag or native context menu.
+drop keeps the place you choose, with one limit: active work always gets the top back.
+
+| You drag                                     | It stays there                                                                      |
+| -------------------------------------------- | ----------------------------------------------------------------------------------- |
+| An active thread within the upper group      | Until you move it again.                                                            |
+| An inactive thread among inactive threads    | Until you move it again.                                                            |
+| An inactive thread above active threads      | Until another thread becomes active; the upper group then forms above it again.     |
+| An active thread down among inactive threads | Until it stops being active. Meanwhile, newly active threads still join at the top. |
+
+For example, if you drag X above a working A, X stays there until B starts working;
+then A and B sit above X. If you drag a working A to the bottom, a later working B
+still goes to the top while A stays where you put it. Movement pauses during a drag
+or native context menu.
+
+When you are connected to several machines and one is offline or catching up, only
+that machine's threads hold their last known places; threads on the other machines
+keep moving. Its threads are rechecked when it is back.
 
 Turning the setting off reveals the saved manual order and cancels pending movements.
 Manual moves made while it was on remain saved. Turning it back on groups current
@@ -289,8 +300,9 @@ has its own sections:
 
 - A thread can join only sections of its own machine. The **Section** menu lists that machine's
   sections, and dragging a thread onto another machine's section does nothing.
-- While sections from more than one machine are listed, each header shows its machine's name. Two
-  machines' sections with the same name stay separate.
+- While sections from more than one machine are listed, each header shows its machine's icon
+  after the section name; hover it for the machine's name. Two machines' sections with the same
+  name stay separate.
 - **New section…** for threads on several machines creates a section of that name on each. A
   section started from **New section** goes to the machine of the selected project; when more than
   one machine can hold it, the form lets you choose.
@@ -363,7 +375,8 @@ Press `Escape` while dragging to cancel.
 
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
-thread. Work in progress, pending questions or approvals, and live background work
+thread. An empty thread's inactivity counts from when it was created.
+Work in progress, pending questions or approvals, and live background work
 prevent automatic settlement. An open pull request does not prevent inactivity
 settlement unless you turn on **Keep threads with a PR** in **Settings → General**,
 but an old closed or merged pull request does not settle work you
@@ -423,25 +436,23 @@ the send button. Choose **Artwork**, **Version pill**, or **None** in Settings u
 identification. Artwork is recolored to match each built-in theme. Custom themes use the **Version
 pill** fallback because their colors are not controlled by Scient.
 
-## Answers waiting in the Dock
+## Unread answers on the app icon
 
-On macOS, Scient's Dock badge counts conversations with an unread completed answer.
-Several answers in one conversation count once. The badge keeps updating while
-Scient is in the background or minimized. Opening the app clears only the answer
-in the conversation you view; opening Settings or another conversation leaves
-other answers waiting.
+Scient's app icon shows how many threads have an unread answer: on the Dock on macOS, on the
+taskbar button on Windows, and on Linux docks that support badges. It counts the threads the
+sidebar marks unread, in every project, so reading a thread here or on another device lowers it,
+and **Mark unread** raises it again. Several answers in one thread count once. Archived, snoozed,
+and settled threads are not counted, nor are the threads agents start for their subagents. A
+queued turn starting does not clear an earlier unread answer, and stopped or failed turns do not
+add one.
 
-A queued turn starting does not clear an earlier unread answer. Stopped or failed
-turns do not add a completed-answer badge. Archiving or deleting a conversation
-removes it from the count. **Mark unread** restores its waiting-answer indication.
-Read state belongs to this client; reading on another device does not clear the
-Mac's badge. Existing conversations without read history are treated as read when
-this feature first connects to their environment.
+Turn it off in **Settings → General → App icon badge**. On macOS, the badge needs notification
+permission: macOS asks once, the first time there is something to show. If the count doesn't
+appear, allow badges for Scient in System Settings › Notifications. On Windows, badges must be on
+in Settings › Personalization › Taskbar. The badge itself sends no banner or sound.
 
-The badge uses the macOS app-icon badge permission. If macOS suppresses it, check
-Scient's notification settings and allow app-icon badges. No banner or sound is
-sent by this feature. Closing the last window pauses badge updates until a window
-is reopened; the last displayed count remains. Quitting Scient stops updates.
+The badge keeps updating while Scient is in the background or minimized. Closing the last window
+pauses updates until a window is reopened; the last count remains. Quitting Scient clears it.
 
 ## Inspect agent work
 
@@ -458,8 +469,8 @@ continuation. You can cancel it from the thread. Enable **Auto-resume limited
 threads** in **Settings → General** on web and desktop, or **Settings → Thread
 behavior** on mobile, to schedule limit stops by default.
 The environment must be running when the reset arrives; it resumes overdue
-continuations after a restart. Sending a new message, archiving, or settling the
-thread prevents a pending continuation from starting.
+continuations after a restart. Stopping the thread, sending a new message,
+archiving, or settling it prevents a pending continuation from starting.
 
 Choose **Snooze until reset** to hide the thread until its allowance returns.
 Snooze and auto-resume are independent: snooze alone wakes the thread without
@@ -498,3 +509,6 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+A snoozed thread keeps working and stays hidden until its wake time, even while
+its agent wakes itself for background work. It comes back early only when it needs
+an approval or answer from you, when a run fails, or when you send it a message.

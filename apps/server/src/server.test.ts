@@ -35,7 +35,6 @@ import {
   TurnItemId,
   ThreadSectionId,
   GitCommandError,
-  VcsUnsupportedOperationError,
   VcsCheckpointUnavailableError,
   KeybindingRule,
   MessageId,
@@ -57,6 +56,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   type PreviewEvent,
   ProjectId,
+  PlanId,
   type ProviderAuthState,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -78,6 +78,7 @@ import {
 import {
   computeDpopAccessTokenHash,
   computeDpopJwkThumbprint,
+  DPOP_MAX_CLOCK_SKEW_SECONDS,
   type DpopPublicJwk,
 } from "@t3tools/shared/dpop";
 import { RELAY_HEALTH_REQUEST_TYP, RELAY_MINT_REQUEST_TYP } from "@t3tools/shared/relayJwt";
@@ -129,10 +130,36 @@ import * as Socket from "effect/socket/Socket";
 import * as SqlClient from "effect/sql/SqlClient";
 import { afterAll, beforeAll, vi } from "vite-plus/test";
 
+import {
+  nativeFilePublicationCapabilities,
+  resolveNativeFilePublicationHelperPath,
+} from "./scient/workspace/NativeFilePublication.ts";
+// SCIENT-FORK:START — ignored-file RPC races exercise the shipped native boundary.
+import {
+  filePublicationTestHelper,
+  nativePublicationHost,
+} from "./scient/workspace/fileExchange.testkit.ts";
+const ignoredReadHelper = await filePublicationTestHelper();
+const ignoredReadNative = await nativePublicationHost();
+// SCIENT-FORK:END
+
 const decodeWorkflowSubagent = Schema.decodeUnknownSync(OrchestrationV2SubagentJson);
 const encodeWorkflowSubagent = Schema.encodeSync(OrchestrationV2SubagentJson);
 const decodeWorkflowTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+// Retained history exists only where the resolved helper grants native publication authority.
+const nativePublicationServer = await (async () => {
+  const helper = await resolveNativeFilePublicationHelperPath();
+  if (helper === undefined) return false;
+  const capabilities = await nativeFilePublicationCapabilities(helper);
+  return (
+    capabilities.strictCurrentRoot &&
+    capabilities.publicationLease &&
+    capabilities.sharedPublicationLease &&
+    capabilities.exclusiveMove &&
+    capabilities.exclusiveLink
+  );
+})();
 const SUCCESSFUL_GIT_EXECUTION = {
   exitCode: ChildProcessSpawner.ExitCode(0),
   stdout: "",
@@ -193,6 +220,9 @@ import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
 import { makeDroidTextGeneration } from "./textGeneration/DroidTextGeneration.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, layerMakeRoutes } from "./server.ts";
+// SCIENT-FORK:START — the real extensions owners, as the server composes them.
+import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.ts";
+// SCIENT-FORK:END
 import {
   coalesceProviderStatusUpdates,
   resolveAvailableEditorsForConfig,
@@ -218,7 +248,6 @@ import * as ProviderSessionsV2 from "./orchestration-v2/ProviderSessionManager.t
 import * as IdAllocatorV2 from "@t3tools/provider-core/server/IdAllocator";
 import * as CommandReceiptsV2 from "./orchestration-v2/CommandReceiptStore.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
-import * as ResourceCleanupV2 from "./orchestration-v2/ResourceCleanupService.ts";
 import * as ThreadSearchV2 from "./orchestration-v2/ThreadSearch.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -285,6 +314,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as WorkspaceBindingResolver from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -303,6 +333,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as ThreadCommandExecutor from "./orchestration-v2/ThreadCommandExecutor.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
+import * as ConnectReachability from "./cloud/ConnectReachability.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
@@ -586,6 +617,11 @@ const buildAppUnderTest = (options?: {
   transformApplicationEventStore?: (
     events: OrchestrationEventStore["Service"],
   ) => OrchestrationEventStore["Service"];
+  // SCIENT-FORK:START — exercise namespace changes at the workspace read boundary.
+  transformWorkspaceEntries?: (
+    entries: WorkspaceEntries.WorkspaceEntries["Service"],
+  ) => WorkspaceEntries.WorkspaceEntries["Service"];
+  // SCIENT-FORK:END
   layers?: {
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
     environmentTheme?: Partial<EnvironmentTheme.EnvironmentThemeService["Service"]>;
@@ -602,6 +638,7 @@ const buildAppUnderTest = (options?: {
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
     gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+    knownWorkspaces?: Partial<KnownWorkspaces.KnownWorkspaces["Service"]>;
     gitManager?: Partial<GitManager.GitManager["Service"]>;
     sourceControlRepositoryService?: Partial<
       SourceControlRepositoryService.SourceControlRepositoryService["Service"]
@@ -790,16 +827,37 @@ const buildAppUnderTest = (options?: {
     const gitManagerLayer = Layer.mock(GitManager.GitManager)({
       ...options?.layers?.gitManager,
     });
-    const workspaceEntriesLayer = WorkspaceEntries.layer.pipe(
-      Layer.provide(WorkspacePaths.layer),
-      Layer.provideMerge(vcsDriverRegistryLayer),
+    // SCIENT-FORK:START — retain the real service behind the controlled read boundary.
+    const workspaceEntriesLayer = Layer.effect(
+      WorkspaceEntries.WorkspaceEntries,
+      Effect.map(
+        WorkspaceEntries.WorkspaceEntries,
+        (entries) => options?.transformWorkspaceEntries?.(entries) ?? entries,
+      ),
+    ).pipe(
+      Layer.provideMerge(
+        WorkspaceEntries.layer.pipe(
+          Layer.provide(WorkspacePaths.layer),
+          Layer.provideMerge(vcsDriverRegistryLayer),
+        ),
+      ),
     );
+    // SCIENT-FORK:END
+    // Every folder is known unless a test narrows it; WorkspaceFileSystem's own tests cover
+    // the rejection.
+    const knownWorkspacesLayer = Layer.mock(KnownWorkspaces.KnownWorkspaces)({
+      contains: () => Effect.succeed(true),
+      assertContains: () => Effect.void,
+      ...options?.layers?.knownWorkspaces,
+    });
     const workspaceAndProjectServicesLayer = Layer.mergeAll(
       WorkspacePaths.layer,
       workspaceEntriesLayer,
+      knownWorkspacesLayer,
       WorkspaceFileSystem.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
+        Layer.provide(knownWorkspacesLayer),
       ),
       ProjectFaviconResolver.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
@@ -940,7 +998,6 @@ const buildAppUnderTest = (options?: {
               ),
             ),
           ).pipe(
-            Layer.provide(ResourceCleanupV2.layer),
             Layer.provideMerge(ProjectEnrichmentService.layer),
             Layer.provide(CheckpointStore.layer.pipe(Layer.provide(vcsDriverRegistryLayer))),
           ),
@@ -953,6 +1010,7 @@ const buildAppUnderTest = (options?: {
                 issues: [],
               }),
               streamChanges: Stream.empty,
+              subscribeChanges: Effect.succeed(Stream.empty),
               ...options?.layers?.keybindings,
             }),
             Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
@@ -994,6 +1052,10 @@ const buildAppUnderTest = (options?: {
               Effect.die("Source control title links are not stubbed in this test"),
           }),
         ),
+        // SCIENT-FORK:START — extensions RPCs and connector routes use the real owners,
+        // backed by this fixture's state directory, project store and provider registry.
+        Layer.provide(ScientExtensionsLayerLive.pipe(Layer.provide(ProjectStoreV2.layer))),
+        // SCIENT-FORK:END
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(ModelManifest.ModelManifest)({
@@ -1217,6 +1279,11 @@ const buildAppUnderTest = (options?: {
     const appLayer = servedRoutesLayer
       .pipe(
         Layer.provide(CloudLink.layer),
+        Layer.provide(
+          Layer.mock(ConnectReachability.ConnectReachability)({
+            latest: Effect.succeed(Option.none()),
+          }),
+        ),
         Layer.provide(DirectEndpoints.layer),
         Layer.provide(workspaceBindingResolverLayer),
         Layer.provide(GeneratedDocumentStore.layer),
@@ -1225,6 +1292,7 @@ const buildAppUnderTest = (options?: {
         Layer.provide(
           Layer.mock(AnalyticsService.AnalyticsService)({
             record: () => Effect.void,
+            recordOwners: () => Effect.void,
             flush: Effect.void,
             ...options?.layers?.analyticsService,
           }),
@@ -1330,6 +1398,8 @@ const buildAppUnderTest = (options?: {
               CloudManagedEndpointRuntime.CloudManagedEndpointRuntime,
               CloudManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
                 applyConfig: () => Effect.succeed({ status: "disabled" }),
+                inspectConnector: Effect.succeed(null),
+                readinessChanged: Stream.empty,
                 // Managed endpoint recovery stays inert in tests: no requests, no
                 // side effects, and the link-state lock is a pass-through.
                 recoveryRequests: Stream.empty,
@@ -2822,7 +2892,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const dpop = makeDpopProof({
         method: "POST",
         url: tokenUrl,
-        iat: Math.floor(now.epochMilliseconds / 1_000) + 25,
+        iat: Math.floor(now.epochMilliseconds / 1_000) + DPOP_MAX_CLOCK_SKEW_SECONDS + 1,
       });
 
       const exchange = yield* exchangeAccessToken(credential.credential, {
@@ -8088,7 +8158,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               keybindings: [],
               issues: [],
             }),
-            streamChanges: Stream.succeed(changeEvent),
+            subscribeChanges: Effect.succeed(Stream.succeed(changeEvent)),
           },
           providerRegistry: {
             getProviders: Effect.succeed(providers),
@@ -8129,16 +8199,22 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   );
 
   it.effect.each(
-    (["all", "targeted", "background"] as const).map((mode) => ({
+    (["all", "targeted", "workspace", "workspace-fresh", "background"] as const).map((mode) => ({
       caseTitle: `provider refresh invalidates T3 caches before probing (${mode})`,
       mode,
     })),
   )("$caseTitle", ({ mode }) => {
     const driver = ProviderDriverKind.make("codex");
-    const instanceIds = [ProviderInstanceId.make("codex"), ProviderInstanceId.make("codex_work")];
+    const instanceIds = [
+      ProviderInstanceId.make("codex"),
+      ProviderInstanceId.make("codex_work"),
+    ] as const;
     const packageNames = ["@example/personal", "@example/work"];
     const invalidated: string[] = [];
-    const freshMaintenance: string[] = [];
+    const resolvedMaintenance: string[] = [];
+    const workspaceScoped = mode === "workspace" || mode === "workspace-fresh";
+    const targeted = mode === "targeted" || workspaceScoped;
+    const cwd = "/synthetic/provider-refresh";
     let manifestRefreshed = false;
     let probed = false;
     const instances = instanceIds.map(
@@ -8155,8 +8231,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           snapshot: {
             resolveMaintenance: (options) =>
               Effect.sync(() => {
-                assert.isTrue(options?.fresh);
-                freshMaintenance.push(instanceId);
+                assert.equal(options?.fresh, mode === "workspace");
+                assert.include(invalidated, instanceId);
+                resolvedMaintenance.push(instanceId);
                 return makeManualOnlyProviderMaintenanceCapabilities({
                   provider: driver,
                   packageName: packageNames[index]!,
@@ -8173,14 +8250,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           textGeneration: {} as ProviderInstance["textGeneration"],
         }) satisfies ProviderInstance,
     );
-    const expected =
-      mode === "background" ? [] : mode === "targeted" ? [instanceIds[1]!] : instanceIds;
+    const expected = mode === "background" ? [] : targeted ? [instanceIds[1]!] : instanceIds;
     const probe = (versionCache: ProviderLatestVersions.ProviderLatestVersions["Service"]) =>
       Effect.gen(function* () {
         probed = true;
         assert.equal(manifestRefreshed, mode !== "background");
         assert.deepEqual(invalidated.toSorted(), expected.toSorted());
-        assert.deepEqual(freshMaintenance.toSorted(), expected.toSorted());
+        assert.deepEqual(resolvedMaintenance.toSorted(), expected.toSorted());
         for (let index = 0; index < instanceIds.length; index++) {
           assert.equal(
             yield* versionCache.cached(packageNames[index]!, Effect.succeed("2.0.0")),
@@ -8205,7 +8281,18 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           providerInstanceRegistry: { listInstances: Effect.succeed(instances) },
           providerRegistry: {
             refresh: () => probe(versionCache),
-            refreshInstance: () => probe(versionCache),
+            refreshInstance: (instanceId) => {
+              assert.equal(instanceId, instanceIds[1]);
+              return probe(versionCache);
+            },
+            refreshWorkspaceSnapshot: (input) => {
+              assert.deepEqual(input, {
+                instanceId: instanceIds[1],
+                cwd,
+                fresh: mode === "workspace-fresh",
+              });
+              return probe(versionCache);
+            },
           },
         },
       });
@@ -8213,7 +8300,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.serverRefreshProviders]({
-            ...(mode === "targeted" ? { instanceId: instanceIds[1]! } : {}),
+            ...(targeted ? { instanceId: instanceIds[1]! } : {}),
+            ...(workspaceScoped ? { cwd } : {}),
+            ...(mode === "workspace-fresh" ? { fresh: true } : {}),
             ...(mode !== "background" ? { refreshModels: true } : {}),
           }),
         ),
@@ -9181,6 +9270,77 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServerTest), TestClock.withLive),
   );
 
+  // SCIENT-FORK:START — ignored-file discovery must not publish stale root authority.
+  for (const replaceRoot of [false, true]) {
+    it.effect.skipIf(replaceRoot && !ignoredReadNative)(
+      replaceRoot
+        ? "rejects ignored-file results after workspace root authority changes"
+        : "routes websocket rpc ignored files from a settled workspace",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const parent = yield* fs.makeTempDirectoryScoped({ prefix: "scient-ignored-rpc-" });
+          const workspaceDir = path.join(parent, "workspace");
+          yield* fs.makeDirectory(workspaceDir);
+          yield* fs.writeFileString(path.join(workspaceDir, ".gitignore"), ".env\n");
+          yield* fs.writeFileString(path.join(workspaceDir, ".env"), "SYNTHETIC=true\n");
+          const vcs = yield* VcsProcess.VcsProcess.pipe(Effect.provide(VcsProcess.layer));
+          yield* vcs.run({
+            operation: "fixture.git-init",
+            command: "git",
+            args: ["init", "--quiet"],
+            cwd: workspaceDir,
+          });
+          yield* buildAppUnderTest({
+            config:
+              ignoredReadHelper === undefined
+                ? {}
+                : { filePublicationHelperPath: ignoredReadHelper },
+            transformWorkspaceEntries: (entries) => ({
+              ...entries,
+              listIgnoredFiles: Effect.fn("ServerTest.listIgnoredFiles")(function* (input) {
+                const result = yield* entries.listIgnoredFiles(input);
+                assert.deepEqual(result.files, [{ path: ".env", byteLength: 15 }]);
+                if (replaceRoot) {
+                  yield* fs
+                    .rename(workspaceDir, path.join(parent, "previous-workspace"))
+                    .pipe(Effect.orDie);
+                  yield* fs.makeDirectory(workspaceDir).pipe(Effect.orDie);
+                }
+                return result;
+              }),
+            }),
+          });
+          const response = yield* Effect.scoped(
+            withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+              client[WS_METHODS.projectsListIgnoredFiles]({ cwd: workspaceDir }).pipe(
+                Effect.result,
+              ),
+            ),
+          );
+          if (replaceRoot) {
+            if (
+              response._tag !== "Failure" ||
+              response.failure._tag !== "ProjectListEntriesError"
+            ) {
+              assert.fail("Changed workspace authority must not return ignored-file results.");
+            }
+            assert.equal(response.failure.cwd, workspaceDir);
+            assert.equal(response.failure.failure, "directory_list_failed");
+            assert.propertyVal(response.failure.cause, "name", "WorkspaceFileTargetChangedError");
+          } else {
+            if (response._tag !== "Success") assert.fail("Expected ignored-file results.");
+            assert.deepEqual(response.success, {
+              files: [{ path: ".env", byteLength: 15 }],
+              truncated: false,
+            });
+          }
+        }).pipe(Effect.provide(NodeHttpServerTest), TestClock.withLive),
+    );
+  }
+  // SCIENT-FORK:END
+
   it.effect("routes websocket rpc projects.searchEntries excludes gitignored files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -9251,6 +9411,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const outsideFile = path.join(outsideDir, "outside.txt");
       yield* fs.writeFileString(outsideFile, "outside\n");
       yield* fs.symlink(outsideFile, path.join(workspaceDir, "linked-outside.txt"));
+      yield* fs.symlink(
+        path.join(workspaceDir, "missing-referent.txt"),
+        path.join(workspaceDir, "dangling.txt"),
+      );
 
       yield* buildAppUnderTest();
 
@@ -9278,9 +9442,21 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               cwd: workspaceDir,
               relativePath: "missing.txt",
             }).pipe(Effect.result),
+            missingRootRead: client[WS_METHODS.projectsReadFile]({
+              cwd: invalidWorkspace,
+              relativePath: "missing.txt",
+            }).pipe(Effect.result),
+            nonDirectoryRootRead: client[WS_METHODS.projectsReadFile]({
+              cwd: outsideFile,
+              relativePath: "missing.txt",
+            }).pipe(Effect.result),
             linkedRead: client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
               relativePath: "linked-outside.txt",
+            }).pipe(Effect.result),
+            danglingRead: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "dangling.txt",
             }).pipe(Effect.result),
             browse: client[WS_METHODS.filesystemBrowse]({
               cwd: workspaceDir,
@@ -9351,7 +9527,46 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(readError.relativePath, "missing.txt");
       assert.equal(readError.failure, "operation_failed");
       assert.equal(readError.reason, "not_found");
+      assert.equal(readError.currentMissing, true);
       assert.isDefined(readError.cause);
+
+      if (
+        results.danglingRead._tag !== "Failure" ||
+        results.danglingRead.failure._tag !== "ProjectReadFileError"
+      ) {
+        assert.fail("Expected a typed dangling-referent read failure");
+      }
+      assert.equal(results.danglingRead.failure.cwd, workspaceDir);
+      assert.equal(results.danglingRead.failure.relativePath, "dangling.txt");
+      assert.equal(results.danglingRead.failure.reason, "not_found");
+      assert.isUndefined(results.danglingRead.failure.currentMissing);
+
+      if (
+        results.missingRootRead._tag !== "Failure" ||
+        results.missingRootRead.failure._tag !== "ProjectReadFileError"
+      ) {
+        assert.fail("Expected a typed missing-root read failure");
+      }
+      assert.equal(results.missingRootRead.failure.failure, "operation_failed");
+      assert.equal(results.missingRootRead.failure.operation, "realpath-workspace-root");
+      assert.equal(results.missingRootRead.failure.operationPath, invalidWorkspace);
+      assert.equal(results.missingRootRead.failure.reason, "not_found");
+      assert.equal(results.missingRootRead.failure.osErrorCode, "ENOENT");
+      assert.isUndefined(results.missingRootRead.failure.currentMissing);
+      assert.isDefined(results.missingRootRead.failure.cause);
+
+      if (
+        results.nonDirectoryRootRead._tag !== "Failure" ||
+        results.nonDirectoryRootRead.failure._tag !== "ProjectReadFileError"
+      ) {
+        assert.fail("Expected a typed non-directory-root read failure");
+      }
+      assert.equal(results.nonDirectoryRootRead.failure.failure, "operation_failed");
+      assert.equal(results.nonDirectoryRootRead.failure.operation, "stat");
+      assert.equal(results.nonDirectoryRootRead.failure.operationPath, outsideFile);
+      assert.equal(results.nonDirectoryRootRead.failure.osErrorCode, "ENOTDIR");
+      assert.isUndefined(results.nonDirectoryRootRead.failure.currentMissing);
+      assert.isDefined(results.nonDirectoryRootRead.failure.cause);
 
       // A symlink leading out of the project is viewable, never editable.
       if (results.linkedRead._tag !== "Success") {
@@ -9498,6 +9713,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         }
         assert.equal(result.failure.failure, "operation_failed");
         assert.equal(result.failure.reason, "permission_denied");
+        assert.isUndefined(result.failure.currentMissing);
         // The system's own code travels too: a file mode refuses with EACCES,
         // which the client tells apart from the system itself declining.
         assert.equal(result.failure.osErrorCode, "EACCES");
@@ -9537,29 +9753,135 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  it.effect("routes websocket rpc projects.writeFile", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-write-" });
+  it.effect.skipIf(!nativePublicationServer)(
+    "preserves websocket file mutation ownership, retained history, and recovery refusal",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-write-" });
 
-      yield* buildAppUnderTest();
+        yield* buildAppUnderTest();
 
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const response = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.projectsWriteFile]({
-            cwd: workspaceDir,
-            relativePath: "nested/created.txt",
-            contents: "written-by-rpc",
-          }),
-        ),
-      );
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const input = {
+                cwd: workspaceDir,
+                relativePath: "nested/created.txt",
+                contents: "written-by-rpc",
+                createOnly: true as const,
+                mutationId: "rpc-create",
+              };
+              const created = yield* client[WS_METHODS.projectsWriteFile](input);
+              assert.equal(created.mutationId, input.mutationId);
+              assert.deepEqual(yield* client[WS_METHODS.projectsWriteFile](input), created);
+              const conflict = yield* client[WS_METHODS.projectsWriteFile]({
+                ...input,
+                contents: "must-not-publish",
+              }).pipe(Effect.flip);
+              assert.equal(conflict._tag, "ProjectWriteFileError");
+              if (conflict._tag !== "ProjectWriteFileError")
+                return assert.fail("Expected mutation intent failure");
+              assert.equal(conflict.failure, "mutation_intent_conflict");
+              assert.equal(conflict.mutationId, input.mutationId);
+              assert.equal(
+                yield* fs.readFileString(path.join(workspaceDir, input.relativePath)),
+                input.contents,
+              );
 
-      assert.equal(response.relativePath, "nested/created.txt");
-      const persisted = yield* fs.readFileString(path.join(workspaceDir, "nested", "created.txt"));
-      assert.equal(persisted, "written-by-rpc");
-    }).pipe(Effect.provide(NodeHttpServerTest)),
+              const updated = yield* client[WS_METHODS.projectsWriteFile]({
+                cwd: input.cwd,
+                relativePath: input.relativePath,
+                contents: "updated-by-rpc",
+                expectedRevision: created.revision,
+                mutationId: "rpc-update",
+              });
+              const history = yield* client[WS_METHODS.projectsListFileVersions](input);
+              const retained = history.versions.find(
+                (version) => version.revision === created.revision,
+              );
+              assert.isDefined(retained);
+              if (!retained) return assert.fail("Expected retained pre-publication revision");
+              assert.equal(retained.mutationId, "rpc-update");
+              assert.isNull(history.attention);
+              const discarded = yield* client[WS_METHODS.projectsDiscardFileVersion]({
+                ...input,
+                versionId: retained.versionId,
+              });
+              assert.equal(discarded.versionId, retained.versionId);
+              const afterDiscard = yield* client[WS_METHODS.projectsListFileVersions](input);
+              assert.isFalse(
+                afterDiscard.versions.some((version) => version.versionId === retained.versionId),
+              );
+              assert.isNull(afterDiscard.attention);
+
+              for (const currentRevision of [updated.revision, null]) {
+                const refused = yield* client[WS_METHODS.projectsResolveFileMutation]({
+                  ...input,
+                  recoveryId: "no-durable-attention",
+                  currentRevision,
+                  choice: "accept-current",
+                }).pipe(Effect.flip);
+                assert.equal(refused._tag, "ProjectWriteFileError");
+                if (refused._tag !== "ProjectWriteFileError")
+                  return assert.fail("Expected typed recovery refusal");
+                assert.equal(refused.failure, "mutation_intent_conflict");
+                assert.equal(refused.cwd, input.cwd);
+                assert.equal(refused.relativePath, input.relativePath);
+                assert.equal(refused.recoveryId, "no-durable-attention");
+                assert.isUndefined(refused.currentRevision);
+              }
+              assert.equal(
+                yield* fs.readFileString(path.join(workspaceDir, input.relativePath)),
+                "updated-by-rpc",
+              );
+
+              const renameInput = {
+                cwd: input.cwd,
+                relativePath: input.relativePath,
+                destinationRelativePath: "nested/renamed.txt",
+                expectedRevision: updated.revision,
+                mutationId: "rpc-rename",
+              };
+              const renamed = yield* client[WS_METHODS.projectsRenameFile](renameInput);
+              assert.equal(renamed.mutationId, renameInput.mutationId);
+              assert.deepEqual(yield* client[WS_METHODS.projectsRenameFile](renameInput), renamed);
+              assert.isFalse(yield* fs.exists(path.join(workspaceDir, input.relativePath)));
+              const absentRefused = yield* client[WS_METHODS.projectsResolveFileMutation]({
+                cwd: input.cwd,
+                relativePath: input.relativePath,
+                recoveryId: "no-durable-attention",
+                currentRevision: null,
+                choice: "accept-current",
+              }).pipe(Effect.flip);
+              assert.equal(absentRefused._tag, "ProjectWriteFileError");
+              if (absentRefused._tag !== "ProjectWriteFileError")
+                return assert.fail("Expected typed absent-path refusal");
+              assert.equal(absentRefused.failure, "mutation_intent_conflict");
+              assert.isUndefined(absentRefused.currentRevision);
+              assert.isFalse(yield* fs.exists(path.join(workspaceDir, input.relativePath)));
+              assert.equal(
+                yield* fs.readFileString(
+                  path.join(workspaceDir, renameInput.destinationRelativePath),
+                ),
+                "updated-by-rpc",
+              );
+              const deleteInput = {
+                cwd: input.cwd,
+                relativePath: renameInput.destinationRelativePath,
+                expectedRevision: renamed.revision,
+                mutationId: "rpc-delete",
+              };
+              const deleted = yield* client[WS_METHODS.projectsDeleteFile](deleteInput);
+              assert.equal(deleted.mutationId, deleteInput.mutationId);
+              assert.deepEqual(yield* client[WS_METHODS.projectsDeleteFile](deleteInput), deleted);
+              assert.isFalse(yield* fs.exists(path.join(workspaceDir, deleteInput.relativePath)));
+            }),
+          ),
+        );
+      }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
   it.effect("rejects generic Files writes to owner-managed project paths", () =>
@@ -10321,6 +10643,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "launch:cmd-thread-create-failed",
         "launch:cmd-thread-create-succeeded",
         "analytics:client.thread.started",
+        // Inherited feature usage; Scient's analytics contract drops this name.
+        "analytics:feature.used",
       ]);
       assert.deepEqual(analyticsProperties, [
         {
@@ -10349,6 +10673,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           clientDeviceModel: "iPhone 15 Pro",
           connectionMethod: "relay",
         },
+        { feature: "thread.launch", variant: "root", surface: "mobile" },
       ]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
@@ -10483,6 +10808,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             cwd: workspaceDir,
             relativePath: "../escape.txt",
             contents: "nope",
+            mutationId: "rpc-refused-write",
           }),
         ).pipe(Effect.result),
       );
@@ -10498,6 +10824,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(writeError.cwd, workspaceDir);
       assert.equal(writeError.relativePath, "../escape.txt");
       assert.equal(writeError.failure, "workspace_path_outside_root");
+      assert.equal(writeError.mutationId, "rpc-refused-write");
+      assert.isUndefined(writeError.publicationOutcome);
       assert.isDefined(writeError.cause);
       assert.notProperty(writeError, "contents");
     }).pipe(Effect.provide(NodeHttpServerTest)),
@@ -13557,7 +13885,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         vcsDriver: { isInsideWorkTree: () => Effect.succeed(true), ...options.layers?.vcsDriver },
         gitVcsDriver: {
           execute: () => Effect.succeed(SUCCESSFUL_GIT_EXECUTION),
-          remoteExists: () => Effect.succeed(false),
+          resolveWorktreeBaseRemote: () => Effect.succeed(null),
+          fetchWorktreeBaseCommit: () => Effect.die("A local launch must not fetch a remote base"),
           removeWorktree: () => Effect.void,
           ...options.layers?.gitVcsDriver,
         },
@@ -13635,6 +13964,55 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     };
   });
 
+  it.effect("forwards opening-turn plan provenance through launch RPC", () =>
+    Effect.gen(function* () {
+      const received: Array<ThreadLaunchV2.ThreadLaunchInput> = [];
+      const sourcePlanRef = {
+        threadId: ThreadId.make("source-plan-thread"),
+        planId: PlanId.make("source-plan"),
+      };
+      const fixture = yield* makeNativeLaunchFixture("source-plan-wire", {
+        transformThreadLaunchV2: (launch) => ({
+          ...launch,
+          launch: (input) =>
+            Effect.sync(() => {
+              received.push(input);
+            }).pipe(
+              // Stop at the service boundary; real plan adoption is covered by
+              // the connected cross-target extraction fixture.
+              Effect.andThen(
+                Effect.fail(
+                  new ThreadLaunchV2.ThreadLaunchError({
+                    operation: "dispatch-message",
+                    commandId: input.commandId,
+                    projectId: input.projectId,
+                    cause: "Synthetic launch boundary",
+                  }),
+                ),
+              ),
+            ),
+        }),
+      });
+      const failure = yield* fixture
+        .launch({
+          ...fixture.input,
+          initialMessage: {
+            ...fixture.input.initialMessage,
+            sourcePlanRef,
+            selectedScientSkillNames: ["pdf-authoring"],
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(failure._tag, "OrchestrationV2ThreadLaunchError");
+      assert.lengthOf(received, 1);
+      assert.deepEqual(received[0]?.initialMessage, {
+        ...fixture.input.initialMessage,
+        sourcePlanRef,
+        selectedScientSkillNames: ["pdf-authoring"],
+      });
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
   it.effect("bootstraps a native first-send worktree before releasing its durable run", () =>
     Effect.gen(function* () {
       const operations: string[] = [];
@@ -13658,23 +14036,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fixture = yield* makeNativeLaunchFixture("remote-first", {
         layers: {
           gitVcsDriver: {
-            remoteExists: () =>
+            resolveWorktreeBaseRemote: (input) =>
               Effect.sync(() => {
-                operations.push("remote-exists");
-                return true;
+                assert.equal(input.refName, "main");
+                operations.push("resolve-base-remote");
+                return { remoteName: "origin", branchName: "main" };
               }),
-            fetchRemote: () =>
+            fetchWorktreeBaseCommit: (input) =>
               Effect.sync(() => {
-                operations.push("fetch");
-              }),
-            remoteBranchExists: () =>
-              Effect.sync(() => {
-                operations.push("remote-branch-exists");
-                return true;
-              }),
-            resolveRemoteTrackingCommit: () =>
-              Effect.sync(() => {
-                operations.push("resolve-remote-commit");
+                assert.equal(input.refName, "main");
+                operations.push("fetch-base-commit");
                 return { commitSha: fetchedCommit, remoteRefName: "origin/main" };
               }),
           },
@@ -13690,10 +14061,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isTrue(launched.projection.runs.some((run) => run.status === "preparing"));
       const ready = yield* fixture.awaitRun("starting");
       assert.deepEqual(operations, [
-        "remote-exists",
-        "fetch",
-        "remote-branch-exists",
-        "resolve-remote-commit",
+        "resolve-base-remote",
+        "fetch-base-commit",
         "checkout",
         "setup",
       ]);
@@ -13707,7 +14076,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         cwd: fixture.root,
         refName: fetchedCommit,
         newRefName: "feature/manual",
-        baseRefName: "main",
+        baseRefName: "refs/remotes/origin/main",
         path: null,
       });
       assert.equal(runForThread.mock.calls[0]?.[0].worktreePath, fixture.root);
@@ -13723,25 +14092,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     { caseName: "the base branch exists only locally", hasOrigin: true },
   ])("native launch uses the local base when $caseName", ({ hasOrigin }) =>
     Effect.gen(function* () {
-      const remoteExists = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["remoteExists"]>(() =>
-        Effect.succeed(hasOrigin),
-      );
-      const fetchRemote = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"]>(
-        () => Effect.void,
-      );
-      const remoteBranchExists = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["remoteBranchExists"]>(
-        () => Effect.succeed(false),
-      );
-      const resolveRemoteTrackingCommit = vi.fn<
-        GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"]
-      >(() => Effect.die("Absent remote base must not resolve"));
+      const resolveWorktreeBaseRemote = vi.fn<
+        GitVcsDriver.GitVcsDriver["Service"]["resolveWorktreeBaseRemote"]
+      >(() => Effect.succeed(hasOrigin ? { remoteName: "origin", branchName: "main" } : null));
+      const fetchWorktreeBaseCommit = vi.fn<
+        GitVcsDriver.GitVcsDriver["Service"]["fetchWorktreeBaseCommit"]
+      >(() => Effect.succeed(null));
       const fixture = yield* makeNativeLaunchFixture(`local-${hasOrigin}`, {
         layers: {
           gitVcsDriver: {
-            remoteExists,
-            fetchRemote,
-            remoteBranchExists,
-            resolveRemoteTrackingCommit,
+            resolveWorktreeBaseRemote,
+            fetchWorktreeBaseCommit,
           },
         },
       });
@@ -13750,9 +14111,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         workspaceStrategy: { ...fixture.input.workspaceStrategy, startFromOrigin: true },
       });
       yield* fixture.awaitRun("starting");
-      assert.equal(fetchRemote.mock.calls.length, hasOrigin ? 1 : 0);
-      assert.equal(remoteBranchExists.mock.calls.length, hasOrigin ? 1 : 0);
-      assert.equal(resolveRemoteTrackingCommit.mock.calls.length, 0);
+      assert.deepEqual(resolveWorktreeBaseRemote.mock.calls, [
+        [{ cwd: fixture.root, refName: "main" }],
+      ]);
+      assert.deepEqual(
+        fetchWorktreeBaseCommit.mock.calls,
+        hasOrigin ? [[{ cwd: fixture.root, refName: "main" }]] : [],
+      );
       assert.deepEqual(fixture.createWorktree.mock.calls[0]?.[0], {
         cwd: fixture.root,
         refName: "main",
@@ -13790,8 +14155,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         layers: {
           vcsDriver: { isInsideWorkTree: () => Effect.succeed(failure !== "non-repository") },
           gitVcsDriver: {
-            remoteExists: () => Effect.succeed(failure === "fetch-failure"),
-            fetchRemote: () =>
+            resolveWorktreeBaseRemote: () =>
+              Effect.succeed(
+                failure === "fetch-failure" ? { remoteName: "origin", branchName: "main" } : null,
+              ),
+            fetchWorktreeBaseCommit: () =>
               Effect.fail(
                 new GitCommandError({
                   operation: "fetch",
@@ -13827,6 +14195,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(createWorktree.mock.calls.length, failure === "fetch-failure" ? 0 : 1);
       const snapshot = yield* fixture.snapshotWhere((current) => current.phase === "failed");
       assert.isString(snapshot.error);
+      if (failure === "fetch-failure") {
+        assert.include(snapshot.error!, "fetch failed");
+      }
       // Retrying an accepted command reuses its durable message/run, not a second launch.
       const retried = yield* fixture.launch();
       assert.equal(retried.threadId, fixture.threadId);
@@ -14362,325 +14733,317 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   );
 });
 
-it.live(
-  "reports thread HTTP and WebSocket transfer budgets",
-  () =>
-    Effect.gen(function* () {
-      const providers = [
-        ProviderDriverKind.make("codex"),
-        ProviderDriverKind.make("claudeAgent"),
-      ] as const;
+it.live("reports thread HTTP and WebSocket transfer budgets", () =>
+  Effect.gen(function* () {
+    const providers = [
+      ProviderDriverKind.make("codex"),
+      ProviderDriverKind.make("claudeAgent"),
+    ] as const;
 
-      const runs = yield* Effect.forEach(
-        providers,
-        (provider) => {
-          // Runtime writes and HTTP/WS subscription reads share one traced database.
-          const sqlCounter = makeSqlStatementCounter();
-          return Effect.scoped(
-            Effect.gen(function* () {
-              const app = yield* buildAppUnderTest();
-              yield* seedTransferBudgetHistory(app.v2.eventSink, provider);
+    const runs = yield* Effect.forEach(
+      providers,
+      (provider) => {
+        // Runtime writes and HTTP/WS subscription reads share one traced database.
+        const sqlCounter = makeSqlStatementCounter();
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const app = yield* buildAppUnderTest();
+            yield* seedTransferBudgetHistory(app.v2.eventSink, provider);
 
-              const baseUrl = yield* getHttpServerUrl();
-              const cookie = yield* getAuthenticatedSessionCookieHeader();
-              const wsUrl =
-                baseUrl.replace(/^http:/, "ws:") +
-                `/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${ORCHESTRATION_PROTOCOL_VERSION}`;
+            const baseUrl = yield* getHttpServerUrl();
+            const cookie = yield* getAuthenticatedSessionCookieHeader();
+            const wsUrl =
+              baseUrl.replace(/^http:/, "ws:") +
+              `/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${ORCHESTRATION_PROTOCOL_VERSION}`;
 
-              return yield* Effect.scoped(
-                Effect.gen(function* () {
-                  const threadSnapshot = yield* measureHttpGet({
-                    url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}/bounded`,
-                    headers: {
-                      cookie,
-                      [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-                      [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT,
-                    },
-                  });
-                  yield* Effect.logInfo(
-                    "Synthetic bounded transfer attribution",
-                    provider,
-                    encodeTestJson(attributeSnapshotTransfer(threadSnapshot)),
-                  );
-                  assert.equal(threadSnapshot.status, 200);
-                  assert.equal(threadSnapshot.contentEncoding, "gzip");
-                  const decodedThread = yield* decodeTransferThreadSnapshot(
-                    Buffer.from(threadSnapshot.decodedBody).toString("utf8"),
-                  );
-                  assert.equal(
-                    decodedThread.projection.messages.length,
-                    THREAD_HISTORY_PAGE_POLICY.maxUserTurns * 2,
-                  );
-                  assert.equal(
-                    decodedThread.hasMoreHistory,
-                    TRANSFER_HISTORY_TURN_COUNT > THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
-                  );
-                  let historyCursor = decodedThread.historyCursor;
-                  const historyItems = [...decodedThread.projection.visibleTurnItems];
-                  const seenCursors = new Set<string>();
-                  // Startup matches the shared bounded HTTP loader. Older pages are
-                  // explicitly requested and must reconstruct the complete persisted history.
-                  while (historyCursor !== null) {
-                    assert.isFalse(seenCursors.has(historyCursor), "history cursor must advance");
-                    seenCursors.add(historyCursor);
-                    const response = yield* measureHttpGet({
-                      url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}/history?cursor=${encodeURIComponent(historyCursor)}`,
-                      headers: {
-                        cookie,
-                        [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-                      },
-                    });
-                    assert.equal(response.status, 200);
-                    const page = yield* decodeTransferHistoryPage(
-                      Buffer.from(response.decodedBody).toString("utf8"),
-                    );
-                    assert.equal(page.snapshotSequence, decodedThread.snapshotSequence);
-                    assert.isAbove(page.items.length, 0);
-                    historyItems.unshift(...page.items);
-                    assert.equal(page.hasMoreHistory, page.nextCursor !== null);
-                    historyCursor = page.nextCursor;
-                  }
-                  assert.equal(
-                    historyItems.filter((row) => row.item.type === "user_message").length,
-                    TRANSFER_HISTORY_TURN_COUNT,
-                  );
-                  assert.equal(
-                    historyItems.filter((row) => row.item.type === "assistant_message").length,
-                    TRANSFER_HISTORY_TURN_COUNT,
-                  );
-                  assert.equal(
-                    historyItems.filter((row) => row.item.type === "dynamic_tool").length,
-                    TRANSFER_HISTORY_TURN_COUNT,
-                  );
-                  assert.equal(
-                    new Set(historyItems.map((row) => row.sourceItemId)).size,
-                    historyItems.length,
-                  );
-                  const persistedHistory =
-                    yield* app.v2.threads.getThreadProjection(TRANSFER_THREAD_ID);
-                  assert.deepEqual(
-                    historyItems.map((row) => row.sourceItemId),
-                    persistedHistory.visibleTurnItems.map((row) => row.sourceItemId),
-                  );
-                  const shellSnapshot = yield* measureHttpGet({
-                    url: `${baseUrl}/api/orchestration/shell`,
+            return yield* Effect.scoped(
+              Effect.gen(function* () {
+                const threadSnapshot = yield* measureHttpGet({
+                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}/bounded`,
+                  headers: {
+                    cookie,
+                    [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+                    [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT,
+                  },
+                });
+                yield* Effect.logInfo(
+                  "Synthetic bounded transfer attribution",
+                  provider,
+                  encodeTestJson(attributeSnapshotTransfer(threadSnapshot)),
+                );
+                assert.equal(threadSnapshot.status, 200);
+                assert.equal(threadSnapshot.contentEncoding, "gzip");
+                const decodedThread = yield* decodeTransferThreadSnapshot(
+                  Buffer.from(threadSnapshot.decodedBody).toString("utf8"),
+                );
+                assert.equal(
+                  decodedThread.projection.messages.length,
+                  THREAD_HISTORY_PAGE_POLICY.maxUserTurns * 2,
+                );
+                assert.equal(
+                  decodedThread.hasMoreHistory,
+                  TRANSFER_HISTORY_TURN_COUNT > THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+                );
+                let historyCursor = decodedThread.historyCursor;
+                const historyItems = [...decodedThread.projection.visibleTurnItems];
+                const seenCursors = new Set<string>();
+                // Startup matches the shared bounded HTTP loader. Older pages are
+                // explicitly requested and must reconstruct the complete persisted history.
+                while (historyCursor !== null) {
+                  assert.isFalse(seenCursors.has(historyCursor), "history cursor must advance");
+                  seenCursors.add(historyCursor);
+                  const response = yield* measureHttpGet({
+                    url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}/history?cursor=${encodeURIComponent(historyCursor)}`,
                     headers: {
                       cookie,
                       [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
                     },
                   });
-                  assert.equal(shellSnapshot.status, 200);
-                  const decodedShell = yield* decodeTransferShellSnapshot(
-                    Buffer.from(shellSnapshot.decodedBody).toString("utf8"),
+                  assert.equal(response.status, 200);
+                  const page = yield* decodeTransferHistoryPage(
+                    Buffer.from(response.decodedBody).toString("utf8"),
                   );
-                  assert.equal(decodedShell.threads.length, 1);
+                  assert.equal(page.snapshotSequence, decodedThread.snapshotSequence);
+                  assert.isAbove(page.items.length, 0);
+                  historyItems.unshift(...page.items);
+                  assert.equal(page.hasMoreHistory, page.nextCursor !== null);
+                  historyCursor = page.nextCursor;
+                }
+                assert.equal(
+                  historyItems.filter((row) => row.item.type === "user_message").length,
+                  TRANSFER_HISTORY_TURN_COUNT,
+                );
+                assert.equal(
+                  historyItems.filter((row) => row.item.type === "assistant_message").length,
+                  TRANSFER_HISTORY_TURN_COUNT,
+                );
+                assert.equal(
+                  historyItems.filter((row) => row.item.type === "dynamic_tool").length,
+                  TRANSFER_HISTORY_TURN_COUNT,
+                );
+                assert.equal(
+                  new Set(historyItems.map((row) => row.sourceItemId)).size,
+                  historyItems.length,
+                );
+                const persistedHistory =
+                  yield* app.v2.threads.getThreadProjection(TRANSFER_THREAD_ID);
+                assert.deepEqual(
+                  historyItems.map((row) => row.sourceItemId),
+                  persistedHistory.visibleTurnItems.map((row) => row.sourceItemId),
+                );
+                const shellSnapshot = yield* measureHttpGet({
+                  url: `${baseUrl}/api/orchestration/shell`,
+                  headers: {
+                    cookie,
+                    [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+                  },
+                });
+                assert.equal(shellSnapshot.status, 200);
+                const decodedShell = yield* decodeTransferShellSnapshot(
+                  Buffer.from(shellSnapshot.decodedBody).toString("utf8"),
+                );
+                assert.equal(decodedShell.threads.length, 1);
 
-                  // Three sockets, the way real installs look: the capped
-                  // thread-only client, a shell-only socket that isolates the
-                  // sidebar cost, and a second device holding both.
-                  const threadClient = yield* openMeasuredWsClient({ url: wsUrl, cookie });
-                  const shellClient = yield* openMeasuredWsClient({ url: wsUrl, cookie });
-                  const secondClient = yield* openMeasuredWsClient({ url: wsUrl, cookie });
-                  assert.include(
-                    threadClient.recorder.negotiatedExtensions(),
-                    "permessage-deflate",
-                  );
+                // Three sockets, the way real installs look: the capped
+                // thread-only client, a shell-only socket that isolates the
+                // sidebar cost, and a second device holding both.
+                const threadClient = yield* openMeasuredWsClient({ url: wsUrl, cookie });
+                const shellClient = yield* openMeasuredWsClient({ url: wsUrl, cookie });
+                const secondClient = yield* openMeasuredWsClient({ url: wsUrl, cookie });
+                assert.include(threadClient.recorder.negotiatedExtensions(), "permessage-deflate");
 
-                  const threadItems = yield* subscribeThreadItems(
-                    threadClient,
-                    decodedThread.snapshotSequence,
-                  );
-                  const shellItems = yield* subscribeShellItems(
-                    shellClient,
-                    decodedShell.snapshotSequence,
-                  );
-                  const secondThreadItems = yield* subscribeThreadItems(
-                    secondClient,
-                    decodedThread.snapshotSequence,
-                  );
-                  const secondShellItems = yield* subscribeShellItems(
-                    secondClient,
-                    decodedShell.snapshotSequence,
-                  );
-                  assert.equal(
-                    yield* awaitSubscriptionSynchronized(
-                      threadItems,
-                      `${provider} thread subscription to synchronize`,
-                    ),
-                    "replay",
-                  );
-                  assert.equal(
-                    yield* awaitSubscriptionSynchronized(
-                      shellItems,
-                      `${provider} shell subscription to synchronize`,
-                    ),
-                    "replay",
-                  );
-                  assert.equal(
-                    yield* awaitSubscriptionSynchronized(
-                      secondThreadItems,
-                      `${provider} second client thread subscription to synchronize`,
-                    ),
-                    "replay",
-                  );
-                  assert.equal(
-                    yield* awaitSubscriptionSynchronized(
-                      secondShellItems,
-                      `${provider} second client shell subscription to synchronize`,
-                    ),
-                    "replay",
-                  );
-
-                  const turnStartTotals = threadClient.recorder.totals();
-                  const shellTurnStartTotals = shellClient.recorder.totals();
-                  const secondTurnStartTotals = secondClient.recorder.totals();
-                  const turnStartSqlStatements = sqlCounter.count();
-                  const committed = yield* commitMeasuredTransferTurn(app.v2.eventSink, provider);
-                  const finalThreadSequence = committed.at(-1)!.sequence;
-                  const finalSequences = {
-                    detail: finalThreadSequence,
-                    aggregate: finalThreadSequence,
-                  };
-                  assert.isAbove(finalThreadSequence, decodedThread.snapshotSequence);
-
-                  const reachedFinalThreadEvent = (item: OrchestrationV2ThreadStreamItem) =>
-                    item.kind === "event" && item.sequence === finalThreadSequence;
-                  // Shell items carry the sequence of the latest coalesced
-                  // event for the thread, so the last one lands at or past
-                  // the final thread event.
-                  const reachedFinalShellEvent = (item: OrchestrationV2ShellStreamItem) =>
-                    item.kind === "thread.updated" && item.sequence >= finalSequences.aggregate;
-                  yield* collectQueueUntil(
+                const threadItems = yield* subscribeThreadItems(
+                  threadClient,
+                  decodedThread.snapshotSequence,
+                );
+                const shellItems = yield* subscribeShellItems(
+                  shellClient,
+                  decodedShell.snapshotSequence,
+                );
+                const secondThreadItems = yield* subscribeThreadItems(
+                  secondClient,
+                  decodedThread.snapshotSequence,
+                );
+                const secondShellItems = yield* subscribeShellItems(
+                  secondClient,
+                  decodedShell.snapshotSequence,
+                );
+                assert.equal(
+                  yield* awaitSubscriptionSynchronized(
                     threadItems,
-                    reachedFinalThreadEvent,
-                    `${provider} thread stream to reach sequence ${finalThreadSequence}`,
-                  );
-                  yield* collectQueueUntil(
-                    secondThreadItems,
-                    reachedFinalThreadEvent,
-                    `${provider} second client thread stream to reach sequence ${finalThreadSequence}`,
-                  );
-                  yield* collectQueueUntil(
+                    `${provider} thread subscription to synchronize`,
+                  ),
+                  "replay",
+                );
+                assert.equal(
+                  yield* awaitSubscriptionSynchronized(
                     shellItems,
-                    reachedFinalShellEvent,
-                    `${provider} shell stream to reach sequence ${finalSequences.aggregate}`,
-                  );
-                  yield* collectQueueUntil(
+                    `${provider} shell subscription to synchronize`,
+                  ),
+                  "replay",
+                );
+                assert.equal(
+                  yield* awaitSubscriptionSynchronized(
+                    secondThreadItems,
+                    `${provider} second client thread subscription to synchronize`,
+                  ),
+                  "replay",
+                );
+                assert.equal(
+                  yield* awaitSubscriptionSynchronized(
                     secondShellItems,
-                    reachedFinalShellEvent,
-                    `${provider} second client shell stream to reach sequence ${finalSequences.aggregate}`,
-                  );
-                  const measuredTurnWebSocket = transferDelta(
-                    turnStartTotals,
-                    threadClient.recorder.totals(),
-                  );
-                  const measuredTurnShellWebSocket = transferDelta(
-                    shellTurnStartTotals,
-                    shellClient.recorder.totals(),
-                  );
-                  const measuredTurnSecondClientWebSocket = transferDelta(
-                    secondTurnStartTotals,
-                    secondClient.recorder.totals(),
-                  );
-                  const measuredTurnSqlStatements = sqlCounter.count() - turnStartSqlStatements;
+                    `${provider} second client shell subscription to synchronize`,
+                  ),
+                  "replay",
+                );
 
-                  // The second device drops and comes back with the cursors it
-                  // held before the turn, one subscription at a time so the
-                  // catch-up bytes stay separable.
-                  yield* secondClient.close;
-                  const reconnectSqlStart = sqlCounter.count();
-                  const reconnected = yield* openMeasuredWsClient({ url: wsUrl, cookie });
-                  const reconnectStartTotals = reconnected.recorder.totals();
-                  const reconnectThreadItems = yield* subscribeThreadItems(
-                    reconnected,
-                    decodedThread.snapshotSequence,
-                  );
-                  const reconnectThreadMode = yield* awaitSubscriptionSynchronized(
-                    reconnectThreadItems,
-                    `${provider} reconnected thread subscription to synchronize`,
-                  );
-                  const reconnectThreadTotals = reconnected.recorder.totals();
-                  const reconnectShellItems = yield* subscribeShellItems(
-                    reconnected,
-                    decodedShell.snapshotSequence,
-                  );
-                  const reconnectShellMode = yield* awaitSubscriptionSynchronized(
-                    reconnectShellItems,
-                    `${provider} reconnected shell subscription to synchronize`,
-                  );
-                  const reconnectShellTotals = reconnected.recorder.totals();
-                  const reconnectSqlStatements = sqlCounter.count() - reconnectSqlStart;
+                const turnStartTotals = threadClient.recorder.totals();
+                const shellTurnStartTotals = shellClient.recorder.totals();
+                const secondTurnStartTotals = secondClient.recorder.totals();
+                const turnStartSqlStatements = sqlCounter.count();
+                const committed = yield* commitMeasuredTransferTurn(app.v2.eventSink, provider);
+                const finalThreadSequence = committed.at(-1)!.sequence;
+                const finalSequences = {
+                  detail: finalThreadSequence,
+                  aggregate: finalThreadSequence,
+                };
+                assert.isAbove(finalThreadSequence, decodedThread.snapshotSequence);
 
-                  const finalThreadSnapshot =
-                    yield* app.v2.threads.getThreadProjection(TRANSFER_THREAD_ID);
-                  const expectedAssistantText = expectedMeasuredAssistantText(provider);
-                  const measuredAssistant = finalThreadSnapshot.messages.find(
-                    (message) =>
-                      message.role === "assistant" && message.text === expectedAssistantText,
-                  );
-                  assert.isDefined(measuredAssistant);
-                  assert.equal(
-                    finalThreadSnapshot.messages.length,
-                    (TRANSFER_HISTORY_TURN_COUNT + 1) * 2,
-                  );
-                  assert.equal(measuredAssistant?.streaming, false);
-                  assert.equal(finalThreadSnapshot.runs.length, TRANSFER_HISTORY_TURN_COUNT + 1);
-                  assert.isTrue(
-                    finalThreadSnapshot.runs.every((run) => run.status === "completed"),
-                  );
-                  assert.equal(
-                    finalThreadSnapshot.turnItems.filter((item) => item.type === "dynamic_tool")
-                      .length,
-                    TRANSFER_HISTORY_TURN_COUNT + 1,
-                  );
+                const reachedFinalThreadEvent = (item: OrchestrationV2ThreadStreamItem) =>
+                  item.kind === "event" && item.sequence === finalThreadSequence;
+                // Shell items carry the sequence of the latest coalesced
+                // event for the thread, so the last one lands at or past
+                // the final thread event.
+                const reachedFinalShellEvent = (item: OrchestrationV2ShellStreamItem) =>
+                  item.kind === "thread.updated" && item.sequence >= finalSequences.aggregate;
+                yield* collectQueueUntil(
+                  threadItems,
+                  reachedFinalThreadEvent,
+                  `${provider} thread stream to reach sequence ${finalThreadSequence}`,
+                );
+                yield* collectQueueUntil(
+                  secondThreadItems,
+                  reachedFinalThreadEvent,
+                  `${provider} second client thread stream to reach sequence ${finalThreadSequence}`,
+                );
+                yield* collectQueueUntil(
+                  shellItems,
+                  reachedFinalShellEvent,
+                  `${provider} shell stream to reach sequence ${finalSequences.aggregate}`,
+                );
+                yield* collectQueueUntil(
+                  secondShellItems,
+                  reachedFinalShellEvent,
+                  `${provider} second client shell stream to reach sequence ${finalSequences.aggregate}`,
+                );
+                const measuredTurnWebSocket = transferDelta(
+                  turnStartTotals,
+                  threadClient.recorder.totals(),
+                );
+                const measuredTurnShellWebSocket = transferDelta(
+                  shellTurnStartTotals,
+                  shellClient.recorder.totals(),
+                );
+                const measuredTurnSecondClientWebSocket = transferDelta(
+                  secondTurnStartTotals,
+                  secondClient.recorder.totals(),
+                );
+                const measuredTurnSqlStatements = sqlCounter.count() - turnStartSqlStatements;
 
-                  return {
-                    provider,
-                    startupTransport: "bounded-compact-http-with-live-cursor",
-                    threadSnapshot,
-                    measuredTurnWebSocket,
-                    shellSnapshot,
-                    measuredTurnShellWebSocket,
-                    measuredTurnSecondClientWebSocket,
-                    reconnectThread: {
-                      mode: reconnectThreadMode,
-                      ...transferDelta(reconnectStartTotals, reconnectThreadTotals),
-                    },
-                    reconnectShell: {
-                      mode: reconnectShellMode,
-                      ...transferDelta(reconnectThreadTotals, reconnectShellTotals),
-                    },
-                    measuredTurnSqlStatements,
-                    reconnectSqlStatements,
-                  } satisfies TransferBudgetRun;
-                }),
-              );
-            }),
-          ).pipe(
-            Effect.provideService(Tracer.Tracer, sqlCounter.tracer),
-            Effect.provide(NodeHttpServerTestWithWsDeflate),
-          );
-        },
-        { concurrency: 1 },
-      );
+                // The second device drops and comes back with the cursors it
+                // held before the turn, one subscription at a time so the
+                // catch-up bytes stay separable.
+                yield* secondClient.close;
+                const reconnectSqlStart = sqlCounter.count();
+                const reconnected = yield* openMeasuredWsClient({ url: wsUrl, cookie });
+                const reconnectStartTotals = reconnected.recorder.totals();
+                const reconnectThreadItems = yield* subscribeThreadItems(
+                  reconnected,
+                  decodedThread.snapshotSequence,
+                );
+                const reconnectThreadMode = yield* awaitSubscriptionSynchronized(
+                  reconnectThreadItems,
+                  `${provider} reconnected thread subscription to synchronize`,
+                );
+                const reconnectThreadTotals = reconnected.recorder.totals();
+                const reconnectShellItems = yield* subscribeShellItems(
+                  reconnected,
+                  decodedShell.snapshotSequence,
+                );
+                const reconnectShellMode = yield* awaitSubscriptionSynchronized(
+                  reconnectShellItems,
+                  `${provider} reconnected shell subscription to synchronize`,
+                );
+                const reconnectShellTotals = reconnected.recorder.totals();
+                const reconnectSqlStatements = sqlCounter.count() - reconnectSqlStart;
 
-      const report = formatTransferBudgetReport(runs);
-      yield* Effect.logInfo(`\n${report}`);
-      const reportPath = yield* Config.String("T3CODE_BOUNDED_TRANSFER_BUDGET_REPORT_PATH").pipe(
-        Config.option,
-      );
-      if (Option.isSome(reportPath)) {
-        const fileSystem = yield* FileSystem.FileSystem;
-        yield* fileSystem.writeFileString(reportPath.value, report);
-      }
-      const resultPath = yield* Config.String("T3CODE_BOUNDED_TRANSFER_BUDGET_RESULT_PATH").pipe(
-        Config.option,
-      );
-      if (Option.isSome(resultPath)) {
-        const fileSystem = yield* FileSystem.FileSystem;
-        yield* fileSystem.writeFileString(resultPath.value, formatTransferBudgetResult(runs));
-      }
-      assert.deepEqual(transferBudgetViolations(runs), []);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  120_000,
+                const finalThreadSnapshot =
+                  yield* app.v2.threads.getThreadProjection(TRANSFER_THREAD_ID);
+                const expectedAssistantText = expectedMeasuredAssistantText(provider);
+                const measuredAssistant = finalThreadSnapshot.messages.find(
+                  (message) =>
+                    message.role === "assistant" && message.text === expectedAssistantText,
+                );
+                assert.isDefined(measuredAssistant);
+                assert.equal(
+                  finalThreadSnapshot.messages.length,
+                  (TRANSFER_HISTORY_TURN_COUNT + 1) * 2,
+                );
+                assert.equal(measuredAssistant?.streaming, false);
+                assert.equal(finalThreadSnapshot.runs.length, TRANSFER_HISTORY_TURN_COUNT + 1);
+                assert.isTrue(finalThreadSnapshot.runs.every((run) => run.status === "completed"));
+                assert.equal(
+                  finalThreadSnapshot.turnItems.filter((item) => item.type === "dynamic_tool")
+                    .length,
+                  TRANSFER_HISTORY_TURN_COUNT + 1,
+                );
+
+                return {
+                  provider,
+                  startupTransport: "bounded-compact-http-with-live-cursor",
+                  threadSnapshot,
+                  measuredTurnWebSocket,
+                  shellSnapshot,
+                  measuredTurnShellWebSocket,
+                  measuredTurnSecondClientWebSocket,
+                  reconnectThread: {
+                    mode: reconnectThreadMode,
+                    ...transferDelta(reconnectStartTotals, reconnectThreadTotals),
+                  },
+                  reconnectShell: {
+                    mode: reconnectShellMode,
+                    ...transferDelta(reconnectThreadTotals, reconnectShellTotals),
+                  },
+                  measuredTurnSqlStatements,
+                  reconnectSqlStatements,
+                } satisfies TransferBudgetRun;
+              }),
+            );
+          }),
+        ).pipe(
+          Effect.provideService(Tracer.Tracer, sqlCounter.tracer),
+          Effect.provide(NodeHttpServerTestWithWsDeflate),
+        );
+      },
+      { concurrency: 1 },
+    );
+
+    const report = formatTransferBudgetReport(runs);
+    yield* Effect.logInfo(`\n${report}`);
+    const reportPath = yield* Config.String("T3CODE_BOUNDED_TRANSFER_BUDGET_REPORT_PATH").pipe(
+      Config.option,
+    );
+    if (Option.isSome(reportPath)) {
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(reportPath.value, report);
+    }
+    const resultPath = yield* Config.String("T3CODE_BOUNDED_TRANSFER_BUDGET_RESULT_PATH").pipe(
+      Config.option,
+    );
+    if (Option.isSome(resultPath)) {
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(resultPath.value, formatTransferBudgetResult(runs));
+    }
+    assert.deepEqual(transferBudgetViolations(runs), []);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

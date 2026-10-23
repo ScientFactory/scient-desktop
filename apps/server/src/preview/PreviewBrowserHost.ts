@@ -21,8 +21,8 @@ export const APPARMOR_PROFILE_PATH = "/etc/apparmor.d/t3-chrome-headless-shell";
  * Modelled on the profile Ubuntu ships for Google Chrome; `unconfined` adds
  * nothing beyond `userns`.
  */
-// SCIENT-FORK:START — Scient display copy retains native CLI and profile identifiers.
-export const APPARMOR_PROFILE = `# Written by \`t3 browser setup\`: lets Scient's headless browser use Chrome's sandbox.
+// SCIENT-FORK:START — Scient display copy retains the native profile identifiers.
+export const APPARMOR_PROFILE = `# Written by \`scient browser setup\`: lets Scient's headless browser use Chrome's sandbox.
 abi <abi/4.0>,
 include <tunables/global>
 
@@ -63,7 +63,7 @@ export class PreviewBrowserSandboxError extends Schema.TaggedError<PreviewBrowse
   { setupCommand: Schema.String },
 ) {
   override get message(): string {
-    return `This host blocks the sandbox T3's browser runs in (AppArmor on Ubuntu 23.10+). Run \`${this.setupCommand}\` on the host once to allow it, then try again.`;
+    return `This host blocks the sandbox Scient's browser runs in (AppArmor on Ubuntu 23.10+). Run \`${this.setupCommand}\` on the host once to allow it, then try again.`;
   }
 }
 
@@ -72,11 +72,25 @@ export class PreviewBrowserLibrariesError extends Schema.TaggedError<PreviewBrow
   { setupCommand: Schema.String, libraries: Schema.Array(Schema.String) },
 ) {
   override get message(): string {
-    return `This host is missing libraries T3's browser needs (${this.libraries.join(", ")}). Run \`${this.setupCommand}\` on the host to install them, then try again.`;
+    return `This host is missing libraries Scient's browser needs (${this.libraries.join(", ")}). Run \`${this.setupCommand}\` on the host to install them, then try again.`;
   }
 }
 
-export type PreviewBrowserHostError = PreviewBrowserSandboxError | PreviewBrowserLibrariesError;
+/** Chrome will not start its sandbox as root (crbug.com/638180), which no host setup fixes. */
+export class PreviewBrowserRootError extends Schema.TaggedError<PreviewBrowserRootError>()(
+  "PreviewBrowserRootError",
+  {},
+) {
+  override get message(): string {
+    // SCIENT-FORK: root diagnostics name the host product.
+    return "Chrome will not start its sandbox as root, so Scient's browser cannot run while the Scient server runs as root. Run the server as a nonroot user (for example `User=` in its systemd service), or set `T3CODE_SERVER_BROWSER_SANDBOX=0` to run the browser unsandboxed as root.";
+  }
+}
+
+export type PreviewBrowserHostError =
+  | PreviewBrowserSandboxError
+  | PreviewBrowserLibrariesError
+  | PreviewBrowserRootError;
 
 const MISSING_LIBRARY = /^\s*(\S+) => not found$/gm;
 const LOADER_ERROR = /error while loading shared libraries: ([^:\s]+)/;
@@ -89,7 +103,10 @@ export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunc
   }) {
     const { setupCommand } = input;
     if (input.output.includes(NO_SANDBOX_SIGNATURE)) {
-      return new PreviewBrowserSandboxError({ setupCommand });
+      // Playwright reports Chrome's refusal to sandbox as root as a sandbox failure too.
+      return (yield* HostProcess.UserId) === 0
+        ? new PreviewBrowserRootError()
+        : new PreviewBrowserSandboxError({ setupCommand });
     }
     if ((yield* HostProcess.Platform) !== "linux") return undefined;
     const libraries = yield* missingLibraries(input.executable);

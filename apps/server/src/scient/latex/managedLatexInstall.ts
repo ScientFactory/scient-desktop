@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
 import { TinyTexManifestRef, resolveTinyTexAsset } from "./tinytexManifest.ts";
+import { latexTexDirectory } from "./latexTexDirectory.ts";
 
 /**
  * Written once, atomically, after the unpacked tree is in place. This write is
@@ -113,14 +114,13 @@ export const readManagedLatexInstall = Effect.fn("scient.latex.readManagedLatexI
   > {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const config = yield* ServerConfig.ServerConfig;
     const platform = yield* HostProcess.Platform;
     const architecture = yield* HostProcess.Architecture;
     const lookup = resolveTinyTexAsset(platform, architecture, yield* TinyTexManifestRef);
     if (!lookup.supported) return null;
     const asset = lookup.asset;
 
-    const paths = managedLatexPaths({ latexDir: config.latexDir, join: path.join });
+    const paths = managedLatexPaths({ latexDir: yield* latexTexDirectory, join: path.join });
     const contents = yield* fileSystem
       .readFileString(paths.statePath)
       .pipe(Effect.orElseSucceed(() => null));

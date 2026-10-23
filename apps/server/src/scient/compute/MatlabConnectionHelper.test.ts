@@ -142,11 +142,7 @@ describe("MATLAB connection helper prerequisites", () => {
       });
       yield* Effect.addFinalizer(() => Effect.sync(() => helper.controller.dispose()));
       yield* helper.controller.manage("install");
-      let status = yield* helper.controller.status();
-      for (let attempt = 0; status.operation !== null && attempt < 100; attempt += 1) {
-        yield* Effect.sleep("5 millis");
-        status = yield* helper.controller.status();
-      }
+      const status = yield* helper.controller.awaitSettled();
       expect(status.operation).toBeNull();
       expect(status.installed).toBe(false);
       expect(status.failureMessage).not.toBeNull();

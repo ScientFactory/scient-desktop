@@ -70,6 +70,10 @@ const buildCmd = Command.make(
   "build",
   {
     verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
+    // SCIENT-FORK:START — desktop development (t3#build:dev) renders from Vite; without
+    // dist/client the server still falls back to apps/web/dist (resolveStaticDir).
+    skipWebClient: Flag.Boolean("skip-web-client").pipe(Flag.withDefault(false)),
+    // SCIENT-FORK:END
   },
   (config) =>
     Effect.gen(function* () {
@@ -91,7 +95,11 @@ const buildCmd = Command.make(
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");
 
-      if (yield* fs.exists(webDist)) {
+      // SCIENT-FORK:START
+      if (config.skipWebClient) {
+        yield* Effect.log("[cli] Skipped the web client copy (development build).");
+      } else if (yield* fs.exists(webDist)) {
+        // SCIENT-FORK:END
         yield* fs.copy(webDist, clientTarget);
         yield* applyDevelopmentIconOverrides(repoRoot, serverDir);
         yield* Effect.log("[cli] Bundled web app into dist/client");
@@ -101,6 +109,22 @@ const buildCmd = Command.make(
 
       // SCIENT-FORK:START — compute bridges and managed Python specifications are runtime data
       yield* stageScientServerAssets(serverDir);
+      yield* runCommand(
+        ChildProcess.make(
+          process.execPath,
+          [
+            path.join(repoRoot, "scripts/stage-file-exchange.ts"),
+            `--destination=${path.join(serverDir, "dist/file-exchange")}`,
+          ],
+          {
+            cwd: repoRoot,
+            stdout: config.verbose ? "inherit" : "ignore",
+            stderr: "inherit",
+            shell: false,
+          },
+        ),
+      );
+      yield* Effect.log("[cli] Staged the host native publication adapter into dist/file-exchange");
       // SCIENT-FORK:END
     }),
 ).pipe(Command.withDescription("Build the server package (tsdown + bundle web client)."));
@@ -150,8 +174,33 @@ const buildExeCmd = Command.make(
       if (specifiers.length > 0) {
         return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
       }
+      const nativeTarget = Option.match(config.target, {
+        onNone: () => [],
+        onSome: (target) => {
+          const split = target.lastIndexOf("-");
+          const platform = target.slice(0, split);
+          const arch = target.slice(split + 1);
+          return [`--platform=${platform === "win" ? "win32" : platform}`, `--arch=${arch}`];
+        },
+      });
+      yield* runCommand(
+        ChildProcess.make(
+          process.execPath,
+          [
+            path.join(repoRoot, "scripts/stage-file-exchange.ts"),
+            ...nativeTarget,
+            `--destination=${path.join(serverDir, "dist-exe/file-exchange")}`,
+          ],
+          {
+            cwd: repoRoot,
+            stdout: config.verbose ? "inherit" : "ignore",
+            stderr: "inherit",
+            shell: false,
+          },
+        ),
+      );
       yield* Effect.log(
-        "[cli] Built dist-exe/scient (expects client/, resource-monitor/, and runtime externals beside it; the release packaging workflow assembles that tree)",
+        "[cli] Built dist-exe/scient (expects client/, resource-monitor/, file-exchange/, and runtime externals beside it; the release packaging workflow assembles that tree)",
       );
     }),
 ).pipe(

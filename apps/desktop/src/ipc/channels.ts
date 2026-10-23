@@ -14,6 +14,7 @@ export const MENU_ACTION_CHANNEL = "desktop:menu-action";
 export const RELOAD_MAIN_WINDOW_CHANNEL = "desktop:reload-main-window";
 export const RELOAD_BLOCKED_CHANNEL = "desktop:reload-blocked";
 export const PASTE_AS_TEXT_CHANNEL = "desktop:paste-as-text";
+export const REVEAL_WINDOW_CHANNEL = "desktop:reveal-window";
 export const SNAP_SHOT_EVENT_CHANNEL = "desktop:snap-shot-event";
 export const WEB_LINK_OPEN_CHANNEL = "desktop:web-link-open";
 export const WEB_LINK_READY_CHANNEL = "desktop:web-link-ready";
@@ -34,6 +35,7 @@ export const CLI_COMMAND_GET_STATE_CHANNEL = "desktop:cli-command-get-state";
 export const CLI_COMMAND_INSTALL_CHANNEL = "desktop:cli-command-install";
 export const CLI_COMMAND_UNINSTALL_CHANNEL = "desktop:cli-command-uninstall";
 export const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
+export const GET_RELAY_TELEMETRY_ENABLED_CHANNEL = "desktop:get-relay-telemetry-enabled";
 export const GET_SYSTEM_LOCALE_CHANNEL = "desktop:get-system-locale";
 export const GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL = "desktop:get-local-environment-bootstraps";
 export const GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL = "desktop:get-local-environment-enabled";
@@ -130,7 +132,9 @@ export const VOICE_REMOVE_MODEL_CHANNEL = "desktop:voice-remove-model";
 export const VOICE_TRANSCRIBE_CHANNEL = "desktop:voice-transcribe";
 export const VOICE_CANCEL_TRANSCRIPTION_CHANNEL = "desktop:voice-cancel-transcription";
 
-export const SET_UNREAD_ANSWER_COUNT_CHANNEL = "scient:answer-attention:set-count";
+// SCIENT-FORK:START — the unread-answer app badge (scient/answerAttention).
+export const SET_UNREAD_ANSWER_BADGE_CHANNEL = "scient:answer-attention:set-badge";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — conversation files the OS opened with Scient.
 export const TAKE_OPENED_CONVERSATION_FILES_CHANNEL = "scient:conversation-import:take-opened";
 export const CONVERSATION_FILES_OPENED_CHANNEL = "scient:conversation-import:opened";

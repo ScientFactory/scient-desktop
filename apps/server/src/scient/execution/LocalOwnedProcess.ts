@@ -88,14 +88,15 @@ function ensureLocalOwnedProcessTreeExit(
         );
       }
     });
-    const awaitGroupExit = (attempts: number) =>
-      Effect.gen(function* () {
-        for (let attempt = 0; attempt < attempts; attempt += 1) {
-          if (!(yield* groupExists)) return true;
-          yield* Effect.sleep(PROCESS_TREE_EXIT_POLL);
-        }
-        return !(yield* groupExists);
-      });
+    const awaitGroupExit = Effect.fn("LocalOwnedProcess.awaitGroupExit")(function* (
+      attempts: number,
+    ) {
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        if (!(yield* groupExists)) return true;
+        yield* Effect.sleep(PROCESS_TREE_EXIT_POLL);
+      }
+      return !(yield* groupExists);
+    });
 
     if (yield* awaitGroupExit(PROCESS_TREE_GRACE_ATTEMPTS)) return;
 

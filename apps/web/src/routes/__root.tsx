@@ -13,7 +13,7 @@ import {
   useRouter,
 } from "@tanstack/react-router";
 import { Check, Copy } from "lucide";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
@@ -23,7 +23,11 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 // SCIENT-FORK: conversation export dialog.
 import { ConversationExportDialogHost } from "../scient/conversationExport/ConversationExportDialog";
 import { ConversationImportDialogHost } from "../scient/conversationImport/ConversationImportDialog";
+// SCIENT-FORK:START — sign-in pages open for the starting client from one app-level watcher.
+import { ProviderSignInPageCoordinator } from "../scient/providerConnection/ProviderSignInPageCoordinator";
+// SCIENT-FORK:END
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
+import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
@@ -47,6 +51,7 @@ import { ThreadNotificationCoordinator } from "../components/ThreadNotificationC
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { PullRequestGuideRunCoordinator } from "../components/pullRequest/guide/PullRequestGuideRunCoordinator";
+import { HostFreezeToastCoordinator } from "../components/HostFreezeToastCoordinator";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -75,6 +80,11 @@ import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
+import {
+  fetchSessionState,
+  isPrimaryEnvironmentRequestError,
+  isTransientBootstrapError,
+} from "../environments/primary/auth";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { useHostedPromptLinkLanding } from "../components/promptLinks/HostedPromptLinkLanding";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
@@ -161,19 +171,11 @@ function RootRouteView() {
     authGateState.status === "hosted-static",
   );
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      syncBrowserChromeTheme();
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [pathname]);
-
   if (pathname === "/pair" || pathname === "/connect" || pathname === "/connect-agent") {
     return (
       <>
         <DocumentTitleSync />
+        <BrowserChromeThemeSync key={pathname} />
         <Outlet />
       </>
     );
@@ -185,6 +187,7 @@ function RootRouteView() {
     return (
       <>
         <DocumentTitleSync />
+        <BrowserChromeThemeSync key={pathname} />
         {hostedPromptLinkLanding}
       </>
     );
@@ -195,6 +198,7 @@ function RootRouteView() {
       <ToastProvider>
         <AnchoredToastProvider>
           <DocumentTitleSync />
+          <BrowserChromeThemeSync key={pathname} />
           <ContrastAppearanceSync />
           <EnvironmentThemeSync />
           <GlassAppearanceSync />
@@ -203,6 +207,9 @@ function RootRouteView() {
           {/* SCIENT-FORK: conversation export dialog; imports wait for setup to finish. */}
           <ConversationExportDialogHost />
           <ConversationImportDialogHost suspended />
+          {/* SCIENT-FORK:START — app-level sign-in page opener. */}
+          <ProviderSignInPageCoordinator />
+          {/* SCIENT-FORK:END */}
           <CommandPalette>
             <AppSidebarLayout>
               <Outlet />
@@ -217,6 +224,7 @@ function RootRouteView() {
     return (
       <>
         <DocumentTitleSync />
+        <BrowserChromeThemeSync key={pathname} />
         <Outlet />
       </>
     );
@@ -236,6 +244,7 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <DocumentTitleSync />
+        <BrowserChromeThemeSync key={pathname} />
         <ContrastAppearanceSync />
         <EnvironmentThemeSync />
         <GlassAppearanceSync />
@@ -262,9 +271,14 @@ function RootRouteView() {
           {/* SCIENT-FORK: conversation export dialog. */}
           <ConversationExportDialogHost />
           <ConversationImportDialogHost />
+          {/* SCIENT-FORK:START — app-level sign-in page opener. */}
+          <ProviderSignInPageCoordinator />
+          {/* SCIENT-FORK:END */}
           <SlowRpcRequestToastCoordinator />
+          <HostFreezeToastCoordinator />
           <PermissionUpdateNotice />
           <ProjectCloneToastCoordinator />
+          <AddProjectToMachineDialogHost />
           <PullRequestGuideRunCoordinator />
           <HostedStaticEnvironmentBootstrap />
           {primaryEnvironmentAuthenticated ? (
@@ -364,6 +378,19 @@ function FontAppearanceSync() {
   return null;
 }
 
+/** Keyed by pathname: each route paints its own surface, which the browser chrome samples. */
+function BrowserChromeThemeSync() {
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      syncBrowserChromeTheme();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
+  return null;
+}
+
 function DocumentTitleSync() {
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
@@ -409,19 +436,57 @@ function HostedStaticEnvironmentBootstrap() {
   return null;
 }
 
+function isTransientSessionError(error: unknown) {
+  return (
+    isPrimaryEnvironmentRequestError(error) &&
+    error.operation === "fetch-session-state" &&
+    isTransientBootstrapError(error)
+  );
+}
+
 function RootRouteErrorView({ error }: ErrorComponentProps) {
   const router = useRouter();
   const message = errorMessage(error);
+  const reconnecting = isTransientSessionError(error);
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
   const pathname = useLocation({ select: (location) => location.pathname });
-  const report = useMemo(() => errorReport(error, pathname), [error, pathname]);
+  const report = errorReport(error, pathname);
+
+  useEffect(() => {
+    if (!isTransientSessionError(error)) return;
+    let disposed = false;
+    let retryTimeout: number;
+    const retry = async () => {
+      try {
+        // Keep this page visible until the backend answers; invalidating an
+        // unavailable route repeatedly would replace it with a blank pending view.
+        await fetchSessionState();
+        if (!disposed) await router.invalidate();
+      } catch (error) {
+        if (!isTransientBootstrapError(error)) {
+          // Let the route surface authentication or server failures normally.
+          if (!disposed) await router.invalidate().catch(() => undefined);
+        }
+      }
+      if (!disposed) retryTimeout = window.setTimeout(() => void retry(), 3_000);
+    };
+    retryTimeout = window.setTimeout(() => void retry(), 3_000);
+    return () => {
+      disposed = true;
+      window.clearTimeout(retryTimeout);
+    };
+  }, [error, router]);
 
   return (
-    <StandalonePage tone="error">
+    <StandalonePage tone={reconnecting ? "brand" : "error"}>
       <StandalonePageHeader
         eyebrow={APP_DISPLAY_NAME}
-        title="Something went wrong."
-        description={message}
+        title={reconnecting ? "Connecting to your server" : "Something went wrong."}
+        description={
+          reconnecting
+            ? "The server is temporarily unavailable. Scient will reconnect automatically when it is ready."
+            : message
+        }
       />
 
       <div className="mt-5 flex flex-wrap gap-2">

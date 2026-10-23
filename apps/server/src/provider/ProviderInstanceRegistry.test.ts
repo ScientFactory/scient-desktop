@@ -1,32 +1,12 @@
+import type { CursorSettings } from "@t3tools/provider-cursor/settings";
+import type { GrokSettings } from "@t3tools/provider-grok/settings";
 import { scientAntigravityInstallationLayer } from "../scient/providerLifecycle/ScientAntigravityInstallation.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-/**
- * Multi-instance validation slices for the live `ProviderInstanceRegistry`.
- *
- * Two axes of the driver/registry refactor are exercised here:
- *
- *  1. **Same driver, many instances** — the "multi-instance codex slice"
- *     describe block below configures two independent `codex` instances and
- *     asserts each gets its own closures and identity. This is the
- *     multi-codex capability the refactor exists to unlock.
- *
- *  2. **Many drivers, one registry** — the "all drivers slice" describe
- *     block below configures one instance of every shipped driver
- *     (`codex`, `claudeAgent`, `cursor`, `droid`, `grok`, `opencode`) in a single
- *     `ProviderInstanceConfigMap` and asserts the registry boots them all
- *     without cross-contamination. This proves the driver SPI is uniform
- *     across every provider — any driver plugs into the registry through
- *     the same `ProviderDriver` value contract.
- *
- * Every instance in these tests is configured with `enabled: false` so the
- * provider-status checks short-circuit to pending/disabled snapshots
- * without trying to spawn real `codex` / `claude` / `agent` / `droid` / `grok` / `opencode`
- * binaries. That keeps the assertions focused on registry routing
- * behaviour rather than the runtime details of each provider.
- */
+import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AntigravitySettings,
@@ -40,8 +20,6 @@ import {
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import type { GrokSettings } from "@t3tools/provider-grok/settings";
-import type { CursorSettings } from "@t3tools/provider-cursor/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -50,10 +28,10 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
-import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
@@ -66,7 +44,6 @@ import * as ModelManifest from "./ModelManifest.ts";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
-import type { BuiltInDriversEnv } from "./builtInDrivers.ts";
 import { DroidDriver } from "./Drivers/DroidDriver.ts";
 import type { DroidDriverEnv } from "./Drivers/DroidDriver.ts";
 import { MuseDriver, type MuseCompositionEnv } from "./MuseDriverComposition.ts";
@@ -87,6 +64,8 @@ import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRe
 import { SECRET_REDACTED } from "../settingsSecrets.ts";
 
 const decodeAntigravitySettingsForTest = Schema.decodeSync(AntigravitySettings);
+
+vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -505,6 +484,146 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("scopes Claude's one-probe fallback to the logged-in organization", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const accountConfigPath = path.join(fixtures.claudeHomePath, ".claude.json");
+      yield* fs.writeFileString(
+        accountConfigPath,
+        JSON.stringify({ oauthAccount: { organizationUuid: "org-a" } }),
+      );
+      const claudeId = ProviderInstanceId.make("claude_probe_recovery");
+      let probeCount = 0;
+      let successfulProbeCount = 0;
+      let failProbe = false;
+      const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: () => {
+              probeCount++;
+              if (failProbe) return Promise.reject(new Error("initialization failed"));
+              successfulProbeCount++;
+              return Promise.resolve({
+                commands: [
+                  {
+                    name: successfulProbeCount === 1 ? "last-good" : "recovered",
+                    description: "",
+                    argumentHint: "",
+                  },
+                ],
+                account: {
+                  email:
+                    successfulProbeCount === 1 ? "account-a@example.com" : "account-b@example.com",
+                  subscriptionType: "pro",
+                  tokenSource: "oauth",
+                },
+              });
+            },
+            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+              rate_limits_available: true,
+              rate_limits: {
+                five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" },
+              },
+            }),
+          }) as ReturnType<typeof ClaudeSdk.query>,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+      expect(claude).toBeDefined();
+
+      const first = yield* claude!.snapshot.refresh;
+      expect(first).toMatchObject({
+        status: "ready",
+        auth: { status: "authenticated", email: "account-a@example.com", workspaceId: "org-a" },
+        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
+      });
+      expect(first.usageLimits?.unavailable).toBeUndefined();
+      expect(probeCount).toBe(1);
+
+      yield* TestClock.adjust("1 second");
+      yield* fs.writeFileString(
+        accountConfigPath,
+        JSON.stringify({ oauthAccount: { organizationUuid: "org-b" } }),
+      );
+      yield* claude!.invalidateCaches ?? Effect.void;
+      failProbe = true;
+      const accountChangedFailure = yield* claude!.snapshot.refresh;
+
+      // SCIENT-FORK:START — provider lifecycle facts are independent (docs/internals/provider-lifecycle.md).
+      // The CLI confirms sign-in; failed readiness must not reuse the previous organization's metadata.
+      expect(accountChangedFailure).toMatchObject({
+        status: "warning",
+        message: "Claude is signed in, but Scient could not complete its readiness check.",
+      });
+      expect(accountChangedFailure.auth).toEqual({ status: "authenticated", required: true });
+      // SCIENT-FORK:END
+      expect(accountChangedFailure.checkedAt).not.toBe(first.checkedAt);
+      expect(accountChangedFailure.usageLimits).toBeUndefined();
+      expect(accountChangedFailure.slashCommands).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "last-good" })]),
+      );
+      const failedProbeCount = probeCount;
+      expect(failedProbeCount).toBeGreaterThan(1);
+
+      failProbe = false;
+      const recovered = yield* claude!.snapshot.refresh;
+      expect(recovered).toMatchObject({
+        status: "ready",
+        auth: { status: "authenticated", email: "account-b@example.com", workspaceId: "org-b" },
+        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
+      });
+      expect(recovered.usageLimits?.unavailable).toBeUndefined();
+      const recoveredProbeCount = probeCount;
+      expect(recoveredProbeCount).toBeGreaterThan(failedProbeCount);
+
+      yield* TestClock.adjust("1 second");
+      yield* claude!.invalidateCaches ?? Effect.void;
+      failProbe = true;
+      const sameAccountFailure = yield* claude!.snapshot.refresh;
+      expect(sameAccountFailure).toMatchObject({
+        status: "ready",
+        auth: { status: "authenticated", email: "account-b@example.com", workspaceId: "org-b" },
+        slashCommands: expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
+      });
+      expect(sameAccountFailure.usageLimits?.checkedAt).toBe(recovered.usageLimits?.checkedAt);
+      expect(sameAccountFailure.usageLimits?.windows).toEqual(recovered.usageLimits?.windows);
+      const sameAccountFailureProbeCount = probeCount;
+      expect(sameAccountFailureProbeCount).toBeGreaterThan(recoveredProbeCount);
+
+      const repeatedFailure = yield* claude!.snapshot.refresh;
+      // SCIENT-FORK:START — confirmed sign-in survives readiness failure, account metadata does not.
+      expect(repeatedFailure).toMatchObject({
+        status: "warning",
+        message: "Claude is signed in, but Scient could not complete its readiness check.",
+      });
+      expect(repeatedFailure.auth).toEqual({ status: "authenticated", required: true });
+      // SCIENT-FORK:END
+      expect(repeatedFailure.slashCommands).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
+      );
+      expect(probeCount).toBeGreaterThan(sameAccountFailureProbeCount);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -596,6 +715,90 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(outcome).toMatchObject({ _tag: "Success", success: "alreadyRedeemed" });
       }),
   );
+
+  const makeClaudeCacheFixture = Effect.fn("ProviderInstanceRegistry.test.makeClaudeCacheFixture")(
+    function* (state: "ready" | "signed-out" | "usage-failed") {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixtures = yield* makeTildeProviderFixtures();
+      const recovered = path.join(fixtures.claudeHomePath, "recovered");
+      const instanceId = ProviderInstanceId.make("claude_cache");
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            environment: [
+              ...(state === "ready"
+                ? []
+                : [
+                    {
+                      name:
+                        state === "signed-out"
+                          ? "T3_CLAUDE_LOGIN_MARKER"
+                          : "T3_CLAUDE_USAGE_FAILS_UNTIL",
+                      value: recovered,
+                      sensitive: false,
+                    },
+                  ]),
+            ],
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const instance = yield* registry.getInstance(instanceId);
+      expect(instance).toBeDefined();
+      return {
+        refresh: instance!.snapshot.refresh,
+        recover: fs.writeFileString(recovered, ""),
+      };
+    },
+  );
+
+  it.effect.skipIf(windowsHost)("reuses Claude's successful usage probe on refresh", () =>
+    Effect.gen(function* () {
+      // CLI auth checks must remain fresh; only the SDK usage probe earns the cache TTL.
+      const query = vi.spyOn(ClaudeSdk, "query");
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+      const fixture = yield* makeClaudeCacheFixture("ready");
+      const first = yield* fixture.refresh;
+      const second = yield* fixture.refresh;
+      expect(first.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
+      expect(second.usageLimits).toEqual(first.usageLimits);
+      expect(query.mock.calls).toHaveLength(1);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  for (const state of ["signed-out", "usage-failed"] as const) {
+    it.effect.skipIf(windowsHost)(
+      state === "signed-out"
+        ? "shows Claude usage on the first refresh after signing back in"
+        : "retries Claude usage on the first refresh after a failed usage read",
+      () =>
+        Effect.gen(function* () {
+          const fixture = yield* makeClaudeCacheFixture(state);
+          const before = yield* fixture.refresh;
+          if (state === "signed-out") {
+            expect(before.auth.status).toBe("unauthenticated");
+            expect(before.usageLimits).toBeUndefined();
+          } else {
+            expect(before.auth.status).toBe("authenticated");
+            expect(before.usageLimits?.unavailable?.reason).toBe("probeFailed");
+          }
+
+          yield* fixture.recover;
+          const after = yield* fixture.refresh;
+          expect(after.auth.status).toBe("authenticated");
+          expect(after.usageLimits?.unavailable).toBeUndefined();
+          expect(after.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
+        }).pipe(Effect.provide(testLayer)),
+    );
+  }
 
   it.live(
     "shadows instances whose driver is not registered in this build without failing boot",

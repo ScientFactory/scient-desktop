@@ -7,8 +7,13 @@ export {
   type CursorRuntimeResolution,
   type CursorRuntimeResolverInput,
 } from "./server/driver.ts";
+/**
+ * Default native Cursor adapter for hosts without application-owned prompt policy.
+ *
+ * @public
+ */
+export { CursorAdapterV2Driver } from "./server/adapter.ts";
 export {
-  CursorAdapterV2Driver,
   makeCursorAdapterV2Driver,
   type CursorAdapterV2DriverEnv,
   type CursorAdapterV2DriverOptions,

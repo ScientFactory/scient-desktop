@@ -54,7 +54,7 @@ import { initializeV2Database } from "./initializeV2Database.ts";
 import { refreshLegacyV1Snapshot } from "./refreshLegacyV1Snapshot.ts";
 import * as ServerConfig from "../config.ts";
 
-export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
+const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
 const layerSetup = (filesystemPaths?: RetiredThreadFilesystemPaths) =>
   Layer.effectDiscard(
@@ -80,8 +80,17 @@ const layerSetup = (filesystemPaths?: RetiredThreadFilesystemPaths) =>
       // largest size until the last connection closes.
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
       yield* runMigrations();
-      // Analyze missing or substantially changed index statistics under a bounded analysis limit.
-      yield* sql`PRAGMA optimize = 0x10012;`;
+      // No planner statistics. Collecting them reads every page of the large
+      // tables, and stats taken while a table was small make the planner scan it
+      // once it grows. Without them SQLite assumes large tables and uses indexes;
+      // the few queries that still pick a worse index name theirs with INDEXED BY.
+      // Older builds collected stats, so clear them. A connection loads stats
+      // when it opens, so this one must reload them after the delete.
+      const statTables = yield* sql`SELECT 1 FROM sqlite_schema WHERE name = 'sqlite_stat1'`;
+      if (statTables.length > 0) {
+        yield* sql`DELETE FROM sqlite_stat1;`;
+        yield* sql`ANALYZE sqlite_schema;`;
+      }
       // SCIENT-FORK:START
       yield* runScientMigrations(sql);
       // SCIENT-FORK:END

@@ -1,4 +1,12 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, type HTMLAttributes } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import {
+  forwardRef,
+  useEffect,
+  useLayoutEffect,
+  useImperativeHandle,
+  useRef,
+  type HTMLAttributes,
+} from "react";
 
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
@@ -78,11 +86,13 @@ export const PlotlyView = forwardRef<PlotlyViewController, PlotlyViewProps>(func
   });
   const presentationQueueRef = useRef<Promise<void>>(Promise.resolve());
 
-  onErrorRef.current = onError;
-  onReadyRef.current = onReady;
-  onWebGlContextLostRef.current = onWebGlContextLost;
-  surfaceRef.current = surface;
-  themeRef.current = theme;
+  useLayoutEffect(() => {
+    onErrorRef.current = onError;
+    onReadyRef.current = onReady;
+    onWebGlContextLostRef.current = onWebGlContextLost;
+    surfaceRef.current = surface;
+    themeRef.current = theme;
+  }, [onError, onReady, onWebGlContextLost, surface, theme]);
 
   useImperativeHandle(
     forwardedRef,
@@ -122,77 +132,80 @@ export const PlotlyView = forwardRef<PlotlyViewController, PlotlyViewProps>(func
     [],
   );
 
-  useEffect(() => {
-    const host = hostRef.current;
-    if (host == null) return;
+  const mountView = useStableCallback(
+    (initialState: PlotlyViewProps["initialState"], parsed: ParsedPlotlySource) => {
+      const host = hostRef.current;
+      if (host == null) return;
 
-    // Plotly mutates its graph div (including its class list and private plot
-    // markers). Keep that div outside React's reconciliation boundary so a
-    // loading/ready class update on the host cannot invalidate the live plot.
-    const container = host.ownerDocument.createElement("div");
-    container.className = "scient-plotly-graph";
-    host.replaceChildren(container);
+      // Plotly mutates its graph div (including its class list and private plot
+      // markers). Keep that div outside React's reconciliation boundary so a
+      // loading/ready class update on the host cannot invalidate the live plot.
+      const container = host.ownerDocument.createElement("div");
+      container.className = "scient-plotly-graph";
+      host.replaceChildren(container);
 
-    let cancelled = false;
-    let ownedMount: MountedPlotlyView | null = null;
-    const releaseOwnedMount = () => {
-      const mounted = ownedMount;
-      if (mounted == null) return;
-      ownedMount = null;
-      if (mountedRef.current === mounted) mountedRef.current = null;
-      mounted.dispose();
-    };
-
-    // Let React's Strict Mode probe cancel before Plotly mutates the graph div.
-    let startFrame: number | null = requestAnimationFrame(() => {
-      startFrame = null;
-      void plotlyMountQueue.enqueue(async () => {
-        if (cancelled) return;
-        container.replaceChildren();
-        try {
-          ownedMount = await mountPlotlyView({
-            container,
-            initialState,
-            onWebGlContextLost: () => onWebGlContextLostRef.current(),
-            parsed,
-            surface: surfaceRef.current,
-            theme: themeRef.current,
-          });
-          if (cancelled) {
-            releaseOwnedMount();
-            return;
-          }
-          if (themeRef.current !== theme || surfaceRef.current !== surface) {
-            await ownedMount.updatePresentation(themeRef.current, surfaceRef.current);
-          }
-          if (cancelled) {
-            releaseOwnedMount();
-            return;
-          }
-          mountedRef.current = ownedMount;
-          onReadyRef.current(ownedMount);
-        } catch (cause) {
-          releaseOwnedMount();
-          if (!cancelled) {
-            console.error("[scient-visualizations] Plotly mount failed", cause);
-            onErrorRef.current(normalizedPlotlyError(cause));
-          }
-        }
-      });
-    });
-
-    return () => {
-      cancelled = true;
-      if (startFrame != null) cancelAnimationFrame(startFrame);
-      const mounted = ownedMount;
-      ownedMount = null;
-      if (mounted != null) {
+      let cancelled = false;
+      let ownedMount: MountedPlotlyView | null = null;
+      const releaseOwnedMount = () => {
+        const mounted = ownedMount;
+        if (mounted == null) return;
+        ownedMount = null;
         if (mountedRef.current === mounted) mountedRef.current = null;
-        void plotlyMountQueue.enqueue(async () => mounted.dispose());
-      }
-      container.remove();
-    };
-  }, [initialState, parsed]);
+        mounted.dispose();
+      };
+
+      // Let React's Strict Mode probe cancel before Plotly mutates the graph div.
+      let startFrame: number | null = requestAnimationFrame(() => {
+        startFrame = null;
+        void plotlyMountQueue.enqueue(async () => {
+          if (cancelled) return;
+          container.replaceChildren();
+          try {
+            ownedMount = await mountPlotlyView({
+              container,
+              initialState,
+              onWebGlContextLost: () => onWebGlContextLostRef.current(),
+              parsed,
+              surface: surfaceRef.current,
+              theme: themeRef.current,
+            });
+            if (cancelled) {
+              releaseOwnedMount();
+              return;
+            }
+            if (themeRef.current !== theme || surfaceRef.current !== surface) {
+              await ownedMount.updatePresentation(themeRef.current, surfaceRef.current);
+            }
+            if (cancelled) {
+              releaseOwnedMount();
+              return;
+            }
+            mountedRef.current = ownedMount;
+            onReadyRef.current(ownedMount);
+          } catch (cause) {
+            releaseOwnedMount();
+            if (!cancelled) {
+              console.error("[scient-visualizations] Plotly mount failed", cause);
+              onErrorRef.current(normalizedPlotlyError(cause));
+            }
+          }
+        });
+      });
+
+      return () => {
+        cancelled = true;
+        if (startFrame != null) cancelAnimationFrame(startFrame);
+        const mounted = ownedMount;
+        ownedMount = null;
+        if (mounted != null) {
+          if (mountedRef.current === mounted) mountedRef.current = null;
+          void plotlyMountQueue.enqueue(async () => mounted.dispose());
+        }
+        container.remove();
+      };
+    },
+  );
+  useEffect(() => mountView(initialState, parsed), [initialState, parsed, mountView]);
 
   useEffect(() => {
     const mounted = mountedRef.current;

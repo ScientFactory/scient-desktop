@@ -173,7 +173,6 @@ export function buildThreadActionMenuItems(
                     id: `snooze:${preset.id}` as const,
                     label: `${preset.label} (${preset.whenLabel})`,
                   })),
-
                   { id: "snooze:custom" as const, label: "Custom…", separatorBefore: true },
                 ],
               },
@@ -189,9 +188,7 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "regenerate-title" as const,
-
             label: state.isRegeneratingTitle ? "Regenerating…" : "Regenerate title",
-
             icon: "refresh-cw",
             disabled: state.isRegeneratingTitle,
           },

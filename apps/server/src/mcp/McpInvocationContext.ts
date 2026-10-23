@@ -72,6 +72,14 @@ export interface McpInvocationScope {
   readonly requestNamespace: string;
   readonly thread: McpThreadCaller | undefined;
   readonly client: McpClientCaller | undefined;
+  // SCIENT-FORK:START Scient Extensions connectors
+  /**
+   * Connectors delivered with a provider-session credential. The connector
+   * proxy honors only these, and only for a thread caller. Absent means none
+   * (client sessions never reach connectors).
+   */
+  readonly connectorIds?: ReadonlySet<string>;
+  // SCIENT-FORK:END
 }
 
 export class McpInvocationContext extends Context.Service<

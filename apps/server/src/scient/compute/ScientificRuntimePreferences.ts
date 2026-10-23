@@ -38,14 +38,15 @@ export function makeScientificRuntimePreferences(
   });
   return {
     getSettings,
-    readRuntimeExecutablePath: (kind: string) =>
-      Effect.gen(function* () {
+    readRuntimeExecutablePath: Effect.fn("ScientificRuntimePreferences.readRuntimeExecutablePath")(
+      function* (kind: string) {
         const current = yield* settings.getSettings;
         const preference = current.scientificComputing.languages[ComputeLanguageId.make(kind)];
         if (kind === "matlab" && preference === undefined)
           return yield* legacy.readRuntimeExecutablePath(kind);
         return { executablePath: preference?.executable || null, warning: null };
-      }),
+      },
+    ),
     writeRuntimeExecutablePath: (kind: string, executablePath: string | null) =>
       settings
         .updateSettings({

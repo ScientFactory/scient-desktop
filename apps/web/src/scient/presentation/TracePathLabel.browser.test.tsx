@@ -1,10 +1,10 @@
+import { act as _fixtureAct, render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 import { createRef } from "react";
-import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
+
 import type { LegendListRef } from "@legendapp/list/react";
 import { EnvironmentId, RunId } from "@t3tools/contracts";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 import { TooltipScrollDismissArea } from "~/components/ui/tooltip";
 import { MessagesTimeline } from "~/components/chat/MessagesTimeline";
@@ -12,8 +12,6 @@ import { workEntryPathPresentation } from "~/components/chat/MessagesTimeline.lo
 import { TracePathLabel } from "./TracePathLabel";
 import { TracePathTooltipEnabled } from "./TracePathLabel.context";
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
 const date = "2026-10-10T00:00:00.000Z";
 const fullPath = "/work/project/apps/web/src/deep/view.tsx";
 const entry = {
@@ -27,23 +25,25 @@ const entry = {
   toolData: { input: { file_path: fullPath } },
 };
 
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
   document.documentElement.classList.remove("dark");
   document.documentElement.style.removeProperty("--popover");
-});
+}
 
-function mount(children: React.ReactNode) {
-  if (!host) {
-    host = document.createElement("div");
-    Object.assign(host.style, { width: "360px", height: "400px" });
-    document.body.append(host);
-    root = createRoot(host);
+async function mount(_fixture: _Fixture, children: React.ReactNode) {
+  if (!_fixture.host) {
+    _fixture.host = document.createElement("div");
+    Object.assign(_fixture.host.style, { width: "360px", height: "400px" });
+    document.body.append(_fixture.host);
+    _fixture.root0 = _fixture.stack.use(
+      await _fixtureRender(null, { container: _fixture.host, router: false }),
+    );
   }
-  flushSync(() => root!.render(children));
+  await _fixtureAct(async () => await _fixture.root0!.rerender(children));
 }
 
 function label(path = fullPath) {
@@ -54,8 +54,9 @@ function label(path = fullPath) {
   return <TracePathLabel text={presentation!.text} path={presentation} />;
 }
 
-function fixture(path = fullPath, onClick = vi.fn()) {
-  mount(
+async function fixture(_fixture: _Fixture, path = fullPath, onClick = vi.fn()) {
+  await mount(
+    _fixture,
     <TooltipScrollDismissArea>
       <button type="button" onClick={onClick}>
         {label(path)}
@@ -66,7 +67,10 @@ function fixture(path = fullPath, onClick = vi.fn()) {
 }
 
 it("shows a light, wrapping full-path card only over the shortened path", async () => {
-  fixture(`/work/project/${"long folder/".repeat(10)}deep/view.tsx`);
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await fixture(_fixture, `/work/project/${"long folder/".repeat(10)}deep/view.tsx`);
   await page.getByText("deep/view.tsx", { exact: true }).hover();
   await expect.element(page.getByRole("tooltip")).toBeVisible();
   const popup = document.querySelector<HTMLElement>('[role="tooltip"]')!;
@@ -82,8 +86,11 @@ it("shows a light, wrapping full-path card only over the shortened path", async 
 });
 
 it("uses the dark and custom theme surfaces", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
   document.documentElement.classList.add("dark");
-  fixture();
+  await fixture(_fixture);
   await page.getByText("deep/view.tsx", { exact: true }).hover();
   await expect.element(page.getByRole("tooltip")).toBeVisible();
   const popup = document.querySelector<HTMLElement>('[role="tooltip"]')!;
@@ -93,7 +100,10 @@ it("uses the dark and custom theme surfaces", async () => {
 });
 
 it("opens on keyboard focus and leaves the row click intact", async () => {
-  const clicked = fixture();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const clicked = await fixture(_fixture);
   await userEvent.tab();
   await userEvent.tab();
   await expect.element(page.getByRole("tooltip")).toBeVisible();
@@ -105,20 +115,27 @@ it("opens on keyboard focus and leaves the row click intact", async () => {
 });
 
 it("dismisses hovered cards when the timeline scrolls or the row changes", async () => {
-  fixture();
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await fixture(_fixture);
   await page.getByText("deep/view.tsx", { exact: true }).hover();
   await expect.element(page.getByRole("tooltip")).toBeVisible();
-  host!.querySelector("button")!.dispatchEvent(new Event("scroll", { bubbles: true }));
+  _fixture.host!.querySelector("button")!.dispatchEvent(new Event("scroll", { bubbles: true }));
   await expect.element(page.getByRole("tooltip")).not.toBeInTheDocument();
   await userEvent.unhover(page.getByRole("button"));
   await page.getByText("deep/view.tsx", { exact: true }).hover();
   await expect.element(page.getByRole("tooltip")).toBeVisible();
-  fixture("/another/project/deep/view.tsx");
+  await fixture(_fixture, "/another/project/deep/view.tsx");
   await expect.element(page.getByRole("tooltip")).not.toBeInTheDocument();
 });
 
-it("gives the animation copy no hover trigger or keyboard stop", () => {
-  mount(
+it("gives the animation copy no hover trigger or keyboard stop", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await mount(
+    _fixture,
     <>
       {label()}
       <TracePathTooltipEnabled value={false}>
@@ -126,21 +143,26 @@ it("gives the animation copy no hover trigger or keyboard stop", () => {
       </TracePathTooltipEnabled>
     </>,
   );
-  expect(host!.querySelectorAll("[data-trace-path]")).toHaveLength(1);
-  expect(host!.querySelector("[aria-hidden] [tabindex]")).toBeNull();
+  expect(_fixture.host!.querySelectorAll("[data-trace-path]")).toHaveLength(1);
+  expect(_fixture.host!.querySelector("[aria-hidden] [tabindex]")).toBeNull();
 });
 
 it.each([false, true])(
   "integrates with the actual %s live timeline and disclosure",
   async (live) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
     const listRef = createRef<LegendListRef>();
     const read = {
       ...entry,
       runId: RunId.make("run-1"),
       toolLifecycleStatus: live ? ("inProgress" as const) : ("completed" as const),
     };
-    mount(
+    await mount(
+      _fixture,
       <MessagesTimeline
+        emptyPlaceholderInset={0}
         listRef={listRef}
         routeThreadKey="trace-path-browser"
         timelineEntries={[{ id: "read-path", kind: "work", createdAt: date, entry: read }]}
@@ -168,7 +190,6 @@ it.each([false, true])(
         timestampFormat="locale"
         workspaceRoot="/work/project"
         runs={[]}
-        providerStatuses={[]}
         anchorMessageId={null}
         onAnchorReady={() => {}}
         onAnchorSizeChanged={() => {}}
@@ -178,15 +199,34 @@ it.each([false, true])(
       />,
     );
     if (!live) await page.getByRole("button", { name: /Worked for/ }).click();
-    await expect.poll(() => host!.querySelectorAll("[data-trace-path]").length).toBe(1);
+    await expect.poll(() => _fixture.host!.querySelectorAll("[data-trace-path]").length).toBe(1);
     // The live animation has the same text but never another trigger.
     const trigger = page.getByText("deep/view.tsx", { exact: true });
     await trigger.hover();
     await expect.element(page.getByRole("tooltip")).toHaveTextContent(fullPath);
     await trigger.click();
-    await expect.poll(() => host!.querySelector('[aria-expanded="true"]')).not.toBeNull();
+    await expect.poll(() => _fixture.host!.querySelector('[aria-expanded="true"]')).not.toBeNull();
     if (live) await page.getByRole("button", { name: "Read deep/view.tsx", exact: true }).click();
-    expect(host!.textContent).toContain(fullPath);
-    expect(host!.querySelector("button button")).toBeNull();
+    expect(_fixture.host!.textContent).toContain(fullPath);
+    expect(_fixture.host!.querySelector("button button")).toBeNull();
   },
 );
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

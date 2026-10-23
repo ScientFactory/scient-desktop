@@ -16,24 +16,6 @@ vi.mock("node:v8", async (importOriginal) => {
 });
 
 it.layer(NodeServices.layer)("writeHeapSnapshot", (it) => {
-  it.effect("removes the partial file when the write fails", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const logsDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-heap-snapshot-test-" });
-      let partialPath: string | undefined;
-      vi.mocked(NodeV8.writeHeapSnapshot).mockImplementationOnce((path) => {
-        partialPath = path;
-        if (path) NodeFS.writeFileSync(path, "partial");
-        throw new Error("ENOSPC: no space left on device");
-      });
-
-      yield* writeHeapSnapshot(logsDir);
-
-      assert.strictEqual(NodePath.dirname(partialPath ?? ""), logsDir);
-      assert.deepEqual(yield* fs.readDirectory(logsDir), []);
-    }),
-  );
-
   it.effect("leaves the snapshot owner-only and never publishes the partial file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

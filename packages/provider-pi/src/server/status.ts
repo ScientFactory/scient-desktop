@@ -72,7 +72,7 @@ const PI_PRESENTATION = {
 } as const;
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
-const PI_RPC_DISCOVERY_TIMEOUT_MS = 15_000;
+const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
 /**
  * get_entries arrived in 0.80.3 and agent_settled landed in source at 0.80.4.
  * Version 0.80.5 was the first published package containing both hooks.
@@ -115,9 +115,13 @@ function parseDiscoveredModels(
   data: unknown,
   state: unknown,
   providerLabel?: (provider: string) => string | undefined,
-): ReadonlyArray<ServerProviderModel> {
+): Result.Result<ReadonlyArray<ServerProviderModel>, PiRpcError> {
   const models = recordField(data, "models");
-  if (!Array.isArray(models)) return [];
+  if (!Array.isArray(models)) {
+    return Result.fail(
+      new PiRpcError({ operation: "get_available_models", detail: "Invalid model inventory" }),
+    );
+  }
   const activeModel = recordField(state, "model");
   const activeProvider = recordString(activeModel, "provider");
   const activeModelId = recordString(activeModel, "id");
@@ -126,9 +130,19 @@ function parseDiscoveredModels(
   for (const model of models) {
     const provider = recordString(model, "provider");
     const id = recordString(model, "id");
-    if (provider === undefined || id === undefined) continue;
+    if (provider === undefined || id === undefined || provider.trim() === "" || id.trim() === "") {
+      return Result.fail(
+        new PiRpcError({ operation: "get_available_models", detail: "Invalid model identity" }),
+      );
+    }
+    // SCIENT-FORK:START encoded identity also supports Oh My Pi model ids.
     const slug = encodePiModelSlug(provider, id);
-    if (slug === undefined) continue;
+    if (slug === undefined) {
+      return Result.fail(
+        new PiRpcError({ operation: "get_available_models", detail: "Invalid model identity" }),
+      );
+    }
+    // SCIENT-FORK:END
     if (seen.has(slug)) continue;
     seen.add(slug);
     parsed.push({
@@ -145,7 +159,7 @@ function parseDiscoveredModels(
       ),
     });
   }
-  return parsed;
+  return Result.succeed(parsed);
 }
 
 const makePiDiscoveryConnection = Effect.fnUntraced(function* (
@@ -177,74 +191,75 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
   return connection;
 });
 
-const discoverPiViaRpc = (
+const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
   launchArgs: ReadonlyArray<string>,
   cwd: string | undefined,
   makeDiscoveryClient: PiDiscoveryClientFactory | undefined,
-) =>
-  Effect.gen(function* () {
-    const launch = buildPiRpcLaunch({
-      launchArgs,
-      environment,
-      mcpSession: undefined,
-      extensionPath: undefined,
-      // SCIENT-FORK:START — inventory must not execute workspace or profile extensions.
-      ...PI_DISCOVERY_LAUNCH_POLICY,
-      // SCIENT-FORK:END
-    });
-    if (makeDiscoveryClient !== undefined) {
-      const client = yield* makeDiscoveryClient({
-        command: piSettings.binaryPath || "pi",
-        // The typed client owns the RPC mode prefix.
-        args: launch.args.slice(2),
-        ...(cwd === undefined ? {} : { cwd }),
-        env: launch.env,
-      });
-      yield* client.events.pipe(Stream.runDrain, Effect.ignore, Effect.forkScoped);
-      const state = yield* client.getState();
-      const inventory = yield* client.getAvailableModels();
-      const commands = yield* client.getCommands();
-      const models = parseDiscoveredModels(inventory, state, client.modelProviderLabel);
-      const discovered = parsePiDiscoveredCommands(commands);
-      return {
-        models,
-        slashCommands: withPiBuiltinSlashCommands(discovered.slashCommands),
-        skills: discovered.skills,
-        authenticated: models.length > 0,
-        ...(client.assessModelConnections === undefined
-          ? {}
-          : {
-              modelConnections: client.assessModelConnections(inventory.models),
-            }),
-      } satisfies PiDiscovery;
-    }
-    const connection = yield* makePiRpcConnection({
+) {
+  const launch = buildPiRpcLaunch({
+    launchArgs,
+    environment,
+    mcpSession: undefined,
+    extensionPath: undefined,
+    // SCIENT-FORK:START — inventory must not execute workspace or profile extensions.
+    ...PI_DISCOVERY_LAUNCH_POLICY,
+    // SCIENT-FORK:END
+  });
+  if (makeDiscoveryClient !== undefined) {
+    const client = yield* makeDiscoveryClient({
       command: piSettings.binaryPath || "pi",
-      args: launch.args,
-      cwd,
+      // The typed client owns the RPC mode prefix.
+      args: launch.args.slice(2),
+      ...(cwd === undefined ? {} : { cwd }),
       env: launch.env,
     });
-    yield* Stream.fromQueue(connection.events).pipe(
-      Stream.runDrain,
-      Effect.ignore,
-      Effect.forkScoped,
+    yield* client.events.pipe(Stream.runDrain, Effect.ignore, Effect.forkScoped);
+    const state = yield* client.getState();
+    const inventory = yield* client.getAvailableModels();
+    const commands = yield* client.getCommands();
+    const models = yield* Effect.fromResult(
+      parseDiscoveredModels(inventory, state, client.modelProviderLabel),
     );
-    const stateData = yield* connection.request({ type: "get_state" });
-    const modelsData = yield* connection.request({ type: "get_available_models" });
-    const commandsData = yield* connection
-      .request({ type: "get_commands" })
-      .pipe(Effect.orElseSucceed(() => undefined));
-    const discoveredModels = parseDiscoveredModels(modelsData, stateData);
-    const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
+    const discovered = parsePiDiscoveredCommands(commands);
     return {
-      models: discoveredModels,
-      slashCommands: withPiBuiltinSlashCommands(slashCommands),
-      skills,
-      authenticated: discoveredModels.length > 0,
+      models,
+      slashCommands: withPiBuiltinSlashCommands(discovered.slashCommands),
+      skills: discovered.skills,
+      authenticated: models.length > 0,
+      ...(client.assessModelConnections === undefined
+        ? {}
+        : {
+            modelConnections: client.assessModelConnections(inventory.models),
+          }),
     } satisfies PiDiscovery;
-  }).pipe(Effect.scoped);
+  }
+  const connection = yield* makePiRpcConnection({
+    command: piSettings.binaryPath || "pi",
+    args: launch.args,
+    cwd,
+    env: launch.env,
+  });
+  yield* Stream.fromQueue(connection.events).pipe(
+    Stream.runDrain,
+    Effect.ignore,
+    Effect.forkScoped,
+  );
+  const stateData = yield* connection.request({ type: "get_state" });
+  const modelsData = yield* connection.request({ type: "get_available_models" });
+  const commandsData = yield* connection
+    .request({ type: "get_commands" })
+    .pipe(Effect.orElseSucceed(() => undefined));
+  const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
+  const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
+  return {
+    models: discoveredModels,
+    slashCommands: withPiBuiltinSlashCommands(slashCommands),
+    skills,
+    authenticated: discoveredModels.length > 0,
+  } satisfies PiDiscovery;
+}, Effect.scoped);
 
 export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
   function* (
@@ -296,57 +311,57 @@ export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
   }),
 );
 
-const runPiVersionCommand = (piSettings: PiSettings, environment: NodeJS.ProcessEnv) =>
-  Effect.gen(function* () {
-    const command = piSettings.binaryPath || "pi";
-    const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
-      env: environment,
-    });
-    return yield* spawnAndCollect(
-      command,
-      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: environment,
-        shell: spawnCommand.shell,
-      }),
-    );
-  });
-
-export function buildInitialPiProviderSnapshot(
+const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(function* (
   piSettings: PiSettings,
-): Effect.Effect<ServerProviderDraft> {
-  return Effect.gen(function* () {
-    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const models = piModelsFromSettings(piSettings.customModels);
-    if (!piSettings.enabled) {
-      return buildServerProvider({
-        presentation: PI_PRESENTATION,
-        enabled: false,
-        checkedAt,
-        models,
-        probe: {
-          installed: false,
-          version: null,
-          status: "warning",
-          auth: { status: "unknown" },
-          message: "Pi is disabled in Scient settings.",
-        },
-      });
-    }
+  environment: NodeJS.ProcessEnv,
+) {
+  const command = piSettings.binaryPath || "pi";
+  const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
+    env: environment,
+  });
+  return yield* spawnAndCollect(
+    command,
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      env: environment,
+      shell: spawnCommand.shell,
+    }),
+  );
+});
+
+export const buildInitialPiProviderSnapshot = Effect.fn(
+  "PiProviderStatus.buildInitialPiProviderSnapshot",
+)(function* (piSettings: PiSettings): Effect.fn.Return<ServerProviderDraft> {
+  const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+  const models = piModelsFromSettings(piSettings.customModels);
+  if (!piSettings.enabled) {
     return buildServerProvider({
       presentation: PI_PRESENTATION,
-      enabled: true,
+      enabled: false,
       checkedAt,
       models,
       probe: {
-        installed: true,
+        installed: false,
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Checking Pi CLI availability...",
+        message: "Pi is disabled in Scient settings.",
       },
     });
+  }
+  return buildServerProvider({
+    presentation: PI_PRESENTATION,
+    enabled: true,
+    checkedAt,
+    models,
+    probe: {
+      installed: true,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "Checking Pi CLI availability...",
+    },
   });
-}
+});
 
 export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function* (
   piSettings: PiSettings,

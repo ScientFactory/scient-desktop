@@ -27,8 +27,14 @@ export type DesktopAssetCopyResult = AssetCopyResultType;
 /** Scient members of the desktop bridge; ipc.ts's DesktopBridge extends this interface. */
 export interface ScientDesktopBridge {
   keepAwake?: (request: KeepAwakeRequest) => Promise<KeepAwakeState>;
-  /** Scient: macOS conversations with unread completed answers; zero clears the badge. */
-  setUnreadAnswerCount?: (count: number) => Promise<boolean>;
+  /**
+   * Scient: shows the threads with an unread answer on the app icon; zero clears it. `image` is
+   * the Windows taskbar overlay. Resolves whether the platform accepted it.
+   */
+  setUnreadAnswerBadge?: (badge: {
+    readonly count: number;
+    readonly image: string | null;
+  }) => Promise<boolean>;
   // Conversation files the OS opened with Scient.
   /** Scient: removes and returns the `.scic` files opened with Scient that await import. */
   takeOpenedConversationFiles?: () => Promise<ReadonlyArray<DesktopOpenedConversationFile>>;

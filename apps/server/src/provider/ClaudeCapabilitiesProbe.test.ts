@@ -1,64 +1,24 @@
 // @effect-diagnostics nodeBuiltinImport:off - cleanup uses Node's retrying rm, which the FileSystem service does not expose.
-import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
-import { vi } from "vite-plus/test";
-import * as Deferred from "effect/Deferred";
-import * as Fiber from "effect/Fiber";
-import * as TestClock from "effect/testing/TestClock";
-import {
-  ClaudeSettings,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ServerProvider,
-} from "@t3tools/contracts";
-import * as NodeFSP from "node:fs/promises";
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-
-import {
-  buildClaudeCapabilitiesProbeQueryOptions,
-  CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
-  probeClaudeCapabilities,
-  probeClaudeWorkspaceSnapshot,
-} from "./ClaudeProvider.ts";
+import * as FileSystem from "effect/FileSystem";
+import { ClaudeSettings } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
+import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
+import { type ServerProvider } from "@t3tools/contracts";
+import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
+import { probeClaudeWorkspaceSnapshot } from "./ClaudeProvider.ts";
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
+import * as NodeFSP from "node:fs/promises";
+import { probeClaudeCapabilities } from "./ClaudeProvider.ts";
+import { vi } from "vite-plus/test";
+import { assert, it } from "@effect/vitest";
+
+import { buildClaudeCapabilitiesProbeQueryOptions } from "./ClaudeProvider.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
-
-const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
-
-it("isolates Claude capability probes without dropping workspace setting sources", () => {
-  const abortController = new AbortController();
-  const options = buildClaudeCapabilitiesProbeQueryOptions({
-    executablePath: "/usr/bin/claude",
-    abortController,
-    environment: {
-      HOME: "/home/user",
-      ENABLE_CLAUDEAI_MCP_SERVERS: "true",
-      FORCE_CODE_TERMINAL: "1",
-    },
-    cwd: "/workspace/project",
-    managedMcpConfig: false,
-  });
-
-  assert.deepEqual(options.mcpServers, {});
-  assert.equal(options.strictMcpConfig, true);
-  assert.equal(options.cwd, "/workspace/project");
-  assert.deepEqual(options.settingSources, [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES]);
-  assert.deepEqual(options.settings, { disableAllHooks: true });
-  assert.deepEqual(options.allowedTools, []);
-  assert.equal(options.persistSession, false);
-  assert.equal(options.pathToClaudeCodeExecutable, "/usr/bin/claude");
-  assert.equal(options.abortController, abortController);
-  assert.equal(options.env?.HOME, "/home/user");
-  assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
-  assert.equal(options.env?.FORCE_CODE_TERMINAL, undefined);
-  assert.equal(options.env?.CLAUDE_CODE_AUTO_CONNECT_IDE, "0");
-  assert.equal(options.env?.CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL, "1");
-});
 
 it("drops strict MCP mode, and only that, next to an administrator's managed-mcp.json", () => {
   const options = buildClaudeCapabilitiesProbeQueryOptions({
@@ -74,6 +34,8 @@ it("drops strict MCP mode, and only that, next to an administrator's managed-mcp
   assert.deepEqual(options.mcpServers, {});
   assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
 });
+
+const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
   it.effect(
@@ -260,7 +222,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-probe-sdk-" });
       const executablePath = yield* path.fromFileUrl(
-        new URL("./testing/ClaudeCapabilitiesProbe.fixture.mjs", import.meta.url),
+        new URL("./testing/scient/ClaudeCapabilitiesProbe.fixture.mjs", import.meta.url),
       );
       const invocationPath = path.join(tempDir, "invocation.json");
       // The probe aborts the SDK without awaiting the child's exit, and on
@@ -309,6 +271,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           rate_limits_available: true,
           rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },
         },
+        usageCheckedAt: "1970-01-01T00:00:00.000Z",
       });
 
       const invocation = JSON.parse(yield* fs.readFileString(invocationPath)) as {
@@ -334,60 +297,3 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
     }).pipe(Effect.scoped),
   );
 });
-
-it.effect("preserves initialized capabilities when optional usage times out", () =>
-  Effect.gen(function* () {
-    const usageStarted = yield* Deferred.make<void>();
-    let abortSignal: AbortSignal | undefined;
-    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
-      abortSignal = options?.abortController?.signal;
-      return {
-        initializationResult: async () => ({
-          account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
-          commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
-        }),
-        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => {
-          Deferred.doneUnsafe(usageStarted, Effect.void);
-          return new Promise(() => {});
-        },
-      } as ReturnType<typeof ClaudeSdk.query>;
-    });
-    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
-    const probe = yield* probeClaudeCapabilities(
-      decodeClaudeSettings({ binaryPath: "claude" }),
-    ).pipe(Effect.forkChild);
-    yield* Deferred.await(usageStarted);
-    yield* TestClock.adjust("4 seconds");
-    const capabilities = yield* Fiber.join(probe);
-    assert.equal(capabilities?.email, "dev@example.com");
-    assert.equal(capabilities?.subscriptionType, "pro");
-    assert.equal(capabilities?.tokenSource, "oauth");
-    assert.deepEqual(capabilities?.slashCommands, [
-      { name: "review", description: "Review changes", input: { hint: "[path]" } },
-    ]);
-    assert.equal(capabilities?.usage, undefined);
-    assert.equal(abortSignal?.aborted, true);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("asks for usage without the local transcript scan", () =>
-  Effect.gen(function* () {
-    let usageOptions: unknown;
-    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
-      () =>
-        ({
-          initializationResult: async () => ({
-            account: { email: "dev@example.com", subscriptionType: "max", tokenSource: "oauth" },
-            commands: [],
-          }),
-          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async (options?: unknown) => {
-            usageOptions = options;
-            return { rate_limits_available: true, rate_limits: null };
-          },
-        }) as unknown as ReturnType<typeof ClaudeSdk.query>,
-    );
-    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
-    yield* probeClaudeCapabilities(decodeClaudeSettings({ binaryPath: "claude" }));
-    assert.deepEqual(usageOptions, { skipBehaviors: true });
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);

@@ -28,8 +28,8 @@ const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const platform = yield* HostProcess.Platform;
 
-  const start: ExecutionProcessPort["start"] = (request) =>
-    Effect.gen(function* () {
+  const start: ExecutionProcessPort["start"] = Effect.fn("LocalExecutionProcess.start")(
+    function* (request) {
       const child = yield* spawner
         .spawn(makeLocalOwnedProcess(request, platform))
         .pipe(
@@ -70,7 +70,8 @@ const make = Effect.gen(function* () {
         Effect.tap(() => cancel),
       );
       return { output, exitCode, cancel } satisfies ExecutionProcessHandle;
-    });
+    },
+  );
 
   return ExecutionProcess.of({ start });
 });

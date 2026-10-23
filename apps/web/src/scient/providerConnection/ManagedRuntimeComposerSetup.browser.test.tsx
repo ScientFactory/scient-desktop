@@ -1,3 +1,4 @@
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import "../../index.css";
 
 import {
@@ -7,8 +8,8 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 import { PiIcon } from "../../components/Icons";
@@ -23,6 +24,10 @@ const controller: ProviderLifecycleController = {
   cancelConnection: vi.fn(),
   submitAuthorizationCode: vi.fn(),
   disconnect: vi.fn(),
+  signInKey: {
+    environmentId: "environment-test",
+    instanceId: "sign-in-test",
+  } as ProviderLifecycleController["signInKey"],
   openAuthorizationPage: vi.fn(),
   updateExternalRuntime: vi.fn(),
   refresh: vi.fn(),
@@ -78,15 +83,12 @@ function OnboardingPopover(props: { readonly children: ReactNode }) {
   );
 }
 
-let root: Root | undefined;
-let host: HTMLDivElement | undefined;
-
-afterEach(() => {
-  root?.unmount();
-  host?.remove();
-  root = undefined;
-  host = undefined;
-});
+async function _cleanupFixture0(_fixture: _Fixture) {
+  await _fixture.root0?.unmount();
+  _fixture.host?.remove();
+  _fixture.root0 = undefined;
+  _fixture.host = undefined;
+}
 
 const CONTAINERS = [["onboarding popover", OnboardingPopover]] as const;
 const STATES = [
@@ -98,12 +100,17 @@ describe.each(CONTAINERS)("Pi in the %s", (_label, Container) => {
   it.each(STATES)(
     "renders the %s state as one centered frame with a visible action",
     async (_state, models, expectedTitle) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
       // A desktop viewport, where the composer's popovers render at full size.
       await page.viewport(1280, 720);
-      host = document.createElement("div");
-      document.body.append(host);
-      root = createRoot(host);
-      root.render(
+      _fixture.host = document.createElement("div");
+      document.body.append(_fixture.host);
+      _fixture.root0 = _fixture.stack.use(
+        await _fixtureRender(null, { container: _fixture.host, router: false }),
+      );
+      await _fixture.root0.rerender(
         <Container>
           <ManagedRuntimeComposerSetup
             controller={controller}
@@ -115,9 +122,9 @@ describe.each(CONTAINERS)("Pi in the %s", (_label, Container) => {
           />
         </Container>,
       );
-      await expect.poll(() => host!.querySelector("button")).toBeTruthy();
+      await expect.poll(() => _fixture.host!.querySelector("button")).toBeTruthy();
 
-      const container = host.querySelector<HTMLElement>("[data-test-container=true]")!;
+      const container = _fixture.host.querySelector<HTMLElement>("[data-test-container=true]")!;
       const frames = container.querySelectorAll<HTMLElement>("[data-provider-onboarding-view]");
       expect(frames).toHaveLength(1);
       expect(container.children).toHaveLength(1);
@@ -147,3 +154,22 @@ describe.each(CONTAINERS)("Pi in the %s", (_label, Container) => {
     },
   );
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    host: undefined! as HTMLDivElement | undefined,
+    stack,
+    cleanup,
+    root0: undefined! as Screen | undefined,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}
+type _Fixture = ReturnType<typeof _createFixture>;

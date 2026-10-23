@@ -259,6 +259,7 @@ describe("createMarkdownSourceLedger", () => {
     ).toThrow("Duplicate replacement");
   });
 
+  // 500 parses can outlast the default 5 s on a busy CI runner.
   it("partitions and reconstructs 500 deterministic malformed Unicode documents", () => {
     for (let seed = 1; seed <= 500; seed += 1) {
       const source = fuzzMarkdown(seed);

@@ -3,7 +3,6 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useCallback } from "react";
 
 import { openFileInPreview } from "~/browser/openFileInPreview";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -31,52 +30,49 @@ export function useScientFileOpening(input: {
     reportFailure: false,
   });
 
-  return useCallback(
-    (relativePath: string) => {
-      if (!threadRef || !workspaceRoot) return;
+  return (relativePath: string) => {
+    if (!threadRef || !workspaceRoot) return;
 
-      if (
-        !shouldOpenInBrowserByDefault(relativePath) ||
-        !isPreviewAvailableFor(threadRef.environmentId) ||
-        environmentHttpBaseUrl === null
-      ) {
+    if (
+      !shouldOpenInBrowserByDefault(relativePath) ||
+      !isPreviewAvailableFor(threadRef.environmentId) ||
+      environmentHttpBaseUrl === null
+    ) {
+      openSource(relativePath);
+      return;
+    }
+
+    void (async () => {
+      try {
+        const result = await openFileInPreview({
+          threadRef,
+          workspaceRoot,
+          filePath: workspaceFileHostPath(relativePath, workspaceRoot),
+          httpBaseUrl: environmentHttpBaseUrl,
+          createAssetUrl,
+          openPreview,
+        });
+        if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+
         openSource(relativePath);
-        return;
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to preview HTML",
+            description: `${error instanceof Error ? error.message : "An error occurred."} Opened the source instead.`,
+          }),
+        );
+      } catch (cause) {
+        openSource(relativePath);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to preview HTML",
+            description: `${cause instanceof Error ? cause.message : "An error occurred."} Opened the source instead.`,
+          }),
+        );
       }
-
-      void (async () => {
-        try {
-          const result = await openFileInPreview({
-            threadRef,
-            workspaceRoot,
-            filePath: workspaceFileHostPath(relativePath, workspaceRoot),
-            httpBaseUrl: environmentHttpBaseUrl,
-            createAssetUrl,
-            openPreview,
-          });
-          if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
-
-          openSource(relativePath);
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Unable to preview HTML",
-              description: `${error instanceof Error ? error.message : "An error occurred."} Opened the source instead.`,
-            }),
-          );
-        } catch (cause) {
-          openSource(relativePath);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Unable to preview HTML",
-              description: `${cause instanceof Error ? cause.message : "An error occurred."} Opened the source instead.`,
-            }),
-          );
-        }
-      })();
-    },
-    [createAssetUrl, environmentHttpBaseUrl, openPreview, openSource, threadRef, workspaceRoot],
-  );
+    })();
+  };
 }

@@ -32,9 +32,20 @@ const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 export const desktopDir = NodePath.resolve(__dirname, "..");
 const repoRoot = NodePath.resolve(desktopDir, "..", "..");
-const devBundleIdSuffix = NodePath.basename(repoRoot)
+// SCIENT-DEV-APP: the standing stable app keeps the identity it was first
+// installed with (keychain item, microphone grant) wherever its checkout lives.
+const devBundleIdSuffix = (
+  process.env.SCIENT_DEV_BUNDLE_ID_SUFFIX?.trim() || NodePath.basename(repoRoot)
+)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
+// SCIENT-DEV-APP: the stable app's signed, per-machine root. A review launch
+// points SCIENT_NEXT_HOME at one of its profiles instead.
+function stableRoot(environment) {
+  return environment.SCIENT_DEV_APP_ROLE === "stable"
+    ? environment.SCIENT_DEV_STABLE_ROOT || environment.SCIENT_NEXT_HOME || null
+    : null;
+}
 export function resolveDevelopmentAppDisplayName(environment = process.env, root = repoRoot) {
   return resolveDevAppDisplayName(environment, root);
 }
@@ -119,7 +130,7 @@ function runChecked(command, args) {
   throw new Error(`Failed to run ${command} ${args.join(" ")}: ${details}`.trim());
 }
 
-export function resolveMacCodeSignArguments(appBundlePath) {
+function resolveMacCodeSignArguments(appBundlePath) {
   return ["--force", "--deep", "--sign", "-", "--timestamp=none", appBundlePath];
 }
 
@@ -257,10 +268,7 @@ function signDevelopmentAppBundle(appBundlePath, identity) {
 
 export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
   const launcherRepoRoot = NodePath.resolve(desktopRoot, "..", "..");
-  const logRoot =
-    environment.SCIENT_DEV_APP_ROLE === "stable" && environment.SCIENT_NEXT_HOME
-      ? environment.SCIENT_NEXT_HOME
-      : NodePath.join(launcherRepoRoot, ".scient-next");
+  const logRoot = stableRoot(environment) ?? NodePath.join(launcherRepoRoot, ".scient-next");
   const logPath = NodePath.join(logRoot, "local-dev-app.log");
   const openArgumentsPath = NodePath.join(
     logRoot,
@@ -269,9 +277,16 @@ export function makeDevelopmentCommandScript({ desktopRoot, environment }) {
   );
   const nodeBinDir = NodePath.dirname(process.execPath);
   const pnpmExecPath = environment.npm_execpath?.trim();
-  const localDevInvocation = pnpmExecPath
-    ? `${shellSingleQuote(process.execPath)} ${shellSingleQuote(pnpmExecPath)} dev:app:start`
-    : "pnpm dev:app:start";
+  // SCIENT-DEV-APP: the stable app opens through its installed controller,
+  // which knows the reviewed commit and profile.
+  const stableController = stableRoot(environment)
+    ? NodePath.join(stableRoot(environment), "controller", "scripts", "dev-app", "controller.mjs")
+    : null;
+  const localDevInvocation = stableController
+    ? `${shellSingleQuote(process.execPath)} ${shellSingleQuote(stableController)} open`
+    : pnpmExecPath
+      ? `${shellSingleQuote(process.execPath)} ${shellSingleQuote(pnpmExecPath)} dev:app:start`
+      : "pnpm dev:app:start";
   const roleExport = environment.SCIENT_DEV_APP_ROLE
     ? `export SCIENT_DEV_APP_ROLE=${shellSingleQuote(environment.SCIENT_DEV_APP_ROLE)}`
     : "";
@@ -369,10 +384,7 @@ function writeDevelopmentBootstrap(appBundlePath) {
   const resourcesAppPath = NodePath.join(appBundlePath, "Contents", "Resources", "app");
   NodeFS.mkdirSync(resourcesAppPath, { recursive: true });
   const role = process.env.SCIENT_DEV_APP_ROLE === "stable" ? "stable" : "candidate";
-  const stateRoot =
-    role === "stable" && process.env.SCIENT_NEXT_HOME
-      ? process.env.SCIENT_NEXT_HOME
-      : NodePath.join(repoRoot, ".scient-next");
+  const stateRoot = stableRoot(process.env) ?? NodePath.join(repoRoot, ".scient-next");
   NodeFS.writeFileSync(
     NodePath.join(resourcesAppPath, "package.json"),
     `${JSON.stringify({
@@ -481,7 +493,7 @@ function registerMacLauncherBundle(appBundlePath) {
 }
 
 // Bundle-internal paths are macOS paths whatever host builds them.
-export function resolveMacLauncherIconPaths(runtimeDir, development = isDevelopment) {
+function resolveMacLauncherIconPaths(runtimeDir, development = isDevelopment) {
   return {
     sourceIconPath: development ? developmentMacIconPngPath : productionMacIconPngPath,
     generatedIconPath: NodePath.posix.join(
@@ -540,6 +552,7 @@ function ensureMacIconIcns(runtimeDir) {
   }
 }
 
+// SCIENT-FORK:START — validate signed bootstrap metadata without launching or mutating a bundle.
 export function resolveMacBundleInfoPlistStrings(executableName) {
   return {
     CFBundleDisplayName: APP_DISPLAY_NAME,
@@ -558,6 +571,7 @@ export function resolveMacBundleInfoPlistStrings(executableName) {
     NSNetworkVolumesUsageDescription: "Scient reads files on network drives that you open in it.",
   };
 }
+// SCIENT-FORK:END
 
 function patchMainBundleInfoPlist(appBundlePath, iconPath, executableName) {
   const infoPlistPath = NodePath.join(appBundlePath, "Contents", "Info.plist");
@@ -667,9 +681,7 @@ function buildMacLauncher(electronBinaryPath) {
       : undefined,
     bootstrapNodePath: isDevelopment ? process.execPath : undefined,
     bootstrapStateRoot: isDevelopment
-      ? process.env.SCIENT_DEV_APP_ROLE === "stable" && process.env.SCIENT_NEXT_HOME
-        ? process.env.SCIENT_NEXT_HOME
-        : NodePath.join(repoRoot, ".scient-next")
+      ? (stableRoot(process.env) ?? NodePath.join(repoRoot, ".scient-next"))
       : undefined,
   };
 

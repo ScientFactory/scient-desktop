@@ -24,7 +24,7 @@ import {
   ResolvedKeybindingsConfig,
 } from "./keybindings.ts";
 import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
-import { ModelCapabilities } from "./model.ts";
+import { ModelCapabilities, ProviderOptionDescriptor } from "./model.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ProviderConnectionSummary } from "./providerLifecycle.ts";
@@ -150,12 +150,57 @@ export const ServerProviderSkill = Schema.Struct({
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
+// SCIENT-FORK:START — Scient Extensions native inventory.
+/** A plugin installed in a provider instance's own plugin system. Provider-owned; Scient only reports it. */
+export const ServerProviderPlugin = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  displayName: Schema.optional(TrimmedNonEmptyString),
+  description: Schema.optional(TrimmedNonEmptyString),
+  version: Schema.optional(TrimmedNonEmptyString),
+  marketplace: Schema.optional(TrimmedNonEmptyString),
+  source: Schema.Literals(["local", "remote", "unknown"]),
+  enabled: Schema.Boolean,
+  /** Provider-owned capability. Absent means Scient must render this plugin read-only. */
+  canUninstall: Schema.optional(Schema.Boolean),
+});
+export type ServerProviderPlugin = typeof ServerProviderPlugin.Type;
+
+export const ServerProviderMcpServerStatus = Schema.Literals([
+  "connected",
+  "failed",
+  "needs-auth",
+  "pending",
+  "disabled",
+  "unknown",
+]);
+export type ServerProviderMcpServerStatus = typeof ServerProviderMcpServerStatus.Type;
+
+/** An MCP server configured natively in a provider instance (not one Scient delivers). */
+export const ServerProviderMcpServer = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  status: ServerProviderMcpServerStatus,
+  /** Plugin that contributed this server, when the provider reports it. */
+  pluginId: Schema.optional(TrimmedNonEmptyString),
+  scope: Schema.optional(TrimmedNonEmptyString),
+  toolCount: Schema.optional(Schema.Number),
+  error: Schema.optional(TrimmedNonEmptyString),
+  /** The provider can start its own sign-in for this server from Scient. */
+  canStartSignIn: Schema.optional(Schema.Boolean),
+});
+export type ServerProviderMcpServer = typeof ServerProviderMcpServer.Type;
+// SCIENT-FORK:END
+
 export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   checkedAt: IsoDateTime,
   slashCommands: Schema.Array(ServerProviderSlashCommand),
   slashCommandsPending: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
+  optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+  // SCIENT-FORK:START — Scient Extensions native inventory.
+  plugins: Schema.optionalKey(Schema.Array(ServerProviderPlugin)),
+  // SCIENT-FORK:END
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
@@ -279,6 +324,9 @@ export const ServerProvider = Schema.Struct({
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
+  // Version reported by the installed CLI for a local provider with a separate
+  // server. Null means unknown; absence keeps legacy snapshots on `version`.
+  installedVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   status: ServerProviderState,
   auth: ServerProviderAuth,
   checkedAt: IsoDateTime,
@@ -299,6 +347,12 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // SCIENT-FORK:START — Scient Extensions native inventory.
+  /** Provider-native plugins (global scope). Workspace-scoped plugins live in workspace snapshots. */
+  plugins: Schema.optionalKey(Schema.Array(ServerProviderPlugin)),
+  /** Provider-native MCP servers as last reported by the provider. */
+  mcpServers: Schema.optionalKey(Schema.Array(ServerProviderMcpServer)),
+  // SCIENT-FORK:END
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
@@ -618,6 +672,19 @@ export const ServerDirectEndpoint = Schema.Struct({
 });
 export type ServerDirectEndpoint = typeof ServerDirectEndpoint.Type;
 
+/**
+ * A stretch where the server's event loop could not run, so it answered
+ * nothing and clients may have dropped the connection.
+ */
+export const ServerEventLoopStall = Schema.Struct({
+  detectedAt: IsoDateTime,
+  durationMs: NonNegativeInt,
+  /** One-minute load average when the stall was seen. Absent on Windows, which has none. */
+  loadAverage: Schema.optionalKey(Schema.Number),
+  cpuCount: PositiveInt,
+});
+export type ServerEventLoopStall = typeof ServerEventLoopStall.Type;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -648,6 +715,12 @@ export const ServerConfig = Schema.Struct({
   threadFindProgressive: Schema.optionalKey(Schema.Boolean),
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * The latest stall long enough to notice, sent only for a few minutes after
+   * it. A client that reconnects reads it to say why the host stopped
+   * answering. Clients do not cache it, since it describes the host at connect.
+   */
+  lastEventLoopStall: Schema.optionalKey(ServerEventLoopStall),
   /**
    * Never sent in a config snapshot: the theme stream emits the current set
    * before any change, so a snapshot carrying it too would hand every

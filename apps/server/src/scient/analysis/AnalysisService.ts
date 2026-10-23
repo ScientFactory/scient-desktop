@@ -267,151 +267,159 @@ const make = Effect.gen(function* () {
 
   const nextEventSequence = Ref.getAndUpdate(eventSequenceRef, (value) => value + 1);
 
-  const publish = (run: AnalysisRunSnapshot, isNewRun = false) =>
-    Effect.gen(function* () {
-      const eventSequence = yield* nextEventSequence;
-      yield* PubSub.publish(pubsub, {
-        _tag: "run-updated" as const,
-        eventSequence,
-        run: summarizeAnalysisRun(run),
-      });
-      const { receipt } = run;
-      // Local correlation only; no source, output or identity is exported.
-      const key = [run.projectId, String(receipt.runId)]
-        .map((part) => `${part.length}:${part}`)
-        .join("|");
-      // Phase/queue updates are not new work, including after a consent reset.
-      if (isNewRun || isTerminal(receipt.status)) {
-        yield* observeOperation({
-          key,
-          operationKind: "compute-run",
-          status:
-            receipt.status === "succeeded"
-              ? "completed"
-              : receipt.status === "cancelled"
-                ? "cancelled"
-                : receipt.status === "failed" || receipt.status === "lost"
-                  ? "failed"
-                  : "active",
-          startedAt: Date.parse(receipt.startedAt),
-          ...(receipt.finishedAt === null ? {} : { finishedAt: Date.parse(receipt.finishedAt) }),
-          trigger: "user",
-        });
-      }
-
-      // Capture is a separate persisted outcome: code can succeed without its figures.
-      // Admission starts observation once; later progress must not replay pre-consent work.
-      const capture = run.artifactReceipt.status;
-      if (capture === "not-requested") return;
-      if (!isNewRun && capture === "pending" && !isTerminal(receipt.status)) return;
-      const status =
-        capture === "succeeded"
-          ? run.artifacts.length > 0
-            ? "completed"
-            : "skipped"
-          : capture === "failed"
-            ? "failed"
-            : receipt.cancellationRequested
-              ? "cancelled"
-              : isTerminal(receipt.status)
-                ? "failed"
-                : "active";
+  const publish = Effect.fn("AnalysisService.publish")(function* (
+    run: AnalysisRunSnapshot,
+    isNewRun = false,
+  ) {
+    const eventSequence = yield* nextEventSequence;
+    yield* PubSub.publish(pubsub, {
+      _tag: "run-updated" as const,
+      eventSequence,
+      run: summarizeAnalysisRun(run),
+    });
+    const { receipt } = run;
+    // Local correlation only; no source, output or identity is exported.
+    const key = [run.projectId, String(receipt.runId)]
+      .map((part) => `${part.length}:${part}`)
+      .join("|");
+    // Phase/queue updates are not new work, including after a consent reset.
+    if (isNewRun || isTerminal(receipt.status)) {
       yield* observeOperation({
-        key: `${key}|artifacts`,
-        operationKind: "compute-artifact",
-        status,
+        key,
+        operationKind: "compute-run",
+        status:
+          receipt.status === "succeeded"
+            ? "completed"
+            : receipt.status === "cancelled"
+              ? "cancelled"
+              : receipt.status === "failed" || receipt.status === "lost"
+                ? "failed"
+                : "active",
         startedAt: Date.parse(receipt.startedAt),
-        ...(status === "active" ? {} : { finishedAt: yield* Clock.currentTimeMillis }),
+        ...(receipt.finishedAt === null ? {} : { finishedAt: Date.parse(receipt.finishedAt) }),
         trigger: "user",
       });
-    });
+    }
 
-  const publishOutput = (run: AnalysisRunSnapshot, chunks: ReadonlyArray<ExecutionOutputChunk>) =>
-    Effect.gen(function* () {
-      const eventSequence = yield* nextEventSequence;
-      yield* PubSub.publish(pubsub, {
-        _tag: "run-output" as const,
-        eventSequence,
-        projectId: run.projectId,
-        runId: run.receipt.runId,
-        source: run.source,
-        chunks,
-        outputTruncated: run.receipt.outputTruncated,
-        outputByteLength: run.receipt.outputByteLength,
-      });
+    // Capture is a separate persisted outcome: code can succeed without its figures.
+    // Admission starts observation once; later progress must not replay pre-consent work.
+    const capture = run.artifactReceipt.status;
+    if (capture === "not-requested") return;
+    if (!isNewRun && capture === "pending" && !isTerminal(receipt.status)) return;
+    const status =
+      capture === "succeeded"
+        ? run.artifacts.length > 0
+          ? "completed"
+          : "skipped"
+        : capture === "failed"
+          ? "failed"
+          : receipt.cancellationRequested
+            ? "cancelled"
+            : isTerminal(receipt.status)
+              ? "failed"
+              : "active";
+    yield* observeOperation({
+      key: `${key}|artifacts`,
+      operationKind: "compute-artifact",
+      status,
+      startedAt: Date.parse(receipt.startedAt),
+      ...(status === "active" ? {} : { finishedAt: yield* Clock.currentTimeMillis }),
+      trigger: "user",
     });
+  });
+
+  const publishOutput = Effect.fn("AnalysisService.publishOutput")(function* (
+    run: AnalysisRunSnapshot,
+    chunks: ReadonlyArray<ExecutionOutputChunk>,
+  ) {
+    const eventSequence = yield* nextEventSequence;
+    yield* PubSub.publish(pubsub, {
+      _tag: "run-output" as const,
+      eventSequence,
+      projectId: run.projectId,
+      runId: run.receipt.runId,
+      source: run.source,
+      chunks,
+      outputTruncated: run.receipt.outputTruncated,
+      outputByteLength: run.receipt.outputByteLength,
+    });
+  });
 
   const markIndexDirty = (projectId: string) =>
     Ref.update(dirtyIndexProjectsRef, (projects) => new Set(projects).add(projectId));
 
-  const persist = (operation: AnalysisOperation, run: AnalysisRunSnapshot) =>
-    Effect.gen(function* () {
-      const mutation = yield* runIndex
-        .beginMutation(run.projectId)
-        .pipe(
-          Effect.mapError((cause) =>
-            analysisError(
-              operation,
-              "persistence-failed",
-              "Unable to begin the local analysis history update.",
-              cause,
-            ),
+  const persist = Effect.fn("AnalysisService.persist")(function* (
+    operation: AnalysisOperation,
+    run: AnalysisRunSnapshot,
+  ) {
+    const mutation = yield* runIndex
+      .beginMutation(run.projectId)
+      .pipe(
+        Effect.mapError((cause) =>
+          analysisError(
+            operation,
+            "persistence-failed",
+            "Unable to begin the local analysis history update.",
+            cause,
           ),
-        );
-      yield* store
-        .persistRun(run)
-        .pipe(
-          Effect.catch((cause) =>
-            markIndexDirty(run.projectId).pipe(
-              Effect.andThen(
-                Effect.fail(
-                  analysisError(
-                    operation,
-                    "persistence-failed",
-                    "Unable to persist the local run journal.",
-                    cause,
-                  ),
+        ),
+      );
+    yield* store
+      .persistRun(run)
+      .pipe(
+        Effect.catch((cause) =>
+          markIndexDirty(run.projectId).pipe(
+            Effect.andThen(
+              Effect.fail(
+                analysisError(
+                  operation,
+                  "persistence-failed",
+                  "Unable to persist the local run journal.",
+                  cause,
                 ),
               ),
             ),
           ),
-        );
-      yield* runIndex
-        .upsert(summarizeAnalysisRun(run), mutation)
-        .pipe(
-          Effect.catch((cause) =>
-            markIndexDirty(run.projectId).pipe(
-              Effect.andThen(
-                Effect.fail(
-                  analysisError(
-                    operation,
-                    "persistence-failed",
-                    "The run was saved, but its local history projection could not be updated.",
-                    cause,
-                  ),
+        ),
+      );
+    yield* runIndex
+      .upsert(summarizeAnalysisRun(run), mutation)
+      .pipe(
+        Effect.catch((cause) =>
+          markIndexDirty(run.projectId).pipe(
+            Effect.andThen(
+              Effect.fail(
+                analysisError(
+                  operation,
+                  "persistence-failed",
+                  "The run was saved, but its local history projection could not be updated.",
+                  cause,
                 ),
               ),
             ),
           ),
-        );
-    });
+        ),
+      );
+  });
 
   const mapIndexLoadError = (message: string) =>
     Effect.mapError((cause: AnalysisRunIndex.AnalysisRunIndexError) =>
       analysisError("list", "persistence-failed", message, cause),
     );
 
-  const putRun = (operation: AnalysisOperation, run: AnalysisRunSnapshot) =>
-    Effect.gen(function* () {
-      yield* Ref.update(runsRef, (runs) => {
-        const next = new Map(runs);
-        next.set(run.receipt.runId, run);
-        return next;
-      });
-      yield* persist(operation, run);
-      yield* publish(run, true);
-      return run;
+  const putRun = Effect.fn("AnalysisService.putRun")(function* (
+    operation: AnalysisOperation,
+    run: AnalysisRunSnapshot,
+  ) {
+    yield* Ref.update(runsRef, (runs) => {
+      const next = new Map(runs);
+      next.set(run.receipt.runId, run);
+      return next;
     });
+    yield* persist(operation, run);
+    yield* publish(run, true);
+    return run;
+  });
 
   const identityForCwd = (operation: AnalysisOperation, cwd: string) =>
     Effect.tryPromise({
@@ -440,63 +448,65 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const inspectProfile = (adapter: AnalysisRuntimeAdapter, refresh: boolean) =>
-    Effect.gen(function* () {
-      const runtimeConfiguration = yield* runtimePreferences
-        .readRuntimeExecutablePath(adapter.kind)
-        .pipe(
-          Effect.mapError((cause) =>
-            analysisError(
-              "inspect",
-              "persistence-failed",
-              `Unable to read ${adapter.kind} settings.`,
-              cause,
-            ),
-          ),
-        );
-      const cached = (yield* Ref.get(runtimeProfilesRef)).get(adapter.kind);
-      if (
-        cached !== undefined &&
-        !refresh &&
-        cached.executablePreference === runtimeConfiguration.executablePath
-      )
-        return cached.profile;
-      const inspectedAt = yield* nowIso;
-      const inspectedProfile = yield* Effect.tryPromise({
-        try: () =>
-          adapter.inspect({
-            inspectedAt,
-            platform: hostPlatform,
-            environment: hostEnvironment,
-            ...(runtimeConfiguration.executablePath === null
-              ? {}
-              : { customExecutablePath: runtimeConfiguration.executablePath }),
-          }),
-        catch: (cause) =>
+  const inspectProfile = Effect.fn("AnalysisService.inspectProfile")(function* (
+    adapter: AnalysisRuntimeAdapter,
+    refresh: boolean,
+  ) {
+    const runtimeConfiguration = yield* runtimePreferences
+      .readRuntimeExecutablePath(adapter.kind)
+      .pipe(
+        Effect.mapError((cause) =>
           analysisError(
             "inspect",
-            "operation-failed",
-            `Unable to inspect the ${adapter.kind} runtime.`,
+            "persistence-failed",
+            `Unable to read ${adapter.kind} settings.`,
             cause,
           ),
-      });
-      const profile =
-        runtimeConfiguration.warning === null
-          ? inspectedProfile
-          : {
-              ...inspectedProfile,
-              detail: [runtimeConfiguration.warning, inspectedProfile.detail]
-                .filter((value): value is string => value !== null)
-                .join(" "),
-            };
-      yield* Ref.update(runtimeProfilesRef, (profiles) =>
-        new Map(profiles).set(adapter.kind, {
-          executablePreference: runtimeConfiguration.executablePath,
-          profile,
-        }),
+        ),
       );
-      return profile;
+    const cached = (yield* Ref.get(runtimeProfilesRef)).get(adapter.kind);
+    if (
+      cached !== undefined &&
+      !refresh &&
+      cached.executablePreference === runtimeConfiguration.executablePath
+    )
+      return cached.profile;
+    const inspectedAt = yield* nowIso;
+    const inspectedProfile = yield* Effect.tryPromise({
+      try: () =>
+        adapter.inspect({
+          inspectedAt,
+          platform: hostPlatform,
+          environment: hostEnvironment,
+          ...(runtimeConfiguration.executablePath === null
+            ? {}
+            : { customExecutablePath: runtimeConfiguration.executablePath }),
+        }),
+      catch: (cause) =>
+        analysisError(
+          "inspect",
+          "operation-failed",
+          `Unable to inspect the ${adapter.kind} runtime.`,
+          cause,
+        ),
     });
+    const profile =
+      runtimeConfiguration.warning === null
+        ? inspectedProfile
+        : {
+            ...inspectedProfile,
+            detail: [runtimeConfiguration.warning, inspectedProfile.detail]
+              .filter((value): value is string => value !== null)
+              .join(" "),
+          };
+    yield* Ref.update(runtimeProfilesRef, (profiles) =>
+      new Map(profiles).set(adapter.kind, {
+        executablePreference: runtimeConfiguration.executablePath,
+        profile,
+      }),
+    );
+    return profile;
+  });
 
   const inspectRuntimes = (input: AnalysisInspectRuntimesInput) =>
     Effect.map(
@@ -504,323 +514,285 @@ const make = Effect.gen(function* () {
       (runtimes) => ({ contractVersion: 1 as const, runtimes }),
     );
 
-  const configureRuntime = (input: AnalysisConfigureRuntimeInput) =>
-    Effect.gen(function* () {
-      const adapter = runtimeAdapters.find((candidate) => candidate.kind === input.runtimeKind);
-      if (adapter === undefined) {
-        return yield* analysisError(
-          "configure",
-          "runtime-invalid",
-          `Unsupported analysis runtime '${input.runtimeKind}'.`,
-        );
-      }
-      yield* runtimePreferences
-        .writeRuntimeExecutablePath(adapter.kind, input.executablePath)
-        .pipe(
-          Effect.mapError((cause) =>
+  const configureRuntime = Effect.fn("AnalysisService.configureRuntime")(function* (
+    input: AnalysisConfigureRuntimeInput,
+  ) {
+    const adapter = runtimeAdapters.find((candidate) => candidate.kind === input.runtimeKind);
+    if (adapter === undefined) {
+      return yield* analysisError(
+        "configure",
+        "runtime-invalid",
+        `Unsupported analysis runtime '${input.runtimeKind}'.`,
+      );
+    }
+    yield* runtimePreferences
+      .writeRuntimeExecutablePath(adapter.kind, input.executablePath)
+      .pipe(
+        Effect.mapError((cause) =>
+          analysisError(
+            "configure",
+            "persistence-failed",
+            `Unable to save ${adapter.kind} settings.`,
+            cause,
+          ),
+        ),
+      );
+    yield* Ref.update(runtimeProfilesRef, (profiles) => {
+      const next = new Map(profiles);
+      next.delete(adapter.kind);
+      return next;
+    });
+    yield* Ref.update(verificationCacheRef, (cache) => {
+      const next = new Map(cache);
+      next.delete(adapter.id);
+      return next;
+    });
+    return yield* inspectRuntimes({ cwd: input.cwd, refresh: true });
+  });
+
+  const verifyRuntime = Effect.fn("AnalysisService.verifyRuntime")(function* (
+    input: AnalysisVerifyRuntimeInput,
+  ) {
+    yield* identityForCwd("verify", input.cwd);
+    const adapter = runtimeAdapters.find((candidate) => candidate.id === input.runtimeId);
+    if (adapter === undefined || adapter.prepareVerification === undefined) {
+      return yield* analysisError(
+        "verify",
+        "runtime-invalid",
+        "The selected analysis runtime cannot be verified by this Scient build.",
+      );
+    }
+    const profile = yield* inspectProfile(adapter, false);
+    if (profile.availability !== "available" || profile.executablePath === null) {
+      return yield* analysisError(
+        "verify",
+        profile.availability === "invalid" ? "runtime-invalid" : "runtime-missing",
+        profile.detail ?? `${profile.label} is unavailable.`,
+      );
+    }
+    const semaphore = runtimeSemaphores.get(adapter.id);
+    if (!semaphore) {
+      return yield* analysisError(
+        "verify",
+        "runtime-invalid",
+        `${profile.label} has no local execution lease.`,
+      );
+    }
+    return yield* semaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const prepared = yield* Effect.tryPromise({
+          try: () => adapter.prepareVerification!(profile),
+          catch: (cause) =>
             analysisError(
-              "configure",
-              "persistence-failed",
-              `Unable to save ${adapter.kind} settings.`,
+              "verify",
+              "process-failed",
+              `Unable to prepare the ${profile.label} startup check.`,
               cause,
             ),
-          ),
-        );
-      yield* Ref.update(runtimeProfilesRef, (profiles) => {
-        const next = new Map(profiles);
-        next.delete(adapter.kind);
-        return next;
-      });
-      yield* Ref.update(verificationCacheRef, (cache) => {
-        const next = new Map(cache);
-        next.delete(adapter.id);
-        return next;
-      });
-      return yield* inspectRuntimes({ cwd: input.cwd, refresh: true });
-    });
+        });
+        return yield* Effect.gen(function* () {
+          const cached = (yield* Ref.get(verificationCacheRef)).get(adapter.id);
+          if (
+            input.refresh !== true &&
+            cached?.executablePath === profile.executablePath &&
+            cached.verification.executableIdentity === prepared.executableIdentity
+          ) {
+            const verifiedProfile = { ...profile, verification: cached.verification };
+            yield* cacheVerification(profile, verifiedProfile);
+            return verifiedProfile;
+          }
 
-  const verifyRuntime = (input: AnalysisVerifyRuntimeInput) =>
-    Effect.gen(function* () {
-      yield* identityForCwd("verify", input.cwd);
-      const adapter = runtimeAdapters.find((candidate) => candidate.id === input.runtimeId);
-      if (adapter === undefined || adapter.prepareVerification === undefined) {
-        return yield* analysisError(
-          "verify",
-          "runtime-invalid",
-          "The selected analysis runtime cannot be verified by this Scient build.",
-        );
-      }
-      const profile = yield* inspectProfile(adapter, false);
-      if (profile.availability !== "available" || profile.executablePath === null) {
-        return yield* analysisError(
-          "verify",
-          profile.availability === "invalid" ? "runtime-invalid" : "runtime-missing",
-          profile.detail ?? `${profile.label} is unavailable.`,
-        );
-      }
-      const semaphore = runtimeSemaphores.get(adapter.id);
-      if (!semaphore) {
-        return yield* analysisError(
-          "verify",
-          "runtime-invalid",
-          `${profile.label} has no local execution lease.`,
-        );
-      }
-      return yield* semaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const prepared = yield* Effect.tryPromise({
-            try: () => adapter.prepareVerification!(profile),
+          const startedAt = yield* Clock.currentTimeMillis;
+          const verifiedAt = yield* nowIso;
+          const verificationRunId = ExecutionRunId.make(
+            yield* crypto
+              .randomUUIDv4()
+              .pipe(
+                Effect.mapError((cause) =>
+                  analysisError(
+                    "verify",
+                    "operation-failed",
+                    "Unable to create the runtime verification identifier.",
+                    cause,
+                  ),
+                ),
+              ),
+          );
+          const outputsRef = yield* Ref.make<ReadonlyArray<ExecutionProcessOutput>>([]);
+          const outputBytesRef = yield* Ref.make(0);
+          const captureOutput = Effect.fn("AnalysisService.captureOutput")(function* (
+            output: ExecutionProcessOutput,
+          ) {
+            const usedBytes = yield* Ref.get(outputBytesRef);
+            const remaining = Math.max(0, MAXIMUM_VERIFICATION_OUTPUT_BYTES - usedBytes);
+            if (remaining === 0) return;
+            const encoded = new TextEncoder().encode(output.text);
+            const accepted = completeUtf8PrefixByteLength(
+              encoded,
+              Math.min(encoded.byteLength, remaining),
+            );
+            if (accepted === 0) return;
+            const text = new TextDecoder().decode(encoded.subarray(0, accepted));
+            yield* Ref.update(outputsRef, (outputs) => [...outputs, { ...output, text }]);
+            yield* Ref.update(outputBytesRef, (bytes) => bytes + accepted);
+          });
+
+          const processResult = yield* processes
+            .start({
+              runId: verificationRunId,
+              executable: prepared.executable,
+              args: prepared.args,
+              cwd: prepared.cwd,
+              environment: prepared.environment,
+            })
+            .pipe(
+              Effect.flatMap((handle) =>
+                Effect.gen(function* () {
+                  const outputFiber = yield* handle.output.pipe(
+                    Stream.runForEach(captureOutput),
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("runtime verification output failed", { cause }),
+                    ),
+                    Effect.forkScoped,
+                  );
+                  const outcome = yield* Effect.raceFirst(
+                    handle.exitCode.pipe(
+                      Effect.map((exitCode) => ({ exitCode, timedOut: false as const })),
+                    ),
+                    Effect.sleep(Duration.millis(prepared.timeoutMs)).pipe(
+                      Effect.as({ exitCode: null, timedOut: true as const }),
+                    ),
+                  );
+                  if (outcome.timedOut) yield* handle.cancel.pipe(Effect.ignoreCause());
+                  yield* Fiber.join(outputFiber).pipe(Effect.ignoreCause());
+                  return outcome;
+                }),
+              ),
+              Effect.catch((cause) =>
+                Ref.update(outputsRef, (outputs) => [
+                  ...outputs,
+                  { stream: "stderr" as const, text: cause.message },
+                ]).pipe(Effect.as({ exitCode: null, timedOut: false as const })),
+              ),
+              (check) =>
+                Effect.acquireUseRelease(
+                  Effect.gen(function* () {
+                    const release = yield* hostCapacity
+                      .acquire()
+                      .pipe(
+                        Effect.mapError((cause) =>
+                          analysisError("verify", "process-failed", cause.message, cause),
+                        ),
+                      );
+                    return { release, scope: yield* Scope.make("sequential") };
+                  }),
+                  ({ scope }) => check.pipe(Effect.provideService(Scope.Scope, scope)),
+                  ({ release, scope }, exit) =>
+                    Scope.close(scope, exit).pipe(Effect.andThen(release)),
+                ),
+            );
+          const outputs = yield* Ref.get(outputsRef);
+          const finishedAt = yield* Clock.currentTimeMillis;
+          const verification = yield* Effect.tryPromise({
+            try: () =>
+              prepared.collect({
+                ...processResult,
+                output: outputs,
+                verifiedAt,
+                durationMs: Math.max(0, finishedAt - startedAt),
+              }),
             catch: (cause) =>
               analysisError(
                 "verify",
-                "process-failed",
-                `Unable to prepare the ${profile.label} startup check.`,
+                "operation-failed",
+                `Unable to read the ${profile.label} startup check.`,
                 cause,
               ),
           });
-          return yield* Effect.gen(function* () {
-            const cached = (yield* Ref.get(verificationCacheRef)).get(adapter.id);
-            if (
-              input.refresh !== true &&
-              cached?.executablePath === profile.executablePath &&
-              cached.verification.executableIdentity === prepared.executableIdentity
-            ) {
-              const verifiedProfile = { ...profile, verification: cached.verification };
-              yield* cacheVerification(profile, verifiedProfile);
-              return verifiedProfile;
-            }
-
-            const startedAt = yield* Clock.currentTimeMillis;
-            const verifiedAt = yield* nowIso;
-            const verificationRunId = ExecutionRunId.make(
-              yield* crypto
-                .randomUUIDv4()
-                .pipe(
-                  Effect.mapError((cause) =>
-                    analysisError(
-                      "verify",
-                      "operation-failed",
-                      "Unable to create the runtime verification identifier.",
-                      cause,
-                    ),
-                  ),
-                ),
-            );
-            const outputsRef = yield* Ref.make<ReadonlyArray<ExecutionProcessOutput>>([]);
-            const outputBytesRef = yield* Ref.make(0);
-            const captureOutput = (output: ExecutionProcessOutput) =>
-              Effect.gen(function* () {
-                const usedBytes = yield* Ref.get(outputBytesRef);
-                const remaining = Math.max(0, MAXIMUM_VERIFICATION_OUTPUT_BYTES - usedBytes);
-                if (remaining === 0) return;
-                const encoded = new TextEncoder().encode(output.text);
-                const accepted = completeUtf8PrefixByteLength(
-                  encoded,
-                  Math.min(encoded.byteLength, remaining),
-                );
-                if (accepted === 0) return;
-                const text = new TextDecoder().decode(encoded.subarray(0, accepted));
-                yield* Ref.update(outputsRef, (outputs) => [...outputs, { ...output, text }]);
-                yield* Ref.update(outputBytesRef, (bytes) => bytes + accepted);
+          const verifiedProfile = {
+            ...profile,
+            version: verification.version ?? profile.version,
+            detail: verification.detail,
+            verification,
+          } satisfies AnalysisRuntimeProfile;
+          yield* cacheVerification(profile, verifiedProfile);
+          yield* Ref.update(verificationCacheRef, (cache) => {
+            const next = new Map(cache);
+            if (verification.status === "ready") {
+              next.set(adapter.id, {
+                executablePath: profile.executablePath!,
+                verification,
               });
-
-            const processResult = yield* processes
-              .start({
-                runId: verificationRunId,
-                executable: prepared.executable,
-                args: prepared.args,
-                cwd: prepared.cwd,
-                environment: prepared.environment,
-              })
-              .pipe(
-                Effect.flatMap((handle) =>
-                  Effect.gen(function* () {
-                    const outputFiber = yield* handle.output.pipe(
-                      Stream.runForEach(captureOutput),
-                      Effect.catchCause((cause) =>
-                        Effect.logWarning("runtime verification output failed", { cause }),
-                      ),
-                      Effect.forkScoped,
-                    );
-                    const outcome = yield* Effect.raceFirst(
-                      handle.exitCode.pipe(
-                        Effect.map((exitCode) => ({ exitCode, timedOut: false as const })),
-                      ),
-                      Effect.sleep(Duration.millis(prepared.timeoutMs)).pipe(
-                        Effect.as({ exitCode: null, timedOut: true as const }),
-                      ),
-                    );
-                    if (outcome.timedOut) yield* handle.cancel.pipe(Effect.ignoreCause());
-                    yield* Fiber.join(outputFiber).pipe(Effect.ignoreCause());
-                    return outcome;
-                  }),
-                ),
-                Effect.catch((cause) =>
-                  Ref.update(outputsRef, (outputs) => [
-                    ...outputs,
-                    { stream: "stderr" as const, text: cause.message },
-                  ]).pipe(Effect.as({ exitCode: null, timedOut: false as const })),
-                ),
-                (check) =>
-                  Effect.acquireUseRelease(
-                    Effect.gen(function* () {
-                      const release = yield* hostCapacity
-                        .acquire()
-                        .pipe(
-                          Effect.mapError((cause) =>
-                            analysisError("verify", "process-failed", cause.message, cause),
-                          ),
-                        );
-                      return { release, scope: yield* Scope.make("sequential") };
-                    }),
-                    ({ scope }) => check.pipe(Effect.provideService(Scope.Scope, scope)),
-                    ({ release, scope }, exit) =>
-                      Scope.close(scope, exit).pipe(Effect.andThen(release)),
-                  ),
-              );
-            const outputs = yield* Ref.get(outputsRef);
-            const finishedAt = yield* Clock.currentTimeMillis;
-            const verification = yield* Effect.tryPromise({
-              try: () =>
-                prepared.collect({
-                  ...processResult,
-                  output: outputs,
-                  verifiedAt,
-                  durationMs: Math.max(0, finishedAt - startedAt),
-                }),
+            } else {
+              next.delete(adapter.id);
+            }
+            return next;
+          });
+          return verifiedProfile;
+        }).pipe(
+          Effect.ensuring(
+            Effect.tryPromise({
+              try: prepared.cleanup,
               catch: (cause) =>
                 analysisError(
                   "verify",
                   "operation-failed",
-                  `Unable to read the ${profile.label} startup check.`,
+                  "Unable to remove temporary runtime verification files.",
                   cause,
                 ),
-            });
-            const verifiedProfile = {
-              ...profile,
-              version: verification.version ?? profile.version,
-              detail: verification.detail,
-              verification,
-            } satisfies AnalysisRuntimeProfile;
-            yield* cacheVerification(profile, verifiedProfile);
-            yield* Ref.update(verificationCacheRef, (cache) => {
-              const next = new Map(cache);
-              if (verification.status === "ready") {
-                next.set(adapter.id, {
-                  executablePath: profile.executablePath!,
-                  verification,
-                });
-              } else {
-                next.delete(adapter.id);
-              }
-              return next;
-            });
-            return verifiedProfile;
-          }).pipe(
-            Effect.ensuring(
-              Effect.tryPromise({
-                try: prepared.cleanup,
-                catch: (cause) =>
-                  analysisError(
-                    "verify",
-                    "operation-failed",
-                    "Unable to remove temporary runtime verification files.",
-                    cause,
-                  ),
-              }).pipe(Effect.ignoreCause()),
-            ),
-          );
-        }),
-      );
-    });
+            }).pipe(Effect.ignoreCause()),
+          ),
+        );
+      }),
+    );
+  });
 
-  const projectRunsNeedLoad = (projectId: string) =>
-    Effect.gen(function* () {
-      const loaded = yield* Ref.get(loadedProjectsRef);
-      const dirty = (yield* Ref.get(dirtyIndexProjectsRef)).has(projectId);
-      return !loaded.has(projectId) || dirty;
-    });
+  const projectRunsNeedLoad = Effect.fn("AnalysisService.projectRunsNeedLoad")(function* (
+    projectId: string,
+  ) {
+    const loaded = yield* Ref.get(loadedProjectsRef);
+    const dirty = (yield* Ref.get(dirtyIndexProjectsRef)).has(projectId);
+    return !loaded.has(projectId) || dirty;
+  });
 
-  const ensureProjectRunsLoaded = (projectId: string) =>
-    Effect.gen(function* () {
-      if (!(yield* projectRunsNeedLoad(projectId))) return;
-      yield* projectLoadLock.withPermits(1)(
-        Effect.gen(function* () {
-          // The history query and live subscription mount together. Recheck
-          // after acquiring the lease so they share one authoritative scan.
-          if (!(yield* projectRunsNeedLoad(projectId))) return;
-          const memoryDirty = (yield* Ref.get(dirtyIndexProjectsRef)).has(projectId);
-          let rebuild =
-            memoryDirty ||
-            (yield* runIndex
-              .needsRebuild(projectId)
-              .pipe(mapIndexLoadError("Unable to inspect the local analysis history index.")));
-          let loadedRuns: ReadonlyArray<AnalysisRunSnapshot>;
-          if (rebuild) {
-            loadedRuns = yield* store
-              .loadRuns(projectId)
-              .pipe(
-                Effect.mapError((cause) =>
-                  analysisError(
-                    "list",
-                    "persistence-failed",
-                    "Unable to load local run history.",
-                    cause,
-                  ),
+  const ensureProjectRunsLoaded = Effect.fn("AnalysisService.ensureProjectRunsLoaded")(function* (
+    projectId: string,
+  ) {
+    if (!(yield* projectRunsNeedLoad(projectId))) return;
+    yield* projectLoadLock.withPermits(1)(
+      Effect.gen(function* () {
+        // The history query and live subscription mount together. Recheck
+        // after acquiring the lease so they share one authoritative scan.
+        if (!(yield* projectRunsNeedLoad(projectId))) return;
+        const memoryDirty = (yield* Ref.get(dirtyIndexProjectsRef)).has(projectId);
+        let rebuild =
+          memoryDirty ||
+          (yield* runIndex
+            .needsRebuild(projectId)
+            .pipe(mapIndexLoadError("Unable to inspect the local analysis history index.")));
+        let loadedRuns: ReadonlyArray<AnalysisRunSnapshot>;
+        if (rebuild) {
+          loadedRuns = yield* store
+            .loadRuns(projectId)
+            .pipe(
+              Effect.mapError((cause) =>
+                analysisError(
+                  "list",
+                  "persistence-failed",
+                  "Unable to load local run history.",
+                  cause,
                 ),
-              );
-          } else {
-            const nonTerminal = yield* runIndex
-              .listNonTerminal(projectId)
-              .pipe(mapIndexLoadError("Unable to inspect interrupted analysis runs."));
-            const restored = yield* Effect.forEach(
-              nonTerminal,
-              (summary) =>
-                store
-                  .loadRun(projectId, summary.receipt.runId)
-                  .pipe(
-                    Effect.mapError((cause) =>
-                      analysisError(
-                        "list",
-                        "persistence-failed",
-                        "Unable to recover an interrupted run.",
-                        cause,
-                      ),
-                    ),
-                  ),
-              { concurrency: 8 },
+              ),
             );
-            if (restored.some((run) => run === null)) {
-              rebuild = true;
-              loadedRuns = yield* store
-                .loadRuns(projectId)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    analysisError(
-                      "list",
-                      "persistence-failed",
-                      "Unable to rebuild stale local run history.",
-                      cause,
-                    ),
-                  ),
-                );
-            } else {
-              loadedRuns = restored.filter((run): run is AnalysisRunSnapshot => run !== null);
-            }
-          }
-          const observedAt = yield* nowIso;
-          const indexedRuns: AnalysisRunSummary[] = [];
-          for (const loadedRun of loadedRuns) {
-            let run = loadedRun;
-            const liveRun = (yield* Ref.get(runsRef)).get(loadedRun.receipt.runId);
-            if (liveRun && !isTerminal(liveRun.receipt.status)) {
-              // A dirty projection can rebuild while this process is still
-              // alive. Its in-memory snapshot is newer than the disk summary
-              // and must not be misclassified as restart recovery.
-              run = liveRun;
-            } else if (!isTerminal(loadedRun.receipt.status)) {
-              const recovered = yield* store
-                .loadRun(projectId, loadedRun.receipt.runId)
+        } else {
+          const nonTerminal = yield* runIndex
+            .listNonTerminal(projectId)
+            .pipe(mapIndexLoadError("Unable to inspect interrupted analysis runs."));
+          const restored = yield* Effect.forEach(
+            nonTerminal,
+            (summary) =>
+              store
+                .loadRun(projectId, summary.receipt.runId)
                 .pipe(
                   Effect.mapError((cause) =>
                     analysisError(
@@ -830,210 +802,251 @@ const make = Effect.gen(function* () {
                       cause,
                     ),
                   ),
-                );
-              const recoveredReceipt = recovered?.receipt ?? loadedRun.receipt;
-              run = {
-                ...loadedRun,
-                receipt: {
-                  ...recoveredReceipt,
-                  status: "lost" as const,
-                  finishedAt: observedAt,
-                  failureMessage: "The app stopped before this run reached a terminal state.",
-                  outputContentHash: recoveredOutputContentHash(
-                    recoveredReceipt.output,
-                    recoveredReceipt.outputTruncated,
-                  ),
-                  output: [],
-                },
-              };
-            }
-            if (
-              run.localStorage.status === "retained" &&
-              run.localStorage.totalBytes === 0 &&
-              isTerminal(run.receipt.status)
-            ) {
-              const measured = yield* store
-                .measureRunStorage(projectId, run.receipt.runId)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    analysisError(
-                      "list",
-                      "persistence-failed",
-                      "Unable to measure existing local analysis data.",
-                      cause,
-                    ),
-                  ),
-                );
-              if (measured.totalBytes > 0) run = { ...run, localStorage: measured };
-            }
-            if (run !== loadedRun) yield* persist("list", run);
-            indexedRuns.push(summarizeAnalysisRun(run));
-          }
-          if (rebuild) {
-            const mutation = yield* runIndex
-              .beginMutation(projectId)
-              .pipe(mapIndexLoadError("Unable to begin rebuilding local analysis history."));
-            const replaced = yield* runIndex
-              .replaceProject(projectId, indexedRuns, mutation)
-              .pipe(mapIndexLoadError("Unable to rebuild the local analysis history index."));
-            if (!replaced) {
-              yield* markIndexDirty(projectId);
-              return yield* analysisError(
-                "list",
-                "persistence-failed",
-                "Local analysis history changed during recovery. Try loading it again.",
-              );
-            }
-          }
-          yield* Ref.update(loadedProjectsRef, (projects) => new Set(projects).add(projectId));
-          yield* Ref.update(dirtyIndexProjectsRef, (projects) => {
-            const next = new Set(projects);
-            next.delete(projectId);
-            return next;
-          });
-        }),
-      );
-    });
-
-  const updateReceipt = (
-    runId: string,
-    operation: AnalysisOperation,
-    update: (run: AnalysisRunSnapshot) => AnalysisRunSnapshot,
-  ) =>
-    Effect.gen(function* () {
-      const run = yield* Ref.modify(runsRef, (runs) => {
-        const current = runs.get(runId);
-        if (!current) return [null, runs] as const;
-        const nextRun = update(current);
-        const next = new Map(runs);
-        next.set(runId, nextRun);
-        return [nextRun, next] as const;
-      });
-      if (run === null) {
-        return yield* analysisError(
-          operation,
-          "run-not-found",
-          "The analysis run no longer exists.",
-        );
-      }
-      yield* persist(operation, run);
-      yield* publish(run);
-      return run;
-    });
-
-  const removeQueuedRun = (runtimeId: string, runId: string) =>
-    Effect.gen(function* () {
-      const remaining = yield* Ref.modify(runtimeQueuesRef, (queues) => {
-        const next = new Map(queues);
-        const queue = (next.get(runtimeId) ?? []).filter((candidate) => candidate !== runId);
-        next.set(runtimeId, queue);
-        return [queue, next] as const;
-      });
-      yield* Effect.forEach(
-        remaining,
-        (queuedRunId, index) =>
-          Effect.gen(function* () {
-            const run = (yield* Ref.get(runsRef)).get(queuedRunId);
-            if (!run || isTerminal(run.receipt.status) || run.queuePosition === index + 1) return;
-            yield* updateReceipt(queuedRunId, "start", (current) => ({
-              ...current,
-              queuePosition: index + 1,
-            }));
-          }),
-        { concurrency: 1, discard: true },
-      );
-    });
-
-  const appendOutput = (runId: string, outputs: ReadonlyArray<ExecutionProcessOutput>) =>
-    Effect.gen(function* () {
-      const observedAt = yield* nowIso;
-      const update = yield* Ref.modify(runsRef, (runs) => {
-        const run = runs.get(runId);
-        if (!run) return [null, runs] as const;
-        const { chunks, outputByteLength, outputTruncated } = appendBoundedAnalysisOutput({
-          outputs,
-          outputByteLength: run.receipt.outputByteLength,
-          outputTruncated: run.receipt.outputTruncated,
-          nextSequence: run.receipt.output.length,
-          observedAt,
-        });
-        if (chunks.length === 0) return [{ run, chunks }, runs] as const;
-        const nextRun = {
-          ...run,
-          receipt: {
-            ...run.receipt,
-            output: [...run.receipt.output, ...chunks],
-            outputTruncated,
-            outputByteLength,
-          },
-        } satisfies AnalysisRunSnapshot;
-        const next = new Map(runs);
-        next.set(runId, nextRun);
-        return [{ run: nextRun, chunks }, next] as const;
-      });
-      if (update === null || update.chunks.length === 0) return;
-      for (const chunk of update.chunks) {
-        yield* store
-          .appendOutput(update.run.projectId, runId, chunk)
-          .pipe(
-            Effect.mapError((cause) =>
-              analysisError("start", "persistence-failed", "Unable to append run output.", cause),
-            ),
+                ),
+            { concurrency: 8 },
           );
-      }
-      if (update.run.receipt.outputTruncated) yield* persist("start", update.run);
-      yield* publishOutput(update.run, update.chunks);
-    });
-
-  const finishRun = (
-    runId: string,
-    status: Extract<ExecutionStatus, "succeeded" | "failed" | "cancelled" | "lost">,
-    exitCode: number | null,
-    failureMessage: string | null,
-  ) =>
-    Effect.gen(function* () {
-      const finishedAt = yield* nowIso;
-      const current = (yield* Ref.get(runsRef)).get(runId);
-      const contentHash = current === undefined ? null : outputContentHash(current.receipt.output);
-      const localStorage =
-        current === undefined
-          ? null
-          : yield* store
-              .measureRunStorage(current.projectId, runId)
+          if (restored.some((run) => run === null)) {
+            rebuild = true;
+            loadedRuns = yield* store
+              .loadRuns(projectId)
               .pipe(
                 Effect.mapError((cause) =>
                   analysisError(
-                    "start",
+                    "list",
                     "persistence-failed",
-                    "Unable to measure retained local run data.",
+                    "Unable to rebuild stale local run history.",
                     cause,
                   ),
                 ),
               );
-      const finished = yield* updateReceipt(runId, "start", (run) => ({
+          } else {
+            loadedRuns = restored.filter((run): run is AnalysisRunSnapshot => run !== null);
+          }
+        }
+        const observedAt = yield* nowIso;
+        const indexedRuns: AnalysisRunSummary[] = [];
+        for (const loadedRun of loadedRuns) {
+          let run = loadedRun;
+          const liveRun = (yield* Ref.get(runsRef)).get(loadedRun.receipt.runId);
+          if (liveRun && !isTerminal(liveRun.receipt.status)) {
+            // A dirty projection can rebuild while this process is still
+            // alive. Its in-memory snapshot is newer than the disk summary
+            // and must not be misclassified as restart recovery.
+            run = liveRun;
+          } else if (!isTerminal(loadedRun.receipt.status)) {
+            const recovered = yield* store
+              .loadRun(projectId, loadedRun.receipt.runId)
+              .pipe(
+                Effect.mapError((cause) =>
+                  analysisError(
+                    "list",
+                    "persistence-failed",
+                    "Unable to recover an interrupted run.",
+                    cause,
+                  ),
+                ),
+              );
+            const recoveredReceipt = recovered?.receipt ?? loadedRun.receipt;
+            run = {
+              ...loadedRun,
+              receipt: {
+                ...recoveredReceipt,
+                status: "lost" as const,
+                finishedAt: observedAt,
+                failureMessage: "The app stopped before this run reached a terminal state.",
+                outputContentHash: recoveredOutputContentHash(
+                  recoveredReceipt.output,
+                  recoveredReceipt.outputTruncated,
+                ),
+                output: [],
+              },
+            };
+          }
+          if (
+            run.localStorage.status === "retained" &&
+            run.localStorage.totalBytes === 0 &&
+            isTerminal(run.receipt.status)
+          ) {
+            const measured = yield* store
+              .measureRunStorage(projectId, run.receipt.runId)
+              .pipe(
+                Effect.mapError((cause) =>
+                  analysisError(
+                    "list",
+                    "persistence-failed",
+                    "Unable to measure existing local analysis data.",
+                    cause,
+                  ),
+                ),
+              );
+            if (measured.totalBytes > 0) run = { ...run, localStorage: measured };
+          }
+          if (run !== loadedRun) yield* persist("list", run);
+          indexedRuns.push(summarizeAnalysisRun(run));
+        }
+        if (rebuild) {
+          const mutation = yield* runIndex
+            .beginMutation(projectId)
+            .pipe(mapIndexLoadError("Unable to begin rebuilding local analysis history."));
+          const replaced = yield* runIndex
+            .replaceProject(projectId, indexedRuns, mutation)
+            .pipe(mapIndexLoadError("Unable to rebuild the local analysis history index."));
+          if (!replaced) {
+            yield* markIndexDirty(projectId);
+            return yield* analysisError(
+              "list",
+              "persistence-failed",
+              "Local analysis history changed during recovery. Try loading it again.",
+            );
+          }
+        }
+        yield* Ref.update(loadedProjectsRef, (projects) => new Set(projects).add(projectId));
+        yield* Ref.update(dirtyIndexProjectsRef, (projects) => {
+          const next = new Set(projects);
+          next.delete(projectId);
+          return next;
+        });
+      }),
+    );
+  });
+
+  const updateReceipt = Effect.fn("AnalysisService.updateReceipt")(function* (
+    runId: string,
+    operation: AnalysisOperation,
+    update: (run: AnalysisRunSnapshot) => AnalysisRunSnapshot,
+  ) {
+    const run = yield* Ref.modify(runsRef, (runs) => {
+      const current = runs.get(runId);
+      if (!current) return [null, runs] as const;
+      const nextRun = update(current);
+      const next = new Map(runs);
+      next.set(runId, nextRun);
+      return [nextRun, next] as const;
+    });
+    if (run === null) {
+      return yield* analysisError(operation, "run-not-found", "The analysis run no longer exists.");
+    }
+    yield* persist(operation, run);
+    yield* publish(run);
+    return run;
+  });
+
+  const removeQueuedRun = Effect.fn("AnalysisService.removeQueuedRun")(function* (
+    runtimeId: string,
+    runId: string,
+  ) {
+    const remaining = yield* Ref.modify(runtimeQueuesRef, (queues) => {
+      const next = new Map(queues);
+      const queue = (next.get(runtimeId) ?? []).filter((candidate) => candidate !== runId);
+      next.set(runtimeId, queue);
+      return [queue, next] as const;
+    });
+    yield* Effect.forEach(
+      remaining,
+      (queuedRunId, index) =>
+        Effect.gen(function* () {
+          const run = (yield* Ref.get(runsRef)).get(queuedRunId);
+          if (!run || isTerminal(run.receipt.status) || run.queuePosition === index + 1) return;
+          yield* updateReceipt(queuedRunId, "start", (current) => ({
+            ...current,
+            queuePosition: index + 1,
+          }));
+        }),
+      { concurrency: 1, discard: true },
+    );
+  });
+
+  const appendOutput = Effect.fn("AnalysisService.appendOutput")(function* (
+    runId: string,
+    outputs: ReadonlyArray<ExecutionProcessOutput>,
+  ) {
+    const observedAt = yield* nowIso;
+    const update = yield* Ref.modify(runsRef, (runs) => {
+      const run = runs.get(runId);
+      if (!run) return [null, runs] as const;
+      const { chunks, outputByteLength, outputTruncated } = appendBoundedAnalysisOutput({
+        outputs,
+        outputByteLength: run.receipt.outputByteLength,
+        outputTruncated: run.receipt.outputTruncated,
+        nextSequence: run.receipt.output.length,
+        observedAt,
+      });
+      if (chunks.length === 0) return [{ run, chunks }, runs] as const;
+      const nextRun = {
         ...run,
-        phase: "finished",
-        queuePosition: null,
-        ...(localStorage === null ? {} : { localStorage }),
         receipt: {
           ...run.receipt,
-          status: transitionExecutionStatus(run.receipt.status, status),
-          exitCode,
-          failureMessage,
-          finishedAt,
-          outputContentHash: contentHash,
+          output: [...run.receipt.output, ...chunks],
+          outputTruncated,
+          outputByteLength,
         },
-      }));
-      yield* Ref.update(runsRef, (runs) => {
-        const next = new Map(runs);
-        next.set(runId, {
-          ...finished,
-          receipt: { ...finished.receipt, output: [] },
-        });
-        return next;
-      });
-      return finished;
+      } satisfies AnalysisRunSnapshot;
+      const next = new Map(runs);
+      next.set(runId, nextRun);
+      return [{ run: nextRun, chunks }, next] as const;
     });
+    if (update === null || update.chunks.length === 0) return;
+    for (const chunk of update.chunks) {
+      yield* store
+        .appendOutput(update.run.projectId, runId, chunk)
+        .pipe(
+          Effect.mapError((cause) =>
+            analysisError("start", "persistence-failed", "Unable to append run output.", cause),
+          ),
+        );
+    }
+    if (update.run.receipt.outputTruncated) yield* persist("start", update.run);
+    yield* publishOutput(update.run, update.chunks);
+  });
+
+  const finishRun = Effect.fn("AnalysisService.finishRun")(function* (
+    runId: string,
+    status: Extract<ExecutionStatus, "succeeded" | "failed" | "cancelled" | "lost">,
+    exitCode: number | null,
+    failureMessage: string | null,
+  ) {
+    const finishedAt = yield* nowIso;
+    const current = (yield* Ref.get(runsRef)).get(runId);
+    const contentHash = current === undefined ? null : outputContentHash(current.receipt.output);
+    const localStorage =
+      current === undefined
+        ? null
+        : yield* store
+            .measureRunStorage(current.projectId, runId)
+            .pipe(
+              Effect.mapError((cause) =>
+                analysisError(
+                  "start",
+                  "persistence-failed",
+                  "Unable to measure retained local run data.",
+                  cause,
+                ),
+              ),
+            );
+    const finished = yield* updateReceipt(runId, "start", (run) => ({
+      ...run,
+      phase: "finished",
+      queuePosition: null,
+      ...(localStorage === null ? {} : { localStorage }),
+      receipt: {
+        ...run.receipt,
+        status: transitionExecutionStatus(run.receipt.status, status),
+        exitCode,
+        failureMessage,
+        finishedAt,
+        outputContentHash: contentHash,
+      },
+    }));
+    yield* Ref.update(runsRef, (runs) => {
+      const next = new Map(runs);
+      next.set(runId, {
+        ...finished,
+        receipt: { ...finished.receipt, output: [] },
+      });
+      return next;
+    });
+    return finished;
+  });
 
   const runProcess = (
     runId: string,
@@ -1563,59 +1576,56 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const requestRunCancellation = (input: AnalysisCancelRunInput) =>
-    Effect.gen(function* () {
-      const identity = yield* identityForCwd("cancel", input.cwd);
-      yield* ensureProjectRunsLoaded(identity.projectId);
-      const run = (yield* Ref.get(runsRef)).get(input.runId);
-      if (!run || run.projectId !== identity.projectId) {
-        return yield* analysisError(
-          "cancel",
-          "run-not-found",
-          "The analysis run no longer exists.",
-        );
+  const requestRunCancellation = Effect.fn("AnalysisService.requestRunCancellation")(function* (
+    input: AnalysisCancelRunInput,
+  ) {
+    const identity = yield* identityForCwd("cancel", input.cwd);
+    yield* ensureProjectRunsLoaded(identity.projectId);
+    const run = (yield* Ref.get(runsRef)).get(input.runId);
+    if (!run || run.projectId !== identity.projectId) {
+      return yield* analysisError("cancel", "run-not-found", "The analysis run no longer exists.");
+    }
+    if (isTerminal(run.receipt.status)) {
+      return yield* analysisError(
+        "cancel",
+        "run-already-finished",
+        "This analysis run has already finished.",
+      );
+    }
+    const updated = yield* updateReceipt(input.runId, "cancel", (current) => ({
+      ...current,
+      receipt: { ...current.receipt, cancellationRequested: true },
+    }));
+    const handle = (yield* Ref.get(handlesRef)).get(input.runId);
+    if (updated.receipt.status === "queued" && !handle && !claimedRuns.has(input.runId)) {
+      yield* removeQueuedRun(updated.runtime.id, input.runId);
+      const finished = yield* finishRun(input.runId, "cancelled", null, null);
+      const completion = completions.get(input.runId);
+      if (completion !== undefined) {
+        yield* Deferred.succeed(completion, undefined);
+        completions.delete(input.runId);
       }
-      if (isTerminal(run.receipt.status)) {
-        return yield* analysisError(
-          "cancel",
-          "run-already-finished",
-          "This analysis run has already finished.",
-        );
-      }
-      const updated = yield* updateReceipt(input.runId, "cancel", (current) => ({
-        ...current,
-        receipt: { ...current.receipt, cancellationRequested: true },
-      }));
-      const handle = (yield* Ref.get(handlesRef)).get(input.runId);
-      if (updated.receipt.status === "queued" && !handle && !claimedRuns.has(input.runId)) {
-        yield* removeQueuedRun(updated.runtime.id, input.runId);
-        const finished = yield* finishRun(input.runId, "cancelled", null, null);
-        const completion = completions.get(input.runId);
-        if (completion !== undefined) {
-          yield* Deferred.succeed(completion, undefined);
-          completions.delete(input.runId);
-        }
-        yield* Ref.update(runsRef, (runs) => {
-          const next = new Map(runs);
-          next.delete(input.runId);
-          return next;
-        });
-        return finished;
-      }
-      if (handle) {
-        yield* handle.cancel.pipe(
-          Effect.mapError((cause) =>
-            analysisError(
-              "cancel",
-              "process-failed",
-              `Unable to stop the ${run.runtime.label} process tree.`,
-              cause,
-            ),
+      yield* Ref.update(runsRef, (runs) => {
+        const next = new Map(runs);
+        next.delete(input.runId);
+        return next;
+      });
+      return finished;
+    }
+    if (handle) {
+      yield* handle.cancel.pipe(
+        Effect.mapError((cause) =>
+          analysisError(
+            "cancel",
+            "process-failed",
+            `Unable to stop the ${run.runtime.label} process tree.`,
+            cause,
           ),
-        );
-      }
-      return (yield* Ref.get(runsRef)).get(input.runId) ?? updated;
-    });
+        ),
+      );
+    }
+    return (yield* Ref.get(runsRef)).get(input.runId) ?? updated;
+  });
 
   const cancelRun = Effect.fn("AnalysisService.cancelRun")(function* (
     input: AnalysisCancelRunInput,
@@ -1655,270 +1665,264 @@ const make = Effect.gen(function* () {
     return stopped;
   });
 
-  const listRuns = (input: AnalysisListRunsInput) =>
-    Effect.gen(function* () {
-      const identity = yield* identityForCwd("list", input.cwd);
-      yield* ensureProjectRunsLoaded(identity.projectId);
-      const limit = input.limit ?? RUN_HISTORY_DEFAULT_LIMIT;
-      const indexInput = {
+  const listRuns = Effect.fn("AnalysisService.listRuns")(function* (input: AnalysisListRunsInput) {
+    const identity = yield* identityForCwd("list", input.cwd);
+    yield* ensureProjectRunsLoaded(identity.projectId);
+    const limit = input.limit ?? RUN_HISTORY_DEFAULT_LIMIT;
+    const indexInput = {
+      projectId: identity.projectId,
+      ...(input.relativePath === undefined ? {} : { relativePath: input.relativePath }),
+      limit,
+      ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    };
+    const mapIndexError = (cause: AnalysisRunIndex.AnalysisRunIndexError) =>
+      analysisError(
+        "list",
+        cause.operation === "decode-cursor" ? "invalid-cursor" : "persistence-failed",
+        cause.operation === "decode-cursor"
+          ? "The analysis history cursor is invalid. Refresh the run history and try again."
+          : "Unable to query the local analysis history index.",
+        cause,
+      );
+    return yield* runIndex.list(indexInput).pipe(
+      Effect.catch((cause) =>
+        cause.operation === "decode-cursor"
+          ? Effect.fail(mapIndexError(cause))
+          : Effect.gen(function* () {
+              yield* Effect.logWarning(
+                "analysis history projection read failed; rebuilding from canonical receipts",
+                { projectId: identity.projectId, cause },
+              );
+              yield* Ref.update(dirtyIndexProjectsRef, (projects) =>
+                new Set(projects).add(identity.projectId),
+              );
+              yield* ensureProjectRunsLoaded(identity.projectId);
+              return yield* runIndex.list(indexInput).pipe(Effect.mapError(mapIndexError));
+            }),
+      ),
+    );
+  });
+
+  const getRun = Effect.fn("AnalysisService.getRun")(function* (input: AnalysisGetRunInput) {
+    const identity = yield* identityForCwd("get", input.cwd);
+    yield* ensureProjectRunsLoaded(identity.projectId);
+    const run = (yield* Ref.get(runsRef)).get(input.runId);
+    if (run && run.projectId !== identity.projectId) {
+      return yield* analysisError("get", "run-not-found", "The analysis run no longer exists.");
+    }
+    if (run && !isTerminal(run.receipt.status)) return run;
+    const persistedRun = yield* store
+      .loadRun(identity.projectId, input.runId)
+      .pipe(
+        Effect.mapError((cause) =>
+          analysisError("get", "persistence-failed", "Unable to load the local run output.", cause),
+        ),
+      );
+    if (persistedRun === null) {
+      return yield* analysisError("get", "run-not-found", "The analysis run no longer exists.");
+    }
+    return persistedRun;
+  });
+
+  const storageSummary = Effect.fn("AnalysisService.storageSummary")(function* (
+    input: AnalysisStorageSummaryInput,
+  ) {
+    const identity = yield* identityForCwd("storage", input.cwd);
+    yield* ensureProjectRunsLoaded(identity.projectId);
+    return yield* runIndex
+      .storageSummary({
         projectId: identity.projectId,
         ...(input.relativePath === undefined ? {} : { relativePath: input.relativePath }),
-        limit,
-        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-      };
-      const mapIndexError = (cause: AnalysisRunIndex.AnalysisRunIndexError) =>
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          analysisError(
+            "storage",
+            "persistence-failed",
+            "Unable to calculate local analysis storage.",
+            cause,
+          ),
+        ),
+      );
+  });
+
+  const cleanPersistedRun = Effect.fn("AnalysisService.cleanPersistedRun")(function* (
+    projectId: string,
+    runId: ExecutionRunId,
+  ) {
+    const live = (yield* Ref.get(runsRef)).get(runId);
+    if (live && !isTerminal(live.receipt.status)) {
+      return yield* analysisError(
+        "cleanup",
+        "run-already-active",
+        "Wait for this analysis run to finish before removing its local data.",
+      );
+    }
+    const run = yield* store
+      .loadRun(projectId, runId)
+      .pipe(
+        Effect.mapError((cause) =>
+          analysisError(
+            "cleanup",
+            "persistence-failed",
+            "Unable to load the analysis run before cleanup.",
+            cause,
+          ),
+        ),
+      );
+    if (run === null) {
+      return yield* analysisError("cleanup", "run-not-found", "The analysis run no longer exists.");
+    }
+    if (!isTerminal(run.receipt.status)) {
+      return yield* analysisError(
+        "cleanup",
+        "run-already-active",
+        "Wait for this analysis run to finish before removing its local data.",
+      );
+    }
+    if (run.localStorage.status === "metadata-only") {
+      return { cleaned: false, freedBytes: 0 } as const;
+    }
+    const mutation = yield* runIndex
+      .beginMutation(projectId)
+      .pipe(
+        Effect.mapError((cause) =>
+          analysisError(
+            "cleanup",
+            "persistence-failed",
+            "Unable to begin the local cleanup transaction.",
+            cause,
+          ),
+        ),
+      );
+    const measured = yield* store.measureRunStorage(projectId, runId).pipe(
+      Effect.mapError((cause) =>
         analysisError(
-          "list",
-          cause.operation === "decode-cursor" ? "invalid-cursor" : "persistence-failed",
-          cause.operation === "decode-cursor"
-            ? "The analysis history cursor is invalid. Refresh the run history and try again."
-            : "Unable to query the local analysis history index.",
+          "cleanup",
+          "persistence-failed",
+          "Unable to measure the local run data before cleanup.",
           cause,
-        );
-      return yield* runIndex.list(indexInput).pipe(
-        Effect.catch((cause) =>
-          cause.operation === "decode-cursor"
-            ? Effect.fail(mapIndexError(cause))
-            : Effect.gen(function* () {
-                yield* Effect.logWarning(
-                  "analysis history projection read failed; rebuilding from canonical receipts",
-                  { projectId: identity.projectId, cause },
-                );
-                yield* Ref.update(dirtyIndexProjectsRef, (projects) =>
-                  new Set(projects).add(identity.projectId),
-                );
-                yield* ensureProjectRunsLoaded(identity.projectId);
-                return yield* runIndex.list(indexInput).pipe(Effect.mapError(mapIndexError));
-              }),
         ),
-      );
-    });
-
-  const getRun = (input: AnalysisGetRunInput) =>
-    Effect.gen(function* () {
-      const identity = yield* identityForCwd("get", input.cwd);
-      yield* ensureProjectRunsLoaded(identity.projectId);
-      const run = (yield* Ref.get(runsRef)).get(input.runId);
-      if (run && run.projectId !== identity.projectId) {
-        return yield* analysisError("get", "run-not-found", "The analysis run no longer exists.");
-      }
-      if (run && !isTerminal(run.receipt.status)) return run;
-      const persistedRun = yield* store
-        .loadRun(identity.projectId, input.runId)
-        .pipe(
-          Effect.mapError((cause) =>
-            analysisError(
-              "get",
-              "persistence-failed",
-              "Unable to load the local run output.",
-              cause,
-            ),
-          ),
-        );
-      if (persistedRun === null) {
-        return yield* analysisError("get", "run-not-found", "The analysis run no longer exists.");
-      }
-      return persistedRun;
-    });
-
-  const storageSummary = (input: AnalysisStorageSummaryInput) =>
-    Effect.gen(function* () {
-      const identity = yield* identityForCwd("storage", input.cwd);
-      yield* ensureProjectRunsLoaded(identity.projectId);
-      return yield* runIndex
-        .storageSummary({
-          projectId: identity.projectId,
-          ...(input.relativePath === undefined ? {} : { relativePath: input.relativePath }),
-        })
-        .pipe(
-          Effect.mapError((cause) =>
-            analysisError(
-              "storage",
-              "persistence-failed",
-              "Unable to calculate local analysis storage.",
-              cause,
-            ),
-          ),
-        );
-    });
-
-  const cleanPersistedRun = (projectId: string, runId: ExecutionRunId) =>
-    Effect.gen(function* () {
-      const live = (yield* Ref.get(runsRef)).get(runId);
-      if (live && !isTerminal(live.receipt.status)) {
-        return yield* analysisError(
+      ),
+      Effect.tapError(() => markIndexDirty(projectId)),
+    );
+    const removedAt = yield* nowIso;
+    const cleaned = yield* store.removeDisposableRunData(run, removedAt).pipe(
+      Effect.mapError((cause) =>
+        analysisError(
           "cleanup",
-          "run-already-active",
-          "Wait for this analysis run to finish before removing its local data.",
-        );
-      }
-      const run = yield* store
-        .loadRun(projectId, runId)
-        .pipe(
-          Effect.mapError((cause) =>
-            analysisError(
-              "cleanup",
-              "persistence-failed",
-              "Unable to load the analysis run before cleanup.",
-              cause,
-            ),
-          ),
-        );
-      if (run === null) {
-        return yield* analysisError(
+          "persistence-failed",
+          "Unable to remove the local output and artifacts.",
+          cause,
+        ),
+      ),
+      Effect.tapError(() => markIndexDirty(projectId)),
+    );
+    yield* runIndex.upsert(summarizeAnalysisRun(cleaned), mutation).pipe(
+      Effect.mapError((cause) =>
+        analysisError(
           "cleanup",
-          "run-not-found",
-          "The analysis run no longer exists.",
-        );
-      }
-      if (!isTerminal(run.receipt.status)) {
-        return yield* analysisError(
-          "cleanup",
-          "run-already-active",
-          "Wait for this analysis run to finish before removing its local data.",
-        );
-      }
-      if (run.localStorage.status === "metadata-only") {
-        return { cleaned: false, freedBytes: 0 } as const;
-      }
-      const mutation = yield* runIndex
-        .beginMutation(projectId)
-        .pipe(
-          Effect.mapError((cause) =>
-            analysisError(
-              "cleanup",
-              "persistence-failed",
-              "Unable to begin the local cleanup transaction.",
-              cause,
-            ),
-          ),
-        );
-      const measured = yield* store.measureRunStorage(projectId, runId).pipe(
+          "persistence-failed",
+          "Local data was removed, but the history index could not be updated.",
+          cause,
+        ),
+      ),
+      Effect.tapError(() => markIndexDirty(projectId)),
+    );
+    yield* Ref.update(runsRef, (runs) => {
+      if (!runs.has(runId)) return runs;
+      const next = new Map(runs);
+      next.set(runId, cleaned);
+      return next;
+    });
+    yield* publish(cleaned);
+    return { cleaned: true, freedBytes: measured.totalBytes } as const;
+  });
+
+  const cleanupRun = Effect.fn("AnalysisService.cleanupRun")(function* (
+    input: AnalysisCleanupRunInput,
+  ) {
+    const identity = yield* identityForCwd("cleanup", input.cwd);
+    yield* ensureProjectRunsLoaded(identity.projectId);
+    const cleaned = yield* cleanPersistedRun(identity.projectId, input.runId);
+    const storage = yield* runIndex
+      .storageSummary({ projectId: identity.projectId })
+      .pipe(
         Effect.mapError((cause) =>
           analysisError(
             "cleanup",
             "persistence-failed",
-            "Unable to measure the local run data before cleanup.",
+            "Unable to refresh local analysis storage after cleanup.",
             cause,
           ),
         ),
-        Effect.tapError(() => markIndexDirty(projectId)),
       );
-      const removedAt = yield* nowIso;
-      const cleaned = yield* store.removeDisposableRunData(run, removedAt).pipe(
+    return {
+      cleanedRunCount: cleaned.cleaned ? 1 : 0,
+      freedBytes: cleaned.freedBytes,
+      storage,
+    };
+  });
+
+  const cleanupProject = Effect.fn("AnalysisService.cleanupProject")(function* (
+    input: AnalysisCleanupProjectInput,
+  ) {
+    const identity = yield* identityForCwd("cleanup", input.cwd);
+    yield* ensureProjectRunsLoaded(identity.projectId);
+    const before = yield* runIndex
+      .storageSummary({ projectId: identity.projectId })
+      .pipe(
         Effect.mapError((cause) =>
           analysisError(
             "cleanup",
             "persistence-failed",
-            "Unable to remove the local output and artifacts.",
+            "Unable to confirm local analysis storage before cleanup.",
             cause,
           ),
         ),
-        Effect.tapError(() => markIndexDirty(projectId)),
       );
-      yield* runIndex.upsert(summarizeAnalysisRun(cleaned), mutation).pipe(
+    if (before.totalBytes !== input.expectedRetainedBytes) {
+      return yield* analysisError(
+        "cleanup",
+        "operation-failed",
+        "Local analysis storage changed. Review the updated summary before cleaning it up.",
+      );
+    }
+    const retainedRuns = yield* runIndex
+      .listRetainedTerminal(identity.projectId)
+      .pipe(
         Effect.mapError((cause) =>
           analysisError(
             "cleanup",
             "persistence-failed",
-            "Local data was removed, but the history index could not be updated.",
+            "Unable to list retained analysis runs for cleanup.",
             cause,
           ),
         ),
-        Effect.tapError(() => markIndexDirty(projectId)),
       );
-      yield* Ref.update(runsRef, (runs) => {
-        if (!runs.has(runId)) return runs;
-        const next = new Map(runs);
-        next.set(runId, cleaned);
-        return next;
-      });
-      yield* publish(cleaned);
-      return { cleaned: true, freedBytes: measured.totalBytes } as const;
-    });
-
-  const cleanupRun = (input: AnalysisCleanupRunInput) =>
-    Effect.gen(function* () {
-      const identity = yield* identityForCwd("cleanup", input.cwd);
-      yield* ensureProjectRunsLoaded(identity.projectId);
-      const cleaned = yield* cleanPersistedRun(identity.projectId, input.runId);
-      const storage = yield* runIndex
-        .storageSummary({ projectId: identity.projectId })
-        .pipe(
-          Effect.mapError((cause) =>
-            analysisError(
-              "cleanup",
-              "persistence-failed",
-              "Unable to refresh local analysis storage after cleanup.",
-              cause,
-            ),
+    let freedBytes = 0;
+    let cleanedRunCount = 0;
+    // Keep journal deletion and index projection updates ordered. Parallel
+    // generations can invalidate one another and leave the projection dirty.
+    for (const run of retainedRuns) {
+      const cleaned = yield* cleanPersistedRun(identity.projectId, run.receipt.runId);
+      freedBytes += cleaned.freedBytes;
+      if (cleaned.cleaned) cleanedRunCount += 1;
+    }
+    const storage = yield* runIndex
+      .storageSummary({ projectId: identity.projectId })
+      .pipe(
+        Effect.mapError((cause) =>
+          analysisError(
+            "cleanup",
+            "persistence-failed",
+            "Unable to refresh local analysis storage after cleanup.",
+            cause,
           ),
-        );
-      return {
-        cleanedRunCount: cleaned.cleaned ? 1 : 0,
-        freedBytes: cleaned.freedBytes,
-        storage,
-      };
-    });
-
-  const cleanupProject = (input: AnalysisCleanupProjectInput) =>
-    Effect.gen(function* () {
-      const identity = yield* identityForCwd("cleanup", input.cwd);
-      yield* ensureProjectRunsLoaded(identity.projectId);
-      const before = yield* runIndex
-        .storageSummary({ projectId: identity.projectId })
-        .pipe(
-          Effect.mapError((cause) =>
-            analysisError(
-              "cleanup",
-              "persistence-failed",
-              "Unable to confirm local analysis storage before cleanup.",
-              cause,
-            ),
-          ),
-        );
-      if (before.totalBytes !== input.expectedRetainedBytes) {
-        return yield* analysisError(
-          "cleanup",
-          "operation-failed",
-          "Local analysis storage changed. Review the updated summary before cleaning it up.",
-        );
-      }
-      const retainedRuns = yield* runIndex
-        .listRetainedTerminal(identity.projectId)
-        .pipe(
-          Effect.mapError((cause) =>
-            analysisError(
-              "cleanup",
-              "persistence-failed",
-              "Unable to list retained analysis runs for cleanup.",
-              cause,
-            ),
-          ),
-        );
-      let freedBytes = 0;
-      let cleanedRunCount = 0;
-      // Keep journal deletion and index projection updates ordered. Parallel
-      // generations can invalidate one another and leave the projection dirty.
-      for (const run of retainedRuns) {
-        const cleaned = yield* cleanPersistedRun(identity.projectId, run.receipt.runId);
-        freedBytes += cleaned.freedBytes;
-        if (cleaned.cleaned) cleanedRunCount += 1;
-      }
-      const storage = yield* runIndex
-        .storageSummary({ projectId: identity.projectId })
-        .pipe(
-          Effect.mapError((cause) =>
-            analysisError(
-              "cleanup",
-              "persistence-failed",
-              "Unable to refresh local analysis storage after cleanup.",
-              cause,
-            ),
-          ),
-        );
-      return { cleanedRunCount, freedBytes, storage };
-    });
+        ),
+      );
+    return { cleanedRunCount, freedBytes, storage };
+  });
 
   const promoteRun = (input: AnalysisPromoteRunInput) =>
     promotionLock.withPermits(1)(
@@ -1991,42 +1995,43 @@ const make = Effect.gen(function* () {
         ),
       );
 
-  const subscribeRuns = (input: AnalysisSubscribeRunsInput) =>
-    Effect.gen(function* () {
-      const identity = yield* identityForCwd("subscribe", input.cwd);
-      yield* ensureProjectRunsLoaded(identity.projectId);
-      const subscription = yield* PubSub.subscribe(pubsub);
-      const boundarySequence = yield* Ref.get(eventSequenceRef);
-      const matchingRuns = [...(yield* Ref.get(runsRef)).values()]
-        .filter(
-          (run) =>
-            run.projectId === identity.projectId &&
-            matchesSubscription(
-              { _tag: "run-snapshot", eventSequence: boundarySequence, run },
-              input,
-            ),
-        )
-        .toSorted((left, right) => left.receipt.startedAt.localeCompare(right.receipt.startedAt));
-      const latestRunId = matchingRuns.at(-1)?.receipt.runId;
-      const snapshots = matchingRuns
-        .filter((run) => !isTerminal(run.receipt.status) || run.receipt.runId === latestRunId)
-        .map((run) => ({
-          _tag: "run-snapshot" as const,
-          eventSequence: boundarySequence,
-          run,
-        }));
-      return Stream.concat(
-        Stream.fromIterable(snapshots),
-        Stream.fromSubscription(subscription).pipe(
-          Stream.filter(
-            (event) =>
-              event.eventSequence >= boundarySequence &&
-              eventProjectId(event) === identity.projectId &&
-              matchesSubscription(event, input),
+  const subscribeRuns = Effect.fn("AnalysisService.subscribeRuns")(function* (
+    input: AnalysisSubscribeRunsInput,
+  ) {
+    const identity = yield* identityForCwd("subscribe", input.cwd);
+    yield* ensureProjectRunsLoaded(identity.projectId);
+    const subscription = yield* PubSub.subscribe(pubsub);
+    const boundarySequence = yield* Ref.get(eventSequenceRef);
+    const matchingRuns = [...(yield* Ref.get(runsRef)).values()]
+      .filter(
+        (run) =>
+          run.projectId === identity.projectId &&
+          matchesSubscription(
+            { _tag: "run-snapshot", eventSequence: boundarySequence, run },
+            input,
           ),
+      )
+      .toSorted((left, right) => left.receipt.startedAt.localeCompare(right.receipt.startedAt));
+    const latestRunId = matchingRuns.at(-1)?.receipt.runId;
+    const snapshots = matchingRuns
+      .filter((run) => !isTerminal(run.receipt.status) || run.receipt.runId === latestRunId)
+      .map((run) => ({
+        _tag: "run-snapshot" as const,
+        eventSequence: boundarySequence,
+        run,
+      }));
+    return Stream.concat(
+      Stream.fromIterable(snapshots),
+      Stream.fromSubscription(subscription).pipe(
+        Stream.filter(
+          (event) =>
+            event.eventSequence >= boundarySequence &&
+            eventProjectId(event) === identity.projectId &&
+            matchesSubscription(event, input),
         ),
-      );
-    });
+      ),
+    );
+  });
 
   yield* Effect.forEach(
     runtimeWorkQueues.values(),

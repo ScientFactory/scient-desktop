@@ -35,6 +35,18 @@ the stable scheduler and production gate.
   monitor, omit unused Claude SDK platform executables, and package only the
   target Windows `node-pty` architecture. These optimizations do not relax the
   exact-source CI, signing, assembly, or publication gates.
+- Windows packaging runs on Ubuntu 24.04 with pinned `cargo-xwin` and `jsign`.
+  Both Linux-hosted packaging targets install `libsecret-1-dev` and `pkg-config`:
+  the desktop build task compiles the Linux browser helper on its host, including
+  when the eventual installer target is Windows. ImageMagick stays Linux-target-only.
+  The Windows 2025 prerequisite lane builds publication and voice helpers from
+  the same source commit and records their target architecture and checksums.
+  The Linux packager verifies that receipt before staging the helpers outside
+  ASAR, alongside SyncTeX and the resource monitor. Missing target prerequisites
+  fail packaging; a cross-build is not native Windows acceptance.
+  The unpacked artifact is transferred to Windows 2025 for native verification.
+  Structural validation runs on every host; native probes require both the
+  matching operating system and architecture.
 - CI calls Windows Packaging for changes affecting packaged code on pull
   requests, merge groups, and main. Successful qualification is part of the
   existing required `Test` check; an unresolved diff runs qualification, and
@@ -87,7 +99,8 @@ maps for debugging; archive filtering does not delete them or change map
 generation. Packaged launchers do not enable source-map loading. Preserve the
 corresponding source revision and build output when diagnosing bundled stacks.
 
-Whisper, resource monitor, and SyncTeX run from external Electron resources.
+Whisper, resource monitor, SyncTeX, and `scient-file-publication` run from external Electron resources.
+macOS also carries `scient-file-exchange` for volume probes.
 Their `apps/desktop/prod-resources` staging trees are excluded from `app.asar`
 on every platform; Linux also excludes the KDE and Hyprland capture staging
 trees. Keep individual exclusions: Linux registration reads
@@ -186,8 +199,10 @@ tag or release already exists.
    in the same workflow run. Publication fails closed if macOS is unsigned or
    the repository release gate is disabled. Windows is also required to be
    signed unless the operator explicitly set `allow_unsigned_windows=true` when
-   creating the candidate; that exception is recorded in the release body and
-   may trigger an Unknown Publisher or SmartScreen warning. The workflow
+   creating the candidate; that exception is recorded in the workflow run's
+   summary, not the release body, because the app shows the release body as
+   release notes. Unsigned installers may trigger an Unknown Publisher or
+   SmartScreen warning, which `docs/user/install.md` explains. The workflow
    publishes the already accepted assembled artifact, downloads the draft again,
    verifies every uploaded byte, and only then makes the release public and
    Latest. Existing tags or releases are never rebuilt, overwritten, or
@@ -219,11 +234,13 @@ the same owner-approved Windows exception automatically. That exception applies
 only to Windows; macOS signing and notarization remain mandatory.
 
 Release jobs expose Apple credentials only to macOS packaging and Azure
-credentials only to Windows packaging. Publication additionally verifies the
+credentials only to the Linux-hosted Windows packaging job. Publication additionally verifies the
 final Windows Authenticode signature and the final macOS app signatures,
 Gatekeeper assessment, and notarization ticket before the signing attestations
 can authorize publication. Release-owned third-party actions and native build
 tooling are pinned to reviewed revisions.
+The retired inherited macOS-preview workflows do not provide a second signing
+or publication path.
 
 ## Updater and remote-server distribution
 

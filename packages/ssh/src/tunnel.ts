@@ -2,12 +2,10 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
-import {
-  describeReadinessCause,
-  waitForHttpReady as waitForHttpReadyShared,
-} from "@t3tools/shared/httpReadiness";
+import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 import {
   SCIENT_DESKTOP_RELEASE_REPOSITORY,
+  SCIENT_SERVER_PACKAGE_NAME,
   scientServerAllowedScriptsValue,
 } from "@t3tools/shared/scientRelease";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -18,6 +16,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -31,7 +30,6 @@ import * as SshAuth from "./auth.ts";
 import {
   baseSshArgs,
   buildSshHostSpecEffect,
-  collectProcessOutput,
   getLastNonEmptyOutputLine,
   remoteStateKey,
   resolveSshCommand,
@@ -48,12 +46,21 @@ import {
   SshPasswordPromptError,
   SshReadinessError,
 } from "./errors.ts";
+// SCIENT-FORK:START
+import {
+  buildScientHomeCheckStep,
+  migrateRemoteScientHome,
+  SCIENT_HOME_MIGRATION_REQUIRED,
+} from "./scientRemoteHome.ts";
+import { makeSharedSshPreparation } from "./scientSshPreparation.ts";
+// SCIENT-FORK:END
 
 const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
 const SSH_READY_TIMEOUT_MS = 20_000;
 const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
+const TUNNEL_STDERR_TAIL_CHARS = 16_384;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
 const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
@@ -87,8 +94,8 @@ export interface RemoteT3RunnerOptions {
   readonly archiveVersion?: string | null;
   readonly releaseBaseUrl?: string | null;
   /**
-   * Scient fork: exact npm package spec (a pinned `scient-server-<version>`
-   * tarball URL, or a channel such as `t3@nightly`) installed with npx/npm.
+   * Scient fork: the pinned `scient-server-<version>` release tarball URL
+   * installed with npx/npm. Absent means this build has no published server.
    */
   readonly packageSpec?: string;
 }
@@ -180,7 +187,8 @@ interface SshAuthAttemptInput<T> extends SshAuthOperationInput<T> {
 export interface SshEnvironmentManagerShape {
   readonly ensureEnvironment: (
     target: DesktopSshEnvironmentTarget,
-    options?: { readonly issuePairingToken?: boolean },
+    // SCIENT-FORK: boundedWait — a retrying saved connection (scientSshPreparation.ts).
+    options?: { readonly issuePairingToken?: boolean; readonly boundedWait?: boolean },
   ) => Effect.Effect<
     DesktopSshEnvironmentBootstrap,
     SshEnvironmentEffectError,
@@ -272,9 +280,7 @@ function applyScriptPlaceholders(
   return result;
 }
 
-export { describeReadinessCause };
-
-export const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
+const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
 const net = require("node:net");
 const filePath = process.argv[2] ?? "";
 const defaultPort = Number.parseInt(process.argv[3] ?? "", 10);
@@ -486,7 +492,7 @@ fi
 
 // Upstream's self-contained release archive: a version-pinned download that
 // needs neither Node nor npm on the remote. Installs are serialized by a
-// per-version mkdir lock so concurrent launches install once, and the
+// per-version exclusive lock so concurrent launches install once, and the
 // completion marker is rechecked under the lock.
 const REMOTE_ARCHIVE_INSTALL_BLOCK = `T3_ARCHIVE_VERSION=@@T3_ARCHIVE_VERSION@@
 if [ -z "$T3_ARCHIVE_VERSION" ]; then
@@ -494,28 +500,27 @@ if [ -z "$T3_ARCHIVE_VERSION" ]; then
   exit 1
 fi
 # Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
+# SCIENT-FORK: under Scient's remote home, never ~/.t3.
 T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
-T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"
+T3_RUNTIME_DIR="$HOME/.scient-next/runtime/versions/$T3_ARCHIVE_VERSION"
 t3_runtime_ready() {
   [ -x "$T3_RUNTIME_DIR/t3" ] && [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$T3_ARCHIVE_VERSION" ]
 }
 if ! t3_runtime_ready; then
-  mkdir -p "$HOME/.t3/runtime/versions"
-  # Concurrent launches (two clients, a retry racing a slow first run) must
-  # not both install: mkdir is the atomic lock and the ready check repeats
-  # under it.
-  T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
-  # mkdir is the only portable atomic exclusive create (mv would silently
-  # nest a candidate inside an existing lock). The owner publishes its pid
-  # right after, so a lock with a live owner is never reclaimed however
-  # slow its download is, and a lock whose owner is dead is reclaimed at
-  # once. A lock with no pid at all is a crash between mkdir and the pid
-  # write; it is reclaimed after a short grace so a live owner has time to
-  # publish.
+  mkdir -p "$HOME/.scient-next/runtime/versions"
+  T3_LOCK="$HOME/.scient-next/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
+  # uutils mkdir can report success on EEXIST, so use shell noclobber.
+  # An empty lock gets a short grace period for its owner to publish a PID.
   T3_LOCK_WAITED=0
   T3_LOCK_UNOWNED=0
-  while ! mkdir "$T3_LOCK" 2>/dev/null; do
-    T3_LOCK_OWNER="$(cat "$T3_LOCK/pid" 2>/dev/null || true)"
+  while ! (set -C; printf '%s\\n' "$$" > "$T3_LOCK") 2>/dev/null; do
+    # SCIENT-FORK:START — an older Scient runner may still own a directory lock.
+    if [ -d "$T3_LOCK" ]; then
+      T3_LOCK_OWNER="$(cat "$T3_LOCK/pid" 2>/dev/null || true)"
+    else
+      T3_LOCK_OWNER="$(cat "$T3_LOCK" 2>/dev/null || true)"
+    fi
+    # SCIENT-FORK:END
     if [ -n "$T3_LOCK_OWNER" ]; then
       T3_LOCK_UNOWNED=0
       if ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then
@@ -536,7 +541,6 @@ if ! t3_runtime_ready; then
     sleep 1
     T3_LOCK_WAITED=$((T3_LOCK_WAITED + 1))
   done
-  printf '%s\\n' "$$" > "$T3_LOCK/pid.tmp" && mv "$T3_LOCK/pid.tmp" "$T3_LOCK/pid"
   trap 'rm -rf "$T3_LOCK"' EXIT
 fi
 if ! t3_runtime_ready; then
@@ -551,7 +555,7 @@ if ! t3_runtime_ready; then
     *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
   esac
   T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"
-  T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
+  T3_STAGING="$(mktemp -d "$HOME/.scient-next/runtime/versions/.staging-XXXXXX")"
   trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
   t3_fetch() {
     if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
@@ -593,25 +597,46 @@ exec "$T3_RUNTIME_DIR/t3" "$@"
 // per-platform archive, so the npx/npm install path stays. Node is required
 // on the remote here, which is why the launch script's helper dispatch and
 // the launch budget both treat this mode like the dev node-script path.
+// Only that pinned package runs: never a `t3` or `scient` already on the
+// remote PATH, and never T3's npm package.
 const REMOTE_PACKAGE_INSTALL_BLOCK = `ensure_remote_node_path || true
-if command -v t3 >/dev/null 2>&1; then
-  exec t3 "$@"
+if [ -z @@T3_PACKAGE_SPEC@@ ]; then
+  printf 'This Scient build has no published Scient server release to install on the remote host. Connect from a released Scient desktop build.\\n' >&2
+  exit 1
 fi
 # npm extracts a package before it runs the native builds of its dependencies,
 # so a failed build (t3 depends on node-pty, which needs a C toolchain) leaves
-# the npx cache without a t3 executable. \`npx --yes\` then exits 0 without
+# the npx cache without a scient executable. \`npx --yes\` then exits 0 without
 # running anything at all, which the caller only ever sees as a server that
 # never becomes ready. Resolve the CLI once up front so that install failure is
 # reported here, with npm's own output on stderr.
+# npm puts the package's bin directory first but keeps the inherited PATH, so
+# without a package executable \`command -v\` finds any other scient. Accept only
+# the bin of the package npm's own lockfile records as fetched from the spec.
+T3_PINNED_CLI_CHECK='const fs = require("node:fs");
+const path = require("node:path");
+const [cli, spec, name] = process.argv.slice(1);
+try {
+  const modules = path.dirname(path.dirname(cli));
+  const lock = JSON.parse(fs.readFileSync(path.join(modules, ".package-lock.json"), "utf8"));
+  const root = fs.realpathSync(path.join(modules, name));
+  const pinned =
+    path.basename(path.dirname(cli)) === ".bin" &&
+    lock.packages?.["node_modules/" + name]?.resolved === spec &&
+    fs.realpathSync(cli).startsWith(root + path.sep);
+  process.exitCode = pinned ? 0 : 1;
+} catch {
+  process.exitCode = 1;
+}'
 require_installed_t3_cli() {
-  if ! T3_CLI_PATH="$("$@" -- sh -c 'command -v t3')"; then
-    printf 'Remote host could not install %s. See npm output above for the cause.\\n' @@T3_PACKAGE_SPEC@@ >&2
+  if ! T3_CLI_PATH="$("$@" -- sh -c 'command -v scient')"; then
+    printf 'Remote host could not install the Scient server from %s. See npm output above for the cause.\\n' @@T3_PACKAGE_SPEC@@ >&2
     return 1
   fi
-  if [ -n "$T3_CLI_PATH" ]; then
+  if [ -n "$T3_CLI_PATH" ] && node -e "$T3_PINNED_CLI_CHECK" "$T3_CLI_PATH" @@T3_PACKAGE_SPEC@@ @@T3_PACKAGE_NAME@@; then
     return 0
   fi
-  printf 'Remote host installed %s but npm produced no t3 executable, which usually means a native dependency (node-pty) failed to build. Install a C toolchain on the remote host (Debian/Ubuntu: build-essential, Fedora/RHEL: gcc-c++ make, macOS: xcode-select --install) and try again.\\n' @@T3_PACKAGE_SPEC@@ >&2
+  printf 'Remote host installed %s but npm produced no scient executable, which usually means a native dependency (node-pty) failed to build. Install a C toolchain on the remote host (Debian/Ubuntu: build-essential, Fedora/RHEL: gcc-c++ make, macOS: xcode-select --install) and try again.\\n' @@T3_PACKAGE_SPEC@@ >&2
   return 1
 }
 # The launcher records this PID, so exec the CLI without an npm wrapper process.
@@ -623,7 +648,7 @@ if command -v npm >/dev/null 2>&1; then
   require_installed_t3_cli npm exec --yes --allow-scripts=@@T3_ALLOWED_SCRIPTS@@ --package @@T3_PACKAGE_SPEC@@ || exit 1
   exec "$T3_CLI_PATH" "$@"
 fi
-printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPEC@@ because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
+printf 'Remote host could not install the Scient server from @@T3_PACKAGE_SPEC@@ because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
 exit 1
 `;
 // SCIENT-FORK:END
@@ -631,8 +656,13 @@ exit 1
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
-STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+# SCIENT-FORK:START — Scient's own remote home, never ~/.t3, so only a
+# Scient server is ever adopted. An earlier Scient home in ~/.t3 is copied once,
+# by a separate step, before anything creates the new home.
+DEFAULT_SERVER_HOME="$HOME/.scient-next"
+STATE_DIR="$DEFAULT_SERVER_HOME/ssh-launch/$STATE_KEY"
+@@SCIENT_HOME_CHECK_STEP@@
+# SCIENT-FORK:END
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
@@ -788,7 +818,7 @@ elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && server_running "$REMOTE_PI
     REMOTE_PORT=""
     REMOTE_MANAGED=""
   elif ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
-    printf 'Remote T3 server is still running but did not become ready. Retry the connection; the server was left running.\\n' >&2
+    printf 'Remote Scient server is still running but did not become ready. Retry the connection; the server was left running.\\n' >&2
     exit 1
   fi
 else
@@ -812,7 +842,7 @@ if [ -z "$REMOTE_PORT" ]; then
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
-    printf 'Remote T3 server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
+    printf 'Remote Scient server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
     if [ -s "$LOG_FILE" ]; then
       tail -n 80 "$LOG_FILE" >&2 2>/dev/null || true
     else
@@ -828,8 +858,10 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 `;
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+# SCIENT-FORK:START
+DEFAULT_SERVER_HOME="$HOME/.scient-next"
+STATE_DIR="$DEFAULT_SERVER_HOME/ssh-launch/@@T3_STATE_KEY@@"
+# SCIENT-FORK:END
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
@@ -841,7 +873,8 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 `;
 
 const REMOTE_STOP_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+# SCIENT-FORK: Scient's remote home.
+STATE_DIR="$HOME/.scient-next/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -855,7 +888,7 @@ if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMO
     sleep 0.1
   done
   if kill -0 "$REMOTE_PID" 2>/dev/null; then
-    printf 'Remote T3 server with PID %s did not stop within 2 seconds. Its ownership files were kept.\\n' "$REMOTE_PID" >&2
+    printf 'Remote Scient server with PID %s did not stop within 2 seconds. Its ownership files were kept.\\n' "$REMOTE_PID" >&2
     exit 1
   fi
 fi
@@ -864,7 +897,8 @@ printf '{"stopped":true}\\n'
 `;
 
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+# SCIENT-FORK: Scient's remote home.
+STATE_DIR="$HOME/.scient-next/ssh-launch/@@T3_STATE_KEY@@"
 LOG_FILE="$STATE_DIR/server.log"
 if [ -f "$LOG_FILE" ]; then
   tail -n 80 "$LOG_FILE" 2>/dev/null || true
@@ -908,8 +942,10 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
     T3_ARCHIVE_LOCK_WAIT_SECONDS: String(REMOTE_ARCHIVE_LOCK_WAIT_SECONDS),
     T3_ARCHIVE_DOWNLOAD_SECONDS: String(REMOTE_ARCHIVE_DOWNLOAD_SECONDS),
     T3_ARCHIVE_CHECKSUMS_SECONDS: String(REMOTE_ARCHIVE_CHECKSUMS_SECONDS),
-    // SCIENT-FORK: the pinned npm runtime only reads these two.
-    T3_PACKAGE_SPEC: shellSingleQuote(input?.packageSpec?.trim() || "t3@latest"),
+    // SCIENT-FORK: the pinned npm runtime only reads these three. Without a
+    // pinned Scient release the runner refuses to start instead of guessing.
+    T3_PACKAGE_SPEC: shellSingleQuote(input?.packageSpec?.trim() || ""),
+    T3_PACKAGE_NAME: shellSingleQuote(SCIENT_SERVER_PACKAGE_NAME),
     T3_ALLOWED_SCRIPTS: shellSingleQuote(scientServerAllowedScriptsValue()),
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
   };
@@ -937,6 +973,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
+// SCIENT-FORK: retained consumers verify the pinned runner and remote Scient-home boundaries.
 export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
     // Only the archive ships the `__ssh-helper` subcommands; the other modes
@@ -951,6 +988,8 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
     T3_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
+    // SCIENT-FORK: defers to the one-time copy of an earlier Scient home.
+    SCIENT_HOME_CHECK_STEP: buildScientHomeCheckStep(remoteRunnerMode(input) === "archive"),
   });
 }
 
@@ -989,7 +1028,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       ...sshRunnerLogFields(runner),
       stateKey,
     });
-    const result = yield* runSshCommand(target, {
+    const launchCommand = {
       remoteCommandArgs: ["sh", "-l", "-s", "--", stateKey],
       stdin: buildRemoteLaunchScript(runner),
       timeoutMs:
@@ -999,7 +1038,16 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
-    });
+    };
+    let result = yield* runSshCommand(target, launchCommand);
+    // SCIENT-FORK:START — the launch stopped before creating Scient's home
+    // because an earlier one in ~/.t3 may need copying. The copy runs with its
+    // own budget, then the launch runs again.
+    if (getLastNonEmptyOutputLine(result.stdout) === SCIENT_HOME_MIGRATION_REQUIRED) {
+      yield* migrateRemoteScientHome(target, stateKey, buildRemoteNodeEnvScript(runner), input);
+      result = yield* runSshCommand(target, launchCommand);
+    }
+    // SCIENT-FORK:END
     if (!getLastNonEmptyOutputLine(result.stdout)) {
       return yield* new SshLaunchError({
         message: "SSH launch did not return a remote port.",
@@ -1139,7 +1187,7 @@ const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(
   return result.stdout.trim();
 });
 
-export const waitForHttpReady = (input: {
+const waitForHttpReady = (input: {
   readonly baseUrl: string;
   readonly timeoutMs?: number;
   readonly intervalMs?: number;
@@ -1275,6 +1323,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "-N",
     "-L",
     `${input.localPort}:127.0.0.1:${input.remotePort}`,
+    "--",
     hostSpec,
   ];
   const sshCommand = yield* resolveSshCommand;
@@ -1335,8 +1384,21 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     process: child,
     scope,
   };
+  // Readiness cancels the exit waiter, but diagnostics must drain until the tunnel closes.
+  let stderrTail = "";
+  const stderrDrain = yield* child.stderr.pipe(
+    Stream.decodeText(),
+    Stream.runForEach((chunk) =>
+      Effect.sync(() => {
+        stderrTail = (stderrTail + chunk).slice(-TUNNEL_STDERR_TAIL_CHARS);
+      }),
+    ),
+    // Diagnostics are best-effort: a failed read must not hide the real exit.
+    Effect.ignore,
+    Effect.forkIn(scope),
+  );
   const exitFailure = Effect.all(
-    [collectProcessOutput(child.stderr), child.exitCode.pipe(Effect.map(Number))],
+    [Fiber.join(stderrDrain), child.exitCode.pipe(Effect.map(Number))],
     { concurrency: "unbounded" },
   ).pipe(
     Effect.mapError(
@@ -1352,7 +1414,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
           cause,
         }),
     ),
-    Effect.flatMap(([stderr, exitCode]) => {
+    Effect.flatMap(([, exitCode]) => {
+      const stderr = stderrTail;
       const error = new SshCommandError({
         command: tunnelCommand,
         exitCode,
@@ -1452,6 +1515,17 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const tunnels = new Map<string, SshTunnelEntry>();
   const targetLocks = yield* KeyedLock.make<string>();
   const authSecrets = new Map<string, string>();
+  // SCIENT-FORK:START — host preparations run as manager-owned jobs.
+  const preparations = makeSharedSshPreparation<SshEnvironmentEffectError>(
+    managerScope,
+    () =>
+      new SshLaunchError({
+        message:
+          "Scient is still preparing this SSH host. The first connection after an update can take several minutes; it continues in the background.",
+        stdout: "",
+      }),
+  );
+  // SCIENT-FORK:END
 
   // Keep one lock per target so reconnect cannot reuse a server while stop is pending.
   const withTargetLock = Effect.fn("ssh/tunnel.withTargetLock")(function* <A, E, R>(
@@ -1517,7 +1591,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       attempt,
       destination: target.alias.trim() || target.hostname.trim(),
       username: target.username,
-      prompt: `Enter the SSH password for ${hostSpec}.`,
+      prompt: `Enter the SSH password or verification code for ${hostSpec}.`,
     });
     if (password === null) {
       yield* Effect.logWarning("ssh.auth.passwordPrompt.cancelled", {
@@ -1775,7 +1849,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 
   const ensureEnvironment = Effect.fn("ssh/tunnel.ensureEnvironment")(function* (
     target: DesktopSshEnvironmentTarget,
-    requestOptions?: { readonly issuePairingToken?: boolean },
+    // SCIENT-FORK: boundedWait — a retrying saved connection (scientSshPreparation.ts).
+    requestOptions?: { readonly issuePairingToken?: boolean; readonly boundedWait?: boolean },
   ): Effect.fn.Return<
     DesktopSshEnvironmentBootstrap,
     SshEnvironmentEffectError,
@@ -1803,6 +1878,14 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshRunnerLogFields(runner),
       key,
     });
+    // SCIENT-FORK:START — a long host preparation outlives a retried saved
+    // connection; it runs as a manager-owned job (scientSshPreparation.ts).
+    yield* preparations.await(
+      key,
+      Effect.asVoid(withTargetLock(key, ensureTunnelEntry(key, resolvedTarget, runner))),
+      requestOptions?.boundedWait === true,
+    );
+    // SCIENT-FORK:END
     return yield* withTargetLock(
       key,
       Effect.gen(function* () {

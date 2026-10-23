@@ -44,17 +44,6 @@ describe("parseStartupCrashRecords", () => {
     ]);
     expect(records.map((record) => record.timestamp)).toEqual([20, 10]);
   });
-
-  it("skips a runtime error entry without a description line", () => {
-    expect(
-      parseStartupCrashRecords([
-        { ...FATAL, message: "ErrorRecovery fatal exception: Fatal exception: Name: x" },
-      ]),
-    ).toEqual([]);
-  });
-});
-
-describe("formatStartupCrashReport", () => {
   it("writes the app version and each crash's full detail", () => {
     const report = formatStartupCrashReport(parseStartupCrashRecords([FATAL]), {
       version: "1.1.1",

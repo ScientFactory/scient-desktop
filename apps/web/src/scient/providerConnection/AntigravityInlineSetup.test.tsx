@@ -34,6 +34,10 @@ function controller(): ProviderLifecycleController {
     cancelConnection: vi.fn(async () => provider()),
     submitAuthorizationCode: vi.fn(async () => provider()),
     disconnect: vi.fn(async () => provider()),
+    signInKey: {
+      environmentId: "environment-test",
+      instanceId: "sign-in-test",
+    } as ProviderLifecycleController["signInKey"],
     openAuthorizationPage: vi.fn(async () => undefined),
     planRuntime: vi.fn(async () => {
       throw new Error("unsupported");
@@ -194,7 +198,8 @@ describe("AntigravityInlineSetup", () => {
     );
 
     expect(markup).toContain("Finish signing in");
-    expect(markup).toContain("official Antigravity sign-in");
+    // Rendered with no start from this client: no page has been opened here.
+    expect(markup).toContain("Open the Google sign-in page to continue.");
     expect(markup).toContain("Cancel");
     expect(markup).toContain("text-destructive/80");
   });
@@ -255,7 +260,7 @@ describe("AntigravityInlineSetup", () => {
       }),
     );
 
-    expect(markup).toContain("Reopen Google sign-in");
+    expect(markup).toContain("Open Google sign-in");
     expect(markup).toContain("Paste the code Google shows after sign in");
     expect(markup).toContain("Paste authorization code");
     expect(markup).toContain("Antigravity one-time authorization code");
@@ -282,7 +287,7 @@ describe("AntigravityInlineSetup", () => {
       }),
     );
 
-    expect(markup).toContain("Reopen Google sign-in");
+    expect(markup).toContain("Open Google sign-in");
     expect(markup).not.toContain("Paste authorization code");
   });
 

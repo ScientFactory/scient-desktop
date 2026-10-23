@@ -17,7 +17,7 @@ vi.mock("electron", () => ({
     }),
   },
 }));
-import { LinuxCaptureConnection } from "./LinuxSnapShot.ts";
+import { captureLinuxWindow, getLinuxCaptureSupport } from "./LinuxSnapShot.ts";
 import { startNiriCaptureShortcut } from "./NiriCaptureShortcut.ts";
 import { GnomeCaptureSetup } from "./GnomeCaptureSetup.ts";
 import { GNOME_CAPTURE_UUID } from "./gnomeCaptureBundle.ts";
@@ -30,7 +30,6 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-private-dbus-"));
   let daemon: NodeChildProcess.ChildProcess | undefined;
   let server: MessageBus | undefined;
-  const clients: LinuxCaptureConnection[] = [];
   let stopNiriShortcut: (() => void) | undefined;
   try {
     vi.stubEnv("XDG_CURRENT_DESKTOP", "GNOME");
@@ -55,6 +54,8 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
       }),
     ]);
     lines.close();
+    vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", String(address));
+    vi.stubEnv("NIRI_SOCKET", "");
     server = sessionBus({ busAddress: String(address) });
     server.on("error", () => undefined);
     await server.requestName("org.freedesktop.portal.Desktop", NameFlag.DO_NOT_QUEUE);
@@ -70,7 +71,6 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
     let activateTitle: unknown;
     let animateFrame: unknown[] | undefined;
     let target: unknown;
-    let clientName: string | undefined;
     let shellExtensionState = 2;
     server.addMethodHandler((message: Message) => {
       if (message.member === "Register") {
@@ -94,7 +94,7 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
       } else if (message.member === "GetExtensionInfo") {
         server!.send(
           Message.newMethodReturn(message, "a{sv}", [
-            { state: new Variant("d", shellExtensionState), version: new Variant("d", 2) },
+            { state: new Variant("d", shellExtensionState), version: new Variant("d", 3) },
           ]),
         );
       } else if (message.member === "EnableExtension" || message.member === "DisableExtension") {
@@ -125,7 +125,6 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
       } else if (message.member === "Capture" || message.member === "CaptureWithFeedback") {
         const feedback = message.member === "CaptureWithFeedback";
         if (feedback) feedbackArgs = message.body;
-        clientName = message.sender;
         server!.send(
           Message.newMethodReturn(message, feedback ? "aysb" : "ays", [
             png,
@@ -142,11 +141,7 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
       } else return false;
       return true;
     });
-    const connect = () => {
-      const client = new LinuxCaptureConnection(sessionBus({ busAddress: String(address) }));
-      clients.push(client);
-      return client;
-    };
+    const appId = "com.scientfactory.scient";
     const setup = new GnomeCaptureSetup(
       {
         bundle: NodePath.resolve(import.meta.dirname, "../../gnome-extension"),
@@ -163,36 +158,22 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
     } finally {
       setup.close();
     }
-    const portal = connect();
-    expect(await portal.backend("com.t3tools.T3Code")).toBe("screenshot-portal");
-    expect(await portal.capturePortal()).toEqual({ png });
+    expect((await getLinuxCaptureSupport(appId)).linuxBackend).toBe("screenshot-portal");
+    expect(await captureLinuxWindow(appId)).toEqual({ png });
     expect(target).toBe(8);
     portalVersion = 2;
-    const extension = connect();
-    expect(await extension.backend("com.t3tools.T3Code")).toBe("gnome-extension");
-    expect(await extension.captureExtension("com.t3tools.T3Code")).toMatchObject({
+    expect((await getLinuxCaptureSupport(appId)).linuxBackend).toBe("gnome-extension");
+    expect(await captureLinuxWindow(appId)).toMatchObject({
       png,
       window: { processId: 42 },
     });
-    const owner = await server.call(
-      new Message({
-        destination: "org.freedesktop.DBus",
-        path: "/org/freedesktop/DBus",
-        interface: "org.freedesktop.DBus",
-        member: "GetNameOwner",
-        signature: "s",
-        body: ["com.t3tools.T3Code.SnapShot"],
-      }),
-    );
-    expect(owner?.body[0]).toBe(clientName);
-    extension.close();
     extensionVersion = 2;
-    const updated = connect();
-    expect(await updated.backend("com.t3tools.T3Code")).toBe("gnome-extension");
-    const snapshot = await updated.captureExtension("com.t3tools.T3Code", {
+    expect((await getLinuxCaptureSupport(appId)).linuxBackend).toBe("gnome-extension");
+    const snapshot = await captureLinuxWindow(appId, {
       flash: true,
       animate: true,
     });
+    if (!snapshot) throw new Error("GNOME extension capture returned no snapshot");
     expect(snapshot.feedback?.animationStarted).toBe(true);
     await snapshot.feedback!.activate("Scient");
     await snapshot.feedback!.animateTo({ x: 0.1, y: 0.8, width: 0.2, height: 0.1 });
@@ -201,10 +182,10 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
     expect(activateTitle).toBe("Scient");
     expect(animateFrame).toEqual([0.1, 0.8, 0.2, 0.1]);
     vi.stubEnv("XDG_CURRENT_DESKTOP", "KDE");
-    const kde = connect();
-    expect(await kde.backend("com.t3tools.T3Code")).toBe("kde");
-    expect(kde.feedbackAvailable).toBe(false);
-    kde.close();
+    expect(await getLinuxCaptureSupport(appId)).toEqual({
+      linuxBackend: "kde",
+      linuxFeedbackAvailable: false,
+    });
     const triggered = vi.fn();
     const failed = vi.fn();
     const niriBus = sessionBus({ busAddress: String(address) });
@@ -268,7 +249,6 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
   } finally {
     vi.unstubAllEnvs();
     stopNiriShortcut?.();
-    for (const client of clients) client.close();
     server?.disconnect();
     if (daemon && daemon.exitCode === null) {
       const exited = NodeEvents.EventEmitter.once(daemon, "exit");

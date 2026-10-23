@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { isPreviewAvailableFor, previewRuntimeFor } from "~/browser/previewRuntime";
 import type {
   AnalysisArtifact,
@@ -20,13 +21,7 @@ import {
   LoaderCircle,
   Pin,
 } from "lucide-react";
-import {
-  type PointerEvent as ReactPointerEvent,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { resolveAssetUrl, useAssetUrls } from "~/assets/assetUrls";
@@ -101,6 +96,33 @@ function actionFailureMessage(result: AtomCommandFailure): string {
   return error instanceof Error ? error.message : "The artifact operation failed.";
 }
 
+function artifactCards(run: AnalysisRun) {
+  let thumbnailIndex = 0;
+  return run.artifacts.map((artifact) => {
+    const preview = preferredArtifactPreview(artifact);
+    const thumbnail = preferredArtifactThumbnail(artifact);
+    const interactive = interactiveArtifactRepresentation(artifact);
+    const native = nativeArtifactRepresentation(artifact);
+    const currentThumbnailIndex = thumbnailIndex;
+    if (thumbnail) thumbnailIndex += 1;
+    return {
+      artifact,
+      preview,
+      thumbnail,
+      interactive,
+      native,
+      staticArtifact: preview
+        ? createStaticArtifactSurfaceDescriptor(run, artifact, preview)
+        : null,
+      thumbnailIndex: thumbnail ? currentThumbnailIndex : null,
+    };
+  });
+}
+
+function setArtifactDragCursor(cursor: string): void {
+  document.body.style.cursor = cursor;
+}
+
 export function AnalysisArtifactStrip(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -130,32 +152,9 @@ export function AnalysisArtifactStrip(props: {
   );
   const followedRunIdRef = useRef(props.run.receipt.runId);
   const expandedRunIdRef = useRef(props.run.receipt.runId);
-  const cards = useMemo(() => {
-    let thumbnailIndex = 0;
-    return props.run.artifacts.map((artifact) => {
-      const preview = preferredArtifactPreview(artifact);
-      const thumbnail = preferredArtifactThumbnail(artifact);
-      const interactive = interactiveArtifactRepresentation(artifact);
-      const native = nativeArtifactRepresentation(artifact);
-      return {
-        artifact,
-        preview,
-        thumbnail,
-        interactive,
-        native,
-        staticArtifact: preview
-          ? createStaticArtifactSurfaceDescriptor(props.run, artifact, preview)
-          : null,
-        thumbnailIndex: thumbnail ? thumbnailIndex++ : null,
-      };
-    });
-  }, [props.run]);
-  const thumbnailResources = useMemo(
-    () =>
-      cards.flatMap((card) =>
-        card.thumbnail ? [analysisArtifactResource(props.run, card.artifact, card.thumbnail)] : [],
-      ),
-    [cards, props.run],
+  const cards = artifactCards(props.run);
+  const thumbnailResources = cards.flatMap((card) =>
+    card.thumbnail ? [analysisArtifactResource(props.run, card.artifact, card.thumbnail)] : [],
   );
   const thumbnailUrls = useAssetUrls(props.environmentId, thumbnailResources);
   const choiceCard = choiceMenu
@@ -165,7 +164,7 @@ export function AnalysisArtifactStrip(props: {
   useEffect(
     () => () => {
       if (previousBodyCursorRef.current === null) return;
-      document.body.style.cursor = previousBodyCursorRef.current;
+      setArtifactDragCursor(previousBodyCursorRef.current);
       previousBodyCursorRef.current = null;
     },
     [],
@@ -187,11 +186,11 @@ export function AnalysisArtifactStrip(props: {
     }
   }, [cards, props.threadRef]);
 
-  const restoreDragCursor = () => {
+  const restoreDragCursor = useStableCallback(() => {
     if (previousBodyCursorRef.current === null) return;
-    document.body.style.cursor = previousBodyCursorRef.current;
+    setArtifactDragCursor(previousBodyCursorRef.current);
     previousBodyCursorRef.current = null;
-  };
+  });
 
   useEffect(() => {
     if (!httpBaseUrl || followedRunIdRef.current === props.run.receipt.runId) return;
@@ -292,59 +291,66 @@ export function AnalysisArtifactStrip(props: {
     }
     const actionKey = `${mode}:${artifact.artifactId}`;
     setPendingAction(actionKey);
-    try {
-      const staticArtifact = createStaticArtifactSurfaceDescriptor(
-        props.run,
-        artifact,
-        representation,
-      );
-      if (staticArtifact) {
+    let operationFailure: { error: unknown } | null = null;
+    completeOperation: {
+      try {
+        const staticArtifact = createStaticArtifactSurfaceDescriptor(
+          props.run,
+          artifact,
+          representation,
+        );
+        if (staticArtifact) {
+          if (mode === "pin") {
+            usePreviewMiniPlayerStore
+              .getState()
+              .openArtifact(props.threadRef, staticArtifact, initialPosition);
+          } else {
+            useRightPanelStore.getState().openScientArtifact(props.threadRef, staticArtifact);
+          }
+          break completeOperation;
+        }
+        if (!isPreviewAvailableFor(props.environmentId)) {
+          reportFailure("Figure preview is unavailable");
+          break completeOperation;
+        }
+        const url = await createUrl(analysisArtifactResource(props.run, artifact, representation));
+        if (!url) break completeOperation;
+        const result = await openPreview({
+          environmentId: props.environmentId,
+          input: {
+            threadId: props.threadRef.threadId,
+            url,
+            ...(previewRuntimeFor(props.environmentId) === undefined
+              ? {}
+              : { runtime: previewRuntimeFor(props.environmentId) }),
+          },
+        });
+        if (result._tag !== "Success") {
+          if (!isAtomCommandInterrupted(result)) reportFailure("Unable to open figure", result);
+          break completeOperation;
+        }
+        applyPreviewServerSnapshot(props.threadRef, result.value);
+        rememberPreviewUrl(props.threadRef, url);
+        followedTabsRef.current.set(result.value.tabId, {
+          artifactId: artifact.artifactId,
+          representationId: representation.representationId,
+          lastArtifactUrl: url,
+        });
         if (mode === "pin") {
           usePreviewMiniPlayerStore
             .getState()
-            .openArtifact(props.threadRef, staticArtifact, initialPosition);
+            .open(props.threadRef, { kind: "browser", tabId: result.value.tabId }, initialPosition);
         } else {
-          useRightPanelStore.getState().openScientArtifact(props.threadRef, staticArtifact);
+          useRightPanelStore.getState().openBrowser(props.threadRef, result.value.tabId);
         }
-        return;
+      } catch (error) {
+        operationFailure = { error };
       }
-      if (!isPreviewAvailableFor(props.environmentId)) {
-        reportFailure("Figure preview is unavailable");
-        return;
-      }
-      const url = await createUrl(analysisArtifactResource(props.run, artifact, representation));
-      if (!url) return;
-      const result = await openPreview({
-        environmentId: props.environmentId,
-        input: {
-          threadId: props.threadRef.threadId,
-          url,
-          ...(previewRuntimeFor(props.environmentId) === undefined
-            ? {}
-            : { runtime: previewRuntimeFor(props.environmentId) }),
-        },
-      });
-      if (result._tag !== "Success") {
-        if (!isAtomCommandInterrupted(result)) reportFailure("Unable to open figure", result);
-        return;
-      }
-      applyPreviewServerSnapshot(props.threadRef, result.value);
-      rememberPreviewUrl(props.threadRef, url);
-      followedTabsRef.current.set(result.value.tabId, {
-        artifactId: artifact.artifactId,
-        representationId: representation.representationId,
-        lastArtifactUrl: url,
-      });
-      if (mode === "pin") {
-        usePreviewMiniPlayerStore
-          .getState()
-          .open(props.threadRef, { kind: "browser", tabId: result.value.tabId }, initialPosition);
-      } else {
-        useRightPanelStore.getState().openBrowser(props.threadRef, result.value.tabId);
-      }
-    } finally {
-      setPendingAction(null);
     }
+
+    setPendingAction(null);
+
+    if (operationFailure !== null) throw operationFailure.error;
   };
 
   const beginArtifactDrag = (
@@ -367,7 +373,7 @@ export function AnalysisArtifactStrip(props: {
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const moveArtifactDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const moveArtifactDrag = useStableCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     const drag = artifactDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     const distance = Math.hypot(event.clientX - drag.originX, event.clientY - drag.originY);
@@ -375,7 +381,7 @@ export function AnalysisArtifactStrip(props: {
     if (!drag.dragging) {
       artifactDragRef.current = { ...drag, dragging: true };
       previousBodyCursorRef.current = document.body.style.cursor;
-      document.body.style.cursor = "grabbing";
+      setArtifactDragCursor("grabbing");
     }
     setDragPreview({
       artifactId: drag.artifact.artifactId,
@@ -385,7 +391,7 @@ export function AnalysisArtifactStrip(props: {
       y: event.clientY,
     });
     event.preventDefault();
-  };
+  });
 
   const endArtifactDrag = (event: ReactPointerEvent<HTMLButtonElement>, cancelled = false) => {
     const drag = artifactDragRef.current;
@@ -419,16 +425,23 @@ export function AnalysisArtifactStrip(props: {
     if (!representation) return;
     const actionKey = `download:${artifact.artifactId}`;
     setPendingAction(actionKey);
-    try {
-      const url = await createUrl(analysisArtifactResource(props.run, artifact, representation));
-      if (!url) return;
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = representation.fileName;
-      anchor.click();
-    } finally {
-      setPendingAction(null);
+    let operationFailure: { error: unknown } | null = null;
+    completeOperation: {
+      try {
+        const url = await createUrl(analysisArtifactResource(props.run, artifact, representation));
+        if (!url) break completeOperation;
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = representation.fileName;
+        anchor.click();
+      } catch (error) {
+        operationFailure = { error };
+      }
     }
+
+    setPendingAction(null);
+
+    if (operationFailure !== null) throw operationFailure.error;
   };
 
   return (

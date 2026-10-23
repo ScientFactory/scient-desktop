@@ -185,22 +185,21 @@ export const makeForkCheckpointOwnership = Effect.gen(function* () {
     );
     return {
       ref,
-      beforePublish: (publication: {
+      beforePublish: Effect.fn("ForkCheckpointOwnership.beforePublish")(function* (publication: {
         readonly cwd: string;
         readonly checkpointRef: string;
         readonly commitOid: string;
-      }) =>
-        Effect.gen(function* () {
-          if (publication.cwd !== input.cwd || publication.checkpointRef !== ref)
-            return yield* unavailable(input.cwd, "Snapshot publication owner mismatch");
-          const rows = yield* sql<{
-            checkpoint_oid: string;
-          }>`UPDATE scient_fork_checkpoint_ownership SET checkpoint_oid = ${publication.commitOid}
+      }) {
+        if (publication.cwd !== input.cwd || publication.checkpointRef !== ref)
+          return yield* unavailable(input.cwd, "Snapshot publication owner mismatch");
+        const rows = yield* sql<{
+          checkpoint_oid: string;
+        }>`UPDATE scient_fork_checkpoint_ownership SET checkpoint_oid = ${publication.commitOid}
           WHERE attempt_id = ${attempt} AND (checkpoint_oid IS NULL OR checkpoint_oid = ${publication.commitOid})
           RETURNING checkpoint_oid`.pipe(Effect.mapError((cause) => unavailable(input.cwd, cause)));
-          if (rows.length !== 1 || rows[0]?.checkpoint_oid !== publication.commitOid)
-            return yield* unavailable(input.cwd, "Snapshot publication owner disappeared");
-        }),
+        if (rows.length !== 1 || rows[0]?.checkpoint_oid !== publication.commitOid)
+          return yield* unavailable(input.cwd, "Snapshot publication owner disappeared");
+      }),
     };
   });
   return { recover, reserve };
