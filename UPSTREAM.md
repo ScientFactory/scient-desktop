@@ -597,9 +597,18 @@ The current alignment through
 Literal merge `29f4ebb106d541307e8b2eb9251e41b9dd5cf703` has exact owned-main
 base `3ca9472f3cf5dd0e7b8d885a2e9bc876db31d5bc` and the frozen official target as
 parents, retaining all 151 additional donor commits after `21da3061aa`.
+Ordinary owned-main catch-ups preserve that merge: `2551263540432343ac6d9b3acb4551b7742015d0`
+includes `be0eaf41518376062d8945709e91b4ab0792a70b`;
+`94fde5e77561a699a30f7c6425d8a0848539b1c8` includes
+`d5c9445fc1ce5326355e80e45f073e91d4169119`; and
+`d7823dce9238cba7f958f3b04ad1ddd4a20072c5` includes
+`87e2e1f4d485c1a957566c27b6ffee621a3f95b4`.
 Local automated qualification covers all 46 workspace test tasks through fresh
-affected checks and exact unchanged-input reuse. Committed provenance and all
-six staged seam checks pass. Visual acceptance and hosted CI remain pending;
+affected checks and exact unchanged-input reuse, including 488 current Overleaf
+cases and the complete 13,022-case web suite. Current-owned-main provenance and all
+six staged seam checks pass. The catch-ups retain the unmounted Overleaf foundation,
+short send admission and network-outside-checkout behavior; the web CI change is
+a job cap, not a test timeout. Visual acceptance and hosted CI remain pending;
 the owner authorized the local merge with visual acceptance pending and prohibited
 pushing. No pull request was created for this alignment. The
 [previous receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md)

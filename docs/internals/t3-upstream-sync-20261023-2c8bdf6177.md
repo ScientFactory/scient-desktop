@@ -24,11 +24,18 @@ Generated with
 - Frozen official target: `2c8bdf6177159d8fcd12a897d7c9311f6eb93237`, no tag at the target (nearest reachable: `v0.1.2-nightly.20261021.3457`).
 - Range: 151 official commits, 556 incoming paths, 241 same-path overlaps with Scient, 96 initially unmerged paths.
 - Literal integration merge: `29f4ebb106d541307e8b2eb9251e41b9dd5cf703`, tree `2ab1e210e0e996b8d63db08a2e57c941828a1cc8`; parents are the owned base and the frozen official target.
+- Owned-main catch-up: merge `2551263540432343ac6d9b3acb4551b7742015d0` of owned main `be0eaf41518376062d8945709e91b4ab0792a70b`.
+- Owned-main catch-up: merge `94fde5e77561a699a30f7c6425d8a0848539b1c8` of owned main `d5c9445fc1ce5326355e80e45f073e91d4169119`.
+- Owned-main catch-up: merge `d7823dce9238cba7f958f3b04ad1ddd4a20072c5` of owned main `87e2e1f4d485c1a957566c27b6ffee621a3f95b4`.
 
 Branch: `codex/t3-sync-2c8bdf6177-20261023`. Upstream push URL: `DISABLED`.
-No later official extension or owned-main catch-up is included. The normal
-pre-commit hook ran; the committed tree equals the reviewed staged tree.
-Provenance passed against the exact owned base, actual merge and official target.
+No later official extension is included. Each owned-main advance was frozen and
+carried by an ordinary merge after the preceding merge was committed and clean.
+The normal pre-commit hooks ran; each committed tree equals its reviewed staged
+tree. The latest catch-up tree is `a2dc9516cccd68337e668490181dfce71f304e42`.
+Provenance passed against current owned main `87e2e1f4d485c1a957566c27b6ffee621a3f95b4`,
+the actual catch-up head and the frozen official target. The original owned base,
+official cursor and `lastRefreshMerge` remain unchanged.
 The cursor advances only after this literal merge and the recorded local gates,
 not merely because the official tip was observed.
 
@@ -115,6 +122,10 @@ they exercise or adding retries, per-test timeouts, sleeps or frame waits:
   refused source, retained recovery content and visible input assertions remain.
   The quiet clock starts asynchronous checkpoint/conversion work; source review
   does not establish which stage exceeded the previous polling window.
+  The first owned-main catch-up supersedes the private callback with main's
+  equivalent disposable attempt receipt and stronger exact-one-write assertion.
+  Painting, source-refusal and recovery checks remain; the complete web suite
+  was rerun after that composition.
 
 Failed, instrumented and neutral-control runs remain evidence, not qualification
 of the final candidate. Each correction received completed independent review.
@@ -125,8 +136,12 @@ Node `26.12.1`, pnpm `12.14.0`, macOS arm64. Checks ran in one heavy serial lane
 with synthetic homes and stripped host profile/analytics variables. Frozen source,
 index and merge boundaries were checked before and after qualification.
 
-The partitions cover all **46 workspace manifest test tasks**. They are not
-represented as one fresh successful aggregate invocation:
+### Original official merge
+
+The following partitions qualified the original literal merge. The later
+owned-main section supersedes the changed inputs, not the whole task inventory.
+Together the partitions cover all **46 workspace manifest test tasks**; they are
+not represented as one fresh successful aggregate invocation:
 
 | Gate                                                                       | Result and exact scope                                                                                                                                                                    |
 | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -148,6 +163,68 @@ bridges. The changed manifest consumer was rerun. Existing skips were retained,
 not introduced to obtain these results. Receipt/cursor documentation does not
 change the qualified runtime or fixtures.
 
+### Owned-main composition and final partitions
+
+The first catch-up carries main's local Overleaf coordinator/publication foundation
+and the pending-field receipt composition. Independent review identified three
+mandatory corrections: reuse canonical persisted limits/kept-path schema, preserve
+service namespaces, and name the four reusable operation spans. The record shape,
+values, reservation bodies and acquisition/finalizer order remain unchanged.
+The coordinator is still an unmounted foundation, not a new enabled transport.
+
+The second catch-up releases the application section before the network send.
+A short admission section rechecks the exact checkout-key chain and epoch,
+physical checkout/manuscript identities, and credential epoch after lookup.
+It sends the recorded immutable candidate once, or records `not-sent`; recovery
+still settles only by positive evidence and never resends. Six added cases cover
+checkout/folder replacement, nested-checkout removal, epoch/credential changes,
+and a bulk change completing during the send. The established
+`OverleafCoordinator.publish` span name remains on the send/resolution continuation;
+the new staging span remains separate. Old span duration/extent equivalence and
+exporter delivery are not claimed. Send cases use disposable local Git remotes,
+not authenticated projects or hosted publication.
+
+The third catch-up changes only the web CI job cap from 10 to 15 minutes, inside
+a narrow paired fork region. It changes no per-test timeout, retry, event,
+permission, checkout, cache, action reference or activation boundary. The actual
+whole workflow blob `9e0a9a3f5e7dc9260a68ff8152f3a01d0b718fc5` equals the independently
+reviewed three-way proposal. The comment's measured-duration rationale is an
+owned record, not a timing measurement performed during this alignment.
+
+| Gate                                        | Final scope and result                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Complete web, uncached                      | 1,100 files and 13,022 tests passed after the first catch-up, on tree `3f0556e5c3b010edacabffd601be266bacf2b246` (236.252 s). Later changes leave its runtime, fixture, dependency and setup inputs unchanged.                                                                                                                                                         |
+| Complete coordinator suites                 | All 35 local and 21 publication cases passed on tree `5c1a19bca9debcc36bf01012c7a9f4c7be4ded88` (542.668 s), including the six new admission/network cases.                                                                                                                                                                                                            |
+| Publication span correction                 | Exactly one `Effect.fn` name literal changes to preserve the existing publication identity. Eight affected publication cases passed afterward (67.431 s); the remaining 48 cases reuse the complete coordinator run after byte/consumer review. No bodies, options, inputs or error expectations changed.                                                              |
+| Current server partition                    | Current Overleaf coverage is 488 cases: 8 fresh after the span correction, 48 from the complete coordinator run, 43 passed state/store cases from the earlier corrected run, and 389 unchanged cases from the full 19-file Overleaf run. The non-Overleaf partition reuses complete server240's unchanged inputs. Not a fresh full-server or full-Overleaf invocation. |
+| Other workspace tasks                       | The other 43 whole-task results remain exact-input reuses, including desktop239. The fresh scripts task below replaces its earlier result; the inventory still covers 46 tasks, not 47. Existing skips remain reported.                                                                                                                                                |
+| Scripts after the final CI change, uncached | 61 files passed, 1 skipped; 826 tests passed, 1 skipped (23.414 s). This complete task reran because release-machinery, compute-CI and Windows-packaging tests read the changed workflow. It replaces scripts270 and includes the alignment/provenance and seam-check cases.                                                                                           |
+| Static checks                               | Formatting, lint, Knip, workspace types, brand and diff passed after the span correction on tree `58cd9318beaab31e72c15652c1ce059c12b330bd`. Normal workspace type caching remains. Formatting, lint, brand and full staged/worktree diff passed again after the CI-only merge.                                                                                        |
+| Build and desktop smoke                     | All six root build tasks passed after the span correction (10.654 s); maintained synthetic-state Electron smoke passed (8.764 s), including the actual nested smoke log. The later CI-only change leaves all runtime/build/smoke inputs unchanged. Not visual acceptance.                                                                                              |
+| CI scripts                                  | All 94 GitHub-script tests passed after the actual CI merge, with no skips. Hosted job completion is not established by these local checks.                                                                                                                                                                                                                            |
+| Actual index and history                    | Exact staged/committed tree equality and all six seam checks passed for each catch-up. Provenance passed on `d7823dce9238cba7f958f3b04ad1ddd4a20072c5` against current owned main and the frozen official target.                                                                                                                                                      |
+
+One earlier corrected run failed five tests while returning the expected typed
+refusals: its assertions compared Effect's internal Exit/Cause representation,
+which gained tracing annotations. Only those five assertions changed to public
+`Effect.flip` and the same error tag/limit checks; setup and all no-write,
+base/file/marker/push afterchecks remain. A synthetic control bypassing one group
+guard then failed on actual unexpected success. The guard was restored exactly.
+That is one discriminating control, not five controls or platform proof. The
+failed run remains failed; only its 43 actually passed state/store cases remain
+in the current partition.
+
+Completed independent reviews cover the incoming composition, corrections,
+typed-error assertions, restored publication identity and CI proposal. The
+integrator read complete reports/findings and verified all 785 frozen source
+identities before staging. Raw-index/global-ref byte invariance failed during
+earlier review windows and is retained as a limitation, not relabeled success.
+Full serialized index entries and pinned source/HEAD/merge boundaries remained
+exact; the earlier index was also independently reconstructed. Saved shared-ref
+rows identify the later main advances. A stat-only explanation for raw-index
+bytes, exhaustive attribution of earlier unsaved ref differences, or global-ref
+invariance is not claimed. No unrelated ref, source or index was rolled back.
+
 Retained warnings include ResizeObserver delivery warnings in browser fixtures,
 build chunk size, MathJax evaluation, CSS sourcemaps and optional platform imports.
 Expected synthetic provider refusals are not failed tests or real-provider proof.
@@ -160,7 +237,14 @@ bridges are retained outside committed source under
 Key combined evidence: `qualification-current-266.json`,
 `seam-static-tests-270.json`, `review-seams-integrator-271.json`,
 `real-stage-272.json`, `real-seams-273.log`, `local-merge-274.log` and
-`merge-provenance-275.log`. Temporary evidence is not a permanent artifact store.
+`merge-provenance-275.log`. Later combined evidence includes
+`qualification-final-owned-294.json`, `owned-second-303.json`,
+`owned-span-317.json`, `qualification-final-boundaries-319.json`,
+`review-final-boundaries-319/independent.md`, `review-second-integrator-305.json`,
+`owned-ci-324.json`, `ci-proposal-integrator-325.json`,
+`ci-index-seams-326.log`, `owned-ci-commit-327.log`, `owned-facts-308.log`
+`owned-current-provenance-328.log` and `scripts-final-329.json`. Temporary evidence is not a permanent
+artifact store.
 
 ## Pending acceptance
 
