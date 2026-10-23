@@ -421,6 +421,10 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             Effect.gen(function* () {
               order.push(point);
               if (point !== "linked" || !barrier) return;
+              const epoch = Effect.orDie(
+                Effect.map(barrier.current(checkout), (section) => section.epoch),
+              );
+              const before = yield* epoch;
               bulk = yield* barrier
                 .bulk(
                   checkout,
@@ -429,7 +433,8 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
                   }),
                 )
                 .pipe(Effect.forkDetach);
-              yield* Effect.sleep("100 millis");
+              // The bulk change moves the epoch as it enters, then waits for the apply.
+              while ((yield* epoch) === before) yield* Effect.yieldNow;
             }),
         });
         barrier = w.barrier;
