@@ -1,5 +1,4 @@
 import {
-  KEEP_AWAKE_CHANNEL,
   KeepAwakeRequest,
   KeepAwakeState,
   keepAwakeThreadKey,
@@ -15,6 +14,7 @@ import * as Schedule from "effect/Schedule";
 import { ElectronApp } from "../../electron/ElectronApp.ts";
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
 import { makeIpcMethod } from "../../ipc/DesktopIpc.ts";
+import { KEEP_AWAKE_CHANNEL } from "../../ipc/channels.ts";
 import * as Controller from "./controller.ts";
 import * as Storage from "./storage.ts";
 import * as Power from "./power.ts";

@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — keep the sandboxed preload's IPC channels free of package imports.
+export const KEEP_AWAKE_CHANNEL = "scient:keep-awake";
+// SCIENT-FORK:END
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 export const SET_NOTIFICATION_BADGE_CHANNEL = "desktop:set-notification-badge";
 export const PICK_PROJECT_FAVICON_CHANNEL = "desktop:pick-project-favicon";
