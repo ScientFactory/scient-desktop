@@ -16,6 +16,7 @@ const workspaceFiles = [
   "package.json",
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",
+  ".pnpmfile.cjs",
   "apps/server/package.json",
   "apps/desktop/package.json",
   "apps/web/package.json",

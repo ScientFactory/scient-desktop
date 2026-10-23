@@ -1,7 +1,8 @@
 import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
+import { waitForTestReceipt } from "../../../test/receipt";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi, type TestContext } from "vite-plus/test";
 
 vi.mock("./LatexMathField", () => ({
   LatexMathField: ({ value }: { value: string }) => <span>{value}</span>,
@@ -76,23 +77,43 @@ describe("recovering unsaved work", () => {
   let singleFileDocument: boolean;
   let coordinator: FileSaveCoordinator<FileView, Error>;
   const writes = vi.fn();
-  const writeReceipts = new Set<() => void>();
-  const nextWriteReceipt = () => {
-    let accepted = false;
-    writeReceipts.add(() => {
-      accepted = true;
-    });
-    return () => vi.waitFor(() => expect(accepted).toBe(true));
+  const writeReceipts = new Map<(source: string) => boolean, () => void>();
+  const confirmedReceipts = new Map<string, () => void>();
+  // Arm before publishing or mounting, but start cancellation only when awaited:
+  // an abort during mount must not reject a receipt that has no consumer yet.
+  // Fixture cleanup also removes armed receipts that an earlier failure skips.
+  const nextWriteReceipt = (
+    _fixture: _Fixture,
+    matches: (source: string) => boolean = () => true,
+  ) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    writeReceipts.set(matches, resolve);
+    const dispose = () => {
+      if (writeReceipts.get(matches) === resolve) writeReceipts.delete(matches);
+    };
+    _fixture.cleanup.defer(dispose);
+    return () => waitForTestReceipt(_fixture.context.signal, promise, dispose);
   };
-  const publishWriteReceipt = () => {
-    for (const resolve of writeReceipts) resolve();
-    writeReceipts.clear();
+  const nextConfirmation = (_fixture: _Fixture, source: string) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    confirmedReceipts.set(source, resolve);
+    const dispose = () => {
+      if (confirmedReceipts.get(source) === resolve) confirmedReceipts.delete(source);
+    };
+    _fixture.cleanup.defer(dispose);
+    return () => waitForTestReceipt(_fixture.context.signal, promise, dispose);
+  };
+  const publishWriteReceipt = (source: string) => {
+    for (const [matches, resolve] of writeReceipts) {
+      if (!matches(source)) continue;
+      writeReceipts.delete(matches);
+      resolve();
+    }
   };
 
   async function _setupFixture0(_fixture: _Fixture) {
     _fixture.restoreFonts = stubLatexReadingFonts();
     writes.mockReset();
-    writeReceipts.clear();
     singleFileDocument = true;
     save = "completes";
     publicationGate = null;
@@ -118,7 +139,12 @@ describe("recovering unsaved work", () => {
 
   const settle = async (ms = 20) => await act(() => vi.advanceTimersByTimeAsync(ms));
   const acknowledged = async () => await settle(SAVE_DELAY + 60);
-  async function mount(_fixture: _Fixture, source: string, revision: number) {
+  async function mount(
+    _fixture: _Fixture,
+    source: string,
+    revision: number,
+    openingSave?: () => Promise<void>,
+  ) {
     disk = { source, revision };
     shown = disk;
     coordinator = new FileSaveCoordinator<FileView, Error>({
@@ -139,6 +165,8 @@ describe("recovering unsaved work", () => {
       onConfirmed: (contents, saved) => {
         confirmVisualDraft(KEY, contents);
         show({ source: shown.source, revision: saved.revision });
+        confirmedReceipts.get(contents)?.();
+        confirmedReceipts.delete(contents);
       },
     });
     function Harness() {
@@ -167,19 +195,20 @@ describe("recovering unsaved work", () => {
             writes(request.edit.source, next);
             show({ source: next, revision: shown.revision });
             coordinator.change(next);
-            publishWriteReceipt();
+            publishWriteReceipt(next);
             return outcome;
           }}
         />
       );
     }
-    await coordinator.ready();
+    await waitForTestReceipt(_fixture.context.signal, coordinator.ready());
     await _fixture.root0.rerender(<Harness />);
     await vi.waitFor(() => {
       const mounted = readMountedLatexVisualTestEditor(_fixture.container);
       expect(mounted).not.toBeNull();
       expect(mounted!.view.dom.dataset.latexLoading).not.toBe("true");
     });
+    if (openingSave) await openingSave();
     _fixture.clock ??= _fixture.cleanup.use(fakeTimers());
   }
   /** Something else wrote the file; the host adopts it. */
@@ -251,8 +280,8 @@ describe("recovering unsaved work", () => {
         .join(""),
     );
 
-  it("retains unapplied raw block input across outside updates and reopening", async () => {
-    await using _fixture = _createFixture();
+  it("retains unapplied raw block input across outside updates and reopening", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -289,8 +318,8 @@ describe("recovering unsaved work", () => {
     expect(writes).not.toHaveBeenCalled();
   });
 
-  it("retires only its own unapplied raw input after Cancel", async () => {
-    await using _fixture = _createFixture();
+  it("retires only its own unapplied raw input after Cancel", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -316,8 +345,8 @@ describe("recovering unsaved work", () => {
     expect(writes).not.toHaveBeenCalled();
   });
 
-  it("keeps raw input available after storage failure and releases it on Discard", async () => {
-    await using _fixture = _createFixture();
+  it("keeps raw input available after storage failure and releases it on Discard", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -358,8 +387,8 @@ describe("recovering unsaved work", () => {
     expect(writes).not.toHaveBeenCalled();
   });
 
-  it("hands raw input to the accepted-source journal before retiring its fragment", async () => {
-    await using _fixture = _createFixture();
+  it("hands raw input to the accepted-source journal before retiring its fragment", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -393,8 +422,8 @@ describe("recovering unsaved work", () => {
     expect(parked()?.source).toBe(next);
   });
 
-  it("retains an accepted raw fragment until checkpoint transfer succeeds without republishing it", async () => {
-    await using _fixture = _createFixture();
+  it("retains an accepted raw fragment until checkpoint transfer succeeds without republishing it", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -431,8 +460,8 @@ describe("recovering unsaved work", () => {
     expect(checkpoint()).toEqual({ source: next, baseRevision: "r1" });
   });
 
-  it("sits in the footer as one line with plain actions", async () => {
-    await using _fixture = _createFixture();
+  it("sits in the footer as one line with plain actions", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -447,8 +476,8 @@ describe("recovering unsaved work", () => {
     ).toEqual(["Compare", "Discard"]);
   });
 
-  it("has a one-action form for a narrow footer, with Discard inside the comparison", async () => {
-    await using _fixture = _createFixture();
+  it("has a one-action form for a narrow footer, with Discard inside the comparison", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -474,8 +503,8 @@ describe("recovering unsaved work", () => {
     expect(disk.source).toBe(AGENT);
   });
 
-  it("never changes the file before the comparison is opened", async () => {
-    await using _fixture = _createFixture();
+  it("never changes the file before the comparison is opened", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -490,8 +519,8 @@ describe("recovering unsaved work", () => {
     expect(page(_fixture)).toContain("Monday base");
   });
 
-  it("shows both sides and replaces the file only by the explicit choice", async () => {
-    await using _fixture = _createFixture();
+  it("shows both sides and replaces the file only by the explicit choice", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -520,8 +549,8 @@ describe("recovering unsaved work", () => {
     expect(checkpoint()).toBeNull();
   });
 
-  it("names each side of a difference for a screen reader", async () => {
-    await using _fixture = _createFixture();
+  it("names each side of a difference for a screen reader", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -536,8 +565,8 @@ describe("recovering unsaved work", () => {
     );
   });
 
-  it("closes the comparison with the same control", async () => {
-    await using _fixture = _createFixture();
+  it("closes the comparison with the same control", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -549,8 +578,8 @@ describe("recovering unsaved work", () => {
     expect(_fixture.container.querySelector(".scient-latex-visual-recovery-panel")).toBeNull();
   });
 
-  it("refreshes the comparison when the file changes again, and applies only against what is shown", async () => {
-    await using _fixture = _createFixture();
+  it("refreshes the comparison when the file changes again, and applies only against what is shown", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -567,8 +596,8 @@ describe("recovering unsaved work", () => {
     expect(writes).toHaveBeenCalledExactlyOnceWith(again, MONDAY);
   });
 
-  it("is refused when the file moves between the comparison and the click", async () => {
-    await using _fixture = _createFixture();
+  it("is refused when the file moves between the comparison and the click", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -589,8 +618,8 @@ describe("recovering unsaved work", () => {
     expect(parked()).toMatchObject({ source: MONDAY, baseRevision: "r1" });
   });
 
-  it("discards only when asked, and then removes the recovered work", async () => {
-    await using _fixture = _createFixture();
+  it("discards only when asked, and then removes the recovered work", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -605,15 +634,15 @@ describe("recovering unsaved work", () => {
     expect(writes).not.toHaveBeenCalled();
   });
 
-  it("keeps the editor writable, and writing does not replace the recovered work", async () => {
-    await using _fixture = _createFixture();
+  it("keeps the editor writable, and writing does not replace the recovered work", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
     storeSourceDraft(MONDAY, "r1");
     await mount(_fixture, AGENT, 2);
     expect(editable(_fixture)).toBe(true);
-    const published = nextWriteReceipt();
+    const published = nextWriteReceipt(_fixture);
     await type(_fixture, 12, " kept writing");
     await settle(300);
     await published();
@@ -625,8 +654,8 @@ describe("recovering unsaved work", () => {
     expect(sides(_fixture, "recovered")).toEqual(["Monday text"]);
   });
 
-  it("offers no way past the comparison while new writing is still unsaved", async () => {
-    await using _fixture = _createFixture();
+  it("offers no way past the comparison while new writing is still unsaved", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -647,8 +676,8 @@ describe("recovering unsaved work", () => {
     expect(writes.mock.calls.every(([, next]) => next !== MONDAY)).toBe(true);
   });
 
-  it("keeps recovered work that equals a buffer which is not saved yet", async () => {
-    await using _fixture = _createFixture();
+  it("keeps recovered work that equals a buffer which is not saved yet", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -669,16 +698,15 @@ describe("recovering unsaved work", () => {
     expect(bar(_fixture)).toBeNull();
   });
 
-  it("still reinstalls a typing snapshot over the exact source it was typed on", async () => {
-    await using _fixture = _createFixture();
+  it("still reinstalls a typing snapshot over the exact source it was typed on", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
     const base = tex("Old base");
     storeTypingDraft(base, [paragraph("Old base plus typed")]);
-    const published = nextWriteReceipt();
-    await mount(_fixture, base, 1);
-    await published();
+    const saved = nextConfirmation(_fixture, tex("Old base plus typed"));
+    await mount(_fixture, base, 1, saved);
     await settle(400);
     expect(bar(_fixture)).toBeNull();
     expect(page(_fixture)).toContain("Old base plus typed");
@@ -700,8 +728,8 @@ describe("recovering unsaved work", () => {
     return spy;
   }
 
-  it("owns only the snapshot it put back, not one another view stored before it was installed", async () => {
-    await using _fixture = _createFixture();
+  it("owns only the snapshot it put back, not one another view stored before it was installed", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -712,18 +740,17 @@ describe("recovering unsaved work", () => {
       content: { type: "doc", content: [paragraph("Written in the other view")] },
     });
     const spy = storeAfterOpeningRead(theirs);
-    const published = nextWriteReceipt();
-    await mount(_fixture, base, 1);
+    const saved = nextConfirmation(_fixture, tex("Old base plus typed"));
+    await mount(_fixture, base, 1, saved);
     spy.mockRestore();
-    await published();
     await settle(400);
     // Ours was put back, converted and published; theirs is still stored.
     expect(shown.source).toBe(tex("Old base plus typed"));
     expect(localStorage.getItem(TYPING_SLOT)).toBe(theirs);
   });
 
-  it("keeps the snapshot it could not put back, not one another view stored meanwhile", async () => {
-    await using _fixture = _createFixture();
+  it("keeps the snapshot it could not put back, not one another view stored meanwhile", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -744,8 +771,8 @@ describe("recovering unsaved work", () => {
     expect(localStorage.getItem(TYPING_SLOT)).toBe(theirs);
   });
 
-  it("does not reinstall a typing snapshot over a newer file; it shows the file and offers the writing", async () => {
-    await using _fixture = _createFixture();
+  it("does not reinstall a typing snapshot over a newer file; it shows the file and offers the writing", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -769,8 +796,8 @@ describe("recovering unsaved work", () => {
     expect(checkpoint()).toEqual({ source: tex("Old base plus typed"), baseRevision: "r2" });
   });
 
-  it("offers unconvertible writing as text to copy, without a way to apply it", async () => {
-    await using _fixture = _createFixture();
+  it("offers unconvertible writing as text to copy, without a way to apply it", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -790,8 +817,8 @@ describe("recovering unsaved work", () => {
     expect(parked()).toBeNull();
   });
 
-  it("shows the next recovered work after one is discarded", async () => {
-    await using _fixture = _createFixture();
+  it("shows the next recovered work after one is discarded", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -807,8 +834,8 @@ describe("recovering unsaved work", () => {
     expect(bar(_fixture)).toBeNull();
   });
 
-  it("retains immediately painted typing when its source changes before publication", async () => {
-    await using _fixture = _createFixture();
+  it("retains immediately painted typing when its source changes before publication", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -835,8 +862,8 @@ describe("recovering unsaved work", () => {
     expect(parked()?.text).toContain("Old base typed");
   });
 
-  it("discards only its own refused writing, not a snapshot another view stored since", async () => {
-    await using _fixture = _createFixture();
+  it("discards only its own refused writing, not a snapshot another view stored since", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -857,8 +884,8 @@ describe("recovering unsaved work", () => {
     expect(page(_fixture)).toContain("Agent paragraph.");
   });
 
-  it("removes its own refused writing when the user discards it", async () => {
-    await using _fixture = _createFixture();
+  it("removes its own refused writing when the user discards it", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -872,8 +899,8 @@ describe("recovering unsaved work", () => {
     expect(readStoredRecovery(KEY)).toBeNull();
   });
 
-  it("keeps an admitted edit recoverable when an outside source arrives before disk acknowledgement", async () => {
-    await using _fixture = _createFixture();
+  it("keeps an admitted edit recoverable when an outside source arrives before disk acknowledgement", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -901,8 +928,8 @@ describe("recovering unsaved work", () => {
     expect(parked()).toMatchObject({ origin: "source", baseRevision: "r1" });
   });
 
-  it("offers a document made of several files for comparing and copying only", async () => {
-    await using _fixture = _createFixture();
+  it("offers a document made of several files for comparing and copying only", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -920,8 +947,8 @@ describe("recovering unsaved work", () => {
     expect(parked()).not.toBeNull();
   });
 
-  it("does not act on recovered work that another view already resolved", async () => {
-    await using _fixture = _createFixture();
+  it("does not act on recovered work that another view already resolved", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -939,8 +966,8 @@ describe("recovering unsaved work", () => {
     expect(sides(_fixture, "recovered")).toEqual(["Written in the other view"]);
   });
 
-  it("does not replace writing that has not reached the comparison yet", async () => {
-    await using _fixture = _createFixture();
+  it("does not replace writing that has not reached the comparison yet", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -960,10 +987,10 @@ describe("recovering unsaved work", () => {
     expect(message(_fixture)).toBe("Unsaved changes · not applied, compare again");
   });
 
-  it.each(["waits", "fails"] as const)(
+  it.for(["waits", "fails"] as const)(
     "keeps applied work recoverable when its save %s",
-    async (outcome) => {
-      await using _fixture = _createFixture();
+    async (outcome, testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -983,8 +1010,8 @@ describe("recovering unsaved work", () => {
     },
   );
 
-  it("keeps the parked copy when the applied work could not be journaled", async () => {
-    await using _fixture = _createFixture();
+  it("keeps the parked copy when the applied work could not be journaled", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1006,8 +1033,8 @@ describe("recovering unsaved work", () => {
     expect(parked()).toMatchObject({ source: MONDAY, baseRevision: "r1" });
   });
 
-  it("keeps a typing snapshot it cannot load as text, safe from later typing", async () => {
-    await using _fixture = _createFixture();
+  it("keeps a typing snapshot it cannot load as text, safe from later typing", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1017,8 +1044,13 @@ describe("recovering unsaved work", () => {
     await settle(300);
     expect(message(_fixture)).toBe("Unsaved text");
     // Ordinary writing afterwards succeeds and does not clear it.
+    const published = nextWriteReceipt(_fixture, (source) => source === tex("Old base typed"));
+    const saved = nextConfirmation(_fixture, tex("Old base typed"));
     await type(_fixture, 9, " typed");
     await settle(300);
+    await published();
+    await acknowledged();
+    await saved();
     expect(disk.source).toBe(tex("Old base typed"));
     expect(parked()).toMatchObject({ source: null, text: "Only copy of writing" });
     await click(_fixture, "View");
@@ -1028,8 +1060,8 @@ describe("recovering unsaved work", () => {
   });
 
   describe("when the work cannot be set aside", () => {
-    it("keeps the editor read-only so writing cannot replace it, until the user chooses", async () => {
-      await using _fixture = _createFixture();
+    it("keeps the editor read-only so writing cannot replace it, until the user chooses", async (testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -1054,8 +1086,8 @@ describe("recovering unsaved work", () => {
       expect(writes).not.toHaveBeenCalled();
     });
 
-    it("applies it from its slot by the same explicit choice", async () => {
-      await using _fixture = _createFixture();
+    it("applies it from its slot by the same explicit choice", async (testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -1075,10 +1107,10 @@ describe("recovering unsaved work", () => {
       expect(checkpoint()).toBeNull();
     });
 
-    it.each(["waits", "fails"] as const)(
+    it.for(["waits", "fails"] as const)(
       "keeps work applied from its slot recoverable when its save %s, at the same revision too",
-      async (outcome) => {
-        await using _fixture = _createFixture();
+      async (outcome, testContext) => {
+        await using _fixture = _createFixture(testContext);
         _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
         await _setupFixture0(_fixture);
 
@@ -1102,8 +1134,8 @@ describe("recovering unsaved work", () => {
       },
     );
 
-    it("keeps the record in its slot when applying it could not rewrite the slot", async () => {
-      await using _fixture = _createFixture();
+    it("keeps the record in its slot when applying it could not rewrite the slot", async (testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -1124,8 +1156,8 @@ describe("recovering unsaved work", () => {
       expect(message(_fixture)).toBe("Unsaved changes");
     });
 
-    it("is not replaced when the read-only editor closes with an older unwritten checkpoint", async () => {
-      await using _fixture = _createFixture();
+    it("is not replaced when the read-only editor closes with an older unwritten checkpoint", async (testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -1143,8 +1175,8 @@ describe("recovering unsaved work", () => {
       );
     });
 
-    it("stays read-only when the applied work could not be journaled, until it is discarded", async () => {
-      await using _fixture = _createFixture();
+    it("stays read-only when the applied work could not be journaled, until it is discarded", async (testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -1168,8 +1200,8 @@ describe("recovering unsaved work", () => {
       expect(shown.source).toBe(tex("Old base plus typed"));
     });
 
-    it("reinstalls waiting typing only after the work in the slot is resolved", async () => {
-      await using _fixture = _createFixture();
+    it("reinstalls waiting typing only after the work in the slot is resolved", async (testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -1190,8 +1222,8 @@ describe("recovering unsaved work", () => {
       expect(shown.source).toBe(tex("Old base plus typed"));
     });
 
-    it("puts back typing made on the recovered work once that work is applied", async () => {
-      await using _fixture = _createFixture();
+    it("puts back typing made on the recovered work once that work is applied", async (testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -1204,17 +1236,24 @@ describe("recovering unsaved work", () => {
       await click(_fixture, "Compare");
       expect(sides(_fixture, "recovered")).toEqual(["Monday text"]);
       full.mockRestore();
+      const published = nextWriteReceipt(
+        _fixture,
+        (source) => source === tex("Monday text and more"),
+      );
+      const saved = nextConfirmation(_fixture, tex("Monday text and more"));
       await click(_fixture, "Use recovered");
       await settle(300);
       expect(bar(_fixture)).toBeNull();
       expect(editable(_fixture)).toBe(true);
       expect(page(_fixture)).toContain("Monday text and more");
+      await published();
       await acknowledged();
+      await saved();
       expect(disk.source).toBe(tex("Monday text and more"));
     });
 
-    it("says on the line that an edit it could store nowhere needs the document kept open", async () => {
-      await using _fixture = _createFixture();
+    it("says on the line that an edit it could store nowhere needs the document kept open", async (testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -1245,8 +1284,8 @@ describe("recovering unsaved work", () => {
       expect(shown.source).toContain("\\section{Old base}");
     });
 
-    it("keeps an unloadable typing snapshot in place and the editor read-only", async () => {
-      await using _fixture = _createFixture();
+    it("keeps an unloadable typing snapshot in place and the editor read-only", async (testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -1265,10 +1304,11 @@ describe("recovering unsaved work", () => {
   });
 });
 
-function _createFixture() {
+function _createFixture(context: TestContext) {
   const stack = new AsyncDisposableStack();
   const cleanup = new AsyncDisposableStack();
   return {
+    context,
     restoreFonts: () => {},
     storageLimit: null as { mockRestore: () => void } | null,
 

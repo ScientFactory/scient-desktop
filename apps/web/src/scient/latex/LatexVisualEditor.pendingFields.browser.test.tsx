@@ -5,10 +5,11 @@ import {
   fakeTimers as _fixtureFakeTimers,
   act,
 } from "../../../test/render";
+import { waitForTestReceipt } from "../../../test/receipt";
 import type { Editor } from "@tiptap/core";
 import { useImperativeHandle, type Ref } from "react";
 
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi, type TestContext } from "vite-plus/test";
 
 vi.mock("./LatexMathField", () => ({
   LatexMathField: ({ value, ref }: { value: string; ref: Ref<unknown> }) => {
@@ -42,6 +43,16 @@ const SOURCE =
 describe("pending fields across outside document changes", () => {
   const writes = vi.fn();
   const pending = vi.fn();
+  const acceptedReceipts = new Map<string, () => void>();
+  const nextAcceptedSource = (_fixture: _Fixture, context: TestContext, source: string) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    acceptedReceipts.set(source, resolve);
+    const dispose = () => {
+      if (acceptedReceipts.get(source) === resolve) acceptedReceipts.delete(source);
+    };
+    _fixture.cleanup.defer(dispose);
+    return () => waitForTestReceipt(context.signal, promise, dispose);
+  };
 
   async function _setupFixture0(_fixture: _Fixture) {
     _fixture.restoreFonts = stubLatexReadingFonts();
@@ -87,7 +98,11 @@ describe("pending fields across outside document changes", () => {
             request,
             _fixture.acceptWrites && request.edit.source === _fixture.shown,
           );
-          if (outcome.accepted) _fixture.shown = outcome.snapshot.source;
+          if (outcome.accepted) {
+            _fixture.shown = outcome.snapshot.source;
+            acceptedReceipts.get(_fixture.shown)?.();
+            acceptedReceipts.delete(_fixture.shown);
+          }
           return outcome;
         }}
       />,
@@ -331,7 +346,7 @@ describe("pending fields across outside document changes", () => {
     expect(editor(_fixture).state.doc.textContent).toContain("Unavailable");
   });
 
-  it("coalesces consecutive typing without a parent render and preserves title metadata", async () => {
+  it("coalesces consecutive typing without a parent render and preserves title metadata", async (context) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -343,6 +358,11 @@ describe("pending fields across outside document changes", () => {
     editor(_fixture).state.doc.descendants((node, at) => {
       if (node.type.name === "paragraph") position = at + 1;
     });
+    const published = nextAcceptedSource(
+      _fixture,
+      context,
+      _fixture.shown.replace("Body text.", "ABBody text."),
+    );
     await act(() => {
       editor(_fixture).commands.setTextSelection(position);
       editor(_fixture).commands.insertContent("A");
@@ -351,6 +371,7 @@ describe("pending fields across outside document changes", () => {
     expect(editor(_fixture).state.doc.textContent).toContain("ABBody text.");
     expect(writes).not.toHaveBeenCalled();
     await advance(500);
+    await published();
     expect(_fixture.shown).toContain("ABBody text.");
     expect(_fixture.shown).toContain("\\title{Keep title}");
     expect(writes).toHaveBeenCalledTimes(1);

@@ -3,6 +3,7 @@ import type { Editor } from "@tiptap/core";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 import { act, fakeTimers, render } from "../../../test/render";
+import { waitForTestReceipt } from "../../../test/receipt";
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { latexPagedKey, pagedLayoutProgress, pagedLayoutSettled } from "./latexPagedGeometry";
 import {
@@ -15,6 +16,7 @@ import {
   readMountedLatexVisualTestEditor,
 } from "./latexVisualTestOwner";
 import "./scient-latex.css";
+import { waitForLatexVisualTestReadiness } from "./latexVisualTestReadiness";
 
 const sentence =
   "זהו משפט סינתטי לבדיקת בחירה בעברית. המילים נשמרות בסדר המקורי והמספר 12345 נשאר קריא. ";
@@ -66,17 +68,7 @@ function scroller(editor: Editor) {
   return editor.view.dom.closest<HTMLElement>(".scient-latex-visual-scroll")!;
 }
 
-async function settled(container: HTMLElement) {
-  await vi.waitFor(() => {
-    const editor = readMountedLatexVisualTestEditor(container);
-    expect(editor).not.toBeNull();
-    expect(editor!.view.dom.dataset.latexLoading).not.toBe("true");
-    expect(pagedLayoutSettled(editor!.view)).toBe(true);
-  });
-  return readMountedLatexVisualTestEditor(container)!;
-}
-
-it("keeps the visible Hebrew two-column source heading across a file-tab remount", async () => {
+it("keeps the visible Hebrew two-column source heading across a file-tab remount", async (context) => {
   await page.viewport(1280, 800);
   using resources = new DisposableStack();
   const container = document.createElement("div");
@@ -119,8 +111,11 @@ it("keeps the visible Hebrew two-column source heading across a file-tab remount
   }
   // The file host has no router behavior; the actual editor and its retained source owner do.
   await using screen = await render(<FileTabs />, { container, router: false });
-  await document.fonts.ready;
-  const before = await settled(container);
+  const before = await waitForLatexVisualTestReadiness(
+    container,
+    context,
+    "Hebrew tab initial opening",
+  );
   expect(latexPagedKey.getState(before.state)!.plan!.pages).toBeGreaterThanOrEqual(5);
   let delivered = false;
   scroller(before).addEventListener(
@@ -153,7 +148,7 @@ it("keeps the visible Hebrew two-column source heading across a file-tab remount
   await screen.getByRole("button", { name: "rich.md", exact: true }).click();
   expect(readMountedLatexVisualTestEditor(container)).toBeNull();
   await screen.getByRole("button", { name: "hebrew-two-column.tex", exact: true }).click();
-  const after = await settled(container);
+  const after = await waitForLatexVisualTestReadiness(container, context, "Hebrew tab remount");
   const returned = Array.from(after.view.dom.querySelectorAll("h1,h2,h3,h4,h5,h6")).find(
     (element) => element.textContent === text,
   );
@@ -170,7 +165,7 @@ it("keeps the visible Hebrew two-column source heading across a file-tab remount
   ).toBeLessThan(2);
 });
 
-it("yields opening restoration to explicit reader zoom before pagination settles", async () => {
+it("yields opening restoration to explicit reader zoom before pagination settles", async (context) => {
   await page.viewport(1280, 800);
   using resources = new DisposableStack();
   const container = document.createElement("div");
@@ -199,15 +194,21 @@ ${"A source-owned paragraph spans several pages while its reading position is re
     />,
     { container, router: false },
   );
-  await document.fonts.ready;
-  const editor = await settled(container);
+  const editor = await waitForLatexVisualTestReadiness(
+    container,
+    context,
+    "zoom cancellation initial opening",
+  );
   const originalDocument = editor.state.doc.toJSON();
   const scroll = scroller(editor);
-  const delivered = new Promise<void>((resolve) =>
-    scroll.addEventListener("scroll", () => resolve(), { once: true }),
-  );
+  const delivered = Promise.withResolvers<void>();
+  const onScroll = () => delivered.resolve();
+  scroll.addEventListener("scroll", onScroll, { once: true });
+  using _scrollReceipt = {
+    [Symbol.dispose]: () => scroll.removeEventListener("scroll", onScroll),
+  };
   scroll.scrollTop = 400;
-  await delivered;
+  await waitForTestReceipt(context.signal, delivered.promise);
   rememberLatexReadingPosition(key, editor.view);
   expect(rememberedLatexReadingBlock(key)).toBe(0);
   expect(scroll.scrollTop).toBe(400);

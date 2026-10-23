@@ -1,6 +1,6 @@
 import { pdfCitationText, type PdfCitation } from "@t3tools/contracts";
 import { pdfCitationDocumentLabel, pdfCitationPages } from "@t3tools/shared/pdfCitations";
-import type { ReactElement } from "react";
+import { useId, type ReactElement } from "react";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
@@ -12,12 +12,13 @@ export function PdfCitationHoverCard({
   citation: PdfCitation;
   trigger: ReactElement;
 }) {
+  const popupId = useId();
   const location = pdfCitationDocumentLabel(citation);
   const excerpt = pdfCitationText(citation).replace(/\s+/g, " ").trim();
   return (
     <Tooltip>
-      <TooltipTrigger render={trigger} />
-      <TooltipPopup side="top" className="max-w-72">
+      <TooltipTrigger render={trigger} aria-describedby={popupId} />
+      <TooltipPopup side="top" className="max-w-72" role="tooltip" id={popupId}>
         <span className="flex min-w-0 flex-col gap-0.5 py-0.5 text-left">
           <span className="font-medium text-foreground">{citation.target.document.fileName}</span>
           {location !== citation.target.document.fileName ? (

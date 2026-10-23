@@ -1,17 +1,13 @@
 import "../../index.css";
 import "./scient-latex.css";
-import {
-  fakeTimers,
-  render as _fixtureRender,
-  type Screen,
-  act as reactAct,
-} from "../../../test/render";
+import { fakeTimers, render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { waitForTestReceipt } from "../../../test/receipt";
 import type { Editor, NodeViewRenderer, NodeViewRendererProps } from "@tiptap/core";
 import type { LatexMathFieldHandle } from "./LatexMathField";
 import { useImperativeHandle, useState, type ReactNode, type Ref } from "react";
 import { PDF_FIT_WIDTH_PADDING } from "../pdf/pdfReaderModel";
 
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi, type TestContext } from "vite-plus/test";
 
 // Test the actual ProseMirror transaction/save boundary. MathLive's native
 // shadow-DOM keyboard is checked in the running desktop, not simulated here.
@@ -47,10 +43,11 @@ import { setLatexPageMarkers } from "./latexPageMarkers";
 import { latexPagedKey, pagedLayoutSettled } from "./latexPagedGeometry";
 import {
   createLatexVisualTestOwner,
-  readMountedLatexVisualTestEditor,
-  stubLatexReadingFonts,
   useLatexVisualTestOwner,
+  stubLatexReadingFonts,
 } from "./latexVisualTestOwner";
+import { waitForLatexVisualTestReadiness } from "./latexVisualTestReadiness";
+import { latexEditingTarget } from "./latexEditingTarget";
 import { ReaderBarHostContext } from "../writing/readerBarHost";
 import { mathSourceCompletions } from "./latexMathCompletion";
 import { clearVisualDraft, readPersistedVisualDraft } from "./visualDrafts";
@@ -66,10 +63,10 @@ import {
   saveKeyboardPreferences,
 } from "../keyboard/preferences";
 
-// Commit the interaction before driving its controlled source-publication debounce.
-const act = async (callback: () => unknown) => {
-  await reactAct(callback);
-  await reactAct(() => vi.advanceTimersByTimeAsync(320));
+const advance = async (ms = 320) => await act(() => vi.advanceTimersByTimeAsync(ms));
+const settleTyping = async (published: () => Promise<void>) => {
+  await advance();
+  await published();
 };
 
 const readerHosted = vi.fn();
@@ -79,14 +76,26 @@ describe("writing editor source transactions", () => {
   let confirmed: string | null;
 
   const writes = vi.fn();
-  const writeReceipts = new Set<() => void>();
-  const nextWriteReceipt = () =>
-    new Promise<void>((resolve) => {
-      writeReceipts.add(resolve);
-    });
-  const publishWriteReceipt = () => {
-    for (const resolve of writeReceipts) resolve();
-    writeReceipts.clear();
+  const writeReceipts = new Map<() => void, (source: string) => boolean>();
+  const nextWriteReceipt = (
+    _fixture: _Fixture,
+    matches: (source: string) => boolean = () => true,
+  ) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const dispose = () => {
+      writeReceipts.delete(resolve);
+    };
+    writeReceipts.set(resolve, matches);
+    _fixture.cleanup.defer(dispose);
+    // Arm immediately, but only start the rejecting cancellation race when awaited.
+    return () => waitForTestReceipt(_fixture.context.signal, promise, dispose);
+  };
+  const publishWriteReceipt = (source: string) => {
+    for (const [resolve, matches] of writeReceipts) {
+      if (!matches(source)) continue;
+      writeReceipts.delete(resolve);
+      resolve();
+    }
   };
   const flushReferences = vi.fn<() => Promise<boolean>>();
   const tex = (body: string) =>
@@ -94,7 +103,6 @@ describe("writing editor source transactions", () => {
   async function _setupFixture0(_fixture: _Fixture) {
     _fixture.restoreFonts = stubLatexReadingFonts();
     writes.mockReset();
-    writeReceipts.clear();
     confirmed = null;
     flushReferences.mockReset().mockResolvedValue(false);
     clearVisualDraft("synthetic-editor-test");
@@ -111,21 +119,23 @@ describe("writing editor source transactions", () => {
     );
   }
   async function renderMountedEditor(_fixture: _Fixture, ui: ReactNode) {
+    _fixture.clock?.[Symbol.dispose]();
+    _fixture.clock = undefined;
     await _fixture.root0.rerender(ui);
-    await vi.waitFor(() => {
-      const mounted = readMountedLatexVisualTestEditor(_fixture.container);
-      expect(mounted).not.toBeNull();
-      expect(mounted!.view.dom.dataset.latexLoading).not.toBe("true");
-    });
-    _fixture.clock ??= _fixture.cleanup.use(fakeTimers());
+    await waitForLatexVisualTestReadiness(
+      _fixture.container,
+      _fixture.context,
+      "source transactions",
+    );
+    _fixture.clock = _fixture.cleanup.use(fakeTimers());
   }
   async function _cleanupFixture1(_fixture: _Fixture) {
     // References keeps forms across remounts; discard this fixture's retained form.
     const cancel = [..._fixture.container.querySelectorAll<HTMLButtonElement>("form button")].find(
       (button) => button.textContent === "Cancel",
     );
-    if (cancel) await reactAct(() => cancel.click());
-    await reactAct(async () => await _fixture.root0.unmount());
+    if (cancel) await act(() => cancel.click());
+    await act(async () => await _fixture.root0.unmount());
     _fixture.container.remove();
     clearVisualDraft("synthetic-editor-test");
     clearTypingDraft("synthetic-editor-test");
@@ -167,6 +177,15 @@ describe("writing editor source transactions", () => {
     return (_fixture.container.querySelector(".ProseMirror") as HTMLElement & { editor: Editor })
       .editor;
   }
+  async function focusCellEditor(_fixture: _Fixture, field: Editor) {
+    // TipTap's focus command queues RAF. With the fixture clock stopped, a
+    // selection transaction alone has not delivered the native focus event
+    // that gives this cell ownership of toolbar actions and selection status.
+    await act(() => field.view.focus());
+    expect(document.activeElement).toBe(field.view.dom);
+    expect(field.isFocused).toBe(true);
+    expect(latexEditingTarget(editor(_fixture))).toBe(field);
+  }
   async function contextMenuAction(
     _fixture: _Fixture,
     menu: string,
@@ -190,6 +209,7 @@ describe("writing editor source transactions", () => {
     const action = find(name);
     expect(action).toBeDefined();
     await act(() => action!.click());
+    await advance();
   }
   async function openCellFormatting(_fixture: _Fixture) {
     await act(() =>
@@ -224,7 +244,7 @@ describe("writing editor source transactions", () => {
     const item = find();
     expect(item).toBeDefined();
     await act(() => item!.click());
-    await act(() => {});
+    await advance();
   }
   async function setField(
     field: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
@@ -241,7 +261,9 @@ describe("writing editor source transactions", () => {
         new Event(field instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }),
       );
     });
+    await advance();
     await act(() => field.blur());
+    await advance();
   }
   async function focusReferenceLabel(_fixture: _Fixture, label: string) {
     const field = _fixture.container.querySelector<HTMLTextAreaElement>(
@@ -290,7 +312,7 @@ describe("writing editor source transactions", () => {
             writes(request.edit.source, outcome.snapshot.source);
             current = outcome.snapshot.source;
             setSource(current);
-            publishWriteReceipt();
+            publishWriteReceipt(current);
             return outcome;
           }}
         />
@@ -306,14 +328,14 @@ describe("writing editor source transactions", () => {
     await renderMountedEditor(_fixture, <Harness />);
   }
 
-  it.each([
+  it.for([
     "\\newcommand% name follows\n\\hiddenBegin{\\begin{comment}}",
     "\\newcommand% star follows\r\n*{\\hiddenBegin}{\\begin{comment}}",
     "\\DeclareDocumentCommand{\\hiddenBegin}{m}{\\begin{comment}#1}",
-  ])(
+  ] as const)(
     "edits the body and preserves unused declaration %s through undo and redo",
-    async (definition) => {
-      await using _fixture = _createFixture();
+    async (definition, testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -321,24 +343,24 @@ describe("writing editor source transactions", () => {
       const original = current;
       expect(editor(_fixture).isEditable).toBe(true);
       expect(editor(_fixture).state.doc.textContent).toBe("Actual body.");
-      let published = nextWriteReceipt();
+      let published = nextWriteReceipt(_fixture);
       await act(() => editor(_fixture).chain().setTextSelection(1).insertContent("New ").run());
-      await published;
+      await settleTyping(published);
       const changed = original.replace("Actual body.", "New Actual body.");
       expect(current).toBe(changed);
-      published = nextWriteReceipt();
+      published = nextWriteReceipt(_fixture);
       await act(() => editor(_fixture).commands.undo());
-      await published;
+      await settleTyping(published);
       expect(current).toBe(original);
-      published = nextWriteReceipt();
+      published = nextWriteReceipt(_fixture);
       await act(() => editor(_fixture).commands.redo());
-      await published;
+      await settleTyping(published);
       expect(current).toBe(changed);
     },
   );
 
-  it("edits a visible heading label in the footer and adds/removes it through source and undo", async () => {
-    await using _fixture = _createFixture();
+  it("edits a visible heading label in the footer and adds/removes it through source and undo", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -371,12 +393,13 @@ describe("writing editor source transactions", () => {
     await setField(field(), "");
     expect(current).not.toContain("\\label{sec:intro}");
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toContain("\\label{sec:intro}");
     expect(field().value).toBe("sec:intro");
   });
 
-  it("renames a heading label and its recognized references on Enter while preserving heading selection", async () => {
-    await using _fixture = _createFixture();
+  it("renames a heading label and its recognized references on Enter while preserving heading selection", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -401,6 +424,7 @@ describe("writing editor source transactions", () => {
         new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
       ),
     );
+    await advance();
     expect(current).toContain("\\label{sec:new}");
     expect(current).toContain("\\ref{sec:new}");
     expect(current).toContain("\\nameref{sec:new}");
@@ -411,12 +435,13 @@ describe("writing editor source transactions", () => {
     expect(document.activeElement).toBe(field);
     expect(field.value).toBe("sec:new");
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toContain("\\label{sec:old}");
     expect(current).toContain("\\hyperref[sec:old]{Introduction}");
   });
 
-  it("rejects invalid and duplicate heading labels without publishing the field draft", async () => {
-    await using _fixture = _createFixture();
+  it("rejects invalid and duplicate heading labels without publishing the field draft", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -442,8 +467,8 @@ describe("writing editor source transactions", () => {
     expect(current).toContain("\\label{sec:summary}");
   });
 
-  it("keeps table label editing attached to its object through the inline footer field", async () => {
-    await using _fixture = _createFixture();
+  it("keeps table label editing attached to its object through the inline footer field", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -465,11 +490,12 @@ Control & 1 \\\\
     expect(current).toContain("\\label{tab:new}");
     expect(current).toContain("Control & 1");
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toContain("\\label{tab:old}");
   });
 
-  it("settles selected table layout without resize observer errors", async () => {
-    await using _fixture = _createFixture();
+  it("settles selected table layout without resize observer errors", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
     const errors: string[] = [];
@@ -483,13 +509,13 @@ Control & 1 \\\\
       "\\begin{table}\\caption{Results}\\label{tab:old}\\begin{tabular}{ll}Method & Score \\\\\nControl & 1 \\\\\n\\end{tabular}\\end{table}",
     );
     await selectKind(_fixture, "table");
+    await advance();
     await expect.poll(() => pagedLayoutSettled(editor(_fixture).view)).toBe(true);
-    await act(() => {});
     expect(errors).toEqual([]);
   });
 
-  it("retains a manual reference until its document save is confirmed", async () => {
-    await using _fixture = _createFixture();
+  it("retains a manual reference until its document save is confirmed", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -534,8 +560,8 @@ Control & 1 \\\\
     expect(_fixture.container.textContent).toContain("Reference saved.");
   });
 
-  it("keeps a manual reference when a clean save published a superseding entry", async () => {
-    await using _fixture = _createFixture();
+  it("keeps a manual reference when a clean save published a superseding entry", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -568,8 +594,8 @@ Control & 1 \\\\
     );
   });
 
-  it("keeps writing tools in one permanent row and reader controls in the footer", async () => {
-    await using _fixture = _createFixture();
+  it("keeps writing tools in one permanent row and reader controls in the footer", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -586,11 +612,9 @@ Control & 1 \\\\
     expect(toolbar.querySelector('[aria-label="Hide formatting tools"]')).toBeNull();
     expect(toolbar.querySelector('input[aria-label="Page number"]')).toBeNull();
     expect(latexPagedKey.getState(editor(_fixture).state)?.plan?.pages).toBe(1);
-    expect(
-      _fixture.container.querySelector<HTMLInputElement>(
-        '.scient-latex-reader-footer input[aria-label="Page number"]',
-      )?.value,
-    ).toBe("1");
+    await expect
+      .element(_fixture.root0.getByRole("textbox", { name: "Page number", exact: true }))
+      .toHaveValue("1");
     expect(
       _fixture.container.querySelector('.scient-latex-reader-footer [aria-label="1 pages"]'),
     ).not.toBeNull();
@@ -611,8 +635,8 @@ Control & 1 \\\\
     ).toBeNull();
   });
 
-  it("draws the reader controls in the host's header and leaves a compact footer", async () => {
-    await using _fixture = _createFixture();
+  it("draws the reader controls in the host's header and leaves a compact footer", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -624,9 +648,9 @@ Control & 1 \\\\
       expect(headerSlot.querySelector('button[aria-label^="Zoom in"]')).not.toBeNull();
       expect(headerSlot.querySelector(".scient-pdf-toolbar-hosted")).not.toBeNull();
       expect(_fixture.container.querySelector('button[aria-label^="Zoom in"]')).toBeNull();
-      expect(
-        headerSlot.querySelector<HTMLInputElement>('input[aria-label="Page number"]')?.value,
-      ).toBe("1");
+      await expect
+        .element(document.body.querySelector<HTMLInputElement>('input[aria-label="Page number"]')!)
+        .toHaveValue("1");
       expect(document.body.querySelectorAll('input[aria-label="Page number"]')).toHaveLength(1);
       await act(() =>
         setLatexPageMarkers(editor(_fixture).view, {
@@ -674,8 +698,8 @@ Control & 1 \\\\
     }
   });
 
-  it("finds and replaces text, writing the replacement to the source", async () => {
-    await using _fixture = _createFixture();
+  it("finds and replaces text, writing the replacement to the source", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -694,10 +718,12 @@ Control & 1 \\\\
         bar.querySelector<HTMLButtonElement>("[aria-label='Replace current match']")!.click(),
       );
       // Special characters are written the way typing them would write them.
+      await advance();
       expect(current).toContain("One dog\\_100\\%, two cats, three Cats.");
       await act(() =>
         bar.querySelector<HTMLButtonElement>("[aria-label='Replace all matches']")!.click(),
       );
+      await advance();
       expect(current).toContain("One dog\\_100\\%, two dog\\_100\\%s, three dog\\_100\\%s.");
       expect(current).toContain("\\begin{document}");
     } finally {
@@ -705,8 +731,8 @@ Control & 1 \\\\
     }
   });
 
-  it("replaces across paragraphs, a heading and a list, one block at a time", async () => {
-    await using _fixture = _createFixture();
+  it("replaces across paragraphs, a heading and a list, one block at a time", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -743,6 +769,7 @@ Control & 1 \\\\
         bar.querySelector<HTMLButtonElement>("[aria-label='Replace all matches']")!.click(),
       );
       // Each block is written to the source before the next is edited.
+      await advance();
       await act(() => vi.waitFor(() => expect(current).not.toContain("cat")));
       expect(current).toContain("\\section{A dog}");
       expect(current).toContain("First dog here, and a second dog.");
@@ -752,6 +779,7 @@ Control & 1 \\\\
       expect(_fixture.container.textContent).not.toContain("could not");
       // One block per undo step, so each step is an edit the source can hold.
       await act(() => editor(_fixture).commands.undo());
+      await advance();
       expect(current.match(/cat/gu)?.length).toBe(1);
       expect(_fixture.container.textContent).not.toContain("could not");
     } finally {
@@ -759,8 +787,8 @@ Control & 1 \\\\
     }
   });
 
-  it("stops replacing when the document changes under it, and never touches the new text", async () => {
-    await using _fixture = _createFixture();
+  it("stops replacing when the document changes under it, and never touches the new text", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -777,13 +805,17 @@ Control & 1 \\\\
         bar.querySelector<HTMLInputElement>("input[aria-label='Replacement text']")!,
         "dog",
       );
+      const published = nextWriteReceipt(
+        _fixture,
+        (source) => source.includes("cat cat cat.") && source.includes("Last dog."),
+      );
       await act(() => {
         bar.querySelector<HTMLButtonElement>("[aria-label='Replace all matches']")!.click();
         // The last paragraph is done; the others wait for a paint. The writer
         // types the searched word at the very start before that paint.
         editor(_fixture).commands.insertContentAt(1, "cat ");
       });
-      await act(() => {});
+      await settleTyping(published);
       expect(current).toContain("Last dog.");
       // The positions found earlier still hold the word "cat", but they are no
       // longer the words that were matched: nothing in this paragraph changes.
@@ -795,8 +827,8 @@ Control & 1 \\\\
     }
   });
 
-  it("groups insertions and runs relocated text blocks from Text", async () => {
-    await using _fixture = _createFixture();
+  it("groups insertions and runs relocated text blocks from Text", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -843,12 +875,13 @@ Control & 1 \\\\
       (row) => row.textContent?.trim() === "Right-aligned text",
     )!;
     await act(() => right.click());
+    await advance();
     expect(current).toContain("\\begin{flushright}");
     expect(editor(_fixture).isFocused).toBe(true);
   });
 
-  it("keeps Backspace typed in the title inside the title, whatever the document selects", async () => {
-    await using _fixture = _createFixture();
+  it("keeps Backspace typed in the title inside the title, whatever the document selects", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -879,10 +912,10 @@ Control & 1 \\\\
     expect(current).toContain("Second.");
   });
 
-  it.each(["english", "hebrew"])(
+  it.for(["english", "hebrew"] as const)(
     "removes an empty %s document title with Backspace and restores it with Undo",
-    async (language) => {
-      await using _fixture = _createFixture();
+    async (language, testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -901,6 +934,7 @@ Control & 1 \\\\
         cancelable: true,
       });
       await act(() => title.dispatchEvent(backspace));
+      await advance();
       expect(backspace.defaultPrevented).toBe(true);
       expect(current).not.toContain("\\maketitle");
       expect(current).toContain(preamble);
@@ -910,17 +944,19 @@ Control & 1 \\\\
       expect(editor(_fixture).state.selection.$from.parent.type.name).toBe("paragraph");
       expect(editor(_fixture).isFocused).toBe(true);
       await act(() => editor(_fixture).commands.undo());
+      await advance();
       expect(current).toContain("\\maketitle");
       expect(current).toContain(preamble);
       expect(_fixture.container.querySelector(".scient-latex-title-preview")).not.toBeNull();
       await act(() => editor(_fixture).commands.redo());
+      await advance();
       expect(current).not.toContain("\\maketitle");
       expect(current).toContain(body);
     },
   );
 
-  it("settles a just-cleared title before deleting a title-only block", async () => {
-    await using _fixture = _createFixture();
+  it("settles a just-cleared title before deleting a title-only block", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -929,19 +965,20 @@ Control & 1 \\\\
       "textarea[aria-label='Document title']",
     )!;
     await act(() => title.focus());
-    await reactAct(() => {
+    await act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(title, "");
       title.dispatchEvent(new Event("input", { bubbles: true }));
       title.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }),
       );
     });
-    await act(() => {});
+    await advance();
     expect(current).not.toContain("\\maketitle");
     expect(current).toContain("\\title{}");
     expect(editor(_fixture).state.selection.$from.parent.type.name).toBe("paragraph");
     expect(editor(_fixture).isFocused).toBe(true);
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toContain("\\maketitle");
     expect(current).toContain("\\title{}");
     expect(
@@ -951,8 +988,8 @@ Control & 1 \\\\
     ).toBe("");
   });
 
-  it("starts a titled document with formatting ready on body text", async () => {
-    await using _fixture = _createFixture();
+  it("starts a titled document with formatting ready on body text", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -974,8 +1011,8 @@ Control & 1 \\\\
     expect(editor(_fixture).isActive("bold")).toBe(true);
   });
 
-  it("offers the Markdown bar's inline formatting in the same order, without strikethrough", async () => {
-    await using _fixture = _createFixture();
+  it("offers the Markdown bar's inline formatting in the same order, without strikethrough", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1011,11 +1048,13 @@ Control & 1 \\\\
     await act(() => editor(_fixture).commands.setTextSelection({ from: 1, to: 6 }));
     let items = await openFormatting();
     await act(() => items[2]!.click());
+    await advance();
     expect(current).toContain("\\texttt{Hello}");
     expect(editor(_fixture).isFocused).toBe(true);
     items = await openFormatting();
     expect(items[2]!.getAttribute("aria-checked")).toBe("true");
     await act(() => items[2]!.click());
+    await advance();
     expect(current).not.toContain("\\texttt");
     // Link lives in Insert, not in the bar.
     await act(() =>
@@ -1030,9 +1069,12 @@ Control & 1 \\\\
     )!;
     expect(link).toBeDefined();
     await act(() => link.click());
-    await act(() => {});
-    const popup = document.body.querySelector('[data-slot="popover-popup"]')!;
-    expect(popup).not.toBeNull();
+    // InsertMenu runs the command after its close transition completes.
+    const popup = await vi.waitFor(() => {
+      const element = document.body.querySelector('[data-slot="popover-popup"]');
+      expect(element).not.toBeNull();
+      return element!;
+    });
     expect(popup.classList.contains("w-64")).toBe(true);
     expect(document.body.querySelector('[data-slot="dialog-backdrop"]')).toBeNull();
     expect(document.body.querySelector('[data-slot="dialog-popup"]')).toBeNull();
@@ -1045,12 +1087,13 @@ Control & 1 \\\\
         .querySelector("form")!
         .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
     );
+    await advance();
     await vi.waitFor(() => expect(current).toContain("\\href{https://example.com}{Hello}"));
     expect(editor(_fixture).isFocused).toBe(true);
   });
 
-  it("puts plain-text shortcut help under Document without extra More actions", async () => {
-    await using _fixture = _createFixture();
+  it("puts plain-text shortcut help under Document without extra More actions", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1076,8 +1119,8 @@ Control & 1 \\\\
       "Writing shortcuts",
     );
   });
-  it("applies settings from a one-card submenu that shows the current values", async () => {
-    await using _fixture = _createFixture();
+  it("applies settings from a one-card submenu that shows the current values", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1131,6 +1174,7 @@ Control & 1 \\\\
     });
     await setField(top, "2cm");
     await act(() => button("Apply").click());
+    await advance();
     await vi.waitFor(() => expect(current).toContain("top=2cm"));
     expect(current).toContain("Hello");
     expect(current).toContain("\\documentclass{article}");
@@ -1138,10 +1182,12 @@ Control & 1 \\\\
     await act(() => {
       editor(_fixture).commands.undo();
     });
+    await advance();
     await vi.waitFor(() => expect(current).not.toContain("top=2cm"));
     await act(() => {
       editor(_fixture).commands.redo();
     });
+    await advance();
     await vi.waitFor(() => expect(current).toBe(applied));
     await vi.waitFor(() =>
       expect(
@@ -1152,8 +1198,8 @@ Control & 1 \\\\
     );
   });
 
-  it("changes the document language through settings with source preservation and undo/redo", async () => {
-    await using _fixture = _createFixture();
+  it("changes the document language through settings with source preservation and undo/redo", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1191,18 +1237,21 @@ Control & 1 \\\\
         .find((button) => button.textContent?.trim() === "Apply")!
         .click(),
     );
+    await advance();
     await vi.waitFor(() => expect(current).toContain("\\setdefaultlanguage{hebrew}"));
     expect(current).toContain(body);
     expect(current).not.toContain("\\usepackage[T1]{fontenc}");
     const applied = current;
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     await vi.waitFor(() => expect(current).toBe(original));
     await act(() => editor(_fixture).commands.redo());
+    await advance();
     await vi.waitFor(() => expect(current).toBe(applied));
   });
 
-  it("moves lower-priority writing groups into More on narrow panes", async () => {
-    await using _fixture = _createFixture();
+  it("moves lower-priority writing groups into More on narrow panes", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1241,8 +1290,8 @@ Control & 1 \\\\
       ).toBe(true);
   });
 
-  it("shows the list menu in the Markdown menu's shape, with its shortcuts", async () => {
-    await using _fixture = _createFixture();
+  it("shows the list menu in the Markdown menu's shape, with its shortcuts", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1265,13 +1314,14 @@ Control & 1 \\\\
     // The current kind is shown by the row itself, not by a separate mark.
     expect(document.body.querySelector('[data-slot="menu-radio-item-indicator"]')).toBeNull();
     await act(() => rows[0]!.click());
+    await advance();
     expect(current).toContain("\\begin{itemize}");
   });
 
-  it.each([false, true])(
+  it.for([false, true] as const)(
     "opens and applies an existing theorem's exact source after insertion=%s",
-    async (insertBefore) => {
-      await using _fixture = _createFixture();
+    async (insertBefore, testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -1304,13 +1354,14 @@ Control & 1 \\\\
       );
       expect(apply).toBeDefined();
       await act(() => apply!.click());
+      await advance();
       expect(current).toContain(raw.replace("Assume", "Suppose"));
       if (insertBefore) expect(current).toContain("Before");
     },
   );
 
-  it("keeps an accepted raw edit recoverable when Cancel and Escape cannot checkpoint it", async () => {
-    await using _fixture = _createFixture();
+  it("keeps an accepted raw edit recoverable when Cancel and Escape cannot checkpoint it", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1337,6 +1388,7 @@ Control & 1 \\\\
         (item) => item.textContent === name,
       )!;
     await act(() => button("Apply LaTeX").click());
+    await advance();
     expect(current).toBe(tex(draft));
     expect(writes).toHaveBeenCalledOnce();
     expect(readPersistedVisualDraft("synthetic-editor-test")).toBeNull();
@@ -1359,8 +1411,8 @@ Control & 1 \\\\
     expect(finish.current?.()).toBe(true);
   });
 
-  it("edits prose and nested equations in the supplied theorem/proof/remark document", async () => {
-    await using _fixture = _createFixture();
+  it("edits prose and nested equations in the supplied theorem/proof/remark document", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1383,10 +1435,15 @@ Control & 1 \\\\
       if (node.isText && node.text?.startsWith("Assume")) prose = position;
     });
     expect(prose).toBeGreaterThan(0);
+    const published = nextWriteReceipt(
+      _fixture,
+      (source) => source === before.replace("Assume", "We Assume"),
+    );
     await act(() => {
       editor(_fixture).commands.setTextSelection(prose);
       editor(_fixture).commands.insertContent("We ");
     });
+    await settleTyping(published);
     expect(current).toBe(before.replace("Assume", "We Assume"));
     let math = -1;
     editor(_fixture).state.doc.descendants((node, position) => {
@@ -1399,13 +1456,15 @@ Control & 1 \\\\
         tex: String(editor(_fixture).state.doc.nodeAt(math)!.attrs.tex).replace("\\sup", "\\max"),
       });
     });
+    await advance();
     expect(current).toBe(before.replace("Assume", "We Assume").replace("\\sup", "\\max"));
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toBe(before.replace("Assume", "We Assume"));
   });
 
-  it("splits a paragraph inside a theorem while keeping its environment", async () => {
-    await using _fixture = _createFixture();
+  it("splits a paragraph inside a theorem while keeping its environment", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1416,11 +1475,12 @@ Control & 1 \\\\
     });
     expect(editor(_fixture).state.doc.firstChild!.type.name).toBe("latexScientific");
     expect(editor(_fixture).state.doc.firstChild!.childCount).toBe(2);
+    await advance();
     expect(current).toContain("\\begin{theorem}[Result]\nFirst\n\n second\n\\end{theorem}");
   });
 
-  it("restores exact CRLF and list trivia through native split undo and redo", async () => {
-    await using _fixture = _createFixture();
+  it("restores exact CRLF and list trivia through native split undo and redo", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1438,19 +1498,22 @@ Control & 1 \\\\
       editor(_fixture).commands.setTextSelection(caret);
       expect(editor(_fixture).commands.splitListItem("listItem")).toBe(true);
     });
+    await advance();
     const split = current;
     expect(split).not.toBe(original);
     expect(projectLatexVisualDocument(split).content.content![0]!.content).toHaveLength(3);
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toBe(original);
     await act(() => editor(_fixture).commands.redo());
+    await advance();
     expect(current).toBe(split);
   });
 
-  it.each([0, 1])(
+  it.for([0, 1] as const)(
     "splits repeated live list item %i with exact undo and redo",
-    async (itemIndex) => {
-      await using _fixture = _createFixture();
+    async (itemIndex, testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -1468,6 +1531,7 @@ Control & 1 \\\\
         editor(_fixture).commands.setTextSelection(positions[itemIndex]!);
         editor(_fixture).commands.splitListItem("listItem");
       });
+      await advance();
       const split = current;
       expect(split).not.toBe(original);
       const list = projectLatexVisualDocument(split).content.content![0]!;
@@ -1479,14 +1543,16 @@ Control & 1 \\\\
         itemIndex === 0 ? ["Same", "words", "Same words"] : ["Same words", "Same", "words"],
       );
       await act(() => editor(_fixture).commands.undo());
+      await advance();
       expect(current).toBe(original);
       await act(() => editor(_fixture).commands.redo());
+      await advance();
       expect(current).toBe(split);
     },
   );
 
-  it("keeps distinct native undo events when two nonadjacent typing edits coalesce", async () => {
-    await using _fixture = _createFixture();
+  it("keeps distinct native undo events when two nonadjacent typing edits coalesce", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1500,25 +1566,32 @@ Control & 1 \\\\
     });
     expect(first).toBeGreaterThan(0);
     expect(second).toBeGreaterThan(first);
+    const expected = original
+      .replace("First words.", "A First words.")
+      .replace("Second words.", "B Second words.");
+    const published = nextWriteReceipt(_fixture, (source) => source === expected);
     await act(() => {
       editor(_fixture).commands.setTextSelection(first);
       editor(_fixture).commands.insertContent("A ");
       editor(_fixture).commands.setTextSelection(second + 2);
       editor(_fixture).commands.insertContent("B ");
     });
+    await settleTyping(published);
     expect(current).toBe(
       original
         .replace("First words.", "A First words.")
         .replace("Second words.", "B Second words."),
     );
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toBe(original.replace("First words.", "A First words."));
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toBe(original);
   });
 
-  it("keeps separate native undo events when composition postpones their publication", async () => {
-    await using _fixture = _createFixture();
+  it("keeps separate native undo events when composition postpones their publication", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1530,6 +1603,10 @@ Control & 1 \\\\
       if (node.isText && node.text === "First words.") first = position;
       if (node.isText && node.text === "Second words.") second = position;
     });
+    const expected = original
+      .replace("First words.", "A First words.")
+      .replace("Second words.", "B Second words.");
+    const published = nextWriteReceipt(_fixture, (source) => source === expected);
     await act(() => {
       editor(_fixture).view.dom.dispatchEvent(
         new CompositionEvent("compositionstart", { bubbles: true }),
@@ -1544,19 +1621,22 @@ Control & 1 \\\\
         new CompositionEvent("compositionend", { bubbles: true }),
       );
     });
+    await settleTyping(published);
     expect(current).toBe(
       original
         .replace("First words.", "A First words.")
         .replace("Second words.", "B Second words."),
     );
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toBe(original.replace("First words.", "A First words."));
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toBe(original);
   });
 
-  it("splits the correct native list item immediately after typing shifts its range", async () => {
-    await using _fixture = _createFixture();
+  it("splits the correct native list item immediately after typing shifts its range", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1577,6 +1657,7 @@ Control & 1 \\\\
       editor(_fixture).commands.setTextSelection(second + "A long ".length);
       expect(editor(_fixture).commands.splitListItem("listItem")).toBe(true);
     });
+    await advance();
     const split = current;
     const nativeList = projectLatexVisualDocument(split).content.content![0]!;
     expect(
@@ -1585,46 +1666,57 @@ Control & 1 \\\\
       ),
     ).toEqual(["A long First words", "Second", "words"]);
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toBe(original.replace("First words", "A long First words"));
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toBe(original);
     await act(() => editor(_fixture).commands.redo());
+    await advance();
     await act(() => editor(_fixture).commands.redo());
+    await advance();
     expect(current).toBe(split);
   });
 
-  it("does not write on mount; spaces, Enter and undo save real source", async () => {
-    await using _fixture = _createFixture();
+  it("does not write on mount; spaces, Enter and undo save real source", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
     await mount(_fixture);
     expect(writes).not.toHaveBeenCalled();
+    let published = nextWriteReceipt(_fixture, (source) => source === tex("Hello world"));
     await act(async () => {
       editor(_fixture).commands.setTextSelection(6);
       editor(_fixture).commands.insertContent(" world");
     });
+    await settleTyping(published);
     expect(current).toBe(tex("Hello world"));
     await act(async () => {
       editor(_fixture).commands.splitBlock();
     });
+    await advance();
     expect(current).toContain("Hello world\n\n\\par");
+    published = nextWriteReceipt(_fixture, (source) => source.includes("Hello world\n\nNext"));
     await act(async () => {
       editor(_fixture).commands.insertContent("Next");
     });
+    await settleTyping(published);
     expect(current).toContain("Hello world\n\nNext");
     await act(async () => {
       editor(_fixture).commands.undo();
     });
+    await advance();
     expect(current).not.toContain("Next");
     await act(async () => {
       editor(_fixture).commands.redo();
     });
+    await advance();
     expect(current).toContain("Next");
   });
 
-  it("applies toolbar formatting and inserts math without a build", async () => {
-    await using _fixture = _createFixture();
+  it("applies toolbar formatting and inserts math without a build", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1633,16 +1725,18 @@ Control & 1 \\\\
       editor(_fixture).commands.setTextSelection({ from: 1, to: 6 });
       editor(_fixture).commands.toggleBold();
     });
+    await advance();
     expect(current).toContain("\\textbf{Hello}");
     await act(async () => {
       editor(_fixture).commands.setTextSelection(6);
       editor(_fixture).commands.insertContent({ type: "latexInlineMath", attrs: { tex: "x^2" } });
     });
+    await advance();
     expect(current).toContain("\\(x^2\\)");
   });
 
-  it("inserts a source-backed explicit page break", async () => {
-    await using _fixture = _createFixture();
+  it("inserts a source-backed explicit page break", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1656,8 +1750,8 @@ Control & 1 \\\\
     ).toBe(true);
   });
 
-  it("zooms the fixed paper without changing LaTeX", async () => {
-    await using _fixture = _createFixture();
+  it("zooms the fixed paper without changing LaTeX", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1682,8 +1776,8 @@ Control & 1 \\\\
     expect(writes).not.toHaveBeenCalled();
   });
 
-  it("shows editable front matter and marks only starred headings as unnumbered", async () => {
-    await using _fixture = _createFixture();
+  it("shows editable front matter and marks only starred headings as unnumbered", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1748,8 +1842,8 @@ Control & 1 \\\\
     expect(_fixture.container.querySelector("textarea[aria-label='Document date']")).toBeNull();
   });
 
-  it("opens formula source without replacing the rendered equation", async () => {
-    await using _fixture = _createFixture();
+  it("opens formula source without replacing the rendered equation", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1787,8 +1881,8 @@ Control & 1 \\\\
     expect(sourceButton.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("keeps the selected equation and its source editor through whole footer clicks", async () => {
-    await using _fixture = _createFixture();
+  it("keeps the selected equation and its source editor through whole footer clicks", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1842,8 +1936,8 @@ Control & 1 \\\\
     }
   });
 
-  it("saves a label on blur after a footer click while keeping its equation controls", async () => {
-    await using _fixture = _createFixture();
+  it("saves a label on blur after a footer click while keeping its equation controls", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1867,6 +1961,7 @@ Control & 1 \\\\
           .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
         field.blur();
       });
+      await advance();
       expect(current).toContain("\\label{eq:new}");
       expect(_fixture.container.querySelector('[aria-label="Math tools"]')).not.toBeNull();
       expect(editor(_fixture).state.selection.$from.nodeAfter?.type.name).toBe("latexDisplayMath");
@@ -1875,8 +1970,8 @@ Control & 1 \\\\
     }
   });
 
-  it("adds an equation label in its visible footer field without losing the selected equation", async () => {
-    await using _fixture = _createFixture();
+  it("adds an equation label in its visible footer field without losing the selected equation", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1909,12 +2004,13 @@ Control & 1 \\\\
     expect(editor(_fixture).state.selection.$from.nodeAfter?.type.name).toBe("latexDisplayMath");
     expect(_fixture.container.querySelector('[aria-label="Math tools"]')).not.toBeNull();
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).not.toContain("\\label{eq:new}");
     expect(field.value).toBe("");
   });
 
-  it("retains invalid equation label edits on blur and cancels them with Escape", async () => {
-    await using _fixture = _createFixture();
+  it("retains invalid equation label edits on blur and cancels them with Escape", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1956,12 +2052,13 @@ Control & 1 \\\\
     await act(() =>
       field().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
     );
+    await advance();
     expect(current).toContain("\\label{eq:summary}");
     expect(field().getAttribute("aria-invalid")).toBe("false");
   });
 
-  it("changes a display wrapper from the compact source popover", async () => {
-    await using _fixture = _createFixture();
+  it("changes a display wrapper from the compact source popover", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1976,11 +2073,12 @@ Control & 1 \\\\
         .querySelector<HTMLButtonElement>('[aria-label="Math tools"] [data-latex-number-toggle]')!
         .click(),
     );
+    await advance();
     expect(current).toContain("\\begin{equation}\nx^2\n\\end{equation}");
   });
 
-  it("changes centered math to a standalone inline formula", async () => {
-    await using _fixture = _createFixture();
+  it("changes centered math to a standalone inline formula", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1998,11 +2096,12 @@ Control & 1 \\\\
       (item) => item.textContent?.trim() === "Inline math",
     )!;
     await act(() => inline.click());
+    await advance();
     expect(current).toBe(tex("\\(x^2\\)"));
   });
 
-  it("offers bounded command and environment completions", async () => {
-    await using _fixture = _createFixture();
+  it("offers bounded command and environment completions", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2016,23 +2115,30 @@ Control & 1 \\\\
     });
   });
 
-  it("converts a completely typed supported math environment", async () => {
-    await using _fixture = _createFixture();
+  it("converts a completely typed supported math environment", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
     await mount(_fixture, "Replace me");
     const matrix = "\\begin{bmatrix}\na & b \\\\\nc & d\n\\end{bmatrix}";
+    const typingPublished = nextWriteReceipt(_fixture);
+    const published = nextWriteReceipt(_fixture, (source) =>
+      source.includes(`\\[\n${matrix}\n\\]`),
+    );
     await act(async () => {
       editor(_fixture).commands.selectAll();
       editor(_fixture).commands.insertContent(matrix);
     });
+    await settleTyping(typingPublished);
+    await advance();
+    await published();
     expect(editor(_fixture).getJSON().content?.[0]?.type).toBe("latexDisplayMath");
     expect(current).toContain(`\\[\n${matrix}\n\\]`);
   });
 
-  it("edits prose and inserts both kinds of math inside an abstract", async () => {
-    await using _fixture = _createFixture();
+  it("edits prose and inserts both kinds of math inside an abstract", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2059,20 +2165,21 @@ Control & 1 \\\\
         },
       ),
     );
+    await advance();
     expect(current).toContain("\\(x\\)Abstract text.");
     expect(current).toMatch(/\\\[\s*a=b\s*\\\]/u);
     expect(current.match(/\\begin\{abstract\}/g)).toHaveLength(1);
     expect(projectLatexVisualDocument(current).rawBlocks).toBe(0);
   });
 
-  it.each([
+  it.for([
     ["bold", 0, "textbf"],
     ["italic", 1, "textit"],
     ["code", 2, "texttt"],
   ] as const)(
     "follows the cell caret for %s availability, checked state and menu actions",
-    async (mark, index, command) => {
-      await using _fixture = _createFixture();
+    async ([mark, index, command], testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -2083,18 +2190,22 @@ Control & 1 \\\\
       await selectKind(_fixture, "table");
       const field = _fixture.container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
       const inner = (field as HTMLElement & { editor: Editor }).editor;
-      await act(() => inner.chain().focus().setTextSelection({ from: 1, to: 7 }).run());
+      await focusCellEditor(_fixture, inner);
+      await act(() => inner.commands.setTextSelection({ from: 1, to: 7 }));
       let items = await openCellFormatting(_fixture);
       expect(items.every((item) => item.getAttribute("aria-disabled") !== "true")).toBe(true);
       expect(items[index]!.getAttribute("aria-checked")).toBe("true");
       await act(() => items[index]!.click());
       expect(inner.isActive(mark)).toBe(false);
+      await advance();
       expect(current).not.toContain(`\\${command}{Marked}`);
-      await act(() => inner.chain().focus().setTextSelection({ from: 8, to: 13 }).run());
+      await focusCellEditor(_fixture, inner);
+      await act(() => inner.commands.setTextSelection({ from: 8, to: 13 }));
       items = await openCellFormatting(_fixture);
       expect(items[index]!.getAttribute("aria-checked")).toBe("false");
       await act(() => items[index]!.click());
       expect(inner.isActive(mark)).toBe(true);
+      await advance();
       expect(current).toContain(`Marked \\${mark === "italic" ? "emph" : command}{Plain}`);
       // A different cell has its own marks, even though the outer selection stays a table.
       const other = (
@@ -2102,16 +2213,17 @@ Control & 1 \\\\
           editor: Editor;
         }
       ).editor;
-      await act(() => other.chain().focus().selectAll().run());
+      await focusCellEditor(_fixture, other);
+      await act(() => other.commands.selectAll());
       items = await openCellFormatting(_fixture);
       expect(items[index]!.getAttribute("aria-checked")).toBe("false");
     },
   );
 
-  it.each(["MacIntel", "Win32"])(
+  it.for(["MacIntel", "Win32"] as const)(
     "respects default, disabled and remapped cell formatting shortcuts on %s",
-    async (platform) => {
-      await using _fixture = _createFixture();
+    async (platform, testContext) => {
+      await using _fixture = _createFixture(testContext);
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
 
@@ -2120,7 +2232,8 @@ Control & 1 \\\\
       await mount(_fixture, "\\begin{tabular}{l}\nCell text\\\\\n\\end{tabular}");
       const field = _fixture.container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
       const inner = (field as HTMLElement & { editor: Editor }).editor;
-      await act(() => inner.chain().focus().selectAll().run());
+      await focusCellEditor(_fixture, inner);
+      await act(() => inner.commands.selectAll());
       const press = async (key: string, shiftKey = false) =>
         await act(() =>
           field.dispatchEvent(
@@ -2170,8 +2283,8 @@ Control & 1 \\\\
     },
   );
 
-  it("counts a cell text selection in the footer and follows cell selection changes", async () => {
-    await using _fixture = _createFixture();
+  it("counts a cell text selection in the footer and follows cell selection changes", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2189,7 +2302,8 @@ Control & 1 \\\\
           editor: Editor;
         }
       ).editor;
-      await act(() => inner.chain().focus().setTextSelection({ from: 1, to: 12 }).run());
+      await focusCellEditor(_fixture, inner);
+      await act(() => inner.commands.setTextSelection({ from: 1, to: 12 }));
       const footer = _fixture.container.querySelector(".scient-document-footer-count")!;
       expect(footer.textContent).toBe("2 of 4 words");
       await act(() => inner.commands.setTextSelection({ from: 1, to: 6 }));
@@ -2201,8 +2315,8 @@ Control & 1 \\\\
     }
   });
 
-  it("routes the Math menu to the caret inside a table cell and shares document undo", async () => {
-    await using _fixture = _createFixture();
+  it("routes the Math menu to the caret inside a table cell and shares document undo", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2210,7 +2324,8 @@ Control & 1 \\\\
     const field = _fixture.container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
     const inner = (field as HTMLElement & { editor: Editor }).editor;
     expect(inner).toBeDefined();
-    await act(() => inner.chain().focus().setTextSelection(8).run());
+    await focusCellEditor(_fixture, inner);
+    await act(() => inner.commands.setTextSelection(8));
     await act(() =>
       _fixture.container.querySelector<HTMLButtonElement>('button[aria-label="Math"]')!.click(),
     );
@@ -2229,15 +2344,17 @@ Control & 1 \\\\
         inner.state.tr.setNodeMarkup(position, undefined, { tex: "q^2", wrapper: "paren" }),
       ),
     );
+    await advance();
     expect(current).toContain("Before \\(q^2\\)after & Keep");
     expect(editor(_fixture).state.doc.childCount).toBe(1);
     expect(projectLatexVisualDocument(current).rawBlocks).toBe(0);
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current.match(/\\begin\{tabular\}/g)).toHaveLength(1);
   });
 
-  it("expands a cell's Select All to the whole table and restores a deleted table with undo", async () => {
-    await using _fixture = _createFixture();
+  it("expands a cell's Select All to the whole table and restores a deleted table with undo", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2245,11 +2362,8 @@ Control & 1 \\\\
     const before = current;
     const field = _fixture.container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
     const inner = (field as HTMLElement & { editor: Editor }).editor;
-    await act(() => inner.chain().focus().selectAll().run());
-    await act(() => {
-      field.focus();
-      field.dispatchEvent(new FocusEvent("focusin", { bubbles: true, composed: true }));
-    });
+    await focusCellEditor(_fixture, inner);
+    await act(() => inner.commands.selectAll());
     await act(() =>
       field.dispatchEvent(
         new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }),
@@ -2279,14 +2393,16 @@ Control & 1 \\\\
         new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }),
       ),
     );
+    await advance();
     expect(current).not.toContain("\\begin{tabular}");
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current.match(/\\begin\{tabular\}/g)).toHaveLength(1);
     expect(current).toContain("One & Two");
   });
 
-  it("retains rapid edits in different table cells", async () => {
-    await using _fixture = _createFixture();
+  it("retains rapid edits in different table cells", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2298,11 +2414,12 @@ Control & 1 \\\\
       fields[0]!.chain().selectAll().insertContent("First").run();
       fields[1]!.chain().selectAll().insertContent("Second").run();
     });
+    await advance();
     expect(current).toContain("First & Second");
   });
 
-  it("clears a rectangular selection of rich cells and restores it without another table", async () => {
-    await using _fixture = _createFixture();
+  it("clears a rectangular selection of rich cells and restores it without another table", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2312,7 +2429,8 @@ Control & 1 \\\\
     );
     const field = _fixture.container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
     const inner = (field as HTMLElement & { editor: Editor }).editor;
-    await act(() => inner.commands.focus("end"));
+    await focusCellEditor(_fixture, inner);
+    await act(() => inner.commands.setTextSelection(inner.state.doc.content.size - 1));
     await act(() =>
       field.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -2339,14 +2457,16 @@ Control & 1 \\\\
       ["Alpha", "Text $x$"],
       ["Keep", "Last"],
     ]);
+    await advance();
     expect(current.match(/\\begin\{tabular\}/g)).toHaveLength(1);
-    await act(() => inner.commands.focus("end"));
+    await focusCellEditor(_fixture, inner);
+    await act(() => inner.commands.setTextSelection(inner.state.doc.content.size - 1));
     expect(_fixture.container.querySelector("[data-table-selection]")).toBeNull();
     expect(inner.state.selection.empty).toBe(true);
   });
 
-  it("edits description and table structures without opening source", async () => {
-    await using _fixture = _createFixture();
+  it("edits description and table structures without opening source", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2389,7 +2509,9 @@ Theory & Proofs \\\\
       "[contenteditable][aria-label='Table row 2 column 2']",
     )!;
     const fieldEditor = (evidence as HTMLElement & { editor: Editor }).editor;
-    await act(() => fieldEditor.chain().focus().selectAll().insertContent("Verified proofs").run());
+    await focusCellEditor(_fixture, fieldEditor);
+    await act(() => fieldEditor.chain().selectAll().insertContent("Verified proofs").run());
+    await advance();
     expect(current).toContain("Theory & Verified proofs");
     expect(
       _fixture.container.querySelector("[contenteditable][aria-label='Table row 2 column 2']"),
@@ -2412,8 +2534,8 @@ Theory & Proofs \\\\
     expect(current).toContain("\\label{tab:research}");
   });
 
-  it("inserts a table from the document toolbar picker", async () => {
-    await using _fixture = _createFixture();
+  it("inserts a table from the document toolbar picker", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2424,7 +2546,7 @@ Theory & Proofs \\\\
       "[data-scient-table-size-cell-row='3'][data-scient-table-size-cell-column='4']",
     )!;
     await act(async () => insert.click());
-    await act(() => {});
+    await advance();
     expect(current).toContain("\\begin{table}[htbp]");
     expect(current).toContain("\\begin{tabular}");
     expect(
@@ -2432,19 +2554,21 @@ Theory & Proofs \\\\
     ).not.toBeNull();
     const inserted = current;
     await act(() => editor(_fixture).commands.undo());
+    await advance();
     expect(current).toBe(original);
     expect(
       _fixture.container.querySelector("[contenteditable][aria-label='Table row 3 column 4']"),
     ).toBeNull();
     await act(() => editor(_fixture).commands.redo());
+    await advance();
     expect(current).toBe(inserted);
     expect(
       _fixture.container.querySelector("[contenteditable][aria-label='Table row 3 column 4']"),
     ).not.toBeNull();
   });
 
-  it("inserts and edits theorem-like scientific statements", async () => {
-    await using _fixture = _createFixture();
+  it("inserts and edits theorem-like scientific statements", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2460,6 +2584,9 @@ Theory & Proofs \\\\
       "textarea[aria-label='Scientific statement title']",
     )!;
     await setField(title, "Central claim");
+    const published = nextWriteReceipt(_fixture, (source) =>
+      source.includes("The visual source remains authoritative."),
+    );
     await act(() => {
       const statement = editor(_fixture).state.doc.nodeAt(position)!;
       editor(_fixture).commands.setTextSelection({
@@ -2468,13 +2595,14 @@ Theory & Proofs \\\\
       });
       editor(_fixture).commands.insertContent("The visual source remains authoritative.");
     });
+    await settleTyping(published);
     expect(current).toContain("\\newtheorem{claim}{Claim}");
     expect(current).toContain("\\begin{claim}[Central claim]");
     expect(current).toContain("The visual source remains authoritative.");
   });
 
-  it("inserts, edits and deletes a visual figure", async () => {
-    await using _fixture = _createFixture();
+  it("inserts, edits and deletes a visual figure", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2489,6 +2617,7 @@ Theory & Proofs \\\\
         projectLatexVisualDocument(tex(figure)).content.content!,
       ),
     );
+    await advance();
     expect(current).toContain("\\usepackage{graphicx}");
     const position = await selectKind(_fixture, "figure");
     await act(() =>
@@ -2499,13 +2628,14 @@ Theory & Proofs \\\\
         }),
       ),
     );
+    await advance();
     expect(current).toContain("\\includegraphics[width=0.8\\textwidth]{images/result.png}");
     await contextMenuAction(_fixture, "Figure appearance", null, "Delete figure");
     expect(current).not.toContain("\\begin{figure}");
   });
 
-  it("inserts a source-backed reference from the writing toolbar", async () => {
-    await using _fixture = _createFixture();
+  it("inserts a source-backed reference from the writing toolbar", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2518,12 +2648,12 @@ Theory & Proofs \\\\
     await act(() =>
       key.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
     );
-    await act(() => {});
+    await advance();
     expect(current).toContain("\\ref{sec:target}");
   });
 
-  it("provides a compact writing toolbar and collapsed document outline", async () => {
-    await using _fixture = _createFixture();
+  it("provides a compact writing toolbar and collapsed document outline", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2539,8 +2669,8 @@ Theory & Proofs \\\\
     ).toContain("Methods");
   });
 
-  it("never inserts a printed title block unless the writer asks for one", async () => {
-    await using _fixture = _createFixture();
+  it("never inserts a printed title block unless the writer asks for one", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2563,8 +2693,8 @@ Theory & Proofs \\\\
     expect(current).not.toContain("\\maketitle");
   });
 
-  it("rejects a destructive transaction spanning protected source", async () => {
-    await using _fixture = _createFixture();
+  it("rejects a destructive transaction spanning protected source", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2580,8 +2710,8 @@ Theory & Proofs \\\\
     expect(_fixture.container.textContent).toContain("This edit is unavailable in Visual");
   });
 
-  it("discards obsolete undo history when external source is adopted", async () => {
-    await using _fixture = _createFixture();
+  it("discards obsolete undo history when external source is adopted", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2596,7 +2726,10 @@ Theory & Proofs \\\\
           disabled={false}
           onEdit={(request) => {
             const outcome = owner.edit(request);
-            if (outcome.accepted) writes(request.edit.source, outcome.snapshot.source);
+            if (outcome.accepted) {
+              writes(request.edit.source, outcome.snapshot.source);
+              publishWriteReceipt(outcome.snapshot.source);
+            }
             return outcome;
           }}
           onEditingChange={() => {}}
@@ -2605,9 +2738,11 @@ Theory & Proofs \\\\
       );
     };
     await renderMountedEditor(_fixture, renderEditor(tex("Hello")));
+    const published = nextWriteReceipt(_fixture, (source) => source === tex("Old Hello"));
     await act(async () => {
       editor(_fixture).commands.insertContent("Old ");
     });
+    await settleTyping(published);
     expect(editor(_fixture).can().undo()).toBe(true);
     const external = tex("External replacement");
     await renderMountedEditor(_fixture, renderEditor(external));
@@ -2615,8 +2750,8 @@ Theory & Proofs \\\\
     expect(editor(_fixture).can().undo()).toBe(false);
   });
 
-  it("keeps the body caret after an external source change so typing cannot replace the title", async () => {
-    await using _fixture = _createFixture();
+  it("keeps the body caret after an external source change so typing cannot replace the title", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2633,7 +2768,10 @@ Theory & Proofs \\\\
           disabled={false}
           onEdit={(request) => {
             const outcome = owner.edit(request);
-            if (outcome.accepted) writes(request.edit.source, outcome.snapshot.source);
+            if (outcome.accepted) {
+              writes(request.edit.source, outcome.snapshot.source);
+              publishWriteReceipt(outcome.snapshot.source);
+            }
             return outcome;
           }}
           onEditingChange={() => {}}
@@ -2654,15 +2792,19 @@ Theory & Proofs \\\\
     expect(editor(_fixture).getText()).toContain("Changed paragraph");
     expect(editor(_fixture).state.selection.empty).toBe(true);
     expect(editor(_fixture).state.selection.$from.parent.type.name).toBe("paragraph");
+    const published = nextWriteReceipt(
+      _fixture,
+      (source) => source === titled("ChangedX paragraph"),
+    );
     await act(async () => editor(_fixture).commands.insertContent("X"));
-    await act(async () => vi.advanceTimersByTimeAsync(300));
+    await settleTyping(published);
     expect(writes).toHaveBeenCalledWith(external, expect.stringContaining("\\maketitle"));
     expect(writes.mock.lastCall?.[1]).toContain("\\title{Keep this title}");
     expect(writes.mock.lastCall?.[1]).toContain("ChangedX paragraph");
   });
 
-  it("edits labelled equation math while retaining numbering and refusing new outer rows", async () => {
-    await using _fixture = _createFixture();
+  it("edits labelled equation math while retaining numbering and refusing new outer rows", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -2690,10 +2832,11 @@ Theory & Proofs \\\\
   });
 });
 
-function _createFixture() {
+function _createFixture(context: TestContext) {
   const stack = new AsyncDisposableStack();
   const cleanup = new AsyncDisposableStack();
   return {
+    context,
     restoreFonts: () => {},
 
     container: undefined! as HTMLDivElement,

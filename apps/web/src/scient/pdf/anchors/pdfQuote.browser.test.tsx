@@ -6,9 +6,11 @@ import {
   type ComposerCitation,
   type PdfCitation,
 } from "@t3tools/contracts";
-import { act, StrictMode, type RefObject } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { StrictMode, type RefObject } from "react";
+import { describe, expect, it, vi, type TestContext } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
+import { act, render as renderScreen, type Screen } from "../../../../test/render";
+import { waitForTestReceipt } from "../../../../test/receipt";
 
 import type { ChatComposerHandle } from "~/components/chat/ChatComposer";
 import { toastManager } from "~/components/ui/toast";
@@ -67,8 +69,9 @@ const source = workspacePdfSource({
 });
 const QUOTE = "coupling constant scales";
 
-function blobResolver(bytes: Uint8Array): PdfSourceResolver {
+function blobResolver(bytes: Uint8Array, urls: Set<string>): PdfSourceResolver {
   const url = URL.createObjectURL(new Blob([bytes.slice().buffer], { type: "application/pdf" }));
+  urls.add(url);
   const resolution = {
     _tag: "Success" as const,
     url,
@@ -79,29 +82,20 @@ function blobResolver(bytes: Uint8Array): PdfSourceResolver {
 }
 
 async function waitForText(container: HTMLElement, text: string): Promise<Text> {
-  let found: Text | null = null;
-  await vi.waitFor(
-    () => {
-      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-      while (walker.nextNode()) {
-        const node = walker.currentNode as Text;
-        if (node.parentElement?.closest(".textLayer") && node.data.includes(text)) {
-          found = node;
-          return;
-        }
-      }
-      throw new Error(`text layer does not show "${text}" yet`);
-    },
-    { timeout: 15_000, interval: 50 },
-  );
-  return found!;
+  await expect.element(page.getByRole("textbox", { name: "Page number" })).toBeEnabled();
+  return vi.waitFor(() => textNode(container, text));
 }
 
 function textNode(container: HTMLElement, text: string): Text {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
     const node = walker.currentNode as Text;
-    if (node.parentElement?.closest(".textLayer") && node.data.includes(text)) return node;
+    if (
+      node.parentElement?.closest(".textLayer") &&
+      !node.parentElement.closest(".scient-pdf-staging") &&
+      node.data.includes(text)
+    )
+      return node;
   }
   throw new Error(`no "${text}" in the text layer`);
 }
@@ -114,16 +108,41 @@ function highlightedText(): string[] {
   }
   return texts;
 }
+function observeQuoteHighlight(text: string) {
+  const receipt = Promise.withResolvers<void>();
+  const set = CSS.highlights.set.bind(CSS.highlights);
+  const observer = vi.spyOn(CSS.highlights, "set").mockImplementation((name, highlight) => {
+    const result = set(name, highlight);
+    if (highlightedText().join("") === text) receipt.resolve();
+    return result;
+  });
+  return {
+    receipt: receipt.promise,
+    [Symbol.dispose]: () => observer.mockRestore(),
+  };
+}
 
 /** Drags a selection over `text` the way a pointer would: down, select, up. */
-async function selectText(node: Text, text: string) {
-  node.parentElement!.scrollIntoView({ block: "center" });
-  await new Promise((resolve) => requestAnimationFrame(resolve));
+async function selectText(node: Text, text: string, signal: AbortSignal) {
+  const viewport = node.parentElement!.closest<HTMLElement>(".scient-pdf-viewer-container")!;
+  const before = { top: viewport.scrollTop, left: viewport.scrollLeft };
+  const scrolled = Promise.withResolvers<void>();
+  const onScrollEnd = () => scrolled.resolve();
+  viewport.addEventListener("scrollend", onScrollEnd);
+  using _scroll = {
+    [Symbol.dispose]: () => viewport.removeEventListener("scrollend", onScrollEnd),
+  };
+  node.parentElement!.scrollIntoView({ block: "center", behavior: "instant" });
+  if (viewport.scrollTop !== before.top || viewport.scrollLeft !== before.left) {
+    await waitForTestReceipt(signal, scrolled.promise);
+  }
   const range = document.createRange();
   range.setStart(node, node.data.indexOf(text));
   range.setEnd(node, node.data.indexOf(text) + text.length);
   const box = range.getBoundingClientRect();
   const at = { clientX: box.right, clientY: box.bottom - 2, button: 0, isPrimary: true };
+  // Native input flushes the newly mounted reader's passive selection owners.
+  await userEvent.click(node.parentElement!);
   await act(async () => {
     node.parentElement!.dispatchEvent(new PointerEvent("pointerdown", { ...at, bubbles: true }));
     const selection = document.getSelection()!;
@@ -134,115 +153,120 @@ async function selectText(node: Text, text: string) {
   });
 }
 
-/**
- * Selects `text` and returns the Ask in chat button. Layout can still scroll
- * while pdf.js settles, which dismisses a pending action exactly as it would
- * for a person, so the gesture is repeated until the reader is still.
- */
-async function askAbout(node: () => Text, text: string): Promise<HTMLButtonElement> {
-  return vi.waitFor(
-    async () => {
-      await selectText(node(), text);
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      const element = document.querySelector<HTMLButtonElement>("[data-pdf-ask-in-chat]");
-      if (!element || element.getAttribute("aria-label") !== "Ask in chat") {
-        throw new Error(`no Ask in chat yet (${element?.getAttribute("aria-label") ?? "none"})`);
-      }
-      return element;
-    },
-    { timeout: 10_000, interval: 100 },
-  );
+async function askAbout(node: Text, text: string, context: TestContext) {
+  const receipt = Promise.withResolvers<void>();
+  const check = () => {
+    if (document.querySelector("[data-pdf-ask-in-chat]")) receipt.resolve();
+  };
+  const observer = new MutationObserver(check);
+  observer.observe(document.body, { childList: true, subtree: true });
+  try {
+    await selectText(node, text, context.signal);
+    check();
+    await waitForTestReceipt(context.signal, receipt.promise);
+    const button = page.getByRole("button", { name: "Ask in chat", exact: true });
+    await expect.element(button).toBeVisible();
+    return button.element() as HTMLButtonElement;
+  } finally {
+    observer.disconnect();
+  }
 }
 
-describe("PDF quotes in the reader", () => {
-  let root: Root;
-  let container: HTMLDivElement;
+function setup() {
+  const stack = new AsyncDisposableStack();
+  const savedStorage = Object.entries(localStorage);
+  stack.defer(() => {
+    localStorage.clear();
+    for (const [key, value] of savedStorage) localStorage.setItem(key, value);
+    document.getSelection()?.removeAllRanges();
+    resetPdfRevealRequests();
+  });
+  resetPdfRevealRequests();
+  localStorage.clear();
+  const urls = new Set<string>();
+  stack.defer(() => {
+    for (const url of urls) URL.revokeObjectURL(url);
+  });
   const citeText = vi.fn<(citation: ComposerCitation) => boolean>(() => true);
   const composerRef = { current: { citeText } as unknown as ChatComposerHandle };
-
-  const render = async (bytes: Uint8Array) => {
-    await act(async () => {
-      root.render(
-        // The app renders in StrictMode; its development replay must not drop a pending quote.
+  const container = document.createElement("div");
+  let screen: Screen | undefined;
+  return {
+    container,
+    citeText,
+    async render(bytes: Uint8Array) {
+      const ui = (
+        // The app's development replay must not drop a pending quote.
         <StrictMode>
           <ComposerHandleContext value={composerRef as RefObject<ChatComposerHandle | null>}>
             <div style={{ width: 800, height: 900, display: "flex" }}>
               <ScientPdfReader
                 source={source}
-                resolver={blobResolver(bytes)}
+                resolver={blobResolver(bytes, urls)}
                 readerScope="thread-1"
                 citeThread={threadRef}
               />
             </div>
           </ComposerHandleContext>
-        </StrictMode>,
+        </StrictMode>
       );
-    });
-  };
-
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    citeText.mockClear();
-    resetPdfRevealRequests();
-    localStorage.clear();
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-  });
-
-  afterEach(async () => {
-    await act(async () => root.unmount());
-    container.remove();
-    vi.unstubAllGlobals();
-  });
-
-  it(
-    "quotes selected text into the chat and shows it again from the quote",
-    { timeout: 40_000 },
-    async () => {
-      const bytes = pdfBytes([
-        ["Introduction"],
-        ["Results", `The ${QUOTE} as the inverse square.`],
-      ]);
-      await render(bytes);
-      await waitForText(container, QUOTE);
-      const button = await askAbout(() => textNode(container, QUOTE), QUOTE);
-      await act(async () => button.click());
-
-      expect(citeText).toHaveBeenCalledTimes(1);
-      const citation = citeText.mock.calls[0]![0] as PdfCitation;
-      expect(citation.kind).toBe("pdf");
-      expect(citation.threadId).toBe("thread-1");
-      expect(pdfCitationText(citation)).toBe(QUOTE);
-      expect(citation.target.selector.pages.map((page) => page.page)).toEqual([2]);
-      expect(citation.target.document.locator).toEqual({
-        _tag: "workspace",
-        workspaceRoot: "/project",
-        relativePath: "papers/paper.pdf",
-      });
-
-      // A chip click files a reveal for this document; the open reader shows it.
-      await act(async () => {
-        requestPdfReveal(pdfRevealDocumentKey(source), citation.target);
-      });
-      await vi.waitFor(() => expect(highlightedText().join("")).toBe(QUOTE), { timeout: 10_000 });
+      if (screen) await screen.rerender(ui);
+      else screen = stack.use(await renderScreen(ui, { container }));
     },
-  );
+    async clear() {
+      await screen?.rerender(null);
+    },
+    [Symbol.asyncDispose]: () => stack.disposeAsync(),
+  };
+}
 
-  it("finds a quote again by its text after the PDF changed", async () => {
+describe("PDF quotes in the reader", () => {
+  it("quotes selected text into the chat and shows it again from the quote", async (context) => {
+    await using fixture = setup();
+    const { container, citeText } = fixture;
+    const bytes = pdfBytes([["Introduction"], ["Results", `The ${QUOTE} as the inverse square.`]]);
+    await fixture.render(bytes);
+    await waitForText(container, QUOTE);
+    const button = await askAbout(textNode(container, QUOTE), QUOTE, context);
+    await act(async () => button.click());
+
+    expect(citeText).toHaveBeenCalledTimes(1);
+    const citation = citeText.mock.calls[0]![0] as PdfCitation;
+    expect(citation.kind).toBe("pdf");
+    expect(citation.threadId).toBe("thread-1");
+    expect(pdfCitationText(citation)).toBe(QUOTE);
+    expect(citation.target.selector.pages.map((page) => page.page)).toEqual([2]);
+    expect(citation.target.document.locator).toEqual({
+      _tag: "workspace",
+      workspaceRoot: "/project",
+      relativePath: "papers/paper.pdf",
+    });
+
+    // A chip click files a reveal for this document; the open reader shows it.
+    using highlight = observeQuoteHighlight(QUOTE);
+    await act(async () => {
+      requestPdfReveal(pdfRevealDocumentKey(source), citation.target);
+    });
+    await waitForTestReceipt(context.signal, highlight.receipt);
+    expect(highlightedText().join("")).toBe(QUOTE);
+  });
+
+  it("finds a quote again by its text after the PDF changed", async (context) => {
+    await using fixture = setup();
+    const { container, citeText } = fixture;
     const original = pdfBytes([
       ["Introduction"],
       ["Results", `The ${QUOTE} as the inverse square.`],
     ]);
-    await render(original);
+    await fixture.render(original);
     await waitForText(container, QUOTE);
-    const button = await askAbout(() => textNode(container, QUOTE), QUOTE);
+    const button = await askAbout(textNode(container, QUOTE), QUOTE, context);
     await act(async () => button.click());
     const citation = citeText.mock.calls[0]![0] as PdfCitation;
 
     // The rebuilt PDF gained a page before the result.
-    await act(async () => root.render(null));
-    await render(
+    await fixture.clear();
+    await fixture.render(
       pdfBytes([
         ["Title page"],
         ["Introduction"],
@@ -251,11 +275,13 @@ describe("PDF quotes in the reader", () => {
     );
     // The reader reopens where it was read last (page 2), so wait for that page.
     await waitForText(container, "Introduction");
-    const notices = vi.spyOn(toastManager, "add");
+    using notices = vi.spyOn(toastManager, "add");
+    using highlight = observeQuoteHighlight(QUOTE);
     await act(async () => {
       requestPdfReveal(pdfRevealDocumentKey(source), citation.target);
     });
-    await vi.waitFor(() => expect(highlightedText().join("")).toBe(QUOTE), { timeout: 10_000 });
+    await waitForTestReceipt(context.signal, highlight.receipt);
+    expect(highlightedText().join("")).toBe(QUOTE);
     // Its stored position (page 2) no longer holds it: it was found by its text, and said so.
     expect(notices).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Quote found by its text" }),
@@ -263,22 +289,26 @@ describe("PDF quotes in the reader", () => {
     expect(
       textNode(container, QUOTE).parentElement!.closest(".page")!.getAttribute("data-page-number"),
     ).toBe("3");
-  }, 40_000);
+  });
 
-  it("shows a quote asked for before its reader opened, once the PDF has loaded", async () => {
+  it("shows a quote asked for before its reader opened, once the PDF has loaded", async (context) => {
+    await using fixture = setup();
+    const { container, citeText } = fixture;
     const bytes = pdfBytes([["Introduction"], ["Results", `The ${QUOTE} as the inverse square.`]]);
-    await render(bytes);
+    await fixture.render(bytes);
     await waitForText(container, QUOTE);
-    const button = await askAbout(() => textNode(container, QUOTE), QUOTE);
+    const button = await askAbout(textNode(container, QUOTE), QUOTE, context);
     await act(async () => button.click());
     const citation = citeText.mock.calls[0]![0] as PdfCitation;
-    await act(async () => root.render(null));
+    await fixture.clear();
 
     // The chip files its reveal first; the reader opens afterwards and claims it.
+    using highlight = observeQuoteHighlight(QUOTE);
     await act(async () => {
       requestPdfReveal(pdfRevealDocumentKey(source), citation.target);
     });
-    await render(bytes);
-    await vi.waitFor(() => expect(highlightedText().join("")).toBe(QUOTE), { timeout: 15_000 });
-  }, 40_000);
+    await fixture.render(bytes);
+    await waitForTestReceipt(context.signal, highlight.receipt);
+    expect(highlightedText().join("")).toBe(QUOTE);
+  });
 });

@@ -1,9 +1,10 @@
 import { act, fakeTimers, render as _fixtureRender, type Screen } from "../../../test/render";
+import { waitForTestReceipt } from "../../../test/receipt";
 import { useState, type ReactNode } from "react";
 
 import type { Editor as ProseEditor } from "@tiptap/core";
 import type { Editor, EditorSelection } from "@pierre/diffs/edit";
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, vi, type TestContext } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
@@ -18,7 +19,7 @@ import { EditableFileEditor, useFileLineReveal } from "~/components/files/FilePr
 import { sourceOffset, sourcePosition } from "../math/input/sourceAdapter";
 import { latexTextSelectionRects } from "./latexTextSelectionRects";
 import { pagedLayoutSettled } from "./latexPagedGeometry";
-import { mathReadingPreviewReady } from "./mathReadingPreview";
+import { waitForLatexVisualTestReadiness } from "./latexVisualTestReadiness";
 import type { MathfieldElement } from "mathlive";
 import template26 from "./fixtures/hebrew-math-and-tables.tex?raw";
 import template28 from "./fixtures/mock-medical-article.tex?raw";
@@ -42,7 +43,7 @@ async function readyToHit(editor: ProseEditor, measure: () => DOMRect) {
     expect(rect.top + rect.height / 2).toBeLessThanOrEqual(viewport.bottom);
   });
 }
-async function mount(_fixture: _Fixture, input: string, name: string) {
+async function mount(_fixture: _Fixture, input: string, name: string, context: TestContext) {
   await page.viewport(1300, 900);
   _fixture.host = document.createElement("div");
   _fixture.host.style.cssText = "width:1250px;height:840px;display:flex";
@@ -53,6 +54,8 @@ async function mount(_fixture: _Fixture, input: string, name: string) {
     await _fixtureRender(null, { container: _fixture.host, router: false }),
   );
   let sourceEditor: Editor<"file", unknown, undefined> | undefined;
+  const sourceReady = Promise.withResolvers<void>();
+  const sourceContentReady = Promise.withResolvers<HTMLElement>();
   let current = input;
   const reveals: { from: number; to: number; precise?: boolean }[] = [];
   const sourceSelections = vi.fn<(selection: EditorSelection | null) => void>();
@@ -91,6 +94,11 @@ async function mount(_fixture: _Fixture, input: string, name: string) {
             onPostRender={(container, instance, context) => {
               sourceEditor = (instance as unknown as { editor: typeof sourceEditor }).editor;
               onPostRender(container, instance, context);
+              const content = _fixture.host
+                .querySelector("diffs-container")
+                ?.shadowRoot?.querySelector<HTMLElement>("[data-content]");
+              if (content) sourceContentReady.resolve(content);
+              if (sourceEditor?.getFile()) sourceReady.resolve();
             }}
             onContentsChange={(value) => {
               current = value;
@@ -139,46 +147,17 @@ async function mount(_fixture: _Fixture, input: string, name: string) {
     );
   }
   await _fixture.root0.rerender(<Harness />);
-  await expect
-    .poll(
-      () =>
-        _fixture.host.querySelector<HTMLElement & { editor: ProseEditor }>(
-          ".scient-latex-visual-document",
-        )?.editor,
-    )
-    .toBeTruthy();
-  await expect
-    .poll(
-      () =>
-        _fixture.host.querySelector("diffs-container")?.shadowRoot?.querySelector("[data-content]"),
-      { timeout: 15_000 },
-    )
-    .toBeTruthy();
-  await userEvent.click(
-    _fixture.host
-      .querySelector("diffs-container")!
-      .shadowRoot!.querySelector<HTMLElement>("[data-content]")!,
-    { position: { x: 100, y: 10 } },
-  );
-  await expect.poll(() => sourceEditor?.getFile(), { timeout: 15_000 }).toBeTruthy();
-  const visual = _fixture.host.querySelector<HTMLElement & { editor: ProseEditor }>(
-    ".scient-latex-visual-document",
-  )!.editor;
-  await expect
-    .poll(() => visual.view.dom.hasAttribute("data-latex-loading"), { timeout: 15_000 })
-    .toBe(false);
-  await document.fonts.ready;
-  await expect
-    .poll(
-      () =>
-        [..._fixture.host.querySelectorAll(".scient-latex-math-preview")].every(
-          mathReadingPreviewReady,
-        ),
-      { timeout: 15_000 },
-    )
-    .toBe(true);
-  await expect.poll(() => pagedLayoutSettled(visual.view), { timeout: 15_000 }).toBe(true);
-  return { visual, source: () => sourceEditor!, sourceSelections, reveals, text: () => current };
+  const visual = await waitForLatexVisualTestReadiness(_fixture.host, context, `split ${name}`);
+  const sourceContent = await waitForTestReceipt(context.signal, sourceContentReady.promise);
+  await userEvent.click(sourceContent, { position: { x: 100, y: 10 } });
+  await waitForTestReceipt(context.signal, sourceReady.promise);
+  return {
+    visual,
+    source: () => sourceEditor!,
+    sourceSelections,
+    reveals,
+    text: () => current,
+  };
 }
 function wordPosition(root: HTMLElement | ShadowRoot, word: string, scroll = true) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
@@ -214,7 +193,7 @@ function wordPosition(root: HTMLElement | ShadowRoot, word: string, scroll = tru
   }
   throw new Error(`Missing word: ${word}`);
 }
-it.each([
+it.for([
   ["26", template26, "פסקה"],
   ["26-abstract", template26, "מסמך"],
   ["26-abstract-line-end", template26, "ניסוי"],
@@ -240,11 +219,11 @@ it.each([
   ["28", template28, "Early"],
 ] as const)(
   "template %s: native word selection updates Source without jumping, then survives pane handoff",
-  async (name, source, word) => {
+  async ([name, source, word], context) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-    const state = await mount(_fixture, source, name);
+    const state = await mount(_fixture, source, name, context);
     if (name === "26-footnote") {
       await page
         .getByRole("button", { name: "Return to footnote 1 marker", exact: true })
@@ -308,12 +287,12 @@ it.each([
         .nth(0)
         .dblClick({ position: hit.position });
     } else {
-      await page
+      const target = page
         .getByTestId("active-visual-editor")
         .nth(0)
         .getByText(word, { exact: false })
-        .nth(0)
-        .dblClick({ position: hit.position });
+        .nth(0);
+      await target.dblClick({ position: hit.position });
     }
     await expect.poll(() => state.reveals.length).toBe(1);
     const mapped = state.reveals[0]!;
@@ -369,11 +348,11 @@ it.each([
   },
 );
 
-it("a Source interaction cancels a queued Visual reveal before it can replace Source selection", async () => {
+it("a Source interaction cancels a queued Visual reveal before it can replace Source selection", async (context) => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-  const state = await mount(_fixture, template26, "cancel-source");
+  const state = await mount(_fixture, template26, "cancel-source", context);
   wordPosition(state.visual.view.dom, "פסקה");
   await readyToHit(state.visual, () => wordPosition(state.visual.view.dom, "פסקה", false).box);
   const hit = wordPosition(state.visual.view.dom, "פסקה", false);
@@ -395,17 +374,17 @@ it("a Source interaction cancels a queued Visual reveal before it can replace So
   expect(state.source().getViewState().selections).toEqual(before);
 });
 
-it.each([
+it.for([
   ["matrix", "pmatrix", "4", "4"],
   ["cases", "cases", "0", "x\\geq0,"],
   ["aligned", "x-y", "−", null],
 ] as const)(
   "template 26: clicking inside %s reveals its authored cell",
-  async (name, match, word, expected) => {
+  async ([name, match, word, expected], context) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-    const state = await mount(_fixture, template26, `26-math-${name}`);
+    const state = await mount(_fixture, template26, `26-math-${name}`, context);
     let mathNode: HTMLElement | null = null;
     state.visual.state.doc.descendants((node, at) => {
       if (
@@ -425,9 +404,7 @@ it.each([
       [...state.visual.view.dom.querySelectorAll<MathfieldElement>("math-field")].find((field) =>
         field.value.replace(/\s+/gu, "").includes(match),
       )!;
-    await expect
-      .poll(() => field()?.shadowRoot?.querySelector(".ML__latex"), { timeout: 15_000 })
-      .toBeTruthy();
+    await expect.poll(() => field()?.shadowRoot?.querySelector(".ML__latex")).toBeTruthy();
     field().scrollIntoView({ block: "center" });
     await readyToHit(state.visual, () => field().getBoundingClientRect());
     const glyph = () => {

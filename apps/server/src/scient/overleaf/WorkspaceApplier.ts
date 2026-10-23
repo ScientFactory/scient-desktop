@@ -362,469 +362,469 @@ async function attemptHasDurableMutation(state: State, name: string, directory: 
 }
 
 const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierHooks) {
-    const files = yield* WorkspaceFileSystem;
-    const settledRevision = (cwd: string, relativePath: string) =>
-      Effect.runPromise(
-        files.withSettledFileRead({ cwd, relativePath }, (attention) =>
-          attention
-            ? Effect.fail(
-                new WorkspaceApplyError({
-                  cause: new Error(
-                    `Retained publication ${attention.recoveryId} needs explicit review before Overleaf may apply.`,
-                  ),
-                }),
-              )
-            : Effect.promise(() => revision(cwd, relativePath)),
-        ),
-      );
-    // One applier instance owns all its connection-local journals. Serializing local
-    // applies prevents concurrent recovery of a shared record (no hidden queue in UI).
-    const semaphore = yield* Semaphore.make(1);
-    const apply: WorkspaceApplier["Service"]["apply"] = (input) =>
-      semaphore.withPermits(1)(
-        Effect.gen(function* () {
-          if (!/^[a-zA-Z0-9_-]{1,100}$/u.test(input.id))
-            return yield* new WorkspaceApplyError({ cause: new Error("Invalid apply id.") });
-          const prepareDirectory = (retentionDirectory: string) =>
-            files
-              .prepareRetainedDirectory({ cwd: input.cwd, retentionDirectory })
-              .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
-          const applicationRoot = yield* prepareDirectory(input.applicationDirectory);
-          const directory = yield* prepareDirectory(NodePath.join(applicationRoot, input.id));
-          const retentionDirectory = yield* prepareDirectory(NodePath.join(directory, "files"));
-          yield* Effect.tryPromise({
-            try: async () => {
-              const device = (await NodeFSP.stat(input.cwd)).dev;
-              for (const prepared of [applicationRoot, directory, retentionDirectory]) {
-                if ((await NodeFSP.stat(prepared)).dev !== device)
-                  throw new Error("Apply retention must be on manuscript filesystem.");
-              }
-            },
-            catch: (cause) => new WorkspaceApplyError({ cause }),
-          });
-          yield* files
-            .registerRetainedFileHistory({ cwd: input.cwd, retentionDirectory })
+  const files = yield* WorkspaceFileSystem;
+  const settledRevision = (cwd: string, relativePath: string) =>
+    Effect.runPromise(
+      files.withSettledFileRead({ cwd, relativePath }, (attention) =>
+        attention
+          ? Effect.fail(
+              new WorkspaceApplyError({
+                cause: new Error(
+                  `Retained publication ${attention.recoveryId} needs explicit review before Overleaf may apply.`,
+                ),
+              }),
+            )
+          : Effect.promise(() => revision(cwd, relativePath)),
+      ),
+    );
+  // One applier instance owns all its connection-local journals. Serializing local
+  // applies prevents concurrent recovery of a shared record (no hidden queue in UI).
+  const semaphore = yield* Semaphore.make(1);
+  const apply: WorkspaceApplier["Service"]["apply"] = (input) =>
+    semaphore.withPermits(1)(
+      Effect.gen(function* () {
+        if (!/^[a-zA-Z0-9_-]{1,100}$/u.test(input.id))
+          return yield* new WorkspaceApplyError({ cause: new Error("Invalid apply id.") });
+        const prepareDirectory = (retentionDirectory: string) =>
+          files
+            .prepareRetainedDirectory({ cwd: input.cwd, retentionDirectory })
             .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
-          const begin = yield* Effect.tryPromise({
-            try: async () => {
-              const cwd = await NodeFSP.realpath(input.cwd);
-              const rootIdentity = await directoryIdentity(cwd);
-              if ((await NodeFSP.stat(retentionDirectory)).dev !== (await NodeFSP.stat(cwd)).dev)
+        const applicationRoot = yield* prepareDirectory(input.applicationDirectory);
+        const directory = yield* prepareDirectory(NodePath.join(applicationRoot, input.id));
+        const retentionDirectory = yield* prepareDirectory(NodePath.join(directory, "files"));
+        yield* Effect.tryPromise({
+          try: async () => {
+            const device = (await NodeFSP.stat(input.cwd)).dev;
+            for (const prepared of [applicationRoot, directory, retentionDirectory]) {
+              if ((await NodeFSP.stat(prepared)).dev !== device)
                 throw new Error("Apply retention must be on manuscript filesystem.");
-              const recordPath = NodePath.join(directory, "apply.json");
-              const intentPath = NodePath.join(directory, "plan.json");
-              let state: State;
-              const record = await NodeFSP.readFile(recordPath, "utf8").catch((e) => {
-                if (e.code !== "ENOENT") throw e;
-                return null;
-              });
-              let intentText = await NodeFSP.readFile(intentPath, "utf8").catch((e) => {
-                if (e.code !== "ENOENT") throw e;
-                return null;
-              });
-              const saved = record === null ? null : decodeSaved(record);
-              // Upgrade old draft records once, before any further local mutation.
-              if (saved?.version === 1) {
-                const legacy = saved;
-                validatePlan(legacy.plan);
-                const intent = {
-                  version: 2 as const,
-                  cwd: legacy.cwd,
-                  rootIdentity: legacy.rootIdentity,
-                  plan: legacy.plan,
-                };
-                const expected = encodeIntent(intent);
-                if (intentText !== null && intentText !== expected)
-                  throw new Error("Legacy apply plan identity changed.");
-                if (intentText === null) {
-                  await durableJson(intentPath, intent);
-                  await hooks.at?.("plan-recorded");
-                }
-                intentText = expected;
+            }
+          },
+          catch: (cause) => new WorkspaceApplyError({ cause }),
+        });
+        yield* files
+          .registerRetainedFileHistory({ cwd: input.cwd, retentionDirectory })
+          .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
+        const begin = yield* Effect.tryPromise({
+          try: async () => {
+            const cwd = await NodeFSP.realpath(input.cwd);
+            const rootIdentity = await directoryIdentity(cwd);
+            if ((await NodeFSP.stat(retentionDirectory)).dev !== (await NodeFSP.stat(cwd)).dev)
+              throw new Error("Apply retention must be on manuscript filesystem.");
+            const recordPath = NodePath.join(directory, "apply.json");
+            const intentPath = NodePath.join(directory, "plan.json");
+            let state: State;
+            const record = await NodeFSP.readFile(recordPath, "utf8").catch((e) => {
+              if (e.code !== "ENOENT") throw e;
+              return null;
+            });
+            let intentText = await NodeFSP.readFile(intentPath, "utf8").catch((e) => {
+              if (e.code !== "ENOENT") throw e;
+              return null;
+            });
+            const saved = record === null ? null : decodeSaved(record);
+            // Upgrade old draft records once, before any further local mutation.
+            if (saved?.version === 1) {
+              const legacy = saved;
+              validatePlan(legacy.plan);
+              const intent = {
+                version: 2 as const,
+                cwd: legacy.cwd,
+                rootIdentity: legacy.rootIdentity,
+                plan: legacy.plan,
+              };
+              const expected = encodeIntent(intent);
+              if (intentText !== null && intentText !== expected)
+                throw new Error("Legacy apply plan identity changed.");
+              if (intentText === null) {
+                await durableJson(intentPath, intent);
+                await hooks.at?.("plan-recorded");
+              }
+              intentText = expected;
+              state = {
+                ...legacy,
+                version: 2,
+                intentRevision: bytesRevision(Buffer.from(intentText)),
+              };
+              await durableJson(recordPath, progress(state));
+            } else {
+              if (intentText === null) {
+                if (saved !== null) throw new Error("Missing durable apply intent.");
+                if (!input.plan) throw new Error("Missing apply plan.");
+                const plan = storePlan(input.plan);
+                validatePlan(plan);
+                const intent = { version: 2 as const, cwd, rootIdentity, plan };
+                await durableJson(intentPath, intent);
+                intentText = encodeIntent(intent);
+                await hooks.at?.("plan-recorded");
+              }
+              const intent = decodeIntent(intentText);
+              const intentRevision = bytesRevision(Buffer.from(intentText));
+              if (saved !== null) {
+                if (saved.intentRevision !== intentRevision)
+                  throw new Error("Apply plan identity changed.");
+                state = { ...intent, ...saved };
+              } else {
+                // A crash between the immutable intent and initial progress is safe:
+                // no file mutation can start until both records have been synced.
                 state = {
-                  ...legacy,
-                  version: 2,
-                  intentRevision: bytesRevision(Buffer.from(intentText)),
+                  ...intent,
+                  intentRevision,
+                  steps: {},
+                  outcomes: intent.plan.units.map(() => "pending"),
+                  phase: "applying",
+                  nextBase: intent.plan.base,
                 };
                 await durableJson(recordPath, progress(state));
-              } else {
-                if (intentText === null) {
-                  if (saved !== null) throw new Error("Missing durable apply intent.");
-                  if (!input.plan) throw new Error("Missing apply plan.");
-                  const plan = storePlan(input.plan);
-                  validatePlan(plan);
-                  const intent = { version: 2 as const, cwd, rootIdentity, plan };
-                  await durableJson(intentPath, intent);
-                  intentText = encodeIntent(intent);
-                  await hooks.at?.("plan-recorded");
-                }
-                const intent = decodeIntent(intentText);
-                const intentRevision = bytesRevision(Buffer.from(intentText));
-                if (saved !== null) {
-                  if (saved.intentRevision !== intentRevision)
-                    throw new Error("Apply plan identity changed.");
-                  state = { ...intent, ...saved };
-                } else {
-                  // A crash between the immutable intent and initial progress is safe:
-                  // no file mutation can start until both records have been synced.
-                  state = {
-                    ...intent,
-                    intentRevision,
-                    steps: {},
-                    outcomes: intent.plan.units.map(() => "pending"),
-                    phase: "applying",
-                    nextBase: intent.plan.base,
-                  };
-                  await durableJson(recordPath, progress(state));
-                  await hooks.at?.("recorded");
-                }
+                await hooks.at?.("recorded");
               }
-              if (state.cwd !== cwd) throw new Error("Apply workspace binding changed.");
-              await assertRootBinding(cwd, state.rootIdentity);
-              if (input.plan && encodePlan(storePlan(input.plan)) !== encodePlan(state.plan))
-                throw new Error("Apply id reused with a different plan.");
-              validatePlan(state.plan);
-              if (state.outcomes.length !== state.plan.units.length)
-                throw new Error("Invalid unit outcomes.");
-              if (state.phase === "applying" && Object.keys(state.steps).length === 0) {
-                // No local write has begun: stale capture means re-plan with zero mutations.
-                const records = await NodeFSP.readdir(retentionDirectory);
-                let captureBytes = 0;
-                if (records.length === 0)
-                  for (const name of new Set([
-                    ...Object.keys(state.plan.captured),
-                    ...Object.keys(state.plan.target),
-                  ])) {
-                    const stat = await NodeFSP.lstat(NodePath.join(cwd, name)).catch((e) => {
-                      if (["ENOENT", "ENOTDIR"].includes(e.code)) return null;
-                      throw e;
-                    });
-                    if (stat?.isFile()) captureBytes += stat.size;
-                    if (captureBytes > 250 * 1024 * 1024)
-                      throw new Error("Capture exceeds local read budget.");
-                    if (
-                      (await settledRevision(cwd, name)) !==
-                      (ownValue(state.plan.captured, name) ?? null)
-                    ) {
-                      state = { ...state, phase: "replan" };
-                      await durableJson(recordPath, progress(state));
-                      break;
-                    }
+            }
+            if (state.cwd !== cwd) throw new Error("Apply workspace binding changed.");
+            await assertRootBinding(cwd, state.rootIdentity);
+            if (input.plan && encodePlan(storePlan(input.plan)) !== encodePlan(state.plan))
+              throw new Error("Apply id reused with a different plan.");
+            validatePlan(state.plan);
+            if (state.outcomes.length !== state.plan.units.length)
+              throw new Error("Invalid unit outcomes.");
+            if (state.phase === "applying" && Object.keys(state.steps).length === 0) {
+              // No local write has begun: stale capture means re-plan with zero mutations.
+              const records = await NodeFSP.readdir(retentionDirectory);
+              let captureBytes = 0;
+              if (records.length === 0)
+                for (const name of new Set([
+                  ...Object.keys(state.plan.captured),
+                  ...Object.keys(state.plan.target),
+                ])) {
+                  const stat = await NodeFSP.lstat(NodePath.join(cwd, name)).catch((e) => {
+                    if (["ENOENT", "ENOTDIR"].includes(e.code)) return null;
+                    throw e;
+                  });
+                  if (stat?.isFile()) captureBytes += stat.size;
+                  if (captureBytes > 250 * 1024 * 1024)
+                    throw new Error("Capture exceeds local read budget.");
+                  if (
+                    (await settledRevision(cwd, name)) !==
+                    (ownValue(state.plan.captured, name) ?? null)
+                  ) {
+                    state = { ...state, phase: "replan" };
+                    await durableJson(recordPath, progress(state));
+                    break;
                   }
-              }
-              return { state, recordPath, retentionDirectory };
-            },
+                }
+            }
+            return { state, recordPath, retentionDirectory };
+          },
+          catch: (cause) => new WorkspaceApplyError({ cause }),
+        });
+        yield* files
+          .registerRetainedFileHistory({
+            cwd: input.cwd,
+            retentionDirectory: begin.retentionDirectory,
+          })
+          .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
+        let state = begin.state;
+        const save = () =>
+          Effect.tryPromise({
+            try: () => durableJson(begin.recordPath, progress(state)),
             catch: (cause) => new WorkspaceApplyError({ cause }),
           });
+        // Every path the plan names, for the folders a peer guard may meet.
+        const planned = [
+          ...new Set([...Object.keys(state.plan.captured), ...Object.keys(state.plan.target)]),
+        ];
+        // Settle any step a crash left pending before deciding anything: settlement
+        // checks each step's group, and a step left pending is otherwise replayed as
+        // if it never started.
+        if (state.phase === "applying")
           yield* files
-            .registerRetainedFileHistory({
-              cwd: input.cwd,
-              retentionDirectory: begin.retentionDirectory,
-            })
+            .withSettledWorkspaceRead({ cwd: state.cwd }, () => Effect.void)
             .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
-          let state = begin.state;
-          const save = () =>
-            Effect.tryPromise({
-              try: () => durableJson(begin.recordPath, progress(state)),
-              catch: (cause) => new WorkspaceApplyError({ cause }),
-            });
-          // Every path the plan names, for the folders a peer guard may meet.
-          const planned = [
-            ...new Set([...Object.keys(state.plan.captured), ...Object.keys(state.plan.target)]),
-          ];
-          // Settle any step a crash left pending before deciding anything: settlement
-          // checks each step's group, and a step left pending is otherwise replayed as
-          // if it never started.
-          if (state.phase === "applying")
-            yield* files
-              .withSettledWorkspaceRead({ cwd: state.cwd }, () => Effect.void)
-              .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
-          if (state.phase === "applying")
-            for (const [unitIndex, unit] of state.plan.units.entries()) {
-              if (state.outcomes[unitIndex] !== "pending") continue;
-              const blockers = unit.filter(
-                (name) =>
-                  !ownValue(state.plan.target, name) &&
-                  unit.some(
-                    (other) =>
-                      ownValue(state.plan.target, other) &&
-                      (other.startsWith(`${name}/`) || name.startsWith(`${other}/`)),
-                  ),
-              );
-              // Explicit dependency layers: preserve/remove blocking entries, create
-              // destinations, then remove remaining sources. No cyclic comparator.
-              const ordered = [
-                ...blockers.sort(),
-                ...unit.filter((name) => ownValue(state.plan.target, name)).sort(),
-                ...unit
-                  .filter((name) => !ownValue(state.plan.target, name) && !blockers.includes(name))
-                  .sort(),
-              ];
-              const positions = new Map(ordered.map((name, index) => [name, index]));
-              const below = new Map(
-                state.plan.guards[unitIndex]!.map((guard) => [
-                  guard,
-                  planned.filter((path) => path.startsWith(`${guard}/`)),
-                ]),
-              );
-              const destinationsIntact = async () => {
-                await assertRootBinding(state.cwd, state.rootIdentity);
-                for (const name of state.plan.guards[unitIndex]!) {
-                  const target = ownValue(state.plan.target, name);
-                  if (
-                    (!unit.includes(name) || ownValue(state.steps, name) === "done") &&
-                    (await settledRevision(state.cwd, name)) !== (target?.revision ?? null)
-                  )
-                    return false;
-                }
-                return true;
-              };
-              let failed = false;
-              for (const name of ordered) {
-                const intact = yield* Effect.tryPromise({
+        if (state.phase === "applying")
+          for (const [unitIndex, unit] of state.plan.units.entries()) {
+            if (state.outcomes[unitIndex] !== "pending") continue;
+            const blockers = unit.filter(
+              (name) =>
+                !ownValue(state.plan.target, name) &&
+                unit.some(
+                  (other) =>
+                    ownValue(state.plan.target, other) &&
+                    (other.startsWith(`${name}/`) || name.startsWith(`${other}/`)),
+                ),
+            );
+            // Explicit dependency layers: preserve/remove blocking entries, create
+            // destinations, then remove remaining sources. No cyclic comparator.
+            const ordered = [
+              ...blockers.sort(),
+              ...unit.filter((name) => ownValue(state.plan.target, name)).sort(),
+              ...unit
+                .filter((name) => !ownValue(state.plan.target, name) && !blockers.includes(name))
+                .sort(),
+            ];
+            const positions = new Map(ordered.map((name, index) => [name, index]));
+            const below = new Map(
+              state.plan.guards[unitIndex]!.map((guard) => [
+                guard,
+                planned.filter((path) => path.startsWith(`${guard}/`)),
+              ]),
+            );
+            const destinationsIntact = async () => {
+              await assertRootBinding(state.cwd, state.rootIdentity);
+              for (const name of state.plan.guards[unitIndex]!) {
+                const target = ownValue(state.plan.target, name);
+                if (
+                  (!unit.includes(name) || ownValue(state.steps, name) === "done") &&
+                  (await settledRevision(state.cwd, name)) !== (target?.revision ?? null)
+                )
+                  return false;
+              }
+              return true;
+            };
+            let failed = false;
+            for (const name of ordered) {
+              const intact = yield* Effect.tryPromise({
+                try: destinationsIntact,
+                catch: (cause) => new WorkspaceApplyError({ cause }),
+              });
+              if (!intact) {
+                failed = true;
+                break;
+              }
+              if (ownValue(state.steps, name) === "done") continue;
+              yield* Effect.tryPromise({
+                try: () => hooks.at?.("before-step", name) ?? Promise.resolve(),
+                catch: (cause) => new WorkspaceApplyError({ cause }),
+              });
+              if (
+                !(yield* Effect.tryPromise({
                   try: destinationsIntact,
                   catch: (cause) => new WorkspaceApplyError({ cause }),
-                });
-                if (!intact) {
-                  failed = true;
-                  break;
-                }
-                if (ownValue(state.steps, name) === "done") continue;
-                yield* Effect.tryPromise({
-                  try: () => hooks.at?.("before-step", name) ?? Promise.resolve(),
-                  catch: (cause) => new WorkspaceApplyError({ cause }),
-                });
-                if (
-                  !(yield* Effect.tryPromise({
-                    try: destinationsIntact,
-                    catch: (cause) => new WorkspaceApplyError({ cause }),
-                  }))
-                ) {
-                  failed = true;
-                  break;
-                }
-                const file = ownValue(state.plan.target, name);
-                const index = state.plan.units.flat().indexOf(name);
-                // The rest of the unit as it must stand when this file becomes visible:
-                // steps before this one applied, later ones still as captured. The record
-                // keeps them, so a crash's recovery cannot publish into a changed group.
-                const position = positions.get(name)!;
-                const expected = (guard: string) =>
-                  (!positions.has(guard) || positions.get(guard)! < position
-                    ? ownValue(state.plan.target, guard)?.revision
-                    : ownValue(state.plan.captured, guard)) ?? null;
-                const peerGuards = state.plan.guards[unitIndex]!.filter(
-                  (guard) => guard !== name,
-                ).map((guard) => {
-                  const inside = below.get(guard)!;
-                  // A folder may stand here where one stood when the folder was captured,
-                  // or where the plan needs one now: it holds a file still kept or already
-                  // written, or this step's own file. One the plan empties for good may
-                  // hold nothing but the files it removes.
-                  const folder =
-                    name.startsWith(`${guard}/`) ||
-                    inside.some(
-                      (path) => ownValue(state.plan.captured, path) || expected(path) !== null,
-                    );
-                  const removed = !inside.some((path) => ownValue(state.plan.target, path));
-                  return {
-                    path: guard,
-                    revision: expected(guard),
-                    ...(folder ? { directory: true as const } : {}),
-                    ...(folder && removed
-                      ? { only: inside.filter((path) => ownValue(state.plan.captured, path)) }
-                      : {}),
-                  };
-                });
-                // A crash can leave a step's record closed without anything published:
-                // settlement after a crash before staging has no bytes to finish it. The
-                // plan has them, so such a step is tried again under a new record, with
-                // every check made afresh. A closed record is otherwise its receipt.
-                const attempts = yield* Effect.tryPromise({
-                  try: () => stepAttempts(begin.retentionDirectory, index),
-                  catch: (cause) => new WorkspaceApplyError({ cause }),
-                });
-                const latest = attempts.at(-1);
-                const closed =
-                  latest === undefined
-                    ? null
-                    : yield* Effect.tryPromise({
-                        try: () => readStepRecord(NodePath.join(begin.retentionDirectory, latest)),
-                        catch: (cause) => new WorkspaceApplyError({ cause }),
-                      });
-                const unpublished =
-                  closed?.version === 2 &&
-                  closed.phase === "done" &&
-                  closed.outcome === "skipped" &&
-                  closed.sourceMutation === false;
-                const args = {
-                  cwd: state.cwd,
-                  relativePath: name,
-                  retentionDirectory: begin.retentionDirectory,
-                  id:
-                    latest === undefined
-                      ? `step-${index}`
-                      : unpublished
-                        ? `step-${index}-${attempts.length}`
-                        : latest,
-                  expectedRevision: ownValue(state.plan.captured, name) ?? null,
-                  expectedRootIdentity: state.rootIdentity,
-                  peerGuards,
-                  ...(file
-                    ? { bytes: Buffer.from(file.contents, "base64"), executable: file.executable }
+                }))
+              ) {
+                failed = true;
+                break;
+              }
+              const file = ownValue(state.plan.target, name);
+              const index = state.plan.units.flat().indexOf(name);
+              // The rest of the unit as it must stand when this file becomes visible:
+              // steps before this one applied, later ones still as captured. The record
+              // keeps them, so a crash's recovery cannot publish into a changed group.
+              const position = positions.get(name)!;
+              const expected = (guard: string) =>
+                (!positions.has(guard) || positions.get(guard)! < position
+                  ? ownValue(state.plan.target, guard)?.revision
+                  : ownValue(state.plan.captured, guard)) ?? null;
+              const peerGuards = state.plan.guards[unitIndex]!.filter(
+                (guard) => guard !== name,
+              ).map((guard) => {
+                const inside = below.get(guard)!;
+                // A folder may stand here where one stood when the folder was captured,
+                // or where the plan needs one now: it holds a file still kept or already
+                // written, or this step's own file. One the plan empties for good may
+                // hold nothing but the files it removes.
+                const folder =
+                  name.startsWith(`${guard}/`) ||
+                  inside.some(
+                    (path) => ownValue(state.plan.captured, path) || expected(path) !== null,
+                  );
+                const removed = !inside.some((path) => ownValue(state.plan.target, path));
+                return {
+                  path: guard,
+                  revision: expected(guard),
+                  ...(folder ? { directory: true as const } : {}),
+                  ...(folder && removed
+                    ? { only: inside.filter((path) => ownValue(state.plan.captured, path)) }
                     : {}),
                 };
-                const outcome = yield* (
-                  file ? files.replaceFileRetained(args) : files.removeFileRetained(args)
-                ).pipe(
-                  Effect.map((result) => result.outcome),
-                  Effect.mapError((cause) => new WorkspaceApplyError({ cause })),
-                );
-                yield* Effect.tryPromise({
-                  try: () => hooks.at?.("after-step", name) ?? Promise.resolve(),
-                  catch: (cause) => new WorkspaceApplyError({ cause }),
-                });
-                state = {
-                  ...state,
-                  steps: Object.fromEntries([...Object.entries(state.steps), [name, outcome]]),
-                };
-                yield* save();
-                yield* Effect.tryPromise({
-                  try: () => hooks.at?.("step-recorded", name) ?? Promise.resolve(),
-                  catch: (cause) => new WorkspaceApplyError({ cause }),
-                });
-                if (outcome !== "done") {
-                  failed = true;
-                  break;
-                }
-              }
-              if (!failed)
-                failed = !(yield* Effect.tryPromise({
-                  try: destinationsIntact,
-                  catch: (cause) => new WorkspaceApplyError({ cause }),
-                }));
-              const touched =
-                failed &&
-                (yield* Effect.tryPromise({
-                  try: () => unitHasDurableMutation(state, unit, begin.retentionDirectory),
-                  catch: (cause) => new WorkspaceApplyError({ cause }),
-                }));
-              const outcome = !failed ? "done" : touched ? "interrupted" : "skipped";
+              });
+              // A crash can leave a step's record closed without anything published:
+              // settlement after a crash before staging has no bytes to finish it. The
+              // plan has them, so such a step is tried again under a new record, with
+              // every check made afresh. A closed record is otherwise its receipt.
+              const attempts = yield* Effect.tryPromise({
+                try: () => stepAttempts(begin.retentionDirectory, index),
+                catch: (cause) => new WorkspaceApplyError({ cause }),
+              });
+              const latest = attempts.at(-1);
+              const closed =
+                latest === undefined
+                  ? null
+                  : yield* Effect.tryPromise({
+                      try: () => readStepRecord(NodePath.join(begin.retentionDirectory, latest)),
+                      catch: (cause) => new WorkspaceApplyError({ cause }),
+                    });
+              const unpublished =
+                closed?.version === 2 &&
+                closed.phase === "done" &&
+                closed.outcome === "skipped" &&
+                closed.sourceMutation === false;
+              const args = {
+                cwd: state.cwd,
+                relativePath: name,
+                retentionDirectory: begin.retentionDirectory,
+                id:
+                  latest === undefined
+                    ? `step-${index}`
+                    : unpublished
+                      ? `step-${index}-${attempts.length}`
+                      : latest,
+                expectedRevision: ownValue(state.plan.captured, name) ?? null,
+                expectedRootIdentity: state.rootIdentity,
+                peerGuards,
+                ...(file
+                  ? { bytes: Buffer.from(file.contents, "base64"), executable: file.executable }
+                  : {}),
+              };
+              const outcome = yield* (
+                file ? files.replaceFileRetained(args) : files.removeFileRetained(args)
+              ).pipe(
+                Effect.map((result) => result.outcome),
+                Effect.mapError((cause) => new WorkspaceApplyError({ cause })),
+              );
+              yield* Effect.tryPromise({
+                try: () => hooks.at?.("after-step", name) ?? Promise.resolve(),
+                catch: (cause) => new WorkspaceApplyError({ cause }),
+              });
               state = {
                 ...state,
-                outcomes: state.outcomes.map((old, index) => (index === unitIndex ? outcome : old)),
+                steps: Object.fromEntries([...Object.entries(state.steps), [name, outcome]]),
               };
               yield* save();
+              yield* Effect.tryPromise({
+                try: () => hooks.at?.("step-recorded", name) ?? Promise.resolve(),
+                catch: (cause) => new WorkspaceApplyError({ cause }),
+              });
+              if (outcome !== "done") {
+                failed = true;
+                break;
+              }
             }
-          if (state.phase === "applying") {
-            const undonePaths = state.plan.units.flatMap((_, i) =>
-              state.outcomes[i] !== "done" ? state.plan.guards[i]! : [],
-            );
-            const next = advanceBase({
-              before: new Map(Object.entries(state.plan.base)),
-              remote: new Map(Object.entries(state.plan.remote)),
-              undonePaths,
-              renames: state.plan.renames,
-            });
-            state = { ...state, nextBase: Object.fromEntries(next), phase: "complete" };
+            if (!failed)
+              failed = !(yield* Effect.tryPromise({
+                try: destinationsIntact,
+                catch: (cause) => new WorkspaceApplyError({ cause }),
+              }));
+            const touched =
+              failed &&
+              (yield* Effect.tryPromise({
+                try: () => unitHasDurableMutation(state, unit, begin.retentionDirectory),
+                catch: (cause) => new WorkspaceApplyError({ cause }),
+              }));
+            const outcome = !failed ? "done" : touched ? "interrupted" : "skipped";
+            state = {
+              ...state,
+              outcomes: state.outcomes.map((old, index) => (index === unitIndex ? outcome : old)),
+            };
             yield* save();
-            yield* Effect.tryPromise({
-              try: () => hooks.at?.("base-recorded") ?? Promise.resolve(),
-              catch: (cause) => new WorkspaceApplyError({ cause }),
-            });
           }
-          return yield* files
-            .withSettledWorkspaceRead({ cwd: state.cwd }, () =>
-              Effect.tryPromise({
-                try: async (): Promise<WorkspaceApplyResult> => {
-                  const retained: Array<RetainedMutationResult & { changed: boolean }> = [];
-                  for (const [index, name] of state.plan.units.flat().entries())
-                    for (const attempt of await stepAttempts(begin.retentionDirectory, index)) {
-                      const directory = NodePath.join(begin.retentionDirectory, attempt);
-                      try {
-                        const record = decodeRetainedRecord(
-                          await NodeFSP.readFile(NodePath.join(directory, "record.json"), "utf8"),
-                        );
-                        for (const leaf of ["slot", "retained", "provisional"]) {
-                          const kept = NodePath.join(directory, leaf);
-                          const current = await fileRevision(kept);
-                          if (
-                            current !== null &&
-                            (leaf === "retained" ||
-                              record.stagedIdentity?.ino !== (await fileIdentity(kept))?.ino ||
-                              record.stagedIdentity?.dev !== (await fileIdentity(kept))?.dev ||
-                              current !== record.desired)
-                          ) {
-                            retained.push(
-                              await recheckRetainedFile(
-                                {
-                                  outcome: record.outcome ?? "attention",
-                                  recordDirectory: directory,
-                                  retainedPath: kept,
-                                  retainedRevision: current,
-                                  retainedIdentity: null,
-                                },
-                                ownValue(state.plan.captured, name) ?? null,
-                              ),
-                            );
-                          }
-                        }
-                      } catch (e) {
-                        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-                      }
-                    }
-                  await assertRootBinding(state.cwd, state.rootIdentity);
-                  let matchesTarget = true;
-                  for (const name of new Set([
-                    ...Object.keys(state.plan.captured),
-                    ...Object.keys(state.plan.target),
-                  ])) {
-                    if (
-                      (await revision(state.cwd, name)) !==
-                      (ownValue(state.plan.target, name)?.revision ?? null)
-                    )
-                      matchesTarget = false;
-                  }
-                  const markerPaths: string[] = [];
-                  for (const name of state.plan.markerPaths) {
+        if (state.phase === "applying") {
+          const undonePaths = state.plan.units.flatMap((_, i) =>
+            state.outcomes[i] !== "done" ? state.plan.guards[i]! : [],
+          );
+          const next = advanceBase({
+            before: new Map(Object.entries(state.plan.base)),
+            remote: new Map(Object.entries(state.plan.remote)),
+            undonePaths,
+            renames: state.plan.renames,
+          });
+          state = { ...state, nextBase: Object.fromEntries(next), phase: "complete" };
+          yield* save();
+          yield* Effect.tryPromise({
+            try: () => hooks.at?.("base-recorded") ?? Promise.resolve(),
+            catch: (cause) => new WorkspaceApplyError({ cause }),
+          });
+        }
+        return yield* files
+          .withSettledWorkspaceRead({ cwd: state.cwd }, () =>
+            Effect.tryPromise({
+              try: async (): Promise<WorkspaceApplyResult> => {
+                const retained: Array<RetainedMutationResult & { changed: boolean }> = [];
+                for (const [index, name] of state.plan.units.flat().entries())
+                  for (const attempt of await stepAttempts(begin.retentionDirectory, index)) {
+                    const directory = NodePath.join(begin.retentionDirectory, attempt);
                     try {
-                      if (hasConflictMarkers(await readMarkerText(NodePath.join(state.cwd, name))))
-                        markerPaths.push(name);
+                      const record = decodeRetainedRecord(
+                        await NodeFSP.readFile(NodePath.join(directory, "record.json"), "utf8"),
+                      );
+                      for (const leaf of ["slot", "retained", "provisional"]) {
+                        const kept = NodePath.join(directory, leaf);
+                        const current = await fileRevision(kept);
+                        if (
+                          current !== null &&
+                          (leaf === "retained" ||
+                            record.stagedIdentity?.ino !== (await fileIdentity(kept))?.ino ||
+                            record.stagedIdentity?.dev !== (await fileIdentity(kept))?.dev ||
+                            current !== record.desired)
+                        ) {
+                          retained.push(
+                            await recheckRetainedFile(
+                              {
+                                outcome: record.outcome ?? "attention",
+                                recordDirectory: directory,
+                                retainedPath: kept,
+                                retainedRevision: current,
+                                retainedIdentity: null,
+                              },
+                              ownValue(state.plan.captured, name) ?? null,
+                            ),
+                          );
+                        }
+                      }
                     } catch (e) {
                       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
                     }
                   }
-                  const interrupted = state.plan.guards.filter(
-                    (_, i) => state.outcomes[i] === "interrupted",
-                  );
-                  return {
-                    outcome:
-                      state.phase === "replan"
-                        ? "replan"
-                        : state.outcomes.every((o) => o === "done") &&
-                            retained.every((r) => !r.changed) &&
-                            !markerPaths.length &&
-                            matchesTarget
-                          ? "complete"
-                          : "attention",
-                    base: new Map(Object.entries(state.nextBase)),
-                    interrupted,
-                    markerPaths,
-                    retained,
-                    matchesTarget,
-                    stagingPaths: (await NodeFSP.readdir(state.cwd)).filter((name) =>
-                      name.startsWith(`.scient-overleaf-apply-${input.id}-`),
-                    ),
-                  };
-                },
-                catch: (cause) => new WorkspaceApplyError({ cause }),
-              }),
-            )
-            .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
-        }).pipe(Effect.uninterruptible),
-      );
-    return WorkspaceApplier.of({ apply });
-  });
+                await assertRootBinding(state.cwd, state.rootIdentity);
+                let matchesTarget = true;
+                for (const name of new Set([
+                  ...Object.keys(state.plan.captured),
+                  ...Object.keys(state.plan.target),
+                ])) {
+                  if (
+                    (await revision(state.cwd, name)) !==
+                    (ownValue(state.plan.target, name)?.revision ?? null)
+                  )
+                    matchesTarget = false;
+                }
+                const markerPaths: string[] = [];
+                for (const name of state.plan.markerPaths) {
+                  try {
+                    if (hasConflictMarkers(await readMarkerText(NodePath.join(state.cwd, name))))
+                      markerPaths.push(name);
+                  } catch (e) {
+                    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+                  }
+                }
+                const interrupted = state.plan.guards.filter(
+                  (_, i) => state.outcomes[i] === "interrupted",
+                );
+                return {
+                  outcome:
+                    state.phase === "replan"
+                      ? "replan"
+                      : state.outcomes.every((o) => o === "done") &&
+                          retained.every((r) => !r.changed) &&
+                          !markerPaths.length &&
+                          matchesTarget
+                        ? "complete"
+                        : "attention",
+                  base: new Map(Object.entries(state.nextBase)),
+                  interrupted,
+                  markerPaths,
+                  retained,
+                  matchesTarget,
+                  stagingPaths: (await NodeFSP.readdir(state.cwd)).filter((name) =>
+                    name.startsWith(`.scient-overleaf-apply-${input.id}-`),
+                  ),
+                };
+              },
+              catch: (cause) => new WorkspaceApplyError({ cause }),
+            }),
+          )
+          .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
+      }).pipe(Effect.uninterruptible),
+    );
+  return WorkspaceApplier.of({ apply });
+});
 export const make = (hooks: ApplierHooks = {}) => makeEffect(hooks);
 /** @public Service construction is part of the canonical Effect module API. */
 export const layer = Layer.effect(WorkspaceApplier, make());

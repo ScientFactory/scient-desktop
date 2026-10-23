@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";

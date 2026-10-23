@@ -378,15 +378,39 @@ it.live("checks Droid periodically without starting Droid sessions", () =>
     expect(afterProbe.acp).toBe(1);
     // Each periodic check spawns the recording binary for `--version`; three
     // more version spawns are the receipt of several checks at the interval.
-    yield* Effect.callback<void, Error>((resume) => {
-      const check = () => {
-        if (versionSpawns() >= afterProbe.version + 3) resume(Effect.void);
-      };
-      const watcher = NodeFS.watch(directory, check);
-      watcher.on("error", (error) => resume(Effect.fail(error)));
-      check();
-      return Effect.sync(() => watcher.close());
-    });
+    yield* Effect.acquireUseRelease(
+      Effect.try(() => NodeFS.watch(directory)),
+      (watcher) =>
+        Effect.callback<void>((resume) => {
+          let settled = false;
+          const detach = () => {
+            settled = true;
+            watcher.off("change", check);
+            watcher.off("error", onError);
+          };
+          const settle = (result: Effect.Effect<void>) => {
+            if (settled) return;
+            detach();
+            resume(result);
+          };
+          const onError = (error: Error) => settle(Effect.die(error));
+          const check = () => {
+            if (settled) return;
+            try {
+              if (versionSpawns() >= afterProbe.version + 3) settle(Effect.void);
+            } catch (error) {
+              settle(Effect.die(error));
+            }
+          };
+          watcher.on("change", check);
+          watcher.on("error", onError);
+          check();
+          return Effect.sync(detach);
+        }),
+      // callback's returned cleanup is interruption-only; the watcher must
+      // also close on success or failure before the directory can be removed.
+      (watcher) => Effect.sync(() => watcher.close()),
+    );
     expect(acpSpawns()).toBe(afterProbe.acp);
     expect(versionSpawns()).toBeGreaterThan(afterProbe.version);
     expect((yield* instance.snapshot.getSnapshot).status).toBe("ready");

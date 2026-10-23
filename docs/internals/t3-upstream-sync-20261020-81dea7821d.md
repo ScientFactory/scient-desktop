@@ -1002,3 +1002,98 @@ such boundary, on this same branch and draft PR, integrate all advancements,
 then review and qualify the whole batch before pushing and capturing the next.
 This does not authorize replacing an active merge target, skipping qualification,
 merging main or releasing.
+
+## PR #614 CI repair and separate next-alignment ownership
+
+The owner subsequently authorized repairing and merging this PR, followed by
+fresh Stable and Beta releases. That supersedes the earlier draft-only delivery
+restriction, not the qualification gates. Another agent owns the later official
+`2c8bdf6177` merge in the original worktree; it is not part of this candidate.
+Repairs use the isolated `codex/pr614-ci-21da3061aa-20261023` checkout and retain
+the existing PR branch as the delivery destination.
+
+CI run `39862334712` failed. Its actual checkout was synthetic merge
+`bf2bb196158a0c567ef515a2fa7e2f38c959bfe5`, combining pushed
+`05468a46ebfedd753f804af3f86ac3adaa8b69bc` with owned main
+`8e054c8c2bf9f4368744461cdd447aee98ef0e8b`; earlier local passes did not qualify
+that composition. Owned-main catch-up `88e340241b` preserves the pushed alignment
+as first parent and exact owned main `9d312f3f0b6bcf35d68ca8823444fcebb076d09e`
+as second parent. The official boundary remains `21da3061aa`.
+
+The release-smoke fixture omitted `.pnpmfile.cjs` while checking the committed
+lockfile with frozen installation. Copying that configuration restores the
+complete input; the maintained release smoke passes without regenerating the
+dependency graph. The Windows failure was include-path decomposition, not
+evidence that Git omitted `installer.nsh`: NSIS 3.0.4 splits Windows paths only
+on backslashes, so appending `/installer.nsh` leaves a slash in its filename
+pattern. The generated include now uses the basename through electron-builder's
+existing build-resource include directory. The pinned macOS NSIS preprocessor
+accepts all six channel/preview variants and finds both upstream shortcut
+recovery and Scient registration/uninstall macros. That is not native Windows
+installer, registry, or upgrade qualification; hosted Windows packaging remains
+required.
+
+The editor-save composition case observes the real helper's complete lease
+request at successful spawn, then checks post-apply revision refusal and exact
+file contents. It no longer claims a one-second absence of progress proves
+contention. The separate native publication qualifier, using compiled production
+and probe helpers on macOS ARM64, passes both
+`duplicate-parent-ex-dominates-sh-under-real-lock-contention` and
+`root-ex-fence-blocks-nested-writer-without-global-volume-ex`.
+Unsupported-volume, power-loss and privileged wrong-owner qualification are
+outside that run.
+
+### Local CI-repair qualification checkpoint, 2026-10-23
+
+The repaired browser group passes all 256 cases in 15 files with the normal
+browser project and default concurrency. This includes 74 source-transaction
+cases, 45 recovery cases, 27 native split-selection cases, both reading-position
+cases, all 11 timeline-motion cases, and all 39 previously uncollectable
+Extensions cases. Server and web type checks, root lint with unused-disable
+reporting, and root formatting checks pass. These local results do not establish
+hosted CI, native Windows packaging, merge-queue qualification, or publication.
+
+The native Antigravity file passes all ten cases on macOS ARM64. Its two new
+signal-handler ordering cases explicitly require POSIX; Windows does not deliver
+JavaScript SIGTERM handlers. Other lifecycle cases are not excluded by that
+condition. Droid's three real-process cases pass, with watcher cleanup on every
+callback outcome. The overlapping editor-save case passes after subscribing to
+successful spawn before inspecting the helper's arguments: Node's diagnostic
+channel publishes the child before those fields are initialized.
+
+Receipt waits now belong to the test's abort signal and exact callback token.
+They are armed before publication but start rejecting only when consumed, so
+cancellation during mount cannot create an unhandled, unobserved rejection.
+Five temporary mounted-editor fault scenarios withheld publication or save
+confirmation and then cancelled: all rejected with the original reason, removed
+their containers and receipt registrations, restored the font descriptor, and
+retired fake timers. Separate native AbortSignal probes covered successful,
+cancelled, and already-cancelled receipts with no remaining abort listeners.
+The temporary scenarios and selection diagnostic logging were removed.
+
+PDF quote tests observe the real Ask-action mount and native CSS highlight
+publication rather than shortening asynchronous work to Vitest's one-second
+retry default. The fixture begins with browser input before its controlled
+selection. Scient's PDF hover card retains explicit tooltip semantics through
+the existing `TracePathLabel` ID/description pattern; the common upstream
+visual-only tooltip primitive is unchanged. Content, navigation, exact quote,
+page, selection, recovery, and undo assertions remain intact.
+
+Earlier failed and cancelled attempts remain distinct from this passing
+checkpoint. A transient single-character native selection observed in an
+earlier group has no established cause; passing later groups does not prove
+eradication. Independent review, the exact-source build and desktop smoke, and
+the final pushed-revision CI remain separate delivery gates.
+
+After the final receipt changes, all 31 cases in the three affected reader files
+pass. A separate withheld-font probe exercised the actual hyphenation body:
+aborting pending native font readiness rejects with the original reason and
+removes the attached specimen. That probe was also removed. Final helper-usage
+checks pass, and changed-path seam classification passes all six registered
+owners; classification is not behavioral proof.
+
+Independent Codex source review converged with no remaining actionable findings:
+native/platform round 3 and browser round 5. The final maintained reader run
+passes 31/31, and root `vp check` passes with warnings but no errors. Review
+approval is not a replacement for the remaining build, platform and hosted
+qualification gates.

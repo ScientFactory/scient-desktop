@@ -9,7 +9,7 @@ import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef } from "react";
 
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, onTestFinished, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { motionClock } from "./motionClock";
@@ -42,8 +42,11 @@ function reply(index: number, text: string, streaming: boolean) {
   };
 }
 
-async function advanceClock(ms = 64) {
-  await _fixtureAct(() => vi.advanceTimersByTimeAsync(ms));
+async function advanceClock(_fixture: _Fixture, ms = 64) {
+  _fixture.assertActive();
+  _fixture.pending = _fixtureAct(() => vi.advanceTimersByTimeAsync(ms));
+  await _fixture.pending;
+  _fixture.assertActive();
 }
 async function render(
   _fixture: _Fixture,
@@ -51,58 +54,86 @@ async function render(
   entries: React.ComponentProps<typeof MessagesTimeline>["timelineEntries"],
   extra: Partial<React.ComponentProps<typeof MessagesTimeline>> = {},
 ) {
+  _fixture.assertActive();
   if (!_fixture.host) {
     _fixture.host = document.createElement("div");
     Object.assign(_fixture.host.style, { width: "720px", height: "600px" });
     document.body.append(_fixture.host);
+    _fixture.stack.defer(() => _fixture.host?.remove());
     // No routed controls are exercised in this measured viewport fixture.
-    _fixture.root0 = _fixture.stack.use(
-      await _fixtureRender(null, { container: _fixture.host, router: false }),
-    );
-    if (!vi.isFakeTimers()) _fixture.cleanup.use(fakeTimers());
+    const mounted = _fixtureRender(null, { container: _fixture.host, router: false });
+    _fixture.pending = mounted;
+    _fixture.root0 = _fixture.stack.use(await mounted);
+    _fixture.assertActive();
   }
-  await _fixtureAct(
-    async () =>
-      await _fixture.root0!.rerender(
-        <MessagesTimeline
-          emptyPlaceholderInset={0}
-          {..._fixture.base}
-          routeThreadKey={key}
-          timelineEntries={entries}
-          {...extra}
-        />,
-      ),
+  // Screen.rerender already owns act(); do not leave a second scope pending.
+  _fixture.pending = _fixture.root0!.rerender(
+    <MessagesTimeline
+      emptyPlaceholderInset={0}
+      {..._fixture.base}
+      routeThreadKey={key}
+      timelineEntries={entries}
+      {...extra}
+    />,
   );
+  await _fixture.pending;
+  _fixture.assertActive();
 }
 // The answer reveal reads `motionClock`; every frame here advances it by 16ms.
-const realNow = motionClock.now;
-
 async function _setupFixture0(_fixture: _Fixture) {
-  motionClock.now = () => vi.getMockedSystemTime()?.getTime() ?? 0;
-}
-async function _cleanupFixture1(_fixture: _Fixture) {
-  await _fixture.root0?.unmount();
-  _fixture.host?.remove();
-  _fixture.root0 = undefined;
-  _fixture.host = undefined;
-  motionClock.now = realNow;
+  // Keep the clock installed until the screen and its scheduled effects unmount.
+  _fixture.stack.use(fakeTimers());
+  const previousNow = motionClock.now;
+  _fixture.stack.defer(() => {
+    motionClock.now = previousNow;
+  });
+  motionClock.now = () => vi.getMockedSystemTime()!.getTime();
 }
 /** Plays `ms` of motion, a 16ms frame at a time. */
-async function play(ms: number) {
-  await advanceClock(ms);
+async function play(_fixture: _Fixture, ms: number) {
+  for (let elapsed = 0; elapsed < ms; elapsed += 16) {
+    await advanceClock(_fixture, Math.min(16, ms - elapsed));
+  }
 }
 /** Drives only the controlled motion clock until the observed milestone. */
-async function playUntil(done: () => boolean, ms = 6000) {
-  const motionDeadline = motionClock.now() + ms;
-  await vi.waitFor(
-    async () => {
-      if (!done() && motionClock.now() < motionDeadline) {
-        await _fixtureAct(() => vi.advanceTimersByTimeAsync(16));
-      }
-      expect(done()).toBe(true);
+async function playUntil(_fixture: _Fixture, done: () => boolean, ms = 6000) {
+  // A frame budget remains bounded even if an aborted test restores the clock.
+  for (let elapsed = 0; !done() && elapsed < ms; elapsed += 16) {
+    await advanceClock(_fixture, Math.min(16, ms - elapsed));
+  }
+  _fixture.assertActive();
+  expect(done()).toBe(true);
+}
+
+function observeAnswerReady(host: HTMLElement, paragraphs: number) {
+  let ready = false;
+  const resize = new ResizeObserver(check);
+  const mutations = new MutationObserver(check);
+  let observed: HTMLElement | null = null;
+  function check() {
+    const text = host.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');
+    if (text && text !== observed) {
+      observed = text;
+      resize.observe(text);
+    }
+    if (
+      text?.querySelectorAll("p").length === paragraphs &&
+      text.getBoundingClientRect().height > 0 &&
+      text.classList.contains("streamed-reveal")
+    )
+      ready = true;
+  }
+  mutations.observe(host, { subtree: true, childList: true, attributes: true });
+  check();
+  return {
+    get ready() {
+      return ready;
     },
-    { interval: 0 },
-  );
+    [Symbol.dispose]() {
+      mutations.disconnect();
+      resize.disconnect();
+    },
+  };
 }
 
 const animationsOf = (element: Element | null | undefined) =>
@@ -121,7 +152,6 @@ const working = { isWorking: true, activeTurnInProgress: true, runningRunId: Run
 
 it("marks the working header with its dot while the turn works, the sweep staying on Thinking", async () => {
   await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
   const prompt = entry(1, "First question");
@@ -144,7 +174,6 @@ it("marks the working header with its dot while the turn works, the sweep stayin
 
 it("plays the entrance for a first prompt being placed, and for no other prompt", async () => {
   await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
   const first = entry(1, "First question");
@@ -160,7 +189,7 @@ it("plays the entrance for a first prompt being placed, and for no other prompt"
   expect(animationsOf(bubble(first.message.id))).toHaveLength(1);
   // Its row remounts while it is still being placed: no replay.
   await render(_fixture, "motion:elsewhere", [entry(60, "Elsewhere")]);
-  await advanceClock(64);
+  await advanceClock(_fixture, 64);
   await render(_fixture, "motion:first", [first], {
     anchorMessageId: first.message.id,
     timelinePositioningPending: true,
@@ -179,7 +208,6 @@ it("plays the entrance for a first prompt being placed, and for no other prompt"
 
 it("reveals a streaming answer line by line after a short wait, once, and nothing else", async () => {
   await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
   const prompt = entry(1, "Question");
@@ -193,23 +221,23 @@ it("reveals a streaming answer line by line after a short wait, once, and nothin
     [prompt, answer("First paragraph.\n\nSecond paragraph.", true)],
     working,
   );
-  await playUntil(() => text()?.classList.contains("streamed-reveal") === true);
+  await playUntil(_fixture, () => text()?.classList.contains("streamed-reveal") === true);
   // The first lines wait a moment, so the next paragraphs are in hand.
-  await play(800);
+  await play(_fixture, 800);
   expect(front()).toBe(0);
   // Then the lines appear at a steady pace.
-  await playUntil(() => front() > 10, 1000);
+  await playUntil(_fixture, () => front() > 10, 1000);
   const reached = front();
   // Remounted mid-reveal (a thread switch and back): it continues, no replay.
   await render(_fixture, "motion:elsewhere-stream", [entry(70, "Elsewhere")]);
-  await play(64);
+  await play(_fixture, 64);
   await render(
     _fixture,
     "motion:stream",
     [prompt, answer("First paragraph.\n\nSecond paragraph.", true)],
     working,
   );
-  await playUntil(() => text()?.classList.contains("streamed-reveal") === true);
+  await playUntil(_fixture, () => text()?.classList.contains("streamed-reveal") === true);
   expect(front()).toBeGreaterThanOrEqual(reached);
   // Once the answer is done, the reveal finishes and the mask goes.
   await render(
@@ -221,19 +249,18 @@ it("reveals a streaming answer line by line after a short wait, once, and nothin
       activeTurnInProgress: false,
     },
   );
-  await playUntil(() => text()?.classList.contains("streamed-reveal") === false);
+  await playUntil(_fixture, () => text()?.classList.contains("streamed-reveal") === false);
   // A finished answer that was never revealed here simply shows.
   await render(_fixture, "motion:finished", [prompt, answer("Already done.", false)], {
     isWorking: false,
     activeTurnInProgress: false,
   });
-  await play(64);
+  await play(_fixture, 64);
   expect(text()?.classList.contains("streamed-reveal")).toBe(false);
 });
 
 it("shows what arrived at once when the reader presses Stop, instead of typing it out", async () => {
   await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
   const prompt = entry(1, "Question");
@@ -243,25 +270,26 @@ it("shows what arrived at once when the reader presses Stop, instead of typing i
     _fixture.host!.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');
   const front = () => Number.parseFloat(text()?.style.getPropertyValue("--reveal-front") || "0");
   await render(_fixture, "motion:stop", [prompt, answer(true)], working);
-  await playUntil(() => text()?.classList.contains("streamed-reveal") === true);
-  await playUntil(() => front() > 10, 2000);
+  const readiness = _fixture.stack.use(observeAnswerReady(_fixture.host!, long.length));
+  // Readiness needs LegendList/markdown work on the same frames as the reveal.
+  await playUntil(_fixture, () => readiness.ready);
+  await playUntil(_fixture, () => front() > 10, 2000);
   // Well short of the whole answer, then Stop: everything shows on the next frame.
   expect(front()).toBeLessThan(text()!.scrollHeight / 2);
   showStreamedAnswersNow();
-  await play(64);
+  await play(_fixture, 64);
   expect(front()).toBeGreaterThanOrEqual(text()!.scrollHeight);
   // The cut-off answer settles with nothing left to play out.
   await render(_fixture, "motion:stop", [prompt, answer(false)], {
     isWorking: false,
     activeTurnInProgress: false,
   });
-  await play(64);
+  await play(_fixture, 64);
   expect(text()?.classList.contains("streamed-reveal")).toBe(false);
 });
 
 it("shows a stopped answer in full when its row comes back, after leaving mid-reveal", async () => {
   await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
   const prompt = entry(1, "Question");
@@ -271,38 +299,39 @@ it("shows a stopped answer in full when its row comes back, after leaving mid-re
     _fixture.host!.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');
   const front = () => Number.parseFloat(text()?.style.getPropertyValue("--reveal-front") || "0");
   await render(_fixture, "motion:stop-away", [prompt, answer(true)], working);
-  await playUntil(() => front() > 10, 2000);
+  const readiness = _fixture.stack.use(observeAnswerReady(_fixture.host!, long.length));
+  await playUntil(_fixture, () => readiness.ready);
+  await playUntil(_fixture, () => front() > 10, 2000);
   // The row unmounts mid-reveal (another thread), then the reader presses Stop.
   await render(_fixture, "motion:stop-away-elsewhere", [entry(72, "Elsewhere")]);
-  await play(32);
+  await play(_fixture, 32);
+  expect(streamingTextAppearing("message-45")).toBe(false);
   showStreamedAnswersNow();
   // Back to the stopped answer: everything shows, nothing left to type out.
   await render(_fixture, "motion:stop-away", [prompt, answer(false)], {
     isWorking: false,
     activeTurnInProgress: false,
   });
-  await play(64);
+  await play(_fixture, 64);
   expect(text()?.classList.contains("streamed-reveal")).toBe(false);
 });
 
 it("drops an answer's appearing state when its row unmounts mid-reveal", async () => {
   await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
   const prompt = entry(1, "Question");
   const answer = reply(43, "First paragraph.\n\nSecond paragraph.", true);
   await render(_fixture, "motion:appearing", [prompt, answer], working);
-  await playUntil(() => streamingTextAppearing(answer.message.id));
+  await playUntil(_fixture, () => streamingTextAppearing(answer.message.id));
   // Another thread: the row unmounts while its lines are still appearing.
   await render(_fixture, "motion:appearing-elsewhere", [entry(71, "Elsewhere")]);
-  await play(32);
+  await play(_fixture, 32);
   expect(streamingTextAppearing(answer.message.id)).toBe(false);
 });
 
 it("closes a finished turn's working header gradually, so the answer slides up", async () => {
   await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
   const prompt = entry(1, "Question");
@@ -322,7 +351,7 @@ it("closes a finished turn's working header gradually, so the answer slides up",
   await vi.waitFor(() => {
     expect(header()).not.toBeNull();
   });
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   const before = answerTop();
   await render(_fixture, "motion:exit", [prompt, answer(false)], {
     isWorking: false,
@@ -332,7 +361,7 @@ it("closes a finished turn's working header gradually, so the answer slides up",
   const animation = exit()!;
   animation.pause();
   animation.currentTime = 160;
-  await advanceClock(64);
+  await advanceClock(_fixture, 64);
   expect(header()).not.toBeNull();
   const midway = answerTop();
   expect(midway).toBeLessThan(before - 2);
@@ -341,7 +370,7 @@ it("closes a finished turn's working header gradually, so the answer slides up",
   await vi.waitFor(() => {
     expect(header()).toBeNull();
   });
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   const after = answerTop();
   expect(midway).toBeGreaterThan(after + 2);
   expect(before - after).toBeGreaterThan(20);
@@ -349,7 +378,6 @@ it("closes a finished turn's working header gradually, so the answer slides up",
 
 it("cancels a header's exit when the next run's header takes its place", async () => {
   await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
   const prompt = entry(1, "Question");
@@ -360,7 +388,7 @@ it("cancels a header's exit when the next run's header takes its place", async (
   await vi.waitFor(() => {
     expect(header()).not.toBeNull();
   });
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   const height = root()!.getBoundingClientRect().height;
   await render(_fixture, "motion:exit-reuse", [prompt, reply(2, "The answer.", false)], {
     isWorking: false,
@@ -377,7 +405,7 @@ it("cancels a header's exit when the next run's header takes its place", async (
     [prompt, reply(2, "The answer.", false), next],
     working,
   );
-  await advanceClock(64);
+  await advanceClock(_fixture, 64);
   expect(animation.playState).toBe("idle");
   expect(
     root()!
@@ -390,7 +418,6 @@ it("cancels a header's exit when the next run's header takes its place", async (
 
 it("hides Thinking while the answer's lines appear, and brings it back when the agent moves on", async () => {
   await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
   const prompt = entry(1, "Question");
@@ -401,12 +428,12 @@ it("hides Thinking while the answer's lines appear, and brings it back when the 
       '[data-timeline-row-kind="thinking"] > div > div',
     ) as HTMLElement | null;
   await render(_fixture, "motion:thinking", [prompt, answer], working);
-  await playUntil(() => thinking() !== null);
+  await playUntil(_fixture, () => thinking() !== null);
   // During the short wait before any line shows, Thinking still shows the work.
-  await play(480);
+  await play(_fixture, 480);
   expect(thinking()!.classList.contains("opacity-0")).toBe(false);
   // Once the lines appear, it steps aside.
-  await playUntil(() => thinking()?.classList.contains("opacity-0") === true, 1000);
+  await playUntil(_fixture, () => thinking()?.classList.contains("opacity-0") === true, 1000);
   // The agent goes back to work after the text (a tool step): its live activity
   // shows again (here the running tool takes the activity row's place).
   const tool = {
@@ -424,7 +451,7 @@ it("hides Thinking while the answer's lines appear, and brings it back when the 
     },
   };
   await render(_fixture, "motion:thinking", [prompt, answer, tool], working);
-  await playUntil(() => {
+  await playUntil(_fixture, () => {
     const live = _fixture.host!.querySelector('[data-timeline-row-kind="work-live"]');
     const visibleThinking = thinking() && !thinking()!.classList.contains("opacity-0");
     return Boolean(live) || Boolean(visibleThinking);
@@ -433,7 +460,6 @@ it("hides Thinking while the answer's lines appear, and brings it back when the 
 
 it("keeps a hidden Thinking disclosure out of focus, then restores its group interaction", async () => {
   await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
   const prompt = entry(1, "Question");
@@ -456,8 +482,8 @@ it("keeps a hidden Thinking disclosure out of focus, then restores its group int
   const disclosure = () =>
     _fixture.host!.querySelector<HTMLButtonElement>('[data-timeline-row-kind="thinking"] button');
   await render(_fixture, "motion:thinking-disclosure", [prompt, answer(true), failedTool], working);
-  await playUntil(() => disclosure() !== null);
-  await playUntil(() => streamingTextAppearing("message-42"));
+  await playUntil(_fixture, () => disclosure() !== null);
+  await playUntil(_fixture, () => streamingTextAppearing("message-42"));
   disclosure()!.focus();
   // Chromium refuses focus on the invisible native disclosure; it cannot steal
   // keyboard interaction while the answer is appearing above it.
@@ -469,7 +495,7 @@ it("keeps a hidden Thinking disclosure out of focus, then restores its group int
     [prompt, answer(false), failedTool],
     working,
   );
-  await playUntil(() => !streamingTextAppearing("message-42"));
+  await playUntil(_fixture, () => !streamingTextAppearing("message-42"));
   disclosure()!.focus();
   expect(document.activeElement).toBe(disclosure());
   await userEvent.keyboard("{Enter}");
@@ -484,7 +510,6 @@ it("keeps a hidden Thinking disclosure out of focus, then restores its group int
 
 it("crosses the blank space between paragraphs without pausing", async () => {
   await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
   const prompt = entry(1, "Question");
@@ -493,16 +518,16 @@ it("crosses the blank space between paragraphs without pausing", async () => {
   await render(_fixture, "motion:gaps", [prompt, answer], working);
   const root = () =>
     _fixture.host!.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');
-  await playUntil(() => root()?.classList.contains("streamed-reveal") === true);
+  await playUntil(_fixture, () => root()?.classList.contains("streamed-reveal") === true);
   const paragraphs = Array.from(root()!.querySelectorAll("p"));
   const top = root()!.getBoundingClientRect().top;
   const gapStart = paragraphs[0]!.getBoundingClientRect().bottom - top;
   const gapEnd = paragraphs[1]!.getBoundingClientRect().top - top;
   const lineHeight = Number.parseFloat(getComputedStyle(root()!).lineHeight);
   const front = () => Number.parseFloat(root()!.style.getPropertyValue("--reveal-front") || "0");
-  await playUntil(() => front() >= gapStart);
+  await playUntil(_fixture, () => front() >= gapStart);
   const entered = motionClock.now();
-  await playUntil(() => front() >= gapEnd);
+  await playUntil(_fixture, () => front() >= gapEnd);
   // In motion time: at the line pace the gap would take (gap / 4 lines a
   // second); it takes far less.
   const crossed = motionClock.now() - entered;
@@ -512,7 +537,7 @@ it("crosses the blank space between paragraphs without pausing", async () => {
 
 function _createFixture() {
   const stack = new AsyncDisposableStack();
-  const cleanup = new AsyncDisposableStack();
+  let disposal: Promise<void> | undefined;
   const listRef = createRef<LegendListRef>();
   const base = {
     listRef,
@@ -544,20 +569,30 @@ function _createFixture() {
     onIsAtEndChange: vi.fn(),
     onManualNavigation: () => {},
   };
-  return {
+  const fixture = {
     listRef,
     base,
     host: undefined! as HTMLDivElement | undefined,
     stack,
-    cleanup,
     root0: undefined! as Screen | undefined,
-    async [Symbol.asyncDispose]() {
-      try {
-        await cleanup.disposeAsync();
-      } finally {
-        await stack.disposeAsync();
-      }
+    pending: Promise.resolve() as Promise<unknown>,
+    assertActive() {
+      if (disposal) throw new Error("Timeline motion fixture is disposed");
+    },
+    [Symbol.asyncDispose](): Promise<void> {
+      disposal ??= (async () => {
+        try {
+          // A timed-out test may still be finishing its last act() scope.
+          await fixture.pending;
+        } finally {
+          await stack.disposeAsync();
+        }
+      })();
+      return disposal;
     },
   };
+  // Vitest aborts do not unwind an `await using` suspended in an await.
+  onTestFinished(() => fixture[Symbol.asyncDispose]());
+  return fixture;
 }
 type _Fixture = ReturnType<typeof _createFixture>;

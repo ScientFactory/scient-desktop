@@ -1,10 +1,11 @@
 import { act, fakeTimers, render as _fixtureRender, type Screen } from "../../../test/render";
+import { waitForTestReceipt } from "../../../test/receipt";
 import { useState, type ReactNode } from "react";
 
 import type { Editor } from "@tiptap/core";
 import { undoDepth } from "@tiptap/pm/history";
 import { TextSelection } from "@tiptap/pm/state";
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, vi, type TestContext } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
@@ -17,7 +18,7 @@ import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { latexPagedKey, pagedPositionAtPoint, pagedLayoutSettled } from "./latexPagedGeometry";
 import { measureNatural, naturalTextLines } from "./latexNaturalMeasurement";
 import { clearVisualDraft } from "./visualDrafts";
-import { mathReadingPreviewReady } from "./mathReadingPreview";
+import { waitForLatexVisualTestReadiness } from "./latexVisualTestReadiness";
 import template15 from "./fixtures/paging-long-table.tex?raw";
 import template26 from "./fixtures/paging-hebrew.tex?raw";
 import template28 from "./fixtures/paging-medical-article.tex?raw";
@@ -32,19 +33,9 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host?.remove();
   clearVisualDraft(key);
 }
-async function editAndLayout(editor: Editor, edit: () => void) {
-  let complete!: () => void;
-  const completed = new Promise<void>((resolve) => {
-    complete = resolve;
-  });
-  editor.view.dom.addEventListener("scient-latex-layout", complete, { once: true });
-  try {
-    await act(edit);
-    await completed;
-    await expect.poll(() => pagedLayoutSettled(editor.view), { timeout: 25000 }).toBe(true);
-  } finally {
-    editor.view.dom.removeEventListener("scient-latex-layout", complete);
-  }
+async function editAndLayout(editor: Editor, context: TestContext, edit: () => void) {
+  await act(edit);
+  await waitForLatexVisualTestReadiness(editor.view.dom.parentElement!, context, "edit layout");
 }
 async function mount(_fixture: _Fixture, source: string, name: string) {
   await page.viewport(1250, 950);
@@ -81,40 +72,17 @@ async function mount(_fixture: _Fixture, source: string, name: string) {
     );
   }
   await _fixture.root0.rerender(<Harness />);
-  const editor = () =>
-    (
-      _fixture.host.querySelector(".scient-latex-visual-document") as
-        | (HTMLElement & { editor?: Editor })
-        | null
-    )?.editor;
-  await expect
-    .poll(
-      () => ({
-        editor: !!editor(),
-        loading: editor()?.view.dom.hasAttribute("data-latex-loading"),
-        plan: !!editor() && !!latexPagedKey.getState(editor()!.state)?.plan,
-      }),
-      { timeout: 25000 },
-    )
-    .toMatchObject({ editor: true, loading: false, plan: true });
-  await document.fonts.ready;
-  await expect
-    .poll(
-      () =>
-        [..._fixture.host.querySelectorAll(".scient-latex-math-preview")].every(
-          mathReadingPreviewReady,
-        ),
-      { timeout: 25000 },
-    )
-    .toBe(true);
-  await expect.poll(() => pagedLayoutSettled(editor()!.view), { timeout: 25000 }).toBe(true);
-  return editor()!;
+  return await waitForLatexVisualTestReadiness(
+    _fixture.host,
+    _fixture.context,
+    `pagination ${name}`,
+  );
 }
 
-it.each(["detached", "hidden", "briefly hidden"] as const)(
+it.for(["detached", "hidden", "briefly hidden"] as const)(
   "retires a measurement continuation when its paper becomes %s and resumes when visible",
-  async (unavailable) => {
-    await using _fixture = _createFixture();
+  async (unavailable, context) => {
+    await using _fixture = _createFixture(context);
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
     const editor = await mount(
       _fixture,
@@ -148,7 +116,7 @@ Third paragraph must return with the same source after showing the paper.
     });
     sizeObserver.observe(view.dom);
     using _sizeObserver = { [Symbol.dispose]: () => sizeObserver.disconnect() };
-    await visibleSize.promise;
+    await waitForTestReceipt(context.signal, visibleSize.promise);
     await vi.waitFor(() => expect(pagedLayoutSettled(view)).toBe(true));
     const previous = latexPagedKey.getState(editor.state)!;
     {
@@ -203,7 +171,7 @@ Third paragraph must return with the same source after showing the paper.
       expect(continuations.size).toBe(0);
     }
     if (unavailable !== "briefly hidden") {
-      await hiddenSize.promise;
+      await waitForTestReceipt(context.signal, hiddenSize.promise);
       restore();
     }
     await vi.waitFor(() => {
@@ -220,14 +188,14 @@ Third paragraph must return with the same source after showing the paper.
   },
 );
 
-it.each([
+it.for([
   ["15", template15, 2],
   ["26", template26, 4],
   ["28", template28, 3],
 ] as const)(
   "template %s has the compiled PDF's page count and opens without source or undo changes",
-  async (name, source, pages) => {
-    await using _fixture = _createFixture();
+  async ([name, source, pages], context) => {
+    await using _fixture = _createFixture(context);
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
     const editor = await mount(_fixture, source, name);
@@ -235,9 +203,7 @@ it.each([
     // sets its Hebrew in Arial, which macOS and Windows ship and Linux runners
     // do not; there a substitute with other metrics gives a different count.
     if (name !== "26" || !/Linux/u.test(navigator.userAgent))
-      await expect
-        .poll(() => latexPagedKey.getState(editor.state)?.plan?.pages, { timeout: 15000 })
-        .toBe(pages);
+      expect(latexPagedKey.getState(editor.state)?.plan?.pages).toBe(pages);
     expect(published).toBe(source);
     expect(undoDepth(editor.state)).toBe(0);
     expect(_fixture.host.querySelectorAll(".scient-latex-page-sheet")).toHaveLength(
@@ -281,8 +247,8 @@ it.each([
   },
 );
 
-it("template 15 repeats furniture at the next printable origin and preserves every editable row", async () => {
-  await using _fixture = _createFixture();
+it("template 15 repeats furniture at the next printable origin and preserves every editable row", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const editor = await mount(_fixture, template15, "longtable");
@@ -306,8 +272,8 @@ it("template 15 repeats furniture at the next printable origin and preserves eve
   ).toBeLessThan(2);
   expect(published).toBe(template15);
 });
-it("mirrors body margins on facing pages while retaining authored paragraph positions", async () => {
-  await using _fixture = _createFixture();
+it("mirrors body margins on facing pages while retaining authored paragraph positions", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const source = String.raw`\documentclass[twoside,a5paper]{article}
@@ -327,8 +293,8 @@ Second page text.
   expect(published).toBe(source);
 });
 
-it("a paragraph can cross both columns and pages while every visible text fragment maps to its original position", async () => {
-  await using _fixture = _createFixture();
+it("a paragraph can cross both columns and pages while every visible text fragment maps to its original position", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const source = String.raw`\documentclass[twocolumn,a5paper]{article}
@@ -367,8 +333,8 @@ ${Array.from({ length: 400 }, (_, index) => `word${index}`).join(" ")}
   await expect.poll(() => published).toBe(source);
 });
 
-it("template 28 keeps its title full width, restores two columns and renders running furniture as text", async () => {
-  await using _fixture = _createFixture();
+it("template 28 keeps its title full width, restores two columns and renders running furniture as text", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const editor = await mount(_fixture, template28, "article");
@@ -412,8 +378,8 @@ it("template 28 keeps its title full width, restores two columns and renders run
   );
 });
 
-it("detached measurements preserve mixed-script paragraph line heights", async () => {
-  await using _fixture = _createFixture();
+it("detached measurements preserve mixed-script paragraph line heights", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const editor = await mount(_fixture, template26, "natural-parity");
@@ -439,8 +405,8 @@ it("detached measurements preserve mixed-script paragraph line heights", async (
   expect(checked).toBeGreaterThan(0);
 });
 
-it("keeps paragraphs in source order around a note moved to the foot of the page", async () => {
-  await using _fixture = _createFixture();
+it("keeps paragraphs in source order around a note moved to the foot of the page", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const editor = await mount(
@@ -489,14 +455,14 @@ The second page starts here.
   editor.state.doc.forEach((node, offset) => {
     if (node.textContent.startsWith("Alpha")) end = offset + node.nodeSize - 1;
   });
-  await editAndLayout(editor, () =>
+  await editAndLayout(editor, context, () =>
     editor.view.dispatch(editor.state.tr.insertText(" More words in the first paragraph.", end)),
   );
   inOrder();
 });
 
-it("breaks a word across lines or columns only once, at a hyphen", async () => {
-  await using _fixture = _createFixture();
+it("breaks a word across lines or columns only once, at a hyphen", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const editor = await mount(_fixture, twoColumnArticle, "column-words");
@@ -506,7 +472,7 @@ it("breaks a word across lines or columns only once, at a hyphen", async () => {
   for (let step = 0; step < 16 && !cut; step++) {
     expectWholeWords(editor);
     cut = cutsInsideWord(editor);
-    if (!cut) await insertAtArticleStart(editor, "word ");
+    if (!cut) await insertAtArticleStart(editor, context, "word ");
   }
   expect(cut).toBe(true);
   expectWholeWords(editor);
@@ -574,7 +540,7 @@ function expectWholeWords(editor: Editor) {
 }
 
 /** Inserts at the start of the article's first paragraph, the same one each time. */
-async function insertAtArticleStart(editor: Editor, text: string) {
+async function insertAtArticleStart(editor: Editor, context: TestContext, text: string) {
   let at = -1;
   editor.state.doc.descendants((node, position) => {
     if (at < 0 && node.type.name === "paragraph" && node.textContent.includes("Alpha begins"))
@@ -582,11 +548,13 @@ async function insertAtArticleStart(editor: Editor, text: string) {
     return at < 0;
   });
   expect(at).toBeGreaterThan(0);
-  await editAndLayout(editor, () => editor.view.dispatch(editor.state.tr.insertText(text, at)));
+  await editAndLayout(editor, context, () =>
+    editor.view.dispatch(editor.state.tr.insertText(text, at)),
+  );
 }
 
-it("finds the first letter of a line that follows a hyphenation break", async () => {
-  await using _fixture = _createFixture();
+it("finds the first letter of a line that follows a hyphenation break", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const block = document.createElement("div");
@@ -595,7 +563,7 @@ it("finds the first letter of a line that follows a hyphenation break", async ()
   block.textContent = "Make differences from the compiled output easy to understand differences.";
   document.body.append(block);
   try {
-    await document.fonts.ready;
+    await waitForTestReceipt(context.signal, document.fonts.ready);
     const text = block.firstChild as Text;
     const range = document.createRange();
     const top = (offset: number) => {
@@ -617,8 +585,8 @@ it("finds the first letter of a line that follows a hyphenation break", async ()
   }
 });
 
-it("sets a two-column article's title across both columns, above the body", async () => {
-  await using _fixture = _createFixture();
+it("sets a two-column article's title across both columns, above the body", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const editor = await mount(_fixture, twoColumnArticle, "column-title");
@@ -644,8 +612,8 @@ it("sets a two-column article's title across both columns, above the body", asyn
   expect(published).toBe(twoColumnArticle);
 });
 
-it("draws no hyphen at line ends that stay in their column", async () => {
-  await using _fixture = _createFixture();
+it("draws no hyphen at line ends that stay in their column", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const han = "中文段落的每一行都在字与字之间换行".repeat(12);
@@ -667,18 +635,18 @@ ${words}
   expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen")).toHaveLength(0);
 });
 
-it("lays out an edit next to a drawn hyphen as a fresh opening of the result does", async () => {
-  await using _fixture = _createFixture();
+it("lays out an edit next to a drawn hyphen as a fresh opening of the result does", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   let editor = await mount(_fixture, twoColumnArticle, "hyphen-edit");
   for (let step = 0; step < 16 && !cutsInsideWord(editor); step++)
-    await insertAtArticleStart(editor, "word ");
+    await insertAtArticleStart(editor, context, "word ");
   const hyphen = editor.view.dom.querySelector(".scient-paged-hyphen");
   expect(hyphen).toBeTruthy();
   const at = editor.view.posAtDOM(hyphen!, 0);
   const paragraph = editor.state.doc.resolve(at).start();
-  await editAndLayout(editor, () =>
+  await editAndLayout(editor, context, () =>
     editor.view.dispatch(editor.state.tr.insertText("Inserted words shift the wrap. ", paragraph)),
   );
   await expect.poll(() => published).toContain("Inserted words shift the wrap.");
@@ -699,17 +667,17 @@ it("lays out an edit next to a drawn hyphen as a fresh opening of the result doe
   expect(hyphens(editor)).toEqual(edited.hyphens);
 });
 
-it("drops a drawn hyphen when the letter before it becomes a hyphen, as a fresh opening does", async () => {
-  await using _fixture = _createFixture();
+it("drops a drawn hyphen when the letter before it becomes a hyphen, as a fresh opening does", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   let editor = await mount(_fixture, twoColumnArticle, "hyphen-replaced");
   for (let step = 0; step < 16 && !cutsInsideWord(editor); step++)
-    await insertAtArticleStart(editor, "word ");
+    await insertAtArticleStart(editor, context, "word ");
   const hyphen = editor.view.dom.querySelector(".scient-paged-hyphen");
   expect(hyphen).toBeTruthy();
   const at = editor.view.posAtDOM(hyphen!, 0);
-  await editAndLayout(editor, () =>
+  await editAndLayout(editor, context, () =>
     editor.view.dispatch(editor.state.tr.insertText("-", at, at + 1)),
   );
   await expect.poll(() => published).toContain("-");
@@ -725,8 +693,8 @@ it("drops a drawn hyphen when the letter before it becomes a hyphen, as a fresh 
   expect(hyphens(editor)).toEqual(edited);
 });
 
-it("draws no hyphen where Han text continues in the next column", async () => {
-  await using _fixture = _createFixture();
+it("draws no hyphen where Han text continues in the next column", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const han =
@@ -746,10 +714,11 @@ ${han.repeat(240)}
   expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen")).toHaveLength(0);
 });
 
-function _createFixture() {
+function _createFixture(context: TestContext) {
   const stack = new AsyncDisposableStack();
   const cleanup = new AsyncDisposableStack();
   return {
+    context,
     host: undefined! as HTMLElement,
     stack,
     cleanup,
