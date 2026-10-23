@@ -199,7 +199,8 @@ while a checked page drags the checked group. Drop targets use those IDs without
 changing checkbox selection. Group drags use a canvas-backed stacked preview
 with a page-count badge.
 The context menu's Move… command captures explicit page IDs and opens a shared
-dialog with one Before page field. It converts the current page number to an
+popover anchored to the thumbnail, using the insertion form's spacing and controls,
+with one Before page field. It converts the current page number to an
 insertion boundary; page count + 1 means the end. It uses the same save and undo
 path as dragging. Gap menus only insert blank or imported pages.
 Checkboxes, the Rotate/Move/Duplicate/Delete context menu, page dragging and

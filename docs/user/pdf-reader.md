@@ -71,7 +71,8 @@ is in the sidebar.
 Right-click opens the menu without changing the checked pages. Right-click a
 checked page to act on the checked group, or an unchecked page to target only
 that page. The menu offers Rotate (left/right 90°), Move…, Duplicate, and
-Delete, in that order. Move… opens one Before page number field. Enter a page
+Delete, in that order. Move… opens a compact popover beside the thumbnail with
+one Before page number field. Enter a page
 number from the current document; the number after the last page moves to the
 end. Move saves immediately and supports undo. Copies appear after the last
 checked page. At least one page must remain. Rotation changes the saved PDF; the old view-only Rotate

@@ -55,7 +55,11 @@ export function PdfThumbnail(props: {
   readonly dragScope: string;
   readonly dragPages: readonly string[];
   readonly onToggle: (page: number, shiftKey: boolean) => void;
-  readonly onContext: (page: number, position: { x: number; y: number }) => void;
+  readonly onContext: (
+    page: number,
+    position: { x: number; y: number },
+    anchor: HTMLElement,
+  ) => void;
   readonly onMove: (boundary: number, pages: readonly string[]) => void;
   readonly children?: React.ReactNode;
 }) {
@@ -130,7 +134,11 @@ export function PdfThumbnail(props: {
         event.currentTarget
           .querySelector<HTMLButtonElement>(".scient-reader-page-thumbnail")
           ?.focus({ preventScroll: true });
-        props.onContext(props.pageNumber, { x: event.clientX, y: event.clientY });
+        props.onContext(
+          props.pageNumber,
+          { x: event.clientX, y: event.clientY },
+          event.currentTarget,
+        );
       }}
       onKeyDown={(event) => {
         if (
@@ -139,7 +147,7 @@ export function PdfThumbnail(props: {
         ) {
           event.preventDefault();
           const r = event.currentTarget.getBoundingClientRect();
-          props.onContext(props.pageNumber, { x: r.left + 20, y: r.top + 20 });
+          props.onContext(props.pageNumber, { x: r.left + 20, y: r.top + 20 }, event.currentTarget);
         }
       }}
       onDragOver={(event) => {

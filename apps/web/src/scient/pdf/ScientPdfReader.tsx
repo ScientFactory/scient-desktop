@@ -49,7 +49,7 @@ import { PdfQuoteLayer } from "./anchors/PdfQuoteLayer";
 import { usePdfRevealClaim, usePdfRevealRequest } from "./anchors/pdfRevealRequests";
 import { pdfEditSession } from "./pdfEditSession";
 import { PdfPageInsertion } from "./PdfPageInsertion";
-import { PdfMovePagesDialog } from "./PdfMovePagesDialog";
+import { PdfMovePagesPopover } from "./PdfMovePagesPopover";
 import { savePdfEdits } from "./savePdfEdits";
 import { saveEditedPdfCopy } from "./saveEditedPdfCopy";
 import { rememberPdfEditedCopy, usePdfEditedCopy } from "./pdfEditedCopyStore";
@@ -374,6 +374,7 @@ function LoadedScientPdfReader(props: {
   const copiedNotice = useRef<string | null>(null);
   const [moveRequest, setMoveRequest] = useState<{
     sessionKey: string;
+    anchor: HTMLElement;
     pages: readonly string[];
     initialPage: number;
   } | null>(null);
@@ -411,7 +412,11 @@ function LoadedScientPdfReader(props: {
     editSession.prepareSelection(state.pageCount);
     editSession.toggle(page, shiftKey);
   };
-  const showPageContext = async (page: number, position: { x: number; y: number }) => {
+  const showPageContext = async (
+    page: number,
+    position: { x: number; y: number },
+    anchor: HTMLElement,
+  ) => {
     if (
       !canEditPages ||
       staleEditingCache ||
@@ -454,9 +459,10 @@ function LoadedScientPdfReader(props: {
     if (!action || contextRuntime !== reader.runtimeRef.current || !(await ensureEdits())) return;
     if (action === "left") await editSession.rotate(-90, target);
     else if (action === "right") await editSession.rotate(90, target);
-    else if (action === "move")
+    else if (action === "move" && anchor.isConnected)
       setMoveRequest({
         sessionKey: props.editSessionKey,
+        anchor,
         pages: [...(target ?? frame.selection)],
         initialPage: page,
       });
@@ -610,8 +616,9 @@ function LoadedScientPdfReader(props: {
       onKeyDown={onReaderKeyDown}
     >
       {moveRequest?.sessionKey === props.editSessionKey ? (
-        <PdfMovePagesDialog
+        <PdfMovePagesPopover
           session={editSession}
+          anchor={moveRequest.anchor}
           pages={moveRequest.pages}
           initialPage={moveRequest.initialPage}
           onClose={() => setMoveRequest(null)}
@@ -802,8 +809,8 @@ function LoadedScientPdfReader(props: {
                       onToggle={(page, shift) => {
                         void togglePage(page, shift);
                       }}
-                      onContext={(page, position) => {
-                        void showPageContext(page, position);
+                      onContext={(page, position, anchor) => {
+                        void showPageContext(page, position, anchor);
                       }}
                       onMove={(boundary, pages) => {
                         void ensureEdits().then((ready) => {
