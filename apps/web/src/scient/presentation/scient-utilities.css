@@ -38,3 +38,14 @@
   font-size: 1.4rem;
   line-height: 1.75rem;
 }
+
+/* A quiet toolbar icon: a lighter colour and a thinner line. Its button's hover
+   or open state brings it to full colour. */
+@utility scient-quiet-icon {
+  color: color-mix(in srgb, var(--sidebar-icon-color) 70%, var(--card-foreground));
+  stroke-width: 1.75;
+}
+
+:is(button, [role="button"]):is(:hover, [data-popup-open], [data-pressed]) > .scient-quiet-icon {
+  color: var(--foreground);
+}

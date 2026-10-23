@@ -1,4 +1,5 @@
-import { RefreshIcon } from "~/components/ui/refresh-icon";
+// SCIENT-FORK:START — refresh moved into the Files menu; its icon import went with it
+// SCIENT-FORK:END
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
@@ -9,15 +10,16 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import { ChevronsDownUp, ChevronsUpDown } from "lucide";
+// SCIENT-FORK:START — expand and collapse all moved into the Files menu
+// SCIENT-FORK:END
 import { useEffect, useRef, useState } from "react";
 
-import { Button } from "~/components/ui/button";
-
-import { MorphIcon } from "~/components/MorphIcon";
+// SCIENT-FORK:START — the Files bar's buttons and their icons come from Scient's toolbar
+// SCIENT-FORK:END
 import { cn } from "~/lib/utils";
 import { toastManager } from "~/components/ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+// SCIENT-FORK:START — the Files bar's buttons take their tooltips from Scient's toolbar
+// SCIENT-FORK:END
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -27,7 +29,6 @@ import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMen
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
-import { ScientMarkdownCreateButton } from "~/scient/markdownEditor/ui/ScientMarkdownCreateButton";
 // SCIENT-FORK:START
 import {
   FILE_SEARCH_LIMIT,
@@ -43,6 +44,16 @@ import {
   useScientLazyWorkspaceTreeLoading,
 } from "~/scient/files/useScientLazyWorkspaceTree";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — the Files bar's New and Connect menus
+import { useCreateNewDocument } from "~/scient/documents/useCreateNewDocument";
+import type { OpenFileOptions } from "~/rightPanelStore";
+import {
+  ConnectFolderButton,
+  NewDocumentButton,
+  type ScientToolbarSlot,
+} from "~/scient/files/FileBrowserToolbarActions";
+import { TooltipProvider } from "~/components/ui/tooltip";
+// SCIENT-FORK:END
 import { useProjectPathSearch } from "~/state/queries";
 import { pierreTreeStyle } from "~/pierre-tree-theme";
 
@@ -50,11 +61,9 @@ import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { resolveFileBrowserSearchValue } from "./fileBrowserSearch";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
-import {
-  refreshProjectEntriesQuery,
-  setProjectFileQueryData,
-  subscribeProjectFilesRefresh,
-} from "./projectFilesQueryState";
+// SCIENT-FORK:START — new documents are listed through useCreateNewDocument
+import { refreshProjectEntriesQuery, subscribeProjectFilesRefresh } from "./projectFilesQueryState";
+// SCIENT-FORK:END
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -63,7 +72,9 @@ interface FileBrowserPanelProps {
   selectedPath: string | null;
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
-  onOpenFileSource: (relativePath: string) => void;
+  // SCIENT-FORK:START — New opens a LaTeX document straight in Visual
+  onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
+  // SCIENT-FORK:END
   /**
    * Set when `cwd` is a host folder outside the workspace rather than the
    * workspace root. Entries then open and mention as host paths. A host folder can
@@ -72,29 +83,14 @@ interface FileBrowserPanelProps {
    */
   hostFolder?: boolean;
   onRefreshSelectedFile?: () => void;
+  // SCIENT-FORK:START — controls placed before the search field, such as a tab's Back
+  scientToolbarLeading?: ScientToolbarSlot;
+  // SCIENT-FORK:END
   workspaceMutationId: string | null;
 }
 
-function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Refresh workspace files"
-            onClick={props.onRefresh}
-          />
-        }
-      >
-        <RefreshIcon refreshing={props.isPending} />
-      </TooltipTrigger>
-      <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
-    </Tooltip>
-  );
-}
+// SCIENT-FORK:START — refresh moved into the Files menu (WorkspaceFilesMenu)
+// SCIENT-FORK:END
 
 function areSamePaths(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   return left.size === right.size && [...left].every((path) => right.has(path));
@@ -111,6 +107,9 @@ export default function FileBrowserPanel({
   onRefreshSelectedFile,
   workspaceMutationId,
   hostFolder = false,
+  // SCIENT-FORK:START
+  scientToolbarLeading,
+  // SCIENT-FORK:END
 }: FileBrowserPanelProps) {
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
@@ -139,6 +138,27 @@ export default function FileBrowserPanel({
   const fileContextMenu = useFileContextMenu(environmentId);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
+  // SCIENT-FORK:START — the folder New acts on: the last selected folder, or
+  // the folder of the last selected file.
+  const lastSelectionRef = useRef<string | null>(null);
+  const createNewDocument = useCreateNewDocument();
+  const selectionBase = () => {
+    const selection = lastSelectionRef.current ?? selectedPath;
+    if (!selection) return "";
+    if (entryKindsRef.current.get(selection) === "directory") return `${selection}/`;
+    const slash = selection.lastIndexOf("/");
+    return slash === -1 ? "" : selection.slice(0, slash + 1);
+  };
+  const startNewDocument = (format: "markdown" | "latex", base: string) =>
+    createNewDocument({
+      format,
+      environmentId,
+      cwd,
+      base,
+      open: (relativePath) =>
+        onOpenFileSource(relativePath, undefined, { latexPreviewMode: "visual" }),
+    });
+  // SCIENT-FORK:END
   const searchSelectionPathRef = useRef<string | null>(null);
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
 
@@ -162,6 +182,11 @@ export default function FileBrowserPanel({
         return;
       }
       const relativePath = item.path.replace(/\/$/, "");
+      // SCIENT-FORK:START
+      const isFolder =
+        !hostFolder &&
+        (item.path.endsWith("/") || entryKindsRef.current.get(relativePath) === "directory");
+      // SCIENT-FORK:END
       const mention = serializeComposerFileLink(panelPath(relativePath));
       const pointer = contextMenuPointerRef.current;
       const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
@@ -182,10 +207,34 @@ export default function FileBrowserPanel({
             // SCIENT-FORK:END
             { id: "copy-mention", label: "Copy mention" },
             { id: "add-to-chat", label: "Add to chat" },
+            // SCIENT-FORK:START — start a document in, or connect, this folder
+            ...(isFolder
+              ? ([
+                  {
+                    id: "new-document",
+                    label: "New document here",
+                    separatorBefore: true,
+                    children: [
+                      { id: "new-document:markdown", label: "Markdown" },
+                      { id: "new-document:latex", label: "LaTeX" },
+                    ],
+                  },
+                ] as const)
+              : []),
+            // SCIENT-FORK:END
           ],
           position,
         );
         if (clicked === null) return;
+        // SCIENT-FORK:START
+        if (clicked === "new-document:markdown" || clicked === "new-document:latex") {
+          startNewDocument(
+            clicked === "new-document:latex" ? "latex" : "markdown",
+            `${relativePath}/`,
+          );
+          return;
+        }
+        // SCIENT-FORK:END
         // "Open with" submenu selections report the child id ("editor:<id>"),
         // which is not present in the top-level item list.
         const isFileMenuAction =
@@ -272,6 +321,9 @@ export default function FileBrowserPanel({
         return;
       }
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
+      // SCIENT-FORK:START
+      if (selectedPath) lastSelectionRef.current = selectedPath;
+      // SCIENT-FORK:END
       if (selectedPath && entryKindsRef.current.get(selectedPath) !== "directory") {
         treeSelectionPathRef.current = selectedPath;
         onOpenFile(panelPath(selectedPath));
@@ -455,59 +507,40 @@ export default function FileBrowserPanel({
         className="@container/file-browser-header flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-2 in-data-[preview-panel-mode=inline]:h-8 in-data-[preview-panel-mode=inline]:min-h-8 in-data-[preview-panel-mode=inline]:border-b-transparent in-data-[preview-panel-mode=inline]:pt-1"
         data-surface-subheader
       >
-        <RefreshFilesButton
-          isPending={treeSnapshot.isPending || isSearchPending}
-          onRefresh={handleRefresh}
-        />
-        {/* SCIENT-FORK:START — host folders are read-only, so only the workspace creates documents */}
-        {hostFolder ? null : (
-          <ScientMarkdownCreateButton
-            environmentId={environmentId}
-            cwd={cwd}
-            selectedPath={selectedPath}
-            onCreated={(relativePath, contents, revision) => {
-              setProjectFileQueryData(environmentId, cwd, relativePath, contents, revision);
-              handleRefresh();
-              onOpenFile(relativePath);
-            }}
+        {/* SCIENT-FORK:START — search first; New acts on the selected folder, Connect lists
+            the services on the way; refresh and expand-all live in the Files menu. Host
+            folders are read-only.
+            Tooltips here open quickly, and at once while moving between buttons. */}
+        <TooltipProvider delay={100} closeDelay={0} timeout={400}>
+          {scientToolbarLeading}
+          <FileSearchField
+            name="project-files-search"
+            ariaLabel={`Search ${projectName} files`}
+            value={searchValue}
+            onValueChange={handleSearchValueChange}
+            onClose={handleSearchClose}
           />
-        )}
+          {hostFolder ? null : (
+            <>
+              <NewDocumentButton onChoose={(format) => startNewDocument(format, selectionBase())} />
+              <ConnectFolderButton />
+            </>
+          )}
+          <WorkspaceFilesMenu
+            view={directoryView}
+            onViewChange={changeDirectoryView}
+            refresh={{
+              pending: treeSnapshot.isPending || isSearchPending,
+              onRefresh: handleRefresh,
+            }}
+            folders={
+              loadedDirectoryPaths.length > 0 && !hostFolder
+                ? { allExpanded: allLoadedDirectoriesExpanded, onToggle: toggleLoadedDirectories }
+                : undefined
+            }
+          />
+        </TooltipProvider>
         {/* SCIENT-FORK:END */}
-        <FileSearchField
-          name="project-files-search"
-          ariaLabel={`Search ${projectName} files`}
-          value={searchValue}
-          onValueChange={handleSearchValueChange}
-          onClose={handleSearchClose}
-        />
-        <div className="ms-auto flex shrink-0 items-center gap-1">
-          {loadedDirectoryPaths.length > 0 && !hostFolder ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label={
-                      allLoadedDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
-                    }
-                    onClick={toggleLoadedDirectories}
-                  />
-                }
-              >
-                <MorphIcon
-                  className="size-3.5"
-                  icon={allLoadedDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
-                />
-              </TooltipTrigger>
-              <TooltipPopup>
-                {allLoadedDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          <WorkspaceFilesMenu view={directoryView} onViewChange={changeDirectoryView} />
-        </div>
       </div>
       {/* SCIENT-FORK:START — lazy tree load and search status around the tree */}
       <ScientFileTreeSurface

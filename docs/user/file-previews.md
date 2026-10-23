@@ -13,6 +13,15 @@ visible whether it is Git-tracked, ignored, or named with a leading dot.
 Low-level machinery such as version-control data, dependency stores, temporary
 caches, and private Scient runtime state stays out of the ordinary view.
 
+The bar above the tree searches file names and offers **New**, which creates a
+Markdown or LaTeX document in the selected folder (or the folder of the selected
+file). Right-click a folder for the same choice under **New document here**.
+**Connect** lists the services a folder will keep in sync with, such as Overleaf
+and Google Drive; they are coming soon.
+The **⋯** Files menu refreshes the tree, expands or collapses every loaded
+folder, and sets file visibility. The tree does not watch the disk, so use
+**Refresh files** after changing files outside Scient.
+
 The Files menu offers two visibility levels:
 
 - **Project files** is the default. It includes durable managed source files,
