@@ -400,6 +400,7 @@ describe("ProviderRuntimeManager", () => {
         SECOND_INSTANCE,
       ]);
       assert.deepEqual(yield* Ref.get(reloadedInstancesRef), [INSTANCE, SECOND_INSTANCE]);
+      yield* awaitState(lifecycleReleaseCountRef, (count) => count === 1);
       assert.equal(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
@@ -444,6 +445,7 @@ describe("ProviderRuntimeManager", () => {
         completed[0]?.connection?.runtime?.operation?.message,
         "The runtime change finished, but Scient could not verify the resulting provider state.",
       );
+      yield* awaitState(lifecycleReleaseCountRef, (count) => count === 1);
       assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );
@@ -1126,7 +1128,10 @@ describe("ProviderRuntimeManager", () => {
           ),
         run: () => Ref.update(runCount, (count) => count + 1),
       };
-      const { manager, providersRef, coordinator } = yield* makeHarness(actions, [systemProvider]);
+      const { manager, providersRef, coordinator, lifecycleReleaseCountRef } = yield* makeHarness(
+        actions,
+        [systemProvider],
+      );
 
       const caller = yield* manager
         .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
@@ -1140,6 +1145,7 @@ describe("ProviderRuntimeManager", () => {
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
       );
       assert.strictEqual(yield* Ref.get(runCount), 1);
+      yield* awaitState(lifecycleReleaseCountRef, (count) => count === 1);
       assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
     }),
   );
@@ -1344,6 +1350,7 @@ describe("ProviderRuntimeManager", () => {
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
       );
       assert.strictEqual(completed[0]?.connection?.runtime?.operation?.status, "succeeded");
+      yield* awaitState(lifecycleReleaseCountRef, (count) => count === 1);
       assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
     }),
   );

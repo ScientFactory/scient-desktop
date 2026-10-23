@@ -5365,7 +5365,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 completedAtMs: 1782622480000,
                 afterMs: 60_000,
               }),
-              childTurnCompleted(RESUME_CHILD_TURN_1),
+              childTurnCompleted(RESUME_CHILD_TURN_1, 1),
             ],
           }),
         );
@@ -5387,6 +5387,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* harness.until(
           () => harness.subagentUpdates().at(-1)?.subagent.result === "NATIVE_CHILD_16900_DONE",
         );
+        assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "running");
+        assert.lengthOf(harness.continuationRequests, 0);
+        const parentWake = yield* harness
+          .until(() =>
+            harness.continuationRequests.some((request) =>
+              request.detail?.includes("NATIVE_CHILD_16900_DONE"),
+            ),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust("1 millis");
+        yield* Fiber.join(parentWake);
         assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "completed");
         assert.lengthOf(harness.continuationRequests, 1);
         assert.include(harness.continuationRequests[0]?.detail, "NATIVE_CHILD_16900_DONE");
