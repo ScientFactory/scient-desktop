@@ -25,7 +25,7 @@ describe("Scient PDF reader source seam", () => {
     expect(sourceActions).not.toContain('document.createElement("a")');
     expect(readerSource).toContain("await observePdfCopy(");
     expect(readerSource).toContain("props.actions.saveCopy(");
-    expect(readerSource).toContain("disabled={savingCopy}");
+    expect(readerSource).toContain("disabled={savingCopy || edit.busy");
   });
 
   it("keeps the persisted viewport lifecycle wired to PDF.js view events", () => {
@@ -58,14 +58,13 @@ describe("Scient PDF reader source seam", () => {
     expect(bundleSource).toContain("bundle.resolved.url === presentation.sourceUrl");
   });
 
-  it("reconciles page and rotation geometry against the current pane width", () => {
+  it("keeps page scrolling zoom stable and reconciles rotation against the current pane width", () => {
     const source = NodeFS.readFileSync(new URL("./useScientPdfReader.ts", import.meta.url), "utf8");
 
     expect(source).toContain(
       `const onPageChanging = ({ pageNumber }: { pageNumber: number }) => {
           if (!displayed()) return;
           setState((previous) => ({ ...previous, page: pageNumber }));
-          runtime.refreshForContainerSize();
         };`,
     );
     expect(source).toContain(
@@ -173,7 +172,7 @@ describe("Scient PDF reader source seam", () => {
     expect(source).not.toContain("Actual size");
     expect(source).toContain("<ZoomIn /> Zoom in");
     expect(source).toContain("<Maximize2 /> Fit width");
-    expect(source).toContain("<RotateCw /> Rotate clockwise");
+    expect(source).not.toContain("Rotate clockwise");
     expect(controlsSource).toContain("<Search /> Search {props.label}");
   });
 });
