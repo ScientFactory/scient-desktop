@@ -1,9 +1,16 @@
-import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
+import {
+  render as _fixtureRender,
+  type Screen,
+  act,
+  fakeTimers,
+  stubGlobal,
+} from "../../../test/render";
 import { useLayoutEffect, useState, type ReactNode } from "react";
 
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
-import type { Editor } from "@tiptap/core";
+import { Editor } from "@tiptap/core";
+import StarterKit from "@tiptap/starter-kit";
 import type { MathfieldElement } from "mathlive";
 import { NodeSelection } from "@tiptap/pm/state";
 
@@ -28,6 +35,7 @@ import { isMacKeyboard } from "../keyboard/keys";
 import { clearVisualDraft } from "./visualDrafts";
 import { mathReadingPreviewReady } from "./mathReadingPreview";
 import { refreshMathReadingContext, type MathReadingNodeOptions } from "./mathReadingNodeView";
+import { LatexReadingAnchor } from "./latexReadingAnchor";
 import "./scient-latex.css";
 
 const draftKey = "synthetic-math-reading-node-qualification";
@@ -301,6 +309,41 @@ it("keeps no composing key typed while the equation editor was prepared", async 
   await vi.waitFor(async () => expect(field.hasFocus()).toBe(true));
   await advanceAdmissionClock();
   expect(field.getValue()).toBe("x+y");
+});
+
+it("retires fallback reading measurements through their original timer owner when idle APIs change", () => {
+  // This editor has no paged planner: its real blocks use the reading anchor's idle measurement.
+  using _clock = fakeTimers();
+  const requestIdle = window.requestIdleCallback;
+  using _withoutIdle = stubGlobal("requestIdleCallback", undefined);
+  using cleanup = new DisposableStack();
+  const host = document.createElement("div");
+  document.body.append(host);
+  cleanup.defer(() => host.remove());
+  const owner = new Editor({
+    element: host,
+    extensions: [StarterKit, LatexReadingAnchor],
+    content: "<p>Unchanged reading text.</p>",
+  });
+  cleanup.defer(() => {
+    if (!owner.isDestroyed) owner.destroy();
+  });
+  const block = owner.view.dom.firstElementChild!;
+  const original = block.outerHTML;
+  const changes = vi.fn();
+  owner.on("update", changes);
+
+  vi.advanceTimersToNextFrame();
+  expect(vi.getTimerCount()).toBeGreaterThan(0);
+  expect(block.hasAttribute("data-latex-measure")).toBe(false);
+
+  // Newly available idle APIs must not take ownership of an existing fallback timeout.
+  using _idleAvailable = stubGlobal("requestIdleCallback", requestIdle);
+  owner.destroy();
+  expect(owner.isDestroyed).toBe(true);
+  vi.runAllTimers();
+  expect(block.outerHTML).toBe(original);
+  expect(changes).not.toHaveBeenCalled();
 });
 
 it("closes the document while a formula is being edited without a late write", async () => {

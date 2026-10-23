@@ -382,6 +382,8 @@ patchedDependencies:
   # skip, the fingerprint silently drops every Expo native module and OTAs reach stale binaries.
   "@expo/fingerprint@0.21.5": patches/@expo__fingerprint@0.21.5.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
+  # SCIENT-FORK: Idle deadlines retain cancellation identity without changing scheduling priority.
+  vitest@5.0.5: patches/vitest@5.0.5.patch
 
 peerDependencyRules:
   allowAny:

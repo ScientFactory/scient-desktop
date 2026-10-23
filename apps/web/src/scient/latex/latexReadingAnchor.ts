@@ -224,7 +224,7 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
           const unmeasured = new Set<Element>();
           let marked: Element[] = [];
           let animation = 0;
-          let idleRequest: number | ReturnType<typeof setTimeout> | null = null;
+          let cancelMeasure: (() => void) | undefined;
           let disposed = false;
           let cancelQuiet: (() => void) | undefined;
           /** Follows the top-level blocks; only structural changes alter them. */
@@ -270,7 +270,7 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
               });
           };
           const measure = () => {
-            idleRequest = null;
+            cancelMeasure = undefined;
             if (disposed) return;
             unmark();
             // The page planner measures natural copies and supplies intrinsic heights.
@@ -306,7 +306,7 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             if (
               disposed ||
               animation ||
-              idleRequest !== null ||
+              cancelMeasure ||
               cancelQuiet ||
               pagedLayoutProgress.has(view)
             )
@@ -314,10 +314,16 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
             animation = requestAnimationFrame(() => {
               animation = 0;
               if (disposed) return;
-              idleRequest =
-                typeof requestIdleCallback === "function"
-                  ? requestIdleCallback(measure, { timeout: 1000 })
-                  : setTimeout(measure, 50);
+              // A later native/fake API replacement must not change this request's owner.
+              if (typeof window.requestIdleCallback === "function") {
+                const cancel = window.cancelIdleCallback.bind(window);
+                const request = window.requestIdleCallback(measure, { timeout: 1000 });
+                cancelMeasure = () => cancel(request);
+              } else {
+                const cancel = window.clearTimeout.bind(window);
+                const request = window.setTimeout(measure, 50);
+                cancelMeasure = () => cancel(request);
+              }
             });
           };
           // A formula or image finishing while its block is not rendered
@@ -370,11 +376,8 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
               disposed = true;
               cancelQuiet?.();
               cancelAnimationFrame(animation);
-              if (idleRequest !== null) {
-                if (typeof cancelIdleCallback === "function" && typeof idleRequest === "number")
-                  cancelIdleCallback(idleRequest);
-                else clearTimeout(idleRequest);
-              }
+              cancelMeasure?.();
+              cancelMeasure = undefined;
               // The view is going away: its observer is not restarted.
               for (const element of marked) element.removeAttribute("data-latex-measure");
               marked = [];

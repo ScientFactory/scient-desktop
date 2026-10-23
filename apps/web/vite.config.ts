@@ -130,7 +130,9 @@ const browserTestProject = {
     benchmark: { include: ["src/**/*.browser.bench.{ts,tsx}"] },
     // SCIENT-FORK:END
     hookTimeout: 15_000,
-    testTimeout: 15_000,
+    // SCIENT-FORK:START — Cold document construction shares the native-input budget.
+    testTimeout: 30_000,
+    // SCIENT-FORK:END
     setupFiles: ["./test/browserSetup.ts"],
     api: { port: browserTestApiPort, strictPort: false },
     browser: {

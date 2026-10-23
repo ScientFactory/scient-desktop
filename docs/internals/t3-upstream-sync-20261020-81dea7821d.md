@@ -1189,3 +1189,55 @@ workspace output path fixed capture without relaxing filesystem access. Native
 captures show the Hebrew opening/table pages and repeated longtable furniture.
 Web type checking and root formatting/lint pass; existing warnings are retained.
 These results do not replace fresh exact-candidate hosted qualification.
+
+### Recovery identity and timed-idle follow-through
+
+Run `39887644647` tested synthetic merge
+`da743f7da3506230e191c1304e4493334bfc07f2`, combining owned main
+`6a53599f99da349d1ada22015cb5759f3bb241e8` and alignment head
+`e504e071af03eb0ad921c5ae5bf8bd46dcaef282`. Windows installer/native-runtime
+qualification now passed, as did the server shards and Release Smoke. Browser
+and Ubuntu Python 3.10 scanner failures still made that run a failure.
+
+The scanner fixture no longer requires successful numeric `exitCode` after
+Stop: signal termination uses the documented typed failure channel, while
+`cancelProcessTree` owns cancellation acknowledgement. It keeps the real bridge,
+kernel identities, restart, physical death and endpoint checks. The local real
+Python 3.14.6 integration case passes. Its joined Stop/scanner witness is not a
+claim of immediate acknowledgement timing or Python 3.10 platform acceptance.
+
+Recovery checkpoints now acquire overwrite authority only through their own
+serialized writes or guarded adoption of the exact accepted source and base
+revision. Observing another window's slot grants no ownership. A replacement
+during write acknowledgement remains byte-for-byte preserved and pending work
+stays in memory. The new race witness failed before repair and all 13 draft
+cases pass afterward. This is not a claim of atomic cross-window localStorage
+compare-and-swap. Recovery UI witnesses arm the actual source-publication
+receipt before input; advancing a timer alone is not publication evidence.
+
+Reading measurements retain their allocation-time cancellation function.
+Vitest 5.0.5 also misclassifies idle callbacks with deadlines for cancellation:
+their Timeout scheduling priority is intentional, but their allocation still
+belongs to `requestIdleCallback`. The exact pinned dependency patch accepts that
+existing ownership marker without changing heap ordering, deadlines or other
+timer-type checks. Before that patch, the complete formula file had 24 passing
+assertions but two unhandled cancellation errors and correctly failed overall.
+An injected genuinely wrong fallback cancellation still fails with the original
+cross-namespace error; the normal real-editor teardown preserves ink and emits
+no late document update.
+
+Cold fourfold-throttled Chromium evidence still exceeded 15 seconds after the
+earlier measurement optimization. The shared browser test ceiling is explicitly
+30 seconds now; unit and hook ceilings remain 15 seconds. There is no per-test
+override, retry, platform exclusion, dropped native-selection assertion or font
+substitution. This is budget calibration, not a measured speedup: a hung browser
+case can take 15 seconds longer to fail. Both unprimed template-26 native
+scenarios passed the cold throttled probe; warm success is not substituted for
+that probe. The dock's global offset-width call-count assertion was deleted
+rather than repinned; its consumer layout and interaction cases remain.
+
+With the pinned timer repair installed, all ten affected browser files pass
+213 cases at default concurrency, with a successful runner exit. Root quality,
+web/server type checking and unused-code checks passed their recorded scopes.
+Fresh pushed-candidate hosted qualification, actual merge and both authorized
+release publications remain separate gates.

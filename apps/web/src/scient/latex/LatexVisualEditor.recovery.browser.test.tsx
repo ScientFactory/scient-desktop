@@ -665,8 +665,13 @@ describe("recovering unsaved work", () => {
     storeSourceDraft(MONDAY, "r1");
     save = "waits";
     await mount(_fixture, tex("Monday base"), 1);
+    const published = nextWriteReceipt(
+      _fixture,
+      (source) => source === tex("Monday base kept writing"),
+    );
     await type(_fixture, 12, " kept writing");
     await settle(300);
+    await published();
     expect(shown).toEqual({ source: tex("Monday base kept writing"), revision: 1 });
     expect(
       [...bar(_fixture)!.querySelectorAll(":scope > button")].map((b) => b.textContent),
@@ -1216,8 +1221,13 @@ describe("recovering unsaved work", () => {
       expect(checkpoint()).toEqual({ source: MONDAY, baseRevision: "r1" });
       expect(readTypingDraft(KEY)).not.toBeNull();
       full.mockRestore();
+      const published = nextWriteReceipt(
+        _fixture,
+        (source) => source === tex("Old base plus typed"),
+      );
       await click(_fixture, "Discard");
       await settle(300);
+      await published();
       expect(page(_fixture)).toContain("Old base plus typed");
       expect(shown.source).toBe(tex("Old base plus typed"));
     });

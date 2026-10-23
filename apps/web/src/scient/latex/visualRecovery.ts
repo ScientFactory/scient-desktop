@@ -1,5 +1,6 @@
 import { applyLatexVisualDocumentChange, projectLatexVisualDocument } from "./latexVisualDocument";
 import {
+  adoptPersistedVisualDraft,
   checkpointVisualDraft,
   flushVisualDraft,
   holdPersistedVisualDraft,
@@ -298,6 +299,7 @@ export function readStartupRecovery(
     }
   }
   const draft = readPersistedVisualDraft(key);
+  if (draft?.source === current.source) adoptPersistedVisualDraft(key, draft);
   if (draft && draft.source !== current.source) {
     const entry: ParkedEntry = {
       origin: "source",
@@ -540,7 +542,14 @@ export function journalAppliedRecovery(
   replaced: { readonly source: string; readonly revision: string },
 ): boolean {
   const inSourceSlot = !recovery.parked && recovery.identity.startsWith(LIVE_SOURCE);
-  if (inSourceSlot) releasePersistedVisualDraft(key);
+  if (inSourceSlot) {
+    if (recovery.baseRevision !== null)
+      adoptPersistedVisualDraft(key, {
+        source: recovery.source,
+        baseRevision: recovery.baseRevision,
+      });
+    releasePersistedVisualDraft(key);
+  }
   checkpointVisualDraft(key, recovery.source, replaced.revision);
   const written = flushVisualDraft(key);
   // The source slot now holds the applied work as the live draft, or still the

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   checkpointVisualDraft,
   clearVisualDraft,
@@ -66,6 +66,20 @@ describe("Visual draft recovery", () => {
     });
     expect(readVisualDraftForSource("pending", afterBoth)).toBeNull();
     expect(localStorage.getItem(slot)).toBe(theirs);
+    expect(flushVisualDraft("pending")).toBe(false);
+    expect(localStorage.getItem(slot)).toBe(theirs);
+    expect(readVisualDraftForSource("pending", after)).toEqual({
+      source: after,
+      baseRevision: "disk-one",
+    });
+    expect(discardVisualDraft("pending", { source: before, baseRevision: "other-view" })).toBe(
+      true,
+    );
+    expect(flushVisualDraft("pending")).toBe(true);
+    expect(readPersistedVisualDraft("pending")).toEqual({
+      source: after,
+      baseRevision: "disk-one",
+    });
   });
 
   it("finds the persisted buffer until its exact save is acknowledged", async () => {
@@ -78,6 +92,81 @@ describe("Visual draft recovery", () => {
     expect(readVisualDraftForSource("confirmed", before)).toBeNull();
     expect(confirmVisualDraft("confirmed", after)).toBe(true);
     expect(readVisualDraftForSource("confirmed", after)).toBeNull();
+  });
+
+  it("replaces only its own successfully stored checkpoint with later writing", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    retain("newer", after);
+    expect(flushVisualDraft("newer")).toBe(true);
+    retain("newer", afterBoth);
+    expect(flushVisualDraft("newer")).toBe(true);
+    expect(readPersistedVisualDraft("newer")).toEqual({
+      source: afterBoth,
+      baseRevision: "disk-one",
+    });
+  });
+
+  it("keeps another window's replacement of its successfully stored checkpoint", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const slot = "scient:latex-visual-draft:source:newer";
+    retain("newer", after);
+    expect(flushVisualDraft("newer")).toBe(true);
+    const theirs = JSON.stringify({ source: before, baseRevision: "other-view" });
+    localStorage.setItem(slot, theirs);
+    retain("newer", afterBoth);
+    expect(flushVisualDraft("newer")).toBe(false);
+    expect(localStorage.getItem(slot)).toBe(theirs);
+    expect(readVisualDraftForSource("newer", afterBoth)).toEqual({
+      source: afterBoth,
+      baseRevision: "disk-one",
+    });
+    expect(discardVisualDraft("newer", { source: before, baseRevision: "other-view" })).toBe(true);
+    expect(flushVisualDraft("newer")).toBe(true);
+    expect(readPersistedVisualDraft("newer")).toEqual({
+      source: afterBoth,
+      baseRevision: "disk-one",
+    });
+  });
+
+  it("retains its pending work when another window replaces the write before acknowledgement", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const slot = "scient:latex-visual-draft:source:pending";
+    const theirs = JSON.stringify({ source: before, baseRevision: "other-view" });
+    const setItem = Storage.prototype.setItem;
+    let replace = true;
+    using _replacement = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+      this: Storage,
+      key,
+      value,
+    ) {
+      setItem.call(this, key, value);
+      if (key === slot && replace) {
+        replace = false;
+        setItem.call(this, key, theirs);
+      }
+    });
+
+    retain("pending", after);
+    expect(flushVisualDraft("pending")).toBe(false);
+    expect(localStorage.getItem(slot)).toBe(theirs);
+    expect(readVisualDraftForSource("pending", after)).toEqual({
+      source: after,
+      baseRevision: "disk-one",
+    });
+    expect(discardVisualDraft("pending", { source: before, baseRevision: "other-view" })).toBe(
+      true,
+    );
+    expect(flushVisualDraft("pending")).toBe(true);
+    expect(readPersistedVisualDraft("pending")).toEqual({
+      source: after,
+      baseRevision: "disk-one",
+    });
   });
 
   it("keeps an optimistic complete-source checkpoint durable until disk confirmation", async () => {

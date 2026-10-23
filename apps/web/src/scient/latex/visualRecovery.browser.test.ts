@@ -7,6 +7,7 @@ import {
   discardVisualDraft,
   flushVisualDraft,
   readPersistedVisualDraft as readVisualDraft,
+  readVisualDraftForSource,
 } from "./visualDrafts";
 import {
   canApplyRecovery,
@@ -194,15 +195,85 @@ describe("recovery when a document opens", () => {
     expect(readTypingDraft(KEY)).not.toBeNull();
   });
 
-  it("offers nothing when the stored copy equals the file, and leaves it stored", async () => {
+  it("adopts a stored copy equal to the opening source and checkpoints later writing", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-    checkpointVisualDraft(KEY, tex("Same"), "r1");
-    flushVisualDraft(KEY);
+    const stored = JSON.stringify({ source: tex("Same"), baseRevision: "r1" });
+    localStorage.setItem(SOURCE, stored);
     expect(readStartupRecovery(KEY, { source: tex("Same") }).recovery).toBeNull();
     expect(parked()).toHaveLength(0);
     expect(readVisualDraft(KEY)).toEqual({ source: tex("Same"), baseRevision: "r1" });
+    expect(localStorage.getItem(SOURCE)).toBe(stored);
+    checkpointVisualDraft(KEY, tex("Same, then more"), "r1");
+    expect(flushVisualDraft(KEY)).toBe(true);
+    expect(readVisualDraft(KEY)).toEqual({ source: tex("Same, then more"), baseRevision: "r1" });
+  });
+
+  it("does not replace a different record written after adopting the opening checkpoint", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    localStorage.setItem(SOURCE, JSON.stringify({ source: tex("Same"), baseRevision: "r1" }));
+    expect(readStartupRecovery(KEY, { source: tex("Same") }).recovery).toBeNull();
+    checkpointVisualDraft(KEY, tex("Same, then more"), "r1");
+    const theirs = JSON.stringify({ source: tex("Another view"), baseRevision: "r2" });
+    localStorage.setItem(SOURCE, theirs);
+    expect(flushVisualDraft(KEY)).toBe(false);
+    expect(localStorage.getItem(SOURCE)).toBe(theirs);
+    expect(readVisualDraftForSource(KEY, tex("Same, then more"))).toEqual({
+      source: tex("Same, then more"),
+      baseRevision: "r1",
+    });
+    expect(discardVisualDraft(KEY, { source: tex("Another view"), baseRevision: "r2" })).toBe(true);
+    expect(flushVisualDraft(KEY)).toBe(true);
+    expect(readVisualDraft(KEY)).toEqual({ source: tex("Same, then more"), baseRevision: "r1" });
+  });
+
+  it("adopts an explicitly applied live-source record before rebasing its checkpoint", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const source = tex("Recovered");
+    localStorage.setItem(SOURCE, JSON.stringify({ source, baseRevision: "r1" }));
+    const { recovery } = withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
+    expect(recovery).toMatchObject({ source, baseRevision: "r1", parked: false });
+    expect(
+      journalAppliedRecovery(
+        KEY,
+        { ...recovery!, source },
+        { source: tex("File"), revision: "r2" },
+      ),
+    ).toBe(true);
+    expect(readVisualDraft(KEY)).toEqual({ source, baseRevision: "r2" });
+    checkpointVisualDraft(KEY, tex("Recovered, then more"), "r2");
+    expect(flushVisualDraft(KEY)).toBe(true);
+    expect(readVisualDraft(KEY)).toEqual({
+      source: tex("Recovered, then more"),
+      baseRevision: "r2",
+    });
+  });
+
+  it("does not claim another window's replacement when journaling applied live-source work", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const source = tex("Recovered");
+    localStorage.setItem(SOURCE, JSON.stringify({ source, baseRevision: "r1" }));
+    const { recovery } = withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
+    const theirs = JSON.stringify({ source: tex("Another view"), baseRevision: "r2" });
+    localStorage.setItem(SOURCE, theirs);
+    expect(
+      journalAppliedRecovery(
+        KEY,
+        { ...recovery!, source },
+        { source: tex("File"), revision: "r2" },
+      ),
+    ).toBe(true);
+    expect(localStorage.getItem(SOURCE)).toBe(theirs);
+    expect(readVisualDraftForSource(KEY, source)).toEqual({ source, baseRevision: "r2" });
+    expect(flushVisualDraft(KEY)).toBe(false);
+    expect(localStorage.getItem(SOURCE)).toBe(theirs);
   });
 
   it("does not park the same work twice", async () => {
@@ -615,15 +686,29 @@ describe("work that cannot be parked", () => {
     expect(readVisualDraft(KEY)).toEqual({ source: tex("R, then more"), baseRevision: "r2" });
   });
 
-  it("stops guarding the slot once another window replaced the offered record", async () => {
+  it("preserves another window's replacement until that exact record is resolved", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
     localStorage.setItem(SOURCE, JSON.stringify({ source: tex("Theirs"), baseRevision: "r2" }));
-    withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
-    localStorage.setItem(SOURCE, JSON.stringify({ source: tex("Newer"), baseRevision: "r3" }));
+    const first = withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
+    const newer = JSON.stringify({ source: tex("Newer"), baseRevision: "r3" });
+    localStorage.setItem(SOURCE, newer);
     checkpointVisualDraft(KEY, tex("Ours"), "r3");
+    expect(flushVisualDraft(KEY)).toBe(false);
+    expect(localStorage.getItem(SOURCE)).toBe(newer);
+    expect(isRecoveryStored(KEY, first.recovery!)).toBe(false);
+    expect(removeRecovery(KEY, first.recovery!)).toBe(false);
+    expect(localStorage.getItem(SOURCE)).toBe(newer);
+    const next = withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
+    expect(next.recovery).toMatchObject({
+      source: tex("Newer"),
+      baseRevision: "r3",
+      parked: false,
+    });
+    expect(removeRecovery(KEY, next.recovery!)).toBe(true);
     expect(flushVisualDraft(KEY)).toBe(true);
+    expect(readVisualDraft(KEY)).toEqual({ source: tex("Ours"), baseRevision: "r3" });
   });
 
   it("holds back a typing snapshot that would otherwise be reinstalled", async () => {

@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off -- gated qualification uses an explicit native Python and a recording Fetch service restricted to its loopback fixture.
 import * as NodeHttp from "node:http";
 import * as NodeProcess from "node:process";
-import type { DuplexProcessHandle } from "@scientfactory/execution";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -155,28 +154,11 @@ describe.runIf(Boolean(TEST_PYTHON) && NodeProcess.platform !== "win32")(
           const scannerOwnedEndpoints = yield* OwnedLocalEndpoints.make();
           const requestedUrls: string[] = [];
           const lsofSnapshots: string[] = [];
-          const exits = new Map<number, DuplexProcessHandle["exitCode"]>();
-          const observedDuplex = Layer.effect(
-            LocalDuplexProcess.DuplexProcess,
-            Effect.gen(function* () {
-              const delegate = yield* LocalDuplexProcess.DuplexProcess;
-              return LocalDuplexProcess.DuplexProcess.of({
-                start: (request) =>
-                  delegate.start(request).pipe(
-                    Effect.tap((handle) =>
-                      Effect.sync(() => {
-                        exits.set(handle.pid, handle.exitCode);
-                      }),
-                    ),
-                  ),
-              });
-            }),
-          ).pipe(Layer.provide(LocalDuplexProcess.layer));
 
           const computeLayer = PythonComputeRuntime.layer.pipe(
             Layer.provide(LocalComputeStore.layer),
             Layer.provide(LocalExecutionProcess.layer),
-            Layer.provide(observedDuplex),
+            Layer.provide(LocalDuplexProcess.layer),
             Layer.provide(
               Layer.succeed(OwnedLocalEndpoints.OwnedLocalEndpointRegistry, computeOwnedEndpoints),
             ),
@@ -351,8 +333,8 @@ describe.runIf(Boolean(TEST_PYTHON) && NodeProcess.platform !== "win32")(
               );
             }
             expect(restartedRuntimeProcessId).not.toBe(firstRuntimeProcessId);
-            if (firstTransportProcessId == null || !exits.has(firstTransportProcessId))
-              return yield* Effect.die("The original bridge has no native process handle.");
+            if (firstTransportProcessId == null)
+              return yield* Effect.die("The original bridge did not report its transport PID.");
             // Restart replaces the kernel, not the bridge carrying its acknowledgement.
             expect(session.identity?.transportProcessId).toBe(firstTransportProcessId);
             expect(processExists(firstTransportProcessId)).toBe(true);
@@ -384,14 +366,12 @@ describe.runIf(Boolean(TEST_PYTHON) && NodeProcess.platform !== "win32")(
               ],
               { concurrency: "unbounded" },
             );
-            yield* scanWithoutConfiguredUrls(2);
-            yield* scanConfiguredFixture(2);
-            if (!exits.has(restartedTransportProcessId))
-              return yield* Effect.die("The restarted bridge has no native exit receipt.");
-            yield* exits.get(restartedTransportProcessId)!;
+            // Stop owns reaping; a signal-shaped exitCode failure is not another stop failure.
             expect((yield* computeOwnedEndpoints.snapshot).protectedLoopbackTcpPorts.size).toBe(0);
             expect(processExists(restartedRuntimeProcessId)).toBe(false);
             expect(processExists(restartedTransportProcessId)).toBe(false);
+            yield* scanWithoutConfiguredUrls(2);
+            yield* scanConfiguredFixture(2);
             expectOnlyFixtureTraffic();
             expect(
               yield* compute.listOutputs({

@@ -55,7 +55,6 @@ async function mount(_fixture: _Fixture, input: string, name: string, context: T
   );
   let sourceEditor: Editor<"file", unknown, undefined> | undefined;
   const sourceReady = Promise.withResolvers<void>();
-  const sourceContentReady = Promise.withResolvers<HTMLElement>();
   let current = input;
   const reveals: { from: number; to: number; precise?: boolean }[] = [];
   const sourceSelections = vi.fn<(selection: EditorSelection | null) => void>();
@@ -94,10 +93,6 @@ async function mount(_fixture: _Fixture, input: string, name: string, context: T
             onPostRender={(container, instance, context) => {
               sourceEditor = (instance as unknown as { editor: typeof sourceEditor }).editor;
               onPostRender(container, instance, context);
-              const content = _fixture.host
-                .querySelector("diffs-container")
-                ?.shadowRoot?.querySelector<HTMLElement>("[data-content]");
-              if (content) sourceContentReady.resolve(content);
               if (sourceEditor?.getFile()) sourceReady.resolve();
             }}
             onContentsChange={(value) => {
@@ -148,8 +143,6 @@ async function mount(_fixture: _Fixture, input: string, name: string, context: T
   }
   await _fixture.root0.rerender(<Harness />);
   const visual = await waitForLatexVisualTestReadiness(_fixture.host, context, `split ${name}`);
-  const sourceContent = await waitForTestReceipt(context.signal, sourceContentReady.promise);
-  await userEvent.click(sourceContent, { position: { x: 100, y: 10 } });
   await waitForTestReceipt(context.signal, sourceReady.promise);
   return {
     visual,
