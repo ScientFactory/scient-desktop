@@ -53,6 +53,17 @@ describe("pending fields across outside document changes", () => {
     _fixture.cleanup.defer(dispose);
     return () => waitForTestReceipt(context.signal, promise, dispose);
   };
+  const attemptedWrites = new Set<() => void>();
+  /** Resolves when the editor next asks to write, whether the write is accepted or refused. */
+  const nextWriteAttempt = (_fixture: _Fixture, context: TestContext) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    attemptedWrites.add(resolve);
+    const dispose = () => {
+      attemptedWrites.delete(resolve);
+    };
+    _fixture.cleanup.defer(dispose);
+    return () => waitForTestReceipt(context.signal, promise, dispose);
+  };
 
   async function _setupFixture0(_fixture: _Fixture) {
     _fixture.restoreFonts = stubLatexReadingFonts();
@@ -94,6 +105,8 @@ describe("pending fields across outside document changes", () => {
         }}
         onEdit={(request) => {
           writes(request.edit.source, request.edit);
+          for (const resolve of attemptedWrites) resolve();
+          attemptedWrites.clear();
           const outcome = _fixture.owner.edit(
             request,
             _fixture.acceptWrites && request.edit.source === _fixture.shown,
@@ -325,7 +338,7 @@ describe("pending fields across outside document changes", () => {
     expect(readStoredRecovery(KEY)?.text).toBe("Local unfinished title");
   });
 
-  it("paints ordinary typing before publication and retains it if publication is refused", async () => {
+  it("paints ordinary typing before publication and retains it if publication is refused", async (context) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -335,12 +348,16 @@ describe("pending fields across outside document changes", () => {
     await act(() => editor(_fixture).commands.setTextSelection({ from: 2, to: 5 }));
     const source = _fixture.shown;
     _fixture.acceptWrites = false;
+    const attempted = nextWriteAttempt(_fixture, context);
     await act(() => editor(_fixture).commands.insertContent("Unavailable"));
     expect(editor(_fixture).state.doc.textContent).toContain("Unavailable");
     expect(writes).not.toHaveBeenCalled();
     expect(_fixture.shown).toBe(source);
     await advance(500);
-    await vi.waitFor(() => expect(writes).toHaveBeenCalled());
+    // Publication follows the conversion worker's reply, which takes real time; wait for
+    // the write itself, not a fixed second.
+    await attempted();
+    expect(writes).toHaveBeenCalledTimes(1);
     expect(_fixture.shown).toBe(source);
     expect(JSON.stringify(readTypingDraft(KEY)?.content)).toContain("Unavailable");
     expect(editor(_fixture).state.doc.textContent).toContain("Unavailable");
