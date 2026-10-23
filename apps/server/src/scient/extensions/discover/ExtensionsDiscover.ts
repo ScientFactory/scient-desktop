@@ -56,7 +56,7 @@ const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
 const MAX_QUERY_LENGTH = 200;
 
-export const UNSUPPORTED_LOCAL_ONLY = "Runs locally — local servers are not supported yet";
+export const UNSUPPORTED_LOCAL_ONLY = "Runs locally. Local servers are not supported yet";
 export const UNSUPPORTED_REQUIRES_CONFIGURATION =
   "Requires configuration (headers or URL settings) before it can be connected";
 export const UNSUPPORTED_NOT_HTTPS = "Its remote endpoint is not served over https";

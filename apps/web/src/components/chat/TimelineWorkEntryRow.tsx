@@ -38,7 +38,7 @@ import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { ChevronRightIcon, CircleAlertIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
-import { useThreadShell } from "../../state/entities";
+import { useQuietThreadShell } from "../../state/entities";
 import {
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -74,7 +74,7 @@ import {
 export function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
   const rawThreadId = threadReadTargetId(entry);
   const threadId = rawThreadId === null ? null : ThreadId.make(rawThreadId);
-  const shell = useThreadShell(threadId ? scopeThreadRef(environmentId, threadId) : null);
+  const shell = useQuietThreadShell(threadId ? scopeThreadRef(environmentId, threadId) : null);
   const title = threadReadTargetTitle(shell);
   return threadId && title ? { threadId, title } : null;
 }

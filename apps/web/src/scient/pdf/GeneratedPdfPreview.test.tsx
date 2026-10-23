@@ -100,7 +100,7 @@ describe("GeneratedPdfPreview", () => {
   it("presents update availability as a visible, truthful recovery action", () => {
     const markup = renderWithRelation("update-available", "Automatic source watching paused.");
 
-    expect(markup).toContain('aria-label="Source changed — update PDF from HTML"');
+    expect(markup).toContain('aria-label="Source changed. Update PDF from HTML"');
     expect(markup).toContain('data-html-pdf-update-phase="update-available"');
     expect(markup).toContain("text-warning");
     expect(markup).toContain('role="status"');

@@ -1687,7 +1687,7 @@ describe("orchestrator MCP toolkit", () => {
                   models: [
                     expect.objectContaining({
                       id: codexModel,
-                      options: [expect.objectContaining({ id: "reasoning", type: "select" })],
+                      options: [{ id: "reasoning", values: ["low", "medium", "high"] }],
                     }),
                   ],
                 }),

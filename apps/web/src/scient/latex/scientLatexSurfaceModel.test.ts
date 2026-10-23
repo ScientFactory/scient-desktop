@@ -461,7 +461,7 @@ describe("latexStatusStripModel", () => {
         }),
       ).label,
     ).toBe(
-      "First build: installing LaTeX packages (this can take a few minutes) — mathtools, siunitx",
+      "First build: installing LaTeX packages (this can take a few minutes): mathtools, siunitx",
     );
 
     // And every later build says the ordinary thing, because it is fast.
@@ -496,7 +496,7 @@ describe("latexStatusStripModel", () => {
         }),
       ).label,
     ).toBe(
-      "First build: installing LaTeX packages (this can take a few minutes) — mathtools, siunitx, booktabs, microtype, amsthm, geometry and 2 more",
+      "First build: installing LaTeX packages (this can take a few minutes): mathtools, siunitx, booktabs, microtype, amsthm, geometry and 2 more",
     );
   });
 

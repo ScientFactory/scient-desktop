@@ -190,8 +190,10 @@ are retained unmounted (knip entries) so their changes still merge; the pass's r
 the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
 where a server is left for later while its machine still updates a provider or runtime, and is
 admitted again when its restart is due. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.
-In the desktop app a marked seam in `ProviderUpdateLaunchNotification.tsx` leaves "update
-available" toasts to the circle; the browser client keeps them.
+A marked root mount delegates browser "update available" toasts to Scient's
+`scient/providerConnection/BrowserProviderUpdateNotification.tsx`, reusing the shared CLI and
+managed-runtime update owners. Desktop availability stays in the circle. Browser dismissal
+storage and published-version identities remain compatible.
 Because a server waits while a provider update is queued, a marked seam in
 `apps/server/src/provider/providerMaintenanceRunner.ts` records an interrupted update, including
 one still waiting for the installer lock, as failed instead of leaving it queued. Upstream main has

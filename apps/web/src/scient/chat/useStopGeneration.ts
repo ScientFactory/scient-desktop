@@ -1,4 +1,5 @@
-import type { OrchestrationV2ThreadProjection, RunId } from "@t3tools/contracts";
+import type { RunId } from "@t3tools/contracts";
+import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import { useRef, useState } from "react";
 
 import { showStreamedAnswersNow } from "~/components/chat/useStreamingBlockEntrance";
@@ -12,7 +13,7 @@ export function useStopGeneration(input: {
   readonly threadKey: string | null;
   readonly runId: RunId | null;
   readonly canInterrupt: boolean;
-  readonly projection: OrchestrationV2ThreadProjection | null;
+  readonly projection: Pick<ThreadStructure, "runs" | "turnItems"> | null;
   readonly operation: () => Promise<boolean | undefined>;
 }) {
   const run = input.projection?.runs.find((run) => run.id === input.runId);

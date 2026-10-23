@@ -26,6 +26,9 @@ import { ConversationImportDialogHost } from "../scient/conversationImport/Conve
 // SCIENT-FORK:START — sign-in pages open for the starting client from one app-level watcher.
 import { ProviderSignInPageCoordinator } from "../scient/providerConnection/ProviderSignInPageCoordinator";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — browser availability notices reuse the shared update owners.
+import { BrowserProviderUpdateNotification } from "../scient/providerConnection/BrowserProviderUpdateNotification";
+// SCIENT-FORK:END
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
@@ -38,7 +41,6 @@ import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
-import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { DesktopUpdateLaunchNotice } from "../components/sidebar/updateEverythingRun";
 import { AnalyticsSharingNotice } from "../scient/analytics/AnalyticsSharingNotice";
 import { SettingsAnalyticsObserver } from "../scient/analytics/SettingsAnalyticsObserver";
@@ -274,8 +276,10 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? (
             <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />
           ) : null}
-          {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
           {isElectron ? <DesktopUpdateLaunchNotice /> : null}
+          {/* SCIENT-FORK:START — desktop availability stays in the update circle. */}
+          {primaryEnvironmentAuthenticated ? <BrowserProviderUpdateNotification /> : null}
+          {/* SCIENT-FORK:END */}
           {primaryEnvironmentAuthenticated ? <AnalyticsSharingNotice /> : null}
           {primaryEnvironmentAuthenticated ? <SettingsAnalyticsObserver /> : null}
           {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}

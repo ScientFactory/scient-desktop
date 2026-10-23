@@ -6,6 +6,7 @@ import type { Editor as ProseEditor } from "@tiptap/core";
 import type { Editor, EditorSelection } from "@pierre/diffs/edit";
 import { expect, it, vi, type TestContext } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
+vi.mock("~/localEnvironment", () => ({ isLocalEnvironmentDisabled: () => true }));
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
 }));
@@ -14,7 +15,7 @@ vi.mock("~/assets/assetUrls", async (importOriginal) => ({
   useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
 }));
 import { LatexVisualEditor } from "./LatexVisualEditor";
-import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
+import { scrollLatexVisualTestEditor, useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { EditableFileEditor, useFileLineReveal } from "~/components/files/FilePreviewPanel";
 import { sourceOffset, sourcePosition } from "../math/input/sourceAdapter";
 import { latexTextSelectionRects } from "./latexTextSelectionRects";
@@ -186,6 +187,24 @@ function wordPosition(root: HTMLElement | ShadowRoot, word: string, scroll = tru
   }
   throw new Error(`Missing word: ${word}`);
 }
+async function scrollToWord(editor: ProseEditor, word: string, context: TestContext) {
+  const target = wordPosition(editor.view.dom, word, false).element;
+  const visible = Promise.withResolvers<void>();
+  const observer = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.target === target && entry.isIntersecting))
+        visible.resolve();
+    },
+    { root: editor.view.dom.closest(".scient-latex-visual-scroll") },
+  );
+  using _visibility = { [Symbol.dispose]: () => observer.disconnect() };
+  observer.observe(target);
+  await scrollLatexVisualTestEditor(editor, () => {
+    target.scrollIntoView({ block: "center" });
+  });
+  // A scroll event can precede lazy-block layout and leave readiness briefly stale.
+  await waitForTestReceipt(context.signal, visible.promise);
+}
 it.for([
   ["26", template26, "פסקה"],
   ["26-abstract", template26, "מסמך"],
@@ -228,82 +247,95 @@ it.for([
         .toBeTruthy();
     }
     const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
-    wordPosition(state.visual.view.dom, word);
+    await scrollToWord(state.visual, word, context);
+    // Exposing an offscreen block can request another font before hit measurement.
+    await document.fonts.ready;
     await readyToHit(state.visual, () => wordPosition(state.visual.view.dom, word, false).box);
     const hit = wordPosition(state.visual.view.dom, word, false);
     state.visual.view.dom.dataset.testid = "active-visual-editor";
     let before = scroll.scrollTop;
-    const pointer = () => {
-      before = scroll.scrollTop;
-      _fixture.host.removeEventListener("pointerdown", pointer, true);
-    };
-    _fixture.host.addEventListener("pointerdown", pointer, true);
-    const cell = hit.element.closest<HTMLElement>("[data-table-cell]");
-    if (cell) {
-      const bounds = hit.element.getBoundingClientRect();
-      const cellBounds = cell.getBoundingClientRect();
-      await page
-        .getByRole("textbox", { name: cell.getAttribute("aria-label")!, exact: true })
-        .nth(0)
-        .dblClick({
-          position: {
-            x: bounds.left + hit.position.x - cellBounds.left,
-            y: bounds.top + hit.position.y - cellBounds.top,
-          },
-        });
-    } else if (name === "26-code") {
-      const field = state.visual.view.dom.querySelector<HTMLElement>(
-        '[aria-label="Literal text"]',
-      )!;
-      const bounds = hit.element.getBoundingClientRect();
-      const fieldBounds = field.getBoundingClientRect();
-      await page
-        .getByRole("textbox", { name: "Literal text", exact: true })
-        .nth(0)
-        .dblClick({
-          position: {
-            x: bounds.left + hit.position.x - fieldBounds.left,
-            y: bounds.top + hit.position.y - fieldBounds.top,
-          },
-        });
-    } else if (
-      hit.element instanceof HTMLTextAreaElement ||
-      hit.element instanceof HTMLInputElement
-    ) {
-      await page
-        .getByRole("textbox", { name: hit.element.getAttribute("aria-label")!, exact: true })
-        .nth(0)
-        .dblClick({ position: hit.position });
-    } else if (hit.element.closest("h1,h2,h3,h4,h5,h6")) {
-      await page
-        .getByRole("heading", { name: new RegExp(word) })
-        .nth(0)
-        .dblClick({ position: hit.position });
-    } else {
-      const target = page
-        .getByTestId("active-visual-editor")
-        .nth(0)
-        .getByText(word, { exact: false })
-        .nth(0);
-      await target.dblClick({ position: hit.position });
+    {
+      using _clock = fakeTimers();
+      const pointer = () => {
+        before = scroll.scrollTop;
+        _fixture.host.removeEventListener("pointerdown", pointer, true);
+      };
+      _fixture.host.addEventListener("pointerdown", pointer, true);
+      const cell = hit.element.closest<HTMLElement>("[data-table-cell]");
+      if (cell) {
+        const bounds = hit.element.getBoundingClientRect();
+        const cellBounds = cell.getBoundingClientRect();
+        await page
+          .getByRole("textbox", { name: cell.getAttribute("aria-label")!, exact: true })
+          .nth(0)
+          .dblClick({
+            position: {
+              x: bounds.left + hit.position.x - cellBounds.left,
+              y: bounds.top + hit.position.y - cellBounds.top,
+            },
+          });
+      } else if (name === "26-code") {
+        const field = state.visual.view.dom.querySelector<HTMLElement>(
+          '[aria-label="Literal text"]',
+        )!;
+        const bounds = hit.element.getBoundingClientRect();
+        const fieldBounds = field.getBoundingClientRect();
+        await page
+          .getByRole("textbox", { name: "Literal text", exact: true })
+          .nth(0)
+          .dblClick({
+            position: {
+              x: bounds.left + hit.position.x - fieldBounds.left,
+              y: bounds.top + hit.position.y - fieldBounds.top,
+            },
+          });
+      } else if (
+        hit.element instanceof HTMLTextAreaElement ||
+        hit.element instanceof HTMLInputElement
+      ) {
+        await page
+          .getByRole("textbox", { name: hit.element.getAttribute("aria-label")!, exact: true })
+          .nth(0)
+          .dblClick({ position: hit.position });
+      } else if (hit.element.closest("h1,h2,h3,h4,h5,h6")) {
+        await page
+          .getByRole("heading", { name: new RegExp(word) })
+          .nth(0)
+          .dblClick({ position: hit.position });
+      } else {
+        await page
+          .getByTestId("active-visual-editor")
+          .nth(0)
+          .getByText(word, { exact: false })
+          .nth(0)
+          .dblClick({ position: hit.position });
+      }
+      // Publish the gesture's queued source reveal without advancing recurring editor services.
+      await act(() => vi.runOnlyPendingTimersAsync());
+      await vi.waitFor(() => expect(state.reveals).toHaveLength(1));
+      const mapped = state.reveals[0]!;
+      expect(source.slice(mapped.from, mapped.to).trim()).toBe(word);
+      const field = document.activeElement;
+      expect(
+        field instanceof HTMLTextAreaElement
+          ? field.value.slice(field.selectionStart, field.selectionEnd).trim()
+          : document.getSelection()?.toString().trim(),
+      ).toBe(word);
+      expect(Math.abs(scroll.scrollTop - before)).toBeLessThanOrEqual(2);
+      await vi.waitFor(() =>
+        expect(state.source().getViewState().selections?.[0]?.start).toEqual(
+          sourcePosition(source, mapped.from),
+        ),
+      );
+      expect(state.source().getViewState().selections?.[0]?.end).toEqual(
+        sourcePosition(source, mapped.to),
+      );
+      expect(state.visual.view.dom.contains(document.activeElement)).toBe(true);
+      await vi.waitFor(() => {
+        const sourcePane = _fixture.host.querySelector("diffs-container")!;
+        expect(sourcePane.shadowRoot!.querySelector("[data-caret]")).toBeInstanceOf(HTMLElement);
+      });
     }
-    await expect.poll(() => state.reveals.length).toBe(1);
-    const mapped = state.reveals[0]!;
-    expect(source.slice(mapped.from, mapped.to).trim()).toBe(word);
-    const field = document.activeElement;
-    expect(
-      field instanceof HTMLTextAreaElement
-        ? field.value.slice(field.selectionStart, field.selectionEnd).trim()
-        : document.getSelection()?.toString().trim(),
-    ).toBe(word);
-    expect(Math.abs(scroll.scrollTop - before)).toBeLessThanOrEqual(2);
-    await expect
-      .poll(() => state.source().getViewState().selections?.[0]?.start)
-      .toEqual(sourcePosition(source, mapped.from));
-    expect(state.source().getViewState().selections?.[0]?.end).toEqual(
-      sourcePosition(source, mapped.to),
-    );
-    expect(state.visual.view.dom.contains(document.activeElement)).toBe(true);
     const selection = state.source().getViewState().selections;
     state.visual.view.dom.dataset.testid = "active-visual-split";
     await page
@@ -346,7 +378,9 @@ it("a Source interaction cancels a queued Visual reveal before it can replace So
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const state = await mount(_fixture, template26, "cancel-source", context);
-  wordPosition(state.visual.view.dom, "פסקה");
+  await scrollLatexVisualTestEditor(state.visual, () => {
+    wordPosition(state.visual.view.dom, "פסקה");
+  });
   await readyToHit(state.visual, () => wordPosition(state.visual.view.dom, "פסקה", false).box);
   const hit = wordPosition(state.visual.view.dom, "פסקה", false);
   const bounds = hit.element.getBoundingClientRect();
@@ -389,7 +423,9 @@ it.for([
     });
     expect(mathNode).toBeTruthy();
     const shell = mathNode as unknown as HTMLElement;
-    shell.scrollIntoView({ block: "center" });
+    await scrollLatexVisualTestEditor(state.visual, () => {
+      shell.scrollIntoView({ block: "center" });
+    });
     await readyToHit(state.visual, () => shell.getBoundingClientRect());
     shell.dataset.testid = "active-math-shell";
     await page.getByTestId("active-math-shell").nth(0).click();
@@ -398,7 +434,9 @@ it.for([
         field.value.replace(/\s+/gu, "").includes(match),
       )!;
     await expect.poll(() => field()?.shadowRoot?.querySelector(".ML__latex")).toBeTruthy();
-    field().scrollIntoView({ block: "center" });
+    await scrollLatexVisualTestEditor(state.visual, () => {
+      field().scrollIntoView({ block: "center" });
+    });
     await readyToHit(state.visual, () => field().getBoundingClientRect());
     const glyph = () => {
       const math = field();

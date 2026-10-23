@@ -9,11 +9,7 @@ import {
   TYPE_TO_FOCUS_EDITABLE_SELECTOR,
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./composerFocusRedirect";
-import {
-  type MessageId,
-  type ThreadId,
-  type OrchestrationV2ThreadProjection,
-} from "@t3tools/contracts";
+import { type MessageId, type ThreadId } from "@t3tools/contracts";
 
 import {
   type SetStateAction,
@@ -36,6 +32,7 @@ import { createUpwardScrollDetector, isTimelineScrollTarget } from "./timelineSc
 
 import { releaseChatTimelineAnchor } from "../ChatView.logic";
 import type { Dispatch, RefObject } from "react";
+import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 
 const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
 
@@ -53,7 +50,7 @@ interface TimelineFollowInput {
   readonly activeThreadKey: string | null;
   readonly activeThreadId: ThreadId | undefined;
   readonly isServerThread: boolean;
-  readonly serverProjection: OrchestrationV2ThreadProjection | null;
+  readonly serverProjection: ThreadStructure | null;
   readonly timelineMessages: ReadonlyArray<ChatMessage>;
   readonly isDraftHeroState: boolean;
   readonly hasLatestRun: boolean;
@@ -62,7 +59,7 @@ interface TimelineFollowInput {
   readonly setTimelineAnchor: Dispatch<SetStateAction<TimelineAnchor>>;
 }
 
-// SCIENT-FORK: bounded send-follow and reader policy have one owner in this extracted host.
+// Bounded send-follow and reader policy have one owner in this extracted host.
 export function useTimelineFollow(input: TimelineFollowInput) {
   const {
     legendListRef,

@@ -94,6 +94,7 @@ describe("pending fields across outside document changes", () => {
         }}
         onEdit={(request) => {
           writes(request.edit.source, request.edit);
+          _fixture.writeAttempt?.();
           const outcome = _fixture.owner.edit(
             request,
             _fixture.acceptWrites && request.edit.source === _fixture.shown,
@@ -325,7 +326,7 @@ describe("pending fields across outside document changes", () => {
     expect(readStoredRecovery(KEY)?.text).toBe("Local unfinished title");
   });
 
-  it("paints ordinary typing before publication and retains it if publication is refused", async () => {
+  it("paints ordinary typing before publication and retains it if publication is refused", async (context) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -335,12 +336,16 @@ describe("pending fields across outside document changes", () => {
     await act(() => editor(_fixture).commands.setTextSelection({ from: 2, to: 5 }));
     const source = _fixture.shown;
     _fixture.acceptWrites = false;
+    const attempted = Promise.withResolvers<void>();
+    _fixture.writeAttempt = attempted.resolve;
     await act(() => editor(_fixture).commands.insertContent("Unavailable"));
     expect(editor(_fixture).state.doc.textContent).toContain("Unavailable");
     expect(writes).not.toHaveBeenCalled();
     expect(_fixture.shown).toBe(source);
     await advance(500);
-    await vi.waitFor(() => expect(writes).toHaveBeenCalled());
+    // The quiet clock starts asynchronous recovery and conversion, not publication itself.
+    await waitForTestReceipt(context.signal, attempted.promise);
+    expect(writes).toHaveBeenCalled();
     expect(_fixture.shown).toBe(source);
     expect(JSON.stringify(readTypingDraft(KEY)?.content)).toContain("Unavailable");
     expect(editor(_fixture).state.doc.textContent).toContain("Unavailable");
@@ -420,6 +425,7 @@ function _createFixture() {
     },
 
     restoreFonts: () => {},
+    writeAttempt: undefined as (() => void) | undefined,
 
     container: undefined! as HTMLDivElement,
     stack,

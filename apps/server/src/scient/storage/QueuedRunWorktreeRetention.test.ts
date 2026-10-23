@@ -227,7 +227,7 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                       const isolatedPath = moves[0]![3]!;
                       assert.deepEqual(args, [
                         "-c",
-                        "status.showUntrackedFiles=all",
+                        "status.showUntrackedFiles=normal",
                         "worktree",
                         "remove",
                         "--",

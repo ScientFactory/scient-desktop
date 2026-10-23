@@ -22,6 +22,8 @@
       // Windows verify script with esbuild through a path knip does not trace, and
       // electron-builder loads the macOS signer by path.
       "entry": [
+        // These fixture scripts are injected into a browser page by path.
+        "fixtures/issue-16534/*.js",
         "knip-schemas.ts",
         "qualify-managed-runtime-catalog.ts",
         "mobile-native-client.ts",
@@ -170,6 +172,8 @@
         "fingerprint.config.js",
         "plugins/*.cjs",
         "scripts/generate-device-stream.mts",
+        // Documented manual macOS native removal-guard qualification.
+        "scripts/check-native-removal-guard.mjs",
         "src/features/devices/device-stream.browser.ts!",
         "src/features/browser/preview-stream.browser.ts!",
       ],

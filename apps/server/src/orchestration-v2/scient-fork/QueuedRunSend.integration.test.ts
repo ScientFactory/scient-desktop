@@ -305,90 +305,92 @@ it.effect("keeps Send on a windowed snapshot that misses the session lifting the
   }).pipe(Effect.provide(testLayer)),
 );
 
-it.effect("Send on a message behind a delegated completion lets the completion go first", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* OrchestratorV2;
-    const sink = yield* EventSinkV2;
-    const threadId = ThreadId.make("queued-run-send-delegated");
-    yield* createThread(threadId);
-    for (const suffix of ["first", "second", "automatic"]) {
-      yield* orchestrator.dispatch({
-        type: "legacy-queue.import",
-        commandId: CommandId.make(`${threadId}:admit:${suffix}`),
-        threadId,
-        queueItemId: `qitem_${suffix}`,
-        messageId: MessageId.make(`${threadId}:message:${suffix}`),
-        text: suffix,
-        attachments: [],
-        modelSelection,
-        createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
-      });
-    }
-    const imported = yield* orchestrator.getThreadProjection(threadId);
-    const [firstRun, secondRun, automaticRun] = imported.runs;
-    assert.isDefined(firstRun);
-    assert.isDefined(secondRun);
-    assert.isDefined(automaticRun);
-    assert.isTrue(imported.runs.every((run) => run.queueHeld === true));
-    const automatic = imported.messages.find(
-      (message) => message.id === automaticRun.userMessageId,
-    );
-    assert.isDefined(automatic);
-    yield* sink.writeWithEffects({
-      effects: [],
-      events: [
-        {
-          id: EventId.make(`${threadId}:automatic-delivery`),
-          type: "message.updated",
+it.effect.each(["queue.resume", "queued-run.start"] as const)(
+  "%s on a message behind a delegated completion lets the completion go first",
+  (commandType) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const sink = yield* EventSinkV2;
+      const threadId = ThreadId.make(`queued-run-send-delegated:${commandType}`);
+      yield* createThread(threadId);
+      for (const suffix of ["first", "second", "automatic"]) {
+        yield* orchestrator.dispatch({
+          type: "legacy-queue.import",
+          commandId: CommandId.make(`${threadId}:admit:${suffix}`),
           threadId,
-          occurredAt: yield* DateTime.now,
-          payload: {
-            ...automatic,
-            delegatedCompletion: {
-              parentRunId: firstRun.id,
-              generation: 1,
-              taskIds: [NodeId.make("completed-task")],
+          queueItemId: `qitem_${suffix}`,
+          messageId: MessageId.make(`${threadId}:message:${suffix}`),
+          text: suffix,
+          attachments: [],
+          modelSelection,
+          createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+        });
+      }
+      const imported = yield* orchestrator.getThreadProjection(threadId);
+      const [firstRun, secondRun, automaticRun] = imported.runs;
+      assert.isDefined(firstRun);
+      assert.isDefined(secondRun);
+      assert.isDefined(automaticRun);
+      assert.isTrue(imported.runs.every((run) => run.queueHeld === true));
+      const automatic = imported.messages.find(
+        (message) => message.id === automaticRun.userMessageId,
+      );
+      assert.isDefined(automatic);
+      yield* sink.writeWithEffects({
+        effects: [],
+        events: [
+          {
+            id: EventId.make(`${threadId}:automatic-delivery`),
+            type: "message.updated",
+            threadId,
+            occurredAt: yield* DateTime.now,
+            payload: {
+              ...automatic,
+              delegatedCompletion: {
+                parentRunId: firstRun.id,
+                generation: 1,
+                taskIds: [NodeId.make("completed-task")],
+              },
             },
           },
-        },
-      ],
-    });
+        ],
+      });
 
-    const projection = yield* orchestrator.getThreadProjection(threadId);
-    assert.isTrue(canSendQueuedRun(projection, firstRun.id));
-    assert.isTrue(canSendQueuedRun(projection, secondRun.id));
-    assert.isFalse(canSendQueuedRun(projection, automaticRun.id));
-    const refused = yield* orchestrator
-      .dispatch({
-        type: "queue.resume",
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.isTrue(canSendQueuedRun(projection, firstRun.id));
+      assert.isTrue(canSendQueuedRun(projection, secondRun.id));
+      assert.isFalse(canSendQueuedRun(projection, automaticRun.id));
+      const refused = yield* orchestrator
+        .dispatch({
+          type: commandType,
+          threadId,
+          commandId: CommandId.make(`${threadId}:send-automatic`),
+          runId: automaticRun.id,
+        })
+        .pipe(Effect.flip);
+      assert.include(refusalText(refused), "Automatic deliveries cannot be sent from the queue.");
+
+      // Send on the last user message: the completion still goes first, then the
+      // chosen message, then the rest, and nothing stays held.
+      yield* orchestrator.dispatch({
+        type: commandType,
         threadId,
-        commandId: CommandId.make(`${threadId}:send-automatic`),
-        runId: automaticRun.id,
-      })
-      .pipe(Effect.flip);
-    assert.include(refusalText(refused), "Automatic deliveries cannot be sent from the queue.");
-
-    // Send on the last user message: the completion still goes first, then the
-    // chosen message, then the rest, and nothing stays held.
-    yield* orchestrator.dispatch({
-      type: "queue.resume",
-      threadId,
-      commandId: CommandId.make(`${threadId}:send-second`),
-      runId: secondRun.id,
-    });
-    const delivered = yield* orchestrator.getThreadProjection(threadId);
-    const runOf = (id: typeof firstRun.id) => delivered.runs.find((run) => run.id === id);
-    assert.equal(runOf(automaticRun.id)?.status, "starting");
-    assert.deepEqual(
-      [secondRun.id, firstRun.id].map((id) => [
-        runOf(id)?.status,
-        runOf(id)?.queuePosition,
-        runOf(id)?.queueHeld,
-      ]),
-      [
-        ["queued", 2, false],
-        ["queued", 3, false],
-      ],
-    );
-  }).pipe(Effect.provide(testLayer)),
+        commandId: CommandId.make(`${threadId}:send-second`),
+        runId: secondRun.id,
+      });
+      const delivered = yield* orchestrator.getThreadProjection(threadId);
+      const runOf = (id: typeof firstRun.id) => delivered.runs.find((run) => run.id === id);
+      assert.equal(runOf(automaticRun.id)?.status, "starting");
+      assert.deepEqual(
+        [secondRun.id, firstRun.id].map((id) => [
+          runOf(id)?.status,
+          runOf(id)?.queuePosition,
+          runOf(id)?.queueHeld,
+        ]),
+        [
+          ["queued", 2, false],
+          ["queued", 3, false],
+        ],
+      );
+    }).pipe(Effect.provide(testLayer)),
 );

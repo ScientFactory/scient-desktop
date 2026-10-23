@@ -1,4 +1,3 @@
-import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { InfoIcon } from "lucide-react";
 
 import type { ComposerBannerStackItem } from "~/components/chat/ComposerBannerStack";
@@ -9,7 +8,7 @@ import {
   isTokenLimitError as isTokenLimitThreadError,
 } from "~/components/chat/ThreadErrorBanner";
 
-const EMPTY_TURN_ITEMS: ReadonlyArray<OrchestrationV2TurnItem> = [];
+const EMPTY_TURN_ITEMS: Parameters<typeof getTruncationNoticeKey>[1] = [];
 
 /**
  * A response that stopped at a token limit shows a composer notice instead of
@@ -19,7 +18,7 @@ export function deriveTokenLimitNotice(input: {
   readonly routeThreadKey: string;
   readonly visibleThreadError: string | null;
   readonly threadErrorBannerKey: string | null;
-  readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem> | undefined;
+  readonly turnItems: Parameters<typeof getTruncationNoticeKey>[1] | undefined;
   readonly latestRunId: string | null | undefined;
   readonly runtimeStatus: string | undefined;
 }) {

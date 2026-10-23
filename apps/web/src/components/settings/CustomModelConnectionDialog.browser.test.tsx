@@ -139,7 +139,7 @@ describe("connection management", () => {
     await _setupFixture0(_fixture);
 
     await render(_fixture, false, true);
-    expect(document.body.textContent).toContain("Saved key missing — re-enter it");
+    expect(document.body.textContent).toContain("Saved key missing. Re-enter it");
     expect(document.body.textContent).not.toContain("Key ending in");
   });
 });

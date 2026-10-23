@@ -1,6 +1,7 @@
+import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
-  OrchestrationV2ThreadProjection,
   RunId,
   ScopedThreadRef,
   ThreadId,
@@ -34,7 +35,7 @@ export function useWorktreeSetup(input: {
     | { readonly id: ThreadId; readonly worktreePath: string | null }
     | undefined;
   readonly threadRef: ScopedThreadRef | null;
-  readonly serverProjection: OrchestrationV2ThreadProjection | null;
+  readonly serverProjection: ThreadStructure | null;
   readonly activityRun: Thread["latestRun"] | null;
   readonly localPreparing: boolean;
   // A send that the server queues behind the setup run is not held here.
@@ -83,15 +84,16 @@ export function useWorktreeSetup(input: {
       : null,
   );
   const latestSnapshot = snapshotQuery.data;
+  const routeThreadKey = scopedThreadKey(routeThreadRef);
   // A newer snapshot replaces the held one; a late older one for the same
   // thread does not. Switching routes drops it.
   const [heldFor, setHeldFor] = useState<{
-    readonly routeThreadRef: ScopedThreadRef;
+    readonly routeThreadKey: string;
     readonly latestSnapshot: WorktreeSetupSnapshot | null | undefined;
-  }>({ routeThreadRef, latestSnapshot: null });
-  if (heldFor.routeThreadRef !== routeThreadRef || heldFor.latestSnapshot !== latestSnapshot) {
-    const routeChanged = heldFor.routeThreadRef !== routeThreadRef;
-    setHeldFor({ routeThreadRef, latestSnapshot });
+  }>({ routeThreadKey, latestSnapshot: null });
+  if (heldFor.routeThreadKey !== routeThreadKey || heldFor.latestSnapshot !== latestSnapshot) {
+    const routeChanged = heldFor.routeThreadKey !== routeThreadKey;
+    setHeldFor({ routeThreadKey, latestSnapshot });
     if (routeChanged) {
       setHeldSnapshot(null);
     } else if (latestSnapshot) {
