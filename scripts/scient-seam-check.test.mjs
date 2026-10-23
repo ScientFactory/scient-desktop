@@ -376,13 +376,22 @@ describe("Scient seam snapshot verification", () => {
     expect(f.inspect(["--base", before]).checks[0].status).toBe("review-needed");
   });
 
-  it("retains filename and hunk evidence for unrefined signals", () => {
+  it("retains filename and hunk evidence when index stats are racy", () => {
     const f = fixture();
     f.git("config", "diff.typescript.xfuncname", "^export function.*");
+    f.git("config", "core.trustctime", "false");
+    f.git("config", "core.checkStat", "minimal");
+    // Sub-millisecond time: a millisecond float would round the private index up.
+    const touch = (path) =>
+      NodeChildProcess.execFileSync("touch", ["-d", "2020-01-01T00:00:00.999999999Z", path]);
     f.write(".gitattributes", "*.ts diff=typescript\n");
     f.write("ordinary.ts", "export function ScientFeature() {\n  return 1;\n}\n");
+    touch(NodePath.join(f.cwd, "ordinary.ts"));
     const before = f.commit();
+    const index = f.git("rev-parse", "--path-format=absolute", "--git-path", "index");
+    touch(index);
     f.write("ordinary.ts", "export function ScientFeature() {\n  return 2;\n}\n");
+    touch(NodePath.join(f.cwd, "ordinary.ts"));
     f.write("ScientFeature.ts", "export const unrelated = true;\n");
     expect(f.git("diff", "--unified=0", before, "--", "ordinary.ts")).toContain(
       "@@ -2 +2 @@ export function ScientFeature() {",
