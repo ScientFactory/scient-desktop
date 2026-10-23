@@ -136,3 +136,8 @@ export * from "./secretRequest.ts";
 export * from "./clientRpcPermissions.ts";
 
 export * from "./scientDocumentHost.ts";
+
+// SCIENT-FORK:START keep-awake mount
+export * from "./scientKeepAwake.ts";
+
+// SCIENT-FORK:END

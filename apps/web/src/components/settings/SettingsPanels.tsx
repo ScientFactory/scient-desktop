@@ -1,5 +1,8 @@
 import { AutomaticThreadPlacementSettings } from "../../scient/sections/AutomaticThreadPlacementSettings";
 import { SettingsGroup } from "./SettingsGroup";
+// SCIENT-FORK:START keep-awake mount
+import { KeepAwakeSettings } from "../../scient/keepAwake/KeepAwakeSettings";
+// SCIENT-FORK:END
 import { NotificationSettings } from "./NotificationSettings";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -1295,6 +1298,10 @@ export function GeneralSettingsPanel() {
         />
 
         <BackgroundActivitySettingsRow />
+
+        {/* SCIENT-FORK:START keep-awake mount */}
+        <KeepAwakeSettings />
+        {/* SCIENT-FORK:END */}
       </SettingsSection>
 
       <SettingsSection id="projects-and-threads" title="Projects & threads">

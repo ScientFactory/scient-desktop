@@ -1,3 +1,6 @@
+// SCIENT-FORK:START keep-awake ownership seam
+import { makeExecutionInspector } from "../scient/keepAwake/ownership.ts";
+// SCIENT-FORK:END
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import {
@@ -211,6 +214,14 @@ export interface ProviderSessionManagerV2Shape extends ProviderTextSnapshotManag
     ProviderSessionManagerV2Error
   >;
   readonly isLive: (providerSessionId: ProviderSessionId) => Effect.Effect<boolean>;
+  // SCIENT-FORK:START keep-awake ownership observation
+  /** Inspect current ownership without touching idle timers or starting provider work. */
+  readonly inspectExecution: (input: {
+    readonly threadId: ThreadId;
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly runOrdinal?: number;
+  }) => Effect.Effect<"connected" | "unowned" | "unknown">;
+  // SCIENT-FORK:END
   readonly close: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -2126,6 +2137,66 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
+        // SCIENT-FORK:START share managed ownership with silent compaction
+        const managedStart =
+          (
+            start: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"],
+          ): ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"] =>
+          (input) =>
+            // SCIENT-FORK:START — cancel pending unloads before attach; in-flight unloads own the lock.
+            holdThreadLoaded({
+              providerSessionId,
+              threadId: input.threadId,
+              providerThread: input.providerThread,
+            }).pipe(
+              Effect.andThen(
+                observeActivity(
+                  providerSessionId,
+                  ensureThreadAttached({
+                    providerSessionId,
+                    threadId: input.threadId,
+                    providerInstanceId: runtime.instanceId,
+                  }),
+                ),
+              ),
+              // SCIENT-FORK:END
+              Effect.andThen(
+                claimPiFile(
+                  sessionScope,
+                  runtime.driver,
+                  input.providerThread.nativeThreadRef?.nativeId,
+                ),
+              ),
+              // A start that fails or is stopped may never emit turn.terminal,
+              // so it clears its own turn or the session never goes idle.
+              Effect.andThen(
+                Effect.acquireUseRelease(
+                  observeActivity(
+                    providerSessionId,
+                    markBusy(
+                      providerSessionId,
+                      busyTurnKey(input.providerThread.id, input.runOrdinal),
+                    ),
+                  ),
+                  () =>
+                    start({
+                      ...input,
+                      message: {
+                        ...input.message,
+                        text: expandComposerCitationsForProvider(input.message.text),
+                      },
+                    }).pipe(turnMetrics("send", input.modelSelection.model)),
+                  (_, exit) =>
+                    Exit.isFailure(exit)
+                      ? observeActivity(
+                          providerSessionId,
+                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
+                        )
+                      : Effect.void,
+                ),
+              ),
+            );
+        // SCIENT-FORK:END
         return {
           // SCIENT-FORK:START — the manager alone reads the running-fork text subscription.
           ...subscriberRuntime,
@@ -2259,62 +2330,12 @@ export const layerWithOptions = (
                 }),
               ),
             ),
-          startTurn: (input) =>
-            // SCIENT-FORK:START — cancel pending unloads before attach; in-flight unloads own the lock.
-            holdThreadLoaded({
-              providerSessionId,
-              threadId: input.threadId,
-              providerThread: input.providerThread,
-            }).pipe(
-              Effect.andThen(
-                observeActivity(
-                  providerSessionId,
-                  ensureThreadAttached({
-                    providerSessionId,
-                    threadId: input.threadId,
-                    providerInstanceId: runtime.instanceId,
-                  }),
-                ),
-              ),
-              // SCIENT-FORK:END
-              Effect.andThen(
-                claimPiFile(
-                  sessionScope,
-                  runtime.driver,
-                  input.providerThread.nativeThreadRef?.nativeId,
-                ),
-              ),
-              // A start that fails or is stopped may never emit turn.terminal,
-              // so it clears its own turn or the session never goes idle.
-              Effect.andThen(
-                Effect.acquireUseRelease(
-                  observeActivity(
-                    providerSessionId,
-                    markBusy(
-                      providerSessionId,
-                      busyTurnKey(input.providerThread.id, input.runOrdinal),
-                    ),
-                  ),
-                  () =>
-                    runtime
-                      .startTurn({
-                        ...input,
-                        message: {
-                          ...input.message,
-                          text: expandComposerCitationsForProvider(input.message.text),
-                        },
-                      })
-                      .pipe(turnMetrics("send", input.modelSelection.model)),
-                  (_, exit) =>
-                    Exit.isFailure(exit)
-                      ? observeActivity(
-                          providerSessionId,
-                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
-                        )
-                      : Effect.void,
-                ),
-              ),
-            ),
+          // SCIENT-FORK:START keep-awake compaction lifecycle
+          startTurn: managedStart(runtime.startTurn),
+          ...(runtime.compactThread === undefined
+            ? {}
+            : { compactThread: managedStart(runtime.compactThread) }),
+          // SCIENT-FORK:END
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(
@@ -3052,6 +3073,9 @@ export const layerWithOptions = (
               return current.has(key);
             }),
           ),
+        // SCIENT-FORK:START keep-awake ownership seam
+        inspectExecution: makeExecutionInspector(Ref.get(sessions), releasingRuntimes, busyTurnKey),
+        // SCIENT-FORK:END
         get: Effect.fn("ProviderSessionManager.get")(
           function* (providerSessionId) {
             const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));

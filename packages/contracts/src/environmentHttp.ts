@@ -839,6 +839,7 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
 // environment API groups; they live in scient/environmentHttpGroups.ts.
 export { ScientThreadQueueOperationError };
 export const {
+  EnvironmentScientKeepAwakeHttpApi,
   EnvironmentScientProjectHttpApi,
   EnvironmentScientSourcesHttpApi,
   EnvironmentScientLatexHttpApi,
@@ -896,6 +897,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentScientAnalyticsHttpApi)
   .add(EnvironmentScientLatexHttpApi)
   // SCIENT-FORK:START
+  .add(EnvironmentScientKeepAwakeHttpApi)
   .add(EnvironmentScientThreadQueueHttpApi)
   .add(EnvironmentScientConversationExportHttpApi)
   .add(EnvironmentScientConversationImportHttpApi)

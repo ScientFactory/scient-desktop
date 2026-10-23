@@ -25,6 +25,11 @@ import serverPackageJson from "../../server/package.json" with { type: "json" };
 
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
 import * as DesktopVoice from "./app/DesktopVoice.ts";
+
+// SCIENT-FORK:START keep-awake mount
+import * as DesktopKeepAwake from "./scient/keepAwake/DesktopKeepAwake.ts";
+
+// SCIENT-FORK:END
 import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
 import * as ElectronMenu from "./electron/ElectronMenu.ts";
@@ -235,6 +240,10 @@ const layerDesktopLocalEnvironmentAuth = DesktopLocalEnvironmentAuth.layer.pipe(
 const layerDesktopVoice = DesktopVoice.layer.pipe(Layer.provideMerge(layerDesktopFoundation));
 
 const layerDesktopApplication = Layer.mergeAll(
+  // SCIENT-FORK:START keep-awake mount
+  DesktopKeepAwake.layer,
+
+  // SCIENT-FORK:END
   DesktopLifecycle.layer,
   layerDesktopAppActivation,
   DesktopWebLinks.layer,

@@ -14,6 +14,11 @@ import {
 // SCIENT-FORK:END
 import * as Effect from "effect/Effect";
 
+// SCIENT-FORK:START keep-awake mount
+import { keepAwake } from "../scient/keepAwake/DesktopKeepAwake.ts";
+
+// SCIENT-FORK:END
+
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
@@ -103,6 +108,11 @@ import {
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
+
+  // SCIENT-FORK:START keep-awake mount
+  yield* ipc.handle(keepAwake);
+
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — replaces upstream's installNotificationBadge(): one owner for the app icon.
   yield* installUnreadAnswerBadge();
   // SCIENT-FORK:END

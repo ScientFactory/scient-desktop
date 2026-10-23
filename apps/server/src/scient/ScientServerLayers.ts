@@ -1,3 +1,5 @@
+import * as KeepAwake from "./keepAwake/KeepAwakeService.ts";
+import { httpLayer as keepAwakeHttpLayer } from "./keepAwake/http.ts";
 /**
  * Scient server composition: the Scient services, HTTP groups and provider
  * lifecycle layers that server.ts mounts into the shared server layer.
@@ -173,6 +175,7 @@ export function makeScientRouteServices<
   /** Scient HTTP API groups, provided in order after the upstream groups. */
   const provideScientHttpApiGroups = <A, E, R>(self: Layer.Layer<A, E, R>) =>
     self.pipe(
+      Layer.provide(keepAwakeHttpLayer.pipe(Layer.provide(KeepAwake.layer))),
       Layer.provide(scientProjectHttpApiLayer),
       Layer.provide(scientSourcesHttpApiLayer),
       Layer.provide(scientAnalyticsHttpApiLayer),

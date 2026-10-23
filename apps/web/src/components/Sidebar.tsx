@@ -1,5 +1,8 @@
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+// SCIENT-FORK:START keep-awake menu integration
+import { keepAwakeSidebarState, handleKeepAwakeAction } from "../scient/keepAwake/sidebar";
+// SCIENT-FORK:END
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import {
   dropThreadContext,
@@ -2408,6 +2411,9 @@ export default function Sidebar() {
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
+              // SCIENT-FORK:START keep-awake menu state
+              keepAwake: keepAwakeSidebarState(thread),
+              // SCIENT-FORK:END
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
@@ -2445,6 +2451,15 @@ export default function Sidebar() {
         onSectionInteractionChange(false);
         // SCIENT-FORK:END
         if (clicked._tag === "Failure" || clicked.value === null) return;
+        // SCIENT-FORK:START keep-awake menu dispatch
+        if (
+          await handleKeepAwakeAction(
+            clicked.value,
+            threadByKeyRef.current.get(threadKey) ?? thread,
+          )
+        )
+          return;
+        // SCIENT-FORK:END
         // SCIENT-FORK:START
         if (await handleSectionMenuAction(clicked.value, [threadRef], position)) return;
         if (handleConversationExportMenuAction(clicked.value, threadRef)) return;

@@ -78,6 +78,10 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
+  // SCIENT-FORK:START keep-awake mount
+  keepAwake: (request) => ipcRenderer.invoke(IpcChannels.KEEP_AWAKE_CHANNEL, request),
+
+  // SCIENT-FORK:END
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
     if (typeof result !== "object" || result === null) {

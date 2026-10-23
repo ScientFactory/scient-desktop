@@ -1,5 +1,12 @@
+// SCIENT-FORK:START keep-awake operation lifecycle
+import { makeExecutionCounter } from "../scient/keepAwake/ownership.ts";
+// SCIENT-FORK:END
 import { DroidSteerDeferred, DroidSteerUncertain } from "./Adapters/DroidSteerSafety.ts";
-import { CommandId } from "@t3tools/contracts";
+
+// SCIENT-FORK:START keep-awake mount
+import { CommandId, type ThreadId } from "@t3tools/contracts";
+
+// SCIENT-FORK:END
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -807,6 +814,9 @@ export class OrchestrationEffectWorkerError extends Schema.TaggedError<Orchestra
 const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerError);
 
 export interface OrchestrationEffectWorkerV2Shape {
+  // SCIENT-FORK:START keep-awake operation observation
+  readonly isExecutingThread: (threadId: ThreadId) => Effect.Effect<boolean>;
+  // SCIENT-FORK:END
   readonly awaitWork: Effect.Effect<void>;
   readonly runOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly runRecoveryOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
@@ -843,6 +853,9 @@ export const layerWithOptions = (
       const workerId = options.workerId ?? `orchestration-v2:${process.pid}`;
       const leaseDurationMs = Math.max(1, options.leaseDurationMs ?? 30_000);
       const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
+      // SCIENT-FORK:START keep-awake operation lifecycle
+      const executing = makeExecutionCounter();
+      // SCIENT-FORK:END
       const wasCancelled = (effectId: string) =>
         outbox.get(effectId).pipe(
           Effect.map(
@@ -984,9 +997,15 @@ export const layerWithOptions = (
           }).pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (cancelledBeforeExecution) return true;
 
-          const execution = executor
-            .execute(effect, { willRetry: effect.attemptCount < maxAttempts })
-            .pipe(Effect.as("executed" as const));
+          // SCIENT-FORK:START keep-awake operation lifecycle
+          const execution = executing.track(
+            effect.threadId,
+            executor
+              .execute(effect, { willRetry: effect.attemptCount < maxAttempts })
+              .pipe(Effect.as("executed" as const)),
+            effect.request.type,
+          );
+          // SCIENT-FORK:END
           const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
             Effect.ensuring(outbox.clearCancellation(effect.id)),
           );
@@ -1081,6 +1100,9 @@ export const layerWithOptions = (
       );
 
       return OrchestrationEffectWorkerV2.of({
+        // SCIENT-FORK:START keep-awake operation observation
+        isExecutingThread: executing.isExecuting,
+        // SCIENT-FORK:END
         awaitWork: outbox.awaitAvailable,
         runOnce: runOnce(),
         runRecoveryOnce: runOnce(true),
