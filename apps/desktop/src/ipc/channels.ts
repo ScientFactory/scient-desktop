@@ -153,6 +153,7 @@ export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission"
 
 export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input";
 export const RENDER_DOCUMENT_PAGE_PDF_CHANNEL = "desktop:render-document-page-pdf";
+export const SAVE_PDF_BYTES_COPY_CHANNEL = "scient:pdf:save-bytes-copy";
 
 export const RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:receive-provider-auth-callback";
 export const CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:cancel-provider-auth-callback";

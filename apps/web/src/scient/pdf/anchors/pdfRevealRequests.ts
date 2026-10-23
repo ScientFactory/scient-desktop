@@ -116,7 +116,7 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
-function usePdfRevealRequest(documentKey: string): PdfRevealRequest | null {
+export function usePdfRevealRequest(documentKey: string): PdfRevealRequest | null {
   return useSyncExternalStore(subscribe, () => pendingPdfReveal(documentKey));
 }
 

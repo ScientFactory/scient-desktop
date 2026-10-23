@@ -270,6 +270,8 @@ export default defineConfig(({ mode }) => {
         // new optimizer pass; prepare both MathLive entry points up front.
         "mathlive",
         "mathlive/ssr",
+        // Page editing starts in a worker; prepare its dependency before a document action.
+        "pdf-lib",
         ...(process.env.VITEST
           ? [
               "@base-ui/react/alert-dialog",

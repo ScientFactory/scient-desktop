@@ -10,6 +10,9 @@ including attachments you are still composing, open in the same reader. Browser
 tabs keep their own viewer.
 
 The first time a PDF opens, it starts fit to width with the PDF sidebar closed.
+Zoom stays fixed while scrolling between pages, including mixed portrait and
+landscape pages. Click Fit width again to fit the current page. Resizing the
+reader pane still adjusts the document to the available width.
 Each conversation keeps its own PDF reading position. A fork starts from the
 original conversation’s position; navigating either conversation afterward does
 not move the other.
@@ -26,7 +29,7 @@ The reader supports:
 - continuous, fit-to-width reading that remains responsive in long documents;
 - previous/next navigation and direct page-number entry;
 - zoom in five-percent steps, fit width by clicking the zoom percentage, actual
-  size, smooth trackpad pinch zoom, and clockwise rotation;
+  size, and smooth trackpad pinch zoom;
 - text selection and copy when the PDF contains a text layer;
 - responsive document search after each key, with previous/next result navigation;
 - internal document links and external links opened in a separate context;
@@ -56,6 +59,62 @@ and a little text around it.
   outside the project and sent chat attachments can be quoted. An attachment
   you are still composing can't be quoted yet; ask about it in words, or quote
   it once the message is sent.
+
+## Page changes
+
+The existing Pages sidebar also supports small edits, without an editing mode.
+Clicking a thumbnail still navigates. Its inset corner checkbox selects the page;
+the checkbox beside Pages selects all and shows a dash for a partial selection.
+Shift-clicking checkboxes selects a range. Ctrl/Cmd+A selects all only while focus
+is in the sidebar.
+
+Right-click opens the menu without changing the checked pages. Right-click a
+checked page to act on the checked group, or an unchecked page to target only
+that page. The menu offers Rotate (left/right 90°), Move…, Duplicate, and
+Delete, in that order. Move… opens a compact popover beside the thumbnail with
+one Before page number field. Type a number or adjust it with the minus/plus buttons
+or arrow keys. Page numbers refer to the current document. The highest value,
+one above the last page, moves the pages to the end.
+Move saves immediately and supports undo. Copies appear after the last
+checked page. At least one page must remain. Rotation changes the saved PDF; the old view-only Rotate
+clockwise item is removed from More.
+
+Any thumbnail can be dragged. Dragging an unchecked page moves only that page,
+keeping other checked pages unchanged. Dragging a checked page moves the checked
+group in document order, with a stacked preview showing the number of pages.
+An insertion line marks the destination, and dragging near the sidebar edges
+scrolls it. Checked boxes have a solid gray fill.
+
+Hover or focus a gap to reveal a small gray Lucide CirclePlus icon.
+These controls overlay the existing thumbnail margins and add no spacing. The +
+menu offers Blank page and From PDF….
+A blank page matches the adjacent page's visible size and orientation.
+From PDF… opens a file picker, then a compact All pages / Range popover.
+Insertion uses the chosen gap directly. Moving pages is available through Move…
+in the page's right-click menu or by dragging.
+
+Edits save immediately to the file's environment, including undo and redo.
+Ctrl/Cmd+Z undoes the last page change; Ctrl/Cmd+Shift+Z or Ctrl+Y redoes it.
+Text fields keep their own undo and selection shortcuts. History is kept in
+memory while the document's editing session remains open.
+
+Generated PDFs are immutable build outputs: their first page edit automatically
+creates a separate edited document. Files outside writable project folders also
+use an edited copy. Scient remembers the copy for this conversation and opens it
+when you return to the original document. Use Show original / Open edited copy
+to switch between them, or Save copy to export the edited PDF as a local file.
+Subsequent edits save new revisions of the copy; LaTeX rebuilds own the original.
+Chat attachments remain read-only; save them to your project to edit their pages.
+The backend checks the expected file revision before replacing bytes and uses
+the host's supported file-publication method. If another application changed
+the PDF, the edit is refused.
+Use Reload PDF in the error notice to read the latest file and reset page history.
+
+Page edits support up to 5,000 pages and 50 MB of combined source PDFs.
+Encrypted PDFs and PDFs with form fields or certificate permissions stay
+read-only. Existing base-document outlines, internal destinations, metadata,
+and attachments are retained; destinations to removed pages follow a surviving
+page. Imported internal links are retained when their target is also inserted.
 
 The reader does not yet add Scient annotations or OCR. Scanned PDFs without a
 text layer can be read visually, but text selection and search may be limited.

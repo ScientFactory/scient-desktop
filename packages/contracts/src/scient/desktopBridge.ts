@@ -1,6 +1,8 @@
 import {
   AssetCopyRequest,
   AssetCopyResult,
+  PdfBytesCopyRequest,
+  type PdfBytesCopyRequest as PdfBytesCopyRequestType,
   type AssetCopyRequest as AssetCopyRequestType,
   type AssetCopyResult as AssetCopyResultType,
 } from "@scientfactory/document-artifacts";
@@ -22,6 +24,8 @@ export const DesktopAssetCopyRequestSchema = AssetCopyRequest;
 export type DesktopAssetCopyRequest = AssetCopyRequestType;
 export const DesktopAssetCopyResultSchema = AssetCopyResult;
 export type DesktopAssetCopyResult = AssetCopyResultType;
+export const DesktopPdfBytesCopyRequestSchema = PdfBytesCopyRequest;
+export type DesktopPdfBytesCopyRequest = PdfBytesCopyRequestType;
 
 /** Scient members of the desktop bridge; ipc.ts's DesktopBridge extends this interface. */
 export interface ScientDesktopBridge {
@@ -49,6 +53,8 @@ export interface ScientDesktopBridge {
   /** Scient: gives up an opened `.scic`; its token then fails `file-unavailable`. */
   releaseOpenedConversationFile?: (request: DesktopConversationFileReleaseRequest) => Promise<void>;
   saveAssetCopy: (request: DesktopAssetCopyRequest) => Promise<DesktopAssetCopyResult>;
+  /** Optional while an older desktop shell hosts a newer reader. Uses the native Save dialog. */
+  savePdfBytesCopy?: (request: PdfBytesCopyRequestType) => Promise<DesktopAssetCopyResult>;
   /** Optional while older desktop shells can host a newer web client. */
   revealSavedAsset?: (path: string) => Promise<void>;
   /**

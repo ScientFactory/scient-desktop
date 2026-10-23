@@ -335,7 +335,9 @@ int wmain(int argc, wchar_t **wide) {
   int allocated = 0, result = 71;
   for (int i = 0; i < argc; ++i) {
     int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide[i], -1, NULL, 0, NULL, NULL);
-    if (!size || !(argv[i] = malloc((size_t)size))) goto done;
+    if (!size) goto done;
+    argv[i] = malloc((size_t)size);
+    if (!argv[i]) goto done;
     ++allocated;
     if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide[i], -1, argv[i], size, NULL, NULL)) goto done;
   }

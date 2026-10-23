@@ -1,5 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Native save uses file handles for streamed, flushed, atomic publication.
-import type { DesktopAssetCopyRequest, DesktopAssetCopyResult } from "@t3tools/contracts";
+import type {
+  DesktopAssetCopyRequest,
+  DesktopAssetCopyResult,
+  DesktopPdfBytesCopyRequest,
+} from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -150,37 +154,60 @@ export async function copyAssetToPath(
   return writeResponseAtomically(response, destinationPath);
 }
 
+const chooseCopyDestination = Effect.fn("desktop.scient.documentArtifacts.chooseCopyDestination")(
+  function* (suggestedFileName: string) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const owner = yield* electronWindow.focusedMainOrFirst;
+    const selection = yield* Effect.tryPromise({
+      try: () => {
+        const options: Electron.SaveDialogOptions = {
+          defaultPath: suggestedFileName,
+          filters: fileFilters(suggestedFileName),
+          properties: ["showOverwriteConfirmation", "createDirectory"],
+        };
+        return Option.match(owner, {
+          onNone: () => Electron.dialog.showSaveDialog(options),
+          onSome: (window) => Electron.dialog.showSaveDialog(window, options),
+        });
+      },
+      catch: (cause) => new AssetCopyOperationError({ cause }),
+    }).pipe(Effect.result);
+
+    if (Result.isFailure(selection)) return { _tag: "failed", reason: "dialog-failed" } as const;
+    if (selection.success.canceled || selection.success.filePath.length === 0) {
+      return { _tag: "cancelled" } as const;
+    }
+    return { _tag: "destination", path: selection.success.filePath } as const;
+  },
+);
+
 export const saveAssetCopy = Effect.fn("desktop.scient.documentArtifacts.saveAssetCopy")(function* (
   request: DesktopAssetCopyRequest,
 ) {
-  const electronWindow = yield* ElectronWindow.ElectronWindow;
-  const owner = yield* electronWindow.focusedMainOrFirst;
-  const selection = yield* Effect.tryPromise({
-    try: () => {
-      const options: Electron.SaveDialogOptions = {
-        defaultPath: request.suggestedFileName,
-        filters: fileFilters(request.suggestedFileName),
-        properties: ["showOverwriteConfirmation", "createDirectory"],
-      };
-      return Option.match(owner, {
-        onNone: () => Electron.dialog.showSaveDialog(options),
-        onSome: (window) => Electron.dialog.showSaveDialog(window, options),
-      });
-    },
-    catch: (cause) => new AssetCopyOperationError({ cause }),
-  }).pipe(Effect.result);
-
-  if (Result.isFailure(selection)) return failed("dialog-failed");
-  if (selection.success.canceled || selection.success.filePath.length === 0) {
-    return { _tag: "cancelled" } as const;
-  }
-  const destinationPath = selection.success.filePath;
+  const selection = yield* chooseCopyDestination(request.suggestedFileName);
+  if (selection._tag !== "destination") return selection;
+  const destinationPath = selection.path;
   const copy = yield* Effect.tryPromise({
     try: () => copyAssetToPath(request, destinationPath),
     catch: (cause) => new AssetCopyOperationError({ cause }),
   }).pipe(Effect.result);
   return Result.isSuccess(copy) ? copy.success : failed("write-failed");
 });
+
+export const savePdfBytesCopy = Effect.fn("desktop.scient.documentArtifacts.savePdfBytesCopy")(
+  function* (request: DesktopPdfBytesCopyRequest) {
+    if (!new TextDecoder().decode(request.bytes.subarray(0, 1024)).includes("%PDF-"))
+      return failed("source-unavailable");
+    const selection = yield* chooseCopyDestination(request.suggestedFileName);
+    if (selection._tag !== "destination") return selection;
+    const copy = yield* Effect.tryPromise({
+      try: () =>
+        writeResponseAtomically(new Response(new Uint8Array(request.bytes)), selection.path),
+      catch: (cause) => new AssetCopyOperationError({ cause }),
+    }).pipe(Effect.result);
+    return Result.isSuccess(copy) ? copy.success : failed("write-failed");
+  },
+);
 
 export const revealSavedAsset = Effect.fn("desktop.scient.documentArtifacts.revealSavedAsset")(
   function* (path: string) {

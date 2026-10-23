@@ -449,7 +449,6 @@ export function useScientPdfReader(input: {
         const onPageChanging = ({ pageNumber }: { pageNumber: number }) => {
           if (!displayed()) return;
           setState((previous) => ({ ...previous, page: pageNumber }));
-          runtime.refreshForContainerSize();
         };
         const onScaleChanging = ({
           scale,
