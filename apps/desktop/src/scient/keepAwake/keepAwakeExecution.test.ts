@@ -46,9 +46,15 @@ describe("keep-awake execution health", () => {
     expect(executionKeepsAwake(disconnected, 86_401_000)).toBe(false);
   });
 
-  it("preserves uncertain work but lets a paused operation sleep", () => {
+  it("expires unverifiable work without progress but lets a paused operation sleep", () => {
     const unknown = observeKeepAwakeExecution([], [{ ...abandoned, health: "unknown" }], 1000);
-    expect(executionKeepsAwake(unknown, 1_000_000)).toBe(true);
+    expect(executionKeepsAwake(unknown, 120_999)).toBe(true);
+    expect(
+      executionKeepsAwake(
+        observeKeepAwakeExecution(unknown, [{ ...abandoned, health: "unknown" }], 121_000),
+        121_000,
+      ),
+    ).toBe(false);
     const paused = observeKeepAwakeExecution(
       unknown,
       [{ ...abandoned, health: "connected", needsAwake: false }],

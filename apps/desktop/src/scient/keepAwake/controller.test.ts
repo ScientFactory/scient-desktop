@@ -203,6 +203,31 @@ it.effect("ignores a late older response so it cannot consume an armed choice", 
 );
 
 it.effect(
+  "releases unverifiable background work while preserving its temporary selection and restores protection on progress",
+  () =>
+    Effect.gen(function* () {
+      const { controller } = yield* setup();
+      yield* controller.handle(
+        { type: "choose", key, title: "Thread", choice: "once" },
+        { unfinished: true, latestRunId: "run-1" },
+      );
+      const background = { ...work, ownership: "unknown" as const };
+      yield* controller.accept(result(background));
+      assert.isTrue((yield* controller.handle({ type: "get" })).blocking);
+      yield* TestClock.adjust("121 seconds");
+      yield* controller.accept(result(background));
+      const paused = yield* controller.handle({ type: "get" });
+      assert.isFalse(paused.blocking);
+      assert.isTrue(paused.threads[0]!.once);
+      yield* controller.accept(result({ ...background, progress: "2" }));
+      assert.isTrue((yield* controller.handle({ type: "get" })).blocking);
+      yield* TestClock.adjust("121 seconds");
+      yield* controller.accept(result({ ...background, progress: "2", ownership: "connected" }));
+      assert.isTrue((yield* controller.handle({ type: "get" })).blocking);
+    }),
+);
+
+it.effect(
   "renews a healthy group member despite an unchanged parent and an unavailable other environment",
   () =>
     Effect.gen(function* () {

@@ -20,7 +20,6 @@ export function makeExecutionInspector(
   turnKey: (id: OrchestrationV2ProviderThread["id"], ordinal: number) => string,
 ) {
   return Effect.fn("KeepAwake.inspectExecution")(function* (input: ExecutionInspection) {
-    const absent = input.runOrdinal === undefined ? ("unknown" as const) : ("unowned" as const);
     const id = input.providerThread.providerSessionId;
     const owner = id === null ? undefined : (yield* read).get(String(id));
     if (
@@ -31,13 +30,17 @@ export function makeExecutionInspector(
       owner.runtime.providerSession.status === "stopped" ||
       (input.runOrdinal !== undefined && !owner.attachedThreadIds.has(input.threadId))
     )
-      return absent;
+      return "unowned" as const;
     if (input.runOrdinal !== undefined)
       return owner.busyTurns.has(turnKey(input.providerThread.id, input.runOrdinal))
         ? ("connected" as const)
         : ("unowned" as const);
     const probe = owner.runtime.hasPendingBackgroundWorkForThread?.(input.providerThread);
-    return probe !== undefined && (yield* probe) ? ("connected" as const) : ("unknown" as const);
+    return probe === undefined
+      ? ("unknown" as const)
+      : (yield* probe)
+        ? ("connected" as const)
+        : ("unowned" as const);
   });
 }
 

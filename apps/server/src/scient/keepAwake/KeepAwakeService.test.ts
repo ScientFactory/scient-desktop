@@ -1,11 +1,15 @@
 import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  ProviderDriverKind,
   IsoDateTime,
   EventId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  ProviderThreadId,
+  NodeId,
+  ProviderSessionId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -18,6 +22,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Persistence from "../../persistence/Sqlite.ts";
 import * as Store from "../../orchestration-v2/ProjectionStore.ts";
@@ -27,6 +32,10 @@ import { OrchestrationEffectWorkerV2 } from "../../orchestration-v2/EffectWorker
 import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
 import * as Service from "./KeepAwakeService.ts";
 import { assembleGroups, classifyWork, type WorkFacts } from "./work.ts";
+import {
+  executionKeepsAwake,
+  observeKeepAwakeExecution,
+} from "../../../../desktop/src/scient/keepAwake/keepAwakeExecution.ts";
 
 const now = DateTime.makeUnsafe(1000);
 const id = ThreadId.make("keep-awake-root");
@@ -125,6 +134,113 @@ const seed = (extra: readonly OrchestrationV2DomainEvent[], currentRun = run) =>
     });
     yield* Effect.forEach(records, (event) => store.apply(event.event));
   });
+
+it.effect.each(["background", "native"] as const)(
+  "observes %s ownership on every poll and releases protection after owner loss without completing the work",
+  (kind) =>
+    Effect.gen(function* () {
+      const ownership = yield* Ref.make<"connected" | "unowned" | "unknown">("connected");
+      const fixture = Service.layer.pipe(
+        Layer.provideMerge(stores),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ProviderSessionManagerV2)({
+              inspectExecution: (input) => {
+                assert.isUndefined(input.runOrdinal);
+                return Ref.get(ownership);
+              },
+            }),
+            Layer.mock(OrchestrationEffectWorkerV2)({
+              isExecutingThread: () => Effect.succeed(false),
+            }),
+            Layer.succeed(ServerEnvironmentIdentity, {
+              getEnvironmentId: Effect.succeed(EnvironmentId.make("environment")),
+            }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        yield* seed([
+          {
+            id: EventId.make("background-owner"),
+            threadId: id,
+            occurredAt: now,
+            type: "provider-thread.updated",
+            payload: {
+              id: ProviderThreadId.make("provider"),
+              driver: ProviderDriverKind.make("codex"),
+              providerInstanceId: instanceId,
+              providerSessionId: ProviderSessionId.make("session"),
+              appThreadId: kind === "native" ? null : id,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: null,
+              lastRunOrdinal: null,
+              handoffIds: [],
+              forkedFrom: null,
+              pendingBackgroundTasks: [{ kind: "background_task", taskId: "task" }],
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          ...(kind !== "native"
+            ? []
+            : [
+                {
+                  id: EventId.make("native-root"),
+                  threadId: id,
+                  occurredAt: now,
+                  type: "node.updated",
+                  payload: {
+                    id: NodeId.make("root"),
+                    threadId: id,
+                    runId: null,
+                    parentNodeId: null,
+                    rootNodeId: NodeId.make("root"),
+                    kind: "root_turn",
+                    status: "running",
+                    countsForRun: false,
+                    providerThreadId: ProviderThreadId.make("provider"),
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    runtimeRequestId: null,
+                    checkpointScopeId: null,
+                    startedAt: now,
+                    completedAt: null,
+                  },
+                } satisfies OrchestrationV2DomainEvent,
+              ]),
+        ]);
+        const service = yield* Service.KeepAwakeService;
+        const observe = service
+          .observe({ threadIds: [id], includeLocalWork: false })
+          .pipe(Effect.map((batch) => batch.groups[0]!.members[0]!));
+        const first = yield* observe;
+        assert.equal(first.ownership, "connected");
+        const leaseEntry = (work: typeof first) => ({
+          key: work.threadId,
+          progressToken: work.progress,
+          health: work.ownership,
+          needsAwake: work.runnable,
+        });
+        let leases = observeKeepAwakeExecution([], [leaseEntry(first)], 1_000);
+        yield* Ref.set(ownership, "unowned");
+        const orphaned = yield* observe;
+        assert.isTrue(orphaned.unfinished);
+        assert.equal(orphaned.ownership, "unowned");
+        leases = observeKeepAwakeExecution(leases, [leaseEntry(orphaned)], 121_000);
+        assert.isFalse(executionKeepsAwake(leases, 121_000));
+        yield* Ref.set(ownership, "unknown");
+        leases = observeKeepAwakeExecution(leases, [leaseEntry(yield* observe)], 240_000);
+        assert.isFalse(executionKeepsAwake(leases, 240_000));
+        yield* Ref.set(ownership, "connected");
+        leases = observeKeepAwakeExecution(leases, [leaseEntry(yield* observe)], 360_000);
+        assert.isTrue(executionKeepsAwake(leases, 360_000));
+      }).pipe(Effect.provide(fixture));
+    }),
+);
 
 it.effect(
   "observes background work beyond the bounded history window without returning transcript content",

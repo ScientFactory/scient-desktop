@@ -24,6 +24,6 @@ export function executionKeepsAwake(execution: readonly KeepAwakeExecutionLease[
   return execution.some(
     (entry) =>
       entry.needsAwake &&
-      (entry.health !== "unowned" || entry.lastProgressAt + KEEP_AWAKE_LEASE_MS > now),
+      (entry.health === "connected" || entry.lastProgressAt + KEEP_AWAKE_LEASE_MS > now),
   );
 }
