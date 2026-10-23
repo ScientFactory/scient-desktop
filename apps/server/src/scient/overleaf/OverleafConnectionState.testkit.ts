@@ -26,7 +26,9 @@ export const overleafConnectionFixture = (
   localSnapshots: [],
   managedPaths: [],
   localOnlyPaths: [],
-  attentionPaths: [],
+  forcedConflicts: [],
+  markerPaths: [],
+  stagingPaths: [],
   retention: {
     vaultIdentity: { volume: "0A1B2C3D-0000-4000-8000-000000000001", fileId: "4" },
     copies: [],
