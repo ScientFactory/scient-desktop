@@ -242,19 +242,30 @@ Key combined evidence: `qualification-current-266.json`,
 `owned-span-317.json`, `qualification-final-boundaries-319.json`,
 `review-final-boundaries-319/independent.md`, `review-second-integrator-305.json`,
 `owned-ci-324.json`, `ci-proposal-integrator-325.json`,
-`ci-index-seams-326.log`, `owned-ci-commit-327.log`, `owned-facts-308.log`
+`ci-index-seams-326.log`, `owned-ci-commit-327.log`, `owned-facts-308.log`,
 `owned-current-provenance-328.log` and `scripts-final-329.json`. Temporary evidence is not a permanent
 artifact store.
 
-## Pending acceptance
+## Acceptance and publication boundary
 
-Visual and interaction acceptance remains pending by the owner's explicit
-decision. The required built-in Browser panel tools were absent; no alternate
-automation, candidate service, stable-app switch or live-profile copy was used.
-Unit/browser suites and desktop smoke do not close that gap.
+Initial local completion was authorized with visual acceptance pending and no
+push. On 2026-10-24, the owner explicitly approved visual review of the isolated
+localhost candidate at `706d906b22a2c2cde04f6f3efd45bde7382509e5` and separately
+authorized commit, push and merge. This approval record changes no qualified
+runtime or fixture inputs.
 
-Hosted CI was not run because no push was authorized. Windows-wide qualification,
-native mobile device acceptance, authenticated live-provider compatibility,
-signing, packaging, distribution and release acceptance are not established by
-these local checks. No main-branch merge or cleanup of another checkout is
-authorized by this record.
+The built-in Browser panel tools remained unavailable. This is the owner's human
+acceptance, not an agent-performed browser verification. No normal Scient profile
+or provider credentials were copied, and no stable installed app was switched.
+Unit/browser suites and synthetic desktop smoke remain separate evidence.
+
+Delivery uses Scient PR #638 and the required merge queue, preserving merge
+history rather than squashing or rebasing the official range. Hosted CI must
+qualify the final pushed revision and queue candidate; this record does not claim
+an unobserved hosted result.
+
+Windows-wide qualification, native mobile device acceptance, authenticated
+live-provider compatibility, signing, packaging, distribution and release
+acceptance are not established by these local checks or visual approval.
+Release, product activation and cleanup of another checkout remain separate
+from the authorized source merge.

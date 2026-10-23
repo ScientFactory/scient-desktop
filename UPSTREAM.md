@@ -608,9 +608,10 @@ affected checks and exact unchanged-input reuse, including 488 current Overleaf
 cases and the complete 13,022-case web suite. Current-owned-main provenance and all
 six staged seam checks pass. The catch-ups retain the unmounted Overleaf foundation,
 short send admission and network-outside-checkout behavior; the web CI change is
-a job cap, not a test timeout. Visual acceptance and hosted CI remain pending;
-the owner authorized the local merge with visual acceptance pending and prohibited
-pushing. No pull request was created for this alignment. The
+a job cap, not a test timeout. The owner approved the isolated localhost visual
+review and authorized push and merge in Scient PR #638. Hosted CI remains a required
+PR and merge-queue gate; native-device, authenticated live-provider, signing and
+release acceptance remain separate. The
 [previous receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md)
 retains its own boundaries and evidence, including Scient PR #614.
 Native V2, scientific capabilities, immutable migrations, database durability and
