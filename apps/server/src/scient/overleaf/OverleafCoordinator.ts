@@ -387,8 +387,21 @@ const readWithin = async (path: string, limit: number, keep = false): Promise<Fi
   }
 };
 
-/** The coordinator's durable steps; `recorded` is an attempt written, `sent` its push returned. */
-type HookPoint = "linked" | "applied" | "adopted" | "recorded" | "sent";
+/**
+ * The coordinator's durable steps: `recorded` is an attempt written, `admitting` its
+ * send about to be admitted (the application section released), `sent` its push returned.
+ */
+type HookPoint = "linked" | "applied" | "adopted" | "recorded" | "admitting" | "sent";
+
+/** Publication inside the application section: an outcome, or an attempt recorded to send. */
+type Staged =
+  | { readonly _tag: "outcome"; readonly publication: OverleafPublication }
+  | {
+      readonly _tag: "recorded";
+      readonly attemptNumber: number;
+      readonly candidateCommit: string;
+      readonly recorded: OverleafConnectionDocument;
+    };
 const hook = (options: OverleafCoordinatorOptions, point: HookPoint): Effect.Effect<void> =>
   options.hooks?.at?.(point) ?? Effect.void;
 
@@ -1021,11 +1034,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   });
 
   /**
-   * Sends an adopted apply's result to Overleaf, inside the confirm's application
-   * section so the checkout cannot change before the send (contract sections 5 and 6):
-   * gate, verify the folder, record the attempt, send once, record what came back.
+   * The part of publication that needs the folder, inside the confirm's application
+   * section (contract sections 5 and 6): gate, verify the folder, record the attempt.
    */
-  const publish = Effect.fn("OverleafCoordinator.publish")(function* (input: {
+  const stagePublication = Effect.fn("OverleafCoordinator.stagePublication")(function* (input: {
     readonly repo: string;
     readonly connectionId: string;
     readonly operationId: string;
@@ -1051,9 +1063,13 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 )
               ? ("kept-copy-changed" as const)
               : null;
-    if (blocked !== null) return { _tag: "blocked", reason: blocked } satisfies OverleafPublication;
+    const outcome = (publication: OverleafPublication): Staged => ({
+      _tag: "outcome",
+      publication,
+    });
+    if (blocked !== null) return outcome({ _tag: "blocked", reason: blocked });
     const { candidateTree, remoteCommit, remoteTree } = review.binding;
-    if (candidateTree === remoteTree) return { _tag: "none" } satisfies OverleafPublication;
+    if (candidateTree === remoteTree) return outcome({ _tag: "none" });
     // The folder must hold exactly the candidate now, over the whole publication domain
     // (contract section 5): every path the plan read or wrote, so an explicit deletion
     // must still be absent. What is sent is built from the repository's objects, never
@@ -1068,7 +1084,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       ]),
     ];
     if ((yield* capturedTree(repo, connection, domain)) !== candidateTree)
-      return { _tag: "not-verified" } satisfies OverleafPublication;
+      return outcome({ _tag: "not-verified" });
     // A program still holding a file this apply replaced may have written into its kept
     // copy since adoption: newer work than the candidate. Each copy is checked again; a
     // change is recorded and stops the send.
@@ -1089,7 +1105,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         retention: { ...connection.retention, copies: rechecked },
         updatedAt: DateTime.formatIso(yield* DateTime.now),
       });
-      return { _tag: "blocked", reason: "kept-copy-changed" } satisfies OverleafPublication;
+      return outcome({ _tag: "blocked", reason: "kept-copy-changed" });
     }
     const candidateCommit = yield* repos.commit({
       repo,
@@ -1133,8 +1149,46 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     // Pins first, then the record: no send unless both are durable.
     yield* replaceWithPins(repo, connection, recorded);
     yield* hook(options, "recorded");
-    // Send admission: a credential renewed since the review is not the one reviewed.
-    if (credentialEpoch() !== review.binding.credentialEpoch) {
+    return { _tag: "recorded", attemptNumber, candidateCommit, recorded } satisfies Staged;
+  });
+
+  /**
+   * Admits a recorded attempt and sends it once, outside the application section: the
+   * network is never awaited while holding the checkout (contract section 9). Admission
+   * is a short section of its own, deciding from what it finds there: the same checkout
+   * (every key of its chain) at the same epoch as at verification, the same physical
+   * folders, and the reviewed credential. Anything else (a pull, switch or restore that
+   * ran or is running, a checkout replaced or removed, a renewed credential) records
+   * `not-sent`. Changes after admission are later local changes; they never alter what
+   * is sent.
+   */
+  const send = Effect.fn("OverleafCoordinator.publish")(function* (input: {
+    readonly repo: string;
+    readonly review: OverleafReview;
+    readonly folder: string;
+    /** The checkout the folder was verified in: its key chain and epoch. */
+    readonly verified: Pick<CheckoutBarrier.CheckoutSection, "keys" | "epoch">;
+    readonly attemptNumber: number;
+    readonly candidateCommit: string;
+    readonly recorded: OverleafConnectionDocument;
+  }) {
+    const { repo, attemptNumber, recorded } = input;
+    yield* hook(options, "admitting");
+    const admitted = yield* barrier
+      .application(input.folder, (section) =>
+        Effect.gen(function* () {
+          if (
+            section.epoch !== input.verified.epoch ||
+            section.keys.join("\0") !== input.verified.keys.join("\0")
+          )
+            return false;
+          yield* verifyFolders(recorded);
+          // Decided here, after the section's own lookup, so a renewal meanwhile is seen.
+          return credentialEpoch() === input.review.binding.credentialEpoch;
+        }),
+      )
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!admitted) {
       yield* resolveAttempts(
         repo,
         recorded,
@@ -1145,7 +1199,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       return { _tag: "not-sent", attemptNumber } satisfies OverleafPublication;
     }
     const pushed = yield* options
-      .pushRemote({ repo, connection: recorded, commit: candidateCommit })
+      .pushRemote({ repo, connection: recorded, commit: input.candidateCommit })
       // A push that failed partway may still have reached Overleaf.
       .pipe(
         Effect.orElseSucceed((): OverleafRepository.PushOutcome => ({
@@ -1264,7 +1318,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
             });
           const repo = yield* repositoryFor(first);
           const remote = yield* options.fetchRemote({ repo, connection: first });
-          return yield* barrier.application(folderOf(first), (section) =>
+          const inSection = yield* barrier.application(folderOf(first), (section) =>
             Effect.gen(function* () {
               const connection = yield* readActive(input.connectionId);
               if (connection.activeApply !== null)
@@ -1368,7 +1422,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               return {
                 _tag: "applied" as const,
                 adopted,
-                publication: yield* publish({
+                staged: yield* stagePublication({
                   repo,
                   connectionId: input.connectionId,
                   operationId,
@@ -1376,9 +1430,20 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   review,
                   adopted,
                 }),
+                verified: { keys: section.keys, epoch: section.epoch },
               };
             }),
           );
+          if (inSection._tag !== "applied") return inSection;
+          const { adopted, staged, verified } = inSection;
+          return {
+            _tag: "applied" as const,
+            adopted,
+            publication:
+              staged._tag === "outcome"
+                ? staged.publication
+                : yield* send({ repo, review, folder: folderOf(first), verified, ...staged }),
+          };
         }).pipe(
           Effect.tapError(() => finish(linked ? "unknown" : "failed", "error")),
           Effect.tap((done) =>
