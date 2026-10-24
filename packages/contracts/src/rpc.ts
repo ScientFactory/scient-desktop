@@ -489,6 +489,15 @@ import {
   WsDocumentsReleaseDocumentPdfRpc,
 } from "./scient/documentPdfRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient editor flush RPCs.
+import {
+  SCIENT_EDITOR_FLUSH_WS_METHODS,
+  WsEditorsFlushConnectRpc,
+  WsEditorsFlushLeaveRpc,
+  WsEditorsFlushResolveRpc,
+  WsEditorsFlushRespondRpc,
+} from "./scient/editorFlushRpcs.ts";
+// SCIENT-FORK:END
 
 export const WS_METHODS = {
   projectsList: "projects.list",
@@ -534,6 +543,9 @@ export const WS_METHODS = {
   assetsCreateUrl: "assets.createUrl",
   // SCIENT-FORK:START — Scient document PDF export methods.
   ...SCIENT_DOCUMENT_PDF_WS_METHODS,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient editor flush methods.
+  ...SCIENT_EDITOR_FLUSH_WS_METHODS,
   // SCIENT-FORK:END
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -2290,6 +2302,12 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsDocumentsPrepareConversationPdfRpc,
   WsDocumentsPublishDocumentPdfRpc,
   WsDocumentsReleaseDocumentPdfRpc,
+  // SCIENT-FORK:START — Scient editor flush RPCs.
+  WsEditorsFlushConnectRpc,
+  WsEditorsFlushLeaveRpc,
+  WsEditorsFlushResolveRpc,
+  WsEditorsFlushRespondRpc,
+  // SCIENT-FORK:END
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
   WsFilesystemGetMetadataRpc,

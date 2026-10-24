@@ -12,6 +12,9 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
+// SCIENT-FORK:START — one tooltip timing for the whole app.
+import { AppTooltipTiming } from "./scient/presentation/AppTooltipTiming";
+// SCIENT-FORK:END
 import { requestDesktopReload } from "./lib/desktopReload";
 import { toastManager } from "./components/ui/toast";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
@@ -52,7 +55,13 @@ window.addEventListener("vite:preloadError", (event) => {
   }
 });
 
-const app = <AppRoot router={router} />;
+// SCIENT-FORK:START — the app renders inside Scient's tooltip timing.
+const app = (
+  <AppTooltipTiming>
+    <AppRoot router={router} />
+  </AppTooltipTiming>
+);
+// SCIENT-FORK:END
 
 // Loading only the selected runtime as a split chunk keeps every Clerk byte out
 // of the startup graph for local-mode users, and keeps the bundled clerk-js out
