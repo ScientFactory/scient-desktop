@@ -44,35 +44,38 @@ afterEach(async () => {
 
 describe("transient managed runtime downloads", () => {
   // regression: a5d49bba34 fix(scient-agent): recover transient managed download failures
-  // One row per path: every status in TRANSIENT_DOWNLOAD_STATUSES takes the same branch.
-  it.each([502])("recovers from HTTP %s before writing or verifying bytes", async (status) => {
-    const request = await input();
-    const cancel = vi.fn();
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(new ReadableStream({ cancel }), { status }))
-      .mockImplementationOnce(async () => {
-        await expect(NodeFSP.stat(request.destination)).rejects.toMatchObject({ code: "ENOENT" });
-        return new Response("ok", { headers: { "content-length": "2" } });
-      });
-    vi.stubGlobal("fetch", fetch);
-    await downloadManagedRuntime(request);
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(cancel).toHaveBeenCalledOnce();
-    expect(await NodeFSP.readFile(request.destination, "utf8")).toBe("ok");
-    await expect(
-      verifyManagedRuntimeChecksum(request.destination, {
-        algorithm: "sha256",
-        digest: NodeCrypto.createHash("sha256").update("ok").digest("hex"),
-      }),
-    ).resolves.toBeUndefined();
-    await expect(
-      verifyManagedRuntimeChecksum(request.destination, {
-        algorithm: "sha256",
-        digest: "0".repeat(64),
-      }),
-    ).rejects.toThrow("checksum mismatch");
-  });
+  // One row per status: dropping one from TRANSIENT_DOWNLOAD_STATUSES fails no other test.
+  it.each([500, 502, 503, 504])(
+    "recovers from HTTP %s before writing or verifying bytes",
+    async (status) => {
+      const request = await input();
+      const cancel = vi.fn();
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(new ReadableStream({ cancel }), { status }))
+        .mockImplementationOnce(async () => {
+          await expect(NodeFSP.stat(request.destination)).rejects.toMatchObject({ code: "ENOENT" });
+          return new Response("ok", { headers: { "content-length": "2" } });
+        });
+      vi.stubGlobal("fetch", fetch);
+      await downloadManagedRuntime(request);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(await NodeFSP.readFile(request.destination, "utf8")).toBe("ok");
+      await expect(
+        verifyManagedRuntimeChecksum(request.destination, {
+          algorithm: "sha256",
+          digest: NodeCrypto.createHash("sha256").update("ok").digest("hex"),
+        }),
+      ).resolves.toBeUndefined();
+      await expect(
+        verifyManagedRuntimeChecksum(request.destination, {
+          algorithm: "sha256",
+          digest: "0".repeat(64),
+        }),
+      ).rejects.toThrow("checksum mismatch");
+    },
+  );
 
   it("keeps the existing single-attempt policy unless recovery is requested", async () => {
     const request = await input();
@@ -84,7 +87,7 @@ describe("transient managed runtime downloads", () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
-  it.each([429])("does not retry HTTP %s", async (status) => {
+  it.each([401, 403, 404, 429])("does not retry HTTP %s", async (status) => {
     const request = await input();
     const fetch = vi.fn().mockResolvedValue(new Response("refused", { status }));
     vi.stubGlobal("fetch", fetch);
