@@ -260,6 +260,7 @@ describe("Scient skill session planning", () => {
         ["html-pdf-authoring", "automatic"],
         ["improve-workspace-readiness", "explicit"],
         ["latex-authoring", "automatic"],
+        ["overleaf-sync", "automatic"],
         ["pdf-authoring", "automatic"],
         ["scient-skill-authoring", "automatic"],
         ["workspace-readiness-review", "automatic"],
@@ -288,6 +289,7 @@ describe("Scient skill session planning", () => {
         "html-pdf-authoring",
         "improve-workspace-readiness",
         "latex-authoring",
+        "overleaf-sync",
         "pdf-authoring",
         "scient-skill-authoring",
       ]);
