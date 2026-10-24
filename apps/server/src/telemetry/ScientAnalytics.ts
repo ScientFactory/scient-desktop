@@ -52,12 +52,19 @@ export function localAnalyticsTestEndpoint(value: string): string | undefined {
 }
 
 /** Scient consent and deletion controls on the analytics service. */
+export type AnalyticsCollectionBoundaryPhase = "invalidated" | "ready";
+
 export interface ScientAnalyticsControls {
   /** Read the current local consent state and master availability gate. */
   readonly status: Effect.Effect<AnalyticsStatus>;
 
   /** Internal observer fence; never part of a wire event or public identity. */
   readonly collectionEpoch: Effect.Effect<number>;
+
+  /** In-memory boundary watermark acquisition; not telemetry or a public API. */
+  readonly observeCollectionBoundary?: (
+    listener: (epoch: number, phase: AnalyticsCollectionBoundaryPhase) => Promise<void>,
+  ) => Effect.Effect<() => void>;
 
   /** Persist and apply a new local consent level before accepting later events. */
   readonly setConsent: (consent: AnalyticsConsent) => Effect.Effect<AnalyticsStatus>;
@@ -235,11 +242,36 @@ export const make = Effect.gen(function* () {
 
   let controlInProgress = false;
   let collectionEpoch = 0;
+  type BoundaryListener = (epoch: number, phase: AnalyticsCollectionBoundaryPhase) => Promise<void>;
+  const boundaryListeners = new Set<BoundaryListener>();
+  const notifyBoundary = async (
+    listener: BoundaryListener,
+    phase: AnalyticsCollectionBoundaryPhase,
+  ) => {
+    try {
+      await listener(collectionEpoch, phase);
+    } catch {
+      // An observer must fail closed itself; it cannot prevent Off or erasure.
+    }
+  };
+  const advanceCollectionEpoch = async (phase: AnalyticsCollectionBoundaryPhase) => {
+    collectionEpoch += 1;
+    await Promise.all([...boundaryListeners].map((listener) => notifyBoundary(listener, phase)));
+  };
+  const observeCollectionBoundary: NonNullable<
+    ScientAnalyticsControls["observeCollectionBoundary"]
+  > = (listener) =>
+    Effect.promise(async () => {
+      boundaryListeners.add(listener);
+      await notifyBoundary(listener, "ready");
+      return () => boundaryListeners.delete(listener);
+    });
 
-  const record: AnalyticsService["Service"]["record"] = (event, properties) =>
+  const record: AnalyticsService["Service"]["record"] = (event, properties, expectedEpoch) =>
     Effect.try({
       try: () => {
-        if (controlInProgress) return;
+        if (controlInProgress || (expectedEpoch !== undefined && expectedEpoch !== collectionEpoch))
+          return;
         runtimeHolder.current.record(event, properties);
       },
       catch: () => "analytics-record-failed" as const,
@@ -278,7 +310,7 @@ export const make = Effect.gen(function* () {
           serializeControl(async () => {
             if (!analyticsConfig.enabled) return { available: false, consent: "off" } as const;
             controlInProgress = true;
-            collectionEpoch += 1;
+            await advanceCollectionEpoch("invalidated");
             const previousConsent = consent;
             const previousRuntime = runtimeHolder.current;
             let candidateRuntime: AnalyticsRuntime | null = null;
@@ -312,7 +344,7 @@ export const make = Effect.gen(function* () {
               }
               return { available: true, consent } as const;
             } finally {
-              collectionEpoch += 1;
+              await advanceCollectionEpoch("ready");
               controlInProgress = false;
             }
           }),
@@ -330,7 +362,7 @@ export const make = Effect.gen(function* () {
         serializeControl(async () => {
           if (!analyticsConfig.enabled) return false;
           controlInProgress = true;
-          collectionEpoch += 1;
+          await advanceCollectionEpoch("invalidated");
           try {
             const temporaryRuntime = runtimeHolder.current.enabled
               ? null
@@ -354,7 +386,7 @@ export const make = Effect.gen(function* () {
               if (temporaryRuntime) await temporaryRuntime.close();
             }
           } finally {
-            collectionEpoch += 1;
+            await advanceCollectionEpoch("ready");
             controlInProgress = false;
           }
         }),
@@ -377,5 +409,6 @@ export const make = Effect.gen(function* () {
     setConsent,
     deleteData,
     collectionEpoch: Effect.sync(() => collectionEpoch),
+    observeCollectionBoundary,
   } satisfies AnalyticsService["Service"];
 });

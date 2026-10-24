@@ -1,5 +1,5 @@
 // Scient desktop wire contract. The website gateway consumes a generated copy.
-export const ANALYTICS_CONTRACT_REVISION = "6" as const;
+export const ANALYTICS_CONTRACT_REVISION = "7" as const;
 export const PRIVACY_LEVELS = ["essential", "product", "diagnostic", "contribution"] as const;
 
 export type PrivacyLevel = (typeof PRIVACY_LEVELS)[number];
@@ -15,19 +15,23 @@ interface EventDefinition {
   readonly properties: Readonly<Record<string, PropertyRule>>;
 }
 
+export const ANALYTICS_PROVIDER_KINDS = [
+  "codex",
+  "claudeAgent",
+  "antigravity",
+  "droid",
+  "cursor",
+  "grok",
+  "opencode",
+  "pi",
+  "scient",
+  "omp",
+  "muse",
+  "acpRegistry",
+] as const;
 const provider = {
   kind: "enum",
-  values: [
-    "codex",
-    "claudeAgent",
-    "antigravity",
-    "droid",
-    "cursor",
-    "grok",
-    "opencode",
-    "pi",
-    "other",
-  ],
+  values: [...ANALYTICS_PROVIDER_KINDS, "other"],
 } as const satisfies PropertyRule;
 const runtimeMode = {
   kind: "enum",
@@ -351,7 +355,7 @@ export const EVENT_DEFINITIONS = {
       interactionMode: { kind: "enum", values: ["default", "plan", "other", "unknown"] },
       runtimeMode,
       attachmentCountBucket: countBucket,
-      hasInput: { kind: "boolean" },
+      hasInput: { kind: "boolean", optional: true },
     },
   },
   "provider.turn.completed": {
@@ -680,7 +684,7 @@ export function eventContractViolation(input: {
   const rules: Readonly<Record<string, PropertyRule>> = {
     appVersion,
     buildChannel,
-    contractRevision: { kind: "enum", values: ["1", "2", "3", "4", "5", "6"], optional: true },
+    contractRevision: { kind: "enum", values: ["1", "2", "3", "4", "5", "6", "7"], optional: true },
     ...definition.properties,
   };
   for (const key of Object.keys(input.properties)) {
