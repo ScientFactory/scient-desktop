@@ -151,6 +151,10 @@
       // reports an entire component module when nothing imports it.
       "ignoreIssues": {
         "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"],
+        // Upstream's downloaded-update toast. Scient announces a ready update with
+        // scient/desktopUpdate/updateReadyNotice instead; the module stays as upstream
+        // ships it (its release-notes helper is still used) so upstream changes merge.
+        "src/components/desktopUpdate.toast.tsx": ["exports"],
         // Retained donor UI for the explicitly disabled subscription-sharing mode.
         // Keep file auditing active everywhere else; remove these exact exceptions
         // when that mode has approved native-client activation.
