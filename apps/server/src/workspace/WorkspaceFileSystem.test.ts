@@ -1,8 +1,10 @@
 import * as Exit from "effect/Exit";
-// @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO.
+// @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO, and reads spy on native realpath.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
 
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it, describe, expect } from "@effect/vitest";
@@ -27,6 +29,7 @@ import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { filePublicationTestHelper } from "../scient/workspace/fileExchange.testkit.ts";
+import * as WorkspaceFileMutations from "../scient/workspace/WorkspaceFileMutations.ts";
 const publicationHelper = await filePublicationTestHelper();
 
 const watchReceipts = vi.hoisted(() => ({
@@ -75,6 +78,11 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFSP>();
+  return { ...actual, realpath: vi.fn(actual.realpath) };
+});
+
 // Temp folders count as known workspaces unless named as unknown.
 const UNKNOWN_WORKSPACE_PREFIX = "t3code-unknown-workspace-";
 const layerKnownWorkspacesTest = Layer.mock(KnownWorkspaces.KnownWorkspaces)({
@@ -95,7 +103,7 @@ const layerTest = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
-  Layer.provide(
+  Layer.provideMerge(
     Layer.unwrap(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -180,6 +188,59 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }),
     );
 
+    it.effect("detects an extensionless script and image without returning their contents", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const script = "#!/usr/bin/env python3\nprint('hello')\n";
+        yield* writeTextFile(cwd, "run", script);
+        const image = path.join(cwd, "image");
+        yield* fs.writeFile(
+          image,
+          new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        );
+        expect(
+          (yield* service.getMetadata({ paths: [path.join(cwd, "run"), image] })).entries,
+        ).toEqual([
+          { kind: "file", byteLength: script.length, mimeType: "text/x-python" },
+          { kind: "file", byteLength: 8, mimeType: "image/png" },
+        ]);
+      }),
+    );
+
+    // A file chip for `file://attacker.test/s/a.ts` in an agent's message sent
+    // the Windows user's NTLM credentials to attacker.test as it rendered.
+    it.effect("never stats a network path", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const statted: Array<string> = [];
+        const service = yield* WorkspaceFileSystem.make.pipe(
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.FileSystem.of({
+              ...fs,
+              stat: (requestedPath) => {
+                statted.push(requestedPath);
+                return fs.stat(requestedPath);
+              },
+            }),
+          ),
+          Effect.provide(layerKnownWorkspacesTest),
+        );
+        const paths = [
+          "\\\\attacker.test\\s\\a.ts",
+          "//attacker.test/s/a.ts",
+          "/\\attacker.test\\s",
+        ];
+        expect((yield* service.getMetadata({ paths })).entries).toEqual([null, null, null]);
+        expect(statted).toEqual([]);
+      }),
+    );
+  });
+
+  describe("readFile", () => {
     it.effect("reads host files outside the workspace root by absolute path", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -328,6 +389,96 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
         expect(error).toMatchObject({ workspaceRoot: cwd, relativePath: "../escape.md" });
       }),
+    );
+
+    it.effect("refuses a network path outside the workspace", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd: "//nas.test/share/project", relativePath: "//attacker.test/s/a.md" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+      }),
+    );
+
+    // This resolves inside the project, but Windows reads `\\?\` paths as
+    // written, so realpath on the raw string signed in to attacker.test.
+    it.effect.each(["readFile", "viewFile"] as const)(
+      "%s reads the network path it checked",
+      (method) =>
+        Effect.gen(function* () {
+          const resources = yield* Effect.acquireRelease(
+            Effect.sync(() => new DisposableStack()),
+            (stack) => Effect.sync(() => stack.dispose()),
+          );
+          // Native settlement is covered separately; this Win32 probe must not touch its UNC root.
+          const makeMutations = WorkspaceFileMutations.makeWorkspaceFileMutations;
+          resources.use(
+            vi
+              .spyOn(WorkspaceFileMutations, "makeWorkspaceFileMutations")
+              .mockImplementation((deps) =>
+                makeMutations(deps).pipe(
+                  Effect.map(
+                    (methods) =>
+                      ({
+                        ...methods,
+                        withSettledWorkspaceRead: (_input, read) =>
+                          read(null, { currentMissing: false }),
+                      }) satisfies typeof methods,
+                  ),
+                ),
+              ),
+          );
+          const fs = yield* FileSystem.FileSystem;
+          const workspaceFileSystem = yield* WorkspaceFileSystem.make.pipe(
+            Effect.provideService(
+              FileSystem.FileSystem,
+              FileSystem.FileSystem.of({ ...fs, exists: () => Effect.succeed(false) }),
+            ),
+            Effect.provide(Layer.merge(layerKnownWorkspacesTest, NodePath.layerWin32)),
+          );
+          // Rejects without touching the filesystem, so a Windows runner never looks the share up.
+          const realpath = resources.use(
+            vi
+              .spyOn(NodeFSP, "realpath")
+              .mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" })),
+          );
+
+          yield* workspaceFileSystem[method]({
+            cwd: "\\\\?\\UNC\\nas.test\\share\\project",
+            relativePath: "\\\\?\\UNC\\attacker.test\\s\\..\\..\\nas.test\\share\\project\\a.md",
+          }).pipe(Effect.exit);
+
+          expect(realpath.mock.calls.map(([target]) => target)).toEqual([
+            "\\\\?\\UNC\\nas.test\\share\\project\\a.md",
+          ]);
+        }).pipe(Effect.scoped),
+    );
+
+    // Resolving `..` before realpath would read beside the link instead of its target.
+    // Windows collapses `..` before the filesystem sees a path, so it has no such reads.
+    it.effect.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() === "win32")(
+      "reads `..` after a link from the link's target",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* makeTempDir;
+          yield* writeTextFile(root, "target/parent.md", "beside the target\n");
+          yield* writeTextFile(root, "parent.md", "beside the link\n");
+          yield* fs.makeDirectory(path.join(root, "target", "child"));
+          yield* fs.symlink(path.join(root, "target", "child"), path.join(root, "link"));
+
+          const result = yield* workspaceFileSystem.readFile({
+            cwd: root,
+            relativePath: `${root}/link/../parent.md`,
+          });
+
+          expect(result.contents).toBe("beside the target\n");
+        }),
     );
 
     it.effect.skipIf(!symlinksSupported)(

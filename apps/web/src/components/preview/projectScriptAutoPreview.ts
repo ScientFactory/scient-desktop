@@ -148,12 +148,15 @@ export async function openProjectScriptPreview<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly request: ProjectScriptPreviewRequest;
   readonly openPreview: OpenPreviewMutation<E>;
+  readonly assertCurrent?: () => void;
 }): Promise<AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError>> {
   const result = await openPreviewSession({
     openPreview: input.openPreview,
     threadRef: input.threadRef,
     url: input.request.resolvedUrl,
+    ...(input.assertCurrent ? { assertCurrent: input.assertCurrent } : {}),
   });
+  input.assertCurrent?.();
   if (result._tag === "Success") {
     recordVisitForThread(input.threadRef, input.request.requestedUrl);
     useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);

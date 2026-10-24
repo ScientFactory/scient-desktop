@@ -1648,6 +1648,28 @@ export const layer: Layer.Layer<
                 )
                   return;
                 const providerThread = yield* Ref.get(latestProviderThread);
+                const routing = yield* Ref.get(eventRouting);
+                // Native observations authorize stopping work, not inventing a committed receipt.
+                // The stored root below owns acceptance, usage and terminal-state preservation.
+                if (routing.rootProviderTurnId !== null && !routing.rootTurnEnded) {
+                  yield* input.session
+                    .interruptTurn({
+                      providerThread,
+                      providerTurnId: routing.rootProviderTurnId,
+                      requestRuntimeRestart: true,
+                      onlyIfActive: true,
+                    })
+                    .pipe(
+                      Effect.catchCauseIf(
+                        (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
+                        (interruptCause) =>
+                          Effect.logWarning(
+                            "orchestration V2 failed to interrupt turn after ingestion failure",
+                            { runId: input.run.id, cause: interruptCause },
+                          ),
+                      ),
+                    );
+                }
                 const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                 const openSubagents = yield* Ref.get(openRunOwnedSubagents);
                 const receipt = yield* Ref.get(committedRootProviderTurn);

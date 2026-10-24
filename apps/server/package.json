@@ -1,6 +1,6 @@
 {
   "name": "t3",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -16,12 +16,13 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch --watch-path=src --watch-path=../../packages --watch-path=package.json src/bin.ts",
+    "dev:built": "vp run dev",
     "build:bundle": "node scripts/compute-recipes.ts seal && vp pack && vp pack src/service-launcher.ts --out-dir dist --no-clean",
     "build:exe": "node scripts/cli.ts build-exe",
     "start": "node dist/bin.mjs",
-    "typecheck": "tsc-rs --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run",
-    "test:performance": "vp test bench --run --fileParallelism=false --maxWorkers=1 src/scient/conversationImport/ConversationImportNotices.bench.ts src/scient/conversationImport/ConversationImportBenchmark.bench.ts src/scient/operations/AgentCapabilityBudget.bench.ts src/orchestration-v2/scient-fork/NativeForkHeavy.bench.ts src/orchestration-v2/scient-fork/stress/Scale.native.bench.ts src/scient/compute/ManagedPythonProduct.bench.ts src/provider/omp/OmpCustomModels.barrier.bench.ts",
+    "test:performance": "vp test bench --run --fileParallelism=false --maxWorkers=1 src/scient/conversationImport/ConversationImportNotices.bench.ts src/scient/conversationImport/ConversationImportBenchmark.bench.ts src/scient/operations/AgentCapabilityBudget.bench.ts src/orchestration-v2/scient-fork/NativeForkHeavy.bench.ts src/orchestration-v2/scient-fork/stress/Scale.native.bench.ts src/scient/compute/ManagedPythonProduct.bench.ts src/provider/omp/OmpCustomModels.barrier.bench.ts src/scient/extensions/connectors/ConnectorRedaction.bench.ts",
     "record:codex-replay": "bun scripts/record-codex-app-server-replay-fixture.ts",
     "record:claude-replay": "bun scripts/record-claude-agent-sdk-replay-fixture.ts",
     "record:cursor-replay": "node --env-file-if-exists=../../.env --experimental-strip-types scripts/record-cursor-agent-sdk-replay-fixture.ts",

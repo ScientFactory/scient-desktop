@@ -328,7 +328,7 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                       const isolatedPath = moves[0]![3]!;
                       assert.deepEqual(args, [
                         "-c",
-                        "status.showUntrackedFiles=all",
+                        "status.showUntrackedFiles=normal",
                         "worktree",
                         "remove",
                         "--",

@@ -138,15 +138,13 @@ describe("formatting menu focus", () => {
       );
       await act(() => view.dom.dispatchEvent(event));
       expect(event.defaultPrevented).toBe(true);
-      const input = await vi.waitFor(() => {
+      await vi.waitFor(() => {
         const inputs = document.body.querySelectorAll<HTMLInputElement>(
           'input[aria-label="Link destination"]',
         );
         expect(inputs).toHaveLength(1);
-        return inputs[0]!;
+        expect(document.activeElement).toBe(inputs[0]);
       });
-      // The popup moves focus into the field just after it mounts.
-      await vi.waitFor(() => expect(document.activeElement).toBe(input));
 
       const cancel = Array.from(
         document.body.querySelectorAll<HTMLButtonElement>("[data-slot='popover-popup'] button"),
@@ -366,7 +364,7 @@ describe("formatting menu focus", () => {
       document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
     );
     expect(
-      directionItems.find((node) => node.textContent?.trim() === "Auto — detect from table"),
+      directionItems.find((node) => node.textContent?.trim() === "Auto (detect from table)"),
     ).toBeDefined();
     const rtl = directionItems.find((node) => node.getAttribute("aria-label") === "Right-to-left")!;
     await act(() => rtl.click());
@@ -378,7 +376,7 @@ describe("formatting menu focus", () => {
     await openDirection();
     const automatic = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
-    ).find((node) => node.textContent?.trim() === "Auto — detect from table")!;
+    ).find((node) => node.textContent?.trim() === "Auto (detect from table)")!;
     await act(() => automatic.click());
     await vi.waitFor(() => expect(controller.getSnapshot().textDirection).toBeNull());
     expect(view.state.selection).toBeInstanceOf(CellSelection);

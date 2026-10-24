@@ -100,7 +100,7 @@ export function MarkdownCodeBlockFrame({
   theme,
   wrapped = true,
   className,
-  copyTextDirection,
+  copyTextDirection = "ltr",
   title,
   actions,
   headerProps,

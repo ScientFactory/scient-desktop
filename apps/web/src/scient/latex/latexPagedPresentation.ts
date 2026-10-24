@@ -988,6 +988,7 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                 // transaction. No DOM styles or presentation transaction are
                 // needed when every measured line remains in the same place.
                 progress.pending = refresh;
+                view.dom.dispatchEvent(new CustomEvent("scient-latex-layout", { bubbles: true }));
                 return;
               }
             }

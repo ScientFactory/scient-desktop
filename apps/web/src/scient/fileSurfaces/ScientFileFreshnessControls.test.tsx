@@ -31,7 +31,7 @@ describe("ScientFileReloadButton", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Automatic updates paused — reload file"');
+    expect(markup).toContain('aria-label="Automatic updates paused: reload file"');
     expect(markup).toContain("text-warning");
   });
 

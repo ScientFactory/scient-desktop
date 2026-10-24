@@ -3,13 +3,13 @@ import type {
   OrchestrationV2Run,
   OrchestrationV2ContextTransfer,
   OrchestrationV2ProjectedTurnItem,
-  OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
 
 import { resolveForkInitialization } from "@t3tools/shared/orchestrationV2ForkInitialization";
+import type { ThreadStructure } from "./state/models.ts";
 
 export type HandoffTimelineRun = Pick<
   OrchestrationV2Run,
@@ -19,7 +19,7 @@ export type HandoffTimelineRun = Pick<
 export type HandoffEndpoints = ReturnType<typeof resolveHandoffEndpoints>;
 
 export function resolvePendingHandoff(
-  projection: OrchestrationV2ThreadProjection | null | undefined,
+  projection: ThreadStructure | null | undefined,
   selection: ModelSelection | null | undefined,
   providers: ReadonlyArray<ServerProvider>,
 ): HandoffEndpoints | null {

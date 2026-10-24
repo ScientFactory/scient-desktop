@@ -4,6 +4,9 @@ import {
   NavigationRouteContext,
   StackRouter,
   useNavigationBuilder,
+  // SCIENT-FORK:START column-removal-guard
+  usePreventRemoveContext,
+  // SCIENT-FORK:END column-removal-guard
   type NavigatorTypeBagBase,
   type ParamListBase,
   type StackActionHelpers,
@@ -14,20 +17,29 @@ import {
 } from "@react-navigation/native";
 import {
   NativeStackView,
-  type NativeStackHeaderItemMenu,
   type NativeStackNavigationEventMap,
   type NativeStackNavigationOptions,
   type NativeStackNavigatorProps,
   type NativeStackTypeBag,
 } from "@react-navigation/native-stack";
-import { use, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import {
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { View } from "react-native";
-import { Split, type SplitHostCommands } from "react-native-screens";
+import { Split, Stack, type SplitHostCommands } from "react-native-screens";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { WorkspaceTabsProvider } from "../workspace/WorkspaceTabsContext";
+import { WorkspaceTabsProvider, useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { WorkspaceNativeTabs } from "../workspace/WorkspaceNativeTabs.ios";
-import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
+import { isDuoDevice } from "../../lib/device-type";
+import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
 import { useAdaptiveWorkspaceLayout } from "./AdaptiveWorkspaceLayout";
 import { WorkspaceEmptyDetail } from "./WorkspaceEmptyDetail";
@@ -48,6 +60,7 @@ import {
   nativeWorkspacePopAction,
   projectWorkspaceStack,
   partitionStackPresentations,
+  reconcileStackScreens,
   type CollapsedSplitColumn,
 } from "../../native/workspace-stack-projection";
 import {
@@ -60,14 +73,48 @@ type ViewProps = ComponentProps<typeof NativeStackView>;
 type Descriptor = ViewProps["descriptors"][string];
 type Route = ViewProps["state"]["routes"][number];
 
+const isPullRequestRoute = (route: Route) =>
+  route.name === "PullRequest" ||
+  route.name === "PullRequestFile" ||
+  route.name === "PullRequestFiles";
+
+// SCIENT-FORK:START column-removal-guard
+function ColumnRemovalGuard(props: {
+  readonly descriptor: Descriptor;
+  readonly children: ReactNode;
+}) {
+  const { preventedRoutes } = usePreventRemoveContext();
+  const key = props.descriptor.route.key;
+  const blocked = preventedRoutes[key]?.preventRemove === true;
+  // Split screens cannot veto UIKit dismissal; its native pop guard follows
+  // a nested Stack.Screen. Keep that host stable across draft/live cutover.
+  return (
+    <Stack.Host>
+      <Stack.Screen
+        screenKey={key}
+        activityMode="attached"
+        preventNativeDismiss={blocked}
+        onNativeDismissPrevented={() => {
+          if (blocked) props.descriptor.navigation.goBack();
+        }}
+      >
+        <Stack.HeaderConfig hidden />
+        {props.children}
+      </Stack.Screen>
+    </Stack.Host>
+  );
+}
+// SCIENT-FORK:END column-removal-guard
+
 function ColumnScreen(props: {
   readonly descriptor: Descriptor;
   readonly primary?: boolean;
+  readonly attached?: boolean;
   readonly selectedThreadKey?: string | null;
   readonly selectedPullRequestKey?: string | null;
-  readonly sidebarFilter?: NativeStackHeaderItemMenu;
-  readonly onDismiss: (routeKey: string) => void;
+  readonly onDismiss: (routeKey: string, native: boolean) => void;
   readonly onAppearance: (type: "willAppear" | "didAppear" | "willDisappear", key: string) => void;
+  readonly onCompose?: () => void;
   readonly navigation: ViewProps["navigation"];
 }) {
   const { descriptor } = props;
@@ -85,8 +132,9 @@ function ColumnScreen(props: {
   return (
     <Split.Screen
       screenKey={key}
+      activityMode={props.attached === false ? "detached" : "attached"}
       onDismiss={(event) => {
-        if (event.nativeEvent.isNativeDismiss) props.onDismiss(key);
+        props.onDismiss(key, event.nativeEvent.isNativeDismiss);
       }}
       onWillAppear={() => {
         props.onAppearance("willAppear", key);
@@ -109,8 +157,14 @@ function ColumnScreen(props: {
           <V5StackHeader
             options={descriptor.options}
             canGoBack={!props.primary}
-            primary={props.primary}
-            sidebarFilter={props.sidebarFilter}
+            column={props.primary ? "primary" : "detail"}
+            onCompose={
+              descriptor.route.params &&
+              "draft" in descriptor.route.params &&
+              descriptor.route.params.draft
+                ? undefined
+                : props.onCompose
+            }
           />
           <ColumnContent
             primary={props.primary}
@@ -119,7 +173,15 @@ function ColumnScreen(props: {
             }
           >
             <NativePrimaryColumnContext value={primaryColumn}>
-              {descriptor.render()}
+              {/* SCIENT-FORK:START column-removal-guard */}
+              {descriptor.route.name === "Thread" ? (
+                <ColumnRemovalGuard descriptor={descriptor}>
+                  {descriptor.render()}
+                </ColumnRemovalGuard>
+              ) : (
+                descriptor.render()
+              )}
+              {/* SCIENT-FORK:END column-removal-guard */}
             </NativePrimaryColumnContext>
           </ColumnContent>
         </NavigationRouteContext>
@@ -131,7 +193,45 @@ function ColumnScreen(props: {
 function WorkspaceColumns(
   props: ViewProps & { readonly primary: Route; readonly detail: Route[] },
 ) {
-  const { layout, panes, togglePrimarySidebar, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, togglePrimarySidebar, toggleAuxiliaryPane, startNewTask } =
+    useAdaptiveWorkspaceLayout();
+  const deviceType = useDeviceType();
+  // Split screens must remain mounted while UIKit animates a detached route away.
+  const [screens, setScreens] = useState({
+    routes: props.detail,
+    descriptors: props.descriptors,
+    observedRoutes: props.detail,
+    observedDescriptors: props.descriptors,
+    completed: new Set<string>(),
+  });
+  if (
+    screens.observedRoutes !== props.detail ||
+    screens.observedDescriptors !== props.descriptors
+  ) {
+    const routes = reconcileStackScreens(screens.routes, props.detail, screens.completed);
+    const retained = new Set(routes.map((route) => route.key));
+    const active = new Set(props.detail.map((route) => route.key));
+    setScreens({
+      routes,
+      descriptors: Object.fromEntries(
+        Object.entries({ ...screens.descriptors, ...props.descriptors }).filter(([key]) =>
+          retained.has(key),
+        ),
+      ),
+      observedRoutes: props.detail,
+      observedDescriptors: props.descriptors,
+      completed: new Set([...screens.completed].filter((key) => active.has(key))),
+    });
+  }
+
+  const selectedTab = useWorkspaceTabs()?.state.selectedTab;
+  const openNewTask = startNewTask;
+  // The Duo keeps compose in the detail column's bar, which is its vertical bar in landscape
+  // and folded, so it sits with the column's other actions whichever screen is shown. Pull
+  // requests leave it out, including one opened from a thread; their bar is already full of
+  // review actions.
+  const detailCompose =
+    isDuoDevice(deviceType) && selectedTab !== "pullRequests" ? openNewTask : undefined;
   const inspector = use(NativeWorkspaceInspectorContext);
   const hostRef = useRef<SplitHostCommands>(null);
   const activeDetailKey = props.detail.at(-1)?.key;
@@ -139,12 +239,7 @@ function WorkspaceColumns(
   const collapsed = useRef(!layout.usesSplitView);
   const collapsedColumn = useRef<CollapsedSplitColumn>({ visible: compactColumn, leaving: null });
   const threadParams = props.detail.findLast((route) => route.name === "Thread")?.params;
-  const pullRequestParams = props.detail.findLast(
-    (route) =>
-      route.name === "PullRequest" ||
-      route.name === "PullRequestFile" ||
-      route.name === "PullRequestFiles",
-  )?.params;
+  const pullRequestParams = props.detail.findLast(isPullRequestRoute)?.params;
   const selectedPullRequestKey =
     pullRequestParams &&
     "environmentId" in pullRequestParams &&
@@ -169,10 +264,17 @@ function WorkspaceColumns(
         )
       : null;
   const handleNativeDismiss = useCallback(
-    (key: string) => {
-      const state = props.navigation.getState();
-      const action = nativeWorkspacePopAction(state, key);
-      if (action) props.navigation.dispatch(action);
+    (key: string, native: boolean) => {
+      setScreens((current) => ({
+        ...current,
+        routes: current.routes.filter((route) => route.key !== key),
+        completed: new Set([...current.completed, key]),
+      }));
+      if (native) {
+        const state = props.navigation.getState();
+        const action = nativeWorkspacePopAction(state, key);
+        if (action) props.navigation.dispatch(action);
+      }
     },
     [props.navigation],
   );
@@ -199,7 +301,6 @@ function WorkspaceColumns(
 
   const primary = props.descriptors[props.primary.key];
   if (!primary) return null;
-  const sidebarFilter = (primary.options as AppNativeStackNavigationOptions).nativeSidebarFilter;
   return (
     <Split.Host
       ref={hostRef}
@@ -214,7 +315,10 @@ function WorkspaceColumns(
         collapsed.current = false;
       }}
       preferredDisplayMode={
-        panes.primarySidebarVisible || (!layout.usesSplitView && !activeDetailKey)
+        // UIKit applies the mode as a collapsed split expands, before the new width reaches JS, so a
+        // collapsed split already carries the sidebar the expanded one will show.
+        (layout.usesSplitView ? panes.primarySidebarVisible : panes.primarySidebarWhenExpanded) ||
+        (!layout.usesSplitView && !activeDetailKey)
           ? "oneBesideSecondary"
           : "secondaryOnly"
       }
@@ -264,26 +368,30 @@ function WorkspaceColumns(
                 ],
               }}
               canGoBack={false}
-              sidebarFilter={sidebarFilter}
+              column="detail"
+              onCompose={detailCompose}
             />
             <ColumnContent>
               <WorkspaceEmptyDetail
-                onStartNewTask={() =>
-                  props.navigation.navigate("NewTaskSheet", { screen: "NewTask" })
+                tab={selectedTab}
+                onStartNewTask={
+                  // Duo provides compose in the detail bar; iPad uses the empty-state action.
+                  detailCompose ? undefined : openNewTask
                 }
               />
             </ColumnContent>
           </Split.Screen>
-          {props.detail.map((route) => {
-            const descriptor = props.descriptors[route.key];
+          {screens.routes.map((route) => {
+            const descriptor = props.descriptors[route.key] ?? screens.descriptors[route.key];
             return descriptor ? (
               <ColumnScreen
                 key={route.key}
                 descriptor={descriptor}
+                attached={props.detail.some((current) => current.key === route.key)}
                 onDismiss={handleNativeDismiss}
                 onAppearance={followCollapsedSplit}
+                onCompose={isPullRequestRoute(route) ? undefined : detailCompose}
                 navigation={props.navigation}
-                sidebarFilter={sidebarFilter}
               />
             ) : null;
           })}
@@ -291,7 +399,9 @@ function WorkspaceColumns(
       </Split.Column>
       <Split.Inspector>
         <Split.HeaderConfig hidden />
-        <ColumnContent>
+        {/* Inspector panes host their own native stacks, which UIKit insets for the Duo's
+            vertical bar wherever they sit, so each pane insets its own content instead. */}
+        <ColumnContent insetHorizontally={false}>
           <View className="flex-1 bg-screen">{inspector.render?.()}</View>
         </ColumnContent>
       </Split.Inspector>
@@ -300,7 +410,7 @@ function WorkspaceColumns(
 }
 
 function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean }) {
-  const { layout } = useAdaptiveWorkspaceLayout();
+  const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   // Native dismiss commits the route pop after the transition. Restore the dock
   // when the primary screen starts appearing, including interactive back gestures.
   const [primaryVisible, setPrimaryVisible] = useState(false);
@@ -327,7 +437,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     options: { headerShown: false },
     render: () => (
       <WorkspaceNativeTabs
-        onNewTask={() => props.navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+        onNewTask={startNewTask}
         hidden={
           projection.detail.length > 0 &&
           !primaryVisible &&
