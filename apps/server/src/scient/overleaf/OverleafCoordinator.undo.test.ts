@@ -652,10 +652,10 @@ describe.skipIf(!canApply)("OverleafCoordinator, undo", () => {
   it.live("fails a sync whose pin repair fails while the objects exist, then repairs it", () =>
     run(
       Effect.gen(function* () {
-        // No earlier base kept, so only the attempt's pins hold the send's commits.
-        const w = yield* sentTwoFiles({ limits: { priorBases: 0 } });
+        const w = yield* sentTwoFiles();
         const lock = (side: string) => NodePath.join(w.repo, `refs/scient/attempt/1/${side}.lock`);
-        // The refs are missing and Git cannot write them (stale locks).
+        // The refs are missing and Git cannot write them (stale locks), while the
+        // commits they name are still there.
         for (const side of ["parent", "candidate"]) {
           yield* w.repos.deleteRef({ repo: w.repo, name: `attempt/1/${side}` });
           yield* Effect.promise(() => NodeFSP.writeFile(lock(side), "stale lock"));
@@ -664,18 +664,61 @@ describe.skipIf(!canApply)("OverleafCoordinator, undo", () => {
         const before = yield* w.connection;
         expect(yield* Effect.flip(w.sync("later-1"))).toMatchObject({ _tag: "OverleafGitError" });
         expect((yield* w.connection).revision).toBe(before.revision);
+        expect(yield* pinned(w, 1)).toEqual([null, null]);
+        // Once Git can write them, the next change of the record repairs them first.
         for (const side of ["parent", "candidate"])
           yield* Effect.promise(() => NodeFSP.rm(lock(side)));
-        expect(yield* w.sync("later-2")).toMatchObject({ publication: { _tag: "none" } });
-        expect((yield* pinned(w, 1)).every((oid) => oid !== null)).toBe(true);
-        // The base moved off the send's commits; the repaired pins alone keep them.
-        yield* w.collectGarbage;
         expect(yield* undo(w, 1)).toMatchObject({
           _tag: "undone",
-          restored: ["main.tex", "other.tex"],
+          restored: ["main.tex", "other.tex", "third.tex"],
         });
-        expect(yield* read(w.folder, "main.tex")).toBe("A");
+        expect((yield* pinned(w, 1)).every((oid) => oid !== null)).toBe(true);
       }),
     ),
   );
+
+  it.live("keeps a local-only file local-only when the undo could not write it", () => {
+    let interfere = false;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A", "keep.tex": "K" },
+          remote: { "main.tex": "A", "keep.tex": "K" },
+          // Changed just before the undo's step writes it.
+          beforeStep: async (path, folder) => {
+            if (!interfere || path !== "main.tex") return;
+            interfere = false;
+            await NodeFSP.writeFile(NodePath.join(folder, path), "private edit during Undo");
+          },
+        });
+        yield* write(w.folder, { "main.tex": "B" });
+        expect(yield* w.sync("send-1")).toMatchObject({ publication: { _tag: "accepted" } });
+        yield* remove(w.folder, "main.tex");
+        expect(yield* w.sync("send-2")).toMatchObject({ publication: { _tag: "accepted" } });
+        // Written again with the first send's bytes and left unsent, as a sync records an
+        // addition left unchecked: local-only.
+        yield* write(w.folder, { "main.tex": "B" });
+        const deleted = yield* w.connection;
+        yield* w.store.replaceConnection({
+          expectedRevision: deleted.revision,
+          next: {
+            ...deleted,
+            revision: deleted.revision + 1,
+            localOnlyPaths: [...deleted.localOnlyPaths, "main.tex"],
+          },
+        });
+        interfere = true;
+        expect(yield* undo(w, 1)).toMatchObject({
+          restored: ["main.tex"],
+          adopted: { outcome: "attention" },
+        });
+        expect(yield* read(w.folder, "main.tex")).toBe("private edit during Undo");
+        const after = yield* w.connection;
+        expect(after.localOnlyPaths).toContain("main.tex");
+        // Outside the base and unmanaged, the next sync leaves it alone.
+        expect(after.managedPaths).not.toContain("main.tex");
+        expect(after.base).toEqual(deleted.base);
+      }),
+    );
+  });
 });

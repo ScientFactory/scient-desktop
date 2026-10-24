@@ -330,7 +330,9 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
   conflict, so a rename at the 2,000-file limit fits) and for interruptible
   groups. It then runs as a `sync-undo` apply, adopted like a restore:
   displaced files are kept (`kept`), the base never moves, nothing is sent,
-  and written files join the managed set and leave the local-only list. A
+  and each file the applier wrote (its recorded base, keyed by blob ID, holds
+  the written blob, in recovery too) joins the managed set and leaves the
+  local-only list; a write it skipped keeps the path's earlier part in the sync. A
   removed path (the link records them, `retired`) leaves the managed set once
   the applier has removed it, or where the base or a forced conflict covers
   it; a removal skipped elsewhere stays managed, so its file stays in the sync.

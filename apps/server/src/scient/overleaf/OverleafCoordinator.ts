@@ -832,10 +832,20 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       // part in the sync again unless it stays local-only on purpose (the link's
       // set); restored conflict material is tracked again. One the applier could
       // not finish leaves its groups for review beside those already recorded.
-      const restored = (yield* repos.readTree({ repo, tree: link.intentTree })).map(
-        (entry) => entry.path,
+      const intent = yield* repos.readTree({ repo, tree: link.intentTree });
+      // An undo's plan keys the applier's base by blob ID, so a path its write reached
+      // has the intent's blob there: durable evidence, the same in recovery. A write
+      // the applier skipped keeps the path's earlier part in the sync (local-only
+      // stays local-only); a restore's write always counts, as before.
+      const reached = intent.filter(
+        (entry) => link.kind !== "sync-undo" || result.base.get(entry.path) === entry.oid,
       );
-      const synced = restored.filter((path) => !link.localOnly.includes(path));
+      const unreached = new Set(
+        intent.filter((entry) => !reached.includes(entry)).map((entry) => entry.path),
+      );
+      const synced = reached
+        .map((entry) => entry.path)
+        .filter((path) => !link.localOnly.includes(path));
       // An undo's removal leaves the managed set once done (its path is gone from the
       // applier's base), or where every capture reads it anyway: the base or a forced
       // conflict. A removal skipped elsewhere stays managed, so its file is not lost
@@ -860,7 +870,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           ...connection.managedPaths.filter((path) => !retired.has(path)),
           ...synced,
         ]),
-        localOnlyPaths: unique(link.localOnly),
+        localOnlyPaths: unique([
+          ...link.localOnly,
+          ...connection.localOnlyPaths.filter((path) => unreached.has(path)),
+        ]),
         forcedConflicts: [
           ...new Map(
             [...connection.forcedConflicts, ...result.interrupted].map((group) => {
@@ -2004,6 +2017,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         .map(([path, reason]) => ({ path, reason }))
         .sort((left, right) => byPath(left.path, right.path)),
       current,
+      /** What the send left at each path it replaces or removes, as blob IDs. */
+      left: new Map([...current.keys()].map((path) => [path, sent.get(path)!])),
       targets: new Map(writing().map((path) => [path, before.get(path)!])),
       renames,
       /** Paths every capture reads whether managed or not: the base's and forced conflicts'. */
@@ -2093,11 +2108,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 target.set(path, {
                   bytes: yield* repos.readBlob({ repo, oid, maxBytes: fileBytes }),
                 });
+              // The applier's base and remote are kept by blob ID, as a sync's are: the
+              // base it records afterwards then shows, path by path, which writes it
+              // made (adoption reads it, recovery too).
               const applyPlan = {
-                base: plan.current,
-                remote: new Map(
-                  [...target].map(([path, file]) => [path, bytesRevision(file.bytes)]),
-                ),
+                base: plan.left,
+                remote: plan.targets,
                 captured: plan.current,
                 target,
                 renames: plan.renames,
