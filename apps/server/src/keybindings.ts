@@ -113,6 +113,17 @@ const LATE_DEFAULT_KEYBINDINGS: ReadonlyArray<{
       when: "composerFocus && draftThreadRoute",
     },
   },
+  // SCIENT-FORK:START — existing configs also gain the closed-panel new-tab rule
+  {
+    id: "rightPanel.new:mod+t-closed-panel",
+    alongside: {
+      key: "mod+t",
+      command: "rightPanel.new",
+      when: "rightPanelOpen && !terminalFocus",
+    },
+    rule: { key: "mod+t", command: "rightPanel.new", when: "!rightPanelOpen && !terminalFocus" },
+  },
+  // SCIENT-FORK:END
 ];
 
 function keybindingShortcutContext(rule: KeybindingRule): string | null {

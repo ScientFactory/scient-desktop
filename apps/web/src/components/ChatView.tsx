@@ -248,6 +248,12 @@ import {
 import { isPreviewSupportedInRuntime, useThreadPreviewState } from "../previewStateStore";
 
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
+// SCIENT-FORK:START
+import { useBrowserHistoryProjectLink } from "~/scient/browser/useBrowserHistoryProjectLink";
+import { renameInTabHistory, useRightPanelTabHistory } from "~/scient/rightPanel/tabHistory";
+import { PanelFilesLayout } from "~/scient/rightPanel/PanelFilesColumn";
+import { usePanelTabShortcuts } from "~/scient/rightPanel/usePanelTabShortcuts";
+// SCIENT-FORK:END
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
@@ -1406,6 +1412,15 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProjectRef) return;
     registerFaviconProjectForThread(activeThreadRef, activeProjectRef);
   }, [activeProjectRef, activeThreadRef]);
+  // SCIENT-FORK:START — browser visits are filed under the thread's project again
+  useBrowserHistoryProjectLink({
+    threadRef: activeThreadRef,
+    projectKey: activeProject
+      ? deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings)
+      : null,
+    settingsHydrated: clientSettingsHydrated,
+  });
+  // SCIENT-FORK:END
   const activeEnvironment =
     activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
   const activeEnvironmentUnavailable =
@@ -1995,6 +2010,9 @@ function ChatViewContent(props: ChatViewProps) {
     resourceKey: `git-status:${activeThreadKey ?? ""}:${gitStatusCwd ?? ""}`,
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  // SCIENT-FORK:START — Back and Forward for file tabs
+  useRightPanelTabHistory({ threadRef: activeThreadRef, keybindings, runAfterPendingFileSave });
+  // SCIENT-FORK:END
   const scriptKeybindings =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
     DEFAULT_RESOLVED_KEYBINDINGS;
@@ -2394,6 +2412,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // SCIENT-FORK:START — openers for the right-panel surfaces Scient adds.
   const {
+    addNewTabSurface,
     addAgentsSurface,
     addDocumentsSurface,
     addSourcesSurface,
@@ -3348,6 +3367,22 @@ function ChatViewContent(props: ChatViewProps) {
   const openThreadFind = () => threadFindControlsRef.current?.open();
   const closeThreadFind = () => threadFindControlsRef.current?.close();
 
+  // SCIENT-FORK:START — side-panel tab shortcuts and duplicating a tab (scient/rightPanel)
+  const panelTabs = usePanelTabShortcuts({
+    threadRef: activeThreadRef,
+    panelOpen: rightPanelOpen,
+    surfaces: renderedRightPanelSurfaces,
+    activeSurface: renderedRightPanelSurface,
+    activate: activateRightPanelSurfaceStable,
+    addNewTab: addNewTabSurface,
+    canOperatePreview,
+    browserAvailable,
+    runAfterPendingFileSave,
+    openPreview,
+    previewSessions: activePreviewState.sessions,
+    addTerminal: addTerminalSurfaceStable,
+  });
+  // SCIENT-FORK:END
   useChatShortcuts({
     enabled: activeThreadId !== null,
     keybindings,
@@ -3371,6 +3406,9 @@ function ChatViewContent(props: ChatViewProps) {
         if (!isServerThread || serverConfig?.threadFind !== true) return false;
         openThreadFind();
       },
+      // SCIENT-FORK:START
+      ...panelTabs.shortcuts,
+      // SCIENT-FORK:END
       "composer.cycleHost": ({ event }) => {
         if (!canChangeEnvironment) return false;
         if (event.repeat) return;
@@ -3822,12 +3860,19 @@ function ChatViewContent(props: ChatViewProps) {
               workspaceRoot: activeWorkspaceRoot,
               onCiteFile: (citation, anchor) =>
                 composerRef.current?.citeText(citation, anchor) ?? false,
+              // A rename carries the tab's Back and Forward history with it.
               onFileRenamed: (fromPath, toPath) =>
-                useRightPanelStore.getState().renameFileSurface(activeThreadRef, fromPath, toPath),
+                renameInTabHistory(activeThreadRef, fromPath, toPath, () =>
+                  useRightPanelStore
+                    .getState()
+                    .renameFileSurface(activeThreadRef, fromPath, toPath),
+                ),
               onFileMoved: (fromPath, toPath) =>
-                useRightPanelStore
-                  .getState()
-                  .renameFileSurface(activeThreadRef, fromPath, toPath, { keepState: true }),
+                renameInTabHistory(activeThreadRef, fromPath, toPath, () =>
+                  useRightPanelStore
+                    .getState()
+                    .renameFileSurface(activeThreadRef, fromPath, toPath, { keepState: true }),
+                ),
               onOpenFileSource: openFileSourceSurface,
               onHtmlPresentationRequestHandled: handleHtmlPresentationRequestHandled,
               onLatexPresentationRequestHandled: handleLatexPresentationRequestHandled,
@@ -4767,6 +4812,10 @@ function ChatViewContent(props: ChatViewProps) {
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddAgents={addAgentsSurface}
           onAddSources={addSourcesSurface}
+          // SCIENT-FORK:START — "+" and its shortcut open the launcher as a tab
+          onAddNewTab={addNewTabSurface}
+          onDuplicateSurface={panelTabs.duplicateSurface}
+          // SCIENT-FORK:END
           onAddDocuments={addDocumentsSurface}
           documentsAvailable={activeWorkspaceRoot !== undefined}
           onAddCompute={addComputeSurface}
@@ -4783,7 +4832,21 @@ function ChatViewContent(props: ChatViewProps) {
           computeAvailable={activeProject !== null && activeWorkspaceRoot !== undefined}
           deviceAvailable={activeThreadRef !== null}
         >
-          {forkPdfContinuityPending ? null : rightPanelContent}
+          {/* SCIENT-FORK:START — the project's file list can sit beside any tab */}
+          {forkPdfContinuityPending ? null : (
+            <PanelFilesLayout
+              surface={renderedRightPanelSurface}
+              environmentId={activeThreadRef.environmentId}
+              cwd={activeWorkspaceRoot}
+              projectName={activeProject?.title ?? null}
+              workspaceMutationId={workspaceMutationId}
+              onOpenFile={openFileSurfaceStable}
+              onOpenFileSource={openFileSourceSurface}
+            >
+              {rightPanelContent}
+            </PanelFilesLayout>
+          )}
+          {/* SCIENT-FORK:END */}
         </ChatRightPanel>
       ) : null}
 

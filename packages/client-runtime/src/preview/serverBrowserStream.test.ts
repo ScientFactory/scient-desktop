@@ -84,6 +84,19 @@ describe("preview stream control", () => {
     client.stop();
   });
 
+  // SCIENT-FORK:START — the one in control learns that another window watches
+  it("forwards how many other windows watch, ignoring malformed counts", () => {
+    const { client, socket, onControl } = connect();
+    socket.control({ ...agent, controller: "you", generation: 2, otherViewers: 1 });
+    expect(onControl).toHaveBeenLastCalledWith(expect.objectContaining({ otherViewers: 1 }));
+    socket.message(
+      JSON.stringify({ type: "control", ...agent, generation: 3, otherViewers: "many" }),
+    );
+    expect(onControl.mock.lastCall?.[0]).not.toHaveProperty("otherViewers");
+    client.stop();
+  });
+  // SCIENT-FORK:END
+
   it("does not grant control from malformed dialog metadata", () => {
     const { client, socket, onControl } = connect();
     socket.message(

@@ -7,6 +7,7 @@ import {
   type PdfSourceDescriptor as PdfSourceDescriptorType,
 } from "@scientfactory/document-artifacts";
 import * as Schema from "effect/Schema";
+import { randomUUID } from "~/lib/utils";
 import {
   MAX_COMPUTE_CONTEXT_ID_LENGTH,
   type ComputeContextId,
@@ -20,6 +21,7 @@ const isPdfSourceDescriptor = Schema.is(PdfSourceDescriptor);
 
 export type ScientRightPanelSurface =
   | { readonly id: "scient:sources"; readonly kind: "scient"; readonly module: "sources" }
+  | { readonly id: `scient:new-tab:${string}`; readonly kind: "scient"; readonly module: "new-tab" }
   | {
       readonly id: `scient:compute:${string}`;
       readonly kind: "scient";
@@ -65,6 +67,17 @@ export type ScientRightPanelSurface =
 
 export function scientSourcesSurface(): Extract<ScientRightPanelSurface, { module: "sources" }> {
   return { id: "scient:sources", kind: "scient", module: "sources" };
+}
+
+/** The launcher page as a tab: what "+" opens. Each one is a separate tab. */
+export function scientNewTabSurface(
+  key: string = randomUUID(),
+): Extract<ScientRightPanelSurface, { module: "new-tab" }> {
+  return { id: `scient:new-tab:${key}`, kind: "scient", module: "new-tab" };
+}
+
+export function isScientNewTabSurface(surface: { readonly id: string } | undefined): boolean {
+  return surface?.id.startsWith("scient:new-tab:") === true;
 }
 
 export function scientComputeSurface(input: {
@@ -163,6 +176,14 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
     return scientSourcesSurface();
   }
   if (
+    surface.module === "new-tab" &&
+    typeof surface.id === "string" &&
+    surface.id.startsWith("scient:new-tab:") &&
+    surface.id.length <= 128
+  ) {
+    return scientNewTabSurface(surface.id.slice("scient:new-tab:".length));
+  }
+  if (
     surface.module === "compute" &&
     typeof surface.cwd === "string" &&
     surface.cwd.length > 0 &&
@@ -238,6 +259,8 @@ export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): 
   switch (surface.module) {
     case "sources":
       return "Sources";
+    case "new-tab":
+      return "New tab";
     case "compute":
       return surface.contextId === undefined ? "Compute history" : "Compute session";
     case "source-pdf":
