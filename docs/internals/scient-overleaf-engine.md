@@ -154,12 +154,17 @@ finds it holds it; its discard writes a durable tombstone (`discard-<copy>.json`
 before the same removals, and settlement finishes any whose copy or view is
 still there (`RetainedDiscard.crash.test.ts` kills a child before the copy goes,
 between the two, and after both, for both kinds of record). A kept copy may be
-a folder (one that stood where a file was): it is removed with everything in
-it, never following a link, and a removal a crash interrupted part way is
-finished the same way. A removal that cannot finish (a folder inside closed
-to writing, say) fails the discard that asked for it, keeps its mark and stays
-listed, so it can be discarded again; settlement tries it again but never
-fails the read, epoch, listing or write that found it.
+a folder (one that stood where a file was). Nothing below a kept copy's name
+is ever visited: a file or link is removed with `unlink` (a link as a name),
+a folder with a single `rmdir`, which removes only an empty real folder and
+fails harmlessly on one with anything in it, a link or a mount point. A
+discard of a kept folder with anything in it is refused before anything is
+marked (`WorkspaceFileMutationUnavailableError`, reason `kept-folder-not-empty`);
+the version stays listed and as it was. A mark that already stands on such a
+folder (an older discard, or one that met a folder filled meanwhile) leaves it
+as it is: settlement tries the `rmdir` each time it finds the record, keeps
+the version listed, and never fails the read, epoch, listing or write that
+found it; once the folder is empty the next settlement finishes the discard.
 
 Finding the records still reads every record its store keeps, on each
 discovery (several per write). A finished record already read is taken from
