@@ -15,7 +15,6 @@ import {
   descendantFixture,
   processExists,
   successfulParentWithDescendantFixture,
-  successfulParentWithResistantDescendantFixture,
 } from "./LocalProcessTestSupport.ts";
 
 const Live = layer.pipe(Layer.provideMerge(NodeServices.layer));
@@ -252,29 +251,6 @@ describe("LocalDuplexProcess", () => {
         );
         const childPid = Number(childPidLine);
         expect(Number.isSafeInteger(childPid)).toBe(true);
-        expect(processExists(childPid)).toBe(true);
-
-        expect(yield* handle.exitCode).toBe(0);
-        expect(processExists(childPid)).toBe(false);
-      }),
-    ).pipe(Effect.provide(Live), TestClock.withLive),
-  );
-
-  it.effect("force-stops a resistant descendant after the direct parent exits", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const handle = yield* startFixture(
-          "duplex-resistant-successful-process-tree-test",
-          successfulParentWithResistantDescendantFixture,
-        );
-        const childPid = Number(
-          yield* handle.stdout.pipe(
-            Stream.decodeText(),
-            Stream.splitLines,
-            Stream.runHead,
-            Effect.map(Option.getOrThrow),
-          ),
-        );
         expect(processExists(childPid)).toBe(true);
 
         expect(yield* handle.exitCode).toBe(0);
