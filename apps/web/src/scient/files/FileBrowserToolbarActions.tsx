@@ -13,7 +13,7 @@ import { DropboxMark, GoogleDriveMark, OneDriveMark, OverleafMark } from "./Exte
 /** Extra controls the Files bar can carry, such as a tab's Back and Forward. */
 export type ScientToolbarSlot = ReactNode;
 
-/** The services a project folder will keep in sync with. None is wired up yet. */
+/** The services a project folder keeps in sync with. Overleaf is live; the rest are on the way. */
 const CONNECT_SERVICES: ReadonlyArray<{
   readonly id: string;
   readonly label: string;
@@ -76,7 +76,10 @@ export function NewDocumentButton(props: {
 }
 
 /** Keeps a folder of this project in sync with a place outside it. */
-export function ConnectFolderButton() {
+export function ConnectFolderButton(props: {
+  /** Opens Connect to Overleaf for the selected folder. */
+  readonly onConnectOverleaf?: (() => void) | undefined;
+}) {
   // A service on the way says so where it was clicked, and the menu stays open.
   const [comingSoon, setComingSoon] = useState<string | null>(null);
   return (
@@ -89,17 +92,24 @@ export function ConnectFolderButton() {
     >
       <MenuPopup align="start" sideOffset={6} className="min-w-48">
         {/* Each service shows its own mark, and the folder it adds to the project. */}
-        {CONNECT_SERVICES.map(({ id, label, Mark }) => (
-          <MenuItem key={id} closeOnClick={false} onClick={() => setComingSoon(id)}>
-            <Mark aria-hidden className="size-4 opacity-100" />
-            <span className="flex-1">{label}</span>
-            {comingSoon === id ? (
-              <span className="ms-4 text-2xs text-muted-foreground">Coming soon</span>
-            ) : (
-              <FolderPlusIcon aria-hidden className="ms-4 size-3.5 text-muted-foreground/60" />
-            )}
-          </MenuItem>
-        ))}
+        {CONNECT_SERVICES.map(({ id, label, Mark }) => {
+          const live = id === "overleaf" && props.onConnectOverleaf !== undefined;
+          return (
+            <MenuItem
+              key={id}
+              closeOnClick={live}
+              onClick={() => (live ? props.onConnectOverleaf?.() : setComingSoon(id))}
+            >
+              <Mark aria-hidden className="size-4 opacity-100" />
+              <span className="flex-1">{live ? `${label}…` : label}</span>
+              {comingSoon === id ? (
+                <span className="ms-4 text-2xs text-muted-foreground">Coming soon</span>
+              ) : (
+                <FolderPlusIcon aria-hidden className="ms-4 size-3.5 text-muted-foreground/60" />
+              )}
+            </MenuItem>
+          );
+        })}
       </MenuPopup>
     </MenuButton>
   );

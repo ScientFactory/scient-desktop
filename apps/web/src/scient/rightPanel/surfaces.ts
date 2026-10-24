@@ -63,6 +63,16 @@ export type ScientRightPanelSurface =
       readonly module: "skill";
       readonly releaseKey: string;
       readonly title: string;
+    }
+  | {
+      /** One Overleaf link's review: its changes and any conflicts to settle. */
+      readonly id: `scient:overleaf-review:${string}`;
+      readonly kind: "scient";
+      readonly module: "overleaf-review";
+      readonly cwd: string;
+      readonly connectionId: string;
+      /** The linked folder, for the tab's title. */
+      readonly folder: string;
     };
 
 export function scientSourcesSurface(): Extract<ScientRightPanelSurface, { module: "sources" }> {
@@ -168,6 +178,21 @@ export function scientSkillSurface(input: {
   };
 }
 
+export function scientOverleafReviewSurface(input: {
+  readonly cwd: string;
+  readonly connectionId: string;
+  readonly folder: string;
+}): Extract<ScientRightPanelSurface, { module: "overleaf-review" }> {
+  return {
+    id: `scient:overleaf-review:${encodeURIComponent(input.cwd)}:${encodeURIComponent(input.connectionId)}`,
+    kind: "scient",
+    module: "overleaf-review",
+    cwd: input.cwd,
+    connectionId: input.connectionId,
+    folder: input.folder,
+  };
+}
+
 export function normalizeScientRightPanelSurface(value: unknown): ScientRightPanelSurface | null {
   if (typeof value !== "object" || value === null) return null;
   const surface = value as Record<string, unknown>;
@@ -252,6 +277,24 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
   ) {
     return scientSkillSurface({ releaseKey: surface.releaseKey, title: surface.title });
   }
+  if (
+    surface.module === "overleaf-review" &&
+    typeof surface.cwd === "string" &&
+    surface.cwd.length > 0 &&
+    surface.cwd.length <= 4_096 &&
+    !surface.cwd.includes("\0") &&
+    typeof surface.connectionId === "string" &&
+    /^[a-z0-9][a-z0-9-]{0,63}$/u.test(surface.connectionId) &&
+    typeof surface.folder === "string" &&
+    surface.folder.length <= 4_096 &&
+    !surface.folder.includes("\0")
+  ) {
+    return scientOverleafReviewSurface({
+      cwd: surface.cwd,
+      connectionId: surface.connectionId,
+      folder: surface.folder,
+    });
+  }
   return null;
 }
 
@@ -275,5 +318,9 @@ export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): 
     }
     case "skill":
       return surface.title;
+    case "overleaf-review": {
+      const folder = surface.folder.replace(/\/+$/u, "");
+      return folder === "" ? "Overleaf" : `Overleaf · ${folder.slice(folder.lastIndexOf("/") + 1)}`;
+    }
   }
 }

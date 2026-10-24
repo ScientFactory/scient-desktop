@@ -50,6 +50,9 @@ import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { ProjectSkillsSettings } from "../../scient/skills/ProjectSkillsSettings";
 import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
+// SCIENT-FORK:START — Project Settings ▸ Overleaf
+import { OverleafProjectSettingsSection } from "../../scient/overleaf/OverleafSettings";
+// SCIENT-FORK:END
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 
 const ProjectIconPickerDialog = lazy(() =>
@@ -563,6 +566,12 @@ function ProjectDetail({
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
+        {/* SCIENT-FORK:START — this project's Overleaf links */}
+        <OverleafProjectSettingsSection
+          environmentId={representative.environmentId}
+          workspaceRoot={representative.workspaceRoot}
+        />
+        {/* SCIENT-FORK:END */}
         <SettingsSection title="Skills">
           <ProjectSkillsSettings
             environmentId={representative.environmentId}
