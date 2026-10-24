@@ -9,6 +9,7 @@ import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 import {
   captureOverleafInventory,
   OVERLEAF_LIMITS,
+  overleafInventoryDigest,
   type OverleafInventoryInput,
 } from "./OverleafInventory.ts";
 
@@ -571,5 +572,26 @@ describe("captureOverleafInventory", () => {
         },
       }),
     ).toEqual({ reason: "unstable", path: "sub" });
+  });
+});
+
+describe("overleafInventoryDigest", () => {
+  it("is the same for the same folder and differs for any change a review reads", async () => {
+    const root = await folder({ "main.tex": "main", "notes.md": "notes" });
+    const input = { managedPaths: ["main.tex"] };
+    const digest = async () => overleafInventoryDigest(await captured(root, input));
+    const first = await digest();
+    expect(await digest()).toBe(first);
+    // The same size, other bytes.
+    await NodeFSP.writeFile(NodePath.join(root, "main.tex"), "MAIN");
+    const edited = await digest();
+    expect(edited).not.toBe(first);
+    // A new file, read or not.
+    await NodeFSP.writeFile(NodePath.join(root, "build.log"), "log");
+    const added = await digest();
+    expect(added).not.toBe(edited);
+    // A new empty folder.
+    await NodeFSP.mkdir(NodePath.join(root, "figures"));
+    expect(await digest()).not.toBe(added);
   });
 });

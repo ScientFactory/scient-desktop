@@ -47,6 +47,8 @@ import { manuscriptTreeProblem } from "./manuscriptPaths.ts";
 import {
   captureOverleafInventory,
   OVERLEAF_LIMITS,
+  overleafInventoryDigest,
+  type OverleafInventoryInput,
   type OverleafInventoryRefusal,
 } from "./OverleafInventory.ts";
 import { probeAcceptance } from "./OverleafProtocolProbe.ts";
@@ -770,6 +772,41 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     return yield* options.fetchRemote({ repo, connection });
   });
 
+  /** How each review in memory captured the folder, and what it found. */
+  const capturesOf = new WeakMap<
+    OverleafReview,
+    { readonly input: OverleafInventoryInput; readonly digest: string }
+  >();
+
+  /**
+   * Whether building `review` again now would give the same review: the connection
+   * record, the checkout and credential epochs and Overleaf's head are those it was
+   * built on, and the folder, captured exactly as the review captured it, holds the
+   * same files with the same bytes (and the same new, local-only, skipped and
+   * missing ones). The review is a function of those alone, so then it stands as
+   * it is; otherwise it is built again.
+   */
+  const unchangedSince = Effect.fn("OverleafCoordinator.unchangedSince")(function* (input: {
+    readonly review: OverleafReview;
+    readonly connection: OverleafConnectionDocument;
+    readonly remote: { readonly commit: string; readonly tree: string };
+    readonly checkoutEpoch: number;
+  }) {
+    const { binding } = input.review;
+    const capture = capturesOf.get(input.review);
+    if (
+      capture === undefined ||
+      input.connection.revision !== binding.connectionRevision ||
+      input.checkoutEpoch !== binding.checkoutEpoch ||
+      credentialEpoch() !== binding.credentialEpoch ||
+      input.remote.commit !== binding.remoteCommit ||
+      input.remote.tree !== binding.remoteTree
+    )
+      return false;
+    const again = yield* Effect.promise(() => captureOverleafInventory(capture.input));
+    return again._tag === "captured" && overleafInventoryDigest(again.inventory) === capture.digest;
+  });
+
   /** Captures the folder and builds the review, reading requested collisions in full. */
   const buildReview = Effect.fn("OverleafCoordinator.buildReview")(function* (input: {
     readonly connection: OverleafConnectionDocument;
@@ -824,17 +861,16 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     // A review may ask once for the local files Overleaf has content at; a second
     // request means the folder changed meanwhile, which the next prepare sees.
     for (let round = 0; ; round++) {
-      const captured = yield* Effect.promise(() =>
-        captureOverleafInventory({
-          folder: folderOf(connection),
-          managedPaths,
-          localOnlyPaths: connection.localOnlyPaths,
-          ...selection,
-          requestedPaths: requested,
-          stagingPaths: connection.stagingPaths,
-          atCheckoutTop: connection.folder.relativePath === "",
-        }),
-      );
+      const capture: OverleafInventoryInput = {
+        folder: folderOf(connection),
+        managedPaths,
+        localOnlyPaths: connection.localOnlyPaths,
+        ...selection,
+        requestedPaths: requested,
+        stagingPaths: connection.stagingPaths,
+        atCheckoutTop: connection.folder.relativePath === "",
+      };
+      const captured = yield* Effect.promise(() => captureOverleafInventory(capture));
       if (captured._tag === "refused")
         return { _tag: "refused" as const, refusal: captured.refusal };
       yield* Effect.promise(() => NodeFSP.mkdir(scratch, { recursive: true, mode: 0o700 }));
@@ -863,6 +899,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
             _tag: "refused" as const,
             refusal: { reason: "unstable" as const, path: result.paths[0] ?? "" },
           };
+        if (result._tag === "review")
+          capturesOf.set(result.review, {
+            input: capture,
+            digest: overleafInventoryDigest(captured.inventory),
+          });
         return result;
       }
       requested = result.paths;
@@ -1736,19 +1777,27 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   reason: "recovery-required",
                 });
               yield* verifyFolders(connection);
-              // The same review, built again from what stands now (contract section 5).
-              const fresh = yield* buildReview({
+              // The same review, built again from what stands now (contract section 5),
+              // unless nothing it is built from changed.
+              const fresh = (yield* unchangedSince({
+                review,
                 connection,
-                repo,
-                selections: {
-                  collisionPaths: review.binding.collisionPaths,
-                  choices: new Map(review.binding.choices),
-                  releaseMarked: review.binding.releaseMarked,
-                },
-                replacing: review.binding,
                 remote,
                 checkoutEpoch: section.epoch,
-              });
+              }))
+                ? { _tag: "review" as const, review }
+                : yield* buildReview({
+                    connection,
+                    repo,
+                    selections: {
+                      collisionPaths: review.binding.collisionPaths,
+                      choices: new Map(review.binding.choices),
+                      releaseMarked: review.binding.releaseMarked,
+                    },
+                    replacing: review.binding,
+                    remote,
+                    checkoutEpoch: section.epoch,
+                  });
               if (fresh._tag === "refused") return fresh;
               const stale = overleafReviewStaleness(review.binding, fresh.review.binding);
               if (stale !== null) {
