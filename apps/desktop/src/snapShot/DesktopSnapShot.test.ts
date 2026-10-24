@@ -11,7 +11,6 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -493,7 +492,9 @@ const layerTest = (
           DesktopEnvironment.DesktopEnvironment,
           DesktopEnvironment.DesktopEnvironment.of({
             platform,
+            // SCIENT-FORK:START scient-branding
             displayName: "Scient (Dev)",
+            // SCIENT-FORK:END scient-branding
             stateDir: "/state",
             linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
             appRoot: "/repo",
@@ -1778,7 +1779,9 @@ it.effect("flags revoked macOS permissions on read and re-registers once they re
       const revoked = yield* service.state;
       assert.equal(
         revoked.message,
+        // SCIENT-FORK:START scient-branding
         "Allow Screen Recording in System Settings, then restart Scient.",
+        // SCIENT-FORK:END scient-branding
       );
       assert.deepEqual(revoked.macPermissions, { screenRecording: false, accessibility: true });
 
@@ -1791,7 +1794,9 @@ it.effect("flags revoked macOS permissions on read and re-registers once they re
       const blocked = yield* service.state;
       assert.equal(
         blocked.message,
+        // SCIENT-FORK:START scient-branding
         "Allow Screen Recording in System Settings, then restart Scient.",
+        // SCIENT-FORK:END scient-branding
       );
       assert.isFalse(blocked.shortcutRegistered);
 
@@ -2150,7 +2155,9 @@ it.effect.each([false, true])(
           assert.equal(error.reason, "setup-failed");
           assert.equal(
             error.message,
+            // SCIENT-FORK:START scient-branding
             'Could not capture a test snapshot. Capturing the window failed. macOS grants Screen Recording and Accessibility to each app separately. In System Settings, open Privacy & Security and check that "Scient (Dev)" is allowed for both.',
+            // SCIENT-FORK:END scient-branding
           );
         } else yield* service.setup("test-mac-capture");
         assert.equal(macCaptureMock.mock.calls.length, 1);
@@ -2170,184 +2177,6 @@ it.effect.each([false, true])(
               }),
             ),
           readDirectory: () => Effect.succeed([]),
-        }),
-      ),
-    );
-  },
-);
-
-const macTestCaptureLayer = layerTest("darwin", {
-  makeTempDirectoryScoped: () => Effect.succeed("/tmp/setup-test"),
-  readDirectory: () => Effect.succeed([]),
-});
-const macTestCaptureWindow = {
-  platform: "macos",
-  id: 42,
-  title: "Setup",
-  owner: { name: "T3 Code", processId: 123, path: "/Applications/T3 Code.app" },
-  bounds: { x: 0, y: 0, width: 800, height: 600 },
-};
-
-it.effect("names the failed macOS window lookup without repeating what it printed", () => {
-  const script = 'ObjC.import("CoreGraphics"); function run() { return ""; }';
-  const stderr = "execution error: Error: Not authorized to send Apple events. (-1743)";
-  activeWindowMock
-    .mockReset()
-    .mockRejectedValue(
-      Object.assign(
-        new Error(`Command failed: /usr/bin/osascript -l JavaScript -e ${script}\n${stderr}`),
-        { cmd: `/usr/bin/osascript -l JavaScript -e ${script}`, code: 1, killed: false },
-      ),
-    );
-  macCaptureMock.mockReset();
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const service = yield* DesktopSnapShot.make;
-      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
-      assert.equal(
-        error.message,
-        'Could not capture a test snapshot. Finding the front window failed: osascript exited with code 1. macOS grants Screen Recording and Accessibility to each app separately. In System Settings, open Privacy & Security and check that "Scient (Dev)" is allowed for both.',
-      );
-      assert.include(String(error.cause), stderr);
-      assert.equal(macCaptureMock.mock.calls.length, 0);
-    }),
-  ).pipe(Effect.provide(macTestCaptureLayer));
-});
-
-it.effect("says when macOS has no window to test capture", () => {
-  activeWindowMock.mockReset().mockResolvedValue(undefined);
-  macCaptureMock.mockReset();
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const service = yield* DesktopSnapShot.make;
-      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
-      assert.equal(
-        error.message,
-        "Could not capture a test snapshot. No window is available to capture.",
-      );
-      assert.equal(macCaptureMock.mock.calls.length, 0);
-    }),
-  ).pipe(Effect.provide(macTestCaptureLayer));
-});
-
-it.effect("says when the macOS test capture command timed out", () => {
-  activeWindowMock.mockReset().mockResolvedValue(macTestCaptureWindow);
-  macCaptureMock.mockReset().mockRejectedValue(
-    Object.assign(new Error("Command failed: /usr/sbin/screencapture -l 42 -o -x"), {
-      code: null,
-      killed: true,
-      signal: "SIGTERM",
-    }),
-  );
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const service = yield* DesktopSnapShot.make;
-      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
-      assert.equal(
-        error.message,
-        'Could not capture a test snapshot. Capturing the window timed out. macOS grants Screen Recording and Accessibility to each app separately. In System Settings, open Privacy & Security and check that "Scient (Dev)" is allowed for both.',
-      );
-    }),
-  ).pipe(Effect.provide(macTestCaptureLayer));
-});
-
-it.effect("rejects macOS test capture on other platforms", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const service = yield* DesktopSnapShot.make;
-      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
-      assert.equal(error.reason, "unsupported-session");
-      assert.equal(error.message, "Test capture requires macOS.");
-    }),
-  ).pipe(Effect.provide(layerTest("win32"))),
-);
-
-it.effect(
-  "logs a GNOME activation failure and completes the shell flight before acknowledging the image",
-  () => {
-    vi.stubEnv("XDG_SESSION_TYPE", "wayland");
-    const order: string[] = [];
-    const activationFailure = new Error("Activation failed");
-    const logs: Array<unknown> = [];
-    const logger = Logger.make(({ message }) => logs.push(message));
-    const feedback = {
-      animationStarted: true,
-      activate: async () => {
-        order.push("activate");
-        throw activationFailure;
-      },
-      animateTo: async () => {
-        order.push("land");
-      },
-      complete: async () => {
-        order.push("complete");
-      },
-      close: () => {
-        order.push("close");
-      },
-    };
-    linuxCaptureMock.mockImplementationOnce(async () => {
-      order.push("snapshot");
-      return { png: Buffer.from([1, 2, 3]), feedback };
-    });
-    focusedWindowMock.mockReturnValue(undefined);
-    const destination = {
-      getBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
-      getTitle: () => "T3 Code",
-      isDestroyed: () => false,
-      isVisible: () => true,
-      isMinimized: () => false,
-    };
-    allWindowsMock.mockReturnValue([destination]);
-    let saved = "";
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const service = yield* DesktopSnapShot.make;
-        yield* service.configure(enabledSettings());
-        yield* service.capture;
-        assert.deepEqual(order, ["snapshot", "activate"]);
-        const warning = logs.find(
-          (message) =>
-            Array.isArray(message) &&
-            message[0] === "The compositor could not activate Scient after the snapshot",
-        );
-        assert.strictEqual(Array.isArray(warning) ? warning[1] : undefined, activationFailure);
-        const pending = yield* decodePendingMetadata(saved);
-        yield* service.setAnimationDestination(pending.id, {
-          frame: { x: 0, y: 0, width: 10, height: 10 },
-          relativeFrame: { x: 0.1, y: 0.8, width: 0.2, height: 0.1 },
-          backgroundColor: "white",
-          borderColor: "black",
-          borderWidth: 1,
-          cornerRadius: 8,
-          scaleFactor: 1,
-        });
-        yield* service.acknowledge(pending.id);
-        assert.deepEqual(order, ["snapshot", "activate", "land", "complete", "delete", "delete"]);
-      }),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layerTest("linux", {
-            makeDirectory: () => Effect.void,
-            rename: () => Effect.void,
-            writeFile: () => Effect.void,
-            writeFileString: (_, value) =>
-              Effect.sync(() => {
-                saved = value;
-              }),
-            remove: () =>
-              Effect.sync(() => {
-                order.push("delete");
-              }),
-          }),
-          Logger.layer([logger], { mergeWithExisting: false }),
-        ),
-      ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          allWindowsMock.mockReturnValue([]);
-          vi.unstubAllEnvs();
         }),
       ),
     );

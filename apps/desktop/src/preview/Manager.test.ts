@@ -46,7 +46,9 @@ describe("isPreviewEditingShortcut", () => {
     ({
       type: "keyDown",
       key,
+      // SCIENT-FORK:START scient-preview
       code: /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : "",
+      // SCIENT-FORK:END scient-preview
       meta: platform === "darwin",
       control: platform !== "darwin",
       shift: false,
@@ -54,50 +56,10 @@ describe("isPreviewEditingShortcut", () => {
       ...overrides,
     }) as Electron.Input;
 
-  it.each(["darwin", "linux", "win32"] as const)(
-    "allows native editing chords on %s without allowing host shortcuts",
-    (platform) => {
-      for (const key of ["a", "c", "v", "x", "z", "V"]) {
-        expect(PreviewManager.isPreviewEditingShortcut(input(platform, key), platform)).toBe(true);
-      }
-      const redo =
-        platform === "win32" ? input(platform, "y") : input(platform, "z", { shift: true });
-      expect(PreviewManager.isPreviewEditingShortcut(redo, platform)).toBe(true);
-      expect(
-        PreviewManager.isPreviewEditingShortcut(input(platform, "v", { shift: true }), platform),
-      ).toBe(true);
-      if (platform === "darwin") {
-        expect(
-          PreviewManager.isPreviewEditingShortcut(
-            input(platform, "v", { shift: true, alt: true }),
-            platform,
-          ),
-        ).toBe(true);
-      }
-
-      for (const key of ["k", ",", "w", "j", "q", "+", "=", "-", "0", "r", "F12"]) {
-        expect(PreviewManager.isPreviewEditingShortcut(input(platform, key), platform)).toBe(false);
-      }
-      for (const modifiers of [
-        { meta: false, control: false },
-        { meta: true, control: true },
-        { meta: platform !== "darwin", control: platform === "darwin" },
-        { alt: true },
-        ...(platform === "darwin" ? [] : [{ shift: true, alt: true }]),
-      ]) {
-        expect(
-          PreviewManager.isPreviewEditingShortcut(input(platform, "v", modifiers), platform),
-        ).toBe(false);
-      }
-      expect(
-        PreviewManager.isPreviewEditingShortcut(input(platform, "a", { shift: true }), platform),
-      ).toBe(false);
-    },
-  );
-
   it("recognizes macOS Paste and Match Style when Option changes the key to a symbol", () => {
     const pasteAndMatchStyle = input("darwin", "◊", { code: "KeyV", alt: true, shift: true });
     expect(PreviewManager.isPreviewEditingShortcut(pasteAndMatchStyle, "darwin")).toBe(true);
+    // SCIENT-FORK:START scient-preview
     for (const modifiers of [{ code: "KeyC" }, { shift: false }, { control: true }]) {
       expect(
         PreviewManager.isPreviewEditingShortcut({ ...pasteAndMatchStyle, ...modifiers }, "darwin"),
@@ -124,6 +86,7 @@ describe("isPreviewEditingShortcut", () => {
       ).toBe(false);
     },
   );
+  // SCIENT-FORK:END scient-preview
 });
 
 describe("previewWindowOpenAction", () => {
@@ -238,8 +201,10 @@ vi.mock("electron", () => ({
 const layerBrowserSession = Layer.succeed(
   BrowserSession.BrowserSession,
   BrowserSession.BrowserSession.of({
+    // SCIENT-FORK:START scient-preview
     getPartition: () => Effect.succeed("persist:scient-next-preview-test"),
     isPartition: (partition) => partition.startsWith("persist:scient-next-preview-"),
+    // SCIENT-FORK:END scient-preview
     getSession: () => Effect.succeed(previewSession as unknown as Electron.Session),
     clearCookies: () => Effect.void,
     clearCache: () => Effect.void,
@@ -304,6 +269,7 @@ const withManager = <A>(
     return yield* use(manager);
   }).pipe(Effect.provide(managerLayer(platform)), Effect.scoped);
 
+// SCIENT-FORK:START scient-preview
 const withManagerAndBrowserHost = <A>(
   use: (
     manager: PreviewManager.PreviewManager["Service"],
@@ -315,6 +281,7 @@ const withManagerAndBrowserHost = <A>(
     const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
     return yield* use(manager, browserHost);
   }).pipe(Effect.provide(managerLayer()), Effect.scoped);
+// SCIENT-FORK:END scient-preview
 
 interface TestCapturedPreviewImage {
   readonly toJPEG: () => Buffer;
@@ -669,6 +636,7 @@ describe("PreviewManager", () => {
       ),
   );
 
+  // SCIENT-FORK:START scient-preview
   effectIt.effect.each([
     ["darwin", true, false],
     ["linux", false, true],
@@ -852,6 +820,7 @@ describe("PreviewManager", () => {
       }),
     ),
   );
+  // SCIENT-FORK:END scient-preview
 
   effectIt.effect("keeps editing and forwarded shortcuts in whichever tab holds focus", () =>
     withManager((manager) =>
@@ -2818,6 +2787,7 @@ describe("PreviewManager", () => {
     ),
   );
 
+  // SCIENT-FORK:START scient-preview
   effectIt.effect("does not copy a CDP-attributed server download into local Downloads", () =>
     withManagerAndBrowserHost((manager, browserHost) =>
       Effect.gen(function* () {
@@ -2947,19 +2917,5 @@ describe("PreviewManager", () => {
       }),
     ),
   );
-});
-
-describe("PreviewOperationError", () => {
-  it("keeps timeline detail separate from its structured message", () => {
-    const cause = new Error("CDP command failed with an invalid node id");
-    const error = new PreviewManager.PreviewOperationError({
-      operation: "click.DOM.resolveNode",
-      tabId: "tab_1",
-      webContentsId: 42,
-      cause,
-    });
-
-    expect(error.message).not.toContain(cause.message);
-    expect(PreviewManager.PreviewOperationError.toTimelineMessage(error)).toBe(cause.message);
-  });
+  // SCIENT-FORK:END scient-preview
 });

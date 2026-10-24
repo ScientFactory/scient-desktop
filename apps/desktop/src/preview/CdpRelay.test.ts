@@ -74,6 +74,7 @@ describe("CDP relay", () => {
     });
   });
 
+  // SCIENT-FORK:START scient-agent-input-tracking
   it("completes agent-input tracking when debugger dispatch throws synchronously", async () => {
     const written: Array<Record<string, unknown>> = [];
     const relay = createCdpRelayConnection(
@@ -102,6 +103,7 @@ describe("CDP relay", () => {
     relay.receive("not-json", () => completions++);
     expect(completions).toBe(2);
   });
+  // SCIENT-FORK:END scient-agent-input-tracking
 
   it("resumes paused child frames, so cross-site iframes run", async () => {
     const send = vi.fn(async () => ({}));

@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - Stands in for an Electron debugger.
 import { describe, expect, it } from "@effect/vitest";
 import { DesktopBrowserEvent } from "@t3tools/contracts";
+// SCIENT-FORK:START scient-agent-input-tracking
 import * as Deferred from "effect/Deferred";
+// SCIENT-FORK:END scient-agent-input-tracking
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
@@ -68,6 +70,7 @@ const makeDebuggee = () => {
   };
 };
 
+// SCIENT-FORK:START scient-agent-input-tracking
 const takeEvents = (
   host: DesktopBrowserHost.DesktopBrowserHost["Service"],
   count: number,
@@ -76,6 +79,7 @@ const takeEvents = (
   host.events.pipe(
     Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
     Stream.tap(onEvent),
+    // SCIENT-FORK:END scient-agent-input-tracking
     Stream.take(count),
     Stream.runCollect,
   );
@@ -115,12 +119,14 @@ describe("DesktopBrowserHost", () => {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
+      // SCIENT-FORK:START scient-agent-input-tracking
       const attached = yield* Deferred.make<void>();
       const reader = yield* takeEvents(host, 2, (event) =>
         event.type === "attached" ? Deferred.succeed(attached, undefined) : Effect.void,
       ).pipe(Effect.forkScoped);
 
       yield* Deferred.await(attached);
+      // SCIENT-FORK:END scient-agent-input-tracking
       const command = (id: number, method: string) =>
         host.handleCommandLine(
           encodeJson({
@@ -229,7 +235,9 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  // SCIENT-FORK:START scient-agent-input-tracking
   it.effect("attributes only the next download to explicit human input", () =>
+    // SCIENT-FORK:END scient-agent-input-tracking
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
@@ -238,6 +246,7 @@ describe("DesktopBrowserHost", () => {
         encodeJson({
           type: "cdp",
           ...key,
+          // SCIENT-FORK:START scient-agent-input-tracking
           message: encodeJson({
             id: 1,
             method: "Input.dispatchMouseEvent",
@@ -364,4 +373,5 @@ describe("DesktopBrowserHost", () => {
       expect(host.pendingDownloadWasHuman(webContents)).toBe(true);
     }).pipe(Effect.scoped),
   );
+  // SCIENT-FORK:END scient-agent-input-tracking
 });

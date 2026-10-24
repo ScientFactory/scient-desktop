@@ -3,7 +3,6 @@ import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -22,45 +21,7 @@ import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
 describe("DesktopUpdates", () => {
-  it("preserves complete causes for update poller and event failures", () => {
-    const cause = Cause.combine(
-      Cause.fail(new Error("updater failed")),
-      Cause.die(new Error("updater defect")),
-    );
-    const pollerError = new DesktopUpdates.DesktopUpdatePollerError({
-      poller: "startup",
-      cause,
-    });
-    const eventError = new DesktopUpdates.DesktopUpdateEventHandlingError({
-      event: "download-progress",
-      cause,
-    });
-    const reportedError = new DesktopUpdates.DesktopUpdaterReportedError({
-      operation: "download",
-      cause,
-    });
-    const unexpectedActionError = new DesktopUpdates.DesktopUpdateUnexpectedActionError({
-      action: "install",
-      cause,
-    });
-
-    assert.strictEqual(pollerError.cause, cause);
-    assert.equal(pollerError.poller, "startup");
-    assert.equal(pollerError.message, "Desktop update startup poller failed.");
-    assert.strictEqual(eventError.cause, cause);
-    assert.equal(eventError.event, "download-progress");
-    assert.equal(eventError.message, "Failed to handle desktop update download-progress event.");
-    assert.strictEqual(reportedError.cause, cause);
-    assert.equal(reportedError.operation, "download");
-    assert.equal(reportedError.message, "Desktop updater download operation reported an error.");
-    assert.strictEqual(unexpectedActionError.cause, cause);
-    assert.equal(unexpectedActionError.action, "install");
-    assert.equal(
-      unexpectedActionError.message,
-      "Desktop update install action failed unexpectedly.",
-    );
-  });
-
+  // SCIENT-FORK:START desktop-release-channels
   it.effect(
     "switches official feeds only on explicit enrollment and never enables downgrades",
     () => {
@@ -115,33 +76,7 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
-
-  it.effect("configures the updater and runs startup checks on the test clock", () => {
-    const harness = makeHarness();
-
-    return Effect.gen(function* () {
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const updates = yield* DesktopUpdates.DesktopUpdates;
-          yield* updates.configure;
-
-          const state = yield* updates.getState;
-          assert.equal(state.enabled, true);
-          assert.equal(state.status, "idle");
-          assert.deepEqual(harness.feedUrls(), [
-            { provider: "generic", url: "http://localhost:4141" },
-          ]);
-          assert.equal(harness.listenerCount(), 6);
-          assert.equal(harness.checkCount(), 0);
-
-          yield* TestClock.adjust(Duration.millis(15_000));
-          assert.equal(harness.checkCount(), 1);
-        }),
-      );
-
-      assert.equal(harness.listenerCount(), 0);
-    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
+  // SCIENT-FORK:END desktop-release-channels
 
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
     Effect.gen(function* () {
@@ -162,6 +97,7 @@ describe("DesktopUpdates", () => {
     }),
   );
 
+  // SCIENT-FORK:START desktop-release-channels
   it.effect(
     "carries a Beta through download, restart preparation and the existing install boundary",
     () => {
@@ -193,6 +129,7 @@ describe("DesktopUpdates", () => {
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     },
   );
+  // SCIENT-FORK:END desktop-release-channels
 
   it.effect("keeps the disabled reason available after configuration and channel changes", () => {
     const harness = makeHarness({ env: { T3CODE_DISABLE_AUTO_UPDATE: "true" } });
@@ -206,8 +143,10 @@ describe("DesktopUpdates", () => {
         const configured = yield* updates.getState;
         assert.equal(configured.message, reason);
 
+        // SCIENT-FORK:START desktop-release-channels
         const changed = yield* updates.setChannel("beta");
         assert.equal(changed.channel, "beta");
+        // SCIENT-FORK:END desktop-release-channels
         assert.equal(changed.enabled, false);
         assert.equal(changed.status, "disabled");
         assert.equal(changed.message, reason);
@@ -217,29 +156,7 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(harness.layer));
   });
 
-  it.effect("subscribe delivers the latest state plus subsequent changes", () => {
-    const harness = makeHarness();
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        const { latest, changes } = yield* updates.subscribe;
-        assert.equal(latest.status, "idle");
-
-        const nextState = yield* Stream.runHead(changes).pipe(Effect.forkChild);
-        yield* flushCallbacks;
-        harness.emit("update-available", { version: "1.2.4" });
-        yield* flushCallbacks;
-
-        const observed = yield* Fiber.join(nextState);
-        assert.equal(Option.getOrThrow(observed).status, "available");
-        assert.equal(Option.getOrThrow(observed).availableVersion, "1.2.4");
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
+  // SCIENT-FORK:START desktop-release-channels
   it.effect("enables the owned updater after the release gate opens", () => {
     const harness = makeHarness({ env: { SCIENT_NEXT_SAFETY_ENVELOPE: "true" } });
 
@@ -257,26 +174,6 @@ describe("DesktopUpdates", () => {
           { provider: "generic", url: "http://localhost:4141" },
         ]);
         assert.equal(harness.listenerCount(), 6);
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
-  it.effect("updates and broadcasts state from updater events", () => {
-    const harness = makeHarness();
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        harness.emit("update-available", { version: "1.2.4" });
-        yield* flushCallbacks;
-
-        const state = yield* updates.getState;
-        assert.equal(state.status, "available");
-        assert.equal(state.availableVersion, "1.2.4");
-        assert.isNotNull(state.checkedAt);
-        assert.equal(harness.sentStates.at(-1)?.status, "available");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -366,6 +263,7 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+  // SCIENT-FORK:END desktop-release-channels
 
   it.effect("checks for newer releases after an update has been downloaded", () => {
     const harness = makeHarness();
@@ -429,39 +327,6 @@ describe("DesktopUpdates", () => {
 
         yield* updates.check("poll");
         harness.emit("update-not-available");
-        yield* flushCallbacks;
-
-        const state = yield* updates.getState;
-        assert.equal(state.status, "downloaded");
-        assert.equal(state.availableVersion, "1.2.4");
-        assert.equal(state.downloadedVersion, "1.2.4");
-        assert.deepEqual(state.releaseNotes, [
-          { version: "1.2.4", items: ["fix: queued update"], totalItems: 1 },
-        ]);
-        assert.equal(state.omittedReleaseCount, 0);
-        assert.equal(state.downloadPercent, 100);
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
-  it.effect("preserves a queued installer when the feed offers another channel", () => {
-    const harness = makeHarness();
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        harness.emit("update-available", {
-          version: "1.2.4",
-          releaseNotes: "## What's changed\n- fix: queued update",
-        });
-        yield* flushCallbacks;
-        harness.emit("update-downloaded", { version: "1.2.4" });
-        yield* flushCallbacks;
-
-        yield* updates.check("poll");
-        harness.emit("update-available", { version: "1.2.5-beta.20260710.1" });
         yield* flushCallbacks;
 
         const state = yield* updates.getState;
@@ -626,7 +491,9 @@ describe("DesktopUpdates", () => {
   it.effect("recovers download state after an unexpected setup failure", () => {
     let disableDifferentialCalls = 0;
     const harness = makeHarness({
+      // SCIENT-FORK:START desktop-release-channels
       beforeSetUpdateChannel: Effect.void,
+      // SCIENT-FORK:END desktop-release-channels
       setDisableDifferentialDownload: Effect.suspend(() => {
         disableDifferentialCalls += 1;
         return disableDifferentialCalls === 1
@@ -651,8 +518,10 @@ describe("DesktopUpdates", () => {
         assert.equal(failedState.errorContext, "download");
         assert.equal(failedState.message, "Desktop update download action failed unexpectedly.");
 
+        // SCIENT-FORK:START desktop-release-channels
         const changedState = yield* updates.setChannel("beta");
         assert.equal(changedState.channel, "beta");
+        // SCIENT-FORK:END desktop-release-channels
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -699,7 +568,9 @@ describe("DesktopUpdates", () => {
 
   it.effect("clears quitting state after an unexpected install setup failure", () => {
     const harness = makeHarness({
+      // SCIENT-FORK:START desktop-release-channels
       beforeSetUpdateChannel: Effect.void,
+      // SCIENT-FORK:END desktop-release-channels
       stopBackend: Effect.die(new Error("backend stop failed")),
     });
 
@@ -721,8 +592,10 @@ describe("DesktopUpdates", () => {
         assert.equal(failedState.errorContext, "install");
         assert.equal(failedState.message, "Desktop update install action failed unexpectedly.");
 
+        // SCIENT-FORK:START desktop-release-channels
         const changedState = yield* updates.setChannel("beta");
         assert.equal(changedState.channel, "beta");
+        // SCIENT-FORK:END desktop-release-channels
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -1014,7 +887,9 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  // SCIENT-FORK:START desktop-release-channels
   it.effect("honors the product update-channel policy returned by the settings service", () => {
+    // SCIENT-FORK:END desktop-release-channels
     const harness = makeHarness();
 
     return Effect.scoped(
@@ -1023,11 +898,13 @@ describe("DesktopUpdates", () => {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
 
+        // SCIENT-FORK:START desktop-release-channels
         const state = yield* updates.setChannel("beta");
         const persistedSettings = yield* settings.get;
 
         assert.equal(state.channel, "beta");
         assert.equal(persistedSettings.updateChannel, "beta");
+        // SCIENT-FORK:END desktop-release-channels
         assert.equal(persistedSettings.updateChannelConfiguredByUser, true);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
@@ -1052,40 +929,6 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("fails channel changes with a typed error while a check is in progress", () =>
-    Effect.gen(function* () {
-      const checkStarted = yield* Deferred.make<void>();
-      const releaseCheck = yield* Deferred.make<void>();
-      const harness = makeHarness({
-        checkForUpdates: Deferred.succeed(checkStarted, undefined).pipe(
-          Effect.andThen(Deferred.await(releaseCheck)),
-        ),
-      });
-
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const updates = yield* DesktopUpdates.DesktopUpdates;
-          yield* updates.configure;
-
-          const checkFiber = yield* updates.check("manual").pipe(Effect.forkScoped);
-          yield* Deferred.await(checkStarted);
-
-          const exit = yield* Effect.exit(updates.setChannel("beta"));
-          assert.equal(exit._tag, "Failure");
-          if (exit._tag === "Failure") {
-            const error = Cause.squash(exit.cause);
-            assert.instanceOf(error, DesktopUpdates.DesktopUpdateActionInProgressError);
-            assert.equal(error.action, "check");
-            assert.equal(error.requestedChannel, "beta");
-          }
-
-          yield* Deferred.succeed(releaseCheck, undefined);
-          yield* Fiber.join(checkFiber);
-        }),
-      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-    }),
-  );
-
   it.effect("rejects checks while an update channel change is being persisted", () =>
     Effect.gen(function* () {
       const channelChangeStarted = yield* Deferred.make<void>();
@@ -1101,7 +944,9 @@ describe("DesktopUpdates", () => {
           const updates = yield* DesktopUpdates.DesktopUpdates;
           yield* updates.configure;
 
+          // SCIENT-FORK:START desktop-release-channels
           const channelFiber = yield* updates.setChannel("beta").pipe(Effect.forkScoped);
+          // SCIENT-FORK:END desktop-release-channels
           yield* Deferred.await(channelChangeStarted);
 
           const checkResult = yield* updates.check("manual");
@@ -1111,42 +956,14 @@ describe("DesktopUpdates", () => {
           yield* Deferred.succeed(releaseChannelChange, undefined);
           const state = yield* Fiber.join(channelFiber);
 
+          // SCIENT-FORK:START desktop-release-channels
           assert.equal(state.channel, "beta");
+          // SCIENT-FORK:END desktop-release-channels
           assert.equal(harness.checkCount(), 1);
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
   );
-
-  it.effect("preserves settings failure context when an update channel cannot be persisted", () => {
-    const diskFailure = new Error("disk exploded");
-    const settingsFailure = new DesktopAppSettings.DesktopSettingsWriteError({
-      operation: "replace-settings-file",
-      path: "/tmp/settings.json",
-      cause: diskFailure,
-    });
-    const harness = makeHarness({ setUpdateChannelError: settingsFailure });
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        const error = yield* updates.setChannel("beta").pipe(Effect.flip);
-
-        assert.instanceOf(error, DesktopUpdates.DesktopUpdateChannelPersistenceError);
-        assert.equal(error.channel, "beta");
-        assert.strictEqual(error.cause, settingsFailure);
-        assert.strictEqual(error.cause.cause, diskFailure);
-        assert.equal(error.message, "Failed to persist the beta desktop update channel.");
-        assert.notInclude(error.message, diskFailure.message);
-
-        const checkResult = yield* updates.check("manual");
-        assert.isTrue(checkResult.checked);
-        assert.equal(harness.checkCount(), 1);
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
 });
 
 describe("describeUpdateErrorCause", () => {

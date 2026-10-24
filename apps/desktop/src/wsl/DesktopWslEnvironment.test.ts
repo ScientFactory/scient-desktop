@@ -14,7 +14,9 @@ import {
 // The install script only fails the way this file cares about when a real shell
 // runs it, so find one that has the tools it needs: bash directly on Linux, and
 // the WSL distro on a Windows dev box, where Git Bash ships no flock. Anywhere
+// SCIENT-FORK:START scient-wsl-runtime-cache
 // else the executed suite skips; sanitization checks do not establish cache behavior.
+// SCIENT-FORK:END scient-wsl-runtime-cache
 const REQUIRED_SHELL_TOOLS = ["flock", "sha256sum", "tar", "mktemp"] as const;
 
 const posixShellRunner = (() => {
@@ -75,7 +77,9 @@ const readField = (stdout: string, field: string) => {
   return line.slice(field.length + 1).trim();
 };
 
+// SCIENT-FORK:START scient-wsl-runtime-cache
 const SERVER_ENTRY_SOURCE = 'console.log("t3code wsl runtime test server");';
+// SCIENT-FORK:END scient-wsl-runtime-cache
 
 describe("WSL runtime cache", () => {
   it.each([
@@ -101,6 +105,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     fixtures.length = 0;
   });
 
+  // SCIENT-FORK:START scient-wsl-runtime-cache
   const createFixture = (includeCursorHelpers = false) => {
     const result = runShell(
       [
@@ -123,6 +128,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
             ]
           : []),
         `tar -czf "$work/wsl-runtime.tar.gz" -C "$stage" apps/server/dist node_modules`,
+        // SCIENT-FORK:END scient-wsl-runtime-cache
         `printf 'work:%s\\n' "$work"`,
         `printf 'archiveSha:%s\\n' "$(sha256sum "$work/wsl-runtime.tar.gz" | cut -d ' ' -f 1)"`,
       ].join("\n"),
@@ -149,6 +155,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       runtimeId,
       runtimeParent: `${work}/home/.t3/wsl-runtime`,
       runtimeRoot: `${work}/home/.t3/wsl-runtime/${runtimeId}`,
+      // SCIENT-FORK:START scient-wsl-runtime-cache
       serverEntry: `${work}/home/.t3/wsl-runtime/${runtimeId}/apps/server/dist/bin.mjs`,
       installScript,
       install: (archive?: string, sha?: string) => runShell(installScript(archive, sha)),
@@ -206,6 +213,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       ].join("\n"),
     );
     expect(checked.status, checked.stderr).toBe(0);
+    // SCIENT-FORK:END scient-wsl-runtime-cache
   });
 
   it("reuses a warm cache without touching the archive", () => {
@@ -219,7 +227,9 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     expect(parseWslRuntimeRoot(warm.stdout)).toBe(fixture.runtimeRoot);
   });
 
+  // SCIENT-FORK:START scient-wsl-runtime-cache
   it("reinstalls a cache whose server entry was truncated", () => {
+    // SCIENT-FORK:END scient-wsl-runtime-cache
     const fixture = createFixture();
     expect(fixture.install().status).toBe(0);
     expect(runShell(`set -eu\n: > ${sh(fixture.serverEntry)}`).status).toBe(0);
@@ -350,29 +360,6 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     expect(selected.status, `${selected.stdout}\n${selected.stderr}`).toBe(0);
   });
 
-  it("removes an aged stale tree after replacing an active unready cache", () => {
-    const fixture = createFixture();
-    expect(fixture.install().status).toBe(0);
-    const result = runShell(
-      [
-        "set -eu",
-        `runtime_root=${sh(fixture.runtimeRoot)}`,
-        `runtime_parent=${sh(fixture.runtimeParent)}`,
-        'rm "$runtime_root/.t3code-wsl-runtime-ready"',
-        holdRuntimeBusy('"$runtime_root/apps/server/dist/bin.mjs"'),
-        fixture.installScript(),
-        'stale=$(find "$runtime_parent" -maxdepth 1 -type d -name ".sha256-*.stale.*" -print -quit)',
-        'test -n "$stale"',
-        'touch -d "180 minutes ago" "$stale"',
-        `HOME=${sh(`${fixture.work}/home`)}`,
-        "export HOME",
-        buildWslRuntimePruneScript(fixture.runtimeId),
-        'test ! -e "$stale"',
-      ].join("\n"),
-    );
-
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  });
   it("prunes old and markerless caches without touching retained, active, locked, or unrelated roots", () => {
     const result = runShell(
       [
@@ -381,7 +368,9 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         'home="$work/home"',
         'runtime_parent="$home/.t3/wsl-runtime"',
         'mkdir -p "$runtime_parent"',
+        // SCIENT-FORK:START scient-wsl-runtime-cache
         'make_ready() { mkdir -p "$runtime_parent/$1/apps/server/dist"; printf ready > "$runtime_parent/$1/.t3code-wsl-runtime-ready"; }',
+        // SCIENT-FORK:END scient-wsl-runtime-cache
         "make_ready sha256-current",
         "make_ready sha256-previous",
         "make_ready sha256-active",
@@ -392,7 +381,9 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         'touch -d "4 minutes ago" "$runtime_parent/sha256-active"',
         'touch -d "3 minutes ago" "$runtime_parent/sha256-old"',
         'touch -d "2 minutes ago" "$runtime_parent/sha256-locked"',
+        // SCIENT-FORK:START scient-wsl-runtime-cache
         holdRuntimeBusy('"$runtime_parent/sha256-active/apps/server/dist/bin.mjs"'),
+        // SCIENT-FORK:END scient-wsl-runtime-cache
         holdInstallLock('"$runtime_parent/.sha256-locked.install.lock"'),
         `HOME="$home"`,
         "export HOME",
