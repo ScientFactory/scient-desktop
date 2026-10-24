@@ -176,7 +176,12 @@ until cleared. A retained copy keeps its revision, time and sync count; a
 changed copy never becomes releasable again, and a copy is dropped only after
 seven days and a later completed sync (`completedSyncCount`).
 `overleafRequiredPins` names the private refs (bases, local snapshots, pending
-apply target, unresolved attempts) that cleanup must keep.
+apply target, and the parent and candidate commits of every attempt still
+recorded that is unresolved or accepted) that cleanup must keep. An accepted
+attempt keeps its pins until it is pruned, so Undo stays possible after its
+bases rotate out or Overleaf's history is rewritten. A pending undo
+(`sync-undo` apply link) names its attempt, and a document is valid only while
+that attempt is recorded as accepted, so it cannot be pruned meanwhile.
 
 Request receipts are created once per request ID. A repeat with the same
 payload returns the original receipt instead of running again; reuse with a
@@ -248,7 +253,7 @@ outside it.
 
 `OverleafCoordinator` (unmounted until step 5) prepares reviews, applies a
 confirmed one and sends its result to Overleaf, recovers an interrupted apply,
-settles earlier sends, and lists and restores kept copies.
+settles earlier sends, lists and restores kept copies, and undoes an accepted send.
 
 - **Lock order.** The connection's operation reservation comes first: in
   memory, refused (`OverleafOperationActiveError`) rather than queued. Then the
@@ -298,6 +303,25 @@ settles earlier sends, and lists and restores kept copies.
   restored bytes are a local change for the next review. A restore the applier
   cannot finish leaves its file as a forced conflict, beside those already
   recorded.
+- **Undo** puts back what Overleaf had before one accepted send, named by its
+  attempt number (design section 4.3). Any other attempt, or one no longer
+  recorded (the last 64 are), is `not-eligible` with the reason. Under the same
+  reservation, receipt (`undo`) and application section as a restore, it
+  compares the attempt's parent tree with the tree it sent: every changed path,
+  both sides of a rename included, goes back to the parent's entry (its bytes,
+  or absence). The folder is captured as a review captures it, and a path is
+  put back only while it holds exactly what the send left there; otherwise it
+  is skipped and reported (`changed`, or `already-undone` when it already holds
+  the earlier version). A file it would recreate is skipped (`name-clash`) when
+  another spelling of it or of a folder above it is on disk, a file stands
+  where a folder above it must go, or the result would not be a valid tree;
+  one larger than a restore reads is `too-large`. Room for kept copies,
+  returning managed paths and interruptible groups is checked before anything
+  is written. It then runs as a `sync-undo` apply, adopted like a restore:
+  displaced files are kept (`kept`), the base never moves, nothing is sent,
+  and the files it wrote are managed again (taken off the local-only list).
+  Recovery resumes the same intent, and a repeated request returns the
+  receipt. Saving open editors first is the caller's job.
 
 ### Publication
 
