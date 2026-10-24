@@ -262,7 +262,11 @@ export const ScientOverleafPreviewResult = Schema.Union([
     review: ScientOverleafReview,
     settled: ScientOverleafSettled,
   }),
-  Schema.Struct({ _tag: Schema.Literal("refused"), refusal: ScientOverleafRefusal }),
+  Schema.Struct({
+    _tag: Schema.Literal("refused"),
+    refusal: ScientOverleafRefusal,
+    settled: ScientOverleafSettled,
+  }),
   Schema.Struct({ _tag: Schema.Literal("recovered") }),
 ]);
 export type ScientOverleafPreviewResult = typeof ScientOverleafPreviewResult.Type;
