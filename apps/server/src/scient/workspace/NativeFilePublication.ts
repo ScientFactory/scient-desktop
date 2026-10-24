@@ -580,6 +580,9 @@ const LeaseMessage = Schema.Union([LeaseReply, CommandExit, Result]);
 
 const decodeLeaseMessage = Schema.decodeSync(Schema.fromJsonString(LeaseMessage));
 
+/** The most folders one lease can bind: the helper refuses more (`lease_main`). */
+export const NATIVE_LEASE_FOLDER_LIMIT = 256;
+
 /** Cancellation can retire queued acquisition, never an acquired callback's native work. */
 export async function withNativeFilePublicationLease<T>(
   helperPath: string,
@@ -587,7 +590,11 @@ export async function withNativeFilePublicationLease<T>(
   body: (lease: NativeFilePublicationLease) => Promise<T>,
   options: { readonly mode: "shared" | "exclusive"; readonly signal?: AbortSignal },
 ): Promise<T> {
-  if (!NodePath.isAbsolute(helperPath) || bindings.length === 0 || bindings.length > 256)
+  if (
+    !NodePath.isAbsolute(helperPath) ||
+    bindings.length === 0 ||
+    bindings.length > NATIVE_LEASE_FOLDER_LIMIT
+  )
     throw new NativeFilePublicationError(
       "A publication lease needs an absolute host helper and 1–256 bound parents.",
       null,
