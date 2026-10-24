@@ -516,6 +516,60 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  // SCIENT-FORK:START scient-desktop-settings - upstream's snap dropped this fix guard.
+  // regression: 6f04a5cffb fix(desktop): Niri/Hyprland - Linux secret storage backend (#2916)
+  it.effect(
+    "normalizes unsupported linux password-store values without dropping other settings",
+    () =>
+      withSettings(
+        Effect.gen(function* () {
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            environment.desktopSettingsPath,
+            `{
+            "linuxPasswordStore": "unsupported-store",
+            "serverExposureMode": "network-accessible",
+            "tailscaleServeEnabled": true,
+            "tailscaleServePort": 8443,
+            "updateChannel": "nightly",
+            "updateChannelConfiguredByUser": true
+          }\n`,
+          );
+
+          assert.deepEqual(yield* settings.load, {
+            linuxPasswordStore: "auto",
+            localEnvironmentEnabled: true,
+            mainWindowBounds: null,
+            mainWindowMaximized: false,
+            mainWindowSizeIncreaseApplied: false,
+            mainWindowNearFullSizeApplied: false,
+            serverExposureMode: "network-accessible",
+            tailscaleServeEnabled: true,
+            tailscaleServePort: 8443,
+            updateChannel: "latest",
+            updateChannelConfiguredByUser: false,
+            wslBackendEnabled: false,
+            wslOnly: false,
+            wslDistro: null,
+            voiceSelectedModelId: null,
+          } satisfies DesktopAppSettings.DesktopSettings);
+
+          const persisted = yield* decodeDesktopSettingsPatch(
+            yield* fileSystem.readFileString(environment.desktopSettingsPath),
+          );
+          assert.deepEqual(persisted, {
+            serverExposureMode: "network-accessible",
+            tailscaleServeEnabled: true,
+            tailscaleServePort: 8443,
+          } satisfies typeof DesktopSettingsPatch.Type);
+        }),
+      ),
+  );
+  // SCIENT-FORK:END scient-desktop-settings
+
   it.effect("removes legacy update channel overrides while preserving other settings", () =>
     withSettings(
       Effect.gen(function* () {

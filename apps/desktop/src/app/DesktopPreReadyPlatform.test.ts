@@ -177,6 +177,30 @@ describe("DesktopPreReadyPlatform", () => {
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
 
+  // SCIENT-FORK:START desktop-state-isolation
+  // regression: 7733bc839e fix(desktop): make Linux URL handlers discoverable with the app icon (#8673)
+  it.effect("still prepares the portal entry when the bundled icon cannot be copied", () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
+    getSwitchValueMock.mockReturnValue("");
+    copyFileSyncMock.mockImplementation(() => {
+      throw new Error("missing bundled icon");
+    });
+    return Effect.gen(function* () {
+      yield* DesktopPreReadyPlatform.make;
+      const contents = writeFileSyncMock.mock.calls[0]?.[1];
+      assert.include(contents, "MimeType=x-scheme-handler/scient;");
+      assert.include(contents, "Icon=");
+      assert.equal(setDesktopNameMock.mock.calls.length, 1);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.HomeDirectory, "/home/me"),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
+  });
+  // SCIENT-FORK:END desktop-state-isolation
+
   it.effect(
     "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer",
     () =>

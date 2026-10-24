@@ -33,6 +33,16 @@ describe("project thread title", () => {
     expect(deriveThreadTitleFromPrompt(text)).toBe("Study result");
     expect(deriveThreadTitleSeed({ text, attachments: [] })).toBe("Study result");
   });
+
+  // Upstream deleted this row in its snap; it is the only guard of the mobile length limit.
+  // regression: b20f55248d fix(clients): image threads use readable titles (#19822)
+  it("normalizes draft and queued titles while keeping the mobile length limit", () => {
+    expect(
+      deriveThreadTitleFromPrompt(
+        "![photo.png](t3-context://v1/image/photo) Fix [src/app.ts](t3-context://v1/mention/source) so the sidebar remains readable when a thread starts with an image",
+      ),
+    ).toBe("Fix src/app.ts so the sidebar remains readable when a thread starts w...");
+  });
 });
 
 describe("new thread start command", () => {

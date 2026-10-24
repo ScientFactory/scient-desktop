@@ -56,6 +56,50 @@ describe("isPreviewEditingShortcut", () => {
       ...overrides,
     }) as Electron.Input;
 
+  // SCIENT-FORK:START scient-preview - upstream's snap dropped this fix guard (modifiers and host shortcuts).
+  // regression: e0e0bcb115 fix(desktop): preserve browser editing shortcuts (#10621)
+  it.each(["darwin", "linux", "win32"] as const)(
+    "allows native editing chords on %s without allowing host shortcuts",
+    (platform) => {
+      for (const key of ["a", "c", "v", "x", "z", "V"]) {
+        expect(PreviewManager.isPreviewEditingShortcut(input(platform, key), platform)).toBe(true);
+      }
+      const redo =
+        platform === "win32" ? input(platform, "y") : input(platform, "z", { shift: true });
+      expect(PreviewManager.isPreviewEditingShortcut(redo, platform)).toBe(true);
+      expect(
+        PreviewManager.isPreviewEditingShortcut(input(platform, "v", { shift: true }), platform),
+      ).toBe(true);
+      if (platform === "darwin") {
+        expect(
+          PreviewManager.isPreviewEditingShortcut(
+            input(platform, "v", { shift: true, alt: true }),
+            platform,
+          ),
+        ).toBe(true);
+      }
+
+      for (const key of ["k", ",", "w", "j", "q", "+", "=", "-", "0", "r", "F12"]) {
+        expect(PreviewManager.isPreviewEditingShortcut(input(platform, key), platform)).toBe(false);
+      }
+      for (const modifiers of [
+        { meta: false, control: false },
+        { meta: true, control: true },
+        { meta: platform !== "darwin", control: platform === "darwin" },
+        { alt: true },
+        ...(platform === "darwin" ? [] : [{ shift: true, alt: true }]),
+      ]) {
+        expect(
+          PreviewManager.isPreviewEditingShortcut(input(platform, "v", modifiers), platform),
+        ).toBe(false);
+      }
+      expect(
+        PreviewManager.isPreviewEditingShortcut(input(platform, "a", { shift: true }), platform),
+      ).toBe(false);
+    },
+  );
+  // SCIENT-FORK:END scient-preview
+
   it("recognizes macOS Paste and Match Style when Option changes the key to a symbol", () => {
     const pasteAndMatchStyle = input("darwin", "◊", { code: "KeyV", alt: true, shift: true });
     expect(PreviewManager.isPreviewEditingShortcut(pasteAndMatchStyle, "darwin")).toBe(true);

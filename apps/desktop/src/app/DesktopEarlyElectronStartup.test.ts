@@ -4,6 +4,9 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   restoreEarlyLinuxDeviceScaleFactor,
+  // SCIENT-FORK:START desktop-state-isolation
+  resolveEarlyLinuxElectronOptions,
+  // SCIENT-FORK:END desktop-state-isolation
   resolveEarlyLinuxPasswordStorePreference,
   resolveLinuxDisableFeaturesSwitch,
 } from "./DesktopEarlyElectronStartup.ts";
@@ -57,6 +60,45 @@ describe("DesktopEarlyElectronStartup", () => {
   });
 
   // SCIENT-FORK:START desktop-state-isolation
+  // regression: 6f04a5cffb fix(desktop): Niri/Hyprland - Linux secret storage backend (#2916)
+  it("preserves absolute root paths when resolving early settings", () => {
+    const preference = resolveEarlyLinuxPasswordStorePreference({
+      env: { SCIENT_NEXT_HOME: "/" },
+      homeDirectory: "/home/user",
+      joinPath,
+      readFileString: (path) => {
+        assert.equal(path, "/userdata/desktop-settings.json");
+        return JSON.stringify({ linuxPasswordStore: "kwallet6" });
+      },
+    });
+
+    assert.equal(preference, "kwallet6");
+  });
+
+  // regression: 6f04a5cffb fix(desktop): Niri/Hyprland - Linux secret storage backend (#2916)
+  it("resolves the early linux Electron switches", () => {
+    const options = resolveEarlyLinuxElectronOptions({
+      env: {
+        SCIENT_NEXT_HOME: "/home/user/.scient-next-test",
+        XDG_CURRENT_DESKTOP: "niri",
+        VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
+      },
+      homeDirectory: "/home/user",
+      joinPath,
+      readFileString: (path) => {
+        assert.equal(path, "/home/user/.scient-next-test/scient-next-dev/desktop-settings.json");
+        return JSON.stringify({ linuxPasswordStore: "auto" });
+      },
+    });
+
+    assert.deepEqual(options, {
+      isDevelopment: true,
+      linuxWmClass: "scient-next-dev",
+      linuxDesktopEntryName: "scient-next-dev.desktop",
+      passwordStore: "gnome-libsecret",
+    });
+  });
+
   it("keeps implicit development state under the candidate development root", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
       env: {

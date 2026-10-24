@@ -9,6 +9,9 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+// SCIENT-FORK:START scient-window-fix-guards
+import * as References from "effect/References";
+// SCIENT-FORK:END scient-window-fix-guards
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -54,6 +57,9 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 // SCIENT-FORK:START scient-window
 import { MENU_ACTION_CHANNEL, SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
+// SCIENT-FORK:START scient-window-fix-guards
+import { WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+// SCIENT-FORK:END scient-window-fix-guards
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -934,6 +940,41 @@ describe("DesktopWindow", () => {
       }),
   );
 
+  // SCIENT-FORK:START scient-window-fix-guards - upstream's snap dropped this fix guard
+  // regression: c1b2210411 fix(desktop): keep the sidebar brand and window buttons aligned (#11906)
+  it.effect("keeps macOS window buttons centered when zooming and leaving fullscreen", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        for (const direction of ["in", "in", "out", "reset", "out"] as const) {
+          yield* desktopWindow.zoomMain(direction);
+          const position = fakeWindow.setWindowButtonPosition.mock.lastCall?.[0];
+          assert.isDefined(position);
+          const headerCenter = 26 * fakeWindow.window.webContents.getZoomFactor();
+          assert.isAtMost(Math.abs(position.y + 7 - headerCenter), 0.5);
+          assert.equal(position.x, 16);
+        }
+
+        fakeWindow.isFullScreen.mockReturnValue(true);
+        fakeWindow.setWindowButtonPosition.mockClear();
+        yield* desktopWindow.zoomMain("reset");
+        assert.equal(fakeWindow.setWindowButtonPosition.mock.calls.length, 0);
+
+        fakeWindow.isFullScreen.mockReturnValue(false);
+        fakeWindow.windowListeners.get("leave-full-screen")?.();
+        assert.deepEqual(fakeWindow.setWindowButtonPosition.mock.lastCall, [{ x: 16, y: 19 }]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+  // SCIENT-FORK:END scient-window-fix-guards
+
   it.effect("applies the size increase to a legacy maximized window before opening", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
@@ -1255,6 +1296,135 @@ describe("DesktopWindow", () => {
       }).pipe(Effect.provide(layer));
     }),
   );
+
+  // SCIENT-FORK:START scient-window-fix-guards - upstream's snap dropped this fix guard
+  // regression: 2c199aacac fix(desktop): preserve main window bounds (#3851)
+  it.effect("logs display lookup failures before falling back to the default size", () =>
+    Effect.gen(function* () {
+      const displayLookupFailure = new Error("screen API unavailable");
+      vi.mocked(Electron.screen.getAllDisplays).mockImplementationOnce(() => {
+        throw displayLookupFailure;
+      });
+      const logRecords: Array<{
+        readonly message: unknown;
+        readonly annotations: Readonly<Record<string, unknown>>;
+      }> = [];
+      const logger = Logger.make(({ fiber, message }) => {
+        logRecords.push({
+          message,
+          annotations: { ...fiber.getRef(References.CurrentLogAnnotations) },
+        });
+      });
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+      }).pipe(
+        Effect.provide(Layer.mergeAll(layer, Logger.layer([logger], { mergeWithExisting: false }))),
+      );
+
+      const warning = logRecords.find(
+        (record) =>
+          Array.isArray(record.message) &&
+          record.message[0] === "failed to read connected displays; using defaults",
+      );
+      assert.isDefined(warning);
+      assert.strictEqual(warning.annotations.cause, displayLookupFailure);
+      assert.equal(createdWindowOptions[0]?.width, 1280);
+      assert.equal(createdWindowOptions[0]?.height, 840);
+      assert.isUndefined(createdWindowOptions[0]?.x);
+      assert.isUndefined(createdWindowOptions[0]?.y);
+    }),
+  );
+  // SCIENT-FORK:END scient-window-fix-guards
+
+  // SCIENT-FORK:START scient-window-fix-guards - upstream's snap dropped this fix guard
+  // regression: 0418301de7 Fix macOS fullscreen titlebar spacing (#4019)
+  it.effect("publishes native macOS fullscreen changes to the renderer", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const enterFullscreen = fakeWindow.windowListeners.get("enter-full-screen");
+        const leaveFullscreen = fakeWindow.windowListeners.get("leave-full-screen");
+        if (!enterFullscreen || !leaveFullscreen) {
+          return yield* Effect.die("fullscreen listeners were not registered");
+        }
+
+        enterFullscreen();
+        leaveFullscreen();
+        assert.deepEqual(fakeWindow.send.mock.calls, [
+          [WINDOW_FULLSCREEN_STATE_CHANNEL, true],
+          [WINDOW_FULLSCREEN_STATE_CHANNEL, false],
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+  // SCIENT-FORK:END scient-window-fix-guards
+
+  // SCIENT-FORK:START scient-window-fix-guards - upstream's snap dropped this fix guard
+  // regression: 15ca727b17 fix(desktop): reload the main renderer after it is killed (#20300)
+  it.effect(
+    "recovers killed renderers without reloading indefinitely or reviving closed windows",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.createMain;
+          const onGone = fakeWindow.webContentsListeners.get("render-process-gone");
+          const onLoaded = fakeWindow.webContentsListeners.get("did-finish-load");
+          if (!onGone || !onLoaded)
+            return yield* Effect.die("renderer lifecycle listeners missing");
+
+          onGone({}, { reason: "clean-exit", exitCode: 0 });
+          yield* TestClock.adjust(500);
+          assert.equal(fakeWindow.loadURL.mock.calls.length, 1);
+
+          for (let attempt = 0; attempt < 4; attempt += 1) {
+            onGone({}, { reason: "killed", exitCode: 9 });
+            yield* TestClock.adjust(500);
+            onLoaded();
+          }
+          assert.equal(fakeWindow.loadURL.mock.calls.length, 4);
+
+          yield* TestClock.adjust(60_000);
+          onGone({}, { reason: "killed", exitCode: 9 });
+          yield* TestClock.adjust(500);
+          assert.equal(fakeWindow.loadURL.mock.calls.length, 5);
+          assert.equal(yield* Ref.get(createCount), 1);
+
+          onGone({}, { reason: "killed", exitCode: 9 });
+          fakeWindow.isDestroyed.mockReturnValue(true);
+          yield* TestClock.adjust(500);
+          assert.equal(fakeWindow.loadURL.mock.calls.length, 5);
+        }).pipe(Effect.provide(layer));
+      }),
+  );
+  // SCIENT-FORK:END scient-window-fix-guards
 
   it.effect("persists the current main window bounds before the window closes", () =>
     Effect.gen(function* () {

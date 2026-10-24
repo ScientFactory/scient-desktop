@@ -1,5 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+// SCIENT-FORK:START scient-renderer-retry
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
+// SCIENT-FORK:END scient-renderer-retry
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -153,6 +157,40 @@ describe("ElectronProtocol", () => {
       assert.equal(netFetchMock.mock.calls.length, 0);
     }).pipe(Effect.provide(layerProtocol)),
   );
+
+  // SCIENT-FORK:START scient-renderer-retry - upstream's snap dropped its only retry guard.
+  // regression: 31dfe3596e Fix Electron dev and packaged renderer startup (#3557)
+  it.effect("retries transient renderer target failures", () =>
+    Effect.gen(function* () {
+      let handler: ((request: Request) => Promise<Response>) | undefined;
+      handleMock.mockImplementation((_scheme, nextHandler) => {
+        handler = nextHandler;
+      });
+      netFetchMock
+        .mockRejectedValueOnce(new Error("connect ECONNREFUSED 127.0.0.1:5733"))
+        .mockResolvedValueOnce(new Response("ready"));
+
+      const response = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const protocol = yield* ElectronProtocol.ElectronProtocol;
+          yield* protocol.registerDesktopProtocol({
+            scheme: "t3code-dev",
+            targetOrigin: new URL("http://127.0.0.1:5733/"),
+            clerkFrontendApiHostname: undefined,
+          });
+          const fiber = yield* Effect.forkChild(
+            Effect.promise(() => handler!(new Request("t3code-dev://app/"))),
+          );
+          yield* TestClock.adjust("50 millis");
+          return yield* Fiber.join(fiber);
+        }),
+      );
+
+      assert.equal(yield* Effect.promise(() => response.text()), "ready");
+      assert.equal(netFetchMock.mock.calls.length, 2);
+    }).pipe(Effect.provide(layerProtocol)),
+  );
+  // SCIENT-FORK:END scient-renderer-retry
 
   // SCIENT-FORK:START scient-desktop-csp
   it.effect(

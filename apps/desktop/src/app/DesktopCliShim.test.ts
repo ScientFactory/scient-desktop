@@ -75,6 +75,27 @@ const fakeAppImage = (canMount = true) => {
 
 // SCIENT-FORK:START scient-cli-command
 describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () => {
+  // Scient keeps upstream's fix guards that upstream's snap dropped.
+  // regression: 73e87f683a fix(desktop): setup prompts name a t3 that runs on desktop installs (#16676)
+  it("runs the AppImage's bundled CLI with every argument and unmounts after", () => {
+    const { root, image, shim } = fakeAppImage();
+    const result = run(shim, ["browser", "setup", "a b"]);
+    expect(result.status).toBe(3);
+    expect(result.stdout.split("\n")).toEqual([
+      `node=1 cli=${shim} home=${root}/home`,
+      `${image}/resources/app.asar/apps/server/dist/bin.mjs`,
+      "browser",
+      "setup",
+      "a b",
+      "",
+    ]);
+    NodeChildProcess.spawnSync("sh", [
+      "-c",
+      `i=0; while [ ! -e '${root}/unmounted' ] && [ $i -lt 40 ]; do sleep 0.05; i=$((i+1)); done`,
+    ]);
+    expect(NodeFS.existsSync(NodePath.join(root, "unmounted"))).toBe(true);
+  });
+
   // SCIENT-FORK:END scient-cli-command
   it("extracts the AppImage where it cannot be mounted", () => {
     const { shim } = fakeAppImage(false);
@@ -126,6 +147,21 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
       "",
     ]);
   });
+
+  // SCIENT-FORK:START scient-cli-command
+  // regression: 73e87f683a fix(desktop): setup prompts name a t3 that runs on desktop installs (#16676)
+  it("tells a person whose app moved to reopen it", () => {
+    const root = tempRoot();
+    const shim = writeShim(root, {
+      kind: "direct",
+      executable: NodePath.join(root, "Gone.app/Contents/MacOS/T3 Code"),
+      entry: "/bin.mjs",
+    });
+    const result = run(shim, ["--version"]);
+    expect(result.status).toBe(127);
+    expect(result.stderr).toContain("Open the app once to update this command.");
+  });
+  // SCIENT-FORK:END scient-cli-command
 
   it("writes a Windows launcher that keeps cmd from reinterpreting paths", () => {
     const executable = "C:\\Apps\\R&whoami&X 100%\\!CHANNEL!\\T3 Code.exe";

@@ -28,7 +28,9 @@ import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import {
   getLocalEnvironmentBootstraps,
   getRelayTelemetryEnabled,
+  getWindowFullscreenState,
   reloadMainWindow,
+  revealWindow,
   // SCIENT-FORK:END scient-window-ipc
   probeRemoteEditors,
 } from "./window.ts";
@@ -278,3 +280,43 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+// SCIENT-FORK:START scient-window-ipc - fix guards upstream's snap dropped; no other test covers them.
+describe("getWindowFullscreenState", () => {
+  // regression: 0418301de7 Fix macOS fullscreen titlebar spacing (#4019)
+  it.effect("reads the current native window state", () => {
+    const window = { isFullScreen: () => true } as Electron.BrowserWindow;
+
+    return Effect.gen(function* () {
+      assert.isTrue(yield* getWindowFullscreenState.handler());
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          currentMainOrFirst: Effect.succeedSome(window),
+        }),
+      ),
+    );
+  });
+});
+
+describe("revealWindow", () => {
+  // regression: bb86c24139 fix(desktop): raise the window when a thread notification is clicked … (#12567)
+  it.effect("reveals the main window only when it asks", () => {
+    const window = { webContents: { id: 42 } } as unknown as Electron.BrowserWindow;
+    const reveal = vi.fn(() => Effect.void);
+    return Effect.gen(function* () {
+      yield* revealWindow.handler(undefined, { sender: { id: 99 } });
+      assert.equal(reveal.mock.calls.length, 0);
+      yield* revealWindow.handler(undefined, { sender: { id: 42 } });
+      assert.deepEqual(reveal.mock.calls, [[window]]);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          main: Effect.succeedSome(window),
+          reveal,
+        }),
+      ),
+    );
+  });
+});
+// SCIENT-FORK:END scient-window-ipc

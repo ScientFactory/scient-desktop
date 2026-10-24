@@ -34,6 +34,23 @@ describe("Scient environment release channels", () => {
     expect(urls).toHaveLength(2);
   });
 
+  // Upstream deleted this row in its snap; it is the only guard of the Stable JSON Accept header.
+  // regression: c6fd4ad1e4 fix(mobile): check for server updates without GitHub's API rate limit (#17900)
+  it("checks stable updates as JSON without using the anonymous API quota", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) =>
+        url === "https://github.com/ScientFactory/scient-desktop/releases/latest" &&
+        new Headers(init?.headers).get("Accept") === "application/json"
+          ? Response.json({ tag_name: "v1.1.0" })
+          : new Response(null, { status: 403 }),
+      ),
+    );
+    expect(await findEnvironmentUpdate("1.0.0", signal)).toBe("1.1.0");
+    expect(await findEnvironmentUpdate("1.1.0", signal)).toBeNull();
+    expect(await findEnvironmentUpdate("1.3.0", signal)).toBeNull();
+  });
+
   it("rejects a prerelease returned as the latest Stable release", async () => {
     vi.stubGlobal(
       "fetch",

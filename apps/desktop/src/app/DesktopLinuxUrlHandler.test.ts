@@ -2,6 +2,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+// SCIENT-FORK:START scient-retained-stall-guards
+import * as Fiber from "effect/Fiber";
+// SCIENT-FORK:END scient-retained-stall-guards
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -9,6 +12,9 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+// SCIENT-FORK:START scient-retained-stall-guards
+import * as TestClock from "effect/testing/TestClock";
+// SCIENT-FORK:END scient-retained-stall-guards
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -187,6 +193,34 @@ describe("DesktopLinuxUrlHandler", () => {
       "MimeType=x-scheme-handler/scient-next;application/vnd.scient.conversation+zip;",
     );
     assert.include(entry, "Icon=/home/al ice/icons/T3\\\\x.png");
+  });
+
+  // regression: 69dfb7f09a fix(desktop): claim the t3code:// scheme default on Linux at startup (#5054)
+  it("carries structured context on registration errors", () => {
+    const writeError = new DesktopLinuxUrlHandler.DesktopLinuxUrlHandlerRegistrationError({
+      step: "write-desktop-entry",
+      scheme: "scient-next",
+      desktopEntryPath: "/home/alice/.local/share/applications/scient.desktop",
+      cause: new Error("boom"),
+    });
+    assert.equal(
+      writeError.message,
+      "Failed to register the scient-next:// URL handler (step: write-desktop-entry).",
+    );
+    assert.equal(
+      writeError.desktopEntryPath,
+      "/home/alice/.local/share/applications/scient.desktop",
+    );
+
+    const exitError = new DesktopLinuxUrlHandler.DesktopLinuxUrlHandlerRegistrationError({
+      step: "set-default-handler",
+      scheme: "scient-next",
+      exitCode: 4,
+    });
+    assert.equal(
+      exitError.message,
+      "Failed to register the scient-next:// URL handler (step: set-default-handler, xdg-mime exit code 4).",
+    );
   });
   // SCIENT-FORK:END scient-conversation-files
 
@@ -742,4 +776,63 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       );
     }).pipe(Effect.scoped),
   );
+  // SCIENT-FORK:START scient-retained-stall-guards - upstream dropped these fix guards; no other test covers the stalled-helper timeout.
+  // regression: 7733bc839e fix(desktop): make Linux URL handlers discoverable with the app icon (#8673)
+  it.effect("continues to xdg-mime when the desktop MIME cache refresh stalls", () =>
+    Effect.gen(function* () {
+      const recorded = emptyRecording();
+      const started = yield* Deferred.make<void>();
+      const registration = yield* runRegister(recorded, {
+        updateDesktopDatabaseStalled: true,
+        updateDesktopDatabaseStarted: started,
+      }).pipe(Effect.forkChild);
+
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(registration);
+
+      assert.deepEqual(
+        recorded.commands.map(({ command }) => command),
+        ["update-desktop-database", "xdg-mime", "xdg-mime", "xdg-mime", "xdg-mime"],
+      );
+    }),
+  );
+
+  // regression: f98118d033 fix(desktop): Install Linux theme icons named after the app id (#14471)
+  it.effect("continues to xdg-mime when the icon cache refresh stalls", () =>
+    Effect.gen(function* () {
+      const fixture = yield* themeIconFixture(new Uint8Array([1, 2, 3]));
+      yield* fixture.seedCache;
+      const started = yield* Deferred.make<void>();
+      const iconCacheOptions: Array<Record<string, unknown>> = [];
+      const run: ThemeIconRun = {
+        root: fixture.root,
+        commands: [],
+        iconCacheOptions,
+        iconCacheStalled: true,
+        iconCacheStarted: started,
+      };
+
+      const registration = yield* registerWithRealFileSystem(run).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(registration);
+
+      assert.deepEqual(
+        run.commands.map(({ command }) => command),
+        [
+          "gtk-update-icon-cache",
+          "update-desktop-database",
+          "xdg-mime",
+          "xdg-mime",
+          "xdg-mime",
+          "xdg-mime",
+        ],
+      );
+      // Without a forced kill, releasing a helper that ignores SIGTERM after
+      // the timeout would still wait for it to exit.
+      assert.equal(iconCacheOptions[0]?.forceKillAfter, "1 second");
+    }).pipe(Effect.scoped),
+  );
+  // SCIENT-FORK:END scient-retained-stall-guards
 });

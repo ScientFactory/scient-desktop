@@ -360,6 +360,32 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     expect(selected.status, `${selected.stdout}\n${selected.stderr}`).toBe(0);
   });
 
+  // SCIENT-FORK:START scient-wsl-runtime-cache
+  // regression: f94a0d646e fix(desktop): Cache Runtime locally on WSL Filesystem, dramatically improving launch times  (#5769)
+  it("removes an aged stale tree after replacing an active unready cache", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+    const result = runShell(
+      [
+        "set -eu",
+        `runtime_root=${sh(fixture.runtimeRoot)}`,
+        `runtime_parent=${sh(fixture.runtimeParent)}`,
+        'rm "$runtime_root/.t3code-wsl-runtime-ready"',
+        holdRuntimeBusy('"$runtime_root/apps/server/dist/bin.mjs"'),
+        fixture.installScript(),
+        'stale=$(find "$runtime_parent" -maxdepth 1 -type d -name ".sha256-*.stale.*" -print -quit)',
+        'test -n "$stale"',
+        'touch -d "180 minutes ago" "$stale"',
+        `HOME=${sh(`${fixture.work}/home`)}`,
+        "export HOME",
+        buildWslRuntimePruneScript(fixture.runtimeId),
+        'test ! -e "$stale"',
+      ].join("\n"),
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  });
+  // SCIENT-FORK:END scient-wsl-runtime-cache
   it("prunes old and markerless caches without touching retained, active, locked, or unrelated roots", () => {
     const result = runShell(
       [

@@ -42,6 +42,9 @@ import {
   isPendingUserInputOptionSelected,
   buildPendingUserInputAnswers,
 } from "./threadActivity";
+// SCIENT-FORK:START restored-sole-guards
+import type { ThreadFeedActivity } from "./threadActivity";
+// SCIENT-FORK:END restored-sole-guards
 
 // SCIENT-FORK:START — decoders for the fork boundary cases.
 const decodeBoundaryItem = Schema.decodeUnknownSync(TurnItemSchema);
@@ -1183,6 +1186,199 @@ describe("buildThreadFeed", () => {
       ),
     ).toEqual([]);
   });
+
+  // SCIENT-FORK:START restored-sole-guards — upstream deleted these rows in its snap; they are the
+  // only tests of a lone call's stand-in row and of an expanded group's row identities.
+  // regression: b520120cf1 fix(chat): improve tool group summaries and scrolling (#9106)
+  it("keeps expanded work in one group with stable row identities", () => {
+    const activity = (
+      id: string,
+      createdAt: string,
+      status: ThreadFeedActivity["status"] = "success",
+    ): ThreadFeedActivity => ({
+      id,
+      createdAt,
+      runId: null,
+      attemptId: null,
+      summary: `Tool ${id}`,
+      detail: null,
+      canExpand: false,
+      fetchesDetail: false,
+      getFullDetail: () => null,
+      getCopyText: () => id,
+      icon: "command",
+      logo: null,
+      toolLike: true,
+      prominent: false,
+      status,
+      lifecycleStatus: status === "neutral" ? "inProgress" : "completed",
+      workEntry: {
+        id,
+        createdAt,
+        label: `Tool ${id}`,
+        tone: "tool",
+        command: "vp check",
+        itemType: "command_execution",
+        toolLifecycleStatus: status === "neutral" ? "inProgress" : "completed",
+      },
+      projectedItem: projected(command(createdAt), 0),
+    });
+    const feed: ThreadFeedEntry[] = [
+      {
+        type: "activity-group",
+        id: "work-group-1",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        runId: null,
+        activities: [
+          activity("activity-neutral", "2026-04-01T00:00:01.000Z", "neutral"),
+          activity("activity-1", "2026-04-01T00:00:02.000Z"),
+          activity("activity-2", "2026-04-01T00:00:03.000Z"),
+          activity("activity-3", "2026-04-01T00:00:04.000Z"),
+        ],
+      },
+    ];
+
+    const collapsed = deriveThreadFeedPresentation(feed, null, new Set());
+    expect(collapsed.map((entry) => entry.id)).toEqual(["work-toggle:work-group:activity-neutral"]);
+    expect(collapsed[0]).toMatchObject({
+      type: "work-toggle",
+      groupId: "work-group:activity-neutral",
+      hiddenCount: 3,
+      expanded: false,
+      summary: "Ran 3 commands",
+    });
+
+    const expanded = deriveThreadFeedPresentation(
+      feed,
+      null,
+      new Set(),
+      new Set(["work-group:activity-neutral"]),
+    );
+    expect(expanded.map((entry) => entry.id)).toEqual([
+      "work-toggle:work-group:activity-neutral",
+      "work-details:work-group:activity-neutral",
+    ]);
+    expect(expanded[0]).toMatchObject({
+      type: "work-toggle",
+      expanded: true,
+    });
+    expect(expanded[1]).toMatchObject({
+      type: "activity-group",
+      activities: [
+        { id: "activity-1", groupedToolDetail: true, live: false },
+        { id: "activity-2", groupedToolDetail: true, live: false },
+        { id: "activity-3", groupedToolDetail: true, live: false },
+      ],
+    });
+  });
+
+  // regression: d015325b76 fix(mobile): avoid nested dropdowns for single tools (#15674)
+  describe("a lone call", () => {
+    const wait = (overrides: Partial<OrchestrationV2TurnItem> = {}) =>
+      ({
+        ...base("wait", "2026-06-20T00:00:02.000Z", 1),
+        type: "dynamic_tool",
+        toolName: "t3-code.t3_thread_wait",
+        input: { threadId: "thread-child", timeoutMs: 50_000 },
+        output: { threadId: "thread-child", status: "timeout" },
+        ...overrides,
+      }) as OrchestrationV2TurnItem;
+    const read = (overrides: Partial<OrchestrationV2TurnItem> = {}) =>
+      ({
+        ...base("read", "2026-06-20T00:00:03.000Z", 2),
+        type: "dynamic_tool",
+        toolName: "t3-code.t3_thread_read",
+        input: { threadId: "thread-child" },
+        output: { messages: [] },
+        ...overrides,
+      }) as OrchestrationV2TurnItem;
+    const running = { status: "running", completedAt: null, output: null } as const;
+    const startedAt = "2026-06-20T00:00:01.000Z";
+    const liveRows = (items: ReadonlyArray<OrchestrationV2TurnItem>, groupIds: string[] = []) =>
+      deriveThreadFeedPresentation(
+        buildThreadFeed(items.map((item, position) => projected(item, position))),
+        { runId, status: "running", startedAt, completedAt: null },
+        new Set(),
+        new Set(groupIds),
+        startedAt,
+      );
+    const standIn = (rows: ReadonlyArray<ThreadFeedEntry>) => {
+      const row = rows.find((entry) => entry.type === "activity-group");
+      if (row?.type !== "activity-group") throw new Error("Expected the call's own row");
+      return row.activities[0]?.groupStandIn;
+    };
+
+    it("is its own row, with no group header to open first", () => {
+      // The second call never finished, so only one call is visible.
+      for (const items of [[wait()], [wait(), read(running)]]) {
+        const feed = buildThreadFeed(
+          [userMessage(), ...items, assistantMessage("2026-06-20T00:00:04.000Z")].map(
+            (item, position) => projected(item, position),
+          ),
+        );
+        const rows = deriveThreadFeedPresentation(feed, null, new Set([runId]));
+        expect(rows.map((entry) => entry.type)).toEqual([
+          "message",
+          "run-fold",
+          "activity-group",
+          "message",
+        ]);
+        expect(rows[2]).toMatchObject({
+          activities: [{ canExpand: true, groupStandIn: { label: "Waited for a Scient thread" } }],
+        });
+        expect(rows[2]).not.toMatchObject({ activities: [{ groupedToolDetail: true }] });
+        // The group's own disclosure adds nothing while the call is alone.
+        expect(
+          deriveThreadFeedPresentation(
+            feed,
+            null,
+            new Set([runId]),
+            new Set([standIn(rows)!.groupId]),
+          ).map((entry) => entry.id),
+        ).toEqual(rows.map((entry) => entry.id));
+      }
+    });
+
+    it("offers no disclosure when it has nothing to show", () => {
+      const rows = deriveThreadFeedPresentation(
+        buildThreadFeed([projected(wait({ toolName: "example", input: {}, output: null }), 0)]),
+        null,
+        new Set([runId]),
+      );
+      expect(rows.map((entry) => entry.type)).toEqual(["run-fold", "activity-group"]);
+      expect(rows[1]).toMatchObject({ activities: [{ canExpand: false }] });
+    });
+
+    it("holds the live slot until a second call makes it a group", () => {
+      for (const item of [wait(running), wait()]) {
+        const rows = liveRows([item]);
+        expect(rows.map((entry) => entry.type)).toEqual(["activity-group"]);
+        expect(rows[0]).toMatchObject({
+          id: "live-activity-row",
+          activities: [{ live: true, groupStandIn: { label: "Waiting for a Scient thread" } }],
+        });
+      }
+
+      const groupId = standIn(liveRows([wait()]))!.groupId;
+      const grouped = liveRows([wait(), read(running)], [groupId]);
+      expect(grouped.map((entry) => entry.type)).toEqual(["work-toggle", "activity-group"]);
+      expect(grouped[0]).toMatchObject({
+        id: "live-activity-row",
+        groupId,
+        hiddenCount: 2,
+        expanded: true,
+        summary: "Reading a Scient thread",
+      });
+      expect(grouped[1]).toMatchObject({
+        activities: [
+          { groupedToolDetail: true, live: false },
+          { groupedToolDetail: true, live: true },
+        ],
+      });
+      expect(standIn(grouped)).toBeUndefined();
+    });
+  });
+  // SCIENT-FORK:END restored-sole-guards
 });
 
 describe("retained v2 feed presentation", () => {
