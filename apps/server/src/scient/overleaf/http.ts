@@ -6,6 +6,7 @@ import {
   ScientOverleafOperationError,
   type ScientOverleafPublication,
   type ScientOverleafRefusal,
+  type ScientOverleafRestoreResult,
   type ScientOverleafSyncResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -16,7 +17,11 @@ import {
   failEnvironmentInternal,
   requireEnvironmentScope,
 } from "../../auth/http.ts";
-import type { OverleafAdopted, OverleafPublication } from "./OverleafCoordinator.ts";
+import type {
+  OverleafAdopted,
+  OverleafPublication,
+  OverleafRestoreResult,
+} from "./OverleafCoordinator.ts";
 import {
   OVERLEAF_ACTIONABLE_ERRORS,
   OverleafSync,
@@ -82,6 +87,12 @@ const publicationView = (publication: OverleafPublication): ScientOverleafPublic
 
 export const settledView = (settled: OverleafAdopted | null) =>
   settled === null ? null : settledApplyView(settled);
+
+/** A kept-copy restore as clients see it: a restore that ran says how its apply ended. */
+export const restoreView = (result: OverleafRestoreResult): ScientOverleafRestoreResult =>
+  result._tag === "restored"
+    ? { _tag: "restored", outcome: result.adopted.outcome }
+    : { _tag: result._tag };
 
 export const syncView = (outcome: OverleafSyncOutcome): ScientOverleafSyncResult => {
   switch (outcome._tag) {
@@ -308,7 +319,7 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
               currentRevision: payload.currentRevision,
             }),
           );
-          return { _tag: result._tag };
+          return restoreView(result);
         }),
       )
       .handle("disconnect", ({ endpoint, payload }) =>

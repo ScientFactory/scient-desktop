@@ -199,7 +199,10 @@ The "Retained file versions" popover lists the link's kept copies of the open fi
 filtered by path) with **Restore** (`restoreKept` with the revisions the list read), only when the
 file belongs to the linked copy (`linkedHere`). In another worktree the copies, and a restore,
 would be the other checkout's, so it says "Kept copies are in the main copy." with **Open there**,
-which opens that file on the linked copy the way the Overleaf tab does. Compare and
+which opens that file on the linked copy the way the Overleaf tab does. A restore says what its
+apply did (`restored` carries `outcome`): "Restored" only when it completed; a `replan` wrote
+nothing ("The file changed while restoring, so nothing was written. Try again."), and `attention`
+may have stopped partway. Compare and
 **Show in Finder** need the copy's location or bytes, which the routes don't return yet.
 
 ## Conflict marks in the editor

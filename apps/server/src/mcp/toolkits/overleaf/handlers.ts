@@ -22,7 +22,7 @@ import {
   type OverleafSyncShape,
 } from "../../../scient/overleaf/OverleafSync.ts";
 import type { OverleafAdopted } from "../../../scient/overleaf/OverleafCoordinator.ts";
-import { refusalView, settledView, syncView } from "../../../scient/overleaf/http.ts";
+import { refusalView, restoreView, settledView, syncView } from "../../../scient/overleaf/http.ts";
 import type { ConflictChoice } from "../../../scient/overleaf/syncRules.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import {
@@ -603,13 +603,14 @@ export const overleafKeptCopiesForInvocation = Effect.fn("ScientOverleafToolkit.
         }),
       );
       // Only a complete apply puts the copy back; a replanned one wrote nothing, which
-      // says neither why nor what the file holds now.
+      // says neither why nor what the file holds now. The same view the app reads.
+      const view = restoreView(result);
       restored =
-        result._tag !== "restored"
-          ? result._tag
-          : result.adopted.outcome === "complete"
+        view._tag !== "restored"
+          ? view._tag
+          : view.outcome === "complete"
             ? "restored"
-            : result.adopted.outcome === "replan"
+            : view.outcome === "replan"
               ? "not-restored"
               : "needs-attention";
       lines.push(
@@ -619,9 +620,9 @@ export const overleafKeptCopiesForInvocation = Effect.fn("ScientOverleafToolkit.
             ? `The restore of ${path} wrote nothing. List the copies again and retry.`
             : restored === "needs-attention"
               ? `The restore of ${path} needs attention: it may have stopped partway, or a file changed while it was written. Check the file and scient_overleaf_status before syncing.`
-              : result._tag === "stale"
+              : view._tag === "stale"
                 ? "Nothing was restored: the copy or the file changed since the listing. List again and retry with the new revisions."
-                : result._tag === "unknown-copy"
+                : view._tag === "unknown-copy"
                   ? "Nothing was restored: no kept copy matches. List again."
                   : "This restore already ran; nothing ran again.",
       );
