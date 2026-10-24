@@ -28,6 +28,7 @@ import {
   beginOverleafPreview,
   finishOverleafPreview,
   recordOverleafSync,
+  refreshOverleafStatusElsewhere,
   setOverleafSyncing,
   type OverleafConnection,
 } from "./overleafStore";
@@ -216,6 +217,7 @@ export async function runOverleafSync(
     // Files came in: the tree and the chip read again.
     refreshProjectFiles(environmentId, workspaceRoot);
     void loadOverleafWorkspace(environmentId, workspaceRoot, { force: true });
+    refreshOverleafStatusElsewhere(environmentId, workspaceRoot, connection.connectionId);
   }
 }
 

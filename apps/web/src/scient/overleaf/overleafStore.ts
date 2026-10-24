@@ -207,6 +207,25 @@ export async function refreshOverleafStatus(
   }
 }
 
+/**
+ * After an operation on a link, every other workspace view that lists it reads
+ * its status again, so a view that read "busy" during a sync started elsewhere
+ * doesn't stay on "Syncing…". The caller's own view reloads itself.
+ */
+export function refreshOverleafStatusElsewhere(
+  environmentId: EnvironmentId,
+  exceptWorkspaceRoot: string,
+  connectionId: string,
+): void {
+  const except = keyOf(environmentId, exceptWorkspaceRoot);
+  for (const [key, snapshot] of snapshots) {
+    if (key === except || environmentOf(key) !== environmentId) continue;
+    if (!snapshot.connections.some((connection) => connection.connectionId === connectionId))
+      continue;
+    void refreshOverleafStatus(environmentId, key.slice(key.indexOf("\u0000") + 1), connectionId);
+  }
+}
+
 /** How long saves settle before the status is read again: a burst of saves reads once. */
 const SAVE_REFRESH_DELAY_MS = 400;
 const scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
