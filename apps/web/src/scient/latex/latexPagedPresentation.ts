@@ -1744,7 +1744,9 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
           const visibilityChanged = (event: Event) => {
             if ((event as Event & { skipped?: boolean }).skipped !== false) return;
             if (!(event.target instanceof HTMLElement)) return;
-            if (event.target.classList.contains("scient-latex-pagination-gap")) return;
+            // Widgets (pagination gaps, the gap cursor) own no measured block. Each pass
+            // redraws them, so their first paint would schedule the next pass forever.
+            if (event.target.classList.contains("ProseMirror-widget")) return;
             try {
               const at = view.state.doc.resolve(view.posAtDOM(event.target, 0));
               visibilityChangedFrom = Math.min(

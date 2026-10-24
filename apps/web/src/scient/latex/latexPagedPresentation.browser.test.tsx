@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import type { Editor } from "@tiptap/core";
 import { undoDepth } from "@tiptap/pm/history";
 import { TextSelection } from "@tiptap/pm/state";
+import { GapCursor } from "@tiptap/pm/gapcursor";
 import { expect, it, vi, type TestContext } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
@@ -23,6 +24,7 @@ import template15 from "./fixtures/paging-long-table.tex?raw";
 import template26 from "./fixtures/paging-hebrew.tex?raw";
 import template28 from "./fixtures/paging-medical-article.tex?raw";
 import twoColumnArticle from "./fixtures/paging-two-column-article.tex?raw";
+import hebrewMathAndTables from "./fixtures/hebrew-math-and-tables.tex?raw";
 import "~/index.css";
 import "./scient-latex.css";
 
@@ -708,6 +710,43 @@ ${han.repeat(240)}
   // fallback font metrics; short paragraphs can all end at column boundaries.
   expect(cutsInsideWord(editor)).toBe(true);
   expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen")).toHaveLength(0);
+});
+
+it("lays out once around a gap cursor between blocks", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+  const editor = await mount(_fixture, hebrewMathAndTables, "gap-cursor");
+  // A gap cursor sits between two adjacent blocks that hold no text cursor.
+  let gap: number | null = null;
+  let previous: { isTextblock: boolean } | null = null;
+  editor.state.doc.forEach((node, offset) => {
+    if (gap === null && previous && !previous.isTextblock && !node.isTextblock) gap = offset;
+    previous = node;
+  });
+  expect(gap).not.toBeNull();
+  await act(() =>
+    editor.view.dispatch(
+      editor.state.tr.setSelection(new GapCursor(editor.state.doc.resolve(gap!))),
+    ),
+  );
+  const cursor = editor.view.dom.querySelector<HTMLElement>(".ProseMirror-gapcursor");
+  expect(cursor).toBeInstanceOf(HTMLElement);
+  cursor!.scrollIntoView({ block: "center" });
+  await waitForLatexVisualTestReadiness(_fixture.host, context, "gap cursor layout");
+  // Each pass redraws the cursor's widget; its first paint must not request the next pass.
+  // The defect is a loop the browser paces one rendering step at a time, with no state to
+  // wait on: only watching real frames shows it (4 extra passes in 10 frames before the fix).
+  let passes = 0;
+  const pass = () => passes++;
+  editor.view.dom.addEventListener("scient-latex-layout", pass);
+  _fixture.cleanup.defer(() => editor.view.dom.removeEventListener("scient-latex-layout", pass));
+  for (let frame = 0; frame < 10; frame++)
+    await waitForTestReceipt(
+      context.signal,
+      // oxlint-disable-next-line t3code/no-frame-waits-in-browser-tests -- observes a native-frame loop; see above.
+      new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+  expect(passes).toBe(0);
 });
 
 function _createFixture(context: TestContext) {
