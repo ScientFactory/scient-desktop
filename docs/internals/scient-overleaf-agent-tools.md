@@ -60,7 +60,7 @@ earlier receipt instead of running again; a retried tool call is a new request.
   no links) and sets `suggestNewFolder` when it holds five or more code or data
   files, or any when the folder is the project's top. That is information, not
   a step (pr-c-design.md section 3).
-- **Sync** and **restore** look the link up in the project's list first, so the
+- **Sync**, **restore**, **preview** and **recover** look the link up in the project's list first, so the
   editor save names the linked checkout and folder; a link the list leaves out
   fails with the service's own reason (relink, another project, disconnected).
 - **Relink** records the folder in the calling thread's copy.
@@ -77,15 +77,26 @@ earlier receipt instead of running again; a retried tool call is a new request.
   choices were not applied.
 - **Cancel** asks the link's running sync (in this server) to stop at its next
   stage boundary; an apply or send in progress finishes.
+- **Send wording.** Renames and older versions are said as done only when
+  Overleaf accepted the send; for a send with no answer the result says they may
+  have been sent, and when nothing was sent it says so and leaves them for the
+  next sync. A send refused before it went names the possible causes (the folder,
+  the workspace or the token changed) rather than guessing one.
 - **Refusals** from connect, disconnect and relink are results with a sentence,
   including `authority-changed`, `request-incomplete`, `records-unreadable` and
   `project-invalid`.
 
 ## Saving editors first
 
-Sync and a kept-copy restore (and Undo, when it lands) call `OverleafEditorSave`
+Every call that may write the folder saves its open editors first: sync, a
+kept-copy restore, and every preview, connect's first-sync preview and recover,
+because preparing or recovering can finish an interrupted apply (and Undo, when it
+lands). They call `OverleafEditorSave`
 (`apps/server/src/scient/overleaf/OverleafEditorSave.ts`) with the linked
-checkout and folder before anything reads the folder. Anything but `saved` stops
+checkout and folder before anything reads the folder, then pass that folder to the
+service as `savedFolder`. The service holds the connection and refuses with
+`folder-changed` if a relink moved the link meanwhile; the tool then saves the new
+folder and tries once more, and reports a second move as `connection-changed`. Anything but `saved` stops
 the tool with `editor-save-failed` before a file changes, naming each file a
 window could not save and why, and each window that did not answer (timed out
 or went away). `saved` also covers "no window is open". The editor-save request

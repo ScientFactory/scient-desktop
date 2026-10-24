@@ -121,9 +121,10 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
         expect(kept.copies.map((copy) => copy.relativePath)).toEqual(["main.tex"]);
         expect(kept.lines[0]).toBe("1 kept copy:");
 
-        // Every sync saved the linked folder's editors first.
+        // Every call that may write saved the linked folder's editors first: connect's
+        // first-sync preview, the first sync, the preview, and both syncs after it.
         expect(saver.calls).toEqual(
-          Array.from({ length: 3 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
+          Array.from({ length: 5 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
         );
       }),
     ),
@@ -154,9 +155,10 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
         expect(status.connections).toMatchObject([{ connectionId, linkedHere: false }]);
         expect(status.lines).toContain("No edits to send since the last sync.");
 
-        // Every sync saved the linked folder's editors first, in the linked copy.
+        // Every call that may write saved the linked folder's editors first, in the
+        // linked copy: connect's first-sync preview and the three syncs.
         expect(saver.calls).toEqual(
-          Array.from({ length: 3 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
+          Array.from({ length: 4 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
         );
       }),
     ),

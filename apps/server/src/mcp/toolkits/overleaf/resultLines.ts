@@ -46,21 +46,46 @@ const megabytes = (bytes: number | undefined) =>
 export const linkedElsewhereLine = (checkoutRoot: string) =>
   `This link belongs to the copy of the project at ${checkoutRoot}, not this worktree, so that copy was used. Your edits in this worktree are not in it until they are merged there.`;
 
-/** One line per warning; renames and older versions are grouped. */
+/**
+ * How far a review's send went: `sent` only when Overleaf accepted it, `maybe`
+ * when the send got no answer, `unsent` when nothing went, `would` for a preview.
+ */
+type SendTense = "would" | "sent" | "maybe" | "unsent";
+
+const RENAME_VERB: Record<SendTense, string | null> = {
+  would: "Would rename",
+  sent: "Renamed",
+  maybe: "May have renamed",
+  unsent: null,
+};
+const OLDER_VERB: Record<SendTense, string | null> = {
+  would: "Would send",
+  sent: "Sent",
+  maybe: "May have sent",
+  unsent: null,
+};
+
+/**
+ * One line per warning; renames and older versions are grouped, and said as done
+ * only when the send was accepted. When nothing was sent the publication line says
+ * so, and the next sync reports them again.
+ */
 const warningLines = (
   warnings: ReadonlyArray<ScientOverleafWarning>,
-  tense: "done" | "would",
+  tense: SendTense,
 ): string[] => {
   const lines: string[] = [];
   const renames = warnings.filter((warning) => warning.kind === "rename");
-  if (renames.length > 0)
+  const renameVerb = RENAME_VERB[tense];
+  if (renames.length > 0 && renameVerb !== null)
     lines.push(
-      `${tense === "done" ? "Renamed" : "Would rename"} ${named(renames.map((warning) => `${warning.from} → ${warning.to}`))}. Overleaf drops comments and tracked changes on renamed files.`,
+      `${renameVerb} ${named(renames.map((warning) => `${warning.from} → ${warning.to}`))} on Overleaf. Overleaf drops comments and tracked changes on renamed files.`,
     );
   const older = warnings.filter((warning) => warning.kind === "restores-older-version");
-  if (older.length > 0)
+  const olderVerb = OLDER_VERB[tense];
+  if (older.length > 0 && olderVerb !== null)
     lines.push(
-      `${tense === "done" ? "Sent" : "Would send"} older versions of ${plural(older.length, "file")} (${named(older.map((warning) => warning.path ?? ""))}), for example after switching to an older branch or restoring a checkpoint. Collaborators' newer text in them is replaced.`,
+      `${olderVerb} older versions of ${plural(older.length, "file")} (${named(older.map((warning) => warning.path ?? ""))}), for example after switching to an older branch or restoring a checkpoint. Collaborators' newer text in them ${tense === "would" ? "would be" : tense === "maybe" ? "may have been" : "was"} replaced.`,
     );
   for (const warning of warnings)
     switch (warning.kind) {
@@ -190,12 +215,14 @@ const publicationLines = (
         "Nothing was sent: the folder changed after Overleaf's changes came in. Sync again; the new edit goes with the next sync.",
       ];
     case "not-sent":
-      return ["Nothing was sent: the Overleaf token changed during the sync. Sync again."];
+      return [
+        "Nothing was sent: the folder, the project's workspace or the Overleaf token changed before sending. Sync again.",
+      ];
     case "out-of-date":
       return ["Overleaf changed again while sending, so nothing was sent. Sync again."];
     case "unknown":
       return [
-        `Send #${publication.attemptNumber} got no answer from Overleaf. Scient never sends it again; the next sync or a recover checks whether it arrived.`,
+        `Send #${publication.attemptNumber} got no answer from Overleaf, so it may or may not have arrived. Scient never sends it again; the next sync or a recover checks whether it arrived.`,
       ];
   }
 };
@@ -247,6 +274,9 @@ const refusalLine = (refusal: ScientOverleafRefusal): string => {
   }
 };
 
+const sendTense = (publication: ScientOverleafPublication): SendTense =>
+  publication._tag === "accepted" ? "sent" : publication._tag === "unknown" ? "maybe" : "unsent";
+
 /** A sync's result lines, in the order a person reads them. */
 export const syncLines = (result: ScientOverleafSyncResult): string[] => {
   switch (result._tag) {
@@ -261,7 +291,7 @@ export const syncLines = (result: ScientOverleafSyncResult): string[] => {
       if (lines.length === 0) lines.push("Up to date: nothing came in and nothing needed sending.");
       if (result.retried) lines.push("Overleaf changed while sending, so one new sync ran.");
       lines.push(...fileLines(result.review));
-      lines.push(...warningLines(result.review.warnings, "done"));
+      lines.push(...warningLines(result.review.warnings, sendTense(result.publication)));
       if (result.interrupted > 0)
         lines.push(
           `${plural(result.interrupted, "file group")} an interrupted earlier sync left half done ${result.interrupted === 1 ? "was" : "were"} settled.`,

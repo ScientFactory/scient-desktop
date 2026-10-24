@@ -158,7 +158,7 @@ const ScientOverleafStatusTool = Tool.make("scient_overleaf_status", {
 
 const ScientOverleafPreviewTool = Tool.make("scient_overleaf_preview", {
   description:
-    "Show what a sync of one link would bring in from Overleaf and send to it, with any conflicts, changing nothing on Overleaf (like git status and git diff before a push). It fetches from Overleaf. If an earlier sync was interrupted, it finishes that first. Pass choices to see the result of settling conflicts, and files to see a per-file decision. Sync with scient_overleaf_sync.",
+    "Show what a sync of one link would bring in from Overleaf and send to it, with any conflicts, changing nothing on Overleaf (like git status and git diff before a push). It fetches from Overleaf. If an earlier sync was interrupted, it finishes that first, so it saves the folder's open editors before anything else, and stops if one cannot be saved. Pass choices to see the result of settling conflicts, and files to see a per-file decision. Sync with scient_overleaf_sync.",
   parameters: Schema.Struct({
     connectionId: ConnectionId,
     choices: Schema.optional(Choices),
@@ -261,7 +261,7 @@ const ScientOverleafKeptCopiesTool = Tool.make("scient_overleaf_kept_copies", {
 
 const ScientOverleafManageTool = Tool.make("scient_overleaf_manage", {
   description:
-    "Manage one link. disconnect unlinks the folder from Overleaf; nothing is deleted on either side, and linking the same folder to the same project again keeps its history. relink records the link's folder (`folder`, project-relative) in this thread's copy of the project, after the folder moved or status says relink. recover finishes an interrupted sync and checks Overleaf for earlier sends that got no answer. cancel asks this link's running sync to stop before its next step; a step already applying or sending finishes.",
+    "Manage one link. disconnect unlinks the folder from Overleaf; nothing is deleted on either side, and linking the same folder to the same project again keeps its history. relink records the link's folder (`folder`, project-relative) in this thread's copy of the project, after the folder moved or status says relink. recover saves the folder's open editors, then finishes an interrupted sync and checks Overleaf for earlier sends that got no answer. cancel asks this link's running sync to stop before its next step; a step already applying or sending finishes.",
   parameters: Schema.Struct({
     connectionId: ConnectionId,
     action: Schema.Literals(["disconnect", "relink", "recover", "cancel"]),

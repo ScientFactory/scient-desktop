@@ -29,7 +29,9 @@ import { WorkspaceBindingResolver } from "../../../scient/projectScope/Workspace
 import { workspaceResolverForTest } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import {
+  overleafConnectForInvocation,
   overleafKeptCopiesForInvocation,
+  overleafPreviewForInvocation,
   overleafManageForInvocation,
   overleafSyncForInvocation,
   overleafTokenForInvocation,
@@ -96,12 +98,15 @@ const encodeError = Schema.encodeSync(
 );
 
 describe("Overleaf tool handlers", () => {
-  it.effect("a failed editor save stops sync and restore before anything changes", () =>
+  it.effect("a failed editor save stops every call that may write before anything changes", () =>
     Effect.gen(function* () {
       let changed = 0;
       const overleaf = fakeOverleaf({
         sync: () => Effect.sync(() => changed++) as never,
         restoreKept: () => Effect.sync(() => changed++) as never,
+        // Preparing and recovering can finish an interrupted apply, which writes.
+        preview: () => Effect.sync(() => changed++) as never,
+        recover: () => Effect.sync(() => changed++) as never,
         keptCopies: () => Effect.succeed([]),
       });
       const outcomes: ReadonlyArray<OverleafEditorSaveResult> = [
@@ -132,6 +137,41 @@ describe("Overleaf tool handlers", () => {
         );
         expect(restored).toMatchObject({ code: "editor-save-failed" });
         expect(restored.message).toContain("Nothing was restored.");
+        const previewed = yield* Effect.flip(
+          overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
+            provide(overleaf, saver.service),
+          ),
+        );
+        expect(previewed).toMatchObject({ code: "editor-save-failed" });
+        const recovered = yield* Effect.flip(
+          overleafManageForInvocation({ connectionId: "c-1", action: "recover" }).pipe(
+            provide(overleaf, saver.service),
+          ),
+        );
+        expect(recovered).toMatchObject({ code: "editor-save-failed" });
+        // Connecting still links; only its first-sync preview is left out, and says why.
+        const connected = yield* overleafConnectForInvocation({
+          project: "0123456789abcdef01234567",
+          mode: "new-folder",
+          folder: "paper",
+        }).pipe(
+          provide(
+            fakeOverleaf({
+              connect: () =>
+                Effect.succeed({
+                  _tag: "connected",
+                  connection: summary,
+                  reconnected: false,
+                }) as never,
+              preview: () => Effect.sync(() => changed++) as never,
+            }),
+            saver.service,
+          ),
+        );
+        expect(connected.firstSync).toBeNull();
+        expect(
+          connected.lines.some((line) => line.startsWith("The first sync could not be previewed")),
+        ).toBe(true);
       }
       const first = yield* Effect.flip(
         overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
@@ -392,6 +432,129 @@ describe("Overleaf tool handlers", () => {
       expect(same.lines[0]).toBe("Nothing was applied or sent.");
       // The next call needs the review's Overleaf tree with its choices.
       expect(same.lines[1]).toContain(`reviewedRemote ${"b".repeat(40)}`);
+    }),
+  );
+
+  it.effect(
+    "names the saved folder, and when a relink moved it, saves the new one and retries once",
+    () =>
+      Effect.gen(function* () {
+        const folders = ["paper", "papers/paper"];
+        let listed = 0;
+        const asked: unknown[] = [];
+        const overleaf = fakeOverleaf({
+          list: () => Effect.sync(() => [{ ...summary, folder: folders[Math.min(listed++, 1)]! }]),
+          sync: (input: { readonly savedFolder?: unknown }) =>
+            Effect.suspend(() => {
+              asked.push(input.savedFolder);
+              return asked.length === 1
+                ? Effect.fail(new OverleafSyncRefusedError({ reason: "folder-changed" }))
+                : Effect.succeed({ _tag: "unsettled", reason: "folder-kept-changing" });
+            }) as never,
+        } as Partial<OverleafSyncShape>);
+        const saver = recordingEditorSave({ _tag: "saved" });
+        const synced = yield* overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+          provide(overleaf, saver.service),
+        );
+        expect(synced.result._tag).toBe("unsettled");
+        expect(saver.calls.map((call) => call.folder)).toEqual(["paper", "papers/paper"]);
+        expect(asked).toEqual([
+          { checkoutRoot: "/projects/main", folder: "paper" },
+          { checkoutRoot: "/projects/main", folder: "papers/paper" },
+        ]);
+        expect(synced.link.folder).toBe("papers/paper");
+
+        // A second move is reported, not chased.
+        let tries = 0;
+        const restless = fakeOverleaf({
+          sync: () =>
+            Effect.suspend(() => {
+              tries++;
+              return Effect.fail(new OverleafSyncRefusedError({ reason: "folder-changed" }));
+            }) as never,
+        });
+        const moved = yield* Effect.flip(
+          overleafSyncForInvocation({ connectionId: "c-1" }).pipe(provide(restless)),
+        );
+        expect(moved.code).toBe("connection-changed");
+        expect(moved.message).toContain("Nothing was synced.");
+        expect(tries).toBe(2);
+      }),
+  );
+
+  it.effect("says a send-related change happened only when Overleaf accepted the send", () =>
+    Effect.gen(function* () {
+      const review = {
+        reviewId: "r",
+        digest: "d",
+        remoteTree: "b".repeat(40),
+        upToDate: false,
+        needsDecision: false,
+        incoming: [],
+        outgoing: [{ kind: "renamed" as const, from: "a.tex", to: "b.tex" }],
+        conflicts: [],
+        warnings: [
+          { kind: "rename", from: "a.tex", to: "b.tex" },
+          { kind: "restores-older-version", path: "c.tex" },
+        ],
+        unresolvedMarkers: [],
+        collisions: [],
+        selectedAdditions: [],
+        additions: [],
+        localOnly: [],
+      };
+      const linesFor = (publication: unknown) =>
+        overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+          provide(
+            fakeOverleaf({
+              sync: () =>
+                Effect.succeed({
+                  _tag: "synced",
+                  review,
+                  adopted: {
+                    applyId: "x",
+                    outcome: "applied",
+                    interrupted: [],
+                    markerPaths: [],
+                    baseGeneration: 1,
+                  },
+                  publication,
+                  retried: false,
+                  activity: [],
+                  linkedElsewhere: false,
+                }) as never,
+            }),
+          ),
+          Effect.map((result) => result.lines),
+        );
+      const accepted = yield* linesFor({ _tag: "accepted", attemptNumber: 3 });
+      expect(accepted.some((line) => line.startsWith("Renamed a.tex → b.tex"))).toBe(true);
+      expect(accepted.some((line) => line.startsWith("Sent older versions of 1 file"))).toBe(true);
+      const unknown = yield* linesFor({ _tag: "unknown", attemptNumber: 3 });
+      expect(unknown.some((line) => line.startsWith("May have renamed a.tex → b.tex"))).toBe(true);
+      expect(unknown.some((line) => line.includes("may or may not have arrived"))).toBe(true);
+      for (const publication of [
+        { _tag: "not-sent", attemptNumber: 3 },
+        { _tag: "out-of-date", attemptNumber: 3 },
+        { _tag: "blocked", reason: "attention" },
+        { _tag: "not-verified" },
+      ]) {
+        const lines = yield* linesFor(publication);
+        expect(
+          lines.some((line) => /^(Renamed|Sent|May have)/u.test(line)),
+          publication._tag,
+        ).toBe(false);
+        expect(
+          lines.some(
+            (line) => line.includes("nothing was sent") || line.startsWith("Nothing was sent"),
+          ),
+        ).toBe(true);
+      }
+      // A refused send names the possible causes, not a token change it can't know.
+      const refused = yield* linesFor({ _tag: "not-sent", attemptNumber: 3 });
+      expect(refused).toContain(
+        "Nothing was sent: the folder, the project's workspace or the Overleaf token changed before sending. Sync again.",
+      );
     }),
   );
 });

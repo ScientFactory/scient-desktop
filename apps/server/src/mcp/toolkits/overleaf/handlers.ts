@@ -19,6 +19,7 @@ import { classifyProbeGitFailure } from "../../../scient/overleaf/OverleafProtoc
 import {
   OverleafSync,
   type OverleafCaller,
+  type OverleafSavedFolder,
   type OverleafSyncShape,
 } from "../../../scient/overleaf/OverleafSync.ts";
 import { refusalView, syncView } from "../../../scient/overleaf/http.ts";
@@ -91,6 +92,8 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
               `${error.message} Use the project's link (https://www.overleaf.com/project/<id>) or its 24-character ID.`,
             ),
           );
+        case "folder-changed":
+          return Effect.succeed(toolError("connection-changed", `${error.message} ${LIST_LINKS}`));
         case "access-denied":
         case "project-not-found":
         case "unreachable":
@@ -289,6 +292,43 @@ const saveEditors = Effect.fn("ScientOverleafToolkit.saveEditors")(function* (
   }
 });
 
+const folderChanged = (error: Failure) =>
+  error._tag === "OverleafSyncRefusedError" &&
+  (error as unknown as { readonly reason?: unknown }).reason === "folder-changed";
+
+/**
+ * Saves the link's folder, then runs an operation that may write it (sync, restore,
+ * and any prepare or recover that can finish an interrupted apply), naming the saved
+ * folder so the service refuses if a relink moved the link meanwhile. Then the new
+ * folder is saved and the operation tried once more; a second move is reported.
+ */
+const afterSavingEditors = Effect.fn("ScientOverleafToolkit.afterSavingEditors")(function* <
+  A,
+  E extends Failure,
+>(
+  overleaf: OverleafSyncShape,
+  caller: OverleafCaller,
+  connectionId: string,
+  nothing: string,
+  run: (savedFolder: OverleafSavedFolder) => Effect.Effect<A, E>,
+) {
+  for (let attempt = 0; ; attempt++) {
+    const link = yield* linkFor(overleaf, caller, connectionId);
+    yield* saveEditors(link, nothing);
+    const outcome = yield* run({ checkoutRoot: link.checkoutRoot, folder: link.folder }).pipe(
+      Effect.map((value) => ({ moved: false as const, value })),
+      Effect.catchIf(folderChanged, () => Effect.succeed({ moved: true as const })),
+      Effect.catch((error: E) => Effect.flatMap(toToolError(error), Effect.fail)),
+    );
+    if (!outcome.moved) return { link, value: outcome.value };
+    if (attempt >= 1)
+      return yield* toolError(
+        "connection-changed",
+        `The link moved to another folder twice while open editors were being saved. ${nothing} Call scient_overleaf_status, then try again.`,
+      );
+  }
+});
+
 const withLinkLine = (link: Link, lines: ReadonlyArray<string>) =>
   link.linkedElsewhere ? [linkedElsewhereLine(link.checkoutRoot), ...lines] : [...lines];
 
@@ -423,16 +463,26 @@ export const overleafPreviewForInvocation = Effect.fn("ScientOverleafToolkit.pre
   }) {
     const overleaf = yield* OverleafSync;
     const caller = yield* callerOf;
-    const link = yield* linkFor(overleaf, caller, input.connectionId);
-    const request = {
+    // Preparing may finish an interrupted sync, which writes the folder: editors first.
+    const { link, value: result } = yield* afterSavingEditors(
+      overleaf,
       caller,
-      connectionId: input.connectionId,
-      ...choicesOf(input.choices),
-      ...filesOf(input.files),
-    };
-    let result = yield* mapErrors(overleaf.preview(request));
-    // An interrupted sync was finished first; the preview is of what is there now.
-    if (result._tag === "recovered") result = yield* mapErrors(overleaf.preview(request));
+      input.connectionId,
+      "Nothing was previewed or changed.",
+      (savedFolder) => {
+        const request = {
+          caller,
+          connectionId: input.connectionId,
+          ...choicesOf(input.choices),
+          ...filesOf(input.files),
+          savedFolder,
+        };
+        return Effect.flatMap(overleaf.preview(request), (first) =>
+          // An interrupted sync was finished first; the preview is of what is there now.
+          first._tag === "recovered" ? overleaf.preview(request) : Effect.succeed(first),
+        );
+      },
+    );
     const preview = previewView(result);
     return { lines: withLinkLine(link, previewLines(preview)), link, preview };
   },
@@ -470,8 +520,14 @@ export const overleafConnectForInvocation = Effect.fn("ScientOverleafToolkit.con
         : "Connected. No file was changed and nothing was sent yet.",
     ];
     // What the first sync would do. A preview that cannot run leaves the link in place.
-    const firstSync = yield* overleaf.preview({ caller, connectionId }).pipe(
-      Effect.map(previewView),
+    const firstSync = yield* afterSavingEditors(
+      overleaf,
+      caller,
+      connectionId,
+      "The first sync was not previewed.",
+      (savedFolder) => overleaf.preview({ caller, connectionId, savedFolder }),
+    ).pipe(
+      Effect.map(({ value }) => previewView(value)),
       Effect.catch((error) =>
         Effect.map(toToolError(error), (mapped) => {
           lines.push(`The first sync could not be previewed: ${mapped.message}`);
@@ -519,17 +575,21 @@ export const overleafSyncForInvocation = Effect.fn("ScientOverleafToolkit.sync")
 }) {
   const overleaf = yield* OverleafSync;
   const caller = yield* callerOf;
-  const link = yield* linkFor(overleaf, caller, input.connectionId);
-  yield* saveEditors(link, "Nothing was synced.");
-  const outcome = yield* mapErrors(
-    overleaf.sync({
-      caller,
-      connectionId: input.connectionId,
-      requestId: requestId(),
-      ...choicesOf(input.choices),
-      ...(input.reviewedRemote === undefined ? {} : { reviewedRemote: input.reviewedRemote }),
-      ...filesOf(input.files),
-    }),
+  const { link, value: outcome } = yield* afterSavingEditors(
+    overleaf,
+    caller,
+    input.connectionId,
+    "Nothing was synced.",
+    (savedFolder) =>
+      overleaf.sync({
+        caller,
+        connectionId: input.connectionId,
+        requestId: requestId(),
+        ...choicesOf(input.choices),
+        ...(input.reviewedRemote === undefined ? {} : { reviewedRemote: input.reviewedRemote }),
+        ...filesOf(input.files),
+        savedFolder,
+      }),
   );
   const result = syncView(outcome);
   // Choices answer conflicts as they stood; when Overleaf moved, they were not applied.
@@ -584,14 +644,19 @@ export const overleafKeptCopiesForInvocation = Effect.fn("ScientOverleafToolkit.
       const path =
         before.find((copy) => copy.applyId === restore.applyId && copy.kept === restore.kept)
           ?.relativePath ?? "the file";
-      yield* saveEditors(link, "Nothing was restored.");
-      const result = yield* mapErrors(
-        overleaf.restoreKept({
-          caller,
-          connectionId: link.connectionId,
-          requestId: requestId(),
-          ...restore,
-        }),
+      const { value: result } = yield* afterSavingEditors(
+        overleaf,
+        caller,
+        link.connectionId,
+        "Nothing was restored.",
+        (savedFolder) =>
+          overleaf.restoreKept({
+            caller,
+            connectionId: link.connectionId,
+            requestId: requestId(),
+            ...restore,
+            savedFolder,
+          }),
       );
       restored = result._tag;
       lines.push(
@@ -659,7 +724,14 @@ export const overleafManageForInvocation = Effect.fn("ScientOverleafToolkit.mana
         };
       }
       case "recover": {
-        const recovered = yield* mapErrors(overleaf.recover({ caller, connectionId }));
+        // Recovery finishes an interrupted apply, which writes the folder: editors first.
+        const { value: recovered } = yield* afterSavingEditors(
+          overleaf,
+          caller,
+          connectionId,
+          "Nothing was recovered.",
+          (savedFolder) => overleaf.recover({ caller, connectionId, savedFolder }),
+        );
         const result = {
           recovered: recovered._tag === "recovered",
           accepted: recovered.attempts?.accepted ?? null,
