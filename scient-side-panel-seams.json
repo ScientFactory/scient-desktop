@@ -99,5 +99,12 @@
       "anchor": "rightPanel.new:mod+t-closed-panel",
       "purpose": "Existing configs gain the closed-panel new-tab rule."
     }
+  ],
+  "scientMounts": [
+    {
+      "path": "apps/web/src/scient/presentation/scient-utilities.css",
+      "anchor": "@import \"./scient-panel-tabstrip.css\";\n@import \"./scient-icon-weight.css\";",
+      "purpose": "Loads the tab strip and icon weight stylesheets."
+    }
   ]
 }

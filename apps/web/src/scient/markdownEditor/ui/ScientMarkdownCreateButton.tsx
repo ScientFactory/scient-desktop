@@ -14,11 +14,3 @@ export function normalizeMarkdownCreatePath(input: string): string | null {
   path = ensureScientMarkdownDocumentPath(path);
   return path.length <= 512 ? path : null;
 }
-
-export function untitledMarkdownPath(selectedPath: string | null, collision = 1): string {
-  const parent = selectedPath?.includes("/")
-    ? selectedPath.slice(0, selectedPath.lastIndexOf("/"))
-    : "";
-  const fileName = collision === 1 ? "untitled.md" : `untitled-${collision}.md`;
-  return parent ? `${parent}/${fileName}` : fileName;
-}

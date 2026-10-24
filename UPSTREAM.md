@@ -1632,7 +1632,8 @@ Scient's side panel replaces T3's tab bar look, its empty state and its file
 toolbar. The behaviour lives in `apps/web/src/scient/rightPanel`, `scient/files`,
 `scient/browser` and `scient/presentation`; T3 files keep short marked calls,
 guarded by `scient-side-panel-seams.json`. Without `onAddNewTab`,
-`RightPanelTabs` still renders T3's own strip.
+`RightPanelTabs` keeps T3's "+" menu, empty state and scroll arrows; Scient's tab
+look applies either way.
 
 | Piece                    | Owned in                                                                                                           | Mounted in T3 at                                                                                                    | Removed from T3's version                                                                   |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
