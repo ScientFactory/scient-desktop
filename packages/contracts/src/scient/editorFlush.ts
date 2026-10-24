@@ -61,6 +61,8 @@ export type EditorFlushFileFailure = typeof EditorFlushFileFailure.Type;
 /** The files of a window's editors, as the window names them. */
 export const EditorFlushResolveInput = Schema.Struct({
   clientId: EditorFlushWindow.fields.clientId,
+  /** The connection the request arrived on; a replaced connection's calls are refused. */
+  connectionId: ConnectionId,
   requestId: EditorFlushRequest.fields.requestId,
   files: Schema.Array(
     Schema.Struct({
@@ -91,8 +93,17 @@ export type EditorFlushResolveResult = typeof EditorFlushResolveResult.Type;
 /** One window's answer: the editors it saved, and every one it could not. */
 export const EditorFlushResponse = Schema.Struct({
   clientId: EditorFlushWindow.fields.clientId,
+  /** The connection the request arrived on; a replaced connection's calls are refused. */
+  connectionId: ConnectionId,
   requestId: EditorFlushRequest.fields.requestId,
   saved: Schema.Array(FilePath).check(Schema.isMaxLength(MAX_FILES)),
   failures: Schema.Array(EditorFlushFileFailure).check(Schema.isMaxLength(MAX_FILES)),
 });
 export type EditorFlushResponse = typeof EditorFlushResponse.Type;
+
+/** A window closing, on the connection it says goodbye for. */
+export const EditorFlushLeave = Schema.Struct({
+  clientId: EditorFlushWindow.fields.clientId,
+  connectionId: ConnectionId,
+});
+export type EditorFlushLeave = typeof EditorFlushLeave.Type;

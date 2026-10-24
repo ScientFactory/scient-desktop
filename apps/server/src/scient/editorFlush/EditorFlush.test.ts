@@ -80,6 +80,7 @@ const openWindow = Effect.fn("openWindow")(function* (
         : flush
             .respond(sessionId, {
               clientId,
+              connectionId: event.connectionId,
               requestId: event.request.requestId,
               ...answer(event.request),
             })
@@ -179,6 +180,7 @@ it.effect("fails, naming the window, when a window does not answer in time", () 
     // A late answer to a request that already ended is refused.
     const late = yield* flush.respond("session", {
       clientId: "window-silent",
+      connectionId: silent.connectionId,
       requestId: silent.requests[0]!.requestId,
       ...savesNothing(),
     });
@@ -200,6 +202,7 @@ it.effect("asks a window that connects while the request is open, and waits for 
     yield* Deferred.await(late.asked);
     yield* flush.respond("session", {
       clientId: "window-a",
+      connectionId: first.connectionId,
       requestId: request.requestId,
       ...savesNothing(),
     });
@@ -297,11 +300,92 @@ it.effect("forgets a window that says goodbye at once, even while a request awai
     yield* Deferred.await(window.asked);
 
     // Another session cannot say goodbye for it.
-    expect((yield* flush.leave("session-other", { clientId: "window-a" })).accepted).toBe(false);
-    expect((yield* flush.leave("session", { clientId: "window-a" })).accepted).toBe(true);
+    const goodbye = { clientId: "window-a", connectionId: window.connectionId };
+    expect((yield* flush.leave("session-other", goodbye)).accepted).toBe(false);
+    expect((yield* flush.leave("session", goodbye)).accepted).toBe(true);
 
     expect(yield* Fiber.join(running)).toEqual({ _tag: "NoWindowOpen" });
     expect(yield* flush.flushFolder(folder())).toEqual({ _tag: "NoWindowOpen" });
+  }).pipe(Effect.scoped, Effect.provide(NoStartupWait)),
+);
+
+it.effect("refuses a late goodbye from a connection the window has replaced", () =>
+  Effect.gen(function* () {
+    const flush = yield* EditorFlush;
+    const first = yield* openWindow("session", "window-a", undefined);
+    const running = yield* flush.flushFolder(folder()).pipe(Effect.forkScoped);
+    yield* Deferred.await(first.asked);
+    const back = yield* openWindow("session", "window-a", undefined);
+    const request = yield* Deferred.await(back.asked);
+
+    // An earlier pagehide's goodbye arrives after the window reconnected.
+    const stale = yield* flush.leave("session", {
+      clientId: "window-a",
+      connectionId: first.connectionId,
+    });
+    expect(stale.accepted).toBe(false);
+    const failure = { path: "paper/main.tex", reason: "composing", message: "Composing." } as const;
+    yield* flush.respond("session", {
+      clientId: "window-a",
+      connectionId: back.connectionId,
+      requestId: request.requestId,
+      saved: [],
+      failures: [failure],
+    });
+
+    expect(yield* Fiber.join(running)).toEqual({
+      _tag: "Answered",
+      allSaved: false,
+      windows: [
+        { _tag: "Failed", window: { clientId: "window-a" }, saved: [], failures: [failure] },
+      ],
+    });
+    // The current connection's goodbye is accepted.
+    expect(
+      (yield* flush.leave("session", { clientId: "window-a", connectionId: back.connectionId }))
+        .accepted,
+    ).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NoStartupWait)),
+);
+
+it.effect("accepts an answer only from the connection the request last reached", () =>
+  Effect.gen(function* () {
+    const flush = yield* EditorFlush;
+    const first = yield* openWindow("session", "window-a", undefined);
+    const running = yield* flush.flushFolder(folder()).pipe(Effect.forkScoped);
+    const request = yield* Deferred.await(first.asked);
+    const back = yield* openWindow("session", "window-a", undefined);
+    yield* Deferred.await(back.asked);
+    const call = (connectionId: string) => ({
+      clientId: "window-a",
+      connectionId,
+      requestId: request.requestId,
+    });
+
+    // The replaced connection finished its flush earlier; its answer comes late.
+    expect(
+      (yield* flush.respond("session", { ...call(first.connectionId), ...savesNothing() }))
+        .accepted,
+    ).toBe(false);
+    const peek = yield* flush.resolve("session", {
+      ...call(first.connectionId),
+      files: [{ cwd: checkoutRoot, relativePath: "paper/main.tex" }],
+    });
+    expect(peek.files).toEqual([{ status: "unknown" }]);
+    const failure = {
+      path: "paper/main.tex",
+      reason: "unconverted-input",
+      message: "Not yet.",
+    } as const;
+    expect(
+      (yield* flush.respond("session", {
+        ...call(back.connectionId),
+        saved: [],
+        failures: [failure],
+      })).accepted,
+    ).toBe(true);
+
+    expect(yield* Fiber.join(running)).toMatchObject({ _tag: "Answered", allSaved: false });
   }).pipe(Effect.scoped, Effect.provide(NoStartupWait)),
 );
 
@@ -323,6 +407,7 @@ it.effect("starts a window's answer time when the request reaches it", () =>
     yield* TestClock.adjust("4 seconds");
     yield* flush.respond("session", {
       clientId: "window-a",
+      connectionId: back.connectionId,
       requestId: request.requestId,
       ...savesNothing(),
     });
@@ -382,9 +467,15 @@ it.effect("keeps another session from replacing a window or answering for it", (
     const running = yield* flush.flushFolder(folder()).pipe(Effect.forkScoped);
     const request = yield* Deferred.await(owner.asked);
     yield* Deferred.await(intruder.asked);
+    const connections: Record<string, string> = {
+      "session-owner": owner.connectionId,
+      "session-intruder": intruder.connectionId,
+      "session-nobody": owner.connectionId,
+    };
     const answer = (sessionId: string, failures: EditorFlushResponse["failures"]) =>
       flush.respond(sessionId, {
         clientId: "window-a",
+        connectionId: connections[sessionId]!,
         requestId: request.requestId,
         saved: [],
         failures,
@@ -393,6 +484,7 @@ it.effect("keeps another session from replacing a window or answering for it", (
     expect((yield* answer("session-nobody", [])).accepted).toBe(false);
     const peek = yield* flush.resolve("session-nobody", {
       clientId: "window-a",
+      connectionId: owner.connectionId,
       requestId: request.requestId,
       files: [{ cwd: checkoutRoot, relativePath: "paper/main.tex" }],
     });
@@ -429,6 +521,7 @@ it.effect("locates files by physical identity, whatever path spelling an editor 
 
     const located = yield* flush.resolve("session", {
       clientId: "window-a",
+      connectionId: window.connectionId,
       requestId: request.requestId,
       files: [
         { cwd: checkoutRoot, relativePath: "paper/main.tex" },
@@ -452,6 +545,7 @@ it.effect("locates files by physical identity, whatever path spelling an editor 
     ]);
     yield* flush.respond("session", {
       clientId: "window-a",
+      connectionId: window.connectionId,
       requestId: request.requestId,
       ...savesNothing(),
     });

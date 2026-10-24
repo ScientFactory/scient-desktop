@@ -26,6 +26,7 @@
  */
 import type {
   EditorFlushFileFailure,
+  EditorFlushLeave,
   EditorFlushRequest,
   EditorFlushResolveInput,
   EditorFlushResolveResult,
@@ -115,6 +116,8 @@ interface Presence {
     readonly connectionId: string;
     readonly queue: Queue.Queue<EditorFlushStreamEvent, Cause.Done>;
   } | null;
+  /** Its latest connection, current or lost; only that one may say goodbye. */
+  lastConnectionId: string;
   /** Advances on every disconnect, so only the latest one's retirement can remove it. */
   generation: number;
 }
@@ -123,6 +126,8 @@ interface Member {
   readonly presence: Presence;
   /** When its answer is due: set when the request reaches it, null before. */
   deadline: number | null;
+  /** The connection the request last reached; only an answer from it counts. */
+  deliveredOn: string | null;
   answer: Answer | null;
   /** Completed with the answer. */
   readonly answered: Deferred.Deferred<void>;
@@ -162,10 +167,14 @@ export class EditorFlush extends Context.Service<
       sessionId: string,
       response: EditorFlushResponse,
     ) => Effect.Effect<{ readonly accepted: boolean }>;
-    /** A window closing: forgotten at once, and no longer awaited. */
+    /**
+     * A window closing: forgotten at once, and no longer awaited. Refused
+     * unless it names the window's latest connection, so a late goodbye from a
+     * replaced connection cannot remove the window that replaced it.
+     */
     readonly leave: (
       sessionId: string,
-      window: EditorFlushWindow,
+      window: EditorFlushLeave,
     ) => Effect.Effect<{ readonly accepted: boolean }>;
     readonly flushFolder: (input: EditorFlushFolderInput) => Effect.Effect<EditorFlushResult>;
   }
@@ -198,6 +207,7 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
       request: request.request,
     });
     member.deadline = now + request.timeoutMillis;
+    member.deliveredOn = connection.connectionId;
     signal(request);
   };
 
@@ -207,6 +217,7 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
     const member: Member = {
       presence,
       deadline: null,
+      deliveredOn: null,
       answer: null,
       answered: Deferred.makeUnsafe<void>(),
     };
@@ -233,9 +244,16 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
       const key = windowKey(sessionId, input.clientId);
       let presence = presences.get(key);
       if (presence === undefined) {
-        presence = { key, ref: { clientId: input.clientId }, connection: null, generation: 0 };
+        presence = {
+          key,
+          ref: { clientId: input.clientId },
+          connection: null,
+          lastConnectionId: connectionId,
+          generation: 0,
+        };
         presences.set(key, presence);
       }
+      presence.lastConnectionId = connectionId;
       // The same window reconnecting replaces its earlier connection.
       if (presence.connection !== null) Queue.endUnsafe(presence.connection.queue);
       const connection = { connectionId, queue };
@@ -286,7 +304,8 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
   const leave: EditorFlush["Service"]["leave"] = (sessionId, input) =>
     Effect.sync(() => {
       const presence = presences.get(windowKey(sessionId, input.clientId));
-      if (presence === undefined) return { accepted: false };
+      if (presence === undefined || presence.lastConnectionId !== input.connectionId)
+        return { accepted: false };
       presences.delete(presence.key);
       presence.generation += 1;
       if (presence.connection !== null) Queue.endUnsafe(presence.connection.queue);
@@ -302,16 +321,19 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
       return { accepted: true };
     });
 
-  const memberOf = (sessionId: string, clientId: string, requestId: string) =>
-    open.get(requestId)?.members.get(windowKey(sessionId, clientId));
+  /** The member a call speaks for: same session and window, on the connection last asked. */
+  const memberOf = (
+    sessionId: string,
+    call: { readonly clientId: string; readonly connectionId: string; readonly requestId: string },
+  ) => {
+    const member = open.get(call.requestId)?.members.get(windowKey(sessionId, call.clientId));
+    return member?.deliveredOn === call.connectionId ? member : undefined;
+  };
 
   const resolve: EditorFlush["Service"]["resolve"] = Effect.fn("EditorFlush.resolve")(
     function* (sessionId, input) {
       const request = open.get(input.requestId);
-      if (
-        request === undefined ||
-        memberOf(sessionId, input.clientId, input.requestId) === undefined
-      )
+      if (request === undefined || memberOf(sessionId, input) === undefined)
         return { files: input.files.map(() => ({ status: "unknown" as const })) };
       const files = yield* Effect.forEach(
         input.files,
@@ -324,7 +346,7 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
 
   const respond: EditorFlush["Service"]["respond"] = (sessionId, response) =>
     Effect.sync(() => {
-      const member = memberOf(sessionId, response.clientId, response.requestId);
+      const member = memberOf(sessionId, response);
       return {
         accepted: member !== undefined && settle(member, { _tag: "answered", response }),
       };

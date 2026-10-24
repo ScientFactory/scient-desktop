@@ -8,9 +8,16 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 /**
  * One window's side of the editor flush for one environment, independent of
- * React renders: answers each request once per connection, and says goodbye
- * when the window closes (`pagehide`) or stops answering for this environment,
- * so the server forgets it at once instead of counting it as lost.
+ * React renders.
+ *
+ * Every call names the connection it belongs to. Requests are answered on the
+ * connection they arrived on, and only while it is still the window's latest
+ * one: a replaced connection's late answer is dropped.
+ *
+ * The window says goodbye, once per connection, when it closes (`pagehide`)
+ * or stops answering for this environment, so the server forgets it at once
+ * instead of counting it as lost. A page kept in the back-forward cache keeps
+ * its drafts, so it says no goodbye; restored, it registers again at once.
  */
 export function createEditorFlushConsumerAtom<E>(options: {
   readonly requestsAtom: Atom.Atom<AsyncResult.AsyncResult<EditorFlushStreamEvent, E>>;
@@ -18,24 +25,37 @@ export function createEditorFlushConsumerAtom<E>(options: {
   readonly environmentId: EnvironmentId;
   readonly flush: (
     request: EditorFlushRequest,
+    connectionId: string,
   ) => Promise<Pick<EditorFlushResponse, "saved" | "failures">>;
   readonly respond: (response: EditorFlushResponse) => Promise<unknown>;
-  readonly leave: () => Promise<unknown>;
+  readonly leave: (connectionId: string) => Promise<unknown>;
+  /** Registers this window again, on a new connection. */
+  readonly reconnect: () => void;
 }): Atom.Atom<void> {
   return Atom.make((get) => {
     let disposed = false;
-    let left = false;
+    /** The window's latest connection: the only one it answers or says goodbye on. */
+    let current: string | null = null;
+    /** The connection it already said goodbye for. */
+    let leftOn: string | null = null;
     const leave = () => {
-      if (left) return;
-      left = true;
-      void options.leave().catch(() => {
+      if (current === null || leftOn === current) return;
+      leftOn = current;
+      void options.leave(current).catch(() => {
         // Without a goodbye the server keeps counting this window, failing closed.
       });
     };
     const answered = new Set<string>();
     const consume = (result: AsyncResult.AsyncResult<EditorFlushStreamEvent, E>) => {
-      if (disposed || !AsyncResult.isSuccess(result) || result.value.type !== "request") return;
-      const { connectionId, request } = result.value;
+      if (disposed || !AsyncResult.isSuccess(result)) return;
+      const event = result.value;
+      if (event.type === "connected") {
+        current = event.connectionId;
+        return;
+      }
+      current ??= event.connectionId;
+      const { connectionId, request } = event;
+      if (connectionId !== current) return;
       // A request delivered again after a reconnect is answered again.
       const key = `${connectionId}\0${request.requestId}`;
       if (answered.has(key)) return;
@@ -43,12 +63,13 @@ export function createEditorFlushConsumerAtom<E>(options: {
       const oldest = answered.values().next().value;
       if (answered.size > 256 && oldest !== undefined) answered.delete(oldest);
       void options
-        .flush(request)
+        .flush(request, connectionId)
         .then((reply) =>
-          disposed
+          disposed || connectionId !== current
             ? undefined
             : options.respond({
                 clientId: options.clientId,
+                connectionId,
                 requestId: request.requestId,
                 ...reply,
               }),
@@ -57,10 +78,18 @@ export function createEditorFlushConsumerAtom<E>(options: {
           // The connection is gone; the server counts this window as unanswered.
         });
     };
-    globalThis.addEventListener?.("pagehide", leave);
+    const pageHidden = (event: Event) => {
+      if (!(event as PageTransitionEvent).persisted) leave();
+    };
+    const pageShown = (event: Event) => {
+      if ((event as PageTransitionEvent).persisted && !disposed) options.reconnect();
+    };
+    globalThis.addEventListener?.("pagehide", pageHidden);
+    globalThis.addEventListener?.("pageshow", pageShown);
     get.addFinalizer(() => {
       disposed = true;
-      globalThis.removeEventListener?.("pagehide", leave);
+      globalThis.removeEventListener?.("pagehide", pageHidden);
+      globalThis.removeEventListener?.("pageshow", pageShown);
       leave();
     });
     // Subscribe before reading the cached value; request ids prevent answering twice.

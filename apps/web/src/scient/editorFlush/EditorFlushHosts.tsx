@@ -1,4 +1,4 @@
-import { useAtomMount } from "@effect/atom-react";
+import { useAtomMount, useAtomRefresh } from "@effect/atom-react";
 import { subscribe, type EnvironmentRpcInput } from "@t3tools/client-runtime/rpc";
 import {
   createEnvironmentRpcCommand,
@@ -83,26 +83,41 @@ async function answer(
 function EditorFlushEnvironmentHost(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
   const [clientId] = useState(() => `scient-editors-${randomUUID()}`);
+  const [requestsAtom] = useState(() =>
+    editorFlushRequests({ environmentId, input: { clientId } }),
+  );
   const respond = useAtomCommand(respondToEditorFlush, { reportFailure: false });
   const resolve = useAtomCommand(locateEditorFiles, { reportFailure: false });
   const leave = useAtomCommand(leaveEditorFlush, { reportFailure: false });
-  const leaveLatest = useStableCallback(() => leave({ environmentId, input: { clientId } }));
+  const reconnect = useAtomRefresh(requestsAtom);
+  const reconnectLatest = useStableCallback(() => reconnect());
+  const leaveLatest = useStableCallback((connectionId: string) =>
+    leave({ environmentId, input: { clientId, connectionId } }),
+  );
   const respondLatest = useStableCallback((response: EditorFlushResponse) =>
     respond({ environmentId, input: response }),
   );
-  const locateLatest = useStableCallback((requestId: string): LocateFiles => async (files) => {
-    const result = await resolve({ environmentId, input: { clientId, requestId, files } });
-    if (result._tag !== "Success") throw new Error("The server could not place the files.");
-    return result.value.files;
-  });
+  const locateLatest = useStableCallback(
+    (requestId: string, connectionId: string): LocateFiles =>
+      async (files) => {
+        const result = await resolve({
+          environmentId,
+          input: { clientId, connectionId, requestId, files },
+        });
+        if (result._tag !== "Success") throw new Error("The server could not place the files.");
+        return result.value.files;
+      },
+  );
   const [consumer] = useState(() =>
     createEditorFlushConsumerAtom({
-      requestsAtom: editorFlushRequests({ environmentId, input: { clientId } }),
+      requestsAtom,
       clientId,
       environmentId,
-      flush: (request) => answer(environmentId, request, locateLatest(request.requestId)),
+      flush: (request, connectionId) =>
+        answer(environmentId, request, locateLatest(request.requestId, connectionId)),
       respond: respondLatest,
       leave: leaveLatest,
+      reconnect: reconnectLatest,
     }),
   );
   useAtomMount(consumer);

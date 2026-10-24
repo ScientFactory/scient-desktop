@@ -3,6 +3,7 @@ import * as Rpc from "effect/rpc/Rpc";
 
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
+  EditorFlushLeave,
   EditorFlushResolveInput,
   EditorFlushResolveResult,
   EditorFlushResponse,
@@ -39,7 +40,7 @@ export const WsEditorsFlushResolveRpc = Rpc.make(
 
 /** A window closing says goodbye, so the server stops counting it. */
 export const WsEditorsFlushLeaveRpc = Rpc.make(SCIENT_EDITOR_FLUSH_WS_METHODS.editorsFlushLeave, {
-  payload: EditorFlushWindow,
+  payload: EditorFlushLeave,
   success: Schema.Struct({ accepted: Schema.Boolean }),
   error: EnvironmentAuthorizationError,
 });

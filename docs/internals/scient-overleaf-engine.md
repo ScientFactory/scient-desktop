@@ -374,7 +374,15 @@ confirm.
 - A window is known by the authenticated session of its connection and the
   id it chose. Another session can neither replace it nor answer, resolve or
   say goodbye for it. A window that reconnects replaces its own earlier
-  connection.
+  connection, and every call names its connection: an answer or resolve
+  counts only from the connection the request last reached, and a goodbye
+  only from the window's latest connection, so a late call from a replaced
+  connection can neither satisfy a request nor remove the window. The window
+  itself drops a flush that finishes after its connection was replaced.
+- A page kept in the back-forward cache keeps its drafts, so its `pagehide`
+  sends no goodbye; restored (`pageshow`), it registers again at once. A
+  window says goodbye at most once per connection, so after registering again
+  a later close says goodbye again.
 - Membership is not the set of open streams. A window that says goodbye is
   forgotten at once, and a request still awaiting it stops waiting. A window
   whose connection drops without a goodbye stays known for five minutes: every
