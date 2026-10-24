@@ -174,6 +174,10 @@ import {
   ScientFileReloadButton,
 } from "~/scient/fileSurfaces/ScientFileFreshnessControls";
 import { ScientFileVersionHistory } from "~/scient/fileSurfaces/ScientFileVersionHistory";
+// SCIENT-FORK:START — Overleaf sync state beside "Saved"
+import { OverleafFileChip } from "~/scient/overleaf/OverleafFileChip";
+import { OverleafConflictActions } from "~/scient/overleaf/OverleafConflictActions";
+// SCIENT-FORK:END
 import {
   type FileSaveResolution,
   useSessionFileWatch,
@@ -1347,6 +1351,14 @@ export function EditableFileEditor({
             revealId={revealRequestId}
           />
         ) : null}
+        {/* SCIENT-FORK:START — Overleaf conflict blocks: highlighted, with a choice above each */}
+        <OverleafConflictActions
+          editor={editor}
+          surface={surface}
+          source={editedContents ?? externalFile.contents}
+          disabled={!editable || editingBlocked || restorationBlocked}
+        />
+        {/* SCIENT-FORK:END */}
         {/* SCIENT-FORK:START — Explain source refusal without discarding retained edits. */}
         {restorationBlocked ? (
           <div role="alert" className="p-2 text-xs text-muted-foreground">
@@ -2356,6 +2368,16 @@ export default function FilePreviewPanel({
                 : {})}
             />
           ) : null}
+          {/* SCIENT-FORK:START — the Overleaf chip of a file in a linked folder, beside "Saved" */}
+          {relativePath && !isHostFile && !isFolder ? (
+            <OverleafFileChip
+              environmentId={environmentId}
+              cwd={cwd}
+              relativePath={relativePath}
+              threadRef={threadRef}
+            />
+          ) : null}
+          {/* SCIENT-FORK:END */}
           {relativePath && isLatexPreviewFile(relativePath) ? (
             <ScientFileFreshnessStatus
               {...freshnessNoticeProps}

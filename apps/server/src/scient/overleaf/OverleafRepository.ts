@@ -12,7 +12,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
-  type OverleafGitError,
+  OverleafGitError,
   OverleafGitExecutor,
   type OverleafGitExecuteInput,
   newOverleafId,
@@ -201,6 +201,17 @@ export class OverleafRepository extends Context.Service<
       readonly oid: string;
       readonly maxBytes: number;
     }) => Effect.Effect<Uint8Array, OverleafRepositoryError | OverleafGitError>;
+    /**
+     * Several blobs in one Git run (`cat-file --batch`), in the order asked. Each
+     * must be a blob of at most `maxBytes`, and all of them at most `maxTotalBytes`;
+     * anything larger fails as an output limit, as `readBlob` does.
+     */
+    readonly readBlobs: (input: {
+      readonly repo: string;
+      readonly oids: ReadonlyArray<string>;
+      readonly maxBytes: number;
+      readonly maxTotalBytes: number;
+    }) => Effect.Effect<ReadonlyArray<Uint8Array>, OverleafRepositoryError | OverleafGitError>;
     readonly commit: (input: {
       readonly repo: string;
       readonly tree: string;
@@ -211,6 +222,11 @@ export class OverleafRepository extends Context.Service<
       readonly repo: string;
       readonly commit: string;
     }) => Effect.Effect<string, OverleafRepositoryError | OverleafGitError>;
+    /** The commit's tree, or null when the repository no longer holds the commit. */
+    readonly findTree: (input: {
+      readonly repo: string;
+      readonly commit: string;
+    }) => Effect.Effect<string | null, OverleafRepositoryError | OverleafGitError>;
     /** Three-way merge of two trees over an explicit base tree. Nothing is checked out. */
     readonly merge: (input: {
       readonly repo: string;
@@ -237,6 +253,15 @@ export class OverleafRepository extends Context.Service<
       { readonly commit: string; readonly tree: string },
       OverleafRepositoryError | OverleafGitError
     >;
+    /**
+     * Overleaf's branch head without fetching it: one ref advertisement, nothing
+     * downloaded. Null when the branch is not there.
+     */
+    readonly remoteHead: (input: {
+      readonly repo: string;
+      readonly branch: "main" | "master";
+      readonly token: Uint8Array;
+    }) => Effect.Effect<string | null, OverleafRepositoryError | OverleafGitError>;
     /** Publishes one commit to Overleaf's branch, never forced. Network trouble is an outcome, not a failure. */
     readonly push: (input: {
       readonly repo: string;
@@ -273,6 +298,15 @@ export class OverleafRepository extends Context.Service<
       readonly repo: string;
       readonly name: string;
     }) => Effect.Effect<void, OverleafRepositoryError | OverleafGitError>;
+    /** Whether the repository holds the object; false only when Git says it is absent. */
+    readonly hasObject: (input: {
+      readonly repo: string;
+      readonly oid: string;
+    }) => Effect.Effect<boolean, OverleafRepositoryError | OverleafGitError>;
+    /** Every one of Scient's own references, by name (without `refs/scient/`). */
+    readonly listRefs: (input: {
+      readonly repo: string;
+    }) => Effect.Effect<ReadonlyMap<string, string>, OverleafRepositoryError | OverleafGitError>;
   }
 >()("t3/scient/overleaf/OverleafRepository") {}
 
@@ -448,6 +482,57 @@ export const make = Effect.gen(function* () {
       Effect.map((result) => result.stdout),
     );
 
+  const readBlobs: OverleafRepository["Service"]["readBlobs"] = Effect.fn(
+    "OverleafRepository.readBlobs",
+  )(function* (input) {
+    if (input.oids.length === 0) return [];
+    if (input.oids.some((oid) => !OID.test(oid)))
+      return yield* new OverleafRepositoryError({
+        reason: "invalid-tree",
+        detail: "A blob to read is not an object id.",
+      });
+    const tooLarge = (detail: string) =>
+      new OverleafGitError({ reason: "output-limit", exitCode: null, detail });
+    // Each record is a header line, the bytes and a newline.
+    const headerBytes = 128;
+    const result = yield* run(input.repo, ["cat-file", "--batch"], {
+      stdin: encode(`${input.oids.join("\n")}\n`),
+      maxOutputBytes: input.maxTotalBytes + input.oids.length * headerBytes,
+    });
+    const out = result.stdout;
+    const blobs: Uint8Array[] = [];
+    let offset = 0;
+    let total = 0;
+    for (const oid of input.oids) {
+      const end = out.indexOf(0x0a, offset);
+      if (end === -1) return yield* unreadable("git cat-file --batch ended early");
+      const header = /^([0-9a-f]+) blob (\d+)$/u.exec(text(out.subarray(offset, end)));
+      if (header === null || header[1] !== oid)
+        return yield* unreadable(`git cat-file --batch did not return the blob ${oid}`);
+      const size = Number(header[2]);
+      total += size;
+      if (size > input.maxBytes || total > input.maxTotalBytes)
+        return yield* tooLarge(`Blob ${oid} is larger than allowed.`);
+      const start = end + 1;
+      if (start + size >= out.length || out[start + size] !== 0x0a)
+        return yield* unreadable("git cat-file --batch returned a short blob");
+      blobs.push(out.slice(start, start + size));
+      offset = start + size + 1;
+    }
+    if (offset !== out.length) return yield* unreadable("git cat-file --batch returned more");
+    return blobs;
+  });
+
+  const findTree: OverleafRepository["Service"]["findTree"] = (input) =>
+    run(input.repo, ["rev-parse", "--verify", "-q", "--end-of-options", `${input.commit}^{tree}`], {
+      acceptExitCodes: [1],
+    }).pipe(
+      Effect.map((result) => {
+        const tree = text(result.stdout).trim();
+        return result.exitCode === 0 && OID.test(tree) ? tree : null;
+      }),
+    );
+
   const commit: OverleafRepository["Service"]["commit"] = (input) =>
     oidLine(
       input.repo,
@@ -542,6 +627,25 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const remoteHead: OverleafRepository["Service"]["remoteHead"] = Effect.fn(
+    "OverleafRepository.remoteHead",
+  )(function* (input) {
+    const ref = `refs/heads/${input.branch}`;
+    const result = yield* run(input.repo, ["ls-remote", "origin", ref], {
+      token: input.token,
+      timeout: NETWORK_TIMEOUT,
+    });
+    let head: string | null = null;
+    for (const line of text(result.stdout).split("\n")) {
+      if (line === "") continue;
+      const [oid, name] = line.split("\t");
+      if (oid === undefined || !OID.test(oid) || name === undefined)
+        return yield* unreadable("git ls-remote returned an unreadable line");
+      if (name === ref) head = oid;
+    }
+    return head;
+  });
+
   const push: OverleafRepository["Service"]["push"] = Effect.fn("OverleafRepository.push")(
     function* (input) {
       yield* git.availability;
@@ -599,6 +703,29 @@ export const make = Effect.gen(function* () {
   const deleteRef: OverleafRepository["Service"]["deleteRef"] = (input) =>
     run(input.repo, ["update-ref", "-d", refName(input.name)]).pipe(Effect.asVoid);
 
+  const hasObject: OverleafRepository["Service"]["hasObject"] = (input) =>
+    run(input.repo, ["cat-file", "-e", input.oid], { acceptExitCodes: [1] }).pipe(
+      Effect.map((result) => result.exitCode === 0),
+    );
+  const listRefs: OverleafRepository["Service"]["listRefs"] = Effect.fn(
+    "OverleafRepository.listRefs",
+  )(function* (input) {
+    const result = yield* run(input.repo, [
+      "for-each-ref",
+      "--format=%(refname) %(objectname)",
+      "refs/scient/",
+    ]);
+    const refs = new Map<string, string>();
+    for (const line of text(result.stdout).split("\n")) {
+      if (line === "") continue;
+      const match = /^refs\/scient\/(\S+) ([0-9a-f]+)$/u.exec(line);
+      if (!match || !OID.test(match[2]!))
+        return yield* unreadable("git for-each-ref returned an unreadable reference");
+      refs.set(match[1]!, match[2]!);
+    }
+    return refs;
+  });
+
   return OverleafRepository.of({
     initialize,
     writeBlob,
@@ -607,18 +734,23 @@ export const make = Effect.gen(function* () {
     readTree,
     treeSizes,
     readBlob,
+    readBlobs,
     commit,
     treeOf,
+    findTree,
     merge,
     diff,
     discoverBranch,
     fetch,
+    remoteHead,
     push,
     isAncestor,
     treesSince,
     setRef,
     readRef,
     deleteRef,
+    hasObject,
+    listRefs,
   });
 });
 

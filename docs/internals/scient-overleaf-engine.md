@@ -1,8 +1,9 @@
 # Overleaf manuscript engine
 
-This is an unmounted server foundation, not an available product feature. No
-routes, UI, automatic synchronization or network publication coordinator uses
-it; the coordinator is being built in steps. Its plan, contract, owner decisions
+The server mounts it behind authenticated routes (`/api/scient/overleaf/v1/*`)
+and agent tools ([Overleaf agent tools](scient-overleaf-agent-tools.md)), both
+through `OverleafSync`; no screen calls them yet, and nothing synchronizes
+automatically. Its plan, contract, owner decisions
 and status live on the working-documents PR
 [#535](https://github.com/ScientFactory/scient-desktop/pull/535), which is
 closed rather than merged; this file records what is implemented.
@@ -19,6 +20,32 @@ canonical normalization and pinned Unicode 9.0 full case folding; filenames
 retain their original spelling. This is a conservative portability policy,
 not a claim about every filesystem's complete filename equivalence relation.
 The generated table carries its upstream source hash and Unicode license.
+
+`OverleafGitExecutor` runs each Git command with an environment built from
+scratch (its own `HOME`, configuration, hooks folder and askpass) in a scratch
+folder under its runtime root, removed afterwards. On macOS it runs the real Git
+of the selected developer tools (`xcode-select -p`, then Command Line Tools,
+then Xcode), resolved once, never the `/usr/bin/git` launcher: that launcher
+runs `xcrun`, which records every new `HOME` in a shared database in the user's
+temporary folder (`getconf DARWIN_USER_TEMP_DIR`, whatever `TMPDIR` says),
+rewriting it on every command (it grew to 84 MB, with 22 GB of leftover partial
+copies) and costing about 0.1 s per command. A Git found earlier on `PATH`
+(Homebrew, `/usr/local`) is used as before.
+
+A review reads the blobs it needs in one `cat-file --batch` run each (small new
+blobs from Overleaf checked for LFS pointers, and the bytes of every file it
+would write), not one Git run per file; each blob and their total are held to
+the same limits as before.
+
+### Timing
+
+`OverleafSync.bench.test.ts` syncs 1, 10 and 50 files each way against a local
+bare repository with the real applier and prints the time of each stage. It is
+skipped unless asked for; from `apps/server`:
+
+```sh
+SCIENT_OVERLEAF_BENCH=1 node_modules/.bin/vp test run src/scient/overleaf/OverleafSync.bench.test.ts --testTimeout=0
+```
 
 ## Local application
 
@@ -51,6 +78,26 @@ file identity (device and inode), expected bytes and retention locations before
 the first displacement. Recovery recognizes ownership by identity rather than
 content equality. The record directory must be host-owned and on the same
 filesystem as the manuscript; it is not an arbitrary client-selected path.
+
+Each file write costs helper runs, so the file layer avoids the ones that
+decide nothing (it once took about 300 runs per file, growing with every
+record kept in the same folder):
+
+- A lease binds each directory it locks natively when it is taken, walking the
+  path from `/` without following links, and is refused if any identity
+  differs. The bindings handed to it for a directory on itself (every ancestor
+  up to the volume's edge, each kept record's folder, a retention folder) are
+  therefore observed in process on macOS and Linux: the path is canonical and
+  names a directory, not a link, with that device and inode. A path that is
+  not canonical, or Windows, still asks the helper.
+- The helper's capabilities are asked once per helper binary (path, device,
+  inode, size, change time) and root (canonical path and volume); a replaced
+  helper or a root on another volume asks again.
+- A private retention folder that already stands canonical, owned by this
+  user and closed to everyone else is not provisioned again; anything else
+  goes through the helper as before.
+
+Journals, their syncs and the order of every step are unchanged.
 
 On macOS/Linux an explicitly supplied host-owned helper can exchange the staged
 file with the manuscript atomically. Compile the shipped C source with:
@@ -101,7 +148,8 @@ block application; unchanged files retain their permissions. Target executable
 flags are ignored. Alias-only renames remain refused until captures and the
 planner represent alias moves consistently.
 Marker detection is conservative and runs only on the recorded conflict paths;
-ordinary Markdown underline headings are not publication failures.
+ordinary Markdown underline headings are not publication failures. The result
+also says whether every unit was done (`unitsDone`).
 
 ## Disposable Git protocol qualification
 
@@ -176,7 +224,31 @@ until cleared. A retained copy keeps its revision, time and sync count; a
 changed copy never becomes releasable again, and a copy is dropped only after
 seven days and a later completed sync (`completedSyncCount`).
 `overleafRequiredPins` names the private refs (bases, local snapshots, pending
-apply target, unresolved attempts) that cleanup must keep.
+apply target, and the parent and candidate commits of every attempt still
+recorded that is unresolved or accepted) that cleanup must keep. An accepted
+attempt keeps its pins until it is pruned, so Undo stays possible after its
+bases rotate out or Overleaf's history is rewritten. A pending undo
+(`sync-undo` apply link) names its attempt, and a document is valid only while
+that attempt is recorded as accepted, so it cannot be pruned meanwhile. The
+coordinator writes required refs by what the repository holds, not by the
+previous document's list: a required ref found missing is written again, and a
+failure to write it fails the replacement. Only an accepted attempt's ref (kept
+for Undo alone) whose object Git confirms is gone is left out, so it never
+blocks.
+
+Conflict material is recorded per file (`markers`): where the file is in the
+folder, where its marks are looked for, other folder paths an unfinished apply
+may have left it at, and its paths on Overleaf. A kept copy of conflict material
+remembers its file's other paths (`markerLinks`), which never change. The
+document is at schema version 2. A version 1 document, which recorded folder
+paths only (`markerPaths`, and a pending apply's `priorMarkers`), is read and
+upgraded in memory (a pending undo keeps its attempt and retired paths), each
+path becoming a file whose one path it is; a kept copy
+of conflict material (and a pending apply's held file) gets `markerLinks: null`,
+other paths unknown, and a restore holds it at every path Overleaf has. The next
+replacement writes version 2. A later
+version is reported unsupported; an older one that does not upgrade cleanly is
+reported corrupt.
 
 Request receipts are created once per request ID. A repeat with the same
 payload returns the original receipt instead of running again; reuse with a
@@ -246,19 +318,69 @@ outside it.
 
 ## Coordinator
 
-`OverleafCoordinator` (unmounted until step 5) prepares reviews, applies a
+`OverleafCoordinator` prepares reviews, applies a
 confirmed one and sends its result to Overleaf, recovers an interrupted apply,
-settles earlier sends, and lists and restores kept copies.
+settles earlier sends, lists and restores kept copies, and undoes an accepted send.
 
 - **Lock order.** The connection's operation reservation comes first: in
   memory, refused (`OverleafOperationActiveError`) rather than queued. Then the
   checkout barrier's application section, then the store's compare-and-set,
   then the file layer's locks. Overleaf is fetched before the section.
-- **Confirm.** Inside the section, it checks the folder and retention
+- **New files** (pr-c-design section 5). A review prepared without a list of
+  additions selects every new file no rule skips; an explicit list, even an
+  empty one, is used exactly as given. The rule is judged again at every
+  capture and never remembered: build leftovers, hidden files (any path
+  segment starting with `.`, the file's own name included), Scient's own
+  `AGENTS.md` and `PROJECT.md` (under any letter case or Unicode spelling,
+  compared by collision key) when the linked folder is the checkout's top,
+  and files over 50,000,000 bytes. A file too large is never read, not even a
+  prefix: the opened file's type and size are checked again before its first
+  bytes are read, so one that grew after the listing is marked too large.
+  Selecting one is refused (`file-too-large`); an LFS pointer is
+  left out of the default selection rather than refused. Each review lists
+  every addition with whether it is selected and why it is skipped. On
+  confirm, only an addition sent by default that the selection left out joins
+  `localOnlyPaths` (at most 2,000, `local-only-limit`). `sendLocalOnly` sends
+  paths from that list: they are read like selected additions, leave the list
+  when the review is applied and become managed. A path not on the list is
+  `not-local-only`, one not in the folder `not-selectable`. A file Overleaf
+  already has is managed and synced whatever its name.
+- **Per-file requests.** `keepOnlyHere` and `send` are judged on the review's
+  own capture, with the defaults applying to every other file. `keepOnlyHere`
+  keeps a new file only on this computer and remembers it, whatever the rule
+  says of it; it wins over every request to send, ignores a path that is not a
+  new file, and leaves a local-only one local-only. `send` selects a skipped
+  new file (refusing one too large), sends a local-only one, and is already
+  satisfied for a managed one, so a retry after the apply succeeds. Both are
+  recorded in the binding and applied again by every replacement review, so a
+  kept file that disappears and returns, or shrinks, stays kept. The binding's
+  `keepOnlyHere` also holds every deliberate deselection, including one an
+  explicit `selectedAdditions` list implied, so it survives replacements the
+  same way; its `send` also holds every `sendLocalOnly` request, so a file
+  first decided as a collision is still sent if that collision is gone when a
+  replacement review is built. A local-only file being sent stays a collision candidate: where
+  Overleaf has content at its place it is read in full and reviewed as a
+  collision (keep mine or use Overleaf's), never merged into Overleaf's file.
+- **Confirm.** First it reads Overleaf's head with one ref advertisement
+  (`ls-remote`, nothing downloaded): while it is still the review's head, the
+  objects fetched for the review stand for Overleaf; otherwise it fetches.
+  Inside the section, it checks the folder and retention
   identities, captures the folder again and rebuilds the review with the same
-  selections and choices. Capture reads the base's paths, the managed paths and
+  choices, the same selected and sent files, the same deliberate deselections,
+  and the default rule for anything else. A deliberate deselection is kept
+  whatever the rule now says of the file (one that grew too large stays kept
+  only here). A file that appeared meanwhile is
+  therefore selected by default, never taken for a "keep only here", and a
+  selected file that is gone is left out instead of refused, so the rebuilt
+  review differs and replaces the stale one. Capture reads the base's paths, the managed paths and
   every path in a forced conflict. A different digest is a stale review: the
-  fresh one is offered and nothing is applied. Before anything is written it
+  fresh one is offered and nothing is applied. The review is a function of the
+  connection record, the checkout and credential epochs, Overleaf's head and
+  the capture, so when the record's revision, both epochs and the head are the
+  review's and the folder, captured exactly as the review captured it, gives
+  the same inventory digest (every field, each read file by its SHA-256), the
+  review stands as it is and is not built again (no Git work); any difference
+  builds it again as above. Before anything is written it
   checks room:
   for every kept copy the apply could add, and for every group an interruption
   could leave as a forced conflict (at most 2,000 paths each). Then, before the
@@ -268,7 +390,12 @@ settles earlier sends, and lists and restores kept copies.
   - the base: a tree written from the applier's per-path base on the fetched
     remote commit, with the previous base moved into `priorBases`;
   - managed and local-only paths;
-  - `forcedConflicts` (interrupted groups) and `markerPaths`;
+  - `forcedConflicts` (interrupted groups) and `markers`: the held files the
+    review carried, where the apply put them, plus each file given new marks
+    that still has them. An apply that did not finish every unit may have left a
+    file where it was, so its record keeps that folder path too. A record that
+    names no path of the result (a version 1 pending apply named files where they
+    were before it) is placed by the result's renames from the base;
   - kept copies, each with its place in the retention folder and a stamp (size
     and change time) taken around a fresh read of its bytes, from the file its
     path still names. A copy that no longer holds what the applier kept is
@@ -298,27 +425,127 @@ settles earlier sends, and lists and restores kept copies.
   restored bytes are a local change for the next review. A restore the applier
   cannot finish leaves its file as a forced conflict, beside those already
   recorded.
+- **Undo** puts back what Overleaf had before one accepted send, named by its
+  attempt number (design section 4.3). Any other attempt, or one no longer
+  recorded (the last 64 are), is `not-eligible` with the reason. Under the same
+  reservation, receipt (`undo`) and application section as a restore, it
+  compares the attempt's parent tree with the tree it sent: every changed path,
+  both sides of a rename included, goes back to the parent's entry (its bytes,
+  or absence). The folder is captured as a review captures it, plus any file at
+  a changed path that the sync no longer reads, and a path is put back only
+  while it holds exactly what the send left there; otherwise it
+  is skipped and reported (`changed`, or `already-undone` when it already holds
+  the earlier version). A file it would recreate is skipped (`name-clash`) when
+  another spelling of it or of a folder above it is on disk, a file stands
+  where a folder above it must go, or the result would not be a valid tree;
+  one larger than a restore reads is `too-large`. An attempt whose commits the
+  private repository no longer holds is `not-eligible` (`history-unavailable`).
+  Before anything is written it checks room for one kept copy per path it
+  touches (recreated files included: interference can leave a version there),
+  for the managed set afterwards (files it writes join it; files it removes
+  leave it where every capture reads them anyway, the base or a forced
+  conflict, so a rename at the 2,000-file limit fits) and for interruptible
+  groups. It then runs as a `sync-undo` apply, adopted like a restore:
+  displaced files are kept (`kept`), the base never moves, nothing is sent,
+  and each file the applier wrote (its recorded base, keyed by blob ID, holds
+  the written blob, in recovery too) joins the managed set and leaves the
+  local-only list; a write it skipped keeps the path's earlier part in the sync. A
+  removed path (the link records them, `retired`) leaves the managed set once
+  the applier has removed it, or where the base or a forced conflict covers
+  it; a removal skipped elsewhere stays managed, so its file stays in the sync.
+  Recovery resumes the same intent, and a repeated request returns the
+  receipt. Saving open editors first is the caller's job.
+
+  Undo and held files: a send never changes a held path (the publication tree
+  keeps Overleaf's version there), so an attempt's changes never name a file
+  held at that send, and Undo puts back only a path that holds exactly what the
+  send left, which has no conflict marks. A file given marks since the send is
+  skipped (`changed`), never replaced. Undo records no conflict material of its
+  own: the records stand as they were, and the next sync holds every marked
+  file as usual, so Undo neither sends marks nor deletes or replaces Overleaf's
+  file of a conflict not settled.
+
+### Holding back a file with conflict marks
+
+While a file has conflict marks, only that file waits; everything else is sent
+(design section 4.2). The review holds two trees: the local target (the
+candidate: what the folder will hold, marks included) and the publication tree
+(the candidate with every held path set to Overleaf's fetched entry, or absent
+where Overleaf has none). Both, and the held paths, are in the digest. Outgoing
+changes are Overleaf's tree against the publication tree, so no held path is
+among them.
+
+- **What is held is a file**, every path it has in the base, the folder and on
+  Overleaf, linked by renames on either side (`heldFiles` in `syncRules.ts`).
+  A marked `a.tex` renamed to `b.tex` in the folder is held at both: Overleaf
+  keeps `a.tex` and gets no `b.tex`.
+- **Which files**: each one given new marks in this apply (a group merged in the
+  editor is one path no rename touches), each recorded one whose file still has
+  marks, and any other file with a conflict, recorded or not: Scient's own
+  labelled marks (`<<<<<<< Scient`, `>>>>>>> Overleaf`), or a whole conflict
+  block whatever its labels (an opening, a separator and a closing line, in
+  that order, each a line of its own; `hasConflictBlock`). A Markdown underline
+  never matches. Every captured file is checked from the bytes the inventory
+  already read; most are ruled out by the absence of `<<<<<<<` and `>>>>>>>`.
+- **Finding a recorded file**: at its folder path, its other recorded paths and
+  where a rename in the folder took it; it is held where one of them has marks.
+  Finding it proves less than it seems: Git sees a rename only from the base,
+  which may no longer have the file, and a clean file at a recorded path may be
+  a newcomer put there after the marked file moved, even over another marked
+  file. So a record found clean or found nowhere is settled only when no file
+  is held at all; while any is, recorded, unrecorded or given new marks, each
+  held file keeps the record's paths. A marked `a.tex` moved over the marked
+  `b.tex`, with a new `a.tex` written: Overleaf keeps both. Once settled, the
+  file's edit, rename or deletion goes out. The cost is waiting: with two
+  conflicts, the one settled first goes out with the second.
+- **Records** move with the file: after an apply, at the path the result holds
+  it (Overleaf's rename moves it), with the file's paths Overleaf has, and the
+  paths of the records it took over. A record stays until the marks are gone,
+  across acceptance, restart and recovery. A restored kept copy of conflict
+  material is held at the paths its file had; one kept before those were
+  recorded (version 1) is held at every path of the base, since any of them may
+  have been its file's.
+- **Sending one as it is** (`releaseMarked` in the selections): a file whose
+  marks are its content (a guide quoting them) is sent, marks included, when
+  the request lists it. It is a choice, not a permission: the review lists the
+  files that may be released (`unresolvedMarkers`: the held files with marks
+  already in the folder) and those it sends as they are (`released`, bound in
+  the digest). Marks the review itself writes are never released, and a
+  released file's record is dropped. A release is checked against the whole
+  result: a file whose path another held file keeps (its former name, say) is
+  not sent, so the request is refused (`release-held`) rather than reported as
+  sent.
+- **The publication tree is validated** like any other: a held path that the
+  result turns into a folder, or the other way round, is refused
+  (`held-file-clash`); the file and size limits apply to it too.
 
 ### Publication
 
-After a complete adoption, confirm sends the result. Steps 1 to 4 run inside its
+After an adoption, confirm sends the result. Steps 1 to 4 run inside its
 application section, which is released before the network is used (contract
 section 9):
 
-1. **Gate.** Nothing is sent after a partial apply, while conflict material or
-   structural copies remain, or when a copy this apply kept is `changed` or
-   `ambiguous`. The result is `blocked` with the reason.
-2. **Nothing to send** when the candidate equals Overleaf's fetched tree
+1. **Gate.** Nothing is sent after a partial apply, while interrupted groups or
+   structural copies remain, while a recorded file with conflict material is not
+   one the review holds, or when a copy this apply kept is `changed` or
+   `ambiguous`. The result is `blocked` with the reason. An apply needing
+   attention only because of marks in held files is sent: every unit done, the
+   folder matching the local target, no kept copy changed.
+2. **Nothing to send** when the publication tree equals Overleaf's fetched tree
    (`none`).
 3. **Verify.** The folder is captured again, the way a review captures it and
    over every path the plan read or wrote (so an explicit deletion must still be
-   absent), and its tree must equal the candidate. A difference is
+   absent). Outside the held files it must equal the publication tree; held
+   files are work in progress and are not compared. A difference is
    `not-verified`, and the edit is the next review's to send. Each copy this
    apply kept is checked again by its stamp: one a late writer changed is
    recorded `changed` and the send is `blocked`. From here on, the content comes
    from the private repository's objects, never from the folder.
-4. **Record.** The candidate is committed on the plan's fetched head. The
+4. **Record.** The publication tree is committed on the plan's fetched head. The
    attempt is recorded `unknown` with its pins, before anything is sent.
+   Acceptance makes it the base, where a held file has Overleaf's version at
+   Overleaf's paths, as the apply already set it; the user's merge, and any
+   rename, go out at the first sync after the marks are gone.
    Resolved history makes room; a confirm that would need a seventeenth
    unresolved attempt is refused before the apply.
 5. **Send admission**, a short application section of its own, decides from
@@ -330,7 +557,7 @@ section 9):
    after admission are later local changes and never alter what is sent.
 6. **Send** once, never forced, holding no section, so a pull or branch switch
    of the checkout does not wait for the network. `accepted` makes the
-   candidate the base in the same replacement. `out-of-date` keeps the adopted
+   publication tree the base in the same replacement. `out-of-date` keeps the adopted
    base. Anything else stays `unknown`, as does an attempt whose finalizing
    write fails.
 
@@ -353,14 +580,112 @@ A crash after the send leaves the confirm receipt `running` and the attempt
 `unknown`. A repeated request returns that receipt, and recovery settles the
 attempt.
 
+## Service and routes
+
+`OverleafSync` (`OverleafSync.ts`) is what the routes and the
+[agent tools](scient-overleaf-agent-tools.md) call. It owns one coordinator and `OverleafConnections`, which share the
+coordinator's per-connection reservations.
+
+- **Listing.** A connection is listed only for the host project that owns its
+  recorded binding (by binding ID), whatever its folder's path resolves to now.
+- **Authority.** A request names the caller's workspace or thread; the server
+  resolves it. A connection is used only while its checkout still resolves to
+  the binding and authority generation it recorded (otherwise `relink-needed`),
+  and only by callers of the same host project. A caller in another worktree acts
+  on the linked copy, and results say so (`linkedElsewhere`). Both authorities,
+  as resolved when the request began, are checked again with the folders before
+  every change to them and inside send admission (`OverleafAuthorityGuard`); a
+  change there is `authority-changed`, or `not-sent` at the send. Relink is
+  allowed only to the host project that owns the binding the connection
+  recorded, found by its ID even when the old checkout is gone; unknown
+  ownership refuses.
+- **The token.** One Overleaf Git token, in the server secret store
+  (`overleaf-git-token-<site>`). Saving or removing it advances the credential
+  epoch, so reviews built before it are stale, and waits for fetches and pushes
+  in progress. A push runs only with the token its review was built with; a
+  missing or renewed token fails it before Git runs. The token is never
+  returned, logged or put in an error. Git failures leave the service as fixed
+  reasons (`access-denied`, `project-not-found`, `unreachable`,
+  `git-unavailable`, `git-failed`).
+- **Connect** (`OverleafConnections.connect`). It refuses folders that are not
+  real folders inside the checkout, a folder equal to, inside or around another
+  active connection's (compared by the device and inode of each folder up the
+  path, so letter case and Unicode spelling cannot hide a nesting), and a second link of one project in one checkout. It
+  then prepares the retention folder, discovers the single `main`/`master`
+  branch, fetches once and records an empty base. It writes no manuscript file
+  and sends nothing. "Bring in as a new folder" creates the folder, which must be
+  absent or empty, and removes it again if connect fails. Connect checks again,
+  inside registration and before it records anything, that the caller's
+  authority still holds. A connect has a receipt bound to its caller's binding
+  and request: a repeated request returns its connection or recorded refusal,
+  and the same request ID with other input is refused. Disconnect and relink
+  have receipts the same way. A request whose receipt was begun but never
+  finished (the process stopped) is never run again: it answers
+  `request-incomplete`. Connect and relink refuse (`records-unreadable`) while
+  any connection record cannot be read, since it may own the folder. Connecting a folder whose archived
+  connection has the same project reactivates that archive, so its base, kept
+  copies and unresolved sends survive, but only when the folder is the very
+  directory the archive recorded (same volume and file ID) and the archive's
+  recorded binding belongs to the caller's host project; otherwise a new
+  connection starts with an empty base and the archive is left as it is. A new
+  directory made at an archived folder's path would otherwise inherit the old
+  base, and its first sync would delete Overleaf's files. Git failures leave as fixed categories
+  (`access-denied`, `project-not-found`, `unreachable`, `no-branch`,
+  `git-unavailable`).
+- **Disconnect** archives the connection; it refuses while an apply or its
+  staged files are unsettled, and rechecks authority before the change. **Relink** records a moved folder or a renewed
+  workspace binding, finds the retention folder by its recorded identity, and
+  keeps the base. It refuses a second link of one project in the target
+  checkout.
+- **Status** reads disk only, and is reused for two seconds while the
+  connection's record is unchanged: availability (`ready`, `recovery-required`,
+  `attention`, `unavailable`, `disconnected`) with every reason, and the
+  folder's changes against the base by Git object ID (changed, deleted, and new
+  files the next sync would send).
+- **Sync** is the product rule: only a conflict stops it. It prepares a review
+  with the default selections; a review whose every conflict has a choice is
+  confirmed at once with its acknowledgements. A review rebuilt because the
+  folder changed is confirmed the same way, up to three times. An out-of-date
+  push starts one new sync. **Progress is reported on every outcome and on
+  refusals:** every sync outcome except `duplicate`, and a preview's review or
+  refusal, says what it did before: `retried` (the first attempt applied a
+  review and its send was out of date, so that attempt wrote the folder and
+  sent nothing) and `settled` (an interrupted earlier sync it finished first,
+  with how that apply ended). Once either happened, an actionable refusal
+  (a Git failure on the fetch that follows, authority that changed, a busy
+  connection) comes back as a `refused` result carrying them, not as an error,
+  so nothing hides that the folder was written; before any progress, refusals
+  stay errors. Other failures (state store or file-system defects) stay internal
+  errors. Settlement is its own prepare step: the coordinator's
+  prepare that finds an interrupted apply settles it and returns `recovered`
+  with how it ended, never fetching or building in the same call; sync and
+  preview record it and prepare again. Conflict choices answer one Overleaf tree
+  (`reviewedRemote`); when Overleaf has moved, a review that still has conflicts
+  is shown again without them, and one that has none is confirmed as usual.
+  Per-file decisions (`files.keepOnlyHere`, `files.send`) go to the engine's
+  selections, applied to the review's own capture and carried through rebuilt
+  reviews; reviews list every new file with its selection and skip reason.
+  A caller that saved a folder's editors first passes `savedFolder`; sync,
+  preview, recovery and kept-copy restore then hold the connection and refuse
+  (`folder-changed`) if the link no longer names that folder. The coordinator's confirmations inside a sync use
+  server-made 64-character request IDs, which no client request ID can equal.
+  **Cancel** asks the running sync to stop at its next stage boundary (before
+  any prepare, including the one after settling an interrupted sync, or before
+  it applies); an apply or send already started
+  finishes, and its outcome stands. A sync has its own receipt, so a repeated request
+  returns it instead of syncing again. The result names other agents working
+  in the same checkout (a running turn or background work), read before and
+  after the sync, never the caller or its subagents, and `null` when activity
+  could not be read.
+
 ## Saving open editors
 
 Text a person typed is on disk only once the window holding it has saved it.
 `scient/editorFlush/EditorFlush.ts` lets a server operation ask every window
 of this environment to save its editors for one folder, and wait:
-`flushFolder({ checkoutRoot, folder, timeout, overallTimeout })`. Nothing
-calls it yet; the Overleaf agent tools will, before prepare and again before
-confirm.
+`flushFolder({ checkoutRoot, folder, timeout, overallTimeout })`. The
+Overleaf agent tools call it through `OverleafEditorSave.layerFromEditorFlush`
+before any call that may write the folder.
 
 - Each window subscribes once (`editors.flushConnect`), asks where its
   editors' files are (`editors.flushResolve`), answers (`editors.flushRespond`)
@@ -429,11 +754,11 @@ confirm.
 ## Remaining integration gates
 
 The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
-defines the remaining work and tracks each step's status.
-Before exposing operations, implement connection ownership/binding checks and
-bounded repository retention, call the editor flush before prepare and confirm,
-and derive status (a
-`running` receipt whose operation is no longer live was interrupted). The coordinator must implement cancellation between
+defines the remaining work and tracks each step's status. The agent tools save
+open editors through `OverleafEditorSave` (connected to the editor-save request)
+before any call that may write the folder; the screens come next. Derive
+interrupted operations in status (a `running` receipt whose operation is no
+longer live was interrupted). The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
 release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
 in the development app. The exercised Cloud protocol behavior is recorded on #535;

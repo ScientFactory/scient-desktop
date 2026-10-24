@@ -37,6 +37,7 @@ import type * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import {
   bindNativeFilePublication,
   bindNativeFilePublicationParent,
+  observedDirectoryBinding,
   ensureNativePrivateRetentionDirectory,
   nativeFilePublicationCapabilities,
   withNativeFilePublicationLease,
@@ -911,7 +912,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     ) => Promise<A>,
     signal: AbortSignal,
   ) => {
-    const binding = await bindNativeFilePublicationParent(helperFor(), resolved.root, ""),
+    const binding = await observedDirectoryBinding(helperFor(), resolved.root),
       parent = await nearestParent(resolved.root, resolved.requestedPath).catch(() => null);
     const discover = async () => forTarget(await allRecords(), resolved);
     return withOwnership(
@@ -1656,11 +1657,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           keyFor(mutationId),
           helper,
         );
-        const identityBinding = await bindNativeFilePublicationParent(
-          helper,
-          identityDirectory,
-          "",
-        );
+        const identityBinding = await observedDirectoryBinding(helper, identityDirectory);
         const fingerprint = bytesRevision(
           Buffer.from(
             JSON.stringify({
@@ -1862,27 +1859,26 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                 recordPath: directory,
               })
             : undefined;
-          const indexBinding = await bindNativeFilePublicationParent(helper, indexed, "");
+          const indexBinding = await observedDirectoryBinding(helper, indexed);
           const epochBindings =
             intent.expectedMutationEpoch === undefined
               ? []
-              : [await bindNativeFilePublicationParent(helper, resolved.root, "")];
+              : [await observedDirectoryBinding(helper, resolved.root)];
           const budgetBindings =
             deps.retentionLimitBytes == null
               ? []
               : [
                   {
-                    ...(await bindNativeFilePublicationParent(
+                    ...(await observedDirectoryBinding(
                       helper,
                       await deps.resolveRetentionStorageDirectory(),
-                      "",
                     )),
                     mode: "exclusive" as const,
                   },
                 ];
           const base = [
             binding,
-            await bindNativeFilePublicationParent(helper, directory, ""),
+            await observedDirectoryBinding(helper, directory),
             identityBinding,
             indexBinding,
             ...epochBindings,
@@ -2781,13 +2777,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           const storage = await deps.retentionDirectoryFor(canonicalRoot, parentPath),
             id = `external-${NodeCrypto.createHash("sha256").update(entry.directory).digest("hex")}`;
           const index = await prepareRetainedDirectory(storage, id, helperFor());
-          const rootBinding = await bindNativeFilePublicationParent(helperFor(), canonicalRoot, "");
-          const privateBinding = await bindNativeFilePublicationParent(
-            helperFor(),
-            entry.directory,
-            "",
-          );
-          const indexBinding = await bindNativeFilePublicationParent(helperFor(), index, "");
+          const rootBinding = await observedDirectoryBinding(helperFor(), canonicalRoot);
+          const privateBinding = await observedDirectoryBinding(helperFor(), entry.directory);
+          const indexBinding = await observedDirectoryBinding(helperFor(), index);
           const bindings = await bindingsFor(
             [{ ...rootBinding, mode: "exclusive" }, privateBinding, indexBinding],
             [entry],
@@ -3086,7 +3078,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     readPath?: string,
   ) => {
     const root = await NodeFSP.realpath(cwd),
-      binding = await bindNativeFilePublicationParent(helperFor(), root, "");
+      binding = await observedDirectoryBinding(helperFor(), root);
     const target = readPath === undefined ? null : NodePath.resolve(root, readPath);
     const parent =
       target !== null && within(root, target) && target !== root

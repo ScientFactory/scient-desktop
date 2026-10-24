@@ -147,6 +147,31 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
     );
   });
 
+  it.live("settles an interrupted apply as its own prepare step, then reviews its result", () => {
+    let crash = true;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          at: (point) =>
+            crash && point === "applied" ? Effect.die(new Error("process died")) : Effect.void,
+        });
+        expect(Exit.isFailure(yield* Effect.exit(w.sync()))).toBe(true);
+        crash = false;
+        // A complete recovery is reported, never folded into a review of the same call.
+        expect(yield* w.coordinator.prepare({ connectionId: CONNECTION })).toMatchObject({
+          _tag: "recovered",
+          recovery: { outcome: "complete" },
+        });
+        expect((yield* w.connection).activeApply).toBeNull();
+        expect(yield* read(w.folder, "main.tex")).toBe("B");
+        const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        expect(next).toMatchObject({ _tag: "review", review: { upToDate: true } });
+      }),
+    );
+  });
+
   it.live("clears an apply linked just before a crash, with nothing written", () => {
     let crash = true;
     return run(
@@ -404,6 +429,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           selectedAdditions: ["new.tex"],
           collisionPaths: [],
           choices,
+          releaseMarked: [],
         });
         const first = yield* w.coordinator.prepare({
           connectionId: CONNECTION,
@@ -749,6 +775,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             selectedAdditions: [],
             collisionPaths: first.review.binding.collisionPaths,
             choices,
+            releaseMarked: [],
           },
         });
         if (chosen._tag !== "review") return yield* Effect.die(chosen);
@@ -994,7 +1021,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         // A later sync finds the material gone and stops tracking it.
         w.setRemote({ "main.tex": "resolved", "other.tex": "O2" });
         expect(yield* w.sync("request-2")).toMatchObject({ _tag: "applied" });
-        expect((yield* w.connection).markerPaths).toEqual([]);
+        expect((yield* w.connection).markers).toEqual([]);
         const copy = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).find(
           (entry) => entry.relativePath === "main.tex",
         )!;
@@ -1008,7 +1035,9 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             currentRevision: copy.currentRevision,
           }),
         ).toMatchObject({ _tag: "restored" });
-        expect((yield* w.connection).markerPaths).toEqual(["main.tex"]);
+        expect((yield* w.connection).markers).toEqual([
+          { path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] },
+        ]);
       }),
     ),
   );
@@ -1119,7 +1148,11 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           next: {
             ...current,
             revision: current.revision + 1,
-            markerPaths: Array.from({ length: 2_000 }, (_, n) => `marked-${n}.tex`),
+            markers: Array.from({ length: 2_000 }, (_, n) => ({
+              path: `marked-${n}.tex`,
+              folderPaths: [],
+              overleafPaths: [`marked-${n}.tex`],
+            })),
             updatedAt: "2026-10-22T12:00:00.000Z",
           },
         });
@@ -1140,7 +1173,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         expect(yield* read(w.folder, "main.tex")).toBe("resolved");
         const after = yield* w.connection;
         expect(after.activeApply).toBeNull();
-        expect(after.markerPaths).toHaveLength(2_000);
+        expect(after.markers).toHaveLength(2_000);
       }),
     ),
   );

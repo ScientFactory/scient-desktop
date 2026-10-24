@@ -87,6 +87,9 @@ import {
 // SCIENT-FORK:START — the server's editor flush reaches a mounted editor by its file.
 import { workspaceFileSessionFlush } from "./useFileSaveCoordinator";
 // SCIENT-FORK:END
+// SCIENT-FORK:START
+import { subscribeWorkspaceFileSaves } from "~/scient/files/workspaceFileSaves";
+// SCIENT-FORK:END
 const environmentId = EnvironmentId.make("generic-save-hook");
 const props: FileSaveOptions = {
   environmentId,
@@ -429,6 +432,34 @@ describe("folder flush of a mounted editor", () => {
       ]);
     });
     expect(writes).toEqual(["B"]);
+  });
+});
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — a confirmed save is announced to features that follow a folder
+describe("confirmed saves are announced", () => {
+  it("announces a plain file's confirmed save, and nothing before it is confirmed", async () => {
+    await using fixture = await setup();
+    runtime.write = async ({ input }) => AsyncResult.success({ revision: `r${input.contents}` });
+    await fixture.mount();
+    const saves = vi.fn();
+    const stop = subscribeWorkspaceFileSaves(saves);
+    try {
+      await act(async () => {
+        fixture.actions().change("B");
+      });
+      expect(saves).not.toHaveBeenCalled();
+      await act(async () => {
+        expect(await fixture.actions().flush()).toBe(true);
+      });
+      expect(saves).toHaveBeenCalledExactlyOnceWith({
+        environmentId,
+        cwd: "/repo",
+        relativePath: "file.txt",
+      });
+    } finally {
+      stop();
+    }
   });
 });
 // SCIENT-FORK:END

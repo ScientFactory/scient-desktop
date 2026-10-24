@@ -63,6 +63,9 @@ import { searchableSetting, sourceControlHostSettingsSearchId } from "./settings
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { sourceControlIcon } from "~/sourceControlPresentation";
+// SCIENT-FORK:START — Overleaf's token and linked folders
+import { OverleafSourceControlRow } from "~/scient/overleaf/OverleafSettings";
+// SCIENT-FORK:END
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
@@ -629,6 +632,9 @@ export function SourceControlSettingsPanel() {
                   )}
                 </DiscoveryItemRow>
               ))}
+              {/* SCIENT-FORK:START — Overleaf beside GitHub and the other providers */}
+              <OverleafSourceControlRow environmentId={environmentId} />
+              {/* SCIENT-FORK:END */}
             </SettingsSection>
           ) : null}
         </>

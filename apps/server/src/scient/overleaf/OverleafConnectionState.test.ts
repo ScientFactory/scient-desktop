@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import {
+  decodeOverleafConnectionDocument,
   OverleafConnectionDocument,
   type OverleafPublicationAttempt,
   overleafRequiredPins,
@@ -226,6 +227,7 @@ describe("overleafTransitionViolation", () => {
       remoteCommit: oid("7"),
       localOnly: [],
       priorMarkers: [],
+      markers: [],
     };
     const applying = next(first, { activeApply: link });
     // The apply's result advances the base and clears its link in one replacement.
@@ -282,6 +284,7 @@ describe("overleafTransitionViolation", () => {
       remoteCommit: oid("7"),
       localOnly: [],
       priorMarkers: [],
+      markers: [],
     };
     const applying = next(synced, { activeApply: link });
     expect(overleafTransitionViolation(synced, applying, NOW)).toBeNull();
@@ -293,6 +296,93 @@ describe("overleafTransitionViolation", () => {
     );
     expect(violation(applying, { activeApply: { ...link } })).toBeNull();
     expect(violation(applying, { activeApply: null })).toBeNull();
+  });
+
+  it("keeps the accepted attempt a pending undo names", () => {
+    const accepted = attempt(1, {
+      parentCommit: oid("1"),
+      candidateCommit: oid("3"),
+      candidateTree: oid("4"),
+      outcome: "accepted",
+      evidence: "push-accepted",
+    });
+    const sent = next(synced, {
+      base: { commit: oid("3"), tree: oid("4"), generation: 2 },
+      lastAttemptNumber: 1,
+      attempts: [accepted],
+    });
+    const link = {
+      applyId: "apply-1",
+      kind: "sync-undo" as const,
+      operationId: "operation-1",
+      planDigest: "a".repeat(64),
+      baseGeneration: 2,
+      intentTree: oid("5"),
+      remoteCommit: oid("3"),
+      localOnly: [],
+      priorMarkers: [],
+      markers: [],
+      undoneAttempt: 1,
+    };
+    expect(isValid({ ...sent, activeApply: link })).toBe(true);
+    // Only an undo names an attempt, and it must name one recorded as accepted.
+    const { undoneAttempt: _, ...unnamed } = link;
+    expect(isValid({ ...sent, activeApply: unnamed })).toBe(false);
+    expect(isValid({ ...sent, activeApply: { ...link, kind: "retained-restore" } })).toBe(false);
+    expect(isValid({ ...sent, activeApply: { ...link, undoneAttempt: 2 } })).toBe(false);
+    // Only an undo retires managed paths.
+    expect(isValid({ ...sent, activeApply: { ...link, retired: ["main.tex"] } })).toBe(true);
+    expect(isValid({ ...sent, activeApply: { ...unnamed, kind: "sync-apply", retired: [] } })).toBe(
+      false,
+    );
+    expect(isValid({ ...sent, activeApply: link, attempts: [] })).toBe(false);
+    expect(
+      isValid({
+        ...sent,
+        activeApply: link,
+        attempts: [{ ...accepted, outcome: "out-of-date", evidence: "push-out-of-date" }],
+      }),
+    ).toBe(false);
+  });
+
+  it("upgrades a version 1 document with a pending undo, keeping what it undoes", () => {
+    const accepted = attempt(1, {
+      parentCommit: oid("1"),
+      candidateCommit: oid("3"),
+      candidateTree: oid("4"),
+      outcome: "accepted",
+      evidence: "push-accepted",
+    });
+    const { markers: _markers, ...rest } = next(synced, {
+      base: { commit: oid("3"), tree: oid("4"), generation: 2 },
+      lastAttemptNumber: 1,
+      attempts: [accepted],
+    });
+    const link = {
+      applyId: "apply-1",
+      kind: "sync-undo" as const,
+      operationId: "operation-1",
+      planDigest: "a".repeat(64),
+      baseGeneration: 2,
+      intentTree: oid("5"),
+      remoteCommit: oid("3"),
+      localOnly: [],
+      undoneAttempt: 1,
+      retired: ["added.tex"],
+    };
+    const upgraded = decodeOverleafConnectionDocument(
+      JSON.stringify({
+        ...rest,
+        schemaVersion: 1,
+        markerPaths: ["main.tex"],
+        activeApply: { ...link, priorMarkers: ["main.tex"] },
+      }),
+    );
+    expect(upgraded?.activeApply).toEqual({
+      ...link,
+      priorMarkers: [{ path: "main.tex", links: null }],
+      markers: [{ path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] }],
+    });
   });
 
   it("refuses a fresh vault while the connection still references the recorded one", () => {
@@ -309,6 +399,7 @@ describe("overleafTransitionViolation", () => {
       retainedAtSyncCount: 1,
       kept: "apply-1/files/step-0/retained",
       markers: false,
+      markerLinks: [],
       versions: [],
       stamp: "1:1",
     };
@@ -328,6 +419,7 @@ describe("overleafTransitionViolation", () => {
         remoteCommit: oid("7"),
         localOnly: [],
         priorMarkers: [],
+        markers: [],
       },
     });
     expect(violation(applying, { retention: freshVault })).toBe("vault-replaced-while-referenced");
@@ -349,6 +441,7 @@ describe("overleafTransitionViolation", () => {
       retainedAtSyncCount: 1,
       kept: "apply-1/files/step-0/retained",
       markers: false,
+      markerLinks: [],
       versions: [],
       stamp: "1:1",
     };
@@ -380,6 +473,25 @@ describe("overleafTransitionViolation", () => {
     expect(
       violation(changed, {
         retention: { ...changed.retention, copies: [{ ...copy, state: "changed" }] },
+      }),
+    ).toBe("retained-copy-rewritten"); // The other paths a kept copy of conflict material remembers never change.
+    const kept = holding({ state: "kept", markers: true, markerLinks: ["old.tex"] }, 2);
+    expect(
+      violation(kept, {
+        retention: {
+          ...kept.retention,
+          copies: [{ ...kept.retention.copies[0]!, markerLinks: [] }],
+        },
+      }),
+    ).toBe("retained-copy-rewritten");
+    // Unknown other paths (version 1) never become known, not even as none.
+    const unknown = holding({ state: "kept", markers: true, markerLinks: null }, 2);
+    expect(
+      violation(unknown, {
+        retention: {
+          ...unknown.retention,
+          copies: [{ ...unknown.retention.copies[0]!, markerLinks: [] }],
+        },
       }),
     ).toBe("retained-copy-rewritten");
   });
@@ -426,6 +538,20 @@ describe("overleafRequiredPins", () => {
         for (const pin of pins.slice(0, 4)) yield* repos.setRef({ repo, ...pin });
         const found = yield* Effect.forEach(pins, (pin) => repos.readRef({ repo, name: pin.name }));
         expect(found).toEqual([tree, commit, tree, commit, null]);
+        // An accepted attempt keeps its commits for Undo; one settled otherwise does not.
+        const names = (outcome: Pick<OverleafPublicationAttempt, "outcome" | "evidence">) =>
+          overleafRequiredPins({
+            ...document,
+            attempts: [attempt(1, { parentCommit: commit, candidateCommit: commit, ...outcome })],
+          })
+            .map((pin) => pin.name)
+            .filter((name) => name.startsWith("attempt/"));
+        expect(names({ outcome: "accepted", evidence: "push-accepted" })).toEqual([
+          "attempt/1/candidate",
+          "attempt/1/parent",
+        ]);
+        expect(names({ outcome: "out-of-date", evidence: "push-out-of-date" })).toEqual([]);
+        expect(names({ outcome: "not-sent", evidence: "send-refused" })).toEqual([]);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

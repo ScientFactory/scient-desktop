@@ -44,6 +44,7 @@ const withScenario = <A, E>(
     readonly review: (
       options?: Partial<OverleafReviewInput> & {
         readonly select?: ReadonlyArray<string>;
+        readonly send?: ReadonlyArray<string>;
         readonly request?: ReadonlyArray<string>;
         readonly choices?: ReadonlyMap<string, ConflictChoice>;
       },
@@ -103,6 +104,7 @@ const withScenario = <A, E>(
       const review = (
         options: Partial<OverleafReviewInput> & {
           readonly select?: ReadonlyArray<string>;
+          readonly send?: ReadonlyArray<string>;
           readonly request?: ReadonlyArray<string>;
           readonly choices?: ReadonlyMap<string, ConflictChoice>;
         } = {},
@@ -113,8 +115,10 @@ const withScenario = <A, E>(
             managedPaths: connection.managedPaths,
             localOnlyPaths: connection.localOnlyPaths,
             selectedAdditions: options.select ?? [],
+            sendLocalOnly: options.send ?? [],
             requestedPaths: options.request ?? [],
             stagingPaths: [],
+            atCheckoutTop: false,
           };
           const captured = yield* Effect.promise(() => captureOverleafInventory(inventoryInput));
           if (captured._tag !== "captured") return yield* Effect.die(captured.refusal.reason);
@@ -123,11 +127,11 @@ const withScenario = <A, E>(
             connection,
             inventory: captured.inventory,
             remote: { commit: remoteCommit, tree: remoteTree },
-            selectedAdditions: options.select ?? [],
             collisionPaths: options.request ?? [],
             choices: options.choices ?? new Map(),
             interrupted: [],
-            markerPaths: [],
+            markers: [],
+            releaseMarked: [],
             epochs: { checkout: 1, credential: 1 },
             scratch: NodePath.join(root, "scratch"),
             ...options,
@@ -165,7 +169,7 @@ describe("buildOverleafReview", () => {
     ),
   );
 
-  it.live("first sync: sends only checked additions and remembers the rest as local-only", () =>
+  it.live("first sync: sends only checked additions and remembers deselected default ones", () =>
     withScenario(
       {
         base: null,
@@ -177,12 +181,33 @@ describe("buildOverleafReview", () => {
           const unselected = reviewOf(yield* review());
           expect(unselected.outgoing).toEqual([]);
           expect(unselected.incoming).toEqual([{ kind: "added", path: "refs.bib" }]);
-          expect(unselected.binding.newLocalOnly).toEqual(["main.aux", "main.tex"]);
+          // Build output is skipped by a rule, not remembered.
+          expect(unselected.binding.newLocalOnly).toEqual(["main.tex"]);
+          // The deselection is carried as a request to keep it, for replacement reviews.
+          expect(unselected.binding.keepOnlyHere).toEqual(["main.tex"]);
+          expect(unselected.additions).toEqual([
+            {
+              path: "main.aux",
+              size: 3,
+              checkedByDefault: false,
+              uncheckedReason: "build-output",
+              selected: false,
+            },
+            {
+              path: "main.tex",
+              size: 4,
+              checkedByDefault: true,
+              uncheckedReason: null,
+              selected: false,
+            },
+          ]);
           expect(unselected.warnings).toEqual([{ kind: "first-sync" }]);
 
           const selected = reviewOf(yield* review({ select: ["main.tex"] }));
           expect(selected.outgoing).toEqual([{ kind: "added", path: "main.tex" }]);
-          expect(selected.binding.newLocalOnly).toEqual(["main.aux"]);
+          expect(selected.binding.newLocalOnly).toEqual([]);
+          expect(selected.binding.selectedAdditions).toEqual(["main.tex"]);
+          expect(selected.additions.map((addition) => addition.selected)).toEqual([false, true]);
           expect(selected.warnings).toEqual([{ kind: "first-sync" }, { kind: "no-sync-history" }]);
           expect(selected.binding.acknowledgements).toEqual(["first-sync", "no-sync-history"]);
           expect(targetText(selected, "refs.bib")).toBe("@book{}");
@@ -397,7 +422,10 @@ describe("buildOverleafReview", () => {
       ({ review }) =>
         Effect.gen(function* () {
           const built = reviewOf(
-            yield* review({ interrupted: [["half.tex"]], markerPaths: ["main.tex"] }),
+            yield* review({
+              interrupted: [["half.tex"]],
+              markers: [{ path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] }],
+            }),
           );
           expect(built.conflicts.map((conflict) => [conflict.paths, conflict.origins])).toEqual([
             [["half.tex"], ["interrupted"]],
@@ -687,7 +715,11 @@ describe("buildOverleafReview", () => {
       ({ review, connection }) =>
         Effect.gen(function* () {
           const plain = reviewOf(yield* review());
-          const recorded = reviewOf(yield* review({ markerPaths: ["main.tex"] }));
+          const recorded = reviewOf(
+            yield* review({
+              markers: [{ path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] }],
+            }),
+          );
           expect(recorded.digest).not.toBe(plain.digest);
           // The same facts with object keys in another order digest the same.
           const reordered = reviewOf(
@@ -703,6 +735,94 @@ describe("buildOverleafReview", () => {
             }),
           );
           expect(reordered.digest).toBe(plain.digest);
+        }),
+    ),
+  );
+
+  it.live("binds both trees and the held files, and sends nothing of a held file", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m", "other.tex": "o" },
+        // A lone unlabelled mark, no whole block: held only while recorded.
+        local: {
+          "main.tex": "<<<<<<< mine\nx\n",
+          "other.tex": "o2",
+        },
+        remote: { "main.tex": "m", "other.tex": "o" },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          const plain = reviewOf(yield* review());
+          expect(plain.binding.heldPaths).toEqual([]);
+          expect(plain.binding.publicationTree).toBe(plain.binding.candidateTree);
+          expect(plain.outgoing).toEqual([
+            { kind: "modified", path: "main.tex" },
+            { kind: "modified", path: "other.tex" },
+          ]);
+          const held = reviewOf(
+            yield* review({
+              markers: [{ path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] }],
+            }),
+          );
+          expect(held.binding.heldPaths).toEqual(["main.tex"]);
+          expect(held.binding.carriedMarkers).toEqual([
+            { path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] },
+          ]);
+          expect(held.binding.publicationTree).not.toBe(held.binding.candidateTree);
+          expect(held.outgoing).toEqual([{ kind: "modified", path: "other.tex" }]);
+          // The folder keeps its marks: the local target is unchanged.
+          expect(held.binding.candidateTree).toBe(plain.binding.candidateTree);
+          expect(held.digest).not.toBe(plain.digest);
+        }),
+    ),
+  );
+
+  it.live(
+    "holds any file with Scient's labelled marks or a whole conflict block, and no Markdown underline",
+    () =>
+      withScenario(
+        {
+          base: { "git.tex": "g", "main.tex": "m", "notes.md": "n" },
+          local: {
+            "git.tex": "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> main\n",
+            "main.tex": "<<<<<<< Scient\nx\n=======\ny\n>>>>>>> Overleaf\n",
+            "notes.md": "Results\n=======\n",
+          },
+          remote: { "git.tex": "g", "main.tex": "m", "notes.md": "n" },
+        },
+        ({ review }) =>
+          Effect.gen(function* () {
+            const built = reviewOf(yield* review());
+            expect(built.binding.heldPaths).toEqual(["git.tex", "main.tex"]);
+            expect(built.unresolvedMarkers).toEqual(["git.tex", "main.tex"]);
+            expect(built.outgoing).toEqual([{ kind: "modified", path: "notes.md" }]);
+          }),
+      ),
+  );
+
+  it.live("refuses a held file whose Overleaf path the result makes a folder", () =>
+    withScenario(
+      {
+        // The marked file was renamed from fig to chapter.tex while held; fig is now a folder.
+        base: { fig: "F" },
+        local: {
+          "chapter.tex": "<<<<<<< Scient\nx\n=======\ny\n>>>>>>> Overleaf\n",
+          "fig/plot.tex": "P",
+        },
+        remote: { fig: "F" },
+        connection: { managedPaths: ["fig", "chapter.tex"] },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          expect(
+            yield* review({
+              select: ["fig/plot.tex"],
+              markers: [{ path: "chapter.tex", folderPaths: [], overleafPaths: ["fig"] }],
+            }),
+          ).toEqual({
+            _tag: "refused",
+            refusal: { reason: "held-file-clash", path: "fig", other: "fig/plot.tex" },
+          });
         }),
     ),
   );
@@ -749,7 +869,14 @@ describe("buildOverleafReview", () => {
     withScenario(
       {
         base: { "main.tex": "m" },
-        local: { "main.tex": "m", "a.aux": "a", "b.aux": "b" },
+        local: {
+          "main.tex": "m",
+          "a.tex": "a",
+          "b.tex": "b",
+          "c.aux": "c",
+          ".env": "e",
+          "old.log": "o",
+        },
         remote: { "main.tex": "m" },
         localOnly: ["old.log"],
       },
@@ -759,7 +886,59 @@ describe("buildOverleafReview", () => {
             _tag: "refused",
             refusal: { reason: "local-only-limit" },
           });
-          expect((yield* review({ limits: { localOnlyPaths: 3 } }))._tag).toBe("review");
+          // Files a rule skips are not remembered, so they never count.
+          const built = reviewOf(yield* review({ limits: { localOnlyPaths: 3 } }));
+          expect(built.binding.newLocalOnly).toEqual(["a.tex", "b.tex"]);
+          // A local-only file being sent leaves the list.
+          expect(
+            (yield* review({ send: ["old.log"], select: ["a.tex"], limits: { localOnlyPaths: 1 } }))
+              ._tag,
+          ).toBe("review");
+        }),
+    ),
+  );
+
+  it.live("reviews a local-only file being sent that Overleaf also has as a collision", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "m", "notes.tex": "" },
+        remote: { "main.tex": "m", "notes.tex": "remote" },
+        localOnly: ["notes.tex"],
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          // An empty file would merge cleanly into Overleaf's: it must be read and decided.
+          expect(yield* review({ send: ["notes.tex"] })).toEqual({
+            _tag: "needs-capture",
+            paths: ["notes.tex"],
+          });
+          const built = reviewOf(yield* review({ send: ["notes.tex"], request: ["notes.tex"] }));
+          expect(built.collisions).toEqual(["notes.tex"]);
+          expect(built.conflicts.map((conflict) => conflict.paths)).toEqual([["notes.tex"]]);
+          expect(built.confirmable).toBe(false);
+          expect(built.binding.sentLocalOnly).toEqual([]);
+        }),
+    ),
+  );
+
+  it.live("sends a local-only file like a selected addition", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "m", "notes.tex": "mine", "kept.tex": "k" },
+        remote: { "main.tex": "m" },
+        localOnly: ["notes.tex", "kept.tex"],
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          const built = reviewOf(yield* review({ send: ["notes.tex"] }));
+          expect(built.outgoing).toEqual([{ kind: "added", path: "notes.tex" }]);
+          expect(built.binding.sentLocalOnly).toEqual(["notes.tex"]);
+          expect(built.binding.newLocalOnly).toEqual([]);
+          expect(built.localOnly).toEqual(["kept.tex"]);
+          expect(built.additions).toEqual([]);
+          expect(targetText(built, "notes.tex")).toBe("mine");
         }),
     ),
   );

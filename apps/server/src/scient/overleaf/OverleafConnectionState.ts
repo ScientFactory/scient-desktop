@@ -6,11 +6,17 @@
  *
  * Ephemeral reviews are deliberately absent: they never survive a restart.
  */
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 
-export const OVERLEAF_CONNECTION_SCHEMA_VERSION = 1;
+/**
+ * Version 2 records conflict material by file identity (`markers`). Version 1
+ * documents, which recorded it by folder path alone, are read and upgraded
+ * (`decodeOverleafConnectionDocument`); a later version is reported unsupported.
+ */
+export const OVERLEAF_CONNECTION_SCHEMA_VERSION = 2;
 /** Prior bases kept reachable for recovery classification. */
 export const PRIOR_BASE_LIMIT = 20;
 export const LOCAL_SNAPSHOT_LIMIT = 10;
@@ -85,10 +91,51 @@ const LocalSnapshot = Schema.Struct({
   tree: Oid,
 });
 
-export const OverleafApplyKind = Schema.Literals(["sync-apply", "retained-restore"]);
+/**
+ * `sync-apply` applies a reviewed sync and moves the base. `retained-restore` puts a
+ * kept copy back and `sync-undo` puts back what Overleaf had before one accepted
+ * send; both are local changes that never move the base.
+ */
+export const OverleafApplyKind = Schema.Literals(["sync-apply", "retained-restore", "sync-undo"]);
+
+/**
+ * One file holding Scient conflict material that is not settled yet. While it
+ * has marks, every one of its paths keeps Overleaf's version in what is sent:
+ * the file is held back, everything else goes out.
+ */
+const OverleafMarkerRecord = Schema.Struct({
+  /** Where the file is in the folder: where its marks are looked for. */
+  path: ManuscriptPath,
+  /** Other folder paths the file may be at, where an apply that did not finish left it. */
+  folderPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  /** The file's paths on Overleaf, linked by renames on either side. */
+  overleafPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+});
+export type OverleafMarkerRecord = typeof OverleafMarkerRecord.Type;
+const MarkerRecords = Schema.Array(OverleafMarkerRecord).check(
+  Schema.isMaxLength(MANAGED_PATH_LIMIT),
+  // One record per folder path.
+  Schema.makeFilter(
+    (records) => new Set(records.map((record) => record.path)).size === records.length,
+  ),
+);
+
+/**
+ * A held file's other paths, in the folder and on Overleaf. Null where they were
+ * never recorded (version 1): the file may have come from any path Overleaf has.
+ */
+const MarkerLinks = Schema.NullOr(
+  Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+);
+
+/** A held file at its folder path before an apply, with every other path it is linked to. */
+const HeldFile = Schema.Struct({
+  path: ManuscriptPath,
+  links: MarkerLinks,
+});
 
 /** The connection's pointer to an applier intent that may still need recovery. */
-const ApplyLink = Schema.Struct({
+const applyLinkFields = {
   applyId: OverleafServerId,
   kind: OverleafApplyKind,
   operationId: OverleafServerId,
@@ -101,8 +148,29 @@ const ApplyLink = Schema.Struct({
   remoteCommit: Oid,
   /** The reviewed local-only set after this apply: kept entries less promoted collisions, plus new ones. */
   localOnly: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
-  priorMarkers: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
-});
+  /** The accepted attempt an undo puts back; present exactly for `sync-undo`. */
+  undoneAttempt: Schema.optionalKey(Positive),
+  /** Managed paths an undo removes, which adoption takes out of the managed set. */
+  retired: Schema.optionalKey(
+    Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  ),
+};
+const ApplyLink = Schema.Struct({
+  ...applyLinkFields,
+  /**
+   * Held files before the apply, whose unsettled conflict material it may keep a
+   * copy of: a kept copy remembers the file's other paths.
+   */
+  priorMarkers: Schema.Array(HeldFile).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  /** Held files' records after this apply, at the paths the result puts them. */
+  markers: MarkerRecords,
+}).check(
+  Schema.makeFilter(
+    (link) =>
+      (link.kind === "sync-undo") === (link.undoneAttempt !== undefined) &&
+      (link.kind === "sync-undo" || link.retired === undefined),
+  ),
+);
 
 export const OverleafAttemptOutcome = Schema.Literals([
   /** Recorded before the send boundary; acceptance not established. */
@@ -167,7 +235,7 @@ export const KeptPath = Schema.String.check(
 );
 /** Further versions recorded for one kept path; beyond this the record is ambiguous. */
 export const KEPT_VERSION_LIMIT = 16;
-const RetainedCopy = Schema.Struct({
+const retainedCopyFields = {
   applyId: OverleafServerId,
   relativePath: ManuscriptPath,
   /** Content revision when retained; a later different revision means a late writer. */
@@ -192,6 +260,16 @@ const RetainedCopy = Schema.Struct({
   versions: Schema.Array(KeptPath).check(Schema.isMaxLength(KEPT_VERSION_LIMIT)),
   /** Size and change time of the main version when kept; a later difference means a late writer. */
   stamp: Schema.String.check(Schema.isPattern(/^\d{1,20}:\d{1,30}$/u)),
+};
+const RetainedCopy = Schema.Struct({
+  ...retainedCopyFields,
+  /**
+   * For kept conflict material (`markers`), the file's other paths when kept, on
+   * Overleaf and in the folder: a restored copy is held at all of them again. Null
+   * for a copy kept before they were recorded: a restored one is held at every
+   * path Overleaf has.
+   */
+  markerLinks: MarkerLinks,
 });
 type RetainedCopy = typeof RetainedCopy.Type;
 
@@ -216,7 +294,7 @@ function sameJson(left: unknown, right: unknown): boolean {
   );
 }
 
-export const OverleafConnectionDocument = Schema.Struct({
+const documentFields = {
   schemaVersion: Schema.Literal(OVERLEAF_CONNECTION_SCHEMA_VERSION),
   connectionId: OverleafServerId,
   revision: Positive,
@@ -251,7 +329,7 @@ export const OverleafConnectionDocument = Schema.Struct({
     Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
   ).check(Schema.isMaxLength(FORCED_CONFLICT_LIMIT)),
   /** Files where Scient wrote conflict material that may still be unresolved. */
-  markerPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  markers: MarkerRecords,
   /** The applier's structural source copies in the folder; never captured, never deleted automatically. */
   stagingPaths: Schema.Array(Schema.String.check(Schema.isMaxLength(4_096))).check(
     Schema.isMaxLength(MANAGED_PATH_LIMIT),
@@ -266,7 +344,8 @@ export const OverleafConnectionDocument = Schema.Struct({
   attempts: Schema.Array(PublicationAttempt).check(Schema.isMaxLength(ATTEMPT_LIMIT)),
   createdAt: IsoTime,
   updatedAt: IsoTime,
-}).check(
+};
+export const OverleafConnectionDocument = Schema.Struct(documentFields).check(
   // Relations within one document; a document violating them is never written or trusted.
   Schema.makeFilter((document) => {
     const numbers = new Set(document.attempts.map((attempt) => attempt.attemptNumber));
@@ -277,6 +356,13 @@ export const OverleafConnectionDocument = Schema.Struct({
       document.attempts.every((attempt) => attempt.attemptNumber <= document.lastAttemptNumber) &&
       document.attempts.filter((attempt) => isOverleafAttemptUnresolved(attempt.outcome)).length <=
         UNRESOLVED_ATTEMPT_LIMIT &&
+      // A pending undo keeps the attempt it undoes, and with it that attempt's pins.
+      (document.activeApply?.undoneAttempt === undefined ||
+        document.attempts.some(
+          (attempt) =>
+            attempt.attemptNumber === document.activeApply?.undoneAttempt &&
+            attempt.outcome === "accepted",
+        )) &&
       sequences.size === document.localSnapshots.length &&
       copies.size === document.retention.copies.length &&
       document.retention.copies.every(
@@ -286,6 +372,72 @@ export const OverleafConnectionDocument = Schema.Struct({
   }),
 );
 export type OverleafConnectionDocument = typeof OverleafConnectionDocument.Type;
+
+/** Version 1: conflict material recorded by folder path alone. */
+const { markers: _markers, ...version1Fields } = documentFields;
+const OverleafConnectionDocumentV1 = Schema.Struct({
+  ...version1Fields,
+  schemaVersion: Schema.Literal(1),
+  markerPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  retention: Schema.Struct({
+    vaultIdentity: VolumeFileIdentity,
+    copies: Schema.Array(Schema.Struct(retainedCopyFields)).check(
+      Schema.isMaxLength(RETAINED_COPY_LIMIT),
+    ),
+  }),
+  activeApply: Schema.NullOr(
+    Schema.Struct({
+      ...applyLinkFields,
+      priorMarkers: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+    }),
+  ),
+});
+const decodeCurrent = Schema.decodeUnknownExit(Schema.fromJsonString(OverleafConnectionDocument));
+const decodeVersion1 = Schema.decodeUnknownExit(
+  Schema.fromJsonString(OverleafConnectionDocumentV1),
+);
+const validateDocument = Schema.decodeUnknownExit(OverleafConnectionDocument);
+
+/**
+ * Reads a stored document: the current version, or a version 1 document upgraded.
+ * Version 1 tracked no renames, so each recorded path is its file's only known
+ * path, in the folder and on Overleaf. A kept copy of conflict material, and a
+ * pending apply's held file, have their other paths unknown (null): a restore
+ * holds such a copy at every path Overleaf has. A pending apply's recorded paths are where its files were before
+ * it; adoption finds where the apply put them (`OverleafCoordinator`). The upgrade
+ * is in memory; the next replacement writes the current version. Null when the
+ * text is neither, or the upgrade breaks a document rule.
+ */
+export function decodeOverleafConnectionDocument(text: string): OverleafConnectionDocument | null {
+  const current = decodeCurrent(text);
+  if (Exit.isSuccess(current)) return current.value;
+  const old = decodeVersion1(text);
+  if (Exit.isFailure(old)) return null;
+  const { markerPaths, activeApply, retention, ...rest } = old.value;
+  const recordsOf = (paths: ReadonlyArray<string>) =>
+    [...new Set(paths)].map((path) => ({ path, folderPaths: [], overleafPaths: [path] }));
+  const upgraded = validateDocument({
+    ...rest,
+    schemaVersion: OVERLEAF_CONNECTION_SCHEMA_VERSION,
+    markers: recordsOf(markerPaths),
+    retention: {
+      ...retention,
+      copies: retention.copies.map((copy) => ({ ...copy, markerLinks: null })),
+    },
+    activeApply:
+      activeApply === null
+        ? null
+        : {
+            ...activeApply,
+            priorMarkers: [...new Set(activeApply.priorMarkers)].map((path) => ({
+              path,
+              links: null,
+            })),
+            markers: recordsOf(activeApply.priorMarkers),
+          },
+  });
+  return Exit.isSuccess(upgraded) ? upgraded.value : null;
+}
 
 /** A duplicate request returns this record; it never starts another worker. */
 export const OverleafOperationReceipt = Schema.Struct({
@@ -299,6 +451,7 @@ export const OverleafOperationReceipt = Schema.Struct({
     "relink",
     "disconnect",
     "restore",
+    "undo",
     "token",
     "history-reset",
   ]),
@@ -460,6 +613,7 @@ export function overleafTransitionViolation(
       kept.retainedAtSyncCount !== copy.retainedAtSyncCount ||
       kept.kept !== copy.kept ||
       kept.markers !== copy.markers ||
+      kept.markerLinks?.join("\0") !== copy.markerLinks?.join("\0") ||
       kept.stamp !== copy.stamp ||
       kept.versions.join("\0") !== copy.versions.join("\0") ||
       // A changed, ambiguous, interrupted or kept copy never becomes releasable again.
@@ -483,7 +637,12 @@ export function overleafRetainedCopyReleasable(
   );
 }
 
-/** Private refs that must exist for the document's recovery evidence to be usable. */
+/**
+ * Private refs that must exist for the document's recovery evidence to be usable,
+ * and for an Undo to stay possible: every recorded attempt that is unresolved or
+ * accepted keeps its parent and candidate commits, until it is pruned. A pending
+ * undo's attempt cannot be pruned (the document requires it).
+ */
 export function overleafRequiredPins(
   document: OverleafConnectionDocument,
 ): ReadonlyArray<{ readonly name: string; readonly oid: string }> {
@@ -504,7 +663,7 @@ export function overleafRequiredPins(
       oid: document.activeApply.intentTree,
     });
   for (const attempt of document.attempts) {
-    if (!isOverleafAttemptUnresolved(attempt.outcome)) continue;
+    if (!isOverleafAttemptUnresolved(attempt.outcome) && attempt.outcome !== "accepted") continue;
     pins.push(
       { name: `attempt/${attempt.attemptNumber}/candidate`, oid: attempt.candidateCommit },
       { name: `attempt/${attempt.attemptNumber}/parent`, oid: attempt.parentCommit },
