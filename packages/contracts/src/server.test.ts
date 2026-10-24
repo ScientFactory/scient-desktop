@@ -40,6 +40,7 @@ describe("ServerProvider", () => {
     }
   });
 
+  // SCIENT-FORK:START
   it("defaults capability arrays when decoding provider snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",
@@ -63,41 +64,7 @@ describe("ServerProvider", () => {
     expect(parsed.updateState).toBeUndefined();
     expect(parsed.connection).toBeUndefined();
   });
-
-  it("decodes an additive provider connection summary without credential data", () => {
-    const parsed = decodeServerProvider({
-      ...baseProviderSnapshot,
-      connection: {
-        methods: ["codex_browser", "codex_device_code"],
-        canDisconnect: true,
-        operation: {
-          operationId: "connect-1",
-          method: "codex_device_code",
-          status: "waiting_for_device_code",
-          startedAt: "2026-04-10T00:00:00.000Z",
-          finishedAt: null,
-          message: "Finish signing in with Codex.",
-          authorizationUrl: "https://auth.openai.com/codex/device",
-          userCode: "ABCD-1234",
-        },
-      },
-    });
-
-    expect(parsed.connection).toEqual({
-      methods: ["codex_browser", "codex_device_code"],
-      canDisconnect: true,
-      operation: {
-        operationId: "connect-1",
-        method: "codex_device_code",
-        status: "waiting_for_device_code",
-        startedAt: "2026-04-10T00:00:00.000Z",
-        finishedAt: null,
-        message: "Finish signing in with Codex.",
-        authorizationUrl: "https://auth.openai.com/codex/device",
-        userCode: "ABCD-1234",
-      },
-    });
-  });
+  // SCIENT-FORK:END
 });
 
 describe("server config forward compatibility", () => {

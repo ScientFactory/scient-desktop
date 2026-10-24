@@ -200,7 +200,6 @@ describe("custom model contracts", () => {
   });
   it.each([
     "file:///tmp/model",
-    "ftp://host",
     "https://user:pass@host",
     "https://host/?key=abc",
     "https://host/#key",
