@@ -154,7 +154,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(36);
+      expect(scientTools).toHaveLength(43);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "preview_click",
         "preview_dialog",
@@ -178,6 +178,13 @@ it.live(
         "scient_compute_inventory",
         "scient_document_export",
         "scient_latex_build",
+        "scient_overleaf_connect",
+        "scient_overleaf_kept_copies",
+        "scient_overleaf_manage",
+        "scient_overleaf_preview",
+        "scient_overleaf_status",
+        "scient_overleaf_sync",
+        "scient_overleaf_token",
         "scient_pdf_build",
         "scient_skill_load",
         "scient_skill_read_resource",
@@ -195,7 +202,7 @@ it.live(
       ]);
       yield* Effect.logInfo({
         fixture: "eager-input-schemas",
-        actual36Bytes: Buffer.byteLength(encode(schemas)),
+        actual43Bytes: Buffer.byteLength(encode(schemas)),
         synthetic31Bytes: size(31),
         synthetic100Bytes: size(100),
         synthetic500Bytes: size(500),

@@ -46,6 +46,8 @@ import * as ComputeMcpGateway from "../compute/ComputeMcpGateway.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as LatexBuildService from "../../../scient/latex/LatexBuildService.ts";
+import * as OverleafEditorSave from "../../../scient/overleaf/OverleafEditorSave.ts";
+import * as OverleafSync from "../../../scient/overleaf/OverleafSync.ts";
 import * as LegacyV1ThreadImporter from "../../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver.ts";
@@ -99,6 +101,8 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(DocumentHostBroker.DocumentHostBroker)({}),
   Layer.mock(GeneratedDocumentStore.GeneratedDocumentStore)({}),
   Layer.mock(LatexBuildService.LatexBuildService)({}),
+  Layer.mock(OverleafSync.OverleafSync)({}),
+  Layer.mock(OverleafEditorSave.OverleafEditorSave)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
   ProjectCloneTracker.layer.pipe(Layer.provide(layerRepositories)),

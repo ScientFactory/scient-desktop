@@ -33,6 +33,17 @@ export const SCIENT_DOCUMENT_BUILD_AWARENESS = buildScientDocumentAwareness(
   CANONICAL_SCIENT_TOOL_PROJECTION,
 );
 
+/**
+ * Included with document authority: the Overleaf tools need no grant of their own
+ * (pr-c-design.md section 1). The skill carries the details.
+ */
+const buildScientOverleafAwareness = (tools: ScientToolProjection): string => `## Scient Overleaf
+A project folder can be linked to one Overleaf project and synced both ways on request. For Overleaf work, use the Overleaf tools, starting with \`${tools.name("scient_overleaf_status")}\`, and follow the \`overleaf-sync\` skill. They act without asking anyone; only a conflict stops a sync.${tools.deferred ? " If they are deferred, load their exact names through `ToolSearch` first." : ""}`;
+
+export const SCIENT_OVERLEAF_AWARENESS = buildScientOverleafAwareness(
+  CANONICAL_SCIENT_TOOL_PROJECTION,
+);
+
 /** Included when this provider can receive turn-scoped Scient skills. */
 const buildScientSkillsAwareness = (tools: ScientToolProjection): string => `## Scient skills
 On substantive tasks, read the current-turn marker first; if absent, list before inferring availability. These tools cover Scient skills only; provider-native skills are separate. A complete empty scope needs no \`${tools.name("scient_skills_list")}\` call. For a complete nonempty scope, reuse visible full-catalog summaries only when \`scope.includesAllSkills\` is true, their \`scope.digest\` matches, and they suffice; otherwise search or browse. The digest is freshness metadata, not authority. Pending or incomplete scope does not prove emptiness; list to discover, but treat query and paged results as partial. After context loss or uncertainty, rediscover. Load applicable instructions with \`${tools.name("scient_skill_load")}\` before following them. Load explicitly selected Scient skills directly, without searching.${tools.deferred ? " If these tools are deferred, find their exact names through `ToolSearch` first." : ""} Skip acknowledgements and routine follow-ups. Skills provide guidance and grant no tools or authority.`;
@@ -56,7 +67,9 @@ export function buildScientAwareness(
     ...(capabilities?.has("preview") ? [buildScientPreviewAwareness(tools)] : []),
     ...(capabilities?.has("compute:inventory") ? [buildScientComputeAwareness(tools)] : []),
     ...(capabilities?.has("device") ? [SCIENT_DEVICE_AWARENESS] : []),
-    ...(capabilities?.has("documents:build") ? [buildScientDocumentAwareness(tools)] : []),
+    ...(capabilities?.has("documents:build")
+      ? [buildScientDocumentAwareness(tools), buildScientOverleafAwareness(tools)]
+      : []),
     ...(capabilities?.has("skills:read") ? [buildScientSkillsAwareness(tools)] : []),
   ].join("\n\n");
 }
