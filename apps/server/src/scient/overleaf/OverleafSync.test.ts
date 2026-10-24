@@ -1898,4 +1898,56 @@ describe.skipIf(!canApply)("OverleafSync", () => {
         }),
       ),
   );
+
+  it.live(
+    "an undo that puts nothing back still records the kept file, so a later sync keeps it here",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A" } } });
+          const caller = w.at(w.main);
+          const connected = yield* w.service.connect({
+            caller,
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          const paper = NodePath.join(w.main, "paper");
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+          yield* write(paper, { "main.tex": "B" });
+          const sent = yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
+          if (sent._tag !== "synced" || sent.publication._tag !== "accepted")
+            return yield* Effect.die(sent);
+          yield* Effect.promise(() => NodeFSP.rm(NodePath.join(paper, "main.tex")));
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s3" });
+          yield* write(paper, { "main.tex": "B" });
+          const undone = yield* w.service.undo({
+            caller,
+            connectionId: id,
+            requestId: "u1",
+            attemptNumber: sent.publication.attemptNumber,
+            files: { keepOnlyHere: ["main.tex"] },
+          });
+          // Nothing to put back, and the sync after it still ran with the decision.
+          expect(undone).toMatchObject({
+            _tag: "undone",
+            skipped: [{ path: "main.tex", reason: "kept-only-here" }],
+            adopted: null,
+            sync: { _tag: "synced" },
+          });
+          expect(yield* read(paper, "main.tex")).toBe("B");
+          expect(yield* w.store.readConnection(id)).toMatchObject({
+            document: { localOnlyPaths: ["main.tex"] },
+          });
+          // A later ordinary sync, with no decision, keeps it off Overleaf.
+          expect(
+            yield* w.service.sync({ caller, connectionId: id, requestId: "s4" }),
+          ).toMatchObject({ _tag: "synced", review: { localOnly: ["main.tex"] } });
+          expect(yield* w.overleafNow(PROJECT)).toEqual({});
+        }),
+      ),
+  );
 });
