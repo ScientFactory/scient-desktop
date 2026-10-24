@@ -65,7 +65,9 @@ const mapErrors = <A, E extends TaggedFailure, R>(effect: Effect.Effect<A, E, R>
     ),
   );
 
-const refusalView = (refusal: { readonly reason: string } & object): ScientOverleafRefusal => ({
+export const refusalView = (
+  refusal: { readonly reason: string } & object,
+): ScientOverleafRefusal => ({
   reason: refusal.reason,
   ...("path" in refusal && typeof refusal.path === "string" ? { path: refusal.path } : {}),
 });
@@ -76,7 +78,7 @@ const publicationView = (publication: OverleafPublication): ScientOverleafPublic
   ...("attemptNumber" in publication ? { attemptNumber: publication.attemptNumber } : {}),
 });
 
-const settledView = (settled: OverleafAdopted | null) =>
+export const settledView = (settled: OverleafAdopted | null) =>
   settled === null
     ? null
     : {
@@ -85,7 +87,7 @@ const settledView = (settled: OverleafAdopted | null) =>
         markerPaths: settled.markerPaths,
       };
 
-const syncView = (outcome: OverleafSyncOutcome): ScientOverleafSyncResult => {
+export const syncView = (outcome: OverleafSyncOutcome): ScientOverleafSyncResult => {
   switch (outcome._tag) {
     case "synced":
       return {

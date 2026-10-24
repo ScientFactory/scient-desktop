@@ -1,8 +1,9 @@
 # Overleaf manuscript engine
 
 The server mounts it behind authenticated routes (`/api/scient/overleaf/v1/*`)
-through `OverleafSync`; no screen or agent tool calls them yet, and nothing
-synchronizes automatically. Its plan, contract, owner decisions
+and agent tools ([Overleaf agent tools](scient-overleaf-agent-tools.md)), both
+through `OverleafSync`; no screen calls them yet, and nothing synchronizes
+automatically. Its plan, contract, owner decisions
 and status live on the working-documents PR
 [#535](https://github.com/ScientFactory/scient-desktop/pull/535), which is
 closed rather than merged; this file records what is implemented.
@@ -434,83 +435,10 @@ A crash after the send leaves the confirm receipt `running` and the attempt
 `unknown`. A repeated request returns that receipt, and recovery settles the
 attempt.
 
-## Saving open editors
-
-Text a person typed is on disk only once the window holding it has saved it.
-`scient/editorFlush/EditorFlush.ts` lets a server operation ask every window
-of this environment to save its editors for one folder, and wait:
-`flushFolder({ checkoutRoot, folder, timeout, overallTimeout })`. Nothing
-calls it yet; the Overleaf agent tools will, before prepare and again before
-confirm.
-
-- Each window subscribes once (`editors.flushConnect`), asks where its
-  editors' files are (`editors.flushResolve`), answers (`editors.flushRespond`)
-  with the files it saved and every file it could not save, named relative to
-  the checkout, with the reason: `unconverted-input` (visual input not yet
-  source), `composing` (an input method is composing), `save-failed`, or
-  `conflict` (the file changed outside an editor holding unsaved text), and
-  says goodbye when it closes (`editors.flushLeave`, sent on `pagehide`, which
-  a closing desktop window also fires). All four need the filesystem write
-  scope.
-- A window is known by the authenticated session of its connection and the
-  id it chose. Another session can neither replace it nor answer, resolve or
-  say goodbye for it. A window that reconnects replaces its own earlier
-  connection, and every call names its connection: an answer or resolve
-  counts only from the connection the request last reached, and a goodbye
-  only from the window's latest connection, so a late call from a replaced
-  connection can neither satisfy a request nor remove the window. The window
-  itself drops a flush that finishes after its connection was replaced.
-- A page kept in the back-forward cache keeps its drafts, so its `pagehide`
-  sends no goodbye; restored (`pageshow`), it registers again at once. A
-  window says goodbye at most once per connection, so after registering again
-  a later close says goodbye again.
-- Membership is not the set of open streams. A window that says goodbye is
-  forgotten at once, and a request still awaiting it stops waiting. A window
-  whose connection drops without a goodbye stays known for five minutes: every
-  flush asks it, sends the request again when it is back, and otherwise counts
-  it `Unanswered` (`disconnected`), so the sync stops and names it. After five
-  minutes it is retired. A window that registers while a request is open is
-  asked too.
-- The boundary: a window lost for longer than five minutes, or one that
-  connects only after a new server's ten-second wait for its first window
-  (that wait cannot prove no window exists), is not asked. Its unsaved drafts
-  stay protected by the outside-change and revision conflict (contract
-  section 10): a later save from it cannot silently overwrite what the sync
-  wrote. The remaining risk is only that the sync ran without that window's
-  latest typing.
-- A window's answer time (`timeout`) starts when the request reaches it, so
-  one that reconnects late still gets the whole time. The request as a whole
-  ends at `overallTimeout`, however many windows join meanwhile.
-- The result is `NoWindowOpen` (no window known: nothing is unsaved),
-  `FolderUnavailable` (the folder could not be examined), or `Answered` with
-  one outcome per window and `allSaved`. An unanswered window is never a
-  success.
-- Files are placed by physical identity (`folderIdentity.ts`): the folder is
-  known by device and inode, and a file is inside when a folder physically
-  holding it is that folder, so a symlinked spelling or another letter case
-  finds it. A file not yet on disk is placed by its nearest existing folder. A
-  file the server cannot place (`unknown`) fails when its editor holds unsaved
-  text.
-- The window side (`apps/web/src/scient/editorFlush/`) uses the existing save
-  pipelines only. LaTeX Visual input of editors whose own file is inside is
-  committed in the background, as the editor's idle save does: focus,
-  selection and open fields stay as they are, and input that cannot become
-  source this way (an open title field, a raw block) is reported
-  `unconverted-input`. An editor of a file outside the folder whose document's
-  root is inside is only inspected. Then open documents are flushed through
-  the document registry, and ordinary file editors through
-  `WorkspaceFileSessionRegistry.flushWhere`. Source editors and the Markdown
-  Visual editor register their composition state (`editorComposition.ts`).
-- Right before answering, every editor in the folder, every one the server
-  could not place, and every one not yet placed (opened while the server was
-  being asked) is checked again at once. If any has unsaved text the whole
-  save runs once more; a file still unsaved then fails, as edited again or as
-  not placed.
-
 ## Service and routes
 
-`OverleafSync` (`OverleafSync.ts`) is what the routes, and later the agent
-tools, call. It owns one coordinator and `OverleafConnections`, which share the
+`OverleafSync` (`OverleafSync.ts`) is what the routes and the
+[agent tools](scient-overleaf-agent-tools.md) call. It owns one coordinator and `OverleafConnections`, which share the
 coordinator's per-connection reservations.
 
 - **Listing.** A connection is listed only for the host project that owns its
@@ -596,19 +524,87 @@ coordinator's per-connection reservations.
   after the sync, never the caller or its subagents, and `null` when activity
   could not be read.
 
+## Saving open editors
+
+Text a person typed is on disk only once the window holding it has saved it.
+`scient/editorFlush/EditorFlush.ts` lets a server operation ask every window
+of this environment to save its editors for one folder, and wait:
+`flushFolder({ checkoutRoot, folder, timeout, overallTimeout })`. The
+Overleaf agent tools call it through `OverleafEditorSave.layerFromEditorFlush`
+before any call that may write the folder.
+
+- Each window subscribes once (`editors.flushConnect`), asks where its
+  editors' files are (`editors.flushResolve`), answers (`editors.flushRespond`)
+  with the files it saved and every file it could not save, named relative to
+  the checkout, with the reason: `unconverted-input` (visual input not yet
+  source), `composing` (an input method is composing), `save-failed`, or
+  `conflict` (the file changed outside an editor holding unsaved text), and
+  says goodbye when it closes (`editors.flushLeave`, sent on `pagehide`, which
+  a closing desktop window also fires). All four need the filesystem write
+  scope.
+- A window is known by the authenticated session of its connection and the
+  id it chose. Another session can neither replace it nor answer, resolve or
+  say goodbye for it. A window that reconnects replaces its own earlier
+  connection, and every call names its connection: an answer or resolve
+  counts only from the connection the request last reached, and a goodbye
+  only from the window's latest connection, so a late call from a replaced
+  connection can neither satisfy a request nor remove the window. The window
+  itself drops a flush that finishes after its connection was replaced.
+- A page kept in the back-forward cache keeps its drafts, so its `pagehide`
+  sends no goodbye; restored (`pageshow`), it registers again at once. A
+  window says goodbye at most once per connection, so after registering again
+  a later close says goodbye again.
+- Membership is not the set of open streams. A window that says goodbye is
+  forgotten at once, and a request still awaiting it stops waiting. A window
+  whose connection drops without a goodbye stays known for five minutes: every
+  flush asks it, sends the request again when it is back, and otherwise counts
+  it `Unanswered` (`disconnected`), so the sync stops and names it. After five
+  minutes it is retired. A window that registers while a request is open is
+  asked too.
+- The boundary: a window lost for longer than five minutes, or one that
+  connects only after a new server's ten-second wait for its first window
+  (that wait cannot prove no window exists), is not asked. Its unsaved drafts
+  stay protected by the outside-change and revision conflict (contract
+  section 10): a later save from it cannot silently overwrite what the sync
+  wrote. The remaining risk is only that the sync ran without that window's
+  latest typing.
+- A window's answer time (`timeout`) starts when the request reaches it, so
+  one that reconnects late still gets the whole time. The request as a whole
+  ends at `overallTimeout`, however many windows join meanwhile.
+- The result is `NoWindowOpen` (no window known: nothing is unsaved),
+  `FolderUnavailable` (the folder could not be examined), or `Answered` with
+  one outcome per window and `allSaved`. An unanswered window is never a
+  success.
+- Files are placed by physical identity (`folderIdentity.ts`): the folder is
+  known by device and inode, and a file is inside when a folder physically
+  holding it is that folder, so a symlinked spelling or another letter case
+  finds it. A file not yet on disk is placed by its nearest existing folder. A
+  file the server cannot place (`unknown`) fails when its editor holds unsaved
+  text.
+- The window side (`apps/web/src/scient/editorFlush/`) uses the existing save
+  pipelines only. LaTeX Visual input of editors whose own file is inside is
+  committed in the background, as the editor's idle save does: focus,
+  selection and open fields stay as they are, and input that cannot become
+  source this way (an open title field, a raw block) is reported
+  `unconverted-input`. An editor of a file outside the folder whose document's
+  root is inside is only inspected. Then open documents are flushed through
+  the document registry, and ordinary file editors through
+  `WorkspaceFileSessionRegistry.flushWhere`. Source editors and the Markdown
+  Visual editor register their composition state (`editorComposition.ts`).
+- Right before answering, every editor in the folder, every one the server
+  could not place, and every one not yet placed (opened while the server was
+  being asked) is checked again at once. If any has unsaved text the whole
+  save runs once more; a file still unsaved then fails, as edited again or as
+  not placed.
+
 ## Remaining integration gates
 
 The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
-defines the remaining work and tracks each step's status.
-Before exposing operations, implement connection ownership/binding checks and
-bounded repository retention, call the editor flush before prepare and confirm,
-and derive status (a
-`running` receipt whose operation is no longer live was interrupted). The coordinator must implement cancellation between
-
-defines the remaining work and tracks each step's status. The editor-save
-request, the agent tools and the screens come next. Derive interrupted
-operations in status (a `running` receipt whose operation is no longer live was
-interrupted). The coordinator must implement cancellation between
+defines the remaining work and tracks each step's status. The agent tools save
+open editors through `OverleafEditorSave` (connected to the editor-save request)
+before any call that may write the folder; the screens come next. Derive
+interrupted operations in status (a `running` receipt whose operation is no
+longer live was interrupted). The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
 release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
 in the development app. The exercised Cloud protocol behavior is recorded on #535;
