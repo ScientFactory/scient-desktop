@@ -5,7 +5,10 @@
  * before the copy goes, between the copy and its view, or after both before
  * the folder is synced (and, for a current record, the mark dropped); a fresh
  * file layer then finds the marked record on its next settled read and
- * finishes the discard, so no hidden copy keeps the bytes or the room.
+ * finishes the discard, so no hidden copy keeps the bytes or the room. A kept
+ * copy that is a folder goes with everything in it, also when killed between
+ * its files; one that cannot be removed stays listed without failing anything
+ * else, and goes when discarded again.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
@@ -165,6 +168,133 @@ describe.skipIf(!canPublish)("a discard after real process death", () => {
           version.versionId,
         );
         expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("now\n");
+      }),
+  );
+
+  /**
+   * The version of `main.tex` a record of `kind` keeps, made a folder holding
+   * two files: a folder that stood where the file was is kept as it stood.
+   */
+  const folderVersion = async (h: Harness, helper: string, kind: "current" | "legacy") => {
+    const kept = kind === "current" ? await savedVersion(h) : await legacyVersion(h, helper);
+    const directory = NodePath.dirname(kept.retainedPath),
+      leaf = kept.versionId.split(":")[1]!,
+      copy = NodePath.join(directory, leaf);
+    await NodeFSP.rm(copy);
+    await NodeFSP.rm(kept.retainedPath, { force: true });
+    await NodeFSP.mkdir(NodePath.join(copy, "inner"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(copy, "a.tex"), "kept a\n");
+    await NodeFSP.writeFile(NodePath.join(copy, "inner", "b.tex"), "kept b\n");
+    return { versionId: kept.versionId, directory, copy };
+  };
+  /** A fresh file layer, as after a restart, and the work that must go on beside a kept folder. */
+  const goesOn = async (h: Harness, helper: string) => {
+    const fresh = await h.run(
+      makeApplierFiles({ root: h.root, helper, retainedHooks: {} }).pipe(
+        Effect.provide(NodeServices.layer),
+      ),
+    );
+    await h.run(fresh.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void));
+    await h.run(fresh.getMutationEpoch({ cwd: h.cwd }));
+    const listed = await h.run(fresh.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }));
+    await h.run(
+      fresh.writeFile({
+        cwd: h.cwd,
+        relativePath: `beside-${listed.versions.length}.tex`,
+        contents: "new\n",
+        createOnly: true,
+        mutationId: `beside-${listed.versions.length}`,
+      }),
+    );
+    expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("now\n");
+    return { fresh, listed };
+  };
+
+  it.live.each(["current", "legacy"] as const)(
+    "discards a kept folder of a %s record, and everything after goes on",
+    (kind) =>
+      fixture(async (h) => {
+        const helper = (await filePublicationTestHelper())!;
+        const kept = await folderVersion(h, helper, kind);
+        await h.run(
+          h.files.discardFileVersion({
+            cwd: h.cwd,
+            relativePath: "main.tex",
+            versionId: kept.versionId,
+          }),
+        );
+        expect(await exists(kept.copy)).toBe(false);
+        const { listed } = await goesOn(h, helper);
+        expect(listed.versions.map((version) => version.versionId)).not.toContain(kept.versionId);
+      }),
+  );
+
+  it.live.each(["current", "legacy"] as const)(
+    "finishes the discard of a kept folder of a %s record killed between its files",
+    (kind) =>
+      fixture(async (h) => {
+        const helper = (await filePublicationTestHelper())!;
+        const kept = await folderVersion(h, helper, kind);
+        const first = NodePath.join(kept.copy, "a.tex");
+        const job: DiscardCrashJob = {
+          root: h.root,
+          cwd: h.cwd,
+          helper,
+          relativePath: "main.tex",
+          versionId: kept.versionId,
+          kill: { when: "after", path: first },
+        };
+        const jobPath = NodePath.join(h.root, "discard-crash.json");
+        await NodeFSP.writeFile(jobPath, JSON.stringify(job));
+        const run = NodeChildProcess.spawnSync(process.execPath, [child, jobPath], {
+          encoding: "utf8",
+          timeout: 60_000,
+        });
+        expect(run.signal, run.stderr).toBe("SIGKILL");
+        expect(await exists(first)).toBe(false);
+        expect(await exists(NodePath.join(kept.copy, "inner", "b.tex"))).toBe(true);
+        const { listed } = await goesOn(h, helper);
+        expect(await exists(kept.copy)).toBe(false);
+        expect(listed.versions.map((version) => version.versionId)).not.toContain(kept.versionId);
+      }),
+  );
+
+  it.live.each(["current", "legacy"] as const)(
+    "a %s discard that cannot finish stays listed, fails nothing else, and finishes when asked again",
+    (kind) =>
+      fixture(async (h) => {
+        const helper = (await filePublicationTestHelper())!;
+        const kept = await folderVersion(h, helper, kind);
+        // Nothing can be removed from `inner` while it is closed to writing.
+        const inner = NodePath.join(kept.copy, "inner");
+        await NodeFSP.chmod(inner, 0o500);
+        try {
+          const refused = await h.run(
+            Effect.result(
+              h.files.discardFileVersion({
+                cwd: h.cwd,
+                relativePath: "main.tex",
+                versionId: kept.versionId,
+              }),
+            ),
+          );
+          expect(refused._tag).toBe("Failure");
+          const { listed } = await goesOn(h, helper);
+          expect(listed.versions.map((version) => version.versionId)).toContain(kept.versionId);
+          expect(await NodeFSP.readFile(NodePath.join(inner, "b.tex"), "utf8")).toBe("kept b\n");
+        } finally {
+          await NodeFSP.chmod(inner, 0o700);
+        }
+        await h.run(
+          h.files.discardFileVersion({
+            cwd: h.cwd,
+            relativePath: "main.tex",
+            versionId: kept.versionId,
+          }),
+        );
+        expect(await exists(kept.copy)).toBe(false);
+        const { listed } = await goesOn(h, helper);
+        expect(listed.versions.map((version) => version.versionId)).not.toContain(kept.versionId);
       }),
   );
 });

@@ -153,7 +153,13 @@ A legacy record (journal version 1) is never finished, so every lease that
 finds it holds it; its discard writes a durable tombstone (`discard-<copy>.json`)
 before the same removals, and settlement finishes any whose copy or view is
 still there (`RetainedDiscard.crash.test.ts` kills a child before the copy goes,
-between the two, and after both, for both kinds of record).
+between the two, and after both, for both kinds of record). A kept copy may be
+a folder (one that stood where a file was): it is removed with everything in
+it, never following a link, and a removal a crash interrupted part way is
+finished the same way. A removal that cannot finish (a folder inside closed
+to writing, say) fails the discard that asked for it, keeps its mark and stays
+listed, so it can be discarded again; settlement tries it again but never
+fails the read, epoch, listing or write that found it.
 
 Finding the records still reads every record its store keeps, on each
 discovery (several per write). A finished record already read is taken from
