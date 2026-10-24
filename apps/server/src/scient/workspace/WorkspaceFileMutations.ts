@@ -57,6 +57,7 @@ import {
   mutateRetainedFile,
   prepareRetainedDirectory,
   publicationLeaseBindings,
+  decodeRetainedRecord,
   readRetainedRecord,
   retainedFileNames,
   retainedMutationReceipt,
@@ -135,6 +136,18 @@ export interface WorkspaceRetainedFileMethods {
     readonly cwd: string;
     readonly retentionDirectory: string;
   }) => Effect.Effect<void, MutationError>;
+  /**
+   * At most how many folders one native lease binds for a retained write of any
+   * of `relativePaths`, its record kept in `retentionDirectory`, as things stand
+   * now; nothing is written. Compared with `NATIVE_LEASE_FOLDER_LIMIT` before a
+   * group of writes starts, so a write that could not be leased is refused
+   * before any other is made. Zero on a host without native publication.
+   */
+  readonly retainedWriteFolders: (input: {
+    readonly cwd: string;
+    readonly retentionDirectory: string;
+    readonly relativePaths: ReadonlyArray<string>;
+  }) => Effect.Effect<number, MutationError>;
 }
 export interface WorkspaceFileMutationMethods extends WorkspaceRetainedFileMethods {
   readonly inspectWriteTarget: (
@@ -494,6 +507,49 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       throw e;
     }
   };
+  /**
+   * A kept record that is finished: a version 2 journal at `done`. Nothing makes
+   * it unfinished again, and its target, mutation id, outcome and published
+   * revision never change. Anything else may still change: settlement finishes
+   * an unfinished one, an index without its journal yet is a write in flight,
+   * and an unreadable journal is unknown.
+   */
+  const finished = (entry: Stored) => entry.record?.version === 2 && entry.record.phase === "done";
+  /**
+   * Finished records already read, by their place in a store, with how their
+   * folders and journal stood just before they were read. A finished journal
+   * (version 2 at `done`) is final but for bookkeeping (discards, the receipt's
+   * epoch), each replacing `record.json` by a rename, which gives it another
+   * inode and change time. Every discovery reads every record its store keeps,
+   * so without this each write read and decoded every journal ever kept beside
+   * it, a cost that grew with each one.
+   */
+  const finishedRecords = new Map<string, { readonly stand: string; readonly stored: Stored }>();
+  /**
+   * How a record's folders and journal stand: each folder still a private
+   * directory (as `assertPrivateRetention` requires), with its inode, mode and
+   * times, and the journal's inode, size and times. Null when anything else.
+   */
+  const recordStand = async (indexed: string, directory: string) => {
+    const parts: string[] = [];
+    for (const folder of new Set([indexed, directory])) {
+      const stat = await NodeFSP.lstat(folder, { bigint: true }).catch(() => null);
+      if (
+        stat === null ||
+        !stat.isDirectory() ||
+        (process.getuid !== undefined && stat.uid !== BigInt(process.getuid())) ||
+        (HostProcess.Platform.defaultValue() !== "win32" && (stat.mode & 0o077n) !== 0n)
+      )
+        return null;
+      parts.push(`${stat.dev}:${stat.ino}:${stat.mode}:${stat.mtimeNs}:${stat.ctimeNs}`);
+    }
+    const journal = await NodeFSP.lstat(NodePath.join(directory, "record.json"), {
+      bigint: true,
+    }).catch(() => null);
+    if (journal === null || !journal.isFile()) return null;
+    parts.push(`${journal.ino}:${journal.size}:${journal.mtimeNs}:${journal.ctimeNs}`);
+    return parts.join("/");
+  };
   const recordsIn = async (storage: string): Promise<Stored[]> => {
     let entries;
     try {
@@ -507,6 +563,11 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     for (const entry of entries) {
       if (!entry.isDirectory() || !/^[a-zA-Z0-9_-]{1,100}$/u.test(entry.name)) continue;
       const indexed = NodePath.join(storage, entry.name);
+      const known = finishedRecords.get(indexed);
+      if (known && (await recordStand(indexed, known.stored.directory)) === known.stand) {
+        records.push(known.stored);
+        continue;
+      }
       await assertPrivateRetention(indexed);
       const reference = await readOptional(
         NodePath.join(indexed, "reference.json"),
@@ -514,6 +575,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       );
       const directory = reference?.recordDirectory ?? indexed;
       await assertPrivateRetention(directory);
+      // Taken before the read: a change after it moves this on.
+      const stand = await recordStand(indexed, directory);
       const text = await readOptional(NodePath.join(directory, "record.json"), (value) => value);
       if (text === null) {
         if (reference) {
@@ -538,7 +601,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       let record: Stored["record"] = null,
         header: typeof JournalHeader.Type = {};
       try {
-        record = await readRetainedRecord(directory);
+        record = decodeRetainedRecord(text);
       } catch {
         try {
           header = decodeHeader(text);
@@ -546,7 +609,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           /* Unknown authority is explicit attention, never replay permission. */
         }
       }
-      records.push({
+      const stored: Stored = {
         directory,
         record,
         target: record?.target ?? reference?.target ?? header.target ?? null,
@@ -558,7 +621,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           record?.version === 2
             ? record.mutationId
             : (reference?.mutationId ?? header.mutationId ?? entry.name),
-      });
+      };
+      records.push(stored);
+      if (stand !== null && finished(stored)) finishedRecords.set(indexed, { stand, stored });
+      else finishedRecords.delete(indexed);
     }
     return records;
   };
@@ -601,14 +667,13 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     }
     return bytes; // Admission observation, not a hard filesystem quota against later outside writes.
   };
+  const isForTarget = (entry: Stored, resolved: Resolved) =>
+    entry.target === null ||
+    entry.target === resolved.target ||
+    entry.requestedPath === resolved.requestedPath ||
+    (entry.record?.version === 2 && entry.record.destination === resolved.target);
   const forTarget = (records: ReadonlyArray<Stored>, resolved: Resolved) =>
-    records.filter(
-      (entry) =>
-        entry.target === null ||
-        entry.target === resolved.target ||
-        entry.requestedPath === resolved.requestedPath ||
-        (entry.record?.version === 2 && entry.record.destination === resolved.target),
-    );
+    records.filter((entry) => isForTarget(entry, resolved));
   const nearestParent = async (root: string, target: string) => {
     let parent = NodePath.dirname(target);
     for (;;) {
@@ -650,13 +715,26 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       return false;
     }
   };
+  /**
+   * The lease for work on kept records. It holds a record's folder exclusively
+   * when the work may write into it: every record not finished (settlement may
+   * finish it), and each finished one that `writesFinished` names (a view, a
+   * discard or a review). A finished record the work only reads is not held:
+   * its journal is replaced in one rename, so a read sees it whole, and whoever
+   * writes into it holds it. Holding every one instead made the lease grow
+   * with every record ever kept in a folder or for a path, past the 256 folders
+   * a native lease can bind.
+   */
   const bindingsFor = async (
     base: ReadonlyArray<NativeFileLeaseBinding>,
     records: ReadonlyArray<Stored>,
+    writesFinished: (entry: Stored) => boolean,
   ) => {
     const bindings: NativeFileLeaseBinding[] = [...base];
     const privateDirectories: string[] = [];
-    for (const { directory, record } of records) {
+    for (const entry of records) {
+      const { directory, record } = entry;
+      if (finished(entry) && !writesFinished(entry)) continue;
       // Private records are also mutation parents: journal fsync, compensation, views and tombstones stay owned.
       privateDirectories.push(directory);
       if (record?.version !== 2 || record.phase === "done") continue;
@@ -667,14 +745,17 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     }
     return publicationLeaseBindings(helperFor(), bindings, privateDirectories);
   };
+  /** Finishes every unfinished record; whether there was one (the records then changed). */
   const settle = async (
     records: ReadonlyArray<Stored>,
     lease: NativeFilePublicationLease,
     skipDirectory?: string,
   ) => {
+    let settled = false;
     for (const { directory, record, mutationId } of records) {
       if (!record || record.version !== 2 || record.phase === "done" || directory === skipDirectory)
         continue;
+      settled = true;
       if (
         !record.binding ||
         !(await validBinding(record.binding, directory)) ||
@@ -729,16 +810,18 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           });
       }
     }
+    return settled;
   };
   const withOwnership = async <A>(
     base: ReadonlyArray<NativeFileLeaseBinding>,
     discover: () => Promise<Stored[]>,
     body: (records: Stored[], lease: NativeFilePublicationLease) => Promise<A>,
     signal: AbortSignal,
+    writesFinished: (entry: Stored) => boolean,
   ) => {
     for (;;) {
       const before = await discover(),
-        bindings = await bindingsFor(base, before);
+        bindings = await bindingsFor(base, before, writesFinished);
       const held = new Set(
         bindings
           .filter((binding) => binding.mode === "exclusive")
@@ -749,7 +832,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         bindings,
         async (lease) => {
           const records = await discover(),
-            required = await bindingsFor(base, records);
+            required = await bindingsFor(base, records, writesFinished);
           if (
             required.some(
               (binding) =>
@@ -931,10 +1014,13 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             "Current root authority changed while waiting for ownership.",
             "root-binding",
           );
-        await settle(records, lease);
-        return body(await discover(), lease, binding, parent);
+        // The lease keeps others' records as they are: only settlement changes them.
+        const settled = await settle(records, lease);
+        return body(settled ? await discover() : records, lease, binding, parent);
       },
       signal,
+      // Listing makes a view in each of the path's records; a discard or a review writes into one.
+      () => true,
     );
   };
   const ensureParents = async (
@@ -1950,7 +2036,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                     mutationId,
                   );
               }
-              await settle(records, lease, directory);
+              const settled = await settle(records, lease, directory);
               if (
                 intent.expectedMutationEpoch !== undefined &&
                 (await epochFor(
@@ -2012,7 +2098,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                   await retainedPaths(prior.directory),
                 );
               }
-              const attention = await attentionFor(await discover(), resolved);
+              const attention = await attentionFor(settled ? await discover() : records, resolved);
               if (attention && attention.mutationId !== mutationId)
                 throw new RetainedMutationError(
                   "recovery",
@@ -2236,6 +2322,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               }
             },
             signal,
+            // Besides its own record, a publication writes only a view into each of
+            // its path's records still asking for attention.
+            (entry) => isForTarget(entry, resolved) && requiresAttention(entry),
           );
         } catch (cause) {
           if (
@@ -2731,9 +2820,6 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       catch: (cause) => errorFor(input, input.cwd, cause),
     });
     const resolved = yield* resolveTarget(input);
-    yield* owned(input, resolved.target, (signal) =>
-      qualifyBytePublication(input, resolved, intent, signal, false),
-    );
     if (input.bytes !== null && input.expectedRevision === null) {
       const directory = yield* Effect.tryPromise({
         try: async () =>
@@ -2747,6 +2833,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         catch: (cause) => errorFor(input, resolved.target, cause),
       });
       if (directory) {
+        // Qualified before the folder goes, as the file is again when it is published.
+        yield* owned(input, resolved.target, (signal) =>
+          qualifyBytePublication(input, resolved, intent, signal, false),
+        );
         const pruned = yield* pruneRetainedDirectory(input, resolved);
         if (pruned.outcome !== "done") return pruned;
       }
@@ -2781,6 +2871,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           const bindings = await bindingsFor(
             [{ ...rootBinding, mode: "exclusive" }, privateBinding, indexBinding],
             [entry],
+            () => true,
           );
           await withNativeFilePublicationLease(
             helperFor(),
@@ -2799,6 +2890,66 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         }
       });
     });
+  /**
+   * Counts, for each folder written, the folders the leases of a retained write
+   * there can bind (`publish`, `withRoot`, `ensureParents`): every folder from
+   * the written folder up to `/`, from the step's record, from the identity and
+   * index records in the shared store, and from each record a lease holds,
+   * unfinished or asking for attention (its folder and its target's). Paths are
+   * spelled canonically, as the leases spell them; a folder not made yet counts
+   * as it will be. Leases stop at the volume's edge and bind each folder once,
+   * so this is never less than what they bind.
+   */
+  const retainedWriteFolders: WorkspaceRetainedFileMethods["retainedWriteFolders"] = Effect.fn(
+    "WorkspaceFileSystem.retainedWriteFolders",
+  )(function* (input) {
+    const root = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
+    return yield* Effect.tryPromise({
+      try: async () => {
+        /** `path` with its standing part resolved as the file system resolves it. */
+        const canonical = async (path: string): Promise<string> => {
+          try {
+            return await NodeFSP.realpath(path);
+          } catch (cause) {
+            if (!isNodeError(cause, "ENOENT") && !isNodeError(cause, "ENOTDIR")) throw cause;
+            const parent = NodePath.dirname(path);
+            return parent === path
+              ? path
+              : NodePath.join(await canonical(parent), NodePath.basename(path));
+          }
+        };
+        const chain = (folder: string, into: Set<string>) => {
+          for (let current = folder; ; current = NodePath.dirname(current)) {
+            into.add(current);
+            if (NodePath.dirname(current) === current) return;
+          }
+        };
+        const canonicalRoot = await canonical(root),
+          storage = await canonical(await deps.resolveRetentionStorageDirectory());
+        const shared = new Set<string>();
+        chain(NodePath.join(await canonical(input.retentionDirectory), "record"), shared);
+        chain(NodePath.join(storage, "mutation-identities", "identity"), shared);
+        chain(NodePath.join(storage, "folder", "index"), shared);
+        for (const entry of await recordsUnderRoot(canonicalRoot)) {
+          if (finished(entry) && !requiresAttention(entry)) continue;
+          chain(entry.directory, shared);
+          chain(NodePath.dirname(entry.target ?? canonicalRoot), shared);
+          if (entry.record?.version === 2 && entry.record.destination !== null)
+            chain(NodePath.dirname(entry.record.destination), shared);
+        }
+        let largest = 0;
+        for (const folder of new Set(
+          input.relativePaths.map((path) => NodePath.dirname(NodePath.join(canonicalRoot, path))),
+        )) {
+          const folders = new Set(shared);
+          chain(await canonical(folder), folders);
+          largest = Math.max(largest, folders.size);
+        }
+        return largest;
+      },
+      catch: (cause) => errorFor({ cwd: input.cwd, relativePath: "." }, root, cause),
+    });
+  });
   const withSettledFileRead: WorkspaceFileMutationMethods["withSettledFileRead"] =
     Effect.fnUntraced(function* <A, E, R>(
       input: { cwd: string; relativePath: string },
@@ -3095,16 +3246,20 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             "Current root authority changed while waiting for ownership.",
             "root-binding",
           );
-        await settle(records, lease);
+        const settled = await settle(records, lease);
         if (!(await bindingCurrent(binding)))
           throw new RetainedMutationError(
             "target",
             "Current root authority changed during settlement.",
             "root-binding",
           );
-        return body(root, await recordsUnderRoot(root), binding, parent);
+        // The root lease keeps every record under it as it is: only settlement changes them.
+        return body(root, settled ? await recordsUnderRoot(root) : records, binding, parent);
       },
       signal,
+      // Settlement and the epoch only read finished records; a read's attention makes
+      // views in the records still asking for it.
+      requiresAttention,
     );
   };
   const epochFor = async (root: string, records: ReadonlyArray<Stored>) => {
@@ -3790,6 +3945,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       replaceFileRetained: (input) => unavailable(input),
       removeFileRetained: (input) => unavailable(input),
       registerRetainedFileHistory: (input) => unavailable(input),
+      retainedWriteFolders: () => Effect.succeed(0),
     };
   }
   // Native publication needs every ownership primitive. Without them (Windows has no shared
@@ -3820,6 +3976,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     replaceFileRetained,
     removeFileRetained,
     registerRetainedFileHistory,
+    retainedWriteFolders,
     withSettledFileRead,
     withSettledWorkspaceRead,
     listFileVersions,

@@ -218,6 +218,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, publication", () => {
           remote: { "main.tex": "M", "other.tex": "O" },
           // The applier reports marks at a path the review does not hold.
           applier: (real) => ({
+            ...real,
             apply: (input) =>
               Effect.map(real.apply(input), (result) => ({
                 ...result,

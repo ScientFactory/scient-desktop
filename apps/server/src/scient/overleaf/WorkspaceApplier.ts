@@ -20,6 +20,7 @@ import {
   recheckRetainedFile,
   type RetainedMutationResult,
 } from "../workspace/RetainedFileMutation.ts";
+import { NATIVE_LEASE_FOLDER_LIMIT } from "../workspace/NativeFilePublication.ts";
 import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
 import { manuscriptTreeProblem, manuscriptPathProblem } from "./manuscriptPaths.ts";
 import {
@@ -132,6 +133,15 @@ export class WorkspaceApplier extends Context.Service<
     readonly apply: (
       input: WorkspaceApplyInput,
     ) => Effect.Effect<WorkspaceApplyResult, WorkspaceApplyError>;
+    /**
+     * Whether every write `plan` needs fits one native lease (at most
+     * `NATIVE_LEASE_FOLDER_LIMIT` folders), as the folder stands now. Asked
+     * before an apply is recorded, so one that could not finish is refused with
+     * nothing written rather than stopped part way.
+     */
+    readonly fits: (
+      input: Omit<WorkspaceApplyInput, "id" | "plan"> & { readonly plan: WorkspaceApplyPlan },
+    ) => Effect.Effect<boolean, WorkspaceApplyError>;
   }
 >()("t3/scient/overleaf/WorkspaceApplier") {}
 export interface ApplierHooks {
@@ -868,7 +878,28 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
           .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
       }).pipe(Effect.uninterruptible),
     );
-  return WorkspaceApplier.of({ apply });
+  const fits: WorkspaceApplier["Service"]["fits"] = (input) =>
+    files
+      .retainedWriteFolders({
+        cwd: input.cwd,
+        // Where an apply keeps its step records: `<id>/files` (any id is as deep).
+        retentionDirectory: NodePath.join(input.applicationDirectory, "apply", "files"),
+        // The paths it changes; a step leaves an unchanged one alone.
+        relativePaths: [
+          ...new Set([...input.plan.captured.keys(), ...input.plan.target.keys()]),
+        ].filter((path) => {
+          const target = input.plan.target.get(path);
+          return (
+            (target === undefined ? undefined : bytesRevision(target.bytes)) !==
+            input.plan.captured.get(path)
+          );
+        }),
+      })
+      .pipe(
+        Effect.map((folders) => folders <= NATIVE_LEASE_FOLDER_LIMIT),
+        Effect.mapError((cause) => new WorkspaceApplyError({ cause })),
+      );
+  return WorkspaceApplier.of({ apply, fits });
 });
 export const make = (hooks: ApplierHooks = {}) => makeEffect(hooks);
 /** @public */
