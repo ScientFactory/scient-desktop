@@ -4,7 +4,7 @@ import type { OverleafConnectionDocument } from "./OverleafConnectionState.ts";
 export const overleafConnectionFixture = (
   connectionId = "connection-1",
 ): OverleafConnectionDocument => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   connectionId,
   revision: 1,
   environmentId: "environment-1",
@@ -27,7 +27,7 @@ export const overleafConnectionFixture = (
   managedPaths: [],
   localOnlyPaths: [],
   forcedConflicts: [],
-  markerPaths: [],
+  markers: [],
   stagingPaths: [],
   retention: {
     vaultIdentity: { volume: "0A1B2C3D-0000-4000-8000-000000000001", fileId: "4" },
