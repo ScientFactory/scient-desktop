@@ -59,6 +59,7 @@ interface Entry {
 import {
   latexPagedKey,
   pagedLayoutProgress,
+  type PagedLayoutProgress,
   type PageGeometry,
   type Presentation,
 } from "./latexPagedGeometry";
@@ -557,7 +558,11 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
         },
         props: { decorations: (state) => latexPagedKey.getState(state)?.decorations ?? null },
         view(view) {
-          const progress = { pending: true };
+          const progress: PagedLayoutProgress = {
+            pending: true,
+            visibility: new WeakMap(),
+            laidOutReveals: 0,
+          };
           pagedLayoutProgress.set(view, progress);
           let frame = 0,
             epoch = 0,
@@ -1691,6 +1696,7 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
               layer.replaceChildren(...sheets);
             if (generation === epoch && visibilityAtStart === visibilityRevision)
               visibilityChangedFrom = Infinity;
+            if (generation === epoch) progress.laidOutReveals = visibilityAtStart;
             progress.pending = generation !== epoch || refresh;
             view.dom.dispatchEvent(new CustomEvent("scient-latex-layout", { bubbles: true }));
           }
@@ -1742,11 +1748,14 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
           view.dom.addEventListener("scient-latex-math-preview", invalidate);
           view.dom.addEventListener("scient-latex-content-resized", invalidate);
           const visibilityChanged = (event: Event) => {
-            if ((event as Event & { skipped?: boolean }).skipped !== false) return;
+            const skipped = (event as Event & { skipped?: boolean }).skipped;
             if (!(event.target instanceof HTMLElement)) return;
             // Widgets (pagination gaps, the gap cursor) own no measured block. Each pass
             // redraws them, so their first paint would schedule the next pass forever.
             if (event.target.classList.contains("ProseMirror-widget")) return;
+            if (skipped === true)
+              progress.visibility.set(event.target, { skipped, reveal: visibilityRevision });
+            if (skipped !== false) return;
             try {
               const at = view.state.doc.resolve(view.posAtDOM(event.target, 0));
               visibilityChangedFrom = Math.min(
@@ -1754,6 +1763,7 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                 at.depth ? at.before(1) : at.pos,
               );
               visibilityRevision++;
+              progress.visibility.set(event.target, { skipped, reveal: visibilityRevision });
               // Revealing a skipped block can replace its intrinsic-size estimate.
               // Re-anchor the suffix, retaining cached natural measurements.
               schedule(false);
