@@ -18,6 +18,8 @@ import {
   useScientBrowseHighlight,
   useScientProjectFolderActions,
 } from "~/scient/commandPalette/scientCommandPalette";
+import { useOverleafPaletteItems } from "~/scient/overleaf/overleafPaletteItems";
+import { insertOverleafAddProjectItem } from "~/scient/overleaf/OverleafNewProject";
 // SCIENT-FORK:END
 import {
   canCreateProjectInEnvironment,
@@ -606,6 +608,9 @@ function OpenCommandPaletteDialog(props: {
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
   const projects = useProjects();
+  // SCIENT-FORK:START
+  const overleafPaletteItems = useOverleafPaletteItems({ thread: activeThread ?? null, projects });
+  // SCIENT-FORK:END
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -1242,6 +1247,13 @@ function OpenCommandPaletteDialog(props: {
       });
     }
 
+    // SCIENT-FORK:START — Add project ▸ Overleaf project, right after GitHub
+    insertOverleafAddProjectItem(sourceItems, {
+      environmentId,
+      location: getAddProjectInitialQueryForEnvironment(environmentId),
+      isPrimary: environmentId === primaryEnvironmentId,
+    });
+    // SCIENT-FORK:END
     return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
   };
 
@@ -1645,6 +1657,9 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  // SCIENT-FORK:START — Sync with Overleaf, for each linked folder of this thread's project
+  actionItems.push(...overleafPaletteItems);
+  // SCIENT-FORK:END
   actionItems.push(changeThemeItem);
   actionItems.push(changeAppearanceItem);
 

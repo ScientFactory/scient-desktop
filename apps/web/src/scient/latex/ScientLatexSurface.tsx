@@ -48,6 +48,7 @@ import { type DraftId } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
+import { countOverleafConflictBlocks } from "~/scient/overleaf/overleafModel";
 import type { LatexFilePresentationRequest, OpenFileOptions } from "~/rightPanelStore";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { registerShortcutClaim } from "~/scient/keyboard/ownership";
@@ -709,6 +710,8 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   // source still match it, so an accepted edit keeps the snapshot it returned.
   const [renderedBinding, setRenderedBinding] = useState<LatexSourceBinding | null>(null);
   const workingSource = workingSnapshot?.draftSource ?? props.contents;
+  // Scient's Overleaf conflict marks make any build fail; say what to settle instead.
+  const overleafConflicts = countOverleafConflictBlocks(workingSource);
   let currentBinding = renderedBinding;
   if (
     currentBinding === null ||
@@ -1931,6 +1934,16 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         <span className="scient-latex-status-label" role="status">
           {status.label}
           {descriptor !== null ? " · Previous PDF" : null}
+        </span>
+      ) : overleafConflicts > 0 ? (
+        <span
+          className="scient-latex-status-label text-warning-foreground"
+          role="status"
+          data-overleaf-conflicts={overleafConflicts}
+        >
+          {overleafConflicts === 1
+            ? "This file has 1 Overleaf conflict to settle"
+            : `This file has ${overleafConflicts} Overleaf conflicts to settle`}
         </span>
       ) : status.state === "failed" ? (
         <ScientTooltip

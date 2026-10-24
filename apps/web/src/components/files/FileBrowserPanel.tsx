@@ -27,7 +27,8 @@ import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
-import { T3_PIERRE_ICONS } from "~/pierre-icons";
+// SCIENT-FORK:START — the tree's icons come from SCIENT_FILE_BROWSER_TREE_ICONS
+// SCIENT-FORK:END
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 // SCIENT-FORK:START
 import {
@@ -38,6 +39,7 @@ import {
   WorkspaceFilesMenu,
 } from "~/scient/files/ScientFileBrowserChrome";
 import {
+  SCIENT_FILE_BROWSER_TREE_ICONS,
   SCIENT_FILE_BROWSER_TREE_UNSAFE_CSS,
   scientReadOnlyRowDecoration,
   useScientLazyWorkspaceTree,
@@ -48,6 +50,9 @@ import {
 import type { OpenFileOptions } from "~/rightPanelStore";
 import type { ScientToolbarSlot } from "~/scient/files/FileBrowserToolbarActions";
 import { useScientFolderActions } from "~/scient/files/useScientFolderActions";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Overleaf: Connect for a folder, and the mark on linked folders
+import { useOverleafTreeMarks } from "~/scient/overleaf/useOverleafFolderConnect";
 // SCIENT-FORK:END
 import { useProjectPathSearch } from "~/state/queries";
 import { pierreTreeStyle } from "~/pierre-tree-theme";
@@ -248,6 +253,9 @@ export default function FileBrowserPanel({
   );
 
   const loadingDirectoriesRef = useRef(treeSnapshot.loadingDirectories);
+  // SCIENT-FORK:START — folders linked to Overleaf, read by the row marks
+  const overleafFoldersRef = useRef<ReadonlySet<string>>(new Set());
+  // SCIENT-FORK:END
   const dragMention = createFileTreeDragMentionController(
     hostFolder ? { mentionPath: (path: string) => joinHostPath(cwd, path) } : {},
   );
@@ -265,7 +273,9 @@ export default function FileBrowserPanel({
     fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: false,
     initialExpansion: "closed",
-    icons: T3_PIERRE_ICONS,
+    // SCIENT-FORK:START — the tree's icons include Overleaf's mark for linked folders
+    icons: SCIENT_FILE_BROWSER_TREE_ICONS,
+    // SCIENT-FORK:END
     onSelectionChange: (selectedPaths) => {
       // Update drag selection even for reveals so subsequent drags cannot use stale paths.
       dragMention.handleSelectionChange(selectedPaths);
@@ -285,7 +295,11 @@ export default function FileBrowserPanel({
     paths: [],
     // SCIENT-FORK:START — preserve upstream first-load feedback and read-only locks
     renderRowDecoration: (context) =>
-      scientReadOnlyRowDecoration(treeEntriesRef, loadingDirectoriesRef)(context),
+      scientReadOnlyRowDecoration(
+        treeEntriesRef,
+        loadingDirectoriesRef,
+        overleafFoldersRef,
+      )(context),
     // SCIENT-FORK:END
     search: false,
     unsafeCSS: SCIENT_FILE_BROWSER_TREE_UNSAFE_CSS,
@@ -296,6 +310,16 @@ export default function FileBrowserPanel({
     loadingDirectoriesRef.current = next;
     model.setComposition(model.getComposition());
   }, [model, treeSnapshot.loadingDirectories]);
+  // SCIENT-FORK:START — Overleaf's mark on linked folders, redrawn when links change
+  const redrawRowMarks = useStableCallback(() => model.setComposition(model.getComposition()));
+  useOverleafTreeMarks({
+    environmentId,
+    cwd,
+    enabled: !hostFolder,
+    foldersRef: overleafFoldersRef,
+    onFoldersChanged: redrawRowMarks,
+  });
+  // SCIENT-FORK:END
   const treeSearch = useFileTreeSearch(model);
   const allLoadedDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
     areAllDirectoriesExpanded(currentModel, loadedDirectoryPaths),
@@ -507,6 +531,7 @@ export default function FileBrowserPanel({
         />
         {/* SCIENT-FORK:START */}
       </ScientFileTreeSurface>
+      {folderActions.dialog}
       {/* SCIENT-FORK:END */}
     </div>
   );
