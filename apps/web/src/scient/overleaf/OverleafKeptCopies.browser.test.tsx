@@ -82,7 +82,7 @@ const copies = (cwd: string) => (
 describe("OverleafKeptCopies", () => {
   it("lists the linked copy's kept copies of the file, with Restore", async () => {
     reset(true);
-    client.restoreOverleafKeptCopy.mockResolvedValue({ _tag: "restored" });
+    client.restoreOverleafKeptCopy.mockResolvedValue({ _tag: "restored", outcome: "complete" });
     await using _screen = await render(copies("/work/project"));
     await page.getByRole("button", { name: "Restore" }).click();
     await expect.element(page.getByText("Restored. The next sync sends it.")).toBeVisible();
@@ -90,6 +90,29 @@ describe("OverleafKeptCopies", () => {
       environmentId,
       expect.objectContaining({ workspaceRoot: "/work/project", kept: "a1/retained/main.tex" }),
     );
+  });
+
+  it("says when a restore wrote nothing, or needs attention, instead of restored", async () => {
+    reset(true);
+    client.restoreOverleafKeptCopy.mockResolvedValueOnce({ _tag: "restored", outcome: "replan" });
+    await using _screen = await render(copies("/work/project"));
+    await page.getByRole("button", { name: "Restore" }).click();
+    await expect
+      .element(
+        page.getByText("The file changed while restoring, so nothing was written. Try again."),
+      )
+      .toBeVisible();
+    await expect
+      .element(page.getByText("Restored. The next sync sends it."))
+      .not.toBeInTheDocument();
+    client.restoreOverleafKeptCopy.mockResolvedValueOnce({
+      _tag: "restored",
+      outcome: "attention",
+    });
+    await page.getByRole("button", { name: "Restore" }).click();
+    await expect
+      .element(page.getByText(/^The restore needs attention: it may have stopped partway/u))
+      .toBeVisible();
   });
 
   it("in another worktree, offers the main copy's file instead of restoring into it", async () => {
