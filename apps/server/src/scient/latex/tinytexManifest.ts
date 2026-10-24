@@ -61,7 +61,7 @@ export type TinyTexPlatformArch =
   | "linux-x64"
   | "linux-arm64";
 
-export const TINYTEX_PLATFORM_ARCHES: ReadonlyArray<TinyTexPlatformArch> = [
+const TINYTEX_PLATFORM_ARCHES: ReadonlyArray<TinyTexPlatformArch> = [
   "win32-x64",
   "win32-arm64",
   "darwin-x64",
