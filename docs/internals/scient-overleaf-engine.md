@@ -591,12 +591,20 @@ coordinator's per-connection reservations.
   with the default selections; a review whose every conflict has a choice is
   confirmed at once with its acknowledgements. A review rebuilt because the
   folder changed is confirmed the same way, up to three times. An out-of-date
-  push starts one new sync. Every outcome except `duplicate` says what the sync
-  did before it: `retried` (the first attempt applied a review and its send was
-  out of date, so that attempt wrote the folder and sent nothing) and `settled`
-  (an interrupted earlier sync it finished first, with how that apply ended). A
-  preview's review carries `settled` too; the coordinator's prepare reports a
-  completely recovered apply as `settled` on its review. Conflict choices answer one Overleaf tree
+  push starts one new sync. **Progress is reported on every outcome and on
+  refusals:** every sync outcome except `duplicate`, and a preview's review or
+  refusal, says what it did before: `retried` (the first attempt applied a
+  review and its send was out of date, so that attempt wrote the folder and
+  sent nothing) and `settled` (an interrupted earlier sync it finished first,
+  with how that apply ended). Once either happened, an actionable refusal
+  (a Git failure on the fetch that follows, authority that changed, a busy
+  connection) comes back as a `refused` result carrying them, not as an error,
+  so nothing hides that the folder was written; before any progress, refusals
+  stay errors. Other failures (state store or file-system defects) stay internal
+  errors. Settlement is its own prepare step: the coordinator's
+  prepare that finds an interrupted apply settles it and returns `recovered`
+  with how it ended, never fetching or building in the same call; sync and
+  preview record it and prepare again. Conflict choices answer one Overleaf tree
   (`reviewedRemote`); when Overleaf has moved, a review that still has conflicts
   is shown again without them, and one that has none is confirmed as usual.
   Per-file decisions (`files.keepOnlyHere`, `files.send`) go to the engine's
@@ -607,7 +615,8 @@ coordinator's per-connection reservations.
   (`folder-changed`) if the link no longer names that folder. The coordinator's confirmations inside a sync use
   server-made 64-character request IDs, which no client request ID can equal.
   **Cancel** asks the running sync to stop at its next stage boundary (before
-  it prepares again, or before it applies); an apply or send already started
+  any prepare, including the one after settling an interrupted sync, or before
+  it applies); an apply or send already started
   finishes, and its outcome stands. A sync has its own receipt, so a repeated request
   returns it instead of syncing again. The result names other agents working
   in the same checkout (a running turn or background work), read before and
