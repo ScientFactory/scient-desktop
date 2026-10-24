@@ -1,11 +1,9 @@
-import {
-  adjacentModelPickerProvider,
-  prioritizeActiveProviderInstance,
-} from "./modelPickerProviderOrder";
+import { adjacentModelPickerProvider } from "./modelPickerProviderOrder";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 
+import { prioritizeActiveProviderInstance } from "./modelPickerProviderOrder";
 const entries = ["codex", "claudeAgent", "antigravity", "opencode"].map((instanceId) => ({
   instanceId: ProviderInstanceId.make(instanceId),
 }));
