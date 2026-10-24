@@ -186,63 +186,78 @@ Third paragraph must return with the same source after showing the paper.
   },
 );
 
-it.for([
+const COMPILED_PAGE_COUNTS = [
   ["15", template15, 2],
   ["26", template26, 4],
   ["28", template28, 3],
-] as const)(
-  "template %s has the compiled PDF's page count and opens without source or undo changes",
-  async ([name, source, pages], context) => {
-    await using _fixture = _createFixture(context);
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+] as const;
+async function opensAtCompiledPageCount(
+  [name, source, pages]: (typeof COMPILED_PAGE_COUNTS)[number],
+  context: TestContext,
+) {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-    const editor = await mount(_fixture, source, name);
-    // Page counts match the PDF only with the document's own fonts. Template 26
-    // sets its Hebrew in Arial, which macOS and Windows ship and Linux runners
-    // do not; there a substitute with other metrics gives a different count.
-    if (name !== "26" || !/Linux/u.test(navigator.userAgent))
-      expect(latexPagedKey.getState(editor.state)?.plan?.pages).toBe(pages);
-    expect(published).toBe(source);
-    expect(undoDepth(editor.state)).toBe(0);
-    expect(_fixture.host.querySelectorAll(".scient-latex-page-sheet")).toHaveLength(
-      latexPagedKey.getState(editor.state)!.plan!.pages,
+  const editor = await mount(_fixture, source, name);
+  // Page counts match the PDF only with the document's own fonts. Template 26
+  // sets its Hebrew in Arial, which macOS and Windows ship and Linux runners
+  // do not; there a substitute with other metrics gives a different count.
+  if (name !== "26" || !/Linux/u.test(navigator.userAgent))
+    expect(latexPagedKey.getState(editor.state)?.plan?.pages).toBe(pages);
+  expect(published).toBe(source);
+  expect(undoDepth(editor.state)).toBe(0);
+  expect(_fixture.host.querySelectorAll(".scient-latex-page-sheet")).toHaveLength(
+    latexPagedKey.getState(editor.state)!.plan!.pages,
+  );
+  const screenshotDirectory = import.meta.env.VITE_SCIENT_PAGING_SCREENSHOTS;
+  if (screenshotDirectory) {
+    await page.viewport(1250, 1700);
+    _fixture.host.style.height = "1650px";
+    const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+    scroll.style.flex = "none";
+    scroll.style.height = `${_fixture.host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height + 20}px`;
+    const spacer = document.createElement("div");
+    spacer.style.height = "700px";
+    scroll.append(spacer);
+    await vi.waitFor(() =>
+      expect(scroll.clientHeight).toBeCloseTo(
+        _fixture.host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height +
+          20,
+        0,
+      ),
     );
-    const screenshotDirectory = import.meta.env.VITE_SCIENT_PAGING_SCREENSHOTS;
-    if (screenshotDirectory) {
-      await page.viewport(1250, 1700);
-      _fixture.host.style.height = "1650px";
-      const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
-      scroll.style.flex = "none";
-      scroll.style.height = `${_fixture.host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height + 20}px`;
-      const spacer = document.createElement("div");
-      spacer.style.height = "700px";
-      scroll.append(spacer);
+    for (let number = 1; number <= pages; number++) {
+      const sheet = _fixture.host.querySelector<HTMLElement>(
+        `.scient-latex-page-sheet[data-page="${number}"]`,
+      )!;
+      scroll.scrollTop +=
+        sheet.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 10;
       await vi.waitFor(() =>
-        expect(scroll.clientHeight).toBeCloseTo(
-          _fixture.host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height +
-            20,
-          0,
-        ),
+        expect(
+          Math.abs(sheet.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 10),
+        ).toBeLessThan(2),
       );
-      for (let number = 1; number <= pages; number++) {
-        const sheet = _fixture.host.querySelector<HTMLElement>(
-          `.scient-latex-page-sheet[data-page="${number}"]`,
-        )!;
-        scroll.scrollTop +=
-          sheet.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 10;
-        await vi.waitFor(() =>
-          expect(
-            Math.abs(sheet.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 10),
-          ).toBeLessThan(2),
-        );
-        await page.screenshot({
-          path: `${screenshotDirectory}/${name}-visual-${number}.png`,
-          element: scroll,
-        });
-      }
-      spacer.remove();
+      await page.screenshot({
+        path: `${screenshotDirectory}/${name}-visual-${number}.png`,
+        element: scroll,
+      });
     }
-  },
+    spacer.remove();
+  }
+}
+// Template 26 is this file's first opening of its fixture: each formula preview renders once,
+// through one worker (later openings reuse the shared preview cache). On a slow runner that
+// cold start alone uses most of the project's 30 s, so this case states its own budget.
+const COLD_START_BUDGET_MS = 90_000;
+it.for(COMPILED_PAGE_COUNTS.filter(([name]) => name !== "26"))(
+  "template %s has the compiled PDF's page count and opens without source or undo changes",
+  (testCase, context) => opensAtCompiledPageCount(testCase, context),
+);
+// oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- the fixture's cold start, stated above.
+it(
+  "template 26 has the compiled PDF's page count and opens without source or undo changes",
+  { timeout: COLD_START_BUDGET_MS },
+  (context) => opensAtCompiledPageCount(COMPILED_PAGE_COUNTS[1], context),
 );
 
 it("template 15 repeats furniture at the next printable origin and preserves every editable row", async (context) => {
