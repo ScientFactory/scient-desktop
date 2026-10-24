@@ -60,6 +60,23 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
     settingsPath: "/settings/documents",
   }),
   builtIn({
+    pluginId: "scient.overleaf",
+    displayName: "Overleaf",
+    description: "Link project folders to Overleaf projects and sync them both ways on request.",
+    components: [
+      tools("documents:build", [
+        "scient_overleaf_status",
+        "scient_overleaf_preview",
+        "scient_overleaf_connect",
+        "scient_overleaf_sync",
+        "scient_overleaf_kept_copies",
+        "scient_overleaf_manage",
+        "scient_overleaf_token",
+      ]),
+      { type: "skill", name: "overleaf-sync" },
+    ],
+  }),
+  builtIn({
     pluginId: "scient.compute",
     displayName: "Compute",
     description: "Read-only inventory of configured and managed scientific computing runtimes.",
