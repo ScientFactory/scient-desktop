@@ -39,6 +39,21 @@ import {
   useOverleafWorkspace,
 } from "./overleafStore";
 
+// Outside the components: the React Compiler does not compile try/finally.
+async function settleOverleafOperation(
+  task: () => Promise<void>,
+  failed: (error: unknown) => void,
+  settled: () => void,
+): Promise<void> {
+  try {
+    await task();
+  } catch (error) {
+    failed(error);
+  } finally {
+    settled();
+  }
+}
+
 /** The token: Create a token on Overleaf, Save, Remove and whether one is saved. */
 function OverleafTokenSettings(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
@@ -49,15 +64,15 @@ function OverleafTokenSettings(props: { readonly environmentId: EnvironmentId })
   const run = async (operation: () => Promise<{ readonly saved: boolean }>) => {
     setBusy(true);
     setError(null);
-    try {
-      const status = await operation();
-      setOverleafTokenSaved(environmentId, status.saved);
-      setDraft("");
-    } catch (failure) {
-      setError(operationErrorText(failure));
-    } finally {
-      setBusy(false);
-    }
+    await settleOverleafOperation(
+      async () => {
+        const status = await operation();
+        setOverleafTokenSaved(environmentId, status.saved);
+        setDraft("");
+      },
+      (failure) => setError(operationErrorText(failure)),
+      () => setBusy(false),
+    );
   };
   return (
     <form
@@ -133,31 +148,35 @@ function OverleafProjectLinks(props: {
   }
   const unlink = async (connectionId: string) => {
     setUnlinking(connectionId);
-    try {
-      const result = await disconnectOverleaf(environmentId, {
-        workspaceRoot,
-        connectionId,
-        requestId: overleafRequestId(),
-      });
-      // Unlinked: what this window remembered of the link (its review, decisions) goes too.
-      if (result._tag === "done") forgetOverleafConnection(environmentId, connectionId);
-      if (result._tag === "refused") {
+    await settleOverleafOperation(
+      async () => {
+        const result = await disconnectOverleaf(environmentId, {
+          workspaceRoot,
+          connectionId,
+          requestId: overleafRequestId(),
+        });
+        // Unlinked: what this window remembered of the link (its review, decisions) goes too.
+        if (result._tag === "done") forgetOverleafConnection(environmentId, connectionId);
+        if (result._tag === "refused") {
+          toastManager.add({
+            type: "error",
+            title: "Couldn't unlink",
+            description: refusalText({ reason: result.reason }),
+          });
+        }
+      },
+      (failure) => {
         toastManager.add({
           type: "error",
           title: "Couldn't unlink",
-          description: refusalText({ reason: result.reason }),
+          description: operationErrorText(failure),
         });
-      }
-    } catch (failure) {
-      toastManager.add({
-        type: "error",
-        title: "Couldn't unlink",
-        description: operationErrorText(failure),
-      });
-    } finally {
-      setUnlinking(null);
-      void reloadOverleafWorkspaces(environmentId, workspaceRoot);
-    }
+      },
+      () => {
+        setUnlinking(null);
+        void reloadOverleafWorkspaces(environmentId, workspaceRoot);
+      },
+    );
   };
   return (
     <div className="grid gap-2" aria-label={props.projectName ?? "Linked folders"}>
