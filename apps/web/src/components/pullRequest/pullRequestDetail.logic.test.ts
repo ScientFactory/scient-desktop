@@ -45,6 +45,7 @@ import {
   checkoutFailureDescription,
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
+  resolvePullRequestDetailChecks,
   resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
   allowsSinglePullRequestMerge,
@@ -52,7 +53,17 @@ import {
   resolveBaseFreshness,
   buildPullRequestTimeline,
   writePullRequestDetailSnapshot,
+  classifyPullRequestChecks,
+  describePullRequestChecks,
+  groupPullRequestChecks,
 } from "./pullRequestDetail.logic";
+import {
+  pullRequestCheckStatusLabel,
+  pullRequestCheckStatusPresentation,
+  pullRequestChecksState,
+  pullRequestChecksStatePresentation,
+  summarizePullRequestChecks,
+} from "./pullRequestPresentation";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 describe("pull request checkout commands", () => {
@@ -200,6 +211,69 @@ describe("pull request primary control", () => {
         autoMergeEnabled: undefined,
       }),
     ).toBe("merge");
+  });
+});
+describe("pull request warning checks", () => {
+  const warning: PullRequestCheck = {
+    name: "lint",
+    status: "neutral",
+    outcome: "warning",
+    description: null,
+    url: null,
+  };
+  const success: PullRequestCheck = {
+    name: "build",
+    status: "success",
+    description: null,
+    url: null,
+  };
+
+  it("keeps terminal warnings distinct from passing and failed checks", () => {
+    const neutral: PullRequestCheck = {
+      name: "neutral",
+      status: "neutral",
+      description: null,
+      url: null,
+    };
+    const skipped: PullRequestCheck = {
+      name: "skipped",
+      status: "skipped",
+      description: null,
+      url: null,
+    };
+    expect(classifyPullRequestChecks([warning, success])).toBe("warning");
+    expect(describePullRequestChecks([warning, success])).toBe("1 warning");
+    expect(groupPullRequestChecks([warning, success, neutral, skipped])).toEqual({
+      attention: [warning],
+      running: [],
+      completed: [success, neutral, skipped],
+    });
+    expect(pullRequestCheckStatusLabel(warning)).toBe("Warning");
+    expect(pullRequestCheckStatusPresentation(warning)).toMatchObject({
+      label: "Warning",
+      toneClassName: "text-amber-600 dark:text-amber-400/90",
+    });
+    expect(pullRequestCheckStatusPresentation(neutral).label).toBe("Neutral");
+    expect(pullRequestChecksState([warning, success])).toBe("warning");
+    expect(pullRequestChecksStatePresentation("warning").label).toBe(
+      "Some checks finished with warnings",
+    );
+    expect(summarizePullRequestChecks([warning, success])).toBe("1 warning");
+  });
+
+  it("treats warning outcomes as terminal before checking their status", () => {
+    for (const status of ["pending", "failure"] as const) {
+      const warning = { ...success, status, outcome: "warning" as const };
+      expect(classifyPullRequestChecks([warning])).toBe("warning");
+      expect(describePullRequestChecks([warning])).toBe("1 warning");
+      expect(groupPullRequestChecks([warning])).toEqual({
+        attention: [warning],
+        running: [],
+        completed: [],
+      });
+      expect(pullRequestChecksState([warning])).toBe("warning");
+      expect(summarizePullRequestChecks([warning])).toBe("1 warning");
+    }
   });
 });
 
@@ -650,6 +724,26 @@ describe("fix findings handoff", () => {
     expect(handoff.prompt).toContain("typecheck");
     expect(handoff.prompt).toContain("6 further findings were omitted");
   });
+  it.each(["neutral", "pending", "failure"] as const)(
+    "does not turn a %s warning outcome into a failing-check handoff",
+    (status) => {
+      const genuine = buildFixFindingsHandoff({
+        ...base,
+        reviewThreads: [],
+        checks: [failingCheck],
+      });
+      expect(genuine.prompt).toContain(failingCheck.name);
+      const withWarning = buildFixFindingsHandoff({
+        ...base,
+        reviewThreads: [],
+        checks: [
+          failingCheck,
+          { ...failingCheck, name: "advisory-warning", status, outcome: "warning" },
+        ],
+      });
+      expect(withWarning).toEqual(genuine);
+    },
+  );
 });
 
 describe("findings that cannot be attached", () => {
@@ -1243,6 +1337,59 @@ describe("cached pull request detail", () => {
       mergeCapabilities: { merge: true, squash: true, rebase: true },
       ...overrides,
     }) as PullRequestDetail;
+
+  it("uses fresh checks for detail counts without replacing other PR fields", () => {
+    const pending = (name: string): PullRequestCheck => ({
+      name,
+      status: "pending",
+      url: null,
+      description: null,
+    });
+    const original = detail({ checks: [pending("build"), pending("test")] });
+    const checks = [pending("build"), { ...pending("test"), status: "success" as const }];
+    expect(resolvePullRequestDetailChecks(original, { state: "closed", checks }, true)).toEqual({
+      ...original,
+      state: "closed",
+      checks,
+    });
+    expect(resolvePullRequestDetailChecks(original, { state: "closed", checks }, false)).toBe(
+      original,
+    );
+    expect(resolvePullRequestDetailChecks(original, null, true)).toBe(original);
+    expect(resolvePullRequestDetailChecks(null, { state: "closed", checks }, true)).toBeNull();
+  });
+
+  it("keeps newer checks when an older cached detail arrives later", () => {
+    const pending: PullRequestCheck = {
+      name: "build",
+      status: "pending",
+      url: null,
+      description: null,
+    };
+    const cached = detail({ observedAt: 1_000, checks: [pending] });
+    const checks = {
+      state: "open" as const,
+      checks: [{ ...pending, status: "success" as const }],
+      observedAt: 2_000,
+    };
+    const resolved = resolvePullRequestDetailChecks(cached, checks, false);
+    expect(resolved?.checks).toEqual(checks.checks);
+    expect(resolved?.observedAt).toBe(1_000);
+    expect(
+      resolvePullRequestDetailChecks(cached, { state: checks.state, checks: checks.checks }, true)
+        ?.checks,
+    ).toEqual(checks.checks);
+    const refreshed = detail({ observedAt: 3_000, checks: [pending] });
+    expect(resolvePullRequestDetailChecks(refreshed, checks, true)).toBe(refreshed);
+  });
+
+  it("keeps merged details settled while applying newer checks", () => {
+    const merged = detail({ state: "merged", observedAt: 1_000 });
+    const checks = [{ name: "build", status: "success" as const, url: null, description: null }];
+    expect(
+      resolvePullRequestDetailChecks(merged, { state: "open", observedAt: 2_000, checks }, true),
+    ).toEqual({ ...merged, checks });
+  });
 
   const makeStorage = () => {
     const held = new Map<string, string>();

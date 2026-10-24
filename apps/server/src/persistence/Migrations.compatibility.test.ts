@@ -4,8 +4,9 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "./Migrations.ts";
+import { runScientMigrations } from "../orchestration-v2/scient-fork/schema.ts";
 
-for (const previousId of [49, 50, 52] as const) {
+for (const previousId of [49, 50, 52, 71] as const) {
   it.layer(Layer.fresh(NodeSqliteClient.layerMemory()))(
     `migration compatibility after ${previousId}`,
     (it) => {
@@ -18,13 +19,30 @@ for (const previousId of [49, 50, 52] as const) {
             yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
               VALUES (50, 'ProjectionSessionErrorReason')`;
           }
+          if (previousId === 71) yield* runScientMigrations(sql);
+          const scientificBefore =
+            previousId === 71
+              ? yield* sql`SELECT * FROM scient_schema_migrations ORDER BY migration_id`
+              : [];
           const historyBefore =
             yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
           yield* sql`INSERT INTO projection_thread_sessions
             (thread_id, status, provider_name, runtime_mode, last_error, updated_at)
             VALUES ('legacy', 'error', 'pi', 'full-access', 'Old error', '2026-09-06T00:00:00.000Z')`;
 
-          yield* runMigrations();
+          const applied = yield* runMigrations();
+          if (previousId === 71) {
+            assert.deepStrictEqual(applied, [[72, "ShellStopRequestIndex"]]);
+            assert.deepStrictEqual(
+              yield* sql`SELECT * FROM scient_schema_migrations ORDER BY migration_id`,
+              scientificBefore,
+            );
+            assert.deepStrictEqual(
+              yield* sql`SELECT name FROM sqlite_master WHERE type = 'index'
+                AND name = 'orchestration_v2_projection_turn_items_stop_request_idx'`,
+              [{ name: "orchestration_v2_projection_turn_items_stop_request_idx" }],
+            );
+          }
           assert.deepStrictEqual(
             yield* sql`SELECT * FROM effect_sql_migrations
               WHERE migration_id <= ${previousId} ORDER BY migration_id`,

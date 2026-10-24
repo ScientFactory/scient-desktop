@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
+// Subject reloads must not include the shared schema graph's cold loader work.
+import "@t3tools/contracts";
 const key = "scient:timeline-reading-position:v1";
 function storage(initial?: string) {
   const values = new Map(initial ? [[key, initial]] : []);

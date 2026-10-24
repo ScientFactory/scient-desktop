@@ -200,6 +200,12 @@ describe("resume compaction send admission", () => {
     {
       messageText: " /COMPACT ",
     },
+    {
+      messageText: "/compact keep the API notes",
+    },
+    {
+      messageText: "/compact\n  tests",
+    },
   ])(
     "preserves a special action, immutable retry, full-history choice or explicit command: %j",
     (override) => {
@@ -211,4 +217,7 @@ describe("resume compaction send admission", () => {
       ).toBe(false);
     },
   );
+  it("still compacts a message whose first word merely starts with compact", () => {
+    expect(shouldCompactBeforeSend({ ...ordinary, messageText: "/compactfoo" })).toBe(true);
+  });
 });

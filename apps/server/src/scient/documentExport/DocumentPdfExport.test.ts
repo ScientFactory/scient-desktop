@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -989,12 +990,30 @@ describe("document capture lifetime", () => {
       // The stale capture has expired; the current one has four minutes left.
       yield* TestClock.adjust("6 minutes");
       expect(yield* captureExists(stale)).toBe(true);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const staleDirectory = NodePath.join(
+        config.stateDir,
+        "document-exports",
+        stale.expected.captureId,
+      );
+      const removed = yield* Deferred.make<void>();
       yield* Effect.scoped(
         Effect.gen(function* () {
-          yield* Layer.build(documentCaptureStartupSweepLayer);
-          for (let attempt = 0; attempt < 100 && (yield* captureExists(stale)); attempt += 1) {
-            yield* TestClock.withLive(Effect.sleep("20 millis"));
-          }
+          yield* Layer.build(documentCaptureStartupSweepLayer).pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fileSystem,
+              remove: (path, options) =>
+                fileSystem
+                  .remove(path, options)
+                  .pipe(
+                    Effect.tap(() =>
+                      path === staleDirectory ? Deferred.succeed(removed, undefined) : Effect.void,
+                    ),
+                  ),
+            }),
+          );
+          yield* Deferred.await(removed);
         }),
       );
       expect(yield* captureExists(stale)).toBe(false);

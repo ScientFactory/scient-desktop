@@ -1,6 +1,3 @@
-// @effect-diagnostics globalTimersInEffect:off -- This host watchdog must remain independent of the Effect test clock.
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- This host watchdog must remain independent of the Effect test clock.
-import * as NodeTimers from "node:timers";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   ComputeExecutionId,
@@ -11,7 +8,6 @@ import {
   ComputeProjectId,
   ComputeSessionId,
   ComputeToolkitId,
-  type ComputeSessionJournalEvent,
   ComputeTransportKind,
   INITIAL_COMPUTE_SESSION_GENERATION,
   MAXIMUM_PENDING_COMPUTE_EXECUTIONS,
@@ -21,6 +17,7 @@ import {
   type ComputeCapability,
   type ComputeChannel,
   type ComputeDiagnosticContext,
+  type ComputeExecutionStatus,
   type ComputeLanguageAdapter,
   type ComputeExecutionSource,
   type ComputeOutput,
@@ -30,6 +27,7 @@ import {
   type ComputeManagedRuntimeStatus,
   type ComputeSessionRecord,
   type ComputeSessionStatus,
+  type ComputeSessionStreamEvent,
   type ComputeStartSessionInput,
   type ComputeTransport,
   type SimulatedComputeExecution,
@@ -42,6 +40,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -333,6 +332,7 @@ const withReportedCapabilities = (
 interface HarnessOptions {
   readonly capacity?: number;
   readonly beforeOpen?: (sessionId: ComputeSessionId) => Effect.Effect<void, never, Scope.Scope>;
+  readonly onClosed?: (sessionId: ComputeSessionId) => Effect.Effect<void>;
   readonly transformChannel?: (channel: ComputeChannel) => ComputeChannel;
   readonly adapter?: Partial<ComputeLanguageAdapter>;
   readonly additionalBindings?: ReadonlyArray<ComputeRuntimeBinding>;
@@ -382,7 +382,7 @@ const harness = (options: HarnessOptions = {}) =>
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
               closed.push(request.sessionId);
-            }),
+            }).pipe(Effect.andThen(options.onClosed?.(request.sessionId) ?? Effect.void)),
           );
           if (options.failConnection)
             return yield* new ComputeTransportError({
@@ -468,42 +468,103 @@ const startInput = (
   ...overrides,
 });
 
-/**
- * Runs the coordinator forward until an expectation holds or ten seconds of
- * host time have elapsed.
- *
- * The scripted runtime never sleeps, so every state a test waits for is a fixed
- * number of turns away rather than a duration. Completion still persists to the
- * real filesystem, however, so each retry must yield to both Effect fibers and
- * Node's event loop. A retry count is not a timeout: under load it can be
- * exhausted before a filesystem callback runs. The host-time deadline remains
- * bounded without depending on the Effect test clock.
- */
-const waitUntil = <A, E, R>(check: Effect.Effect<A | null, E, R>) =>
-  Effect.raceFirst(
+const waitForComputeEvent = Effect.fn("test.ComputeSessionService.waitForComputeEvent")(function* <
+  A,
+  E,
+  R,
+>(
+  current: Effect.Effect<A | null, E, R>,
+  match: (event: ComputeSessionStreamEvent) => A | null,
+  projectId = PROJECT_ID,
+) {
+  return yield* Effect.scoped(
     Effect.gen(function* () {
-      for (;;) {
-        const value = yield* check;
-        if (value !== null) return value;
-        yield* Effect.yieldNow;
-        yield* Effect.promise(
-          () => new Promise<void>((resolve) => NodeTimers.setImmediate(resolve)),
+      const service = yield* ComputeSessionService;
+      // Subscribe before the single read; later progress comes only from the matching event.
+      const events = yield* service.subscribeSessions({ projectId });
+      const existing = yield* current;
+      if (existing !== null) return existing;
+      const completed = yield* events.pipe(
+        Stream.map(match),
+        Stream.filter((value) => value !== null),
+        Stream.runHead,
+      );
+      if (Option.isNone(completed)) {
+        return yield* Effect.die(
+          new Error("The compute session subscription ended before the expected event."),
         );
       }
-    }),
-    Effect.callback<never>((resume) => {
-      const timer = NodeTimers.setTimeout(
-        () =>
-          resume(
-            Effect.die(
-              new Error("The compute session never reached the state the test waited for."),
-            ),
-          ),
-        10_000,
-      );
-      return Effect.sync(() => NodeTimers.clearTimeout(timer));
+      return completed.value;
     }),
   );
+});
+
+interface SessionAddress {
+  readonly projectId?: ComputeProjectId;
+  readonly sessionId?: ComputeSessionId;
+}
+
+const waitForSession = Effect.fn("test.ComputeSessionService.waitForSession")(function* (
+  status: ComputeSessionStatus,
+  input: SessionAddress & { readonly activity?: ComputeSessionRecord["activity"] } = {},
+) {
+  const service = yield* ComputeSessionService;
+  const projectId = input.projectId ?? PROJECT_ID;
+  const sessionId = input.sessionId ?? SESSION_ID;
+  const matchingSession = (session: ComputeSessionRecord | null) => {
+    if (
+      session === null ||
+      session.projectId !== projectId ||
+      session.sessionId !== sessionId ||
+      session.status !== status ||
+      (input.activity !== undefined && session.activity !== input.activity)
+    ) {
+      return null;
+    }
+    return session;
+  };
+  return yield* waitForComputeEvent(
+    service.getSession({ projectId, sessionId }).pipe(Effect.map(matchingSession)),
+    (event) =>
+      event._tag === "session-updated" || event._tag === "session-snapshot"
+        ? matchingSession(event.session)
+        : null,
+    projectId,
+  );
+});
+
+const waitForExecution = Effect.fn("test.ComputeSessionService.waitForExecution")(function* (
+  executionId: ComputeExecutionId,
+  status: ComputeExecutionStatus,
+  input: SessionAddress = {},
+) {
+  const service = yield* ComputeSessionService;
+  const projectId = input.projectId ?? PROJECT_ID;
+  const sessionId = input.sessionId ?? SESSION_ID;
+  return yield* waitForComputeEvent(
+    service
+      .listExecutions({ projectId, sessionId })
+      .pipe(
+        Effect.map(
+          (executions) =>
+            executions.find(
+              (execution) =>
+                execution.request.executionId === executionId &&
+                execution.result?.status === status,
+            ) ?? null,
+        ),
+      ),
+    (event) =>
+      event._tag === "execution-updated" &&
+      event.projectId === projectId &&
+      event.sessionId === sessionId &&
+      event.execution.request.executionId === executionId &&
+      event.execution.result?.status === status
+        ? event.execution
+        : null,
+    projectId,
+  );
+});
 
 const sessionAt = (status: ComputeSessionStatus) =>
   Effect.gen(function* () {
@@ -539,16 +600,6 @@ const submit = (
       code,
       source,
     });
-  });
-
-/**
- * The journal reaches disk just after the record a reader polls, so a test that
- * asserts on it waits for it rather than racing it.
- */
-const journalContaining = (event: ComputeSessionJournalEvent) =>
-  Effect.gen(function* () {
-    const events = yield* journalEvents;
-    return events.includes(event) ? events : null;
   });
 
 const journalEvents = Effect.gen(function* () {
@@ -722,7 +773,10 @@ describe("compute workspace ownership", () => {
               ),
         ),
       };
-      const test = yield* harness();
+      const closed = yield* Deferred.make<void>();
+      const test = yield* harness({
+        onClosed: () => Deferred.succeed(closed, undefined).pipe(Effect.asVoid),
+      });
       yield* test.use(
         Effect.gen(function* () {
           const service = yield* ComputeSessionService;
@@ -731,7 +785,7 @@ describe("compute workspace ownership", () => {
           yield* submit("hold", "active").pipe(
             Effect.provideService(ComputeWorkspaceAdmission, owner),
           );
-          yield* waitUntil(executionAt(ComputeExecutionId.make("active"), "running")).pipe(
+          yield* waitForExecution(ComputeExecutionId.make("active"), "running").pipe(
             Effect.provideService(ComputeWorkspaceAdmission, owner),
           );
           yield* submit("must not run", "queued").pipe(
@@ -745,13 +799,10 @@ describe("compute workspace ownership", () => {
               expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
             })
             .pipe(Effect.provideService(ComputeWorkspaceAdmission, owner));
-          yield* waitUntil(
-            store
-              .loadSession(PROJECT_ID, SESSION_ID)
-              .pipe(Effect.map((session) => (session?.status === "lost" ? session : null))),
-          );
+          yield* Deferred.await(closed);
+          expect((yield* store.loadSession(PROJECT_ID, SESSION_ID))?.status).toBe("lost");
           expect(test.submitted()).toEqual(["hold"]);
-          yield* waitUntil(Effect.sync(() => (test.closed().length === 1 ? true : null)));
+          expect(test.closed()).toEqual([SESSION_ID]);
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -1506,9 +1557,7 @@ describe("interactive capture analytics", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit(code, "private-output-execution");
-          yield* waitUntil(
-            executionAt(ComputeExecutionId.make("private-output-execution"), outcome),
-          );
+          yield* waitForExecution(ComputeExecutionId.make("private-output-execution"), outcome);
         }),
       );
       const captures = f.events.filter(
@@ -1542,8 +1591,9 @@ describe("interactive capture analytics", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("chart", "limited-output");
-          const finished = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("limited-output"), "succeeded"),
+          const finished = yield* waitForExecution(
+            ComputeExecutionId.make("limited-output"),
+            "succeeded",
           );
           expect(finished.result?.truncated).toBe(true);
         }),
@@ -1576,22 +1626,32 @@ describe("interactive capture analytics", () => {
           const service = yield* ComputeSessionService;
           yield* start;
           yield* submit(code, "cancel-output");
-          yield* waitUntil(
-            Effect.gen(function* () {
-              const transcript = yield* service.listOutputs({
-                projectId: PROJECT_ID,
-                sessionId: SESSION_ID,
-                executionId: ComputeExecutionId.make("cancel-output"),
-              });
-              return transcript.outputs.length > 0 ? true : null;
-            }),
+          const executionId = ComputeExecutionId.make("cancel-output");
+          const outputTag = code === "chart-hold" ? "display-data" : "stream";
+          yield* waitForComputeEvent(
+            outputsOf(executionId).pipe(
+              Effect.map(
+                ({ outputs }) =>
+                  outputs.find((output) => output._tag === outputTag && output.sequence === 0) ??
+                  null,
+              ),
+            ),
+            (event) =>
+              event._tag === "execution-output" &&
+              event.projectId === PROJECT_ID &&
+              event.sessionId === SESSION_ID &&
+              event.executionId === executionId
+                ? (event.outputs.find(
+                    (output) => output._tag === outputTag && output.sequence === 0,
+                  ) ?? null)
+                : null,
           );
           yield* service.interruptSession({
             projectId: PROJECT_ID,
             sessionId: SESSION_ID,
             expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
           });
-          yield* waitUntil(executionAt(ComputeExecutionId.make("cancel-output"), "cancelled"));
+          yield* waitForExecution(ComputeExecutionId.make("cancel-output"), "cancelled");
         }),
       );
       expect(
@@ -1629,7 +1689,7 @@ describe("interactive capture analytics", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("print(1)", "project-figure");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("project-figure"), "succeeded"));
+          yield* waitForExecution(ComputeExecutionId.make("project-figure"), "succeeded");
           const transcript = yield* outputsOf(ComputeExecutionId.make("project-figure"));
           expect(transcript.outputs.some((output) => output._tag === "image")).toBe(true);
         }),
@@ -1663,7 +1723,7 @@ describe("interactive capture analytics", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("chart", "project-warning");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("project-warning"), "succeeded"));
+          yield* waitForExecution(ComputeExecutionId.make("project-warning"), "succeeded");
         }),
       );
       expect(
@@ -1695,7 +1755,7 @@ describe("interactive capture analytics", () => {
           const service = yield* ComputeSessionService;
           yield* start;
           yield* submit("rich-figure", "untracked-output");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("untracked-output"), "succeeded"));
+          yield* waitForExecution(ComputeExecutionId.make("untracked-output"), "succeeded");
           const transcript = yield* service.listOutputs({
             projectId: PROJECT_ID,
             sessionId: SESSION_ID,
@@ -1746,9 +1806,7 @@ describe("compute outcome analytics", () => {
           const service = yield* ComputeSessionService;
           yield* start;
           yield* submit("hold", "active-before-consent");
-          yield* waitUntil(
-            executionAt(ComputeExecutionId.make("active-before-consent"), "running"),
-          );
+          yield* waitForExecution(ComputeExecutionId.make("active-before-consent"), "running");
           yield* submit("hold", "queued-cancel");
           yield* submit("print(1)", "queued-complete");
           yield* analytics.setConsent("off");
@@ -1764,9 +1822,9 @@ describe("compute outcome analytics", () => {
             sessionId: SESSION_ID,
             expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
           });
-          yield* waitUntil(executionAt(ComputeExecutionId.make("queued-complete"), "succeeded"));
+          yield* waitForExecution(ComputeExecutionId.make("queued-complete"), "succeeded");
           yield* submit("boom", "fresh-after-consent");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("fresh-after-consent"), "failed"));
+          yield* waitForExecution(ComputeExecutionId.make("fresh-after-consent"), "failed");
         }),
       );
       for (const kind of ["compute-run", "compute-artifact"]) {
@@ -1851,7 +1909,7 @@ describe("compute session startup", () => {
               }),
             );
             expect(admitted.lifetime).toBe("fresh");
-            yield* waitUntil(sessionAt("stopped"));
+            yield* waitForSession("stopped");
             expect(test.closed()).toEqual([SESSION_ID]);
             expect(
               (yield* service.getSession({ projectId: PROJECT_ID, sessionId: persistentId }))
@@ -1931,18 +1989,12 @@ describe("compute session startup", () => {
             yield* Effect.forEach(inputs, (input) => service.startSession(input), {
               concurrency: 8,
             });
-            yield* waitUntil(
-              service
-                .listSessions({ projectId: PROJECT_ID })
-                .pipe(
-                  Effect.map((sessions) =>
-                    sessions.length === 16 &&
-                    sessions.every((session) => session.status === "stopped")
-                      ? true
-                      : null,
-                  ),
-                ),
+            yield* Effect.forEach(
+              inputs,
+              (input) => waitForSession("stopped", { sessionId: input.sessionId }),
+              { discard: true },
             );
+            expect(yield* service.listSessions({ projectId: PROJECT_ID })).toHaveLength(16);
             for (const [index, input] of inputs.entries()) {
               const session = yield* service.getSession({
                 projectId: PROJECT_ID,
@@ -1978,7 +2030,7 @@ describe("compute session startup", () => {
               },
             }),
           );
-          yield* waitUntil(executionAt(ComputeExecutionId.make("fresh-hold"), "running"));
+          yield* waitForExecution(ComputeExecutionId.make("fresh-hold"), "running");
           expect(
             (yield* Effect.flip(
               service.startSession(startInput({ sessionId: ComputeSessionId.make("another") })),
@@ -2011,7 +2063,7 @@ describe("compute session startup", () => {
             expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
             executionId: ComputeExecutionId.make("fresh-hold"),
           });
-          yield* waitUntil(sessionAt("stopped"));
+          yield* waitForSession("stopped");
           expect(test.closed()).toEqual([SESSION_ID]);
         }),
       );
@@ -2216,11 +2268,13 @@ describe("compute session startup", () => {
             code: "1",
             source: { _tag: "console" },
           });
-          const executions = yield* waitUntil(
-            service
-              .listExecutions({ projectId: PROJECT_ID, sessionId: second.sessionId })
-              .pipe(Effect.map((rows) => (rows[0]?.result?.status === "succeeded" ? rows : null))),
-          );
+          yield* waitForExecution(ComputeExecutionId.make("parallel-result"), "succeeded", {
+            sessionId: second.sessionId,
+          });
+          const executions = yield* service.listExecutions({
+            projectId: PROJECT_ID,
+            sessionId: second.sessionId,
+          });
           expect(executions).toHaveLength(1);
           expect(
             (yield* service.getSession({ projectId: PROJECT_ID, sessionId: SESSION_ID }))?.status,
@@ -2382,18 +2436,13 @@ describe("compute session startup", () => {
             { concurrency: "unbounded" },
           );
           for (const session of sessions.slice(1)) {
-            const executions = yield* waitUntil(
-              service
-                .listExecutions({ projectId: PROJECT_ID, sessionId: session.sessionId })
-                .pipe(
-                  Effect.map((rows) =>
-                    rows.find((row) => row.request.executionId === "same-queued-id")?.result
-                      ?.status === "succeeded"
-                      ? rows
-                      : null,
-                  ),
-                ),
-            );
+            yield* waitForExecution(ComputeExecutionId.make("same-queued-id"), "succeeded", {
+              sessionId: session.sessionId,
+            });
+            const executions = yield* service.listExecutions({
+              projectId: PROJECT_ID,
+              sessionId: session.sessionId,
+            });
             expect(executions).toHaveLength(2);
             expect(executions.every((row) => row.request.sessionId === session.sessionId)).toBe(
               true,
@@ -2453,11 +2502,7 @@ describe("compute session startup", () => {
           const queued = yield* service
             .startSession(startInput({ sessionId: queuedId }))
             .pipe(Effect.flip, Effect.forkChild);
-          yield* waitUntil(
-            service
-              .getSession({ projectId: PROJECT_ID, sessionId: queuedId })
-              .pipe(Effect.map((record) => (record?.status === "starting" ? record : null))),
-          );
+          yield* waitForSession("starting", { sessionId: queuedId });
           expect(test.opened()).toEqual([SESSION_ID]);
           const refused = yield* Effect.flip(
             service.startSession(
@@ -2533,9 +2578,7 @@ describe("compute session startup", () => {
           const service = yield* ComputeSessionService;
           yield* start;
           yield* submit("hold", "active-before-restart");
-          yield* waitUntil(
-            executionAt(ComputeExecutionId.make("active-before-restart"), "running"),
-          );
+          yield* waitForExecution(ComputeExecutionId.make("active-before-restart"), "running");
           yield* submit("1", "queued-before-restart");
           const command = {
             projectId: PROJECT_ID,
@@ -2618,7 +2661,7 @@ describe("compute session startup", () => {
           const error = yield* Effect.flip(start);
           expect(error.reason).toBe("capability-missing");
           expect(error.message).toContain("interrupt");
-          const session = yield* waitUntil(sessionAt("failed"));
+          const session = yield* waitForSession("failed");
           expect(session.status).toBe("failed");
           // A session that failed is not then also lost: the first ending is
           // the only one, however the runtime's stream ends afterwards.
@@ -2654,15 +2697,22 @@ describe("compute session startup", () => {
 describe("compute session execution", () => {
   it.effect("waits for host-backed completion without depending on wall-clock time", () =>
     Effect.gen(function* () {
-      let completed = false;
-      setImmediate(() => {
-        completed = true;
-      });
-
-      yield* waitUntil(Effect.sync(() => (completed ? true : null)));
-
-      expect(completed).toBe(true);
-    }),
+      const test = yield* harness();
+      yield* test.use(
+        Effect.gen(function* () {
+          yield* start;
+          yield* submit("print(1)", "host-completion");
+          const completed = yield* waitForExecution(
+            ComputeExecutionId.make("host-completion"),
+            "succeeded",
+          );
+          expect(completed.result?.status).toBe("succeeded");
+          expect((yield* outputsOf(ComputeExecutionId.make("host-completion"))).outputs).toEqual([
+            streamOutput(0, "1\n"),
+          ]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("rejects MATLAB definition files before they reach the runtime", () =>
@@ -2729,8 +2779,9 @@ describe("compute session execution", () => {
           expect(submitted.result?.status).toBe("submitting");
           expect(submitted.request.codeHash).toMatch(/^sha256:[0-9a-f]{64}$/);
 
-          const finished = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-1"), "succeeded"),
+          const finished = yield* waitForExecution(
+            ComputeExecutionId.make("execution-1"),
+            "succeeded",
           );
           expect(finished.result?.outcome).toBe("succeeded");
           expect(finished.result?.outputCount).toBe(1);
@@ -2746,6 +2797,7 @@ describe("compute session execution", () => {
           expect(transcript.corruptLineCount).toBe(0);
           expect(transcript.outputs).toEqual([streamOutput(0, "1\n")]);
 
+          const session = yield* waitForSession("ready", { activity: "idle" });
           expect(yield* journalEvents).toEqual([
             "session-created",
             "session-ready",
@@ -2753,12 +2805,6 @@ describe("compute session execution", () => {
             "execution-started",
             "execution-finished",
           ]);
-          const session = yield* waitUntil(
-            Effect.gen(function* () {
-              const current = yield* sessionAt("ready");
-              return current?.activity === "idle" ? current : null;
-            }),
-          );
           expect(session.activity).toBe("idle");
           expect(session.activeExecutionId).toBeNull();
           expect(session.pendingCount).toBe(0);
@@ -2775,12 +2821,12 @@ describe("compute session execution", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("hold", "execution-1");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-1"), "running"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "running");
           const queued = yield* submit("print(1)", "execution-2");
 
           expect(queued.result?.status).toBe("queued");
           expect(queued.result?.queuePosition).toBe(1);
-          const session = yield* waitUntil(sessionAt("ready"));
+          const session = yield* waitForSession("ready");
           expect(session.activity).toBe("busy");
           expect(session.activeExecutionId).toBe(ComputeExecutionId.make("execution-1"));
           expect(session.pendingCount).toBe(1);
@@ -2800,7 +2846,7 @@ describe("compute session execution", () => {
           const service = yield* ComputeSessionService;
           const session = yield* start;
           yield* submit("hold", "execution-1");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-1"), "running"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "running");
           yield* submit("print(1)", "execution-2");
 
           const cancelled = yield* service.cancelExecution({
@@ -2812,7 +2858,7 @@ describe("compute session execution", () => {
           expect(cancelled.result?.status).toBe("cancelled");
           expect(cancelled.result?.outcome).toBe("cancelled");
           expect(test.submitted()).toEqual(["hold"]);
-          const current = yield* waitUntil(sessionAt("ready"));
+          const current = yield* waitForSession("ready");
           expect(current.pendingCount).toBe(0);
           expect(current.activeExecutionId).toBe(ComputeExecutionId.make("execution-1"));
         }),
@@ -2829,7 +2875,7 @@ describe("compute session execution", () => {
           const service = yield* ComputeSessionService;
           const session = yield* start;
           yield* submit("hold", "execution-1");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-1"), "running"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "running");
           yield* submit("print(1)", "execution-2");
 
           yield* service.cancelExecution({
@@ -2839,10 +2885,11 @@ describe("compute session execution", () => {
             expectedGeneration: session.generation,
           });
 
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-1"), "cancelled"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "cancelled");
           // The queue moves on by itself; nothing has to ask it to.
-          const second = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-2"), "succeeded"),
+          const second = yield* waitForExecution(
+            ComputeExecutionId.make("execution-2"),
+            "succeeded",
           );
           expect(second.result?.outputCount).toBe(1);
           expect(test.submitted()).toEqual(["hold", "print(1)"]);
@@ -2984,9 +3031,7 @@ describe("compute session execution", () => {
           yield* start;
           yield* submit("boom", "execution-1");
 
-          const failed = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-1"), "failed"),
-          );
+          const failed = yield* waitForExecution(ComputeExecutionId.make("execution-1"), "failed");
           expect(failed.result?.outcome).toBe("failed");
           expect(failed.result?.failureReason).toBe("ZeroDivisionError: division by zero");
           expect(failed.result?.diagnostics).toEqual([
@@ -3027,9 +3072,7 @@ describe("compute session execution", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("boom", "execution-1");
-          const failed = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-1"), "failed"),
-          );
+          const failed = yield* waitForExecution(ComputeExecutionId.make("execution-1"), "failed");
           expect(failed.result?.truncated).toBe(true);
           expect(failed.result?.diagnostics).toEqual([]);
           const transcript = yield* outputsOf(ComputeExecutionId.make("execution-1"));
@@ -3053,7 +3096,7 @@ describe("compute session execution", () => {
           const service = yield* ComputeSessionService;
           yield* start;
           yield* submit("figure", "execution-1");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-1"), "succeeded"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "succeeded");
 
           const transcript = yield* outputsOf(ComputeExecutionId.make("execution-1"));
           expect(transcript.outputs).toEqual([imageOutput]);
@@ -3080,8 +3123,9 @@ describe("compute session execution", () => {
           const service = yield* ComputeSessionService;
           yield* start;
           yield* submit("phantom-figure", "execution-1");
-          const finished = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-1"), "succeeded"),
+          const finished = yield* waitForExecution(
+            ComputeExecutionId.make("execution-1"),
+            "succeeded",
           );
 
           // The execution still succeeded -- the code ran -- but the transcript
@@ -3117,8 +3161,9 @@ describe("compute session execution", () => {
           const service = yield* ComputeSessionService;
           yield* start;
           yield* submit("rich-figure", "execution-1");
-          const finished = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-1"), "succeeded"),
+          const finished = yield* waitForExecution(
+            ComputeExecutionId.make("execution-1"),
+            "succeeded",
           );
           expect(finished.result?.imageCount).toBe(1);
           const transcript = yield* outputsOf(ComputeExecutionId.make("execution-1"));
@@ -3147,8 +3192,9 @@ describe("compute session execution", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("phantom-rich-figure", "execution-1");
-          const finished = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-1"), "succeeded"),
+          const finished = yield* waitForExecution(
+            ComputeExecutionId.make("execution-1"),
+            "succeeded",
           );
           expect(finished.result?.truncated).toBe(true);
           const transcript = yield* outputsOf(ComputeExecutionId.make("execution-1"));
@@ -3177,8 +3223,9 @@ describe("compute session execution", () => {
 
           // The execution still succeeds: a retention ceiling is a limit on
           // what is kept, not on what the user's code may do.
-          const finished = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-1"), "succeeded"),
+          const finished = yield* waitForExecution(
+            ComputeExecutionId.make("execution-1"),
+            "succeeded",
           );
           expect(finished.result?.truncated).toBe(true);
 
@@ -3209,8 +3256,9 @@ describe("compute session execution", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("empty-display-flood", "execution-1");
-          const finished = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-1"), "succeeded"),
+          const finished = yield* waitForExecution(
+            ComputeExecutionId.make("execution-1"),
+            "succeeded",
           );
 
           expect(finished.result?.truncated).toBe(true);
@@ -3246,8 +3294,9 @@ describe("compute session execution", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("print(1)", "execution-1");
-          const first = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-1"), "succeeded"),
+          const first = yield* waitForExecution(
+            ComputeExecutionId.make("execution-1"),
+            "succeeded",
           );
           expect(first.result?.truncated).toBe(false);
           expect((yield* outputsOf(ComputeExecutionId.make("execution-1"))).outputs).toEqual([
@@ -3255,8 +3304,9 @@ describe("compute session execution", () => {
           ]);
 
           yield* submit("print(1)", "execution-2");
-          const second = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-2"), "succeeded"),
+          const second = yield* waitForExecution(
+            ComputeExecutionId.make("execution-2"),
+            "succeeded",
           );
           // The execution still ran and still succeeded; what it said was not
           // kept, and its own record says so rather than only the session's.
@@ -3286,15 +3336,16 @@ describe("compute session execution", () => {
           const service = yield* ComputeSessionService;
           const original = yield* start;
           yield* submit("print(1)", "execution-1");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-1"), "succeeded"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "succeeded");
           const restarted = yield* service.restartSession({
             projectId: PROJECT_ID,
             sessionId: SESSION_ID,
             expectedGeneration: original.generation,
           });
           yield* submit("print(1)", "execution-2", restarted.generation);
-          const second = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-2"), "succeeded"),
+          const second = yield* waitForExecution(
+            ComputeExecutionId.make("execution-2"),
+            "succeeded",
           );
           expect(second.result?.truncated).toBe(true);
           expect(
@@ -3313,7 +3364,7 @@ describe("compute session execution", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("quiet-hold", "execution-0");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-0"), "running"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-0"), "running");
           for (let index = 0; index < MAXIMUM_PENDING_COMPUTE_EXECUTIONS; index += 1) {
             yield* submit("print(1)", `execution-${index + 1}`);
           }
@@ -3321,7 +3372,7 @@ describe("compute session execution", () => {
           const error = yield* Effect.flip(submit("print(1)", "execution-overflow"));
           expect(error.reason).toBe("queue-full");
           expect(yield* journalEvents).toContain("queue-rejected");
-          const session = yield* waitUntil(sessionAt("ready"));
+          const session = yield* waitForSession("ready");
           expect(session.pendingCount).toBe(MAXIMUM_PENDING_COMPUTE_EXECUTIONS);
         }),
       );
@@ -3336,11 +3387,11 @@ describe("compute session execution", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("quiet-hold", "execution-0");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-0"), "running"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-0"), "running");
           const first = yield* submit("print(1)", "execution-1");
           const second = yield* submit("print(1)", "execution-1");
           expect(second.request.submittedAt).toBe(first.request.submittedAt);
-          const session = yield* waitUntil(sessionAt("ready"));
+          const session = yield* waitForSession("ready");
           expect(session.pendingCount).toBe(1);
         }),
       );
@@ -3355,8 +3406,9 @@ describe("compute session execution", () => {
         Effect.gen(function* () {
           yield* start;
           const first = yield* submit("print(1)", "execution-1");
-          const finished = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-1"), "succeeded"),
+          const finished = yield* waitForExecution(
+            ComputeExecutionId.make("execution-1"),
+            "succeeded",
           );
           const retried = yield* submit("print(1)", "execution-1");
           expect(retried).toEqual(finished);
@@ -3393,7 +3445,7 @@ describe("compute session execution", () => {
           };
 
           yield* submit("print(1)", "execution-1", INITIAL_COMPUTE_SESSION_GENERATION, savedSource);
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-1"), "succeeded"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "succeeded");
 
           const conflict = yield* Effect.flip(
             submit("print(1)", "execution-1", INITIAL_COMPUTE_SESSION_GENERATION, dirtySource),
@@ -3416,9 +3468,9 @@ describe("compute session generations", () => {
           const service = yield* ComputeSessionService;
           const session = yield* start;
           yield* submit("print(1)", "execution-1");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-1"), "succeeded"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "succeeded");
           yield* submit("hold", "execution-2");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-2"), "running"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-2"), "running");
           yield* submit("print(1)", "execution-3");
 
           const restarted = yield* service.restartSession({
@@ -3433,8 +3485,8 @@ describe("compute session generations", () => {
 
           // What was waiting never ran, because it was written for a namespace
           // that no longer exists.
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-3"), "cancelled"));
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-2"), "cancelled"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-3"), "cancelled");
+          yield* waitForExecution(ComputeExecutionId.make("execution-2"), "cancelled");
           expect(test.submitted()).toEqual(["print(1)", "hold"]);
 
           // The history of the generation that ended is still the session's.
@@ -3489,7 +3541,7 @@ describe("compute session generations", () => {
           ]);
           expect(errors[0]?.operation).toBe("submit");
           // Refusing is not the same as breaking: the session is still usable.
-          const current = yield* waitUntil(sessionAt("ready"));
+          const current = yield* waitForSession("ready");
           expect(current.generation).toBe(stale + 1);
         }),
       );
@@ -3507,9 +3559,7 @@ describe("compute session endings", () => {
           const session = yield* start;
           expect(session.activity).toBe("idle");
           yield* submit("hold", "running-during-choice");
-          yield* waitUntil(
-            executionAt(ComputeExecutionId.make("running-during-choice"), "running"),
-          );
+          yield* waitForExecution(ComputeExecutionId.make("running-during-choice"), "running");
           yield* submit("print(1)", "queued-during-choice");
           const command = {
             projectId: PROJECT_ID,
@@ -3569,7 +3619,7 @@ describe("compute session endings", () => {
           const service = yield* ComputeSessionService;
           const session = yield* start;
           yield* submit("print(1)", "execution-1");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-1"), "succeeded"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "succeeded");
 
           const stopped = yield* service.stopSession({
             projectId: PROJECT_ID,
@@ -3602,16 +3652,14 @@ describe("compute session endings", () => {
           yield* start;
           yield* submit("die", "execution-1");
 
-          const lost = yield* waitUntil(sessionAt("lost"));
+          const lost = yield* waitForSession("lost");
           expect(lost.lostReason).toBe("The kernel exited.");
           expect(lost.closedAt).not.toBeNull();
           expect(lost.activeExecutionId).toBeNull();
-          const execution = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("execution-1"), "lost"),
-          );
+          const execution = yield* waitForExecution(ComputeExecutionId.make("execution-1"), "lost");
           expect(execution.result?.outcome).toBeNull();
           expect(execution.result?.failureReason).toBe("The kernel exited.");
-          yield* waitUntil(journalContaining("session-lost"));
+          expect(yield* journalEvents).toContain("session-lost");
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -3645,7 +3693,7 @@ describe("compute session endings", () => {
         Effect.gen(function* () {
           yield* start;
           yield* TestClock.adjust("60 seconds");
-          const stopped = yield* waitUntil(sessionAt("stopped"));
+          const stopped = yield* waitForSession("stopped");
           expect(stopped.closedAt).not.toBeNull();
         }),
       );
@@ -3660,7 +3708,7 @@ describe("compute session endings", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("quiet-hold", "execution-1");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-1"), "running"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "running");
           yield* TestClock.adjust("10 minutes");
           const session = yield* sessionAt("ready");
           expect(session?.activity).toBe("busy");
@@ -3937,7 +3985,7 @@ describe("compute session reads", () => {
           expect(stale.reason).toBe("generation-stale");
 
           yield* submit("quiet-hold", "variables-busy");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("variables-busy"), "running"));
+          yield* waitForExecution(ComputeExecutionId.make("variables-busy"), "running");
           const busy = yield* Effect.flip(
             service.inspectVariables({
               projectId: PROJECT_ID,
@@ -4010,7 +4058,7 @@ describe("compute session reads", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("print(1)", "execution-1");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-1"), "succeeded"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "succeeded");
           const sessionScoped = yield* outputsOf(null);
           expect(sessionScoped.outputs).toEqual([]);
         }),
@@ -4027,7 +4075,7 @@ describe("compute session reads", () => {
           const service = yield* ComputeSessionService;
           const session = yield* start;
           yield* submit("print(1)", "execution-1");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-1"), "succeeded"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "succeeded");
 
           const command = {
             projectId: PROJECT_ID,
@@ -4087,7 +4135,7 @@ describe("compute session under load", () => {
 
             const executionId = ComputeExecutionId.make("paused-project-completion");
             yield* submit("print(1)", executionId);
-            yield* waitUntil(executionAt(executionId, "succeeded"));
+            yield* waitForExecution(executionId, "succeeded");
 
             if (unrelatedRuns > 0) {
               yield* service.startSession(startInput({ projectId: OTHER_PROJECT_ID }));
@@ -4104,20 +4152,9 @@ describe("compute session under load", () => {
                   code: "empty-display-flood",
                   source: { _tag: "console" },
                 });
-                yield* waitUntil(
-                  service
-                    .listExecutions({ projectId: OTHER_PROJECT_ID, sessionId: SESSION_ID })
-                    .pipe(
-                      Effect.map(
-                        (records) =>
-                          records.find(
-                            (record) =>
-                              record.request.executionId === otherExecutionId &&
-                              record.result?.status === "succeeded",
-                          ) ?? null,
-                      ),
-                    ),
-                );
+                yield* waitForExecution(otherExecutionId, "succeeded", {
+                  projectId: OTHER_PROJECT_ID,
+                });
               }
             }
 
@@ -4169,7 +4206,7 @@ describe("compute session under load", () => {
           for (let index = 0; index < 12; index++) {
             const executionId = ComputeExecutionId.make(`own-overflow-${index}`);
             yield* submit("empty-display-flood", executionId);
-            yield* waitUntil(executionAt(executionId, "succeeded"));
+            yield* waitForExecution(executionId, "succeeded");
           }
           const lastId = ComputeExecutionId.make("own-overflow-11");
           const retained = yield* TestClock.withLive(
@@ -4204,7 +4241,7 @@ describe("compute session under load", () => {
           const resumed = yield* service.subscribeSessions({ projectId: PROJECT_ID });
           const nextId = ComputeExecutionId.make("after-recovery");
           yield* submit("print(1)", nextId);
-          yield* waitUntil(executionAt(nextId, "succeeded"));
+          yield* waitForExecution(nextId, "succeeded");
           const recovered = yield* TestClock.withLive(
             resumed.pipe(
               Stream.takeUntil(
@@ -4250,18 +4287,12 @@ describe("compute session under load", () => {
           for (let index = 0; index < 200; index += 1) {
             const executionId = ComputeExecutionId.make(`flood-${index}`);
             yield* submit("flood", executionId);
-            yield* waitUntil(executionAt(executionId, "succeeded"));
+            yield* waitForExecution(executionId, "succeeded");
           }
 
-          // A result is recorded before the session goes idle, and the session
-          // stays ready throughout, so wait for idle itself. A stalled session
-          // never gets there and fails at the deadline.
-          const session = yield* waitUntil(
-            Effect.gen(function* () {
-              const current = yield* sessionAt("ready");
-              return current?.activity === "idle" ? current : null;
-            }),
-          );
+          // A durable result precedes idle publication; await idle itself so a
+          // blocked publisher cannot pass by leaving an already-ready record.
+          const session = yield* waitForSession("ready", { activity: "idle" });
           expect(session.activity).toBe("idle");
         }),
       );
@@ -4282,7 +4313,7 @@ describe("compute session under load", () => {
           for (let index = 0; index < count; index += 1) {
             const executionId = ComputeExecutionId.make(`late-${index}`);
             yield* submit("flood", executionId);
-            yield* waitUntil(executionAt(executionId, "succeeded"));
+            yield* waitForExecution(executionId, "succeeded");
           }
 
           const lastId = ComputeExecutionId.make(`late-${count - 1}`);
@@ -4358,17 +4389,15 @@ describe("compute session under load", () => {
           );
 
           for (const entry of plan) {
-            const executions = yield* waitUntil(
-              Effect.gen(function* () {
-                const found = yield* service.listExecutions({
-                  projectId: entry.projectId,
-                  sessionId: entry.sessionId,
-                });
-                return found.length > 0 && found.every((one) => one.result?.status === "succeeded")
-                  ? found
-                  : null;
-              }),
-            );
+            yield* waitForExecution(entry.executionId, "succeeded", {
+              projectId: entry.projectId,
+              sessionId: entry.sessionId,
+            });
+            const executions = yield* service.listExecutions({
+              projectId: entry.projectId,
+              sessionId: entry.sessionId,
+            });
+            expect(executions.every((one) => one.result?.status === "succeeded")).toBe(true);
             // Exactly its own work, and only its own: a session that saw a
             // neighbour's execution would be a coordinator keyed too loosely.
             expect(executions.map((one) => one.request.executionId)).toEqual([entry.executionId]);
@@ -4398,7 +4427,7 @@ describe("compute session under load", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("quiet-hold", "execution-blocking");
-          yield* waitUntil(executionAt(ComputeExecutionId.make("execution-blocking"), "running"));
+          yield* waitForExecution(ComputeExecutionId.make("execution-blocking"), "running");
 
           const overflow = 8;
           const ids = Array.from(
@@ -4420,7 +4449,7 @@ describe("compute session under load", () => {
           const accepted = outcomes.filter((outcome) => outcome === "accepted");
           expect(accepted).toHaveLength(MAXIMUM_PENDING_COMPUTE_EXECUTIONS);
           expect(outcomes.filter((outcome) => outcome === "queue-full")).toHaveLength(overflow);
-          const session = yield* waitUntil(sessionAt("ready"));
+          const session = yield* waitForSession("ready");
           expect(session.pendingCount).toBe(MAXIMUM_PENDING_COMPUTE_EXECUTIONS);
         }),
       );
@@ -4442,7 +4471,7 @@ describe("compute session under load", () => {
           for (let index = 0; index < count; index += 1) {
             const executionId = ComputeExecutionId.make(`bounded-${index}`);
             yield* submit("flood", executionId);
-            yield* waitUntil(executionAt(executionId, "succeeded"));
+            yield* waitForExecution(executionId, "succeeded");
           }
 
           let keptBytes = 0;
@@ -4460,7 +4489,7 @@ describe("compute session under load", () => {
           // chunk it dropped.
           expect(markers).toBeGreaterThan(0);
           expect(markers).toBeLessThanOrEqual(count);
-          const session = yield* waitUntil(sessionAt("ready"));
+          const session = yield* waitForSession("ready");
           expect(session.storage.outputBytes).toBeLessThanOrEqual(ceiling);
         }),
       );
@@ -4577,7 +4606,7 @@ describe("compute session under load", () => {
           for (let round = 0; round < 24; round += 1) {
             const executionId = ComputeExecutionId.make(`storm-${round}`);
             yield* submit("hold", executionId, generation);
-            yield* waitUntil(executionAt(executionId, "running"));
+            yield* waitForExecution(executionId, "running");
             if (round % 4 === 3) {
               const restarted = yield* service.restartSession({
                 projectId: PROJECT_ID,
@@ -4593,12 +4622,12 @@ describe("compute session under load", () => {
                 expectedGeneration: generation,
               });
             }
-            yield* waitUntil(executionAt(executionId, "cancelled"));
+            yield* waitForExecution(executionId, "cancelled");
           }
 
           // Six restarts, and the session is still the same session: ready,
           // idle, nothing left running, and its whole history still readable.
-          const session = yield* waitUntil(sessionAt("ready"));
+          const session = yield* waitForSession("ready");
           expect(session.generation).toBe(INITIAL_COMPUTE_SESSION_GENERATION + 6);
           expect(session.activity).toBe("idle");
           expect(session.activeExecutionId).toBeNull();
@@ -4613,8 +4642,9 @@ describe("compute session under load", () => {
 
           // Still takes work afterwards, which is the point of surviving.
           yield* submit("print(1)", "storm-after", generation);
-          const after = yield* waitUntil(
-            executionAt(ComputeExecutionId.make("storm-after"), "succeeded"),
+          const after = yield* waitForExecution(
+            ComputeExecutionId.make("storm-after"),
+            "succeeded",
           );
           expect(after.result?.outputCount).toBe(1);
         }),

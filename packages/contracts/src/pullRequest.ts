@@ -5,6 +5,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import {
   ForwardCompatibleArray,
+  ForwardCompatibleOptional,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -35,6 +36,9 @@ const PullRequestQualifierValues = Schema.Array(PullRequestQualifierValue).check
   Schema.isMaxLength(10),
 );
 
+export const PULL_REQUEST_FILTER_MAX_LABEL_GROUPS = 10;
+export const PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH = 100;
+
 export const PullRequestListFilters = Schema.Struct({
   draft: Schema.optional(Schema.Literals(["only", "hide"])),
   review: Schema.optional(
@@ -46,13 +50,17 @@ export const PullRequestListFilters = Schema.Struct({
    * satisfy every group, and a group holding several names is satisfied by any one of them —
    * `label:size:S,size:XS` finds either size.
    */
-  labels: Schema.optional(Schema.Array(PullRequestQualifierValues).check(Schema.isMaxLength(10))),
+  labels: Schema.optional(
+    Schema.Array(PullRequestQualifierValues).check(
+      Schema.isMaxLength(PULL_REQUEST_FILTER_MAX_LABEL_GROUPS),
+    ),
+  ),
   excludedLabels: Schema.optional(PullRequestQualifierValues),
   author: Schema.optional(PullRequestQualifierValue),
 });
 export type PullRequestListFilters = typeof PullRequestListFilters.Type;
 
-export const PullRequestChecksState = Schema.Literals(["passing", "failing", "pending"]);
+export const PullRequestChecksState = Schema.Literals(["passing", "failing", "warning", "pending"]);
 export type PullRequestChecksState = typeof PullRequestChecksState.Type;
 
 export const PullRequestMergeability = Schema.Literals(["mergeable", "conflicting", "unknown"]);
@@ -110,6 +118,9 @@ export type PullRequestCheckStatus = typeof PullRequestCheckStatus.Type;
 export const PullRequestCheck = Schema.Struct({
   name: TrimmedNonEmptyString,
   status: PullRequestCheckStatus,
+  // SCIENT-FORK:START — released clients require the shipped status literals.
+  outcome: ForwardCompatibleOptional(Schema.Literal("warning")),
+  // SCIENT-FORK:END
   description: Schema.NullOr(Schema.String),
   url: Schema.NullOr(Schema.String),
   required: Schema.optional(Schema.Boolean),
@@ -525,6 +536,31 @@ export const PullRequestListStatsResult = Schema.Struct({
 });
 export type PullRequestListStatsResult = typeof PullRequestListStatsResult.Type;
 
+export const PullRequestFilterOptionKind = Schema.Literals(["labels", "authors"]);
+export type PullRequestFilterOptionKind = typeof PullRequestFilterOptionKind.Type;
+
+/** Scoped like `PullRequestListInput`, so the options come from the repositories it lists. */
+export const PullRequestFilterOptionsInput = Schema.Struct({
+  kind: PullRequestFilterOptionKind,
+  projectId: Schema.optional(ProjectId),
+  projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
+  host: Schema.optional(TrimmedNonEmptyString),
+  query: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH)),
+  ),
+});
+export type PullRequestFilterOptionsInput = typeof PullRequestFilterOptionsInput.Type;
+
+export const PullRequestFilterOptions = Schema.Struct({
+  labels: Schema.Array(PullRequestLabel),
+  authors: Schema.Array(PullRequestActor),
+  truncated: Schema.Boolean,
+  // SCIENT-FORK:START — failed repositories are not a capped, otherwise complete search.
+  partialFailure: Schema.optional(TrimmedNonEmptyString),
+  // SCIENT-FORK:END
+});
+export type PullRequestFilterOptions = typeof PullRequestFilterOptions.Type;
+
 /**
  * A separate request rather than a flag on the reads, so an explicit "refresh" one person
  * presses is the only thing that spends host requests — every ordinary read shares.
@@ -589,6 +625,7 @@ export const PullRequestDetail = Schema.Struct({
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
 export const PullRequestChecks = Schema.Struct({
+  observedAt: Schema.optional(Schema.Finite),
   state: PullRequestState,
   checks: Schema.Array(PullRequestCheck),
 });
@@ -952,6 +989,35 @@ export function resolvePullRequestAuthorFilter(
   if (!/^@?me$/i.test(trimmed)) return trimmed;
   return viewer === null || viewer === undefined || viewer.trim().length === 0 ? trimmed : viewer;
 }
+
+// SCIENT-FORK:START — Checkbox edits must preserve persisted AND/OR filter semantics.
+/** Each group is an AND requirement whose names are OR alternatives. */
+export function setPullRequestFilterLabel(
+  labels: PullRequestListFilters["labels"],
+  label: string,
+  selected: boolean,
+): PullRequestListFilters["labels"] {
+  if (labels === undefined) return selected ? [[label]] : labels;
+  const name = label.toLowerCase();
+  const holds = (group: ReadonlyArray<string>) => group.some((held) => held.toLowerCase() === name);
+  if (selected) {
+    return labels.length >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS || labels.some(holds)
+      ? labels
+      : [...labels, [label]];
+  }
+  const first = labels.findIndex(holds);
+  if (first < 0) return labels;
+  const kept = labels.slice(0, first);
+  for (let index = first; index < labels.length; index++) {
+    const group = labels[index]!;
+    if (index === first || holds(group)) {
+      const rest = group.filter((held) => held.toLowerCase() !== name);
+      if (rest.length > 0) kept.push(rest);
+    } else kept.push(group);
+  }
+  return kept.length > 0 ? kept : undefined;
+}
+// SCIENT-FORK:END
 
 export function pullRequestProviderRequirement(
   provider: SourceControlProviderKind,

@@ -24,6 +24,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -475,7 +476,7 @@ const make = Effect.gen(function* () {
       WHERE thread_id = ${threadId}
         AND role IN ('user', 'assistant')
       ORDER BY created_at ASC, message_id ASC
-    `;
+    `.pipe(NodeSqliteClient.readOnly);
 
   const listShellMessages = Effect.fn("LegacyV1ThreadImporter.listShellMessages")(function* (
     threadId: ThreadId,
@@ -984,6 +985,7 @@ const make = Effect.gen(function* () {
       SELECT thread_id FROM scient_legacy_reconciliation_changes WHERE resolved = 0
     )
   `.pipe(
+    NodeSqliteClient.readOnly,
     Effect.map((rows) => rows[0]?.count ?? 0),
     Effect.mapError(
       (cause) => new LegacyV1ThreadImportError({ operation: "inspect pending", cause }),
@@ -1005,7 +1007,7 @@ const make = Effect.gen(function* () {
           FROM orchestration_v2_legacy_imports
           WHERE thread_id = ${threadId}
           LIMIT 1
-        `;
+        `.pipe(NodeSqliteClient.readOnly);
         const imported = imports[0];
         if (imported === undefined) {
           return { importedThreadCount: 0, importedMessageCount: 0 };
@@ -1044,7 +1046,7 @@ const make = Effect.gen(function* () {
             AND aggregate_kind = 'thread'
             AND stream_id = ${threadId}
             AND event_id LIKE ${`${IMPORT_EVENT_PREFIX}:message:%`}
-        `;
+        `.pipe(NodeSqliteClient.readOnly);
         const existing = new Set(existingRows.map((row) => row.event_id));
         const missing =
           revision > 0
@@ -1203,7 +1205,7 @@ const make = Effect.gen(function* () {
       WHERE transcript_imported_at IS NULL
         OR history_repair_version < ${LEGACY_HISTORY_REPAIR_VERSION}
       ORDER BY shell_imported_at ASC, thread_id ASC
-    `;
+    `.pipe(NodeSqliteClient.readOnly);
     let importedThreadCount = 0;
     let importedMessageCount = 0;
     for (const row of rows) {

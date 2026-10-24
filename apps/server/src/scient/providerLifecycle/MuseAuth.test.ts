@@ -283,15 +283,14 @@ describe("Muse native account boundary", () => {
       const failed = yield* phase(h.controller, "failed");
       assert.include(failed.message ?? "", "Fixture routed-stop failure.");
       assert.isFalse(Deferred.isDoneUnsafe(h.spawned));
-      // The failed phase is published just before the flow settles.
-      for (let turn = 0; turn < 100 && (yield* h.controller.isChangingCredentials!); turn++)
-        yield* Effect.yieldNow;
-      assert.isFalse(yield* h.controller.isChangingCredentials!);
-      assert.isUndefined(yield* h.coordinator.currentForProvider(driver));
+      // The failed phase is published under the flow's lock just before the flow returns
+      // to idle. Access takes that lock, so it is admitted only after the flow settles.
       assert.strictEqual(
         (yield* h.controller.withAccess!(Effect.void).pipe(Effect.result))._tag,
         "Success",
       );
+      assert.isFalse(yield* h.controller.isChangingCredentials!);
+      assert.isUndefined(yield* h.coordinator.currentForProvider(driver));
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "win32"),

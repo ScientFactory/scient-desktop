@@ -23,9 +23,19 @@ vi.mock("react-native", () => ({
   Image: { resolveAssetSource: () => ({ uri: "test-icon" }) },
   Share: {},
 }));
-vi.mock("../features/settings/appearance/AppearancePreferencesProvider", () => ({
-  useAppearancePreferences: () => ({ themeAppearance: "light", mathRenderingEnabled: false }),
-}));
+vi.mock("../features/settings/appearance/AppearancePreferencesProvider", async () => {
+  // The factory is hoisted above static imports. Link chips resolve their foreground
+  // against the active theme's message surfaces, as the provider supplies in the app.
+  const { DEFAULT_MOBILE_THEME_ID, getMobileThemeVariables } = await import("../lib/mobileTheme");
+  const themeVariables = getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "light");
+  return {
+    useAppearancePreferences: () => ({
+      themeAppearance: "light",
+      mathRenderingEnabled: false,
+      themeVariables,
+    }),
+  };
+});
 vi.mock("../components/ui/Menu", () => ({ Menu: "div" }));
 vi.mock("../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: vi.fn() }));
 vi.mock("../lib/markdownFileIcons", () => ({

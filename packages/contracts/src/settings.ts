@@ -1081,6 +1081,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "enableAgentBrowserAccess",
   "enableAgentDeviceAccess",
   "textGenerationModelSelection",
+  "threadTitleInstructions",
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
   "reviewGuideInstructions",
@@ -1124,6 +1125,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
+  threadTitleInstructions: Schema.optionalKey(TrimmedString),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
@@ -1395,6 +1397,7 @@ export const ServerSettings = Schema.Struct({
       }),
     ),
   ),
+  threadTitleInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   branchNamingMode: BranchNamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("static" as const)),
   ),
@@ -1705,12 +1708,12 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   /**
-   * Per-project entry replacement: each entry replaces that project's whole
-   * override set and `null` removes it.
-   *
-   * `providerInstances` is the one exception: an entry that omits the key keeps
-   * the stored value instead of clearing it, so a client built before that
-   * field existed cannot wipe it by editing another key.
+   * Per-project replacement clears ordinary scoped keys absent from the entry.
+   * A non-null entry preserves omitted `providerInstances` and
+   * `threadTitleInstructions`. A `null` entry clears ordinary settings and
+   * provider-instance overrides but keeps title instructions so released clients
+   * can reset the settings they know. Explicit `threadTitleInstructions: null`
+   * restores inheritance; an empty string remains an explicit project override.
    */
   projectSettingsOverrides: Schema.optionalKey(
     Schema.Record(
@@ -1718,6 +1721,7 @@ export const ServerSettingsPatch = Schema.Struct({
       Schema.NullOr(
         Schema.Struct({
           ...ProjectSettingsOverrides.fields,
+          threadTitleInstructions: Schema.optionalKey(Schema.NullOr(TrimmedString)),
           sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
         }),
       ),
@@ -1752,6 +1756,7 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  threadTitleInstructions: Schema.optionalKey(TrimmedString),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),
   branchNameInstructions: Schema.optionalKey(TrimmedString),

@@ -1589,10 +1589,15 @@ it.effect.each(["resume", "start"] as const)(
               const startsBefore = yield* Ref.get(nativeStarts);
               const pausedOrFinished = yield* Deferred.make<void>();
               const tasks: Array<() => void> = [];
+              const completionDispatcher = new EffectScheduler.MixedScheduler().makeDispatcher();
               let checkpoints = 0;
               let paused = false;
+              let completing = false;
               const dispatcher: EffectScheduler.SchedulerDispatcher = {
-                scheduleTask: (task) => tasks.push(task),
+                scheduleTask: (task, priority) => {
+                  if (completing) completionDispatcher.scheduleTask(task, priority);
+                  else tasks.push(task);
+                },
                 flush: () => {
                   let task: (() => void) | undefined;
                   while (!paused && (task = tasks.shift()) !== undefined) task();
@@ -1633,10 +1638,11 @@ it.effect.each(["resume", "start"] as const)(
               // Release before asserting, so a failing mutation cannot strand a
               // real native unload or the manager's scope finalizer in the test.
               yield* Deferred.succeed(unloadGate.release, undefined);
-              for (let spin = 0; next.pollUnsafe() === undefined && spin < 1000; spin += 1) {
-                dispatcher.flush();
-                yield* Effect.yieldNow;
-              }
+              // Once the measured pause is released, asynchronous native completion must
+              // schedule itself rather than depend on the test driving extra turns.
+              completing = true;
+              dispatcher.flush();
+              yield* Fiber.await(next);
               assert.isDefined(
                 next.pollUnsafe(),
                 `follow-up did not complete at checkpoint ${pauseAt}`,

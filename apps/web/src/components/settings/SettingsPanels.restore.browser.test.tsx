@@ -72,6 +72,21 @@ function setup() {
 }
 
 describe("restoring V2 settings", () => {
+  it("restores title instructions alone through the extracted scoped owner", async () => {
+    setup();
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      threadTitleInstructions: "Lead with the subject",
+    };
+    await using screen = await renderRestore();
+    expect(screen.restore.changedSettingLabels).toEqual(["Thread title instructions"]);
+    await screen.getByRole("button", { name: "Restore defaults" }).click();
+    expect(state.confirm.mock.calls[0]?.[0]).toContain("Thread title instructions");
+    expect(state.update.mock.calls[0]?.[0].threadTitleInstructions).toBe("");
+    expect(state.update.mock.calls[0]?.[0]).not.toHaveProperty("mathRenderingEnabled");
+    await screen.refresh();
+    expect(screen.restore.changedSettingLabels).toEqual([]);
+  });
   it("enables restore for chat width alone and restores its default through the live hook", async () => {
     setup();
     await using screen = await renderRestore();

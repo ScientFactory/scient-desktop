@@ -2,10 +2,16 @@ import { Spinner } from "~/components/ui/spinner";
 import type {
   EnvironmentId,
   ProjectId,
+  PullRequestFilterOptionsInput,
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
   SourceControlProviderKind,
+} from "@t3tools/contracts";
+import {
+  PULL_REQUEST_FILTER_MAX_LABEL_GROUPS,
+  PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH,
+  setPullRequestFilterLabel,
 } from "@t3tools/contracts";
 import {
   CircleCheckIcon,
@@ -23,6 +29,8 @@ import {
 import { type ElementType, useState } from "react";
 
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
+import { useDebouncedValue } from "~/state/queries";
+import { type EnvironmentQueryTarget, usePullRequestFilterOptions } from "~/state/pullRequests";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Button } from "../ui/button";
@@ -36,6 +44,7 @@ import {
   MenuRadioGroup,
   MenuRadioItem,
   MenuRadioItemIndicator,
+  MenuSearchInput,
   MenuSeparator,
   MenuSub,
   MenuSubPopup,
@@ -44,6 +53,10 @@ import {
 } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  pullRequestAuthorChoices,
+  pullRequestFilterOptionNotice,
+  selectedPullRequestAuthor,
+  pullRequestLabelChoices,
   pullRequestLabelColor,
   type PullRequestAuthorFacet,
   type PullRequestLabelFacet,
@@ -232,30 +245,115 @@ function PullRequestFilterRadioSubmenu<Value extends string>({
   );
 }
 
-function PullRequestAuthorFilter({
+/** The listing's own scope, which the pickers search the host within. */
+export type PullRequestFilterOptionScope = EnvironmentQueryTarget<
+  Omit<PullRequestFilterOptionsInput, "kind" | "query">
+>;
+
+const OPTION_SEARCH_DEBOUNCE_MS = 250;
+
+function useHostedFilterOptions(
+  scope: ReadonlyArray<PullRequestFilterOptionScope>,
+  kind: PullRequestFilterOptionsInput["kind"],
+  query: string,
+) {
+  const typed = query.trim();
+  const sent = useDebouncedValue(typed, OPTION_SEARCH_DEBOUNCE_MS);
+  const hosted = usePullRequestFilterOptions(
+    scope.map(({ environmentId, input }) => ({
+      environmentId,
+      input: { ...input, kind, ...(sent ? { query: sent } : {}) },
+    })),
+  );
+  // Until the search catches up with the typing, the host's answers are for older text.
+  return sent === typed
+    ? hosted
+    : { labels: [], authors: [], truncated: false, error: null, isPending: true };
+}
+
+function PullRequestAuthorChoices({
   value,
   options,
+  scope,
   onChange,
 }: {
   value: string | undefined;
   options: ReadonlyArray<PullRequestAuthorFacet>;
+  scope: ReadonlyArray<PullRequestFilterOptionScope>;
   onChange: (author: string | undefined) => void;
 }) {
   const [query, setQuery] = useState("");
-  const needle = query.trim().toLowerCase();
+  const hosted = useHostedFilterOptions(scope, "authors", query);
   const login = value?.toLowerCase() ?? "";
-  const selected = options.find((option) => option.actor.login.toLowerCase() === login);
+  const selected = selectedPullRequestAuthor(options, hosted.authors, value);
   const visible = [
     ...(selected ? [selected] : []),
-    ...options.filter(
-      (option) =>
-        option !== selected &&
-        (needle.length === 0 ||
-          option.actor.login.toLowerCase().includes(needle) ||
-          option.actor.name?.toLowerCase().includes(needle)),
+    ...pullRequestAuthorChoices(options, hosted.authors, query).filter(
+      (option) => option.actor.login.toLowerCase() !== login,
     ),
-  ].slice(0, 10);
+  ].slice(0, 30);
+  const notice = pullRequestFilterOptionNotice({
+    kind: "authors",
+    visibleCount: visible.length,
+    isPending: hosted.isPending,
+    error: hosted.error,
+    truncated: hosted.truncated,
+  });
   const select = (next: string) => next.toLowerCase() !== login && onChange(next || undefined);
+  return (
+    <>
+      <MenuSearchInput
+        autoFocus
+        busy={hosted.isPending}
+        value={query}
+        maxLength={PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH}
+        onChange={(event) =>
+          setQuery(event.currentTarget.value.slice(0, PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH))
+        }
+        placeholder="Search authors"
+        aria-label="Search authors"
+      />
+      <MenuRadioGroup value={selected?.actor.login ?? value ?? ""} onValueChange={select}>
+        <MenuRadioItem value="">
+          <span className="flex min-w-0 items-center gap-2">
+            <LayersIcon aria-hidden className="size-3.5" />
+            Anyone
+          </span>
+        </MenuRadioItem>
+        {visible.map((option) => (
+          <MenuRadioItem key={option.actor.login.toLowerCase()} value={option.actor.login}>
+            <span className="flex min-w-0 items-center gap-2">
+              <PullRequestActorAvatar actor={option.actor} />
+              <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
+              {option.mergedCount > 0 ? (
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {option.mergedCount} merges loaded
+                </span>
+              ) : null}
+            </span>
+          </MenuRadioItem>
+        ))}
+        {notice !== null ? (
+          <MenuItem disabled>
+            <span role="status">{notice}</span>
+          </MenuItem>
+        ) : null}
+      </MenuRadioGroup>
+    </>
+  );
+}
+
+function PullRequestAuthorFilter({
+  value,
+  options,
+  scope,
+  onChange,
+}: {
+  value: string | undefined;
+  options: ReadonlyArray<PullRequestAuthorFacet>;
+  scope: ReadonlyArray<PullRequestFilterOptionScope>;
+  onChange: (author: string | undefined) => void;
+}) {
   return (
     <MenuSub>
       <MenuSubTrigger>
@@ -266,109 +364,137 @@ function PullRequestAuthorFilter({
         </span>
       </MenuSubTrigger>
       <MenuSubPopup>
-        <div className="p-1 pb-2">
-          <InputGroup>
-            <InputGroupAddon>
-              <SearchIcon aria-hidden />
-            </InputGroupAddon>
-            <InputGroupInput
-              autoFocus
-              size="compact"
-              value={query}
-              onChange={(event) => setQuery(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "ArrowDown" && event.key !== "Escape") event.stopPropagation();
-              }}
-              placeholder="Search authors"
-              aria-label="Search authors"
-            />
-          </InputGroup>
-        </div>
-        <MenuRadioGroup value={selected?.actor.login ?? value ?? ""} onValueChange={select}>
-          <MenuRadioItem value="">
-            <span className="flex min-w-0 items-center gap-2">
-              <LayersIcon aria-hidden className="size-3.5" />
-              Anyone
-            </span>
-          </MenuRadioItem>
-          {visible.map((option) => (
-            <MenuRadioItem key={option.actor.login.toLowerCase()} value={option.actor.login}>
-              <span className="flex min-w-0 items-center gap-2">
-                <PullRequestActorAvatar actor={option.actor} />
-                <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {option.mergedCount} merges loaded
-                </span>
-              </span>
-            </MenuRadioItem>
-          ))}
-          {visible.length === 0 ? <MenuItem disabled>No authors found</MenuItem> : null}
-        </MenuRadioGroup>
+        <PullRequestAuthorChoices
+          value={value}
+          options={options}
+          scope={scope}
+          onChange={onChange}
+        />
       </MenuSubPopup>
     </MenuSub>
+  );
+}
+
+function PullRequestLabelChoices({
+  value,
+  options,
+  scope,
+  onChange,
+}: {
+  value: PullRequestListFilters["labels"];
+  options: ReadonlyArray<PullRequestLabelFacet>;
+  scope: ReadonlyArray<PullRequestFilterOptionScope>;
+  onChange: (labels: PullRequestListFilters["labels"]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const hosted = useHostedFilterOptions(scope, "labels", query);
+  const names = (value ?? []).flatMap((group) => group);
+  const selected = new Set(names.map((name) => name.toLowerCase()));
+  const limitReached = (value?.length ?? 0) >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS;
+  const choices = pullRequestLabelChoices(options, hosted.labels, query);
+  const visible = [
+    // Two groups may offer the same name as an alternative; it is one choice here.
+    ...names
+      .filter(
+        (name, index) =>
+          names.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index &&
+          !choices.some((option) => option.name.toLowerCase() === name.toLowerCase()),
+      )
+      .map((name) => ({ name, color: null, count: 0 })),
+    ...choices,
+  ];
+  const notice = pullRequestFilterOptionNotice({
+    kind: "labels",
+    visibleCount: visible.length,
+    isPending: hosted.isPending,
+    error: hosted.error,
+    truncated: hosted.truncated,
+  });
+  return (
+    <>
+      <MenuSearchInput
+        autoFocus
+        busy={hosted.isPending}
+        value={query}
+        maxLength={PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH}
+        onChange={(event) =>
+          setQuery(event.currentTarget.value.slice(0, PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH))
+        }
+        placeholder="Search labels"
+        aria-label="Search labels"
+      />
+      {notice !== null ? (
+        <MenuItem disabled>
+          <span role="status">{notice}</span>
+        </MenuItem>
+      ) : null}
+      {limitReached ? (
+        <MenuItem disabled>
+          Choose at most {PULL_REQUEST_FILTER_MAX_LABEL_GROUPS} label filters; clear one to choose
+          another
+        </MenuItem>
+      ) : null}
+      {visible.map((option) => {
+        const key = option.name.toLowerCase();
+        const dot = pullRequestLabelColor(option.color);
+        return (
+          <MenuCheckboxItem
+            key={key}
+            checked={selected.has(key)}
+            disabled={limitReached && !selected.has(key)}
+            onCheckedChange={(next) => {
+              const labels = setPullRequestFilterLabel(value, option.name, next);
+              if (labels !== value) onChange(labels);
+            }}
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <span
+                aria-hidden
+                className="size-2.5 shrink-0 rounded-full bg-muted-foreground"
+                {...(dot ? { style: { backgroundColor: dot } } : {})}
+              />
+              <span className="min-w-0 flex-1 truncate">{option.name}</span>
+              {option.count > 0 ? (
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {option.count}
+                </span>
+              ) : null}
+            </span>
+          </MenuCheckboxItem>
+        );
+      })}
+    </>
   );
 }
 
 function PullRequestLabelFilter({
   value,
   options,
+  scope,
   onChange,
 }: {
-  value: ReadonlyArray<string>;
+  value: PullRequestListFilters["labels"];
   options: ReadonlyArray<PullRequestLabelFacet>;
-  onChange: (labels: ReadonlyArray<string>) => void;
+  scope: ReadonlyArray<PullRequestFilterOptionScope>;
+  onChange: (labels: PullRequestListFilters["labels"]) => void;
 }) {
-  const selected = new Set(value.map((name) => name.toLowerCase()));
-  const visible = [
-    ...value
-      .filter((name) => !options.some((option) => option.name.toLowerCase() === name.toLowerCase()))
-      .map((name) => ({ name, color: null, count: 0 })),
-    ...options,
-  ];
+  const selectedCount = (value ?? []).flatMap((group) => group).length;
   return (
     <MenuSub>
       <MenuSubTrigger>
         <TagIcon aria-hidden className="size-3.5" />
         <span className="flex-1">Labels</span>
         <span className="text-xs text-muted-foreground">
-          {value.length === 0 ? "Any" : `${value.length} selected`}
+          {selectedCount === 0 ? "Any" : `${selectedCount} selected`}
         </span>
       </MenuSubTrigger>
       <MenuSubPopup>
-        {visible.length === 0 ? (
-          <MenuItem disabled>No labels in this view</MenuItem>
-        ) : (
-          visible.map((option) => {
-            const key = option.name.toLowerCase();
-            const checked = selected.has(key);
-            const dot = pullRequestLabelColor(option.color);
-            return (
-              <MenuCheckboxItem
-                key={key}
-                checked={checked}
-                onCheckedChange={(next) =>
-                  onChange(
-                    next
-                      ? [...value, option.name]
-                      : value.filter((name) => name.toLowerCase() !== option.name.toLowerCase()),
-                  )
-                }
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <span
-                    aria-hidden
-                    className="size-2.5 shrink-0 rounded-full bg-muted-foreground"
-                    {...(dot ? { style: { backgroundColor: dot } } : {})}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{option.name}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                    {option.count}
-                  </span>
-                </span>
-              </MenuCheckboxItem>
-            );
-          })
-        )}
+        <PullRequestLabelChoices
+          value={value}
+          options={options}
+          scope={scope}
+          onChange={onChange}
+        />
       </MenuSubPopup>
     </MenuSub>
   );
@@ -386,6 +512,7 @@ export function PullRequestFiltersMenu({
   onFilters,
   authorOptions = [],
   labelOptions = [],
+  optionScope,
   host,
   hostOptions,
   onHost,
@@ -409,6 +536,7 @@ export function PullRequestFiltersMenu({
   onFilters: (filters: PullRequestListFilters) => void;
   authorOptions?: ReadonlyArray<PullRequestAuthorFacet>;
   labelOptions?: ReadonlyArray<PullRequestLabelFacet>;
+  optionScope: ReadonlyArray<PullRequestFilterOptionScope>;
   host: string | undefined;
   hostOptions: ReadonlyArray<PullRequestFilterOption<string>>;
   onHost: (host: string | undefined) => void;
@@ -494,16 +622,14 @@ export function PullRequestFiltersMenu({
         <PullRequestAuthorFilter
           value={filters.author}
           options={authorOptions}
+          scope={optionScope}
           onChange={(author) => updateFilters({ author })}
         />
         <PullRequestLabelFilter
-          value={selectedLabels}
+          value={filters.labels}
           options={labelOptions}
-          onChange={(labels) =>
-            updateFilters({
-              labels: labels.length === 0 ? undefined : labels.slice(0, 10).map((label) => [label]),
-            })
-          }
+          scope={optionScope}
+          onChange={(labels) => updateFilters({ labels })}
         />
         <PullRequestFilterRadioSubmenu
           label="Draft"

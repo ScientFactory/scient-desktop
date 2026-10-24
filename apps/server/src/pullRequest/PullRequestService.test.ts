@@ -834,6 +834,258 @@ it.effect("keeps healthy repositories when one of them cannot be read", () =>
   }),
 );
 
+it.effect("offers each label once across repositories, despite one that cannot be read", () =>
+  Effect.gen(function* () {
+    const reads: Array<string> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+        project({
+          id: "p5",
+          title: "t3code worktree",
+          workspaceRoot: "/e",
+          repository: "pingdotgg/t3code",
+        }),
+        project({
+          id: "p2",
+          title: "uploadthing",
+          workspaceRoot: "/b",
+          repository: "pingdotgg/ut",
+        }),
+        project({ id: "p3", title: "broken", workspaceRoot: "/c", repository: "pingdotgg/broken" }),
+        project({
+          id: "p4",
+          title: "elsewhere",
+          workspaceRoot: "/d",
+          repository: "group/app",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listRepositoryLabels: (input) => {
+            reads.push(input.repository);
+            return input.repository === "pingdotgg/broken"
+              ? Effect.fail(requestFailed)
+              : Effect.succeed({
+                  items:
+                    input.repository === "pingdotgg/t3code"
+                      ? [
+                          { name: "size:XL", color: "d93f0b" },
+                          { name: "bug", color: "d73a4a" },
+                        ]
+                      : [{ name: "Bug", color: "ee0701" }],
+                  truncated: false,
+                });
+          },
+        }),
+        // A host with no repository labels is left out rather than failing the answer.
+        fakeProvider(SourceControlProviderKind.make("gitlab")),
+      ],
+    });
+
+    const result = yield* service.filterOptions({ kind: "labels" });
+
+    assert.deepStrictEqual(
+      result.labels.map((label) => label.name),
+      ["bug", "size:XL"],
+    );
+    assert.strictEqual(reads.filter((repository) => repository === "pingdotgg/t3code").length, 1);
+    assert.strictEqual(result.truncated, false);
+    assert.ok(result.partialFailure);
+  }),
+);
+
+it.effect("keeps healthy author options and marks a failed repository as incomplete", () =>
+  Effect.gen(function* () {
+    const provider = SourceControlProviderKind.make("github");
+    const authFailure = new PullRequestProviderError({
+      provider,
+      operation: "searchRepositoryAuthors",
+      reason: "unauthenticated",
+      detail: "Private authentication detail",
+    });
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "healthy", workspaceRoot: "/a", repository: "acme/healthy" }),
+        project({ id: "p2", title: "broken", workspaceRoot: "/b", repository: "acme/broken" }),
+      ],
+      providers: [
+        fakeProvider(provider, {
+          searchRepositoryAuthors: ({ repository }) =>
+            repository === "acme/broken"
+              ? Effect.fail(authFailure)
+              : Effect.succeed({
+                  items: [{ login: "theo", name: "Theo", avatarUrl: null }],
+                  truncated: false,
+                }),
+        }),
+      ],
+    });
+
+    const result = yield* service.filterOptions({ kind: "authors", query: "theo" });
+
+    assert.deepStrictEqual(
+      result.authors.map((author) => author.login),
+      ["theo"],
+    );
+    assert.strictEqual(result.truncated, false);
+    const partialFailure = result.partialFailure;
+    assert.ok(partialFailure);
+    assert.strictEqual(partialFailure.includes("Private authentication detail"), false);
+  }),
+);
+
+it.effect.each(["labels", "authors"] as const)(
+  "reports %s filter-option failures instead of returning an empty answer",
+  (kind) =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p1",
+            title: "broken",
+            workspaceRoot: "/a",
+            repository: "pingdotgg/broken",
+          }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            listRepositoryLabels: () => Effect.fail(requestFailed),
+            searchRepositoryAuthors: () => Effect.fail(requestFailed),
+          }),
+        ],
+      });
+
+      const error = yield* Effect.flip(service.filterOptions({ kind }));
+
+      expect(error).toMatchObject({
+        _tag: "PullRequestOperationError",
+        operation: "filterOptions",
+        detail: requestFailed.detail,
+      });
+    }),
+);
+
+it.effect.each(["labels", "authors"] as const)(
+  "prefers unusable-host guidance when every %s option search fails",
+  (kind) =>
+    Effect.gen(function* () {
+      const provider = SourceControlProviderKind.make("github");
+      const authFailure = new PullRequestProviderError({
+        provider,
+        operation: kind === "labels" ? "listRepositoryLabels" : "searchRepositoryAuthors",
+        reason: "unauthenticated",
+        detail: "Private authentication detail",
+      });
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "broken", workspaceRoot: "/a", repository: "acme/broken" }),
+          project({
+            id: "p2",
+            title: "unavailable",
+            workspaceRoot: "/b",
+            repository: "acme/unavailable",
+          }),
+        ],
+        providers: [
+          fakeProvider(provider, {
+            listRepositoryLabels: ({ repository }) =>
+              Effect.fail(repository === "acme/broken" ? requestFailed : authFailure),
+            searchRepositoryAuthors: ({ repository }) =>
+              Effect.fail(repository === "acme/broken" ? requestFailed : authFailure),
+          }),
+        ],
+      });
+
+      const error = yield* Effect.flip(service.filterOptions({ kind }));
+
+      expect(error).toMatchObject({
+        _tag: "PullRequestUnavailableError",
+        reason: "cli-unauthenticated",
+      });
+      expect(error.message).not.toContain("Private authentication detail");
+    }),
+);
+
+it.effect("scopes filter options to the requested project and host", () =>
+  Effect.gen(function* () {
+    const reads: Array<string> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "one", workspaceRoot: "/one", repository: "acme/one" }),
+        project({ id: "p2", title: "two", workspaceRoot: "/two", repository: "acme/two" }),
+        project({
+          id: "p3",
+          title: "enterprise",
+          workspaceRoot: "/enterprise",
+          repository: "acme/three",
+          host: "github.acme.dev",
+        }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listRepositoryLabels: (input) => {
+            reads.push(`${input.host}/${input.repository}`);
+            return Effect.succeed({
+              items: [{ name: input.repository, color: null }],
+              truncated: false,
+            });
+          },
+        }),
+      ],
+    });
+
+    const result = yield* service.filterOptions({
+      kind: "labels",
+      projectIds: ["p2" as ProjectId],
+      host: "github.com",
+    });
+
+    assert.deepStrictEqual(reads, ["github.com/acme/two"]);
+    assert.deepStrictEqual(
+      result.labels.map((label) => label.name),
+      ["acme/two"],
+    );
+  }),
+);
+
+it.effect("puts the author a query names exactly ahead of those it only begins", () =>
+  Effect.gen(function* () {
+    const queries: Array<string | undefined> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          searchRepositoryAuthors: (input) => {
+            queries.push(input.query);
+            return Effect.succeed({
+              items: [
+                { login: "theo-browne", name: null, avatarUrl: null },
+                { login: "octocat", name: "Theo", avatarUrl: null },
+                { login: "julius", name: "Julius", avatarUrl: null },
+                { login: "t3dotgg", name: "theo", avatarUrl: null },
+              ],
+              truncated: true,
+            });
+          },
+        }),
+      ],
+    });
+
+    const result = yield* service.filterOptions({ kind: "authors", query: "theo" });
+
+    assert.deepStrictEqual(queries, ["theo"]);
+    assert.deepStrictEqual(
+      result.authors.map((author) => author.login),
+      ["octocat", "t3dotgg", "theo-browne"],
+    );
+    assert.strictEqual(result.truncated, true);
+  }),
+);
+
 it.effect("tries another workspace on the same host for the viewer", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
@@ -2741,6 +2993,34 @@ it.effect("deduplicates routed PR reports without dropping draft changes", () =>
   }),
 );
 
+it.effect("preserves check observation time on cache hits and advances it on refresh", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestChecks: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return { state: "open" as const, checks: [] };
+            }),
+        }),
+      ],
+    });
+    yield* TestClock.setTime(1_000);
+    const first = yield* service.checks(reference);
+    expect(first).toMatchObject({ observedAt: 1_000 });
+    yield* TestClock.adjust("1 second");
+    expect(yield* service.checks(reference)).toEqual(first);
+    expect(reads).toBe(1);
+    yield* TestClock.adjust("15 seconds");
+    expect(yield* service.checks(reference)).toMatchObject({ observedAt: 17_000 });
+    expect(reads).toBe(2);
+  }),
+);
+
 it.effect("reuses an observed merged state for strict settlement reads", () =>
   Effect.gen(function* () {
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
@@ -3009,6 +3289,117 @@ it.effect("refuses a way of updating a branch that the host or the viewer does n
 
     yield* service.runAction({ ...reference, action: "update-branch", updateMethod: "merge" });
     assert.strictEqual(taken, "merge");
+  }),
+);
+
+it.effect("fills a filtered page without exceeding its requested size", () =>
+  Effect.gen(function* () {
+    const reads: Array<readonly [number, number]> = [];
+    const rows = Array.from({ length: 40 }, (_, index) => ({
+      ...changeRequest(index + 1, `2026-07-${String(40 - index).padStart(2, "0")}T00:00:00Z`),
+      labels: index === 0 || index >= 4 ? [{ name: "bug", color: null }] : [],
+    }));
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: SourceControlProviderKind.make("gitlab"),
+        }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("gitlab"), {
+          listChangeRequests: (input) => {
+            const delivered = input.cursor?.delivered ?? 0;
+            reads.push([delivered, input.limit]);
+            return Effect.succeed({
+              items: rows.slice(delivered, delivered + input.limit),
+              truncated: delivered + input.limit < rows.length,
+              continues: true,
+            });
+          },
+        }),
+      ],
+    });
+
+    const bugs = yield* service.list({ state: "open", limit: 4, filters: { labels: [["bug"]] } });
+    assert.deepStrictEqual(
+      bugs.entries.map((entry) => entry.number),
+      [1, 5, 6, 7],
+    );
+    assert.deepStrictEqual(reads, [
+      [0, 4],
+      [4, 3],
+    ]);
+    assert.match(Object.values(bugs.nextCursors)[0] ?? "", /\|7\|/);
+
+    const next = yield* service.list({
+      state: "open",
+      limit: 4,
+      filters: { labels: [["bug"]] },
+      cursors: bugs.nextCursors,
+    });
+    assert.deepStrictEqual(
+      next.entries.map((entry) => entry.number),
+      [8, 9, 10, 11],
+    );
+    assert.deepStrictEqual(reads, [
+      [0, 4],
+      [4, 3],
+      [7, 4],
+    ]);
+
+    reads.length = 0;
+    const none = yield* service.list({
+      state: "open",
+      limit: 4,
+      filters: { labels: [["missing"]] },
+    });
+    assert.deepStrictEqual(none.entries, []);
+    assert.deepStrictEqual(reads, [
+      [0, 4],
+      [4, 4],
+      [8, 4],
+      [12, 4],
+      [16, 4],
+    ]);
+    assert.match(Object.values(none.nextCursors)[0] ?? "", /\|20\|/);
+  }),
+);
+
+it.effect("hands a host's own resume position back on the next read", () =>
+  Effect.gen(function* () {
+    const resumed: Array<string | undefined> = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: SourceControlProviderKind.make("gitlab"),
+        }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("gitlab"), {
+          listChangeRequests: (input) => {
+            resumed.push(input.cursor?.resumeAfter);
+            return Effect.succeed({
+              items: [changeRequest(resumed.length, "2026-07-02T00:00:00Z")],
+              truncated: true,
+              continues: true,
+              resumeAfter: `2026-07-01T00:00:00.000Z~${resumed.length}`,
+            });
+          },
+        }),
+      ],
+    });
+
+    const first = yield* service.list({ state: "open", limit: 1 });
+    yield* service.list({ state: "open", limit: 1, cursors: first.nextCursors });
+    assert.deepStrictEqual(resumed, [undefined, "2026-07-01T00:00:00.000Z~1"]);
   }),
 );
 

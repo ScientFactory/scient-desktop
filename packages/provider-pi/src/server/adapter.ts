@@ -658,6 +658,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         threadId: input.threadId,
         env: launch.env,
       });
+      // Finalizers run in reverse order: reap detached work after terminating Pi.
+      const scopeUnit = scopedLaunch.unit;
+      const stopScope =
+        scopeUnit === undefined ? Effect.void : yield* Effect.cached(agentScope.stop(scopeUnit));
+      // SCIENT-FORK:START — the parent may close finalizers in parallel; reap inside the ordered
+      // transport scope, after the process and before the owned session file is released.
+      yield* Scope.addFinalizer(connectionScope, stopScope);
+      // SCIENT-FORK:END
       const connection: PiRpcConnection = yield* (options.makeConnection ?? makePiRpcConnection)({
         command: scopedLaunch.command,
         args: scopedLaunch.args,
@@ -676,6 +684,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             }),
         ),
       );
+      // Detached children can keep stdout open after Pi exits.
+      if (scopeUnit !== undefined) {
+        yield* connection.exited.pipe(
+          Effect.matchEffect({ onFailure: () => stopScope, onSuccess: () => stopScope }),
+          // SCIENT-FORK:START — the watcher belongs to the ordered transport scope.
+          Effect.forkIn(connectionScope),
+          // SCIENT-FORK:END
+        );
+      }
       let nativeCommandNames = new Set<string>(["compact"]);
       const discoverSkillNames = connection
         .request({ type: "get_commands" }, PI_SKILL_DISCOVERY_TIMEOUT_MS)
@@ -4084,7 +4101,11 @@ function piQuestion(
               value: "",
             },
           ];
-  const question = recordString(event, "message") ?? recordString(event, "placeholder") ?? title;
+  // Extensions may send a blank placeholder, which is not a valid question.
+  const question =
+    [recordString(event, "message"), recordString(event, "placeholder")].find(
+      (text) => text !== undefined && text.trim().length > 0,
+    ) ?? title;
   return {
     id: questionId,
     header: title,

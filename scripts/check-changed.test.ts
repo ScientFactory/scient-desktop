@@ -29,7 +29,7 @@ function setup() {
     NodeFS.readFileSync(new URL("../.github/scripts/ci-changes.cjs", import.meta.url), "utf8"),
   );
   write("pnpm-workspace.yaml", "packages:\n");
-  write("package.json", '{"type":"module"}\n');
+  write("package.json", '{"type":"module","scripts":{"knip:check":"knip --include files"}}\n');
   NodeFS.mkdirSync(NodePath.join(root, "node_modules"), { recursive: true });
   NodeFS.symlinkSync(
     NodeURL.fileURLToPath(new URL("../", import.meta.resolve("typescript-legacy"))),
@@ -48,7 +48,9 @@ function setup() {
 import ChildProcess from "node:child_process";
 import * as fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-const spawn = ChildProcess.spawnSync;
+import { EventEmitter } from "node:events";
+const spawnSync = ChildProcess.spawnSync;
+const spawn = ChildProcess.spawn;
 ChildProcess.spawnSync = (command, args, options) => {
   if (command === "git" && args[0] === "merge-base") {
     return { status: 0, stdout: ${JSON.stringify(emptyTree + "\n")} };
@@ -57,7 +59,16 @@ ChildProcess.spawnSync = (command, args, options) => {
     fs.appendFileSync(new URL("./calls.jsonl", import.meta.url), JSON.stringify(args) + "\\n");
     return { status: 0 };
   }
-  return spawn(command, args, options);
+  return spawnSync(command, args, options);
+};
+ChildProcess.spawn = (command, args, options) => {
+  if (command !== "vp") return spawn(command, args, options);
+  fs.appendFileSync(new URL("./calls.jsonl", import.meta.url), JSON.stringify(args) + "\\n");
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  queueMicrotask(() => child.emit("close", 0));
+  return child;
 };
 syncBuiltinESMExports();
 `,
@@ -88,10 +99,11 @@ syncBuiltinESMExports();
   };
 }
 
-it("passes tracked and untracked non-ASCII Git filenames to formatting unchanged", () => {
+it.each([
+  ["docs/café.md", "docs/naïve.md"],
+  ["docs/first\npart.md", "docs/second\npart.md"],
+])("preserves tracked and untracked Git filenames: %s, %s", (tracked, untracked) => {
   using fixture = setup();
-  const tracked = "docs/café.md";
-  const untracked = "docs/naïve.md";
   fixture.write(tracked, "tracked\n");
   fixture.git("add", "--", tracked);
   fixture.write(untracked, "untracked\n");
@@ -148,4 +160,27 @@ it("fixture", () => {});
   const result = fixture.run();
   assert.strictEqual(result.status, 0, result.stdout + result.stderr);
   assert.isTrue(fixture.calls().some((args) => args[0] === "test" && args.includes(file)));
+});
+
+it("invalidates a passing cache when a real Node suite starts failing and never caches that failure", () => {
+  using fixture = setup();
+  const file = ".github/scripts/cache.test.mjs";
+  fixture.write(file, 'import { test } from "node:test";\ntest("cache transition", () => {});\n');
+  fixture.git("add", "--", file);
+  const first = fixture.run();
+  assert.strictEqual(first.status, 0, first.stdout + first.stderr);
+  assert.include(first.stdout, "cache transition");
+  const cached = fixture.run();
+  assert.strictEqual(cached.status, 0, cached.stdout + cached.stderr);
+  assert.include(cached.stdout, "Nothing changed since the last passing run.");
+
+  fixture.write(
+    file,
+    'import { test } from "node:test";\ntest("cache transition", () => { throw new Error("changed suite fails"); });\n',
+  );
+  for (const result of [fixture.run(), fixture.run()]) {
+    assert.strictEqual(result.status, 1, result.stdout + result.stderr);
+    assert.include(result.stdout, "changed suite fails");
+    assert.notInclude(result.stdout, "Nothing changed since the last passing run.");
+  }
 });

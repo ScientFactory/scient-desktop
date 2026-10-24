@@ -119,6 +119,27 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect(
+    "refuses upstream 068 occupying Scient's shipped migration identity before applying 072",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: 71 });
+        yield* sql`UPDATE effect_sql_migrations SET name = 'ShellStopRequestIndex'
+        WHERE migration_id = 68`;
+        const before = yield* history;
+        const exit = yield* Effect.exit(runMigrations());
+        assert.isTrue(Exit.isFailure(exit));
+        assert.include(String(exit), '68 as "ShellStopRequestIndex"');
+        assert.deepStrictEqual(yield* history, before);
+        assert.deepStrictEqual(
+          yield* sql`SELECT name FROM sqlite_master WHERE type = 'index'
+          AND name = 'orchestration_v2_projection_turn_items_stop_request_idx'`,
+          [],
+        );
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("refuses a database whose ledger is newer than this build", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

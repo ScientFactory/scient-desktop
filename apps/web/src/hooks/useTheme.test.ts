@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+// Subject reloads must not include the shared schema graph's cold loader work.
+import "@t3tools/contracts";
 
 function createStorage(overrides: Partial<Storage> = {}): Storage {
   const store = new Map<string, string>();

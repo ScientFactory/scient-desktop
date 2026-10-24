@@ -44,9 +44,9 @@
       "cwd": "apps/web",
       "args": ["exec", "vp", "test", "run", "--project", "unit"]
     },
-    "web-layout": {
+    "web-browser": {
       "cwd": "apps/web",
-      "args": ["exec", "vp", "test", "run", "--project", "layout"]
+      "args": ["exec", "vp", "test", "run", "--project", "browser"]
     }
   },
   "boundaries": [
@@ -132,10 +132,10 @@
           "src/orchestration-v2/RunExecutionService.test.ts",
           "src/mcp/TaskCancelNativeSubagent.integration.test.ts"
         ],
-        "web-unit": [
-          "src/components/chat/ComposerPrimaryActions.test.tsx",
-          "src/scient/chat/useStopGeneration.test.tsx",
-          "src/scient/chat/StopGenerationAcknowledgement.test.tsx"
+        "web-browser": [
+          "src/components/chat/ComposerPrimaryActions.browser.test.tsx",
+          "src/scient/chat/useStopGeneration.browser.test.tsx",
+          "src/scient/chat/StopGenerationAcknowledgement.browser.test.tsx"
         ]
       },
       "limits": [
@@ -221,10 +221,10 @@
           "src/orchestration-v2/scient-fork/QueuedRunSend.integration.test.ts",
           "src/orchestration-v2/legacy/LegacyV1RecoveryAcceptance.integration.test.ts"
         ],
-        "web-unit": [
-          "src/components/chat/ComposerPrimaryActions.test.tsx",
-          "src/scient/threadQueue/queueShortcuts.test.tsx",
-          "src/scient/threadQueue/disposition.test.ts"
+        "web-unit": ["src/scient/threadQueue/disposition.test.ts"],
+        "web-browser": [
+          "src/components/chat/ComposerPrimaryActions.browser.test.tsx",
+          "src/scient/threadQueue/queueShortcuts.browser.test.tsx"
         ]
       },
       "limits": [
@@ -277,10 +277,11 @@
         "web-unit": [
           "src/components/settings/scopedSettings.test.ts",
           "src/hooks/useSettings.test.ts",
-          "src/hooks/useSettings.sync.test.tsx",
           "src/providerInstances.test.ts",
-          "src/modelSelection.test.ts",
-          "src/components/settings/ProviderSettingsPanel.environment.test.tsx"
+          "src/modelSelection.test.ts"
+        ],
+        "web-browser": [
+          "src/components/settings/ProviderSettingsPanel.environment.browser.test.tsx"
         ],
         "shared": [
           "src/modelVisibility.test.ts",
@@ -413,14 +414,14 @@
           "src/components/chat/readerScrollPolicy.test.ts",
           "src/components/chat/timelineScrollAnchoring.test.tsx"
         ],
-        "web-layout": [
+        "web-browser": [
           "src/components/chat/readerScrolling.browser.test.tsx",
           "src/components/chat/responseFollow.browser.test.tsx",
           "src/components/chat/readingEnd.browser.test.tsx"
         ]
       },
       "limits": [
-        "Chromium layout lane is distinct from ordinary web unit tests; requires the repository Playwright Chromium installation.",
+        "Browser-project suites run in the repository Playwright Chromium installation, separately from ordinary web unit tests.",
         "No Electron/native mobile reader or human visual acceptance; document editor Reload/save-departure interactions are outside this chat-reader bundle and require their existing persistence suites when changed."
       ]
     }

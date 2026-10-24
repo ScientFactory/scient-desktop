@@ -215,49 +215,99 @@ const composerThumbnails = new WeakMap<
   Partial<Record<ComposerImageThumbnailMode, Promise<string | null>>>
 >();
 
+const settledComposerThumbnails = new WeakMap<
+  File,
+  Partial<Record<ComposerImageThumbnailMode, string | null>>
+>();
+
+function cacheComposerImageThumbnail(
+  file: File,
+  mode: ComposerImageThumbnailMode,
+  thumbnail: Promise<string | null>,
+): Promise<string | null> {
+  composerThumbnails.set(file, { ...composerThumbnails.get(file), [mode]: thumbnail });
+  void thumbnail.then((src) => {
+    settledComposerThumbnails.set(file, { ...settledComposerThumbnails.get(file), [mode]: src });
+  });
+  return thumbnail;
+}
+
+/** Undefined until this file and mode settle, allowing a ready tile to paint immediately. */
+export function readComposerImageThumbnail(
+  file: File,
+  mode: ComposerImageThumbnailMode = "square",
+): string | null | undefined {
+  return settledComposerThumbnails.get(file)?.[mode];
+}
+
 export function createComposerImageThumbnail(
   file: File,
   mode: ComposerImageThumbnailMode = "square",
 ): Promise<string | null> {
-  const fileThumbnails = composerThumbnails.get(file);
-  const cached = fileThumbnails?.[mode];
-  if (cached) return cached;
-  const thumbnail = (async () => {
-    if (!canRecompress()) return null;
-    let bitmap: ImageBitmap | undefined;
-    try {
-      bitmap = await createImageBitmap(file);
-      if (bitmap.width <= 0 || bitmap.height <= 0) return null;
-      const side = Math.min(bitmap.width, bitmap.height);
-      const sourceWidth = mode === "square" ? side : bitmap.width;
-      const sourceHeight = mode === "square" ? side : bitmap.height;
-      const bounds = COMPOSER_THUMBNAIL_SIZES[mode];
-      const scale = Math.min(1, bounds.width / sourceWidth, bounds.height / sourceHeight);
-      const width = Math.max(1, Math.round(sourceWidth * scale));
-      const height = Math.max(1, Math.round(sourceHeight * scale));
-      const surface = createCanvas(width, height);
-      if (!surface) return null;
-      surface.context.drawImage(
-        bitmap,
-        (bitmap.width - sourceWidth) / 2,
-        (bitmap.height - sourceHeight) / 2,
-        sourceWidth,
-        sourceHeight,
-        0,
-        0,
-        width,
-        height,
-      );
-      const blob = await encodeCanvas(surface.canvas, 1, "image/png");
-      return blob ? await readFileAsDataUrl(blob) : null;
-    } catch {
-      return null;
-    } finally {
-      bitmap?.close();
+  return (
+    composerThumbnails.get(file)?.[mode] ??
+    cacheComposerImageThumbnail(file, mode, renderComposerImageThumbnail(file, mode))
+  );
+}
+
+/** Preserve each placeholder's crop mode when its source becomes a prepared attachment. */
+export function inheritComposerImageThumbnail(source: File, target: File): void {
+  if (source === target) return;
+  for (const mode of ["square", "snapshot"] as const) {
+    const thumbnail = composerThumbnails.get(source)?.[mode];
+    if (!thumbnail || composerThumbnails.get(target)?.[mode]) continue;
+    const settled = readComposerImageThumbnail(source, mode);
+    if (settled !== undefined) {
+      settledComposerThumbnails.set(target, {
+        ...settledComposerThumbnails.get(target),
+        [mode]: settled,
+      });
     }
-  })();
-  composerThumbnails.set(file, { ...fileThumbnails, [mode]: thumbnail });
-  return thumbnail;
+    cacheComposerImageThumbnail(
+      target,
+      mode,
+      thumbnail.then((src) => src ?? renderComposerImageThumbnail(target, mode)),
+    );
+  }
+}
+
+async function renderComposerImageThumbnail(
+  file: File,
+  mode: ComposerImageThumbnailMode,
+): Promise<string | null> {
+  // Placeholders decode the original source, before the attachment compressor can bound it.
+  if (!canRecompress() || file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) return null;
+  let bitmap: ImageBitmap | undefined;
+  try {
+    bitmap = await createImageBitmap(file);
+    if (bitmap.width <= 0 || bitmap.height <= 0) return null;
+    const side = Math.min(bitmap.width, bitmap.height);
+    const sourceWidth = mode === "square" ? side : bitmap.width;
+    const sourceHeight = mode === "square" ? side : bitmap.height;
+    const bounds = COMPOSER_THUMBNAIL_SIZES[mode];
+    const scale = Math.min(1, bounds.width / sourceWidth, bounds.height / sourceHeight);
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    const surface = createCanvas(width, height);
+    if (!surface) return null;
+    surface.context.drawImage(
+      bitmap,
+      (bitmap.width - sourceWidth) / 2,
+      (bitmap.height - sourceHeight) / 2,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      width,
+      height,
+    );
+    const blob = await encodeCanvas(surface.canvas, 1, "image/png");
+    return blob ? await readFileAsDataUrl(blob) : null;
+  } catch {
+    return null;
+  } finally {
+    bitmap?.close();
+  }
 }
 
 async function encodeWithinBudget(
