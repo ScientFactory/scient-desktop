@@ -519,13 +519,25 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
   const base = toMap(yield* repos.readTree({ repo, tree: baseTree }));
 
   // And to the same rules: nothing arrives that the folder's own inventory would refuse.
-  for (const [path, oid] of remote) {
+  // Content already in the base was checked when it first arrived; small new blobs
+  // are read in one Git run, then every path is judged in order.
+  const pointerCandidates = [...remote].filter(
+    ([path, oid]) =>
+      base.get(path) !== oid && (remoteSizes.get(path) ?? 0) <= LFS_POINTER_MAX_BYTES,
+  );
+  const prefixes = new Map(
+    (yield* repos.readBlobs({
+      repo,
+      oids: pointerCandidates.map(([, oid]) => oid),
+      maxBytes: LFS_POINTER_MAX_BYTES,
+      maxTotalBytes: pointerCandidates.length * LFS_POINTER_MAX_BYTES,
+    })).map((bytes, index) => [pointerCandidates[index]![0], bytes] as const),
+  );
+  for (const path of remote.keys()) {
     const kind = overleafPathExclusion(path);
     if (kind !== null) return refused({ reason: "remote-forbidden", path, kind });
-    // Content already in the base was checked when it first arrived.
-    if (base.get(path) === oid || (remoteSizes.get(path) ?? 0) > LFS_POINTER_MAX_BYTES) continue;
-    const prefix = yield* repos.readBlob({ repo, oid, maxBytes: LFS_POINTER_MAX_BYTES });
-    if (isOverleafLfsPointer(prefix))
+    const prefix = prefixes.get(path);
+    if (prefix !== undefined && isOverleafLfsPointer(prefix))
       return refused({ reason: "remote-forbidden", path, kind: "lfs-pointer" });
   }
   const repository = repositoryFolder([
@@ -686,17 +698,22 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     entries: candidatePaths.map((path) => ({ path, oid: candidate.get(path)! })),
   });
 
-  // The applier receives every target file's bytes; unchanged files reuse the capture.
+  // The applier receives every target file's bytes; unchanged files reuse the capture,
+  // and the others are read in one Git run.
+  const toRead = candidatePaths.filter((path) => local.get(path) !== candidate.get(path));
+  const read = yield* repos.readBlobs({
+    repo,
+    oids: toRead.map((path) => candidate.get(path)!),
+    maxBytes: limits.fileBytes,
+    maxTotalBytes: toRead.reduce(
+      (sum, path) => sum + (blobSizes.get(candidate.get(path)!) ?? limits.fileBytes),
+      0,
+    ),
+  });
+  const readAt = new Map(toRead.map((path, index) => [path, read[index]!] as const));
   const target = new Map<string, { readonly bytes: Uint8Array }>();
-  for (const path of candidatePaths) {
-    const oid = candidate.get(path)!;
-    target.set(path, {
-      bytes:
-        local.get(path) === oid
-          ? inventory.captured.get(path)!.bytes
-          : yield* repos.readBlob({ repo, oid, maxBytes: limits.fileBytes }),
-    });
-  }
+  for (const path of candidatePaths)
+    target.set(path, { bytes: readAt.get(path) ?? inventory.captured.get(path)!.bytes });
 
   // A file with conflict marks waits whole; everything else is sent (design 4.2). A
   // group the user merges in the editor is one path that no rename touches (one path,
