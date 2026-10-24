@@ -166,8 +166,9 @@ export function overleafReviewStaleness(
     !same(binding.newLocalOnly, fresh.newLocalOnly) ||
     !same(binding.sentLocalOnly, fresh.sentLocalOnly) ||
     !same(binding.collisionPaths, fresh.collisionPaths) ||
-    !same(binding.recordedMarkerPaths, fresh.recordedMarkerPaths) ||
-    !same(binding.unresolvedMarkers, fresh.unresolvedMarkers)
+    !same(binding.recordedMarkers, fresh.recordedMarkers) ||
+    !same(binding.unresolvedMarkers, fresh.unresolvedMarkers) ||
+    !same(binding.released, fresh.released)
   )
     return "inventory";
   return "review";

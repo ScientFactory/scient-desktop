@@ -20,7 +20,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
-import type { OverleafConnectionDocument } from "./OverleafConnectionState.ts";
+import {
+  OVERLEAF_CONNECTION_SCHEMA_VERSION,
+  type OverleafConnectionDocument,
+} from "./OverleafConnectionState.ts";
 import {
   OverleafConnectionNotReadyError,
   type OverleafReservations,
@@ -562,7 +565,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
             })
             .pipe(Effect.tapError(() => removeCreated));
           const document: OverleafConnectionDocument = {
-            schemaVersion: 1,
+            schemaVersion: OVERLEAF_CONNECTION_SCHEMA_VERSION,
             connectionId: id,
             revision: 1,
             environmentId: options.environmentId,
@@ -583,7 +586,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
             managedPaths: [],
             localOnlyPaths: [],
             forcedConflicts: [],
-            markerPaths: [],
+            markers: [],
             stagingPaths: [],
             retention: { vaultIdentity: retention.identity, copies: [] },
             activeApply: null,
@@ -852,7 +855,8 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     ).length;
     const base = {
       connection: summarize(document),
-      markerPaths: document.markerPaths,
+      // The folder paths of files recorded with conflict marks not settled yet.
+      markerPaths: document.markers.map((record) => record.path),
       unresolvedSends,
       keptCopies: document.retention.copies.length,
       busy,
@@ -881,7 +885,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
       } satisfies OverleafConnectionStatus;
     if (document.activeApply !== null) reasons.push("apply-pending");
     if (document.forcedConflicts.length > 0) reasons.push("interrupted-files");
-    if (document.markerPaths.length > 0) reasons.push("conflict-marks");
+    if (document.markers.length > 0) reasons.push("conflict-marks");
     if (document.stagingPaths.length > 0) reasons.push("staging");
     if (unresolvedSends > 0) reasons.push("unresolved-sends");
 
