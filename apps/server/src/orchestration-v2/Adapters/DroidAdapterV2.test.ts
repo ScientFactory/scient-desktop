@@ -114,6 +114,8 @@ const harness = Effect.fnUntraced(function* (
     readonly idleMillis?: number;
     readonly blockPromptWrite?: boolean;
     readonly liveClock?: boolean;
+    /** Replaces the 5 s wait for Droid's report of a written setting. */
+    readonly settleTimeout?: Duration.Input;
     readonly blockModelWrite?: boolean;
     readonly slowToolLogging?: boolean;
     readonly environment?: Record<string, string>;
@@ -207,6 +209,11 @@ const harness = Effect.fnUntraced(function* (
     makeRuntime: (input) =>
       (scenario?.makeRuntime ?? makeDroidAcpRuntime)({
         ...input,
+        // Teardown sleeps this whole grace after SIGTERM (1 s by default).
+        processGroupTerminationGrace: "100 millis",
+        ...(scenario?.settleTimeout === undefined
+          ? {}
+          : { configOptionSettleTimeout: scenario.settleTimeout }),
         onTermination: (error) =>
           (input.onTermination?.(error) ?? Effect.void).pipe(
             Effect.andThen(Deferred.succeed(nativeTerminated, undefined)),
@@ -301,9 +308,14 @@ const harness = Effect.fnUntraced(function* (
   };
   const recorded: ProviderAdapter.ProviderAdapterV2Event[] = [];
   const queue = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+  // Every recorded event, for waits that subscribe before reading `recorded`.
+  const recordedEvents = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   yield* runtime.events.pipe(
     Stream.runForEach((event) =>
-      Effect.sync(() => recorded.push(event)).pipe(Effect.andThen(Queue.offer(queue, event))),
+      Effect.sync(() => recorded.push(event)).pipe(
+        Effect.andThen(Queue.offer(queue, event)),
+        Effect.andThen(PubSub.publish(recordedEvents, event)),
+      ),
     ),
     Effect.forkScoped,
   );
@@ -390,6 +402,7 @@ const harness = Effect.fnUntraced(function* (
     terminal,
     requests,
     recorded,
+    recordedEvents,
     approval,
     runtime,
     readLog: scripted?.readLog,
@@ -581,9 +594,14 @@ const untilRecorded = (
   h: Effect.Success<ReturnType<typeof harness>>,
   predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
 ) =>
-  Effect.gen(function* () {
-    while (!h.recorded.some(predicate)) yield* livePause();
-  });
+  Effect.scoped(
+    Effect.gen(function* () {
+      // Subscribe first: an event recorded after the check still arrives.
+      const events = yield* PubSub.subscribe(h.recordedEvents);
+      if (h.recorded.some(predicate)) return;
+      while (!predicate(yield* PubSub.take(events)));
+    }),
+  );
 const terminals = (h: Effect.Success<ReturnType<typeof harness>>) =>
   h.recorded.filter((event) => event.type === "turn.terminal");
 const announced = (event: ProviderAdapter.ProviderAdapterV2Event) =>
@@ -2291,6 +2309,7 @@ it.layer(testLayer, { excludeTestServices: true })("Droid native lifecycle", (it
       Effect.gen(function* () {
         const h = yield* harness(false, false, false, undefined, {
           liveClock: true,
+          settleTimeout: "500 millis",
           body: `
         unreported = message => message.params.value === "droid-other";
         function onPrompt(message) {reply(message, {stopReason: "end_turn"});}

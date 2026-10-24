@@ -277,6 +277,8 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
     makeRuntime: (input: Parameters<DroidAdapterV2Options["makeRuntime"]>[0]) =>
       makeDroidAcpRuntime({
         ...input,
+        // Teardown sleeps this whole grace after SIGTERM (1 s by default).
+        processGroupTerminationGrace: "100 millis",
         protocolLogging: {
           logIncoming: true,
           logOutgoing: true,
