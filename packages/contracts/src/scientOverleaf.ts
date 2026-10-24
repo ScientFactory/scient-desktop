@@ -244,8 +244,24 @@ const OtherAgents = Schema.NullOr(
   Schema.Array(Schema.Struct({ threadId: Schema.String, title: Schema.String })),
 );
 
+/**
+ * An interrupted earlier sync this operation finished first, which wrote the
+ * folder, and how its apply ended (`complete`, `replan` or `attention`).
+ */
+const ScientOverleafSettled = Schema.NullOr(
+  Schema.Struct({
+    outcome: Schema.String,
+    interrupted: Schema.Number,
+    markerPaths: Schema.Array(ManuscriptPath),
+  }),
+);
+
 export const ScientOverleafPreviewResult = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("review"), review: ScientOverleafReview }),
+  Schema.Struct({
+    _tag: Schema.Literal("review"),
+    review: ScientOverleafReview,
+    settled: ScientOverleafSettled,
+  }),
   Schema.Struct({ _tag: Schema.Literal("refused"), refusal: ScientOverleafRefusal }),
   Schema.Struct({ _tag: Schema.Literal("recovered") }),
 ]);
@@ -259,22 +275,38 @@ export const ScientOverleafSyncResult = Schema.Union([
     interrupted: Schema.Number,
     markerPaths: Schema.Array(ManuscriptPath),
     publication: ScientOverleafPublication,
+    /** The first attempt applied a review, and Overleaf moved while sending (nothing sent). */
     retried: Schema.Boolean,
+    settled: ScientOverleafSettled,
     activity: OtherAgents,
     linkedElsewhere: Schema.Boolean,
   }),
   Schema.Struct({
     _tag: Schema.Literal("needs-decision"),
     review: ScientOverleafReview,
+    retried: Schema.Boolean,
+    settled: ScientOverleafSettled,
     activity: OtherAgents,
     linkedElsewhere: Schema.Boolean,
   }),
-  Schema.Struct({ _tag: Schema.Literal("refused"), refusal: ScientOverleafRefusal }),
+  Schema.Struct({
+    _tag: Schema.Literal("refused"),
+    refusal: ScientOverleafRefusal,
+    retried: Schema.Boolean,
+    settled: ScientOverleafSettled,
+  }),
   Schema.Struct({ _tag: Schema.Literal("duplicate"), category: Schema.NullOr(Schema.String) }),
-  Schema.Struct({ _tag: Schema.Literal("unsettled"), reason: Schema.String }),
+  Schema.Struct({
+    _tag: Schema.Literal("unsettled"),
+    reason: Schema.String,
+    retried: Schema.Boolean,
+    settled: ScientOverleafSettled,
+  }),
   Schema.Struct({
     _tag: Schema.Literal("cancelled"),
     stage: Schema.Literals(["before-prepare", "before-apply"]),
+    retried: Schema.Boolean,
+    settled: ScientOverleafSettled,
   }),
 ]);
 export type ScientOverleafSyncResult = typeof ScientOverleafSyncResult.Type;

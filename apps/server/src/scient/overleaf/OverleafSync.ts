@@ -201,33 +201,44 @@ const viewOverleafReview = (review: OverleafReview): OverleafReviewView => ({
   localOnly: review.localOnly,
 });
 
+/**
+ * What a sync did before the outcome it ends with, so a result never has to guess:
+ * whether it first finished an interrupted sync (which wrote the folder), and
+ * whether its first attempt applied a review and ran again because Overleaf moved
+ * while sending (that attempt sent nothing).
+ */
+export interface OverleafSyncProgress {
+  /** Overleaf moved while sending, so one new sync ran after an applied attempt. */
+  readonly retried: boolean;
+  /** An interrupted earlier sync this one settled first, and how its apply ended. */
+  readonly settled: OverleafCoordinator.OverleafAdopted | null;
+}
+
 /** What one sync did, in the order a person or agent reads it. */
 export type OverleafSyncOutcome =
-  | {
+  | ({
       readonly _tag: "synced";
       readonly review: OverleafReviewView;
       readonly adopted: OverleafCoordinator.OverleafAdopted;
       readonly publication: OverleafCoordinator.OverleafPublication;
-      /** Overleaf moved while sending, so one new sync ran. */
-      readonly retried: boolean;
       readonly activity: OverleafActivity;
       /** The caller works in another checkout; this synced the linked one. */
       readonly linkedElsewhere: boolean;
-    }
-  /** A conflict has no choice yet. Nothing was applied or sent. */
-  | {
+    } & OverleafSyncProgress)
+  /** A conflict has no choice yet. Nothing of this review was applied or sent. */
+  | ({
       readonly _tag: "needs-decision";
       readonly review: OverleafReviewView;
       readonly activity: OverleafActivity;
       readonly linkedElsewhere: boolean;
-    }
-  | {
+    } & OverleafSyncProgress)
+  | ({
       readonly _tag: "refused";
       readonly refusal: Extract<
         OverleafCoordinator.OverleafPrepareResult,
         { _tag: "refused" }
       >["refusal"];
-    }
+    } & OverleafSyncProgress)
   /** A repeated request: its receipt, never a second sync. */
   | {
       readonly _tag: "duplicate";
@@ -237,9 +248,12 @@ export type OverleafSyncOutcome =
       >["receipt"];
     }
   /** The review kept changing under the sync, or was refused by the registry; sync again. */
-  | { readonly _tag: "unsettled"; readonly reason: string }
+  | ({ readonly _tag: "unsettled"; readonly reason: string } & OverleafSyncProgress)
   /** Stopped on request at a stage boundary; nothing more was applied or sent. */
-  | { readonly _tag: "cancelled"; readonly stage: "before-prepare" | "before-apply" };
+  | ({
+      readonly _tag: "cancelled";
+      readonly stage: "before-prepare" | "before-apply";
+    } & OverleafSyncProgress);
 
 /** The stored token's name: one token per Overleaf site (contract section 3). */
 const TOKEN_SECRET = `overleaf-git-token-${Buffer.from("www.overleaf.com", "utf8").toString("base64url")}`;
@@ -642,7 +656,12 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       ),
     );
     if (prepared._tag === "review")
-      return { _tag: "review" as const, review: viewOverleafReview(prepared.review) };
+      return {
+        _tag: "review" as const,
+        review: viewOverleafReview(prepared.review),
+        // Preparing finished an interrupted sync first, which wrote the folder.
+        settled: prepared.settled ?? null,
+      };
     return prepared;
   });
 
@@ -797,6 +816,9 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       mergeActivity(before, after),
     );
     let retried = false;
+    let settled: OverleafCoordinator.OverleafAdopted | null = null;
+    /** What the sync did before its outcome, on every outcome it returns. */
+    const progress = (): OverleafSyncProgress => ({ retried, settled });
     // Choices answer conflicts as they stood against one Overleaf tree. When Overleaf
     // has moved since (a new sync after out-of-date, a rebuilt review), the conflicts
     // are shown again without them rather than settled on content nobody saw.
@@ -817,14 +839,30 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       };
       // Cancellation stops at stage boundaries only: never inside an apply or a send.
       if (running.cancelled)
-        return { _tag: "cancelled", stage: "before-prepare" } satisfies OverleafSyncOutcome;
+        return {
+          _tag: "cancelled",
+          stage: "before-prepare",
+          ...progress(),
+        } satisfies OverleafSyncOutcome;
       // An interrupted apply is finished first; the review is then built on its result.
       let prepared = yield* coordinator.prepare(prepareInput);
-      if (prepared._tag === "recovered") prepared = yield* coordinator.prepare(prepareInput);
+      if (prepared._tag === "recovered") {
+        settled ??= prepared.recovery;
+        prepared = yield* coordinator.prepare(prepareInput);
+      }
+      if (prepared._tag === "review" && prepared.settled) settled ??= prepared.settled;
       if (prepared._tag === "refused")
-        return { _tag: "refused", refusal: prepared.refusal } satisfies OverleafSyncOutcome;
+        return {
+          _tag: "refused",
+          refusal: prepared.refusal,
+          ...progress(),
+        } satisfies OverleafSyncOutcome;
       if (prepared._tag === "recovered")
-        return { _tag: "unsettled", reason: "recovery-repeated" } satisfies OverleafSyncOutcome;
+        return {
+          _tag: "unsettled",
+          reason: "recovery-repeated",
+          ...progress(),
+        } satisfies OverleafSyncOutcome;
       let review = prepared.review;
       for (let round = 0; ; round++) {
         if (decidedAgainst === null && activeChoices !== undefined && review.conflicts.length > 0)
@@ -837,13 +875,18 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
             selections: selectionsFor(input, new Map()),
           });
           if (fresh._tag !== "review")
-            return { _tag: "unsettled", reason: "overleaf-moved" } satisfies OverleafSyncOutcome;
+            return {
+              _tag: "unsettled",
+              reason: "overleaf-moved",
+              ...progress(),
+            } satisfies OverleafSyncOutcome;
           if (fresh.review.conflicts.length > 0)
             return {
               _tag: "needs-decision",
               review: viewOverleafReview(fresh.review),
               activity: yield* activityNow,
               linkedElsewhere,
+              ...progress(),
             } satisfies OverleafSyncOutcome;
           review = fresh.review;
           decidedAgainst = null;
@@ -856,9 +899,14 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
             review: view,
             activity: yield* activityNow,
             linkedElsewhere,
+            ...progress(),
           } satisfies OverleafSyncOutcome;
         if (running.cancelled)
-          return { _tag: "cancelled", stage: "before-apply" } satisfies OverleafSyncOutcome;
+          return {
+            _tag: "cancelled",
+            stage: "before-apply",
+            ...progress(),
+          } satisfies OverleafSyncOutcome;
         // Server-only request IDs: 64 characters, longer than any a client may send.
         const confirmed = yield* coordinator.confirm({
           connectionId: input.connectionId,
@@ -878,22 +926,31 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
               review: view,
               adopted: confirmed.adopted,
               publication: confirmed.publication,
-              retried,
               activity: yield* activityNow,
               linkedElsewhere,
+              ...progress(),
             } satisfies OverleafSyncOutcome;
           case "stale":
             if (round + 1 >= STALE_ROUNDS)
               return {
                 _tag: "unsettled",
                 reason: "folder-kept-changing",
+                ...progress(),
               } satisfies OverleafSyncOutcome;
             review = confirmed.review;
             continue;
           case "review-refused":
-            return { _tag: "unsettled", reason: confirmed.reason } satisfies OverleafSyncOutcome;
+            return {
+              _tag: "unsettled",
+              reason: confirmed.reason,
+              ...progress(),
+            } satisfies OverleafSyncOutcome;
           case "refused":
-            return { _tag: "refused", refusal: confirmed.refusal } satisfies OverleafSyncOutcome;
+            return {
+              _tag: "refused",
+              refusal: confirmed.refusal,
+              ...progress(),
+            } satisfies OverleafSyncOutcome;
           case "duplicate":
             return { _tag: "duplicate", receipt: confirmed.receipt } satisfies OverleafSyncOutcome;
         }

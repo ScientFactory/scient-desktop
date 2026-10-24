@@ -194,7 +194,12 @@ export interface OverleafSelections {
 }
 
 export type OverleafPrepareResult =
-  | { readonly _tag: "review"; readonly review: OverleafReview }
+  | {
+      readonly _tag: "review";
+      readonly review: OverleafReview;
+      /** An interrupted apply this prepare finished first, completely, writing the folder. */
+      readonly settled?: OverleafAdopted;
+    }
   | {
       readonly _tag: "refused";
       readonly refusal: OverleafReviewRefusal | OverleafInventoryRefusal;
@@ -1380,10 +1385,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         // Writable admission before anything touches the private repository.
         yield* store.admitWritable;
         let connection = yield* readActive(input.connectionId);
+        let settled: OverleafAdopted | undefined;
         if (connection.activeApply !== null) {
           const recovered = yield* recoverHeld(input.connectionId);
           if (recovered._tag === "recovered" && recovered.adopted.outcome !== "complete")
             return { _tag: "recovered" as const, recovery: recovered.adopted };
+          if (recovered._tag === "recovered") settled = recovered.adopted;
           connection = yield* readActive(input.connectionId);
         }
         const repo = yield* repositoryFor(connection);
@@ -1403,8 +1410,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           remote,
           checkoutEpoch: section.epoch,
         });
-        if (built._tag === "review") registry.offer(built.review, yield* now);
-        return built;
+        if (built._tag !== "review") return built;
+        registry.offer(built.review, yield* now);
+        return settled === undefined ? built : { ...built, settled };
       }),
     );
 
