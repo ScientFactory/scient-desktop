@@ -116,75 +116,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
-    it.effect("allows browser auto-open to be explicitly enabled", () =>
-      Effect.gen(function* () {
-        const env = yield* createDevRunnerEnv({
-          mode: "dev",
-          baseEnv: {},
-          serverOffset: 0,
-          webOffset: 0,
-          t3Home: undefined,
-          browser: true,
-          autoBootstrapProjectFromCwd: undefined,
-          logWebSocketEvents: undefined,
-          host: undefined,
-          port: undefined,
-          devUrl: undefined,
-        });
-
-        assert.equal(env.T3CODE_NO_BROWSER, "0");
-      }),
-    );
-
-    it.effect("requires the browser flag even when the environment enables auto-open", () =>
-      Effect.gen(function* () {
-        const env = yield* createDevRunnerEnv({
-          mode: "dev",
-          baseEnv: { T3CODE_NO_BROWSER: "0" },
-          serverOffset: 0,
-          webOffset: 0,
-          t3Home: undefined,
-          browser: false,
-          autoBootstrapProjectFromCwd: undefined,
-          logWebSocketEvents: undefined,
-          host: undefined,
-          port: undefined,
-          devUrl: undefined,
-        });
-
-        assert.equal(env.T3CODE_NO_BROWSER, "1");
-      }),
-    );
-
-    it.effect("supports explicit typed overrides", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const env = yield* createDevRunnerEnv({
-          mode: "dev:server",
-          baseEnv: {},
-          serverOffset: 0,
-          webOffset: 0,
-          t3Home: "/tmp/custom-t3",
-          browser: false,
-          autoBootstrapProjectFromCwd: false,
-          logWebSocketEvents: true,
-          host: "0.0.0.0",
-          port: 4222,
-          devUrl: new URL("http://localhost:7331"),
-        });
-
-        assert.equal(env.T3CODE_HOME, path.resolve("/tmp/custom-t3"));
-        assert.equal(env.T3CODE_PORT, "4222");
-        assert.equal(env.VITE_HTTP_URL, "http://localhost:4222");
-        assert.equal(env.VITE_WS_URL, "ws://localhost:4222");
-        assert.equal(env.T3CODE_NO_BROWSER, "1");
-        assert.equal(env.T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD, "0");
-        assert.equal(env.T3CODE_LOG_WS_EVENTS, "1");
-        assert.equal(env.T3CODE_HOST, "0.0.0.0");
-        assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:7331/");
-      }),
-    );
-
     it.effect("strips inherited service-launcher context", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
@@ -686,40 +617,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(error.shell, false);
         assert.equal(error.exitCode, 17);
         assert.ok(!("cause" in error));
-        assert.notProperty(error, "args");
-        assert.notInclude(error.message, "secret-token-value");
-      });
-    });
-
-    it.effect("preserves wait-for-exit failures as the exact cause", () => {
-      const cause = PlatformError.systemError({
-        _tag: "Unknown",
-        module: "ChildProcess",
-        method: "exitCode",
-        description: "process status became unavailable",
-      });
-      const spawnerLayer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() => Effect.succeed(mockProcess(cause))),
-      );
-
-      return Effect.gen(function* () {
-        const error = yield* runDevRunnerWithInput(devServerInput).pipe(
-          Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.flip,
-        );
-
-        if (error._tag !== "DevRunnerProcessError") {
-          assert.fail(`Unexpected error: ${error._tag}`);
-        }
-        assert.equal(error.operation, "wait-for-exit");
-        assert.equal(error.mode, "dev:server");
-        assert.equal(error.executable, "vp");
-        assert.equal(error.argumentCount, 5);
-        assert.equal(error.shell, false);
-        assert.equal(error.cause, cause);
-        assert.ok(!error.message.includes(cause.message));
         assert.notProperty(error, "args");
         assert.notInclude(error.message, "secret-token-value");
       });

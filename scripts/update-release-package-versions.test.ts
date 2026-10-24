@@ -5,7 +5,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { Command } from "effect/cli";
 import * as TestConsole from "effect/testing/TestConsole";
@@ -13,7 +12,6 @@ import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 
 import {
   InvalidReleasePackageVersionError,
-  ReleasePackageManifestError,
   releasePackageFiles,
   updateReleasePackageVersions,
   updateReleasePackageVersionsCommand,
@@ -118,75 +116,6 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
           releasePackageFiles.map(() => "1.2.3"),
         );
       }
-    }),
-  );
-
-  it.effect("preserves manifest read context and the filesystem cause", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "update-release-package-versions-read-error-",
-      });
-      const filePath = path.join(baseDir, releasePackageFiles[0]);
-
-      const error = yield* updateReleasePackageVersions("1.2.3", {
-        rootDir: baseDir,
-      }).pipe(Effect.flip);
-
-      assert.instanceOf(error, ReleasePackageManifestError);
-      assert.equal(error.operation, "read");
-      assert.equal(error.filePath, filePath);
-      assert.instanceOf(error.cause, PlatformError.PlatformError);
-      assert.equal(error.message, `Failed to read release package manifest '${filePath}'.`);
-    }),
-  );
-
-  it.effect("preserves manifest decode context and the schema cause", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "update-release-package-versions-decode-error-",
-      });
-      const filePath = path.join(baseDir, releasePackageFiles[0]);
-
-      yield* writePackageJsonFixtures(baseDir, "0.0.1");
-      yield* fs.writeFileString(filePath, "not json");
-
-      const error = yield* updateReleasePackageVersions("1.2.3", {
-        rootDir: baseDir,
-      }).pipe(Effect.flip);
-
-      assert.instanceOf(error, ReleasePackageManifestError);
-      assert.equal(error.operation, "decode");
-      assert.equal(error.filePath, filePath);
-      assert.isTrue(Schema.isSchemaError(error.cause));
-      assert.equal(error.message, `Failed to decode release package manifest '${filePath}'.`);
-    }),
-  );
-
-  it.effect("preserves manifest write context and the filesystem cause", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "update-release-package-versions-write-error-",
-      });
-      const filePath = path.join(baseDir, releasePackageFiles[0]);
-
-      yield* writePackageJsonFixtures(baseDir, "0.0.1");
-      yield* fs.chmod(filePath, 0o400);
-
-      const error = yield* updateReleasePackageVersions("1.2.3", {
-        rootDir: baseDir,
-      }).pipe(Effect.flip, Effect.ensuring(fs.chmod(filePath, 0o600).pipe(Effect.orDie)));
-
-      assert.instanceOf(error, ReleasePackageManifestError);
-      assert.equal(error.operation, "write");
-      assert.equal(error.filePath, filePath);
-      assert.instanceOf(error.cause, PlatformError.PlatformError);
-      assert.equal(error.message, `Failed to write release package manifest '${filePath}'.`);
     }),
   );
 

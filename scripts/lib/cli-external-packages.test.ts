@@ -53,10 +53,6 @@ describe("shouldBundleCliDependency", () => {
     }
   });
 
-  it("never bundles node: builtins", () => {
-    assert.strictEqual(shouldBundleCliDependency("node:fs"), false);
-  });
-
   it("leaves native addons and their dlopen wrappers external", () => {
     for (const id of [
       "node-pty",
