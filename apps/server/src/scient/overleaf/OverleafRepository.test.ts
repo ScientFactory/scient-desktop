@@ -200,6 +200,37 @@ describe("OverleafRepository trees", () => {
     ),
   );
 
+  it.effect("reads several blobs in one run, in order, byte for byte", () =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const repo = yield* h.repo("a");
+        const contents = ["one\n", "", "\u0000\n\nbinary\n", "one\n"];
+        const oids: string[] = [];
+        for (const content of contents)
+          oids.push(yield* h.repos.writeBlob({ repo, bytes: bytes(content) }));
+        const read = yield* h.repos.readBlobs({ repo, oids, maxBytes: 16, maxTotalBytes: 64 });
+        expect(read.map(text)).toEqual(contents);
+        expect(yield* h.repos.readBlobs({ repo, oids: [], maxBytes: 0, maxTotalBytes: 0 })).toEqual(
+          [],
+        );
+        // A blob, or all of them, larger than allowed is refused as readBlob refuses it.
+        const tooLarge = yield* h.repos
+          .readBlobs({ repo, oids, maxBytes: 4, maxTotalBytes: 64 })
+          .pipe(Effect.flip);
+        expect(tooLarge).toMatchObject({ _tag: "OverleafGitError", reason: "output-limit" });
+        const tooMuch = yield* h.repos
+          .readBlobs({ repo, oids, maxBytes: 16, maxTotalBytes: 12 })
+          .pipe(Effect.flip);
+        expect(tooMuch).toMatchObject({ reason: "output-limit" });
+        // An object the repository does not hold is never read as empty.
+        const missing = yield* h.repos
+          .readBlobs({ repo, oids: [oids[0]!, "0".repeat(40)], maxBytes: 16, maxTotalBytes: 64 })
+          .pipe(Effect.flip);
+        expect(missing).toMatchObject({ _tag: "OverleafRepositoryError" });
+      }),
+    ),
+  );
+
   it.effect("refuses a path that is both a file and a folder", () =>
     withHarness((h) =>
       Effect.gen(function* () {
