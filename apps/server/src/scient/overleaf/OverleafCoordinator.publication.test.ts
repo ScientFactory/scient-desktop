@@ -203,7 +203,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, publication", () => {
           "other.tex": "O, edited here",
         });
         expect((yield* w.connection).markers).toEqual([
-          { path: "main.tex", overleafPaths: ["main.tex"] },
+          { path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] },
         ]);
       }),
     ),

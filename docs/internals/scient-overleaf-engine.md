@@ -180,12 +180,15 @@ seven days and a later completed sync (`completedSyncCount`).
 apply target, unresolved attempts) that cleanup must keep.
 
 Conflict material is recorded per file (`markers`): where the file is in the
-folder, where its marks are looked for, and its paths on Overleaf. The document
-is at schema version 2. A version 1 document, which recorded folder paths only
-(`markerPaths`, and a pending apply's `priorMarkers`), is read and upgraded in
-memory, each path becoming a file whose one path it is; the next replacement
-writes version 2. A later version is reported unsupported; an older one that
-does not upgrade cleanly is reported corrupt.
+folder, where its marks are looked for, other folder paths an unfinished apply
+may have left it at, and its paths on Overleaf. A kept copy of conflict material
+remembers its file's other paths (`markerLinks`), which never change. The
+document is at schema version 2. A version 1 document, which recorded folder
+paths only (`markerPaths`, and a pending apply's `priorMarkers`), is read and
+upgraded in memory, each path becoming a file whose one path it is and each kept
+copy knowing no other path; the next replacement writes version 2. A later
+version is reported unsupported; an older one that does not upgrade cleanly is
+reported corrupt.
 
 Request receipts are created once per request ID. A repeat with the same
 payload returns the original receipt instead of running again; reuse with a
@@ -278,8 +281,11 @@ settles earlier sends, and lists and restores kept copies.
     remote commit, with the previous base moved into `priorBases`;
   - managed and local-only paths;
   - `forcedConflicts` (interrupted groups) and `markers`: the held files the
-    review carried, at their paths after the apply, plus each file given new
-    marks that still has them;
+    review carried, where the apply put them, plus each file given new marks
+    that still has them. An apply that did not finish every unit may have left a
+    file where it was, so its record keeps that folder path too. A record that
+    names no path of the result (a version 1 pending apply named files where they
+    were before it) is placed by the result's renames from the base;
   - kept copies, each with its place in the retention folder and a stamp (size
     and change time) taken around a fresh read of its bytes, from the file its
     path still names. A copy that no longer holds what the applier kept is
@@ -325,13 +331,19 @@ among them.
   A marked `a.tex` renamed to `b.tex` in the folder is held at both: Overleaf
   keeps `a.tex` and gets no `b.tex`.
 - **Which files**: each one given new marks in this apply (a group merged in the
-  editor is one path no rename touches), and each recorded one whose file still
-  has marks. A recorded file is looked for at its folder path, or where a rename
-  in the folder took it (Git's rename detection, 50% similarity); one found
-  nowhere is not held, so its deletion is sent.
+  editor is one path no rename touches), each recorded one whose file still has
+  marks, and any file carrying Scient's own labelled marks (`<<<<<<< Scient`,
+  `>>>>>>> Overleaf`), recorded or not. A Markdown underline never matches.
+- **Finding a recorded file**: at its folder path, then at its other recorded
+  paths, then where a rename in the folder took it. Git sees a rename only from
+  the base, which may no longer have the file, so a lookup that finds nothing
+  proves nothing: a file with Scient's labelled marks found elsewhere is held
+  with the paths of every record not found. Only when none is left is a record
+  not found taken as deleted or settled, and its deletion sent.
 - **Records** move with the file: after an apply, at the path the result holds
   it (Overleaf's rename moves it), with the file's paths Overleaf has. A record
-  stays until the marks are gone, across acceptance, restart and recovery.
+  stays until the marks are gone, across acceptance, restart and recovery. A
+  restored kept copy of conflict material is held at the paths its file had.
 - **The publication tree is validated** like any other: a held path that the
   result turns into a folder, or the other way round, is refused
   (`held-file-clash`); the file and size limits apply to it too.

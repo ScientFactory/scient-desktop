@@ -26,6 +26,7 @@ const binding: OverleafReviewBinding = {
   interrupted: [],
   recordedMarkers: [],
   unresolvedMarkers: [],
+  heldMarkers: [],
   candidateTree: "e".repeat(40),
   publicationTree: "e".repeat(40),
   heldPaths: [],
@@ -161,7 +162,10 @@ describe("overleafReviewStaleness", () => {
     ["inventory", { newLocalOnly: ["new.txt"] }],
     ["inventory", { collisionPaths: ["notes.txt"] }],
     ["inventory", { unresolvedMarkers: ["main.tex"] }],
-    ["inventory", { recordedMarkers: [{ path: "b.tex", overleafPaths: ["a.tex"] }] }],
+    [
+      "inventory",
+      { recordedMarkers: [{ path: "b.tex", folderPaths: [], overleafPaths: ["a.tex"] }] },
+    ],
     // Held files change what is sent, not the local result.
     ["review", { publicationTree: "f".repeat(40) }],
     ["review", { heldPaths: ["main.tex"] }],

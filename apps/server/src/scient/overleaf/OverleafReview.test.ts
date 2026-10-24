@@ -399,7 +399,7 @@ describe("buildOverleafReview", () => {
           const built = reviewOf(
             yield* review({
               interrupted: [["half.tex"]],
-              markers: [{ path: "main.tex", overleafPaths: ["main.tex"] }],
+              markers: [{ path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] }],
             }),
           );
           expect(built.conflicts.map((conflict) => [conflict.paths, conflict.origins])).toEqual([
@@ -691,7 +691,9 @@ describe("buildOverleafReview", () => {
         Effect.gen(function* () {
           const plain = reviewOf(yield* review());
           const recorded = reviewOf(
-            yield* review({ markers: [{ path: "main.tex", overleafPaths: ["main.tex"] }] }),
+            yield* review({
+              markers: [{ path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] }],
+            }),
           );
           expect(recorded.digest).not.toBe(plain.digest);
           // The same facts with object keys in another order digest the same.
@@ -716,8 +718,9 @@ describe("buildOverleafReview", () => {
     withScenario(
       {
         base: { "main.tex": "m", "other.tex": "o" },
+        // Unlabelled marks: held only while recorded.
         local: {
-          "main.tex": "<<<<<<< Scient\nx\n=======\ny\n>>>>>>> Overleaf\n",
+          "main.tex": "<<<<<<< mine\nx\n=======\ny\n>>>>>>> theirs\n",
           "other.tex": "o2",
         },
         remote: { "main.tex": "m", "other.tex": "o" },
@@ -732,17 +735,39 @@ describe("buildOverleafReview", () => {
             { kind: "modified", path: "other.tex" },
           ]);
           const held = reviewOf(
-            yield* review({ markers: [{ path: "main.tex", overleafPaths: ["main.tex"] }] }),
+            yield* review({
+              markers: [{ path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] }],
+            }),
           );
           expect(held.binding.heldPaths).toEqual(["main.tex"]);
           expect(held.binding.carriedMarkers).toEqual([
-            { path: "main.tex", overleafPaths: ["main.tex"] },
+            { path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] },
           ]);
           expect(held.binding.publicationTree).not.toBe(held.binding.candidateTree);
           expect(held.outgoing).toEqual([{ kind: "modified", path: "other.tex" }]);
           // The folder keeps its marks: the local target is unchanged.
           expect(held.binding.candidateTree).toBe(plain.binding.candidateTree);
           expect(held.digest).not.toBe(plain.digest);
+        }),
+    ),
+  );
+
+  it.live("holds any file with Scient's labelled marks, and no Markdown underline", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m", "notes.md": "n" },
+        local: {
+          "main.tex": "<<<<<<< Scient\nx\n=======\ny\n>>>>>>> Overleaf\n",
+          "notes.md": "Results\n=======\n",
+        },
+        remote: { "main.tex": "m", "notes.md": "n" },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          const built = reviewOf(yield* review());
+          expect(built.binding.heldPaths).toEqual(["main.tex"]);
+          expect(built.unresolvedMarkers).toEqual(["main.tex"]);
+          expect(built.outgoing).toEqual([{ kind: "modified", path: "notes.md" }]);
         }),
     ),
   );
@@ -764,7 +789,7 @@ describe("buildOverleafReview", () => {
           expect(
             yield* review({
               select: ["fig/plot.tex"],
-              markers: [{ path: "chapter.tex", overleafPaths: ["fig"] }],
+              markers: [{ path: "chapter.tex", folderPaths: [], overleafPaths: ["fig"] }],
             }),
           ).toEqual({
             _tag: "refused",

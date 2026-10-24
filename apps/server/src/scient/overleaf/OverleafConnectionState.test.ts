@@ -311,6 +311,7 @@ describe("overleafTransitionViolation", () => {
       retainedAtSyncCount: 1,
       kept: "apply-1/files/step-0/retained",
       markers: false,
+      markerLinks: [],
       versions: [],
       stamp: "1:1",
     };
@@ -352,6 +353,7 @@ describe("overleafTransitionViolation", () => {
       retainedAtSyncCount: 1,
       kept: "apply-1/files/step-0/retained",
       markers: false,
+      markerLinks: [],
       versions: [],
       stamp: "1:1",
     };
@@ -383,6 +385,15 @@ describe("overleafTransitionViolation", () => {
     expect(
       violation(changed, {
         retention: { ...changed.retention, copies: [{ ...copy, state: "changed" }] },
+      }),
+    ).toBe("retained-copy-rewritten"); // The other paths a kept copy of conflict material remembers never change.
+    const kept = holding({ state: "kept", markers: true, markerLinks: ["old.tex"] }, 2);
+    expect(
+      violation(kept, {
+        retention: {
+          ...kept.retention,
+          copies: [{ ...kept.retention.copies[0]!, markerLinks: [] }],
+        },
       }),
     ).toBe("retained-copy-rewritten");
   });

@@ -286,6 +286,7 @@ describe("OverleafStateStore", () => {
                 retainedAtSyncCount: 0,
                 kept: "apply-1/files/step-0/retained",
                 markers: false,
+                markerLinks: [],
                 versions: [],
                 stamp: "1:1",
               },
@@ -433,10 +434,24 @@ describe("OverleafStateStore", () => {
           localOnly: [],
           priorMarkers: ["b.tex"],
         };
+        // A kept copy of conflict material knew nothing of its file's other paths.
+        const copy = {
+          applyId: "apply-0",
+          relativePath: "c.tex",
+          revision: "sha256:0",
+          state: "kept",
+          retainedAt: "2026-10-13T10:00:00.000Z",
+          retainedAtSyncCount: 0,
+          kept: "apply-0/files/step-0/retained",
+          markers: true,
+          versions: [],
+          stamp: "1:1",
+        };
         const old = {
           ...current,
           schemaVersion: 1,
           markerPaths: ["a.tex", "b.tex"],
+          retention: { ...current.retention, copies: [copy] },
           activeApply: link,
         };
         yield* Effect.promise(() => NodeFSP.writeFile(file, JSON.stringify(old)));
@@ -446,10 +461,16 @@ describe("OverleafStateStore", () => {
           document: {
             ...document,
             markers: [
-              { path: "a.tex", overleafPaths: ["a.tex"] },
-              { path: "b.tex", overleafPaths: ["b.tex"] },
+              { path: "a.tex", folderPaths: [], overleafPaths: ["a.tex"] },
+              { path: "b.tex", folderPaths: [], overleafPaths: ["b.tex"] },
             ],
-            activeApply: { ...link, markers: [{ path: "b.tex", overleafPaths: ["b.tex"] }] },
+            retention: { ...document.retention, copies: [{ ...copy, markerLinks: [] }] },
+            // Where the apply put them is found at adoption, from its renames.
+            activeApply: {
+              ...link,
+              priorMarkers: [{ path: "b.tex", links: [] }],
+              markers: [{ path: "b.tex", folderPaths: [], overleafPaths: ["b.tex"] }],
+            },
           },
         });
         if (read._tag !== "ready") return;

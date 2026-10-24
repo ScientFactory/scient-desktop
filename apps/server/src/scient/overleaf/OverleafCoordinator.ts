@@ -341,22 +341,31 @@ const LOCAL_SNAPSHOT_LIMIT = 10;
 
 const byPath = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 const unique = (paths: Iterable<string>) => [...new Set(paths)].sort(byPath);
-/** Conflict-material records, one per folder path, each keeping every Overleaf path recorded for it. */
+/** Conflict-material records, one per folder path, each keeping every path recorded for it. */
 const mergeMarkers = (
   ...lists: ReadonlyArray<ReadonlyArray<OverleafMarkerRecord>>
 ): ReadonlyArray<OverleafMarkerRecord> => {
-  const overleafPaths = new Map<string, string[]>();
+  const merged = new Map<string, { folder: string[]; overleaf: string[] }>();
   for (const list of lists)
-    for (const record of list)
-      overleafPaths.set(record.path, [
-        ...(overleafPaths.get(record.path) ?? []),
-        ...record.overleafPaths,
-      ]);
-  return unique(overleafPaths.keys()).map((path) => ({
+    for (const record of list) {
+      const entry = merged.get(record.path) ?? { folder: [], overleaf: [] };
+      merged.set(record.path, {
+        folder: [...entry.folder, ...record.folderPaths],
+        overleaf: [...entry.overleaf, ...record.overleafPaths],
+      });
+    }
+  return unique(merged.keys()).map((path) => ({
     path,
-    overleafPaths: unique(overleafPaths.get(path)!),
+    folderPaths: unique(merged.get(path)!.folder).filter((other) => other !== path),
+    overleafPaths: unique(merged.get(path)!.overleaf),
   }));
 };
+/** A file given new marks: one path, which no rename touches (`OverleafReview`). */
+const freshMarker = (path: string): OverleafMarkerRecord => ({
+  path,
+  folderPaths: [],
+  overleafPaths: [path],
+});
 const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
 type FileRead =
   | {
@@ -702,7 +711,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     const keptByThisApply = (
       settle: (path: string) => OverleafConnectionDocument["retention"]["copies"][number]["state"],
       syncCount: number,
-      markers: ReadonlyArray<string>,
+      /** Held files at their paths before this apply, with their other paths. */
+      held: ReadonlyArray<{ readonly path: string; readonly links: ReadonlyArray<string> }>,
     ) => {
       const versionsOf = new Map<string, typeof result.retained>();
       for (const kept of result.retained)
@@ -726,6 +736,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               : !verified || others.length > 0
                 ? ("ambiguous" as const)
                 : settle(relativePath);
+          const marked = held.find((file) => file.path === relativePath);
           return {
             applyId: link.applyId,
             relativePath,
@@ -734,7 +745,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
             retainedAt: updatedAt,
             retainedAtSyncCount: syncCount,
             kept: keptAt(main.retainedPath)!,
-            markers: markers.includes(relativePath),
+            markers: marked !== undefined,
+            markerLinks: marked === undefined ? [] : unique(marked.links),
             // Beyond the limit, the rest stay in the apply's folder; the record is ambiguous.
             versions: others.slice(0, KEPT_VERSION_LIMIT),
             // No stamp matches "0:0": an unverified copy is read again whenever listed.
@@ -780,7 +792,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         markers: mergeMarkers(
           connection.markers,
           link.markers,
-          result.markerPaths.map((path) => ({ path, overleafPaths: [path] })),
+          result.markerPaths.map(freshMarker),
         ),
         stagingPaths: unique([...connection.stagingPaths, ...result.stagingPaths]),
         retention: {
@@ -790,7 +802,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
             ...(yield* keptByThisApply(
               () => "kept",
               connection.completedSyncCount,
-              connection.markers.map((record) => record.path),
+              connection.markers.map((record) => ({
+                path: record.path,
+                links: [...record.folderPaths, ...record.overleafPaths].filter(
+                  (path) => path !== record.path,
+                ),
+              })),
             )),
           ],
         },
@@ -805,6 +822,40 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         .map(([path, oid]) => ({ path, oid })),
     });
     const candidate = yield* repos.readTree({ repo, tree: link.intentTree });
+    // Where the apply actually put each held file. A record not at a path of the
+    // result comes from a version 1 link, which named files where they were before
+    // the apply: the result's renames from the base say where they went. An apply
+    // that did not finish every unit may have left a file where it was, so its
+    // record keeps that path too until a review finds the file.
+    const resultPaths = new Set(candidate.map((entry) => entry.path));
+    let applied: ReadonlyArray<{ readonly from: string; readonly to: string }> | null = null;
+    const placed: OverleafMarkerRecord[] = [];
+    for (const record of link.markers) {
+      let where = record;
+      if (!resultPaths.has(record.path)) {
+        applied ??=
+          connection.base.tree === null
+            ? []
+            : (yield* repos.diff({
+                repo,
+                from: connection.base.tree,
+                to: link.intentTree,
+              })).flatMap((change) =>
+                change.kind === "renamed" ? [{ from: change.from, to: change.to }] : [],
+              );
+        const known = new Set([record.path, ...record.folderPaths, ...record.overleafPaths]);
+        const to = applied.find(
+          (rename) => known.has(rename.from) && resultPaths.has(rename.to),
+        )?.to;
+        if (to !== undefined)
+          where = {
+            path: to,
+            folderPaths: [record.path, ...record.folderPaths],
+            overleafPaths: [...record.overleafPaths, to],
+          };
+      }
+      placed.push(result.unitsDone ? { ...where, folderPaths: [] } : where);
+    }
     const completedSyncCount =
       connection.completedSyncCount + (result.outcome === "complete" ? 1 : 0);
     const copies = [
@@ -842,13 +893,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       managedPaths: unique(candidate.map((entry) => entry.path)),
       localOnlyPaths: unique(link.localOnly),
       forcedConflicts: result.interrupted.map((group) => unique(group)),
-      // Files still held, at their paths after this apply, and those given new marks
-      // that still have them. A file merged in the editor has one path, which no rename
-      // touches (`OverleafReview`). A record stays until its file's marks are gone.
-      markers: mergeMarkers(
-        link.markers,
-        result.markerPaths.map((path) => ({ path, overleafPaths: [path] })),
-      ),
+      // Files still held, where the apply put them, and those given new marks that
+      // still have them. A record stays until its file's marks are gone.
+      markers: mergeMarkers(placed, result.markerPaths.map(freshMarker)),
       stagingPaths: unique([...connection.stagingPaths, ...result.stagingPaths]),
       retention: { ...connection.retention, copies },
       // The base moved, so a publication still unknown is overtaken (contract section 6).
@@ -1117,9 +1164,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       (applied.outcome !== "complete" && !marksOnly) || connection.forcedConflicts.length > 0
         ? ("attention" as const)
         : // Every file recorded with conflict material is one this review holds back.
-          connection.markers.some(
-              (record) =>
-                !held.has(record.path) || record.overleafPaths.some((path) => !held.has(path)),
+          connection.markers.some((record) =>
+              [record.path, ...record.folderPaths, ...record.overleafPaths].some(
+                (path) => !held.has(path),
+              ),
             )
           ? ("markers" as const)
           : connection.stagingPaths.length > 0
@@ -1492,7 +1540,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                     ),
                     ...review.binding.newLocalOnly,
                   ]),
-                  priorMarkers: review.binding.unresolvedMarkers,
+                  priorMarkers: review.binding.heldMarkers,
                   markers: review.binding.carriedMarkers,
                 },
                 updatedAt: DateTime.formatIso(yield* DateTime.now),
@@ -1678,10 +1726,17 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               if (copy === undefined || connection.base.commit === null)
                 return { _tag: "unknown-copy" as const };
               // Conflict material kept as the main version is tracked again once back,
-              // held at the path it returns to.
+              // held at the path it returns to and at every other path its file had when
+              // kept. A copy kept before those were recorded knows only its own.
               const priorMarkers =
-                copy.markers && input.kept === copy.kept ? [copy.relativePath] : [];
-              const markers = priorMarkers.map((path) => ({ path, overleafPaths: [path] }));
+                copy.markers && input.kept === copy.kept
+                  ? [{ path: copy.relativePath, links: copy.markerLinks }]
+                  : [];
+              const markers = priorMarkers.map((file) => ({
+                path: file.path,
+                folderPaths: [],
+                overleafPaths: unique([file.path, ...file.links]),
+              }));
               // Room for what the restore keeps, for the path it may bring back into the
               // sync, for the group it may leave and for the conflict material it tracks
               // again, before anything is written.

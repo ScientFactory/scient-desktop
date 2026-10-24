@@ -1013,7 +1013,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           }),
         ).toMatchObject({ _tag: "restored" });
         expect((yield* w.connection).markers).toEqual([
-          { path: "main.tex", overleafPaths: ["main.tex"] },
+          { path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] },
         ]);
       }),
     ),
@@ -1131,6 +1131,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             revision: current.revision + 1,
             markers: Array.from({ length: 2_000 }, (_, n) => ({
               path: `marked-${n}.tex`,
+              folderPaths: [],
               overleafPaths: [`marked-${n}.tex`],
             })),
             updatedAt: "2026-10-22T12:00:00.000Z",

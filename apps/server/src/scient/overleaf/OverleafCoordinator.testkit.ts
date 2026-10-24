@@ -257,7 +257,11 @@ export const world = (input: {
       completedSyncCount: 1,
       managedPaths: Object.keys(input.synced),
       localOnlyPaths: Object.keys(input.localOnly ?? {}),
-      markers: (input.markerPaths ?? []).map((path) => ({ path, overleafPaths: [path] })),
+      markers: (input.markerPaths ?? []).map((path) => ({
+        path,
+        folderPaths: [],
+        overleafPaths: [path],
+      })),
       retention: { vaultIdentity: retention.identity, copies: [] },
     });
 

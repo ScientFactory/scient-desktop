@@ -42,6 +42,8 @@ import {
   type FileTree,
   guardedPaths,
   hasConflictMarkers,
+  hasScientConflictMarkers,
+  type HeldFile,
   heldFiles,
   publicationTree,
   type Rename,
@@ -113,6 +115,8 @@ export interface OverleafReviewBinding {
    */
   readonly recordedMarkers: ReadonlyArray<OverleafMarkerRecord>;
   readonly unresolvedMarkers: ReadonlyArray<string>;
+  /** The same files with every other path each is linked to, for the copies an apply keeps. */
+  readonly heldMarkers: ReadonlyArray<HeldFile>;
   /** The local target: what the folder will hold, conflict material included. */
   readonly candidateTree: string;
   /**
@@ -253,6 +257,9 @@ export const overleafConflictKey = (paths: ReadonlyArray<string>) =>
   sha256(sorted(paths).join("\0"));
 /** Editable on Overleaf means text; a NUL byte early on means it is stored as an upload. */
 const looksLikeText = (bytes: Uint8Array) => !bytes.subarray(0, 8_000).includes(0);
+/** The labelled lines Scient's merge writes, as bytes, to rule most files out quickly. */
+const SCIENT_OPENING = Buffer.from("<<<<<<< Scient");
+const SCIENT_CLOSING = Buffer.from(">>>>>>> Overleaf");
 /** LFS pointers are small by specification; larger blobs need no prefix check. */
 const LFS_POINTER_MAX_BYTES = 1024;
 
@@ -663,8 +670,16 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
       .flatMap((conflict) => conflict.paths),
   );
   const recordedMarkers = input.markers
-    .map((record) => ({ path: record.path, overleafPaths: sorted(new Set(record.overleafPaths)) }))
+    .map((record) => ({
+      path: record.path,
+      folderPaths: sorted(new Set(record.folderPaths)),
+      overleafPaths: sorted(new Set(record.overleafPaths)),
+    }))
     .sort((left, right) => byPath(left.path, right.path));
+  const textOf = (path: string) => {
+    const file = inventory.captured.get(path);
+    return file === undefined ? null : new TextDecoder().decode(file.bytes);
+  };
   const held = heldFiles({
     recorded: recordedMarkers,
     fresh: markerPaths,
@@ -674,8 +689,18 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     localRenames,
     remoteRenames,
     marked: (path) => {
-      const file = inventory.captured.get(path);
-      return file !== undefined && hasConflictMarkers(new TextDecoder().decode(file.bytes));
+      const text = textOf(path);
+      return text !== null && hasConflictMarkers(text);
+    },
+    labelled: (path) => {
+      // Every captured file is checked; most are ruled out by their bytes alone.
+      const bytes = inventory.captured.get(path)?.bytes;
+      if (bytes === undefined) return false;
+      const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      return (
+        (buffer.includes(SCIENT_OPENING) || buffer.includes(SCIENT_CLOSING)) &&
+        hasScientConflictMarkers(textOf(path)!)
+      );
     },
   });
   let publishedTree = candidateTree;
@@ -744,7 +769,7 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
   if (editableBytes > limits.editableTotalBytes)
     warnings.push({ kind: "editable-total-exceeded", bytes: editableBytes });
 
-  const unresolvedMarkers = held.unresolved;
+  const unresolvedMarkers = held.unresolved.map((file) => file.path);
 
   const binding: OverleafReviewBinding = {
     connectionId: connection.connectionId,
@@ -768,6 +793,7 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     interrupted,
     recordedMarkers,
     unresolvedMarkers,
+    heldMarkers: held.unresolved,
     candidateTree,
     publicationTree: publishedTree,
     heldPaths: held.paths,

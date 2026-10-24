@@ -101,6 +101,8 @@ export const OverleafApplyKind = Schema.Literals(["sync-apply", "retained-restor
 const OverleafMarkerRecord = Schema.Struct({
   /** Where the file is in the folder: where its marks are looked for. */
   path: ManuscriptPath,
+  /** Other folder paths the file may be at, where an apply that did not finish left it. */
+  folderPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
   /** The file's paths on Overleaf, linked by renames on either side. */
   overleafPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
 });
@@ -112,6 +114,12 @@ const MarkerRecords = Schema.Array(OverleafMarkerRecord).check(
     (records) => new Set(records.map((record) => record.path)).size === records.length,
   ),
 );
+
+/** A held file at its folder path before an apply, with every other path it is linked to. */
+const HeldFile = Schema.Struct({
+  path: ManuscriptPath,
+  links: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+});
 
 /** The connection's pointer to an applier intent that may still need recovery. */
 const applyLinkFields = {
@@ -127,12 +135,15 @@ const applyLinkFields = {
   remoteCommit: Oid,
   /** The reviewed local-only set after this apply: kept entries less promoted collisions, plus new ones. */
   localOnly: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
-  /** Folder paths, before the apply, of files whose unsettled conflict material it may keep a copy of. */
-  priorMarkers: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
 };
 const ApplyLink = Schema.Struct({
   ...applyLinkFields,
-  /** Recorded files still held after this apply, at their paths after it. */
+  /**
+   * Held files before the apply, whose unsettled conflict material it may keep a
+   * copy of: a kept copy remembers the file's other paths.
+   */
+  priorMarkers: Schema.Array(HeldFile).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  /** Held files' records after this apply, at the paths the result puts them. */
   markers: MarkerRecords,
 });
 
@@ -199,7 +210,7 @@ const KeptPath = Schema.String.check(
 );
 /** Further versions recorded for one kept path; beyond this the record is ambiguous. */
 export const KEPT_VERSION_LIMIT = 16;
-const RetainedCopy = Schema.Struct({
+const retainedCopyFields = {
   applyId: OverleafServerId,
   relativePath: ManuscriptPath,
   /** Content revision when retained; a later different revision means a late writer. */
@@ -224,6 +235,14 @@ const RetainedCopy = Schema.Struct({
   versions: Schema.Array(KeptPath).check(Schema.isMaxLength(KEPT_VERSION_LIMIT)),
   /** Size and change time of the main version when kept; a later difference means a late writer. */
   stamp: Schema.String.check(Schema.isPattern(/^\d{1,20}:\d{1,30}$/u)),
+};
+const RetainedCopy = Schema.Struct({
+  ...retainedCopyFields,
+  /**
+   * For kept conflict material (`markers`), the file's other paths when kept, on
+   * Overleaf and in the folder: a restored copy is held at all of them again.
+   */
+  markerLinks: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
 });
 type RetainedCopy = typeof RetainedCopy.Type;
 
@@ -326,7 +345,18 @@ const OverleafConnectionDocumentV1 = Schema.Struct({
   ...version1Fields,
   schemaVersion: Schema.Literal(1),
   markerPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
-  activeApply: Schema.NullOr(Schema.Struct(applyLinkFields)),
+  retention: Schema.Struct({
+    vaultIdentity: VolumeFileIdentity,
+    copies: Schema.Array(Schema.Struct(retainedCopyFields)).check(
+      Schema.isMaxLength(RETAINED_COPY_LIMIT),
+    ),
+  }),
+  activeApply: Schema.NullOr(
+    Schema.Struct({
+      ...applyLinkFields,
+      priorMarkers: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+    }),
+  ),
 });
 const decodeCurrent = Schema.decodeUnknownExit(Schema.fromJsonString(OverleafConnectionDocument));
 const decodeVersion1 = Schema.decodeUnknownExit(
@@ -336,27 +366,40 @@ const validateDocument = Schema.decodeUnknownExit(OverleafConnectionDocument);
 
 /**
  * Reads a stored document: the current version, or a version 1 document upgraded.
- * Version 1 tracked no renames, so each recorded path is its file's only path, in
- * the folder and on Overleaf; a pending apply's recorded paths become its records.
- * The upgrade is in memory; the next replacement writes the current version.
- * Null when the text is neither, or the upgrade breaks a document rule.
+ * Version 1 tracked no renames, so each recorded path is its file's only known
+ * path, in the folder and on Overleaf, and a kept copy of conflict material knows
+ * no other path. A pending apply's recorded paths are where its files were before
+ * it; adoption finds where the apply put them (`OverleafCoordinator`). The upgrade
+ * is in memory; the next replacement writes the current version. Null when the
+ * text is neither, or the upgrade breaks a document rule.
  */
 export function decodeOverleafConnectionDocument(text: string): OverleafConnectionDocument | null {
   const current = decodeCurrent(text);
   if (Exit.isSuccess(current)) return current.value;
   const old = decodeVersion1(text);
   if (Exit.isFailure(old)) return null;
-  const { markerPaths, activeApply, ...rest } = old.value;
+  const { markerPaths, activeApply, retention, ...rest } = old.value;
   const recordsOf = (paths: ReadonlyArray<string>) =>
-    [...new Set(paths)].map((path) => ({ path, overleafPaths: [path] }));
+    [...new Set(paths)].map((path) => ({ path, folderPaths: [], overleafPaths: [path] }));
   const upgraded = validateDocument({
     ...rest,
     schemaVersion: OVERLEAF_CONNECTION_SCHEMA_VERSION,
     markers: recordsOf(markerPaths),
+    retention: {
+      ...retention,
+      copies: retention.copies.map((copy) => ({ ...copy, markerLinks: [] })),
+    },
     activeApply:
       activeApply === null
         ? null
-        : { ...activeApply, markers: recordsOf(activeApply.priorMarkers) },
+        : {
+            ...activeApply,
+            priorMarkers: [...new Set(activeApply.priorMarkers)].map((path) => ({
+              path,
+              links: [],
+            })),
+            markers: recordsOf(activeApply.priorMarkers),
+          },
   });
   return Exit.isSuccess(upgraded) ? upgraded.value : null;
 }
@@ -534,6 +577,7 @@ export function overleafTransitionViolation(
       kept.retainedAtSyncCount !== copy.retainedAtSyncCount ||
       kept.kept !== copy.kept ||
       kept.markers !== copy.markers ||
+      kept.markerLinks.join("\0") !== copy.markerLinks.join("\0") ||
       kept.stamp !== copy.stamp ||
       kept.versions.join("\0") !== copy.versions.join("\0") ||
       // A changed, ambiguous, interrupted or kept copy never becomes releasable again.
