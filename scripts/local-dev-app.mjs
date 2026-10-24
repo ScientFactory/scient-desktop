@@ -25,6 +25,7 @@ import {
   takeClaimedColdHandoff,
   writeApprovedHandoff,
 } from "../apps/desktop/scripts/dev-cold-handoff.mjs";
+import { packageManagerInvocation } from "./dev-app/host.mjs";
 
 export const LOCAL_DEV_APP_NAME = "Scient (Dev)";
 export const LOCAL_DEV_APP_STABLE_NAME = "Scient (Dev) Stable";
@@ -922,6 +923,11 @@ async function runApp() {
   shareDevelopmentVoiceRuntime({ root: paths.root });
   const pnpmExecPath = process.env.npm_execpath?.trim();
   const devDesktopArgs = ["dev:desktop"];
+  const pnpmInvocation = packageManagerInvocation(
+    pnpmExecPath || "pnpm",
+    devDesktopArgs,
+    process.execPath,
+  );
   const stableProfileRoot = process.env.SCIENT_NEXT_PROFILE_ROOT;
   if (paths.role === "stable" && !stableProfileRoot) {
     throw new Error("The stable dev app starts through its controller: pnpm dev:app:stable start.");
@@ -952,15 +958,11 @@ async function runApp() {
           ],
           { cwd: paths.root, env: childEnv, stdio: "inherit" },
         )
-      : NodeChildProcess.spawn(
-          pnpmExecPath ? process.execPath : "pnpm",
-          pnpmExecPath ? [pnpmExecPath, ...devDesktopArgs] : devDesktopArgs,
-          {
-            cwd: paths.root,
-            env: childEnv,
-            stdio: "inherit",
-          },
-        );
+      : NodeChildProcess.spawn(pnpmInvocation.command, pnpmInvocation.args, {
+          cwd: paths.root,
+          env: childEnv,
+          stdio: "inherit",
+        });
 
   for (const signal of ["SIGINT", "SIGTERM"]) {
     process.once(signal, () => {

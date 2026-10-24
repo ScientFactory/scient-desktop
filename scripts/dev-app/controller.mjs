@@ -50,6 +50,7 @@ import {
   launchJobName,
   launchTokenHash,
   ownerState,
+  packageManagerInvocation,
   quoteWindowsArgument,
   registerScheduledTask,
   runScheduledTask,
@@ -186,16 +187,17 @@ function runInstallOnce(checkout, pnpm) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
     let lastOutputAt = startedAt;
-    const child = NodeChildProcess.spawn(
+    const invocation = packageManagerInvocation(
+      pnpm,
+      ["install", "--frozen-lockfile", "--reporter=append-only"],
       process.execPath,
-      [pnpm, "install", "--frozen-lockfile", "--reporter=append-only"],
-      {
-        cwd: checkout,
-        windowsHide: true,
-        detached: hostPlatform !== "win32",
-        stdio: ["ignore", "pipe", "pipe"],
-      },
     );
+    const child = NodeChildProcess.spawn(invocation.command, invocation.args, {
+      cwd: checkout,
+      windowsHide: true,
+      detached: hostPlatform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const onOutput = (chunk) => {
       lastOutputAt = Date.now();
       appendLog(chunk);

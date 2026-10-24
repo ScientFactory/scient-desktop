@@ -148,6 +148,9 @@ returns; compilation continues in the background. The initial cold build can
 still take tens of seconds. Use status and logs instead of keeping an agent
 shell or terminal open. `pnpm dev:app` remains available when a maintainer
 explicitly wants the same lifecycle attached to the foreground terminal.
+The launcher and checkout installer support native pnpm executables and JavaScript
+entry points. Native binaries run directly; only JavaScript entries run through
+the pinned Node executable.
 
 Each checkout and role has its own deterministic service label, state root,
 ports, app identity, and visible name. Different worktrees can therefore run
