@@ -428,8 +428,30 @@ describe("OverleafRepository transport", () => {
         expect(yield* h.repos.readRef({ repo, name: "base" })).toBeNull();
         yield* h.repos.setRef({ repo, name: "base", oid: tree });
         expect(yield* h.repos.readRef({ repo, name: "base" })).toBe(tree);
+        yield* h.repos.setRef({ repo, name: "attempt/1/parent", oid: tree });
+        expect(yield* h.repos.listRefs({ repo })).toEqual(
+          new Map([
+            ["attempt/1/parent", tree],
+            ["base", tree],
+          ]),
+        );
         yield* h.repos.deleteRef({ repo, name: "base" });
         expect(yield* h.repos.readRef({ repo, name: "base" })).toBeNull();
+        expect([...(yield* h.repos.listRefs({ repo })).keys()]).toEqual(["attempt/1/parent"]);
+      }),
+    ),
+  );
+
+  it.effect("finds a commit's tree only while the repository holds the commit", () =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const repo = yield* h.repo("a");
+        const tree = yield* h.tree(repo, { "main.tex": "x\n" });
+        const commit = yield* h.repos.commit({ repo, tree, parents: [], message: "x" });
+        expect(yield* h.repos.findTree({ repo, commit })).toBe(tree);
+        expect(yield* h.repos.findTree({ repo, commit: "1".repeat(40) })).toBeNull();
+        expect(yield* h.repos.hasObject({ repo, oid: commit })).toBe(true);
+        expect(yield* h.repos.hasObject({ repo, oid: "1".repeat(40) })).toBe(false);
       }),
     ),
   );

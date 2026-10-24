@@ -81,7 +81,12 @@ const LocalSnapshot = Schema.Struct({
   tree: Oid,
 });
 
-export const OverleafApplyKind = Schema.Literals(["sync-apply", "retained-restore"]);
+/**
+ * `sync-apply` applies a reviewed sync and moves the base. `retained-restore` puts a
+ * kept copy back and `sync-undo` puts back what Overleaf had before one accepted
+ * send; both are local changes that never move the base.
+ */
+export const OverleafApplyKind = Schema.Literals(["sync-apply", "retained-restore", "sync-undo"]);
 
 /** The connection's pointer to an applier intent that may still need recovery. */
 const ApplyLink = Schema.Struct({
@@ -98,7 +103,19 @@ const ApplyLink = Schema.Struct({
   /** The reviewed local-only set after this apply: kept entries less promoted collisions, plus new ones. */
   localOnly: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
   priorMarkers: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
-});
+  /** The accepted attempt an undo puts back; present exactly for `sync-undo`. */
+  undoneAttempt: Schema.optionalKey(Positive),
+  /** Managed paths an undo removes, which adoption takes out of the managed set. */
+  retired: Schema.optionalKey(
+    Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  ),
+}).check(
+  Schema.makeFilter(
+    (link) =>
+      (link.kind === "sync-undo") === (link.undoneAttempt !== undefined) &&
+      (link.kind === "sync-undo" || link.retired === undefined),
+  ),
+);
 
 export const OverleafAttemptOutcome = Schema.Literals([
   /** Recorded before the send boundary; acceptance not established. */
@@ -273,6 +290,13 @@ export const OverleafConnectionDocument = Schema.Struct({
       document.attempts.every((attempt) => attempt.attemptNumber <= document.lastAttemptNumber) &&
       document.attempts.filter((attempt) => isOverleafAttemptUnresolved(attempt.outcome)).length <=
         UNRESOLVED_ATTEMPT_LIMIT &&
+      // A pending undo keeps the attempt it undoes, and with it that attempt's pins.
+      (document.activeApply?.undoneAttempt === undefined ||
+        document.attempts.some(
+          (attempt) =>
+            attempt.attemptNumber === document.activeApply?.undoneAttempt &&
+            attempt.outcome === "accepted",
+        )) &&
       sequences.size === document.localSnapshots.length &&
       copies.size === document.retention.copies.length &&
       document.retention.copies.every(
@@ -295,6 +319,7 @@ export const OverleafOperationReceipt = Schema.Struct({
     "relink",
     "disconnect",
     "restore",
+    "undo",
     "token",
     "history-reset",
   ]),
@@ -479,7 +504,12 @@ export function overleafRetainedCopyReleasable(
   );
 }
 
-/** Private refs that must exist for the document's recovery evidence to be usable. */
+/**
+ * Private refs that must exist for the document's recovery evidence to be usable,
+ * and for an Undo to stay possible: every recorded attempt that is unresolved or
+ * accepted keeps its parent and candidate commits, until it is pruned. A pending
+ * undo's attempt cannot be pruned (the document requires it).
+ */
 export function overleafRequiredPins(
   document: OverleafConnectionDocument,
 ): ReadonlyArray<{ readonly name: string; readonly oid: string }> {
@@ -500,7 +530,7 @@ export function overleafRequiredPins(
       oid: document.activeApply.intentTree,
     });
   for (const attempt of document.attempts) {
-    if (!isOverleafAttemptUnresolved(attempt.outcome)) continue;
+    if (!isOverleafAttemptUnresolved(attempt.outcome) && attempt.outcome !== "accepted") continue;
     pins.push(
       { name: `attempt/${attempt.attemptNumber}/candidate`, oid: attempt.candidateCommit },
       { name: `attempt/${attempt.attemptNumber}/parent`, oid: attempt.parentCommit },
