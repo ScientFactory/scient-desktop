@@ -102,7 +102,8 @@ block application; unchanged files retain their permissions. Target executable
 flags are ignored. Alias-only renames remain refused until captures and the
 planner represent alias moves consistently.
 Marker detection is conservative and runs only on the recorded conflict paths;
-ordinary Markdown underline headings are not publication failures.
+ordinary Markdown underline headings are not publication failures. The result
+also says whether every unit was done (`unitsDone`).
 
 ## Disposable Git protocol qualification
 
@@ -188,6 +189,20 @@ previous document's list: a required ref found missing is written again, and a
 failure to write it fails the replacement. Only an accepted attempt's ref (kept
 for Undo alone) whose object Git confirms is gone is left out, so it never
 blocks.
+
+Conflict material is recorded per file (`markers`): where the file is in the
+folder, where its marks are looked for, other folder paths an unfinished apply
+may have left it at, and its paths on Overleaf. A kept copy of conflict material
+remembers its file's other paths (`markerLinks`), which never change. The
+document is at schema version 2. A version 1 document, which recorded folder
+paths only (`markerPaths`, and a pending apply's `priorMarkers`), is read and
+upgraded in memory (a pending undo keeps its attempt and retired paths), each
+path becoming a file whose one path it is; a kept copy
+of conflict material (and a pending apply's held file) gets `markerLinks: null`,
+other paths unknown, and a restore holds it at every path Overleaf has. The next
+replacement writes version 2. A later
+version is reported unsupported; an older one that does not upgrade cleanly is
+reported corrupt.
 
 Request receipts are created once per request ID. A repeat with the same
 payload returns the original receipt instead of running again; reuse with a
@@ -320,7 +335,12 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
   - the base: a tree written from the applier's per-path base on the fetched
     remote commit, with the previous base moved into `priorBases`;
   - managed and local-only paths;
-  - `forcedConflicts` (interrupted groups) and `markerPaths`;
+  - `forcedConflicts` (interrupted groups) and `markers`: the held files the
+    review carried, where the apply put them, plus each file given new marks
+    that still has them. An apply that did not finish every unit may have left a
+    file where it was, so its record keeps that folder path too. A record that
+    names no path of the result (a version 1 pending apply named files where they
+    were before it) is placed by the result's renames from the base;
   - kept copies, each with its place in the retention folder and a stamp (size
     and change time) taken around a fresh read of its bytes, from the file its
     path still names. A copy that no longer holds what the applier kept is
@@ -381,26 +401,96 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
   Recovery resumes the same intent, and a repeated request returns the
   receipt. Saving open editors first is the caller's job.
 
+  Undo and held files: a send never changes a held path (the publication tree
+  keeps Overleaf's version there), so an attempt's changes never name a file
+  held at that send, and Undo puts back only a path that holds exactly what the
+  send left, which has no conflict marks. A file given marks since the send is
+  skipped (`changed`), never replaced. Undo records no conflict material of its
+  own: the records stand as they were, and the next sync holds every marked
+  file as usual, so Undo neither sends marks nor deletes or replaces Overleaf's
+  file of a conflict not settled.
+
+### Holding back a file with conflict marks
+
+While a file has conflict marks, only that file waits; everything else is sent
+(design section 4.2). The review holds two trees: the local target (the
+candidate: what the folder will hold, marks included) and the publication tree
+(the candidate with every held path set to Overleaf's fetched entry, or absent
+where Overleaf has none). Both, and the held paths, are in the digest. Outgoing
+changes are Overleaf's tree against the publication tree, so no held path is
+among them.
+
+- **What is held is a file**, every path it has in the base, the folder and on
+  Overleaf, linked by renames on either side (`heldFiles` in `syncRules.ts`).
+  A marked `a.tex` renamed to `b.tex` in the folder is held at both: Overleaf
+  keeps `a.tex` and gets no `b.tex`.
+- **Which files**: each one given new marks in this apply (a group merged in the
+  editor is one path no rename touches), each recorded one whose file still has
+  marks, and any other file with a conflict, recorded or not: Scient's own
+  labelled marks (`<<<<<<< Scient`, `>>>>>>> Overleaf`), or a whole conflict
+  block whatever its labels (an opening, a separator and a closing line, in
+  that order, each a line of its own; `hasConflictBlock`). A Markdown underline
+  never matches. Every captured file is checked from the bytes the inventory
+  already read; most are ruled out by the absence of `<<<<<<<` and `>>>>>>>`.
+- **Finding a recorded file**: at its folder path, its other recorded paths and
+  where a rename in the folder took it; it is held where one of them has marks.
+  Finding it proves less than it seems: Git sees a rename only from the base,
+  which may no longer have the file, and a clean file at a recorded path may be
+  a newcomer put there after the marked file moved, even over another marked
+  file. So a record found clean or found nowhere is settled only when no file
+  is held at all; while any is, recorded, unrecorded or given new marks, each
+  held file keeps the record's paths. A marked `a.tex` moved over the marked
+  `b.tex`, with a new `a.tex` written: Overleaf keeps both. Once settled, the
+  file's edit, rename or deletion goes out. The cost is waiting: with two
+  conflicts, the one settled first goes out with the second.
+- **Records** move with the file: after an apply, at the path the result holds
+  it (Overleaf's rename moves it), with the file's paths Overleaf has, and the
+  paths of the records it took over. A record stays until the marks are gone,
+  across acceptance, restart and recovery. A restored kept copy of conflict
+  material is held at the paths its file had; one kept before those were
+  recorded (version 1) is held at every path of the base, since any of them may
+  have been its file's.
+- **Sending one as it is** (`releaseMarked` in the selections): a file whose
+  marks are its content (a guide quoting them) is sent, marks included, when
+  the request lists it. It is a choice, not a permission: the review lists the
+  files that may be released (`unresolvedMarkers`: the held files with marks
+  already in the folder) and those it sends as they are (`released`, bound in
+  the digest). Marks the review itself writes are never released, and a
+  released file's record is dropped. A release is checked against the whole
+  result: a file whose path another held file keeps (its former name, say) is
+  not sent, so the request is refused (`release-held`) rather than reported as
+  sent.
+- **The publication tree is validated** like any other: a held path that the
+  result turns into a folder, or the other way round, is refused
+  (`held-file-clash`); the file and size limits apply to it too.
+
 ### Publication
 
-After a complete adoption, confirm sends the result. Steps 1 to 4 run inside its
+After an adoption, confirm sends the result. Steps 1 to 4 run inside its
 application section, which is released before the network is used (contract
 section 9):
 
-1. **Gate.** Nothing is sent after a partial apply, while conflict material or
-   structural copies remain, or when a copy this apply kept is `changed` or
-   `ambiguous`. The result is `blocked` with the reason.
-2. **Nothing to send** when the candidate equals Overleaf's fetched tree
+1. **Gate.** Nothing is sent after a partial apply, while interrupted groups or
+   structural copies remain, while a recorded file with conflict material is not
+   one the review holds, or when a copy this apply kept is `changed` or
+   `ambiguous`. The result is `blocked` with the reason. An apply needing
+   attention only because of marks in held files is sent: every unit done, the
+   folder matching the local target, no kept copy changed.
+2. **Nothing to send** when the publication tree equals Overleaf's fetched tree
    (`none`).
 3. **Verify.** The folder is captured again, the way a review captures it and
    over every path the plan read or wrote (so an explicit deletion must still be
-   absent), and its tree must equal the candidate. A difference is
+   absent). Outside the held files it must equal the publication tree; held
+   files are work in progress and are not compared. A difference is
    `not-verified`, and the edit is the next review's to send. Each copy this
    apply kept is checked again by its stamp: one a late writer changed is
    recorded `changed` and the send is `blocked`. From here on, the content comes
    from the private repository's objects, never from the folder.
-4. **Record.** The candidate is committed on the plan's fetched head. The
+4. **Record.** The publication tree is committed on the plan's fetched head. The
    attempt is recorded `unknown` with its pins, before anything is sent.
+   Acceptance makes it the base, where a held file has Overleaf's version at
+   Overleaf's paths, as the apply already set it; the user's merge, and any
+   rename, go out at the first sync after the marks are gone.
    Resolved history makes room; a confirm that would need a seventeenth
    unresolved attempt is refused before the apply.
 5. **Send admission**, a short application section of its own, decides from
@@ -412,7 +502,7 @@ section 9):
    after admission are later local changes and never alter what is sent.
 6. **Send** once, never forced, holding no section, so a pull or branch switch
    of the checkout does not wait for the network. `accepted` makes the
-   candidate the base in the same replacement. `out-of-date` keeps the adopted
+   publication tree the base in the same replacement. `out-of-date` keeps the adopted
    base. Anything else stays `unknown`, as does an attempt whose finalizing
    write fails.
 
