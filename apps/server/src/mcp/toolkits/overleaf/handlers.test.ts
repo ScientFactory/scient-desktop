@@ -429,7 +429,9 @@ describe("Overleaf tool handlers", () => {
         choices: [{ key: "k1", choice: "mine" }],
         reviewedRemote: "b".repeat(40),
       }).pipe(provide(overleaf));
-      expect(same.lines[0]).toBe("Nothing was applied or sent.");
+      expect(same.lines[0]).toBe(
+        "Stopped at a conflict before applying: none of this review's changes were applied or sent.",
+      );
       // The next call needs the review's Overleaf tree with its choices.
       expect(same.lines[1]).toContain(`reviewedRemote ${"b".repeat(40)}`);
     }),
@@ -659,7 +661,15 @@ describe("Overleaf tool handlers", () => {
         restore: { applyId: "a", kept: "k", keptRevision: "r", currentRevision: null },
       }).pipe(
         // The restore looks the link up once before its save, then once per attempt.
-        provide(relinking({ restoreKept: () => Effect.succeed({ _tag: "restored" }) } as never, 2)),
+        provide(
+          relinking(
+            {
+              restoreKept: () =>
+                Effect.succeed({ _tag: "restored", adopted: { outcome: "complete" } }),
+            } as never,
+            2,
+          ),
+        ),
       );
       expect(restored.restored).toBe("restored");
       expect(restored.link).toMatchObject({
@@ -726,6 +736,158 @@ describe("Overleaf tool handlers", () => {
         "New files over Overleaf's 50 MB limit stay only on this computer: data.bin.",
         "Kept only on this computer: notes.tex. Send one with files.send.",
       ]);
+    }),
+  );
+
+  it.effect("a restore is reported done only when the copy is back in the folder", () =>
+    Effect.gen(function* () {
+      const restoreWith = (outcome: string) =>
+        overleafKeptCopiesForInvocation({
+          connectionId: "c-1",
+          restore: { applyId: "a", kept: "k", keptRevision: "r", currentRevision: null },
+        }).pipe(
+          provide(
+            fakeOverleaf({
+              keptCopies: () =>
+                Effect.succeed([
+                  {
+                    applyId: "a",
+                    kept: "k",
+                    relativePath: "main.tex",
+                    state: "kept",
+                    retainedAt: "2026-10-24T00:00:00.000Z",
+                    revision: "r",
+                    keptRevision: "r",
+                    currentRevision: null,
+                    unread: false,
+                  },
+                ]) as never,
+              restoreKept: () =>
+                Effect.succeed({ _tag: "restored", adopted: { outcome } }) as never,
+            }),
+          ),
+        );
+      const done = yield* restoreWith("complete");
+      expect(done.restored).toBe("restored");
+      expect(done.lines[0]).toContain("Restored main.tex from its kept copy");
+      const replanned = yield* restoreWith("replan");
+      expect(replanned.restored).toBe("not-restored");
+      expect(replanned.lines[0]).toBe(
+        "Nothing was restored: main.tex changed here meanwhile, so nothing was written. List the copies again and retry.",
+      );
+      const attention = yield* restoreWith("attention");
+      expect(attention.restored).toBe("needs-attention");
+      expect(attention.lines[0]).toContain("The restore of main.tex needs attention");
+      for (const result of [replanned, attention])
+        expect(result.lines.some((line) => line.startsWith("Restored"))).toBe(false);
+    }),
+  );
+
+  it.effect("after an automatic retry, says the earlier attempt already brought changes in", () =>
+    Effect.gen(function* () {
+      const review = (
+        incoming: ReadonlyArray<unknown>,
+        conflicts: ReadonlyArray<unknown> = [],
+      ) => ({
+        reviewId: "r",
+        digest: "d",
+        remoteTree: "b".repeat(40),
+        upToDate: false,
+        needsDecision: conflicts.length > 0,
+        incoming,
+        outgoing: [],
+        conflicts,
+        warnings: [],
+        unresolvedMarkers: [],
+        collisions: [],
+        selectedAdditions: [],
+        additions: [],
+        localOnly: [],
+      });
+      const synced = (options: {
+        readonly incoming: ReadonlyArray<unknown>;
+        readonly retried: boolean;
+        readonly publication: unknown;
+      }) =>
+        overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+          provide(
+            fakeOverleaf({
+              sync: () =>
+                Effect.succeed({
+                  _tag: "synced",
+                  review: review(options.incoming),
+                  adopted: {
+                    applyId: "x",
+                    outcome: "complete",
+                    interrupted: [],
+                    markerPaths: [],
+                    baseGeneration: 1,
+                  },
+                  publication: options.publication,
+                  retried: options.retried,
+                  activity: [],
+                  linkedElsewhere: false,
+                }) as never,
+            }),
+          ),
+          Effect.map((result) => result.lines),
+        );
+      const retried = yield* synced({
+        incoming: [{ kind: "modified", path: "other.tex" }],
+        retried: true,
+        publication: { _tag: "accepted", attemptNumber: 2 },
+      });
+      expect(retried[0]).toContain(
+        "An earlier attempt had already brought Overleaf's changes into the folder",
+      );
+      expect(retried[1]).toBe("In the last attempt, 1 file came in from Overleaf: other.tex.");
+      expect(retried.some((line) => /nothing (was )?applied/iu.test(line))).toBe(false);
+
+      // A first sync: the new file is named, and nothing is said to have been sent.
+      const first = yield* synced({
+        incoming: [{ kind: "added", path: "main.tex" }],
+        retried: false,
+        publication: { _tag: "none" },
+      });
+      expect(first).toEqual(["1 file came in from Overleaf: main.tex (new)."]);
+
+      // Nothing came in, and the folder changed after the apply.
+      const unverified = yield* synced({
+        incoming: [],
+        retried: false,
+        publication: { _tag: "not-verified" },
+      });
+      expect(unverified[0]).toBe(
+        "Nothing was sent: the folder changed after the apply. Sync again; the new edit goes with the next sync.",
+      );
+      expect(unverified.some((line) => line.includes("came in"))).toBe(false);
+
+      // A preview with a conflict names its key, choices and the review's Overleaf tree.
+      const previewed = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
+        provide(
+          fakeOverleaf({
+            preview: () =>
+              Effect.succeed({
+                _tag: "review",
+                review: review(
+                  [],
+                  [
+                    {
+                      key: "k",
+                      paths: ["main.tex"],
+                      allowed: ["mine", "theirs", "markers"],
+                      chosen: null,
+                    },
+                  ],
+                ),
+              }) as never,
+          }),
+        ),
+      );
+      expect(previewed.lines).toContain(
+        `1 conflict to settle. Call again with one choice per key and reviewedRemote ${"b".repeat(40)}:`,
+      );
+      expect(previewed.lines).toContain("- key k: main.tex; allowed: mine, theirs, markers");
     }),
   );
 });

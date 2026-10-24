@@ -637,7 +637,14 @@ export const overleafKeptCopiesForInvocation = Effect.fn("ScientOverleafToolkit.
     // folder it finally ran in.
     let link = yield* linkFor(overleaf, caller, input.connectionId);
     const lines: string[] = [];
-    let restored: "restored" | "stale" | "unknown-copy" | "duplicate" | null = null;
+    let restored:
+      | "restored"
+      | "not-restored"
+      | "needs-attention"
+      | "stale"
+      | "unknown-copy"
+      | "duplicate"
+      | null = null;
     if (input.restore !== undefined) {
       const restore = input.restore;
       const before = yield* mapErrors(
@@ -662,15 +669,27 @@ export const overleafKeptCopiesForInvocation = Effect.fn("ScientOverleafToolkit.
       );
       link = saved.link;
       const result = saved.value;
-      restored = result._tag;
+      // Only a complete apply puts the copy back; a replanned one wrote nothing.
+      restored =
+        result._tag !== "restored"
+          ? result._tag
+          : result.adopted.outcome === "complete"
+            ? "restored"
+            : result.adopted.outcome === "replan"
+              ? "not-restored"
+              : "needs-attention";
       lines.push(
-        result._tag === "restored"
+        restored === "restored"
           ? `Restored ${path} from its kept copy; the version it replaced is kept as a copy. Sync to send it to Overleaf.`
-          : result._tag === "stale"
-            ? "Nothing was restored: the copy or the file changed since the listing. List again and retry with the new revisions."
-            : result._tag === "unknown-copy"
-              ? "Nothing was restored: no kept copy matches. List again."
-              : "This restore already ran; nothing ran again.",
+          : restored === "not-restored"
+            ? `Nothing was restored: ${path} changed here meanwhile, so nothing was written. List the copies again and retry.`
+            : restored === "needs-attention"
+              ? `The restore of ${path} needs attention: it may have stopped partway, or a file changed while it was written. Check the file and scient_overleaf_status before syncing.`
+              : result._tag === "stale"
+                ? "Nothing was restored: the copy or the file changed since the listing. List again and retry with the new revisions."
+                : result._tag === "unknown-copy"
+                  ? "Nothing was restored: no kept copy matches. List again."
+                  : "This restore already ran; nothing ran again.",
       );
     }
     const copies = yield* mapErrors(

@@ -212,7 +212,7 @@ const publicationLines = (
       return [];
     case "not-verified":
       return [
-        "Nothing was sent: the folder changed after Overleaf's changes came in. Sync again; the new edit goes with the next sync.",
+        "Nothing was sent: the folder changed after the apply. Sync again; the new edit goes with the next sync.",
       ];
     case "not-sent":
       return [
@@ -285,18 +285,27 @@ const sendTense = (publication: ScientOverleafPublication): SendTense =>
 const incomingLines = (result: Extract<ScientOverleafSyncResult, { _tag: "synced" }>): string[] => {
   const incoming = result.review.incoming;
   const changes = `${plural(incoming.length, "file")} (${named(incoming.map(changeText))})`;
+  // After a retry these describe the last attempt only; the retry line says so.
+  const lead = (body: string) =>
+    result.retried ? `In the last attempt, ${body}` : body.charAt(0).toUpperCase() + body.slice(1);
   switch (result.outcome) {
     case "complete":
       return incoming.length === 0
         ? []
         : [
-            `${plural(incoming.length, "file")} came in from Overleaf: ${named(incoming.map(changeText))}.`,
+            lead(
+              `${plural(incoming.length, "file")} came in from Overleaf: ${named(incoming.map(changeText))}.`,
+            ),
           ];
     case "replan":
       return [
         incoming.length === 0
-          ? "A file here changed while the sync was applying, so nothing was written to the folder. Sync again."
-          : `Overleaf's changes to ${changes} were not brought in: a file here changed while the sync was applying them, so nothing was written. Sync again.`,
+          ? lead(
+              "a file here changed while the sync was applying, so nothing was written to the folder. Sync again.",
+            )
+          : lead(
+              `Overleaf's changes to ${changes} were not brought in: a file here changed while the sync was applying them, so nothing was written. Sync again.`,
+            ),
       ];
     default: {
       const reasons = [
@@ -312,8 +321,12 @@ const incomingLines = (result: Extract<ScientOverleafSyncResult, { _tag: "synced
       ].join("; ");
       return [
         incoming.length === 0
-          ? `Part of the folder needs attention: ${reasons}. Check scient_overleaf_status before syncing again.`
-          : `Overleaf's changes to ${changes} were applied as far as the folder allowed, and part of it needs attention: ${reasons}. Check scient_overleaf_status before syncing again.`,
+          ? lead(
+              `part of the folder needs attention: ${reasons}. Check scient_overleaf_status before syncing again.`,
+            )
+          : lead(
+              `Overleaf's changes to ${changes} were applied as far as the folder allowed, and part of it needs attention: ${reasons}. Check scient_overleaf_status before syncing again.`,
+            ),
       ];
     }
   }
@@ -323,10 +336,16 @@ const incomingLines = (result: Extract<ScientOverleafSyncResult, { _tag: "synced
 export const syncLines = (result: ScientOverleafSyncResult): string[] => {
   switch (result._tag) {
     case "synced": {
-      const lines: string[] = [...incomingLines(result)];
+      // An out-of-date send starts one new attempt: the first one's changes are already in the
+      // folder, and this result describes only the last attempt.
+      const lines: string[] = result.retried
+        ? [
+            "Overleaf changed while sending, so this sync ran again. An earlier attempt had already brought Overleaf's changes into the folder; the lines below describe the last attempt.",
+          ]
+        : [];
+      lines.push(...incomingLines(result));
       lines.push(...publicationLines(result.publication, result.review, result.markerPaths));
       if (lines.length === 0) lines.push("Up to date: nothing came in and nothing needed sending.");
-      if (result.retried) lines.push("Overleaf changed while sending, so one new sync ran.");
       lines.push(...fileLines(result.review));
       lines.push(...warningLines(result.review.warnings, sendTense(result.publication)));
       if (result.publication._tag !== "blocked" || result.publication.reason !== "markers") {
@@ -337,8 +356,10 @@ export const syncLines = (result: ScientOverleafSyncResult): string[] => {
       return lines;
     }
     case "needs-decision":
+      // The service does not say whether an earlier attempt in this sync applied
+      // changes before Overleaf moved, so only this review is said to be unapplied.
       return [
-        "Nothing was applied or sent.",
+        "Stopped at a conflict before applying: none of this review's changes were applied or sent.",
         ...conflictLines(result.review),
         ...activityLines(result.activity),
       ];

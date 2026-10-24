@@ -6,7 +6,6 @@ import {
   ScientOverleafManageResult,
   ScientOverleafPreviewResult,
   ScientOverleafRecoverResult,
-  ScientOverleafRestoreResult,
   ScientOverleafStatus,
   ScientOverleafSyncResult,
   SecretRef,
@@ -247,7 +246,21 @@ const ScientOverleafKeptCopiesTool = Tool.make("scient_overleaf_kept_copies", {
     lines: Lines,
     link: LinkedCopy,
     copies: ScientOverleafKeptCopies.fields.copies,
-    restored: Schema.NullOr(ScientOverleafRestoreResult.fields._tag),
+    restored: Schema.NullOr(
+      Schema.Literals([
+        "restored",
+        /** The file changed here meanwhile: nothing was written. */
+        "not-restored",
+        /** The restore may have stopped partway, or a file changed while it was written. */
+        "needs-attention",
+        "stale",
+        "unknown-copy",
+        "duplicate",
+      ]),
+    ).annotate({
+      description:
+        "restored only when the copy is back in the folder; not-restored and needs-attention say it is not.",
+    }),
   }),
   failure: ScientOverleafToolError,
   dependencies,
