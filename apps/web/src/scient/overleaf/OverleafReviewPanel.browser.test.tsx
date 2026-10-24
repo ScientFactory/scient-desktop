@@ -108,6 +108,7 @@ function review(overrides: Partial<ScientOverleafReview> = {}): ScientOverleafRe
     ],
     warnings: [],
     unresolvedMarkers: [],
+    released: [],
     collisions: [],
     selectedAdditions: [],
     additions: [],
@@ -254,6 +255,24 @@ describe("OverleafReviewPanel", () => {
     expect(client.previewOverleaf).toHaveBeenCalledExactlyOnceWith(environmentId, {
       workspaceRoot: "/work/project",
       connectionId: "c1",
+    });
+  });
+
+  it("sends a file waiting for its conflicts anyway, at the next sync", async () => {
+    reset();
+    client.previewOverleaf.mockResolvedValue({
+      _tag: "review",
+      review: review({ needsDecision: false, conflicts: [], unresolvedMarkers: ["guide.md"] }),
+      settled: null,
+    });
+    await using _screen = await render(panel());
+    await page.getByRole("button", { name: "Read changes" }).click();
+    const waiting = page.getByRole("region", { name: "Waiting for conflicts" });
+    await waiting.getByRole("button", { name: "Send it anyway: guide.md" }).click();
+    await page.getByRole("button", { name: "Sync", exact: true }).click();
+    await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+    expect(client.syncOverleaf.mock.calls[0]![1]).toMatchObject({
+      files: { release: ["guide.md"] },
     });
   });
 

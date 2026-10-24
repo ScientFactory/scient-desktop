@@ -98,11 +98,12 @@ export async function runOverleafSync(
             ...(decision.reviewedRemote ? { reviewedRemote: decision.reviewedRemote } : {}),
           }
         : {}),
-      ...(files.keepOnlyHere.length > 0 || files.send.length > 0
+      ...(files.keepOnlyHere.length > 0 || files.send.length > 0 || files.release.length > 0
         ? {
             files: {
               ...(files.keepOnlyHere.length > 0 ? { keepOnlyHere: [...files.keepOnlyHere] } : {}),
               ...(files.send.length > 0 ? { send: [...files.send] } : {}),
+              ...(files.release.length > 0 ? { release: [...files.release] } : {}),
             },
           }
         : {}),

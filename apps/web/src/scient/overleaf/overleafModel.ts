@@ -82,8 +82,11 @@ export function folderNameProblem(name: string): string | null {
   return null;
 }
 
-/** A person's per-file decision: keep a new file only here, or send one anyway. */
-export type OverleafFileDecision = "keep" | "send";
+/**
+ * A person's per-file decision: keep a new file only here, send one anyway, or
+ * send a file held back for its conflict marks as it is ("Send it anyway").
+ */
+export type OverleafFileDecision = "keep" | "send" | "release";
 
 export type OverleafChipState = "syncing" | "up-to-date" | "edits" | "decision" | "problem";
 
@@ -235,6 +238,8 @@ export function refusalText(refusal: ScientOverleafRefusal): string {
       return `A Git LFS pointer can't be synced${at}.`;
     case "managed-excluded":
       return `A synced file is now inside a nested repository${at}.`;
+    case "release-held":
+      return `${refusal.path ?? "A file"} can't be sent anyway: another file waiting for its conflicts keeps its place on Overleaf. Settle that file first.`;
     case "alias":
     case "path-alias":
     case "alias-rename":
@@ -759,22 +764,25 @@ export function reviewIdentity(review: Pick<ScientOverleafReview, "reviewId" | "
  * left out, so it is neither shown nor sent.
  */
 export function actionableDecisions(
-  review: Pick<ScientOverleafReview, "additions" | "localOnly"> | null,
+  review: Pick<ScientOverleafReview, "additions" | "localOnly" | "unresolvedMarkers"> | null,
   decisions: ReadonlyMap<string, OverleafFileDecision>,
 ): ReadonlyMap<string, OverleafFileDecision> {
   if (review === null || decisions.size === 0) return NO_DECISIONS;
   const additions = new Map(review.additions.map((addition) => [addition.path, addition]));
   const localOnly = new Set(review.localOnly);
+  const held = new Set(review.unresolvedMarkers);
   const kept = new Map<string, OverleafFileDecision>();
   for (const [path, decision] of decisions) {
     const addition = additions.get(path);
     const applies =
-      decision === "keep"
-        ? addition !== undefined && addition.skippedBecause === null
-        : localOnly.has(path) ||
-          (addition !== undefined &&
-            addition.skippedBecause !== null &&
-            !UNSENDABLE_REASONS.has(addition.skippedBecause));
+      decision === "release"
+        ? held.has(path)
+        : decision === "keep"
+          ? addition !== undefined && addition.skippedBecause === null
+          : localOnly.has(path) ||
+            (addition !== undefined &&
+              addition.skippedBecause !== null &&
+              !UNSENDABLE_REASONS.has(addition.skippedBecause));
     if (applies) kept.set(path, decision);
   }
   return kept.size === decisions.size ? decisions : kept;
@@ -785,7 +793,9 @@ export function actionableDecisions(
  * applied (its new files are decided; files kept only here still can be
  * sent). A local-only file the sync that produced the review was asked to
  * send is read like a new file and leaves both lists; it counts as kept only
- * here, so the decision is shown and sent again.
+ * here, so the decision is shown and sent again. Files held back for their
+ * conflict marks can always be sent anyway; one a review not yet applied
+ * already sends as it is (`released`) counts as held, so its decision stays.
  */
 export function decidableFiles(
   shown: { readonly review: ScientOverleafReview; readonly applied: boolean } | null,
@@ -793,10 +803,15 @@ export function decidableFiles(
     readonly review: string;
     readonly decisions: ReadonlyMap<string, OverleafFileDecision>;
   } | null,
-): Pick<ScientOverleafReview, "additions" | "localOnly"> | null {
+): Pick<ScientOverleafReview, "additions" | "localOnly" | "unresolvedMarkers"> | null {
   if (shown === null) return null;
   const { review } = shown;
-  if (shown.applied) return { additions: [], localOnly: review.localOnly };
+  if (shown.applied)
+    return {
+      additions: [],
+      localOnly: review.localOnly,
+      unresolvedMarkers: review.unresolvedMarkers,
+    };
   const sentLocalOnly =
     carried !== null && carried.review === reviewIdentity(review)
       ? [...carried.decisions]
@@ -808,16 +823,23 @@ export function decidableFiles(
           )
           .map(([path]) => path)
       : [];
-  return { additions: review.additions, localOnly: [...review.localOnly, ...sentLocalOnly] };
+  return {
+    additions: review.additions,
+    localOnly: [...review.localOnly, ...sentLocalOnly],
+    unresolvedMarkers: [...new Set([...review.unresolvedMarkers, ...review.released])],
+  };
 }
 
 /** The decisions as a sync request carries them. */
 export function fileDecisionsRequest(decisions: ReadonlyMap<string, OverleafFileDecision>): {
   readonly keepOnlyHere: ReadonlyArray<string>;
   readonly send: ReadonlyArray<string>;
+  readonly release: ReadonlyArray<string>;
 } {
   const keepOnlyHere: string[] = [];
   const send: string[] = [];
-  for (const [path, decision] of decisions) (decision === "keep" ? keepOnlyHere : send).push(path);
-  return { keepOnlyHere, send };
+  const release: string[] = [];
+  for (const [path, decision] of decisions)
+    (decision === "keep" ? keepOnlyHere : decision === "send" ? send : release).push(path);
+  return { keepOnlyHere, send, release };
 }

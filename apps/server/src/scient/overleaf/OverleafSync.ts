@@ -72,6 +72,11 @@ export interface OverleafFileDecisions {
   readonly keepOnlyHere?: ReadonlyArray<string> | undefined;
   /** Files to send anyway: ones the rule skips, or ones kept only on this computer. */
   readonly send?: ReadonlyArray<string> | undefined;
+  /**
+   * Files held back for their conflict marks to send as they are, marks included:
+   * a file whose marks are its content (a guide quoting them, say).
+   */
+  readonly release?: ReadonlyArray<string> | undefined;
 }
 
 /** Who is asking: a window naming its workspace, or an agent's thread. Resolved on the server. */
@@ -184,7 +189,10 @@ export interface OverleafReviewView {
     readonly chosen: ConflictChoice | null;
   }>;
   readonly warnings: OverleafReview["warnings"];
+  /** Files held back for their conflict marks: they wait, everything else is sent. */
   readonly unresolvedMarkers: ReadonlyArray<string>;
+  /** Files with marks this review sends as they are, as `files.release` asked. */
+  readonly released: ReadonlyArray<string>;
   readonly collisions: ReadonlyArray<string>;
   readonly selectedAdditions: ReadonlyArray<string>;
   /** Every new file: whether this sync sends it, and why it is left out by default. */
@@ -214,6 +222,7 @@ const viewOverleafReview = (review: OverleafReview): OverleafReviewView => ({
   })),
   warnings: review.warnings,
   unresolvedMarkers: review.unresolvedMarkers,
+  released: review.released,
   collisions: review.collisions,
   selectedAdditions: review.binding.selectedAdditions,
   additions: review.additions.map((addition) => ({
@@ -801,6 +810,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     choices,
     ...(input.files?.keepOnlyHere ? { keepOnlyHere: input.files.keepOnlyHere } : {}),
     ...(input.files?.send ? { send: input.files.send } : {}),
+    ...(input.files?.release ? { releaseMarked: input.files.release } : {}),
   });
 
   const sync = Effect.fn("OverleafSync.sync")(function* (input: {
@@ -879,6 +889,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
           input.reviewedRemote ?? "",
           ...(input.files?.keepOnlyHere ?? []).map((path) => `keep=${path}`).sort(),
           ...(input.files?.send ?? []).map((path) => `send=${path}`).sort(),
+          ...(input.files?.release ?? []).map((path) => `release=${path}`).sort(),
           ...[...(input.choices ?? new Map())].map(([key, choice]) => `${key}=${choice}`).sort(),
         ].join("\0"),
       ),

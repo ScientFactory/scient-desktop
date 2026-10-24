@@ -227,7 +227,7 @@ Only a conflict stops a sync. None of the stopped review's changes are applied; 
 - \`mine\` keeps this computer's version; \`theirs\` takes Overleaf's.
 - \`markers\` writes both versions into the file between conflict marks (\`<<<<<<<\`, \`=======\`, \`>>>>>>>\`).
 
-Decide the way you would for a Git merge conflict: follow the user's instructions, and when both sides hold real work, choose \`markers\` and merge. Call \`scient_overleaf_sync\` again with one choice per key and the \`reviewedRemote\` the result gave. If Overleaf changed meanwhile, the result shows a new review whose conflicts your choices don't answer; decide again for them. For \`markers\`, edit each marked file so it keeps the intended text from both sides, remove every mark, check the document still builds, then sync again. A file with marks is not sent until its marks are gone. Explain your merge choices to the user.
+Decide the way you would for a Git merge conflict: follow the user's instructions, and when both sides hold real work, choose \`markers\` and merge. Call \`scient_overleaf_sync\` again with one choice per key and the \`reviewedRemote\` the result gave. If Overleaf changed meanwhile, the result shows a new review whose conflicts your choices don't answer; decide again for them. For \`markers\`, edit each marked file so it keeps the intended text from both sides, remove every mark, check the document still builds, then sync again. A file with marks is not sent until its marks are gone; everything else is. If the marks are the file's real content (a guide that quotes them), send it as it is with \`files.release\`. Explain your merge choices to the user.
 
 The version a sync replaced is kept as a copy. \`scient_overleaf_kept_copies\` lists them and restores one.
 

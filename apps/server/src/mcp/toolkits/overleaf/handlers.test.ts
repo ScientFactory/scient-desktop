@@ -234,6 +234,7 @@ describe("Overleaf tool handlers", () => {
                   conflicts: [],
                   warnings: [],
                   unresolvedMarkers: [],
+                  released: [],
                   collisions: [],
                   selectedAdditions: [],
                   additions: [],
@@ -298,6 +299,27 @@ describe("Overleaf tool handlers", () => {
       });
       expect(replanned).toEqual([
         "The undo of send #4 wrote nothing: the folder changed while it ran. Call again.",
+      ]);
+    }),
+  );
+
+  it.effect("passes files.release to the service, and says when a release can't be honoured", () =>
+    Effect.gen(function* () {
+      const asked: unknown[] = [];
+      const overleaf = fakeOverleaf({
+        sync: (input: unknown) =>
+          Effect.sync(() => {
+            asked.push(input);
+            return { _tag: "refused", refusal: { reason: "release-held", path: "guide.md" } };
+          }) as never,
+      } as Partial<OverleafSyncShape>);
+      const synced = yield* overleafSyncForInvocation({
+        connectionId: "c-1",
+        files: { release: ["guide.md"] },
+      }).pipe(provide(overleaf));
+      expect(asked).toEqual([expect.objectContaining({ files: { release: ["guide.md"] } })]);
+      expect(synced.lines).toEqual([
+        "This sync stopped: guide.md can't be sent as it is: another file held for its conflict marks keeps that place on Overleaf. Settle that file's marks first, or leave it out of files.release.",
       ]);
     }),
   );
@@ -512,6 +534,7 @@ describe("Overleaf tool handlers", () => {
         conflicts: [{ key: "k2", paths: ["main.tex"], allowed: ["mine", "theirs"], chosen: null }],
         warnings: [],
         unresolvedMarkers: [],
+        released: [],
         collisions: [],
         selectedAdditions: [],
         additions: [],
@@ -566,6 +589,7 @@ describe("Overleaf tool handlers", () => {
           { kind: "restores-older-version", path: "c.tex" },
         ],
         unresolvedMarkers: [],
+        released: [],
         collisions: [],
         selectedAdditions: [],
         additions: [],
@@ -639,6 +663,7 @@ describe("Overleaf tool handlers", () => {
         conflicts: [],
         warnings: [],
         unresolvedMarkers: [],
+        released: [],
         collisions: [],
         selectedAdditions: [],
         additions: [],
@@ -716,6 +741,7 @@ describe("Overleaf tool handlers", () => {
                   conflicts: [],
                   warnings: [],
                   unresolvedMarkers: [],
+                  released: [],
                   collisions: [],
                   selectedAdditions: [],
                   additions: [
@@ -806,6 +832,7 @@ describe("Overleaf tool handlers", () => {
           conflicts,
           warnings: [],
           unresolvedMarkers: [],
+          released: [],
           collisions: [],
           selectedAdditions: [],
           additions: [],
@@ -1064,6 +1091,7 @@ describe("Overleaf tool handlers", () => {
                   conflicts: [],
                   warnings: [],
                   unresolvedMarkers: [],
+                  released: [],
                   collisions: [],
                   selectedAdditions: [],
                   additions: [],
