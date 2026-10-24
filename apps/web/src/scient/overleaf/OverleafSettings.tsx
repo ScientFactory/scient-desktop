@@ -32,6 +32,7 @@ import {
   refusalText,
 } from "./overleafModel";
 import {
+  forgetOverleafConnection,
   loadOverleafWorkspace,
   setOverleafTokenSaved,
   useOverleafTokenSaved,
@@ -138,6 +139,8 @@ function OverleafProjectLinks(props: {
         connectionId,
         requestId: overleafRequestId(),
       });
+      // Unlinked: what this window remembered of the link (its review, decisions) goes too.
+      if (result._tag === "done") forgetOverleafConnection(environmentId, connectionId);
       if (result._tag === "refused") {
         toastManager.add({
           type: "error",

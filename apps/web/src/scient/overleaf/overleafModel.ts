@@ -605,3 +605,89 @@ export function resolvedConflictLines(
       ? block.theirs
       : [...block.mine, ...block.theirs];
 }
+
+/** Overleaf refuses these new files whatever anyone decides. */
+export const UNSENDABLE_REASONS: ReadonlySet<string> = new Set(["too-large", "lfs-pointer"]);
+
+const NO_DECISIONS: ReadonlyMap<string, OverleafFileDecision> = new Map();
+
+/** One review: the engine's ID and the Overleaf tree its conflicts were found against. */
+export function reviewIdentity(review: Pick<ScientOverleafReview, "reviewId" | "remoteTree">) {
+  return `${review.reviewId}\u0000${review.remoteTree}`;
+}
+
+/**
+ * The decisions that still apply to the review shown. A review from a sync
+ * that carried decisions already encodes them (a kept file not selected, a
+ * sent one selected, a sent local-only file read like a new one), so a
+ * decision applies when its file is still where it can be decided:
+ * - "keep" for a new file the rule would send (whether or not this review
+ *   already leaves it out);
+ * - "send" for a new file the rule skips and Overleaf would take, or a file
+ *   kept only here.
+ * A decision for a file no longer listed, or now impossible (too large), is
+ * left out, so it is neither shown nor sent.
+ */
+export function actionableDecisions(
+  review: Pick<ScientOverleafReview, "additions" | "localOnly"> | null,
+  decisions: ReadonlyMap<string, OverleafFileDecision>,
+): ReadonlyMap<string, OverleafFileDecision> {
+  if (review === null || decisions.size === 0) return NO_DECISIONS;
+  const additions = new Map(review.additions.map((addition) => [addition.path, addition]));
+  const localOnly = new Set(review.localOnly);
+  const kept = new Map<string, OverleafFileDecision>();
+  for (const [path, decision] of decisions) {
+    const addition = additions.get(path);
+    const applies =
+      decision === "keep"
+        ? addition !== undefined && addition.skippedBecause === null
+        : localOnly.has(path) ||
+          (addition !== undefined &&
+            addition.skippedBecause !== null &&
+            !UNSENDABLE_REASONS.has(addition.skippedBecause));
+    if (applies) kept.set(path, decision);
+  }
+  return kept.size === decisions.size ? decisions : kept;
+}
+
+/**
+ * The files decisions can be made on, for the review shown: none after a sync
+ * applied (its new files are decided; files kept only here still can be
+ * sent). A local-only file the sync that produced the review was asked to
+ * send is read like a new file and leaves both lists; it counts as kept only
+ * here, so the decision is shown and sent again.
+ */
+export function decidableFiles(
+  shown: { readonly review: ScientOverleafReview; readonly applied: boolean } | null,
+  carried: {
+    readonly review: string;
+    readonly decisions: ReadonlyMap<string, OverleafFileDecision>;
+  } | null,
+): Pick<ScientOverleafReview, "additions" | "localOnly"> | null {
+  if (shown === null) return null;
+  const { review } = shown;
+  if (shown.applied) return { additions: [], localOnly: review.localOnly };
+  const sentLocalOnly =
+    carried !== null && carried.review === reviewIdentity(review)
+      ? [...carried.decisions]
+          .filter(
+            ([path, decision]) =>
+              decision === "send" &&
+              !review.localOnly.includes(path) &&
+              !review.additions.some((addition) => addition.path === path),
+          )
+          .map(([path]) => path)
+      : [];
+  return { additions: review.additions, localOnly: [...review.localOnly, ...sentLocalOnly] };
+}
+
+/** The decisions as a sync request carries them. */
+export function fileDecisionsRequest(decisions: ReadonlyMap<string, OverleafFileDecision>): {
+  readonly keepOnlyHere: ReadonlyArray<string>;
+  readonly send: ReadonlyArray<string>;
+} {
+  const keepOnlyHere: string[] = [];
+  const send: string[] = [];
+  for (const [path, decision] of decisions) (decision === "keep" ? keepOnlyHere : send).push(path);
+  return { keepOnlyHere, send };
+}

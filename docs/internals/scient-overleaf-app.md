@@ -141,10 +141,16 @@ them. Before they are shown or sent, the decisions are reconciled with the revie
 the rule skips (and Overleaf would take) or one kept only here. Rows and rules follow the rule
 (`skippedBecause`), not the review's `selected`, because a review from a sync that carried
 decisions already encodes them: a kept file unselected, a sent one selected, and a sent local-only
-file read like a new one, in neither list. The decisions, and the ones a sync carried with
-the review it returned at a conflict, live in the store by connection (`fileDecisions`,
-`submittedDecisions`), so opening a file, which replaces the tab, keeps them; a sync that applies
-clears them. The count of files to send takes a file without a decision by the rule, not by the
+file read like a new one, in neither list. The store is the single owner of decisions: they,
+and the ones a sync carried with the review it returned at a conflict, live there by connection
+(`fileDecisions`, `submittedDecisions`), so opening a file, which replaces the tab, keeps them.
+`runOverleafSync`, the one path every Sync takes (chip, palette, settings, the tab), attaches
+the connection's reconciled decisions (`pendingOverleafDecisions`) and records what it carried;
+only a sync that applies clears them. When a fresh review is accepted (a read, or a sync that
+stops at a conflict), decisions it no longer lists or allows are pruned for good, so a file
+recreated later doesn't bring an old decision back. Disconnecting (Unlink) and connecting
+(including an archive reconnected with its old ID) forget the connection's review, decisions and
+carried record in every workspace view (`forgetOverleafConnection`). The count of files to send takes a file without a decision by the rule, not by the
 review's `selected`. The tab shows such a local-only file under **Kept only here**, and
 keeps sending all of them until a sync applies, so the server never falls back to its defaults. One for a file a fresh read no longer lists or
 allows is dropped, never sent; the rest survive a cancel or a refusal. While a sync runs the

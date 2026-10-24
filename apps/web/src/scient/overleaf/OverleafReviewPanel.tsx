@@ -29,16 +29,18 @@ import {
 } from "./overleafActions";
 import { askAgentOnLinkedCopy, openFileOnLinkedCopy } from "./askAgentOnLinkedCopy";
 import { appendToThreadDraft, sameThread, useReadShownThread } from "./overleafThreadTarget";
-import { actionableDecisions, fileDecisionsRequest, OverleafNewFiles } from "./OverleafNewFiles";
+import { OverleafNewFiles } from "./OverleafNewFiles";
 import {
   askAgentMessage,
   choicesFor,
+  decidableFiles,
   overleafResultView,
+  reviewIdentity,
   workspacePathOf,
   type OverleafFileDecision,
 } from "./overleafModel";
 import {
-  recordOverleafSubmittedDecisions,
+  pendingOverleafDecisions,
   setOverleafFileDecision,
   useOverleafWorkspace,
 } from "./overleafStore";
@@ -125,11 +127,6 @@ function newFilesLine(count: number, sent: boolean): string {
 }
 
 const NO_CHOICES: ReadonlyMap<string, OverleafReviewChoice> = new Map();
-const NO_DECISIONS: ReadonlyMap<string, OverleafFileDecision> = new Map();
-
-/** One review: the engine's ID and the Overleaf tree its conflicts were found against. */
-const reviewIdentity = (review: Pick<ScientOverleafReview, "reviewId" | "remoteTree">) =>
-  `${review.reviewId}\u0000${review.remoteTree}`;
 
 export function OverleafReviewPanel(props: {
   readonly environmentId: EnvironmentId;
@@ -158,8 +155,6 @@ export function OverleafReviewPanel(props: {
   const [chooseAgainFor, setChooseAgainFor] = useState<string | null>(null);
   // Per-file decisions wait for the tab's next Sync, which carries them. They live in the
   // store, so opening a file (which replaces this tab) keeps them; an applied sync clears them.
-  const fileDecisions = workspace.fileDecisions.get(connectionId) ?? NO_DECISIONS;
-  const submittedFor = workspace.submittedDecisions.get(connectionId) ?? null;
   const decideFile = (path: string, decision: OverleafFileDecision | null) =>
     setOverleafFileDecision(environmentId, cwd, connectionId, path, decision);
   const review: ScientOverleafReview | null = shownState?.review ?? null;
@@ -171,29 +166,12 @@ export function OverleafReviewPanel(props: {
   // only here still can be sent. Decisions are reconciled with it before they are shown or sent,
   // so one for a file a fresh read no longer lists, or no longer allows, is dropped.
   const shownReview = review === null ? "" : reviewIdentity(review);
-  // A file kept only here that the sync producing this review was asked to send is read like a
-  // new file and leaves both lists; it is shown, and sent again, under "Kept only here".
-  const submitted = submittedFor?.review === shownReview ? submittedFor.decisions : NO_DECISIONS;
-  const decidable =
-    review === null
-      ? null
-      : synced
-        ? { additions: [], localOnly: review.localOnly }
-        : {
-            additions: review.additions,
-            localOnly: [
-              ...review.localOnly,
-              ...[...submitted]
-                .filter(
-                  ([path, decision]) =>
-                    decision === "send" &&
-                    !review.localOnly.includes(path) &&
-                    !review.additions.some((addition) => addition.path === path),
-                )
-                .map(([path]) => path),
-            ],
-          };
-  const pendingDecisions = actionableDecisions(decidable, fileDecisions);
+  // The store owns the decisions: reconciled with the review shown, and carried by every sync.
+  const pendingDecisions = pendingOverleafDecisions(workspace, connectionId);
+  const decidable = decidableFiles(
+    shownState,
+    workspace.submittedDecisions.get(connectionId) ?? null,
+  );
   const reading = workspace.previewing.has(connectionId);
   const readError = workspace.previewErrors.get(connectionId) ?? null;
   const readChanges = () => void readOverleafChanges(environmentId, cwd, connectionId);
@@ -250,22 +228,9 @@ export function OverleafReviewPanel(props: {
     conflicts.length > 0 &&
     conflicts.every((conflict) => chosen.has(conflict.key) || conflict.chosen !== null);
 
-  /** The header's Sync, carrying the per-file decisions made in this tab. */
-  const syncNow = async () => {
-    const result = await runOverleafSync(
-      { environmentId, workspaceRoot: cwd, connection, openReview },
-      { files: fileDecisionsRequest(pendingDecisions) },
-    );
-    // Stopped at a conflict: the decisions stay pending, and the review now encodes them.
-    if (result?._tag === "needs-decision")
-      recordOverleafSubmittedDecisions(
-        environmentId,
-        cwd,
-        connectionId,
-        reviewIdentity(result.review),
-        pendingDecisions,
-      );
-  };
+  /** The header's Sync; like every sync it carries the link's pending per-file decisions. */
+  const syncNow = () =>
+    runOverleafSync({ environmentId, workspaceRoot: cwd, connection, openReview });
 
   const syncWithChoices = async () => {
     if (!review) return;
@@ -275,19 +240,11 @@ export function OverleafReviewPanel(props: {
       {
         choices: choicesFor(review, engineChoices),
         reviewedRemote: review.remoteTree,
-        files: fileDecisionsRequest(pendingDecisions),
       },
     );
     if (result?._tag === "needs-decision") {
       // The fresh review has no choices yet; the old ones belonged to the review they answered.
       setChooseAgainFor(reviewIdentity(result.review));
-      recordOverleafSubmittedDecisions(
-        environmentId,
-        cwd,
-        connectionId,
-        reviewIdentity(result.review),
-        pendingDecisions,
-      );
       return;
     }
     if (result?._tag !== "synced") return;

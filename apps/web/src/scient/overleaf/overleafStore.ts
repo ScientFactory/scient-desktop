@@ -11,7 +11,14 @@ import type {
 import { useEffect, useSyncExternalStore } from "react";
 
 import { listOverleafConnections, readOverleafStatus, readOverleafToken } from "./client";
-import { connectionForPath, operationErrorText, type OverleafFileDecision } from "./overleafModel";
+import {
+  actionableDecisions,
+  connectionForPath,
+  decidableFiles,
+  operationErrorText,
+  reviewIdentity,
+  type OverleafFileDecision,
+} from "./overleafModel";
 
 export type OverleafConnection = ScientOverleafConnectionList["connections"][number];
 
@@ -259,11 +266,55 @@ export function setOverleafSyncing(
   });
 }
 
+/**
+ * The connection's pending decisions, reconciled with the review shown: only
+ * those it still lists and allows. What every sync carries, and what the tab
+ * shows.
+ */
+export function pendingOverleafDecisions(
+  snapshot: OverleafWorkspaceSnapshot,
+  connectionId: string,
+): ReadonlyMap<string, OverleafFileDecision> {
+  return actionableDecisions(
+    decidableFiles(
+      snapshot.reviews.get(connectionId) ?? null,
+      snapshot.submittedDecisions.get(connectionId) ?? null,
+    ),
+    snapshot.fileDecisions.get(connectionId) ?? NO_FILE_DECISIONS,
+  );
+}
+
+const NO_FILE_DECISIONS: ReadonlyMap<string, OverleafFileDecision> = new Map();
+
+/**
+ * A fresh review was accepted for the connection: decisions it no longer
+ * lists or allows are dropped for good, so a file recreated later doesn't
+ * bring back an old decision.
+ */
+function pruneDecisions(
+  snapshot: OverleafWorkspaceSnapshot,
+  connectionId: string,
+): OverleafWorkspaceSnapshot["fileDecisions"] {
+  const current = snapshot.fileDecisions.get(connectionId);
+  if (current === undefined) return snapshot.fileDecisions;
+  const kept = pendingOverleafDecisions(snapshot, connectionId);
+  if (kept === current) return snapshot.fileDecisions;
+  const next = new Map(snapshot.fileDecisions);
+  if (kept.size === 0) next.delete(connectionId);
+  else next.set(connectionId, kept);
+  return next;
+}
+
+/**
+ * Records a sync's result. `carried` is what that sync sent as per-file
+ * decisions: a review it returned at a conflict already encodes them.
+ */
 export function recordOverleafSync(
   environmentId: EnvironmentId,
   workspaceRoot: string,
   connectionId: string,
   result: ScientOverleafSyncResult,
+  carried: ReadonlyMap<string, OverleafFileDecision> = NO_FILE_DECISIONS,
 ): void {
   const at = Date.now();
   update(keyOf(environmentId, workspaceRoot), (current) => {
@@ -291,8 +342,13 @@ export function recordOverleafSync(
       syncedAt.set(connectionId, at);
     } else if (result._tag === "needs-decision") {
       reviews.set(connectionId, { review: result.review, applied: false, sent: false });
+      const record = new Map(submittedDecisions);
+      if (carried.size > 0)
+        record.set(connectionId, { review: reviewIdentity(result.review), decisions: carried });
+      else record.delete(connectionId);
+      submittedDecisions = record;
     }
-    return {
+    const next = {
       ...current,
       reviews,
       syncedAt,
@@ -300,6 +356,9 @@ export function recordOverleafSync(
       submittedDecisions,
       lastSync: new Map(current.lastSync).set(connectionId, { result, at }),
     };
+    return result._tag === "needs-decision"
+      ? { ...next, fileDecisions: pruneDecisions(next, connectionId) }
+      : next;
   });
 }
 
@@ -322,21 +381,32 @@ export function setOverleafFileDecision(
   });
 }
 
-/** A sync carried `decisions` and stopped at a conflict with the review `review` identifies. */
-export function recordOverleafSubmittedDecisions(
-  environmentId: EnvironmentId,
-  workspaceRoot: string,
-  connectionId: string,
-  review: string,
-  decisions: ReadonlyMap<string, OverleafFileDecision>,
-): void {
-  update(keyOf(environmentId, workspaceRoot), (current) => ({
-    ...current,
-    submittedDecisions: new Map(current.submittedDecisions).set(connectionId, {
-      review,
-      decisions,
-    }),
-  }));
+/**
+ * The connection was disconnected, relinked or connected again (an archive
+ * keeps its ID): its review, pending decisions and carried-decision record are
+ * forgotten in every workspace view, and a read already on its way is dropped.
+ */
+export function forgetOverleafConnection(environmentId: EnvironmentId, connectionId: string): void {
+  for (const key of snapshots.keys()) {
+    if (!key.startsWith(`${environmentId}\u0000`)) continue;
+    const versionKey = `${key}\u0000${connectionId}`;
+    reviewVersions.set(versionKey, (reviewVersions.get(versionKey) ?? 0) + 1);
+    update(key, (current) => {
+      const without = <V>(map: ReadonlyMap<string, V>) => {
+        const next = new Map(map);
+        next.delete(connectionId);
+        return next;
+      };
+      return {
+        ...current,
+        reviews: without(current.reviews),
+        fileDecisions: without(current.fileDecisions),
+        submittedDecisions: without(current.submittedDecisions),
+        lastSync: without(current.lastSync),
+        previewErrors: without(current.previewErrors),
+      };
+    });
+  }
 }
 
 /**
@@ -388,7 +458,10 @@ export function finishOverleafPreview(
       // Replaced only by a successful read: a failed one leaves the shown review.
       reviews.set(connectionId, { review: outcome.review, applied: false, sent: false });
     }
-    return { ...snapshot, previewing, previewErrors, reviews };
+    const next = { ...snapshot, previewing, previewErrors, reviews };
+    return outcome._tag === "review"
+      ? { ...next, fileDecisions: pruneDecisions(next, connectionId) }
+      : next;
   });
 }
 

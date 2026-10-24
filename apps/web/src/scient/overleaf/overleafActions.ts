@@ -14,6 +14,7 @@ import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence
 
 import { cancelOverleafSync, overleafRequestId, previewOverleaf, syncOverleaf } from "./client";
 import {
+  fileDecisionsRequest,
   operationErrorText,
   overleafProjectUrl,
   overleafResultView,
@@ -21,6 +22,7 @@ import {
   workspacePathOf,
 } from "./overleafModel";
 import {
+  pendingOverleafDecisions,
   loadOverleafWorkspace,
   readOverleafWorkspace,
   beginOverleafPreview,
@@ -138,11 +140,6 @@ export async function runOverleafSync(
      * Overleaf has moved since, the server shows the conflicts again instead.
      */
     readonly reviewedRemote?: string;
-    /** Per-file decisions: new files to keep only here, files to send anyway. */
-    readonly files?: {
-      readonly keepOnlyHere: ReadonlyArray<string>;
-      readonly send: ReadonlyArray<string>;
-    };
   },
 ): Promise<ScientOverleafSyncResult | null> {
   const { environmentId, workspaceRoot, connection } = context;
@@ -176,6 +173,13 @@ export async function runOverleafSync(
       return cancelled;
     }
     run.sent = true;
+    // Every sync, from any entry point, carries the link's pending per-file decisions,
+    // reconciled with the review shown; they are cleared only when a sync applies.
+    const carried = pendingOverleafDecisions(
+      readOverleafWorkspace(environmentId, workspaceRoot),
+      connection.connectionId,
+    );
+    const files = fileDecisionsRequest(carried);
     const result = await syncOverleaf(environmentId, {
       workspaceRoot,
       connectionId: connection.connectionId,
@@ -186,19 +190,16 @@ export async function runOverleafSync(
             ...(decision.reviewedRemote ? { reviewedRemote: decision.reviewedRemote } : {}),
           }
         : {}),
-      ...(decision?.files &&
-      (decision.files.keepOnlyHere.length > 0 || decision.files.send.length > 0)
+      ...(files.keepOnlyHere.length > 0 || files.send.length > 0
         ? {
             files: {
-              ...(decision.files.keepOnlyHere.length > 0
-                ? { keepOnlyHere: [...decision.files.keepOnlyHere] }
-                : {}),
-              ...(decision.files.send.length > 0 ? { send: [...decision.files.send] } : {}),
+              ...(files.keepOnlyHere.length > 0 ? { keepOnlyHere: [...files.keepOnlyHere] } : {}),
+              ...(files.send.length > 0 ? { send: [...files.send] } : {}),
             },
           }
         : {}),
     });
-    recordOverleafSync(environmentId, workspaceRoot, connection.connectionId, result);
+    recordOverleafSync(environmentId, workspaceRoot, connection.connectionId, result, carried);
     if (!context.quiet) reportOverleafSync(context, result);
     return result;
   } catch (error) {

@@ -37,7 +37,8 @@ vi.mock("~/state/entities", () => ({ useProjects: () => projects.list }));
 
 const { OverleafProjectSettingsSection, OverleafSourceControlRow } =
   await import("./OverleafSettings");
-const { resetOverleafStoreForTests } = await import("./overleafStore");
+const { readOverleafWorkspace, resetOverleafStoreForTests, setOverleafFileDecision } =
+  await import("./overleafStore");
 
 const environmentId = EnvironmentId.make("local");
 const ID = "0123456789abcdef01234567";
@@ -126,9 +127,14 @@ describe("Project Settings ▸ Overleaf", () => {
     await expect.element(slides.getByRole("button", { name: "Sync now" })).toBeVisible();
     await expect.element(slides.getByRole("button", { name: "Open in Overleaf" })).toBeVisible();
     await expect.element(slides.getByText(/Not synced yet/u)).toBeVisible();
+    // A decision this window holds for the link is forgotten with it.
+    setOverleafFileDecision(environmentId, "/work/project", "c2", "notes.md", "send");
     await slides.getByRole("button", { name: "Unlink" }).click();
 
     await expect.element(page.getByText("slides")).not.toBeInTheDocument();
+    expect(readOverleafWorkspace(environmentId, "/work/project").fileDecisions.has("c2")).toBe(
+      false,
+    );
     expect(client.disconnectOverleaf).toHaveBeenCalledExactlyOnceWith(environmentId, {
       workspaceRoot: "/work/project",
       connectionId: "c2",

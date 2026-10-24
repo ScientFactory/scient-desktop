@@ -22,7 +22,8 @@ const client = vi.hoisted(() => ({
 vi.mock("./client", () => ({ ...client, overleafRequestId: () => "request-1" }));
 
 const { ConnectOverleafDialog } = await import("./ConnectOverleafDialog");
-const { resetOverleafStoreForTests } = await import("./overleafStore");
+const { readOverleafWorkspace, resetOverleafStoreForTests, setOverleafFileDecision } =
+  await import("./overleafStore");
 
 const environmentId = EnvironmentId.make("local");
 const ID = "0123456789abcdef01234567";
@@ -131,6 +132,10 @@ describe("ConnectOverleafDialog", () => {
 
   it("links the selected folder as it is, without asking for a saved token again", async () => {
     reset(true);
+    // A link reconnected from an archive keeps its ID; what this window remembered is stale.
+    setOverleafFileDecision(environmentId, "/work/project", "c1", "notes.md", "send");
+    // The first sync doesn't apply, so nothing else clears it.
+    client.syncOverleaf.mockResolvedValue({ _tag: "refused", refusal: { reason: "unreachable" } });
     client.connectOverleaf.mockResolvedValue({ _tag: "done", connection: summary("thesis") });
     await using _screen = await render(
       <ConnectOverleafDialog
@@ -148,6 +153,9 @@ describe("ConnectOverleafDialog", () => {
     await page.getByRole("button", { name: "Connect", exact: true }).click();
 
     await expect.element(page.getByText("Linked thesis.")).toBeVisible();
+    expect(readOverleafWorkspace(environmentId, "/work/project").fileDecisions.has("c1")).toBe(
+      false,
+    );
     expect(client.saveOverleafToken).not.toHaveBeenCalled();
     expect(client.connectOverleaf).toHaveBeenCalledExactlyOnceWith(
       environmentId,

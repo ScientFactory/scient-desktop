@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
-import { workspacePathOf, type OverleafFileDecision } from "./overleafModel";
+import { UNSENDABLE_REASONS, workspacePathOf, type OverleafFileDecision } from "./overleafModel";
 
 /** Why the rule leaves a new file out, in a few words. */
 function skippedReasonText(reason: string): string {
@@ -27,9 +27,6 @@ function skippedReasonText(reason: string): string {
   }
 }
 
-/** Overleaf refuses these whatever anyone decides. */
-const UNSENDABLE = new Set(["too-large", "lfs-pointer"]);
-
 /** How many new files the next sync sends, with the decisions made so far. */
 function newFilesToSend(
   review: Pick<ScientOverleafReview, "additions">,
@@ -42,50 +39,6 @@ function newFilesToSend(
       ? decisions.get(addition.path) === "send"
       : addition.skippedBecause === null,
   ).length;
-}
-
-/**
- * The decisions that still apply to the review shown. A review from a sync
- * that carried decisions already encodes them (a kept file not selected, a
- * sent one selected, a sent local-only file read like a new one), so a
- * decision applies when its file is still where it can be decided:
- * - "keep" for a new file the rule would send (whether or not this review
- *   already leaves it out);
- * - "send" for a new file the rule skips and Overleaf would take, or a file
- *   kept only here.
- * A decision for a file no longer listed, or now impossible (too large), is
- * left out, so it is neither shown nor sent.
- */
-export function actionableDecisions(
-  review: Pick<ScientOverleafReview, "additions" | "localOnly"> | null,
-  decisions: ReadonlyMap<string, OverleafFileDecision>,
-): ReadonlyMap<string, OverleafFileDecision> {
-  if (review === null || decisions.size === 0) return NO_DECISIONS;
-  const additions = new Map(review.additions.map((addition) => [addition.path, addition]));
-  const localOnly = new Set(review.localOnly);
-  const kept = new Map<string, OverleafFileDecision>();
-  for (const [path, decision] of decisions) {
-    const addition = additions.get(path);
-    const applies =
-      decision === "keep"
-        ? addition !== undefined && addition.skippedBecause === null
-        : localOnly.has(path) ||
-          (addition !== undefined &&
-            addition.skippedBecause !== null &&
-            !UNSENDABLE.has(addition.skippedBecause));
-    if (applies) kept.set(path, decision);
-  }
-  return kept.size === decisions.size ? decisions : kept;
-}
-
-const NO_DECISIONS: ReadonlyMap<string, OverleafFileDecision> = new Map();
-
-/** The decisions as a sync request carries them. */
-export function fileDecisionsRequest(decisions: ReadonlyMap<string, OverleafFileDecision>) {
-  const keepOnlyHere: string[] = [];
-  const send: string[] = [];
-  for (const [path, decision] of decisions) (decision === "keep" ? keepOnlyHere : send).push(path);
-  return { keepOnlyHere, send };
 }
 
 function DecisionButton(props: {
@@ -193,7 +146,7 @@ export function OverleafNewFiles(props: {
                   note={skippedReasonText(addition.skippedBecause ?? "")}
                   onOpenFile={props.onOpenFile}
                 >
-                  {UNSENDABLE.has(addition.skippedBecause ?? "") ? null : (
+                  {UNSENDABLE_REASONS.has(addition.skippedBecause ?? "") ? null : (
                     <DecisionButton
                       label="Send this file"
                       path={addition.path}

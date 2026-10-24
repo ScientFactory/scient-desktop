@@ -57,7 +57,13 @@ const toasts = vi.hoisted(() => ({ add: vi.fn(() => "toast"), close: vi.fn() }))
 vi.mock("~/components/ui/toast", () => ({ toastManager: toasts }));
 
 const { OverleafFileChip } = await import("./OverleafFileChip");
-const { resetOverleafStoreForTests } = await import("./overleafStore");
+const {
+  beginOverleafPreview,
+  finishOverleafPreview,
+  readOverleafWorkspace,
+  resetOverleafStoreForTests,
+  setOverleafFileDecision,
+} = await import("./overleafStore");
 
 const environmentId = EnvironmentId.make("local");
 const threadRef = { environmentId, threadId: ThreadId.make("thread-1") };
@@ -482,5 +488,41 @@ describe("OverleafFileChip", () => {
     await page.getByRole("button", { name: /^Overleaf: / }).click();
     await page.getByRole("menuitem", { name: "See changes" }).click();
     await expect.poll(() => client.previewOverleaf.mock.calls.length).toBe(1);
+  });
+
+  it("Sync now carries the link's pending file decisions, and clears them once it applies", async () => {
+    reset();
+    await using _screen = await render(chip());
+    await expect
+      .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
+      .toBeVisible();
+    // Decisions made in the Overleaf tab on the review it read.
+    finishOverleafPreview(
+      environmentId,
+      "/work/project",
+      "c1",
+      beginOverleafPreview(environmentId, "/work/project", "c1"),
+      {
+        _tag: "review",
+        review: {
+          ...sent.review,
+          additions: [
+            { path: "draft.tex", size: 1, selected: true, skippedBecause: null },
+            { path: "main.aux", size: 1, selected: false, skippedBecause: "build-output" },
+          ],
+        },
+      },
+    );
+    setOverleafFileDecision(environmentId, "/work/project", "c1", "draft.tex", "keep");
+    setOverleafFileDecision(environmentId, "/work/project", "c1", "main.aux", "send");
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Sync now" }).click();
+    await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+    expect(client.syncOverleaf.mock.calls[0]![1]).toMatchObject({
+      files: { keepOnlyHere: ["draft.tex"], send: ["main.aux"] },
+    });
+    await expect
+      .poll(() => readOverleafWorkspace(environmentId, "/work/project").fileDecisions.has("c1"))
+      .toBe(false);
   });
 });

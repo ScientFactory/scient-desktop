@@ -9,6 +9,9 @@ const client = vi.hoisted(() => ({
 vi.mock("./client", () => client);
 
 const {
+  forgetOverleafConnection,
+  pendingOverleafDecisions,
+  setOverleafFileDecision,
   beginOverleafPreview,
   finishOverleafPreview,
   recordOverleafSync,
@@ -148,6 +151,87 @@ describe("overleafStore", () => {
     expect(readOverleafWorkspace(environmentId, ROOT).reviews.get("c1")).toMatchObject({
       review: { reviewId: "new" },
       applied: false,
+    });
+  });
+
+  describe("pending decisions", () => {
+    const withFiles = (
+      reviewId: string,
+      additions: ReadonlyArray<{ path: string; selected: boolean; skippedBecause: string | null }>,
+      localOnly: ReadonlyArray<string> = [],
+    ) => ({
+      reviewId,
+      digest: "d",
+      remoteTree: "a".repeat(40),
+      upToDate: false,
+      needsDecision: false,
+      incoming: [],
+      outgoing: [],
+      conflicts: [],
+      warnings: [],
+      unresolvedMarkers: [],
+      collisions: [],
+      selectedAdditions: [],
+      additions: additions.map((addition) => ({ ...addition, size: 1 })),
+      localOnly,
+    });
+    const accept = (root: string, review: ReturnType<typeof withFiles>) =>
+      finishOverleafPreview(
+        environmentId,
+        root,
+        "c1",
+        beginOverleafPreview(environmentId, root, "c1"),
+        {
+          _tag: "review",
+          review,
+        },
+      );
+    const pending = (root = ROOT) => [
+      ...pendingOverleafDecisions(readOverleafWorkspace(environmentId, root), "c1"),
+    ];
+
+    it("a fresh review drops decisions it no longer allows, for good", () => {
+      resetOverleafStoreForTests();
+      accept(
+        ROOT,
+        withFiles("r1", [{ path: "main.aux", selected: false, skippedBecause: "build-output" }]),
+      );
+      setOverleafFileDecision(environmentId, ROOT, "c1", "main.aux", "send");
+      expect(pending()).toEqual([["main.aux", "send"]]);
+      // main.aux is deleted: the decision goes...
+      accept(ROOT, withFiles("r2", []));
+      expect(readOverleafWorkspace(environmentId, ROOT).fileDecisions.get("c1")).toBeUndefined();
+      // ...and a recreated main.aux doesn't bring it back.
+      accept(
+        ROOT,
+        withFiles("r3", [{ path: "main.aux", selected: false, skippedBecause: "build-output" }]),
+      );
+      expect(pending()).toEqual([]);
+    });
+
+    it("forgetting a link clears its review, decisions and carried record in every view", () => {
+      resetOverleafStoreForTests();
+      for (const root of [ROOT, "/work/project-wt"]) {
+        accept(
+          root,
+          withFiles("r1", [{ path: "draft.tex", selected: true, skippedBecause: null }]),
+        );
+        setOverleafFileDecision(environmentId, root, "c1", "draft.tex", "keep");
+      }
+      const late = beginOverleafPreview(environmentId, ROOT, "c1");
+      forgetOverleafConnection(environmentId, "c1");
+      for (const root of [ROOT, "/work/project-wt"]) {
+        const view = readOverleafWorkspace(environmentId, root);
+        expect(view.reviews.has("c1")).toBe(false);
+        expect(view.fileDecisions.has("c1")).toBe(false);
+        expect(view.submittedDecisions.has("c1")).toBe(false);
+      }
+      // A read that started before is dropped.
+      finishOverleafPreview(environmentId, ROOT, "c1", late, {
+        _tag: "review",
+        review: withFiles("stale", []),
+      });
+      expect(readOverleafWorkspace(environmentId, ROOT).reviews.has("c1")).toBe(false);
     });
   });
 });
