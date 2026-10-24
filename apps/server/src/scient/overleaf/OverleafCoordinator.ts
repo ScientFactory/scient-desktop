@@ -47,6 +47,7 @@ import { macVolumeUuid, type OverleafVolumeIdentityResolver } from "./OverleafRe
 import {
   buildOverleafReview,
   type OverleafReview,
+  type OverleafReviewBinding,
   type OverleafReviewRefusal,
   writeCapturedTree,
 } from "./OverleafReview.ts";
@@ -137,7 +138,28 @@ export class OverleafRetainedLimitError extends Schema.TaggedError<OverleafRetai
 
 /** The connection's selections: what a review was built from, and is rebuilt from. */
 export interface OverleafSelections {
-  readonly selectedAdditions: ReadonlyArray<string>;
+  /**
+   * Exactly the additions to send; a default one left out is kept only on this
+   * computer. Absent: the review's default selection, every addition no rule
+   * skips (pr-c-design section 5).
+   */
+  readonly selectedAdditions?: ReadonlyArray<string>;
+  /** Files kept only on this computer to send now; they become managed once applied. */
+  readonly sendLocalOnly?: ReadonlyArray<string>;
+  /**
+   * Files to send whatever the default rule says, judged on the review's own
+   * capture: a skipped new file is selected (one too large is refused), a file
+   * kept only here is sent, and one already synced needs nothing more, so a
+   * retry after it was applied succeeds. Every other file follows the defaults.
+   */
+  readonly send?: ReadonlyArray<string>;
+  /**
+   * New files to keep only on this computer, whatever the rule says of them,
+   * judged on the review's own capture and remembered once applied. Wins over
+   * every request to send. A path that is not a new file is ignored, and one
+   * already kept here stays kept. Every other file follows the defaults.
+   */
+  readonly keepOnlyHere?: ReadonlyArray<string>;
   /** Local paths read in full because Overleaf has content at their place. */
   readonly collisionPaths: ReadonlyArray<string>;
   readonly choices: ReadonlyMap<string, ConflictChoice>;
@@ -551,10 +573,45 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     readonly connection: OverleafConnectionDocument;
     readonly repo: string;
     readonly selections: OverleafSelections;
+    /**
+     * The review this one replaces. Its additions and sent files are selected
+     * again, and new files follow the default rule, so a file that appeared
+     * meanwhile is never taken for a deliberate "keep only here".
+     */
+    readonly replacing?: OverleafReviewBinding;
     readonly remote: { readonly commit: string; readonly tree: string };
     readonly checkoutEpoch: number;
   }) {
-    const { connection, repo } = input;
+    const { connection, repo, replacing } = input;
+    const requests =
+      replacing !== undefined
+        ? { keepOnlyHere: replacing.keepOnlyHere, send: replacing.send }
+        : {
+            keepOnlyHere: input.selections.keepOnlyHere ?? [],
+            // A request to send local-only files is recorded as a send request too,
+            // so a replacement review sends them even when a collision that
+            // decided them in this review is gone by then.
+            send: unique([
+              ...(input.selections.send ?? []),
+              ...(input.selections.sendLocalOnly ?? []),
+            ]),
+          };
+    const selection =
+      replacing !== undefined
+        ? {
+            selectedAdditions: replacing.selectedAdditions,
+            sendLocalOnly: replacing.sentLocalOnly,
+            ...requests,
+            defaultSelection: { except: replacing.newLocalOnly, lenient: true },
+          }
+        : {
+            selectedAdditions: input.selections.selectedAdditions ?? [],
+            sendLocalOnly: input.selections.sendLocalOnly ?? [],
+            ...requests,
+            ...(input.selections.selectedAdditions === undefined
+              ? { defaultSelection: { except: [], lenient: false } }
+              : {}),
+          };
     const baseTree =
       connection.base.tree === null
         ? []
@@ -570,9 +627,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           folder: folderOf(connection),
           managedPaths,
           localOnlyPaths: connection.localOnlyPaths,
-          selectedAdditions: input.selections.selectedAdditions,
+          ...selection,
           requestedPaths: requested,
           stagingPaths: connection.stagingPaths,
+          atCheckoutTop: connection.folder.relativePath === "",
         }),
       );
       if (captured._tag === "refused")
@@ -583,8 +641,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         connection,
         inventory: captured.inventory,
         remote: input.remote,
-        selectedAdditions: input.selections.selectedAdditions,
         collisionPaths: requested,
+        requests,
         choices: input.selections.choices,
         interrupted: connection.forcedConflicts,
         markerPaths: connection.markerPaths,
@@ -895,8 +953,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         managedPaths: unique([...captureScope(connection, baseTree), ...domain]),
         localOnlyPaths: connection.localOnlyPaths,
         selectedAdditions: [],
+        sendLocalOnly: [],
         requestedPaths: [],
         stagingPaths: connection.stagingPaths,
+        atCheckoutTop: connection.folder.relativePath === "",
       }),
     );
     if (captured._tag === "refused") return null;
@@ -1241,11 +1301,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         const built = yield* buildReview({
           connection,
           repo,
-          selections: input.selections ?? {
-            selectedAdditions: [],
-            collisionPaths: [],
-            choices: new Map(),
-          },
+          // No selections: the review's default selection.
+          selections: input.selections ?? { collisionPaths: [], choices: new Map() },
           remote,
           checkoutEpoch: section.epoch,
         });
@@ -1321,10 +1378,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 connection,
                 repo,
                 selections: {
-                  selectedAdditions: review.binding.selectedAdditions,
                   collisionPaths: review.binding.collisionPaths,
                   choices: new Map(review.binding.choices),
                 },
+                replacing: review.binding,
                 remote,
                 checkoutEpoch: section.epoch,
               });
@@ -1393,10 +1450,13 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   baseGeneration: connection.base.generation,
                   intentTree: review.binding.candidateTree,
                   remoteCommit: review.binding.remoteCommit,
-                  // What the review counted: kept entries less promoted collisions, plus new ones.
+                  // What the review counted: kept entries less promoted collisions and
+                  // files sent, plus ones deliberately kept here.
                   localOnly: unique([
                     ...connection.localOnlyPaths.filter(
-                      (path) => !review.binding.collisionPaths.includes(path),
+                      (path) =>
+                        !review.binding.collisionPaths.includes(path) &&
+                        !review.binding.sentLocalOnly.includes(path),
                     ),
                     ...review.binding.newLocalOnly,
                   ]),
