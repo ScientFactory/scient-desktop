@@ -116,6 +116,10 @@ const Files = Schema.Struct({
     description:
       "Files to send anyway: new files the rule skips (build output, hidden files, Scient's own files) or files kept only on this computer.",
   }),
+  release: Schema.optional(FilePaths).annotate({
+    description:
+      "Files held back for their conflict marks to send as they are, marks included: only for a file whose marks are its content (a guide that quotes them, say). Otherwise merge the marks instead.",
+  }),
 }).annotate({
   description:
     "Per-file decisions, paths relative to the linked folder. New files are sent by default; the review's additions say which are skipped and why.",

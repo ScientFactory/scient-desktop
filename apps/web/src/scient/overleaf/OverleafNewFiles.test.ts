@@ -9,6 +9,7 @@ const review = {
     { path: "huge.bin", size: 60_000_000, selected: false, skippedBecause: "too-large" },
   ],
   localOnly: ["notes.md"],
+  unresolvedMarkers: ["guide.md"],
 };
 
 describe("actionableDecisions", () => {
@@ -18,6 +19,8 @@ describe("actionableDecisions", () => {
       ["main.aux", "send"], // a skipped file can be sent
       ["notes.md", "send"], // a file kept only here can be sent
       ["huge.bin", "send"], // Overleaf refuses it: never sent
+      ["guide.md", "release"], // a file waiting for its conflicts can be sent anyway
+      ["main.tex", "release"], // not waiting: nothing to send anyway
       ["old.aux", "send"], // no longer listed (deleted)
       ["gone.tex", "keep"],
     ]);
@@ -25,6 +28,7 @@ describe("actionableDecisions", () => {
       ["sent.tex", "keep"],
       ["main.aux", "send"],
       ["notes.md", "send"],
+      ["guide.md", "release"],
     ]);
   });
 
@@ -47,6 +51,7 @@ describe("actionableDecisions", () => {
         { path: "main.aux", size: 1, selected: true, skippedBecause: "build-output" },
       ],
       localOnly: [],
+      unresolvedMarkers: [],
     };
     const decisions = new Map<string, OverleafFileDecision>([
       ["kept.tex", "keep"],

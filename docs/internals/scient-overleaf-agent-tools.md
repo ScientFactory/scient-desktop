@@ -67,8 +67,11 @@ earlier receipt instead of running again; a retried tool call is a new request.
 - **Relink** records the folder in the calling thread's copy.
 - **Files** (pr-c-design.md section 5) are fields on preview and sync, not a
   tool of their own: `files.keepOnlyHere` keeps new files only on this computer
-  (remembered until sent), and `files.send` sends a new file the rule skips
-  (build output, hidden, Scient's own) or one kept only here. Paths are relative
+  (remembered until sent), `files.send` sends a new file the rule skips
+  (build output, hidden, Scient's own) or one kept only here, and
+  `files.release` sends a file held back for its conflict marks as it is, for a
+  file whose marks are its content (results say `released`; one another held
+  file blocks is refused as `release-held`, with a line saying so). Paths are relative
   to the linked folder. Results name the skipped files with their reason, the
   files kept only here, and new files over 50 MB, which stay here.
 - **Choices and `reviewedRemote`.** A result that lists conflicts gives the

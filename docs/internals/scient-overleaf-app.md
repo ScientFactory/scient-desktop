@@ -134,9 +134,14 @@ Per-file decisions (`OverleafNewFiles`): for a review still to run (a preview, o
 conflict), the tab lists the review's `additions`. A selected one offers **Keep only on this
 computer**; a skipped one shows its `skippedBecause` in a few words and offers **Send this file**,
 except `too-large` (Overleaf refuses it). `localOnly` is listed as **Kept only here**, each with
-**Send this file**. A decision is a pending toggle, not a sync of its own: the tab's next **Sync**
-or **Sync again** sends them as `files: { keepOnlyHere, send }`, and a sync that applies clears
-them. Before they are shown or sent, the decisions are reconciled with the review shown
+**Send this file**. Files held back for their conflict marks (`unresolvedMarkers`, plus those a
+review still to run already sends as they are, `released`) are listed as **Waiting for
+conflicts**, each with **Send it anyway** (decision `release`), after a sync too. A decision is a
+pending toggle, not a sync of its own: the tab's next **Sync** or **Sync again** sends them as
+`files: { keepOnlyHere, send, release }`, and a sync that applies clears them. A release the
+engine can't honour (another held file keeps that path on Overleaf) is the refusal
+`release-held`: "_file_ can't be sent anyway: another file waiting for its conflicts keeps its
+place on Overleaf. Settle that file first." Before they are shown or sent, the decisions are reconciled with the review shown
 (`actionableDecisions`): a "keep" only for a new file the rule would send, a "send" only for one
 the rule skips (and Overleaf would take) or one kept only here. Rows and rules follow the rule
 (`skippedBecause`), not the review's `selected`, because a review from a sync that carried

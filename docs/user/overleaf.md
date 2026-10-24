@@ -204,8 +204,14 @@ While a file has conflict marks, the LaTeX editor says **This file has N
 Overleaf conflicts to settle** instead of a failed build. In the Source view
 each block is highlighted, with **Use mine**, **Use Overleaf's** and **Keep
 both** above it; each is an ordinary edit, so Undo takes it back. Or edit the
-block yourself and remove the marks. Then sync. Until the marks are gone, Scient sends nothing to
-Overleaf; your version from before the sync is always kept.
+block yourself and remove the marks. Then sync. Until its marks are gone, that
+file waits: everything else is sent, Overleaf keeps its own version of the
+file, and every sync result names the files that wait. Your version from
+before the sync is always kept.
+
+If the marks are the file's real content (a guide that quotes them, say), the
+Overleaf tab lists it under **Waiting for conflicts** with **Send it anyway**:
+the next sync sends it as it is, marks included.
 
 ## Kept copies
 

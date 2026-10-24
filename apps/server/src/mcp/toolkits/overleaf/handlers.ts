@@ -214,17 +214,21 @@ const choicesOf = (
 type FileDecisions = {
   readonly keepOnlyHere?: ReadonlyArray<string> | undefined;
   readonly send?: ReadonlyArray<string> | undefined;
+  readonly release?: ReadonlyArray<string> | undefined;
 };
 
 /** Per-file decisions as the service takes them; absent when none were given. */
 const filesOf = (files: FileDecisions | undefined) =>
   files === undefined ||
-  ((files.keepOnlyHere?.length ?? 0) === 0 && (files.send?.length ?? 0) === 0)
+  ((files.keepOnlyHere?.length ?? 0) === 0 &&
+    (files.send?.length ?? 0) === 0 &&
+    (files.release?.length ?? 0) === 0)
     ? {}
     : {
         files: {
           ...(files.keepOnlyHere === undefined ? {} : { keepOnlyHere: files.keepOnlyHere }),
           ...(files.send === undefined ? {} : { send: files.send }),
+          ...(files.release === undefined ? {} : { release: files.release }),
         },
       };
 
