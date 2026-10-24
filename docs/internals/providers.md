@@ -722,7 +722,13 @@ turn settlement and does not establish universal physical-reader release.
   requests, and subagent outcomes retain their independent reporting.
 - At startup the adapter pins the session to `OMP_KNOWN_EVENT_TYPES` with `set_event_filter` on
   18.3.1 and newer, so new event kinds can neither break nor flood a conversation. 18.2.x answers
-  that unknown command without an id, so the filter is not sent there.
+  that unknown command without an id, so the filter is not sent there. The same command requests
+  `messageUpdates: "delta"`: streaming `message_update` frames then carry only the increment, not the
+  whole message twice per token. Full snapshots grow quadratically with a long reply or tool call
+  and, once the host falls behind, fill an unbounded temporary spool file in the agent; one session
+  wrote 99 GB. Releases without the projection ignore the option and leave it out of the echo. The
+  runtime reads only the message id and role, `delta`, `contentIndex`, and block-end content from
+  these frames.
 - Model-discovery failures stay in redacted server diagnostics rather than the conversation
   timeline. Text turns can continue without the catalog. Image attachments retry discovery when
   support is unconfirmed, and report an actionable error if support remains unknown or the model

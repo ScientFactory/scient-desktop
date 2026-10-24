@@ -773,8 +773,11 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         yield* extension.discardUnconsumed;
         yield* client.setSubagentSubscription("progress");
         if (compareSemverVersions(client.runtimeVersion, "18.3.1") >= 0)
+          // Streaming updates are read only for their delta. Full snapshots grow
+          // quadratically with a message and, when this host falls behind, are
+          // spooled to an unbounded temporary file by the agent.
           yield* client
-            .setEventFilter(OMP_KNOWN_EVENT_TYPES)
+            .setEventFilter(OMP_KNOWN_EVENT_TYPES, { messageUpdates: "delta" })
             .pipe(Effect.catchTags({ OmpRpcCommandError: () => Effect.void }));
         const ensureFresh = Effect.fn("OmpAdapterV2.ensureFresh")(
           function* () {

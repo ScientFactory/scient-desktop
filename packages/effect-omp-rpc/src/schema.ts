@@ -603,8 +603,18 @@ export const OMP_KNOWN_EVENT_TYPES: ReadonlyArray<string> = Array.from(
   new Set(eventTypeLiterals(OmpRpcKnownEvent.ast)),
 );
 
+/**
+ * `"delta"` drops the cumulative snapshot from streaming `message_update`
+ * frames: `message` keeps only `role`, `assistantMessageEvent.partial` is
+ * omitted. Without it every token resends the whole message twice.
+ */
+export const OmpMessageUpdates = Schema.Literals(["full", "delta"]);
+export type OmpMessageUpdates = typeof OmpMessageUpdates.Type;
+
 export const OmpEventFilterResult = Schema.Struct({
   events: Schema.NullOr(Schema.Array(Schema.String)),
+  /** Echoed by releases that support the projection; older ones omit it. */
+  messageUpdates: Schema.optional(OmpMessageUpdates),
 });
 export type OmpEventFilterResult = typeof OmpEventFilterResult.Type;
 

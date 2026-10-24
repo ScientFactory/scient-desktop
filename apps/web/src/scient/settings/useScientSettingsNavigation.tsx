@@ -80,33 +80,38 @@ export function useScientSettingsNavigation(
   const activeSettingsPath = items.find(
     (item) => pathname === item.to || pathname.startsWith(`${item.to}/`),
   )?.to;
-  const observedVisibilityScope = (() => {
-    const path = items.find(
-      (item) =>
-        resolvedPathname === item.to || resolvedPathname?.startsWith(`${item.to}/`) === true,
-    )?.to;
-    const pageSections = path ? SETTINGS_PAGE_SECTIONS[path] : undefined;
-    return path && pageSections ? { path, pageSections } : null;
-  })();
+  // The page whose content is on screen. The watcher's lifetime is keyed on this string, not
+  // on an object built during render: that object's identity follows the compiler's memo
+  // grouping, so a report could rebuild it and restart the watcher, which reports again.
+  const observedSettingsPath = items.find(
+    (item) => resolvedPathname === item.to || resolvedPathname?.startsWith(`${item.to}/`) === true,
+  )?.to;
+  // Results describe one visit. Dropping them once another page is observed keeps a return
+  // visit from showing what was in view last time.
+  if (sectionVisibility && sectionVisibility.path !== observedSettingsPath) {
+    setSectionVisibility(null);
+  }
   const visiblePageSectionIds = getVisibleSettingsSectionIds({
     activePath: activeSettingsPath,
-    scope: observedVisibilityScope,
+    observedPath: observedSettingsPath,
     visibility: sectionVisibility,
   });
 
   useEffect(() => {
-    if (!observedVisibilityScope) return;
+    if (!observedSettingsPath) return;
+    const pageSections = SETTINGS_PAGE_SECTIONS[observedSettingsPath];
+    if (!pageSections) return;
     const container = document.querySelector<HTMLElement>("[data-settings-page-layout]");
     if (!container) return;
 
     return observeSettingsSectionVisibility({
       container,
-      targetIds: observedVisibilityScope.pageSections.map((section) => section.targetId),
+      targetIds: pageSections.map((section) => section.targetId),
       onChange(targetIds) {
-        setSectionVisibility({ scope: observedVisibilityScope, targetIds: new Set(targetIds) });
+        setSectionVisibility({ path: observedSettingsPath, targetIds: new Set(targetIds) });
       },
     });
-  }, [observedVisibilityScope]);
+  }, [observedSettingsPath]);
 
   const handlePageSectionClick = (to: SettingsPath, targetId: string) => {
     if (isMobile) {
