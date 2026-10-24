@@ -354,7 +354,9 @@ export type OverleafUndoOutcome =
       /** Null when the undo's apply did not complete, so nothing was synced. */
       readonly sync: OverleafSyncOutcome | null;
     })
-  | Exclude<OverleafCoordinator.OverleafUndoResult, { _tag: "undone" }>;
+  | Exclude<OverleafCoordinator.OverleafUndoResult, { _tag: "undone" }>
+  /** Stopped on request after saving editors, before the undo applied anything. */
+  | { readonly _tag: "cancelled" };
 
 /** The stored token's name: one token per Overleaf site (contract section 3). */
 const TOKEN_SECRET = `overleaf-git-token-${Buffer.from("www.overleaf.com", "utf8").toString("base64url")}`;
@@ -1151,11 +1153,16 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     readonly connectionId: string;
     readonly requestId: string;
     readonly attemptNumber: number;
+    /** The per-file decisions the sync after the undo carries, as any sync does. */
+    readonly files?: OverleafFileDecisions;
   }) {
     const { document, guard, linkedElsewhere } = yield* authorize(input.caller, input.connectionId);
     yield* requireToken;
     return yield* claimingSync(input.connectionId, (running) =>
       Effect.gen(function* () {
+        // A cancel asked while editors were saving stops it before anything is put
+        // back; an apply already started finishes, and the sync after it checks again.
+        if (running.cancelled) return { _tag: "cancelled" } satisfies OverleafUndoOutcome;
         const undone = yield* engine(
           guard,
           coordinator.undo({
@@ -1172,7 +1179,9 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
             caller: input.caller,
             connectionId: input.connectionId,
             // Server-made: 64 characters, longer than any request ID a client may send.
+            // The decisions are part of this receipt's identity, as for any sync.
             requestId: sha256(`undo\0${input.requestId}`),
+            ...(input.files === undefined ? {} : { files: input.files }),
           },
           document,
           guard,

@@ -661,6 +661,13 @@ export function overleafUndoView(
       };
     case "duplicate":
       return { title: "That undo already ran", lines: [], tone: "info", needsDecision: false };
+    case "cancelled":
+      return {
+        title: "Undo cancelled",
+        lines: ["Nothing was changed."],
+        tone: "info",
+        needsDecision: false,
+      };
   }
 }
 

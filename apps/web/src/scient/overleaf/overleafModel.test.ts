@@ -534,6 +534,10 @@ describe("conflict marks", () => {
     expect(overleafUndoView({ ...undone, outcome: "attention" }).title).toBe(
       "Undo needs attention",
     );
+    expect(overleafUndoView({ _tag: "cancelled" })).toMatchObject({
+      title: "Undo cancelled",
+      lines: ["Nothing was changed."],
+    });
     expect(overleafUndoView({ _tag: "not-eligible", reason: "unresolved" }).lines).toEqual([
       "Overleaf never answered this send.",
     ]);

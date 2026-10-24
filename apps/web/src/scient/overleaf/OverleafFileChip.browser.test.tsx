@@ -285,6 +285,46 @@ describe("OverleafFileChip", () => {
     ).toEqual(expect.objectContaining({ _tag: "synced" }));
   });
 
+  it("undo carries the pending file decisions, so a file kept here stays here", async () => {
+    reset();
+    client.listOverleafUndoableSends.mockResolvedValue({
+      sends: [
+        {
+          attemptNumber: 4,
+          recordedAt: "2026-10-24T12:00:00.000Z",
+          changes: [{ kind: "modified", path: "main.tex" }],
+        },
+      ],
+    });
+    client.undoOverleafSend.mockResolvedValue({
+      _tag: "undone",
+      restored: ["main.tex"],
+      removed: [],
+      recreated: [],
+      skipped: [],
+      outcome: "complete",
+      sync: sent,
+    });
+    // The review shown offers private.tex, and it is kept only on this computer.
+    finishOverleafPreview(environmentId, "c1", beginOverleafPreview(environmentId, "c1"), {
+      _tag: "review",
+      review: {
+        ...sent.review,
+        additions: [{ path: "private.tex", size: 1, selected: true, skippedBecause: null }],
+      },
+    });
+    setOverleafFileDecision(environmentId, "c1", "private.tex", "keep");
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Undo last send…" }).click();
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect.element(page.getByText("Put back 1 file")).toBeVisible();
+    expect(client.undoOverleafSend).toHaveBeenCalledExactlyOnceWith(
+      environmentId,
+      expect.objectContaining({ attemptNumber: 4, files: { keepOnlyHere: ["private.tex"] } }),
+    );
+  });
+
   it("in another worktree, says the link belongs to the main copy and offers to sync it", async () => {
     reset({ linkedHere: false });
     await using _screen = await render(chip());

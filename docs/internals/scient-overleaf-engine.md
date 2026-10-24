@@ -679,7 +679,11 @@ coordinator's per-connection reservations.
   the undo's `duplicate` and syncs nothing. A refusal the sync meets after the
   undo wrote the folder is its `sync` result (`refused`), never an error that
   hides the undo. It claims the connection's running sync like a sync, so
-  cancel reaches it. `undoableSends` lists the newest ten accepted sends whose
+  cancel reaches it: a cancel asked while the editors save returns `cancelled`
+  before anything is put back; once the undo's apply has started it finishes,
+  and the sync after it stops at its first boundary. The request's per-file
+  decisions (`files`) go to that sync like any sync's, and are part of its
+  receipt's digest, so a file kept only on this computer stays there. `undoableSends` lists the newest ten accepted sends whose
   commits are still held, each with its changes (the parent tree against the
   sent tree), reading the private repository only; older ones are undone by
   number. HTTP: `undo/sends` (read scope) and `undo` (operate scope).
