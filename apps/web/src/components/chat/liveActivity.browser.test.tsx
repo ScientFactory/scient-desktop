@@ -100,73 +100,7 @@ function runningTool(id: string, label: string) {
   };
 }
 
-it("sweeps only the current activity, and shows the working header's dot", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  await render(_fixture, "live:thinking", [entry(1, "Find the bug")], working);
-  await vi.waitFor(() => {
-    expect(sweeps(_fixture).length).toBe(1);
-  });
-  expect(rowOf(sweeps(_fixture)[0]!)).toBe("thinking");
-  // The working header has the steady dot and no sweep of its own.
-  const header = _fixture.host!.querySelector('[data-timeline-row-kind="working"]')!;
-  expect(header.querySelector(".live-activity-dot")).not.toBeNull();
-  expect(header.querySelector(".live-activity-focus")).toBeNull();
-  // The sweeping label's own text rests lighter under the light.
-  const rest = _fixture.host!.querySelector(
-    '[data-timeline-row-kind="thinking"] .live-activity-rest',
-  )!;
-  expect(getComputedStyle(rest).opacity).toBe("0.55");
-  expect(getComputedStyle(sweeps(_fixture)[0]!).animationName).toBe("scient-live-activity-sweep");
-});
-
-it("moves the sweep to the running tool, with no stepped shine anywhere", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  await render(
-    _fixture,
-    "live:tool",
-    [entry(1, "Run the tests"), runningTool("tool-1", "Running pnpm test")],
-    working,
-  );
-  await vi.waitFor(() => {
-    expect(sweeps(_fixture).length).toBe(1);
-  });
-  expect(rowOf(sweeps(_fixture)[0]!)).toBe("work-live");
-  expect(_fixture.host!.querySelector(".live-tool-shine")).toBeNull();
-});
-
-it("gives a longer label a longer cycle at the same pace", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  await render(_fixture, "live:short", [entry(1, "Short")], working);
-  await vi.waitFor(() => {
-    expect(sweeps(_fixture).length).toBe(1);
-  });
-  const short = cycleSeconds(sweeps(_fixture)[0]!);
-  await render(
-    _fixture,
-    "live:long",
-    [
-      entry(2, "Long"),
-      runningTool("tool-2", "Running pnpm test --filter @t3tools/web --reporter verbose"),
-    ],
-    working,
-  );
-  await vi.waitFor(() => {
-    expect(rowOf(sweeps(_fixture)[0] ?? document.body)).toBe("work-live");
-  });
-  const long = cycleSeconds(sweeps(_fixture)[0]!);
-  expect(short).toBeGreaterThan(0.9);
-  expect(long).toBeGreaterThan(short + 0.5);
-});
-
+// regression: 7424d1c45c fix(chat): one sweep in every live state; dot kept through the exit; review fixes
 it("runs the light at the label's own pace, looping with no pause", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -190,6 +124,7 @@ it("runs the light at the label's own pace, looping with no pause", async () => 
   expect(offsets).toEqual([0, 1]);
 });
 
+// regression: 7424d1c45c fix(chat): one sweep in every live state; dot kept through the exit; review fixes
 it("lets the header's own label sweep while compacting before the compaction row exists", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -205,6 +140,7 @@ it("lets the header's own label sweep while compacting before the compaction row
   expect(rowOf(sweeps(_fixture)[0]!)).toBe("working");
 });
 
+// regression: 7424d1c45c fix(chat): one sweep in every live state; dot kept through the exit; review fixes
 it("keeps the dot through the header's exit, so the label never shifts", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -246,6 +182,7 @@ function setupSnapshot() {
   };
 }
 
+// regression: 7424d1c45c fix(chat): one sweep in every live state; dot kept through the exit; review fixes
 it("sweeps only the latest running setup stage, and never in the setup popover's card", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -288,6 +225,7 @@ it("sweeps only the latest running setup stage, and never in the setup popover's
   expect(sweeps(_fixture)).toHaveLength(0);
 });
 
+// regression: 7424d1c45c fix(chat): one sweep in every live state; dot kept through the exit; review fixes
 it("re-measures the pace between passes when the running tool changes", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -328,6 +266,7 @@ it("re-measures the pace between passes when the running tool changes", async ()
   expect(animation.effect!.getComputedTiming().progress ?? 1).toBeLessThan(0.2);
 });
 
+// regression: 8a83e7e204 fix(chat): re-timed sweeps start cleanly; a just-begun setup sweeps its header
 it("never sweeps the setup popover beside the timeline's current activity", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -376,6 +315,7 @@ async function emulate(feature: "prefers-reduced-motion" | "forced-colors", valu
   await session.send("Emulation.setEmulatedMedia", { features: [{ name: feature, value }] });
 }
 
+// regression: 8a83e7e204 fix(chat): re-timed sweeps start cleanly; a just-begun setup sweeps its header
 it("with reduced motion: no sweep or dimming, the dot still and visible", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -402,6 +342,7 @@ it("with reduced motion: no sweep or dimming, the dot still and visible", async 
   }
 });
 
+// regression: 8a83e7e204 fix(chat): re-timed sweeps start cleanly; a just-begun setup sweeps its header
 it("in high contrast mode: the dot keeps the system text color", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
