@@ -17,7 +17,13 @@ import {
   requireEnvironmentScope,
 } from "../../auth/http.ts";
 import type { OverleafAdopted, OverleafPublication } from "./OverleafCoordinator.ts";
-import { OverleafSync, type OverleafCaller, type OverleafSyncOutcome } from "./OverleafSync.ts";
+import {
+  OVERLEAF_ACTIONABLE_ERRORS,
+  OverleafSync,
+  overleafRefusalReason,
+  type OverleafCaller,
+  type OverleafSyncOutcome,
+} from "./OverleafSync.ts";
 import type { ConflictChoice } from "./syncRules.ts";
 
 /**
@@ -27,39 +33,26 @@ import type { ConflictChoice } from "./syncRules.ts";
  */
 type TaggedFailure = { readonly _tag: string; readonly message: string };
 
-/** `OverleafOperationActiveError` → `operation-active`; a `reason` field wins when present. */
-const operationError = (error: TaggedFailure) => {
-  const ownReason = (error as { readonly reason?: unknown }).reason;
-  const reason =
-    typeof ownReason === "string"
-      ? ownReason
-      : error._tag
-          .replace(/^Overleaf|Error$/gu, "")
-          .replace(/[A-Z]/gu, (letter, index: number) =>
-            index === 0 ? letter.toLowerCase() : `-${letter.toLowerCase()}`,
-          );
-  return new ScientOverleafOperationError({ reason, message: error.message });
-};
+/** An interrupted earlier sync that was settled first, as clients see it. */
+const settledApplyView = (
+  settled: Pick<OverleafAdopted, "outcome" | "interrupted" | "markerPaths">,
+) => ({
+  outcome: settled.outcome,
+  interrupted: settled.interrupted.length,
+  markerPaths: settled.markerPaths,
+});
 
-const ACTIONABLE = new Set([
-  "OverleafSyncRefusedError",
-  "OverleafOperationActiveError",
-  "OverleafConnectionNotReadyError",
-  "OverleafRetainedLimitError",
-  "CheckoutSuspendedError",
-  "CheckoutRecoveryRequiredError",
-  "OverleafStateLockedError",
-  "OverleafConnectionStaleError",
-  "OverleafConnectionUnavailableError",
-  "OverleafRequestReusedError",
-  "OverleafRetentionUnavailableError",
-]);
+const operationError = (error: TaggedFailure) =>
+  new ScientOverleafOperationError({
+    reason: overleafRefusalReason(error),
+    message: error.message,
+  });
 
 const mapErrors = <A, E extends TaggedFailure, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.catch(
       (error): Effect.Effect<never, ScientOverleafOperationError | EnvironmentInternalError> =>
-        ACTIONABLE.has(error._tag)
+        OVERLEAF_ACTIONABLE_ERRORS.has(error._tag)
           ? Effect.fail(operationError(error))
           : failEnvironmentInternal("scient_overleaf_operation_failed", error),
     ),
@@ -79,13 +72,7 @@ const publicationView = (publication: OverleafPublication): ScientOverleafPublic
 });
 
 export const settledView = (settled: OverleafAdopted | null) =>
-  settled === null
-    ? null
-    : {
-        outcome: settled.outcome,
-        interrupted: settled.interrupted.length,
-        markerPaths: settled.markerPaths,
-      };
+  settled === null ? null : settledApplyView(settled);
 
 export const syncView = (outcome: OverleafSyncOutcome): ScientOverleafSyncResult => {
   switch (outcome._tag) {
@@ -242,7 +229,7 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
               return {
                 _tag: "refused" as const,
                 refusal: refusalView(result.refusal),
-                settled: settledView(result.settled ?? null),
+                settled: settledView(result.settled),
               };
             case "recovered":
               return { _tag: "recovered" as const };
