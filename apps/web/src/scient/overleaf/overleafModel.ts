@@ -442,18 +442,21 @@ function contextLines(
   return lines;
 }
 
-/** The short message after a sync (design section 4.1). */
+/**
+ * An interrupted earlier sync an operation (a sync, or a read of the changes)
+ * settled before its own work, which wrote the folder.
+ */
+export function settledText(settled: { readonly outcome: string }): string {
+  return settled.outcome === "complete"
+    ? "It first finished an interrupted sync, which wrote the folder."
+    : "It first settled an interrupted sync without finishing it; sync again.";
+}
+
 /** What a sync did before its outcome: an interrupted sync it finished, and a retry. */
 function progressLines(result: ScientOverleafSyncResult): string[] {
   if (result._tag === "duplicate") return [];
   return [
-    ...(!result.settled
-      ? []
-      : [
-          result.settled.outcome === "complete"
-            ? "It first finished an interrupted sync, which wrote the folder."
-            : "It first settled an interrupted sync without finishing it; sync again.",
-        ]),
+    ...(!result.settled ? [] : [settledText(result.settled)]),
     ...(result.retried
       ? [
           "Overleaf changed while sending, so it ran again; the first run's changes are in the folder.",

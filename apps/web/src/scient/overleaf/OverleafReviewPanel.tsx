@@ -184,6 +184,7 @@ export function OverleafReviewPanel(props: {
   );
   const reading = workspace.previewing.has(connectionId);
   const readError = workspace.previewErrors.get(connectionId) ?? null;
+  const readNote = workspace.previewNotes.get(connectionId) ?? null;
   const readChanges = () => void readOverleafChanges(environmentId, cwd, connectionId);
   const chosen = choiceState.review === shownReview ? choiceState.choices : NO_CHOICES;
   const chooseAgain = chooseAgainFor !== null && chooseAgainFor === shownReview;
@@ -397,6 +398,11 @@ export function OverleafReviewPanel(props: {
                 </p>
               ))}
             </div>
+          ) : null}
+          {readNote ? (
+            <p className="px-1 text-xs text-muted-foreground" role="status">
+              {readNote}
+            </p>
           ) : null}
           {readError ? (
             <div className="flex items-center gap-2 px-1 text-sm" role="alert">
