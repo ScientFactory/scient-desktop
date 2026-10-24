@@ -448,29 +448,3 @@ export const assistantMessages = (events: ReadonlyArray<ProviderAdapterV2Event>)
     (event): event is Extract<ProviderAdapterV2Event, { type: "message.updated" }> =>
       event.type === "message.updated" && event.message.role === "assistant",
   );
-
-export const INTERRUPT_NATIVE_THREAD = "native-codex-interrupt-thread";
-
-export const INTERRUPT_NATIVE_TURN = "native-codex-interrupt-turn";
-
-const INTERRUPT_COMMAND_ITEM = "exec-codex-interrupt-command";
-
-export const INTERRUPT_COMMAND = "bash -c 'sleep 30; echo SHOULD_NOT_FINISH_CMD_INTERRUPT_FIXTURE'";
-
-export const INTERRUPT_PROMPT = "Run a long foreground command and wait until interrupted.";
-
-export const interruptCommandItem = (
-  status: "inProgress" | "completed",
-): Record<string, unknown> => ({
-  type: "commandExecution",
-  id: INTERRUPT_COMMAND_ITEM,
-  command: INTERRUPT_COMMAND,
-  cwd: "/workspace",
-  processId: "57680",
-  source: "unifiedExecStartup",
-  status,
-  commandActions: [{ type: "unknown", command: INTERRUPT_COMMAND }],
-  aggregatedOutput: status === "completed" ? "SHOULD_NOT_FINISH_CMD_INTERRUPT_FIXTURE\n" : null,
-  exitCode: status === "completed" ? 0 : null,
-  durationMs: status === "completed" ? 30_000 : null,
-});
