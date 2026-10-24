@@ -30,7 +30,9 @@ describe("loadBalancingSendWarning", () => {
       loadBalancingSendWarning({
         pending: true,
         threadContexts: [localThread, remoteThread],
+        // SCIENT-FORK:START — candidates carry their environment (load-balanced send).
         candidateEnvironments: [],
+        // SCIENT-FORK:END
       }).title,
     ).toBe("Checking machine resources");
   });
@@ -40,7 +42,9 @@ describe("loadBalancingSendWarning", () => {
       loadBalancingSendWarning({
         pending: false,
         threadContexts: [localThread, remoteThread],
+        // SCIENT-FORK:START — candidates carry their environment (load-balanced send).
         candidateEnvironments: [{ environmentId: local }, { environmentId: remote }],
+        // SCIENT-FORK:END
       }).description,
     ).toMatch(/No machine can read every attached thread/);
   });
@@ -50,7 +54,9 @@ describe("loadBalancingSendWarning", () => {
       loadBalancingSendWarning({
         pending: false,
         threadContexts: [localThread],
+        // SCIENT-FORK:START — candidates carry their environment (load-balanced send).
         candidateEnvironments: [{ environmentId: remote }, { environmentId: local }],
+        // SCIENT-FORK:END
       }).description,
     ).toMatch(/No eligible machine has available resources/);
   });
@@ -61,7 +67,9 @@ describe("multipleModelSendBlock", () => {
     selectionCount: 2,
     serverSupportsWorktreeBootstrap: true,
     isLocalDraftThread: true,
+    // SCIENT-FORK:START — a projectless draft cannot bootstrap worktrees.
     hasProject: true,
+    // SCIENT-FORK:END
     isGitRepo: true,
     branch: "main",
   };
@@ -82,7 +90,9 @@ describe("multipleModelSendBlock", () => {
 
   it.each([
     { isLocalDraftThread: false },
+    // SCIENT-FORK:START — a projectless draft cannot bootstrap worktrees.
     { hasProject: false },
+    // SCIENT-FORK:END
     { isGitRepo: false },
     { branch: null },
     { selectionCount: 0 },
@@ -92,6 +102,7 @@ describe("multipleModelSendBlock", () => {
 });
 
 describe("approvalRedirectNotice", () => {
+  // SCIENT-FORK:START — the notice reads the approval send guard result (approvalSendGuard.ts).
   it("reports a changed draft or thread without claiming a successful decline", () => {
     expect(approvalRedirectNotice("changed")).toBe(
       "Your message changed or you left this thread, so it wasn't sent.",
@@ -110,4 +121,5 @@ describe("approvalRedirectNotice", () => {
     expect(approvalRedirectNotice("decline-failed")).toBeNull();
     expect(approvalRedirectNotice("ready")).toBeNull();
   });
+  // SCIENT-FORK:END
 });
