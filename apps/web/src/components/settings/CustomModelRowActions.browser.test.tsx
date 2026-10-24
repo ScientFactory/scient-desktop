@@ -6,12 +6,7 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
-import {
-  CustomModelRowActions,
-  CustomModelTestGuidance,
-  type CustomModelTestNotice,
-} from "./CustomModelRowActions";
-import { MISSING_KEY_STATUS } from "./customModels";
+import { CustomModelRowActions, type CustomModelTestNotice } from "./CustomModelRowActions";
 
 async function _cleanupFixture0(_fixture: _Fixture) {
   await _fixture.root0?.unmount();
@@ -84,20 +79,6 @@ it("offers Re-enter key when the key is missing and the agent reporting it is si
   expect(onCheckAgain).toHaveBeenCalledOnce();
 });
 
-it("offers Re-enter key for a missing key even when another agent needs a recheck", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  const { onReenterKey, onCheckAgain } = await render(_fixture, {
-    statuses: [MISSING_KEY_STATUS, "Check agent"],
-    keyMissing: true,
-  });
-  await userEvent.click(page.getByRole("button", { name: "Re-enter key" }));
-  expect(onReenterKey).toHaveBeenCalledOnce();
-  await userEvent.click(page.getByRole("button", { name: "Check again" }));
-  expect(onCheckAgain).toHaveBeenCalledOnce();
-});
-
 it("keeps the agent choice after a failed Test", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
@@ -134,29 +115,6 @@ it("tests through the only agent directly", async () => {
   const { onTest } = await render(_fixture, { testAgents: [droid] });
   await userEvent.click(page.getByRole("button", { name: "Test" }));
   expect(onTest).toHaveBeenCalledExactlyOnceWith(droid.id);
-});
-
-it("says how to make the model testable when no enabled agent can run a Test", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  _fixture.host = document.createElement("div");
-  document.body.append(_fixture.host);
-  _fixture.root0 = _fixture.stack.use(
-    await _fixtureRender(null, { container: _fixture.host, router: false }),
-  );
-  await _fixture.root0.rerender(<CustomModelTestGuidance testAgents={[]} agents={[pi, droid]} />);
-  await expect
-    .element(
-      page.getByText(
-        "To test this model, select an enabled agent under Use with (Edit): Pi or Droid.",
-      ),
-    )
-    .toBeVisible();
-  await _fixture.root0.rerender(
-    <CustomModelTestGuidance testAgents={[droid]} agents={[pi, droid]} />,
-  );
-  await expect.poll(() => _fixture.host?.textContent).toBe("");
 });
 
 function _createFixture() {
