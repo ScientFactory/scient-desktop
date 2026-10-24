@@ -85,7 +85,7 @@ import {
   type FileSaveSessionActions,
 } from "./useFileSaveCoordinator";
 // SCIENT-FORK:START — the server's editor flush reaches a mounted editor by its file.
-import { flushWorkspaceFileSessionsWhere } from "./useFileSaveCoordinator";
+import { workspaceFileSessionFlush } from "./useFileSaveCoordinator";
 // SCIENT-FORK:END
 const environmentId = EnvironmentId.make("generic-save-hook");
 const props: FileSaveOptions = {
@@ -412,13 +412,13 @@ describe("folder flush of a mounted editor", () => {
       runtime.projectedSource = "B";
       fixture.actions().change("B");
       expect(
-        await flushWorkspaceFileSessionsWhere((target) => target.relativePath === "other.txt"),
+        await workspaceFileSessionFlush.flushWhere((target) => target.relativePath === "other.txt"),
       ).toEqual([]);
     });
     expect(writes).toEqual([]);
     await act(async () => {
       expect(
-        await flushWorkspaceFileSessionsWhere(
+        await workspaceFileSessionFlush.flushWhere(
           (target) =>
             target.environmentId === environmentId &&
             target.cwd === "/repo" &&

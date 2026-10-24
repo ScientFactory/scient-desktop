@@ -1,37 +1,46 @@
 import type {
   EditorFlushFailureReason,
   EditorFlushFileFailure,
-  EditorFlushRequest,
+  EditorFlushFileLocation,
   EditorFlushResponse,
   EnvironmentId,
 } from "@t3tools/contracts";
-import { resolveWorkspaceFilePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
+import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
 
 import type {
-  WorkspaceFileSessionFlushOutcome,
   WorkspaceFileSessionProblem,
+  WorkspaceFileSessionRegistry,
 } from "~/components/files/workspaceFileSessionRegistry";
 import type { LatexDocumentInputs } from "../latex/latexDocumentInputs";
-import {
-  documentIdentity,
-  type MarkdownPersistenceLease,
-  type MarkdownPersistenceRegistry,
-  type MarkdownPersistenceTarget,
+import type {
+  MarkdownPersistenceLease,
+  MarkdownPersistenceRegistry,
+  MarkdownPersistenceTarget,
 } from "../markdownEditor/persistence/markdownPersistenceRegistry";
+import type { EditorCompositions } from "./editorComposition";
 
 /** The editors one window holds: every place its unsaved text can be. */
 export interface WindowEditors {
   /** Open documents (Markdown, LaTeX and the other document formats). */
-  readonly documents: Pick<MarkdownPersistenceRegistry, "getSnapshot" | "has" | "open">;
+  readonly documents: Pick<
+    MarkdownPersistenceRegistry,
+    "getSnapshot" | "getTargetSnapshot" | "has" | "open"
+  >;
   /** Ordinary file editors. */
-  readonly fileSessions: (
-    select: (target: MarkdownPersistenceTarget) => boolean,
-  ) => Promise<ReadonlyArray<WorkspaceFileSessionFlushOutcome>>;
-  /** LaTeX Visual fields whose input is not yet in the document's source. */
-  readonly latexInputs: Pick<LatexDocumentInputs, "finishWhere">;
-  /** Whether no editor of a document is composing text with an input method. */
-  readonly documentEditorsSettled: (documentId: string) => boolean;
+  readonly fileSessions: Pick<
+    WorkspaceFileSessionRegistry,
+    "flushWhere" | "sessionTargets" | "unsavedWhere"
+  >;
+  /** LaTeX Visual input not yet in its document's source. */
+  readonly latexInputs: Pick<LatexDocumentInputs, "targets" | "commitWhere" | "inspectWhere">;
+  /** Text editors an input method may be composing in. */
+  readonly compositions: Pick<EditorCompositions, "targets" | "composingWhere">;
 }
+
+/** Asks the server where files are, in the order given. */
+export type LocateFiles = (
+  files: ReadonlyArray<{ readonly cwd: string; readonly relativePath: string }>,
+) => Promise<ReadonlyArray<EditorFlushFileLocation>>;
 
 type FlushAnswer = Pick<EditorFlushResponse, "saved" | "failures">;
 
@@ -41,106 +50,190 @@ const MESSAGES: Record<EditorFlushFailureReason, string> = {
   conflict: "This file changed on disk while its editor held unsaved text.",
   "save-failed": "Saving this file failed.",
 };
+const EDITED_AGAIN = "This file was edited again while the folder was being saved.";
+const UNPLACED =
+  "This file has unsaved text, and the server could not tell whether it is in the folder.";
 const MAX_MESSAGE = 2_000;
 
-/**
- * The path, relative to the checkout and with "/" separators, of a file
- * under the requested folder; null for any other file.
- */
-export function folderFileMatcher(
-  environmentId: EnvironmentId,
-  request: Pick<EditorFlushRequest, "checkoutRoot" | "folder">,
-): (target: MarkdownPersistenceTarget) => string | null {
-  const folderRoot =
-    request.folder === ""
-      ? request.checkoutRoot
-      : resolveWorkspaceFilePath(request.folder, request.checkoutRoot);
-  return (target) => {
-    if (target.environmentId !== environmentId) return null;
-    const file = resolveWorkspaceFilePath(target.relativePath, target.cwd);
-    const inFolder = workspaceRelativeFilePath(file, folderRoot);
-    if (inFolder === null || inFolder === ".") return null;
-    return workspaceRelativeFilePath(file, request.checkoutRoot);
-  };
-}
+const keyOf = (target: MarkdownPersistenceTarget) =>
+  JSON.stringify([target.cwd, target.relativePath]);
+const targetOf = (target: MarkdownPersistenceTarget): MarkdownPersistenceTarget => ({
+  environmentId: target.environmentId,
+  cwd: target.cwd,
+  relativePath: target.relativePath,
+});
 
 /**
- * Saves every editor this window holds for a file under the requested
- * folder, through each editor's own save pipeline, and names every file it
- * could not save. Files elsewhere are left alone.
+ * Saves every editor this window holds for a file in the requested folder,
+ * through each editor's own save pipeline, and names every file it could not
+ * save. The server places files by physical identity (`locate`). A file it
+ * cannot place fails when its editor holds unsaved text. Right before
+ * answering, every editor in the folder is checked again at once; if any
+ * changed meanwhile the whole save runs once more, then such files fail.
  */
 export async function flushFolderEditors(
   environmentId: EnvironmentId,
-  request: Pick<EditorFlushRequest, "checkoutRoot" | "folder">,
   editors: WindowEditors,
+  locate: LocateFiles,
 ): Promise<FlushAnswer> {
-  const pathOf = folderFileMatcher(environmentId, request);
-  const selected = (target: MarkdownPersistenceTarget) => pathOf(target) !== null;
-  const saved = new Set<string>();
-  const failures = new Map<string, EditorFlushFileFailure>();
-  const fail = (path: string, reason: EditorFlushFailureReason, message?: string) => {
-    if (failures.has(path)) return;
-    failures.set(path, {
-      path,
-      reason,
-      message: (message ?? MESSAGES[reason]).slice(0, MAX_MESSAGE),
-    });
+  const locations = new Map<string, EditorFlushFileLocation>();
+  const inventory = () => {
+    const found = new Map<string, MarkdownPersistenceTarget>();
+    for (const target of [
+      ...editors.documents.getSnapshot(),
+      ...editors.fileSessions.sessionTargets(),
+      ...editors.latexInputs.targets(),
+      ...editors.compositions.targets(),
+    ])
+      if (target.environmentId === environmentId) found.set(keyOf(target), targetOf(target));
+    return [...found.values()];
+  };
+  const locateNew = async () => {
+    const unplaced = inventory().filter((target) => !locations.has(keyOf(target)));
+    if (unplaced.length === 0) return;
+    const placed = await locate(unplaced.map(({ cwd, relativePath }) => ({ cwd, relativePath })));
+    unplaced.forEach((target, index) =>
+      locations.set(keyOf(target), placed[index] ?? { status: "unknown" }),
+    );
+  };
+  const locationOf = (target: MarkdownPersistenceTarget) =>
+    target.environmentId === environmentId ? locations.get(keyOf(target)) : undefined;
+  const inside = (target: MarkdownPersistenceTarget) => locationOf(target)?.status === "inside";
+  /** In the folder, or possibly: the server could not tell. */
+  const concerned = (target: MarkdownPersistenceTarget) => {
+    const status = locationOf(target)?.status;
+    return status === "inside" || status === "unknown";
+  };
+  const nameOf = (target: MarkdownPersistenceTarget) => {
+    const location = locationOf(target);
+    return location?.status === "inside"
+      ? location.path
+      : resolveWorkspaceFilePath(target.relativePath, target.cwd);
   };
 
-  // Visual fields first: finishing them puts their input into the documents saved below.
-  for (const unfinished of editors.latexInputs.finishWhere(selected)) {
-    const path = pathOf(unfinished.target);
-    if (path !== null) fail(path, unfinished.pending ? "unconverted-input" : "composing");
-  }
-
-  const flushDocument = async (target: MarkdownPersistenceTarget, path: string) => {
-    if (!editors.documents.has(target)) return;
-    let lease: MarkdownPersistenceLease | null = null;
-    try {
-      lease = await editors.documents.open(target);
-      const pendingInput = lease.getPendingInput();
-      if (pendingInput !== null) return fail(path, "unconverted-input", pendingInput.message);
-      const settled = editors.documentEditorsSettled(documentIdentity(lease));
-      const flushed = await lease.flushNow();
-      if (!settled) return fail(path, "composing");
-      if (flushed) return void saved.add(path);
-      const snapshot = lease.getSnapshot();
-      if (snapshot.conflict !== null) return fail(path, "conflict");
-      return fail(path, "save-failed", snapshot.publicationAttention?.message);
-    } catch {
-      return fail(path, "save-failed");
-    } finally {
-      lease?.release();
-    }
-  };
-  await Promise.all(
-    editors.documents.getSnapshot().flatMap((document) => {
-      const target = {
-        environmentId: document.environmentId,
-        cwd: document.cwd,
-        relativePath: document.relativePath,
-      };
-      const path = pathOf(target);
-      return path === null ? [] : [flushDocument(target, path)];
-    }),
-  );
-
-  const problemReason = (problem: WorkspaceFileSessionProblem) =>
-    problem.kind === "conflict" ? "conflict" : "save-failed";
-  for (const outcome of await editors.fileSessions(selected)) {
-    const path = pathOf(outcome.target);
-    if (path === null) continue;
-    if (outcome.saved) saved.add(path);
-    else
-      fail(
+  for (let attempt = 0; ; attempt++) {
+    await locateNew();
+    const saved = new Set<string>();
+    const failures = new Map<string, EditorFlushFileFailure>();
+    const fail = (
+      target: MarkdownPersistenceTarget,
+      reason: EditorFlushFailureReason,
+      message?: string,
+    ) => {
+      const path = nameOf(target);
+      if (failures.has(path)) return;
+      failures.set(path, {
         path,
-        problemReason(outcome.problem),
-        outcome.problem.kind === "save-failed" ? outcome.problem.message : undefined,
-      );
-  }
+        reason,
+        message: (message ?? MESSAGES[reason]).slice(0, MAX_MESSAGE),
+      });
+    };
 
-  return {
-    saved: [...saved].filter((path) => !failures.has(path)).toSorted(),
-    failures: [...failures.values()],
-  };
+    // Visual input first: committing it puts it into the documents saved below.
+    for (const input of editors.latexInputs.commitWhere(inside))
+      fail(input.target, input.state === "composing" ? "composing" : "unconverted-input");
+    for (const target of editors.compositions.composingWhere(inside)) fail(target, "composing");
+
+    const flushDocument = async (target: MarkdownPersistenceTarget) => {
+      if (!editors.documents.has(target)) return;
+      let lease: MarkdownPersistenceLease | null = null;
+      try {
+        lease = await editors.documents.open(target);
+        const pendingInput = lease.getPendingInput();
+        if (pendingInput !== null) return fail(target, "unconverted-input", pendingInput.message);
+        if (await lease.flushNow()) return void saved.add(nameOf(target));
+        const snapshot = lease.getSnapshot();
+        if (snapshot.conflict !== null) return fail(target, "conflict");
+        return fail(target, "save-failed", snapshot.publicationAttention?.message);
+      } catch {
+        return fail(target, "save-failed");
+      } finally {
+        lease?.release();
+      }
+    };
+    await Promise.all(
+      editors.documents
+        .getSnapshot()
+        .map(targetOf)
+        .filter(inside)
+        .map((target) => flushDocument(target)),
+    );
+    for (const outcome of await editors.fileSessions.flushWhere(inside)) {
+      if (outcome.saved) saved.add(nameOf(outcome.target));
+      else fail(outcome.target, ...problemFailure(outcome.problem));
+    }
+
+    // Editors opened meanwhile are placed before the final, synchronous check.
+    await locateNew();
+    const unsaved = unsavedNow(editors, concerned).filter(
+      ({ target }) => !failures.has(nameOf(target)),
+    );
+    if (unsaved.length > 0 && attempt === 0) continue;
+    for (const { target, reason, message } of unsaved)
+      fail(
+        target,
+        reason,
+        message ??
+          (inside(target) ? (reason === "save-failed" ? EDITED_AGAIN : undefined) : UNPLACED),
+      );
+    return {
+      saved: [...saved].filter((path) => !failures.has(path)).toSorted(),
+      failures: [...failures.values()],
+    };
+  }
+}
+
+function problemFailure(
+  problem: WorkspaceFileSessionProblem,
+): [EditorFlushFailureReason, string | undefined] {
+  return problem.kind === "conflict" ? ["conflict", undefined] : ["save-failed", problem.message];
+}
+
+/** Every editor `select` picks whose text is not all on disk right now, and why. */
+function unsavedNow(
+  editors: WindowEditors,
+  select: (target: MarkdownPersistenceTarget) => boolean,
+): ReadonlyArray<{
+  readonly target: MarkdownPersistenceTarget;
+  readonly reason: EditorFlushFailureReason;
+  readonly message?: string;
+}> {
+  const found: Array<{
+    target: MarkdownPersistenceTarget;
+    reason: EditorFlushFailureReason;
+    message?: string;
+  }> = [];
+  for (const target of editors.compositions.composingWhere(select))
+    found.push({ target, reason: "composing" });
+  for (const input of editors.latexInputs.inspectWhere(select))
+    found.push({
+      target: input.target,
+      reason: input.state === "composing" ? "composing" : "unconverted-input",
+    });
+  for (const document of editors.documents.getSnapshot()) {
+    const target = targetOf(document);
+    if (!select(target)) continue;
+    const snapshot = editors.documents.getTargetSnapshot(target);
+    if (!document.pending && !document.attention && snapshot?.inFlight !== true) continue;
+    if (snapshot?.conflict) found.push({ target, reason: "conflict" });
+    else if (snapshot?.error != null || snapshot?.attention)
+      found.push({
+        target,
+        reason: "save-failed",
+        ...(snapshot.publicationAttention
+          ? { message: snapshot.publicationAttention.message }
+          : {}),
+      });
+    // Attention without an error or conflict is input a visual editor holds.
+    else if (document.attention) found.push({ target, reason: "unconverted-input" });
+    else found.push({ target, reason: "save-failed" });
+  }
+  for (const session of editors.fileSessions.unsavedWhere(select)) {
+    if (session.problem === null) found.push({ target: session.target, reason: "save-failed" });
+    else {
+      const [reason, message] = problemFailure(session.problem);
+      found.push({ target: session.target, reason, ...(message ? { message } : {}) });
+    }
+  }
+  return found;
 }

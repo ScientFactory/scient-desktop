@@ -34,6 +34,9 @@ import {
 } from "~/scient/fileSurfaces/scientLazyFileSurfaces";
 import { useScientFileReadRecovery } from "~/scient/fileSurfaces/scientFileReadRecovery";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — the server's editor flush names a file whose input method is composing.
+import { editorCompositions } from "~/scient/editorFlush/editorComposition";
+// SCIENT-FORK:END
 import { Spinner } from "~/components/ui/spinner";
 import { LatexDocumentPreparation } from "~/scient/latex/latexOpeningPresentation";
 import { Button } from "~/components/ui/button";
@@ -953,6 +956,16 @@ export function EditableFileEditor({
     FileCommentAnnotationGroup,
     undefined
   > | null>(null);
+  // SCIENT-FORK:START — the server's editor flush names a file whose input method is composing.
+  const compositionTarget = useStableCallback(
+    () => externalPersistence?.target ?? { environmentId, cwd, relativePath },
+  );
+  useEffect(
+    () =>
+      editor ? editorCompositions.register(compositionTarget, () => editor.isComposing) : undefined,
+    [editor, compositionTarget],
+  );
+  // SCIENT-FORK:END
   const handledSourceSelection = useRef<{ editor: typeof editor; requestId: number } | null>(null);
   useEffect(() => {
     if (

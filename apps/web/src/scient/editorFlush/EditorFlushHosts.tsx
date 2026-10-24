@@ -15,7 +15,7 @@ import * as Stream from "effect/Stream";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 
-import { flushWorkspaceFileSessionsWhere } from "~/components/files/useFileSaveCoordinator";
+import { workspaceFileSessionFlush } from "~/components/files/useFileSaveCoordinator";
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { randomUUID } from "~/lib/utils";
@@ -23,8 +23,8 @@ import { useEnvironments } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { latexDocumentInputs } from "../latex/latexDocumentInputs";
 import { markdownPersistenceRegistry } from "../markdownEditor/persistence/markdownPersistenceRegistry";
-import { participantsReady } from "../markdownEditor/persistence/renameOpenDocument";
-import { flushFolderEditors, type WindowEditors } from "./flushFolderEditors";
+import { editorCompositions } from "./editorComposition";
+import { flushFolderEditors, type LocateFiles, type WindowEditors } from "./flushFolderEditors";
 
 const editorFlushRequests = createEnvironmentSubscriptionAtomFamily(connectionAtomRuntime, {
   label: "environment-data:scient-editor-flush:requests",
@@ -34,6 +34,11 @@ const editorFlushRequests = createEnvironmentSubscriptionAtomFamily(connectionAt
   idleTtlMs: 0,
 });
 
+const locateEditorFiles = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:scient-editor-flush:resolve",
+  tag: WS_METHODS.editorsFlushResolve,
+});
+
 const respondToEditorFlush = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-data:scient-editor-flush:response",
   tag: WS_METHODS.editorsFlushRespond,
@@ -41,18 +46,19 @@ const respondToEditorFlush = createEnvironmentRpcCommand(connectionAtomRuntime, 
 
 const windowEditors: WindowEditors = {
   documents: markdownPersistenceRegistry,
-  fileSessions: flushWorkspaceFileSessionsWhere,
+  fileSessions: workspaceFileSessionFlush,
   latexInputs: latexDocumentInputs,
-  documentEditorsSettled: participantsReady,
+  compositions: editorCompositions,
 };
 
 /** This window's answer; an unexpected error fails the whole folder, never passes it. */
 async function answer(
   environmentId: EnvironmentId,
   request: EditorFlushRequest,
+  locate: LocateFiles,
 ): Promise<Pick<EditorFlushResponse, "saved" | "failures">> {
   try {
-    return await flushFolderEditors(environmentId, request, windowEditors);
+    return await flushFolderEditors(environmentId, windowEditors, locate);
   } catch {
     return {
       saved: [],
@@ -72,6 +78,7 @@ function createEditorFlushConsumerAtom<E>(options: {
   readonly requestsAtom: Atom.Atom<AsyncResult.AsyncResult<EditorFlushStreamEvent, E>>;
   readonly clientId: string;
   readonly environmentId: EnvironmentId;
+  readonly locate: (requestId: string) => LocateFiles;
   readonly respond: (response: EditorFlushResponse) => Promise<unknown>;
 }): Atom.Atom<void> {
   return Atom.make((get) => {
@@ -85,13 +92,12 @@ function createEditorFlushConsumerAtom<E>(options: {
       answered.add(key);
       const oldest = answered.values().next().value;
       if (answered.size > 256 && oldest !== undefined) answered.delete(oldest);
-      void answer(options.environmentId, request)
+      void answer(options.environmentId, request, options.locate(request.requestId))
         .then((reply) =>
           disposed
             ? undefined
             : options.respond({
                 clientId: options.clientId,
-                connectionId,
                 requestId: request.requestId,
                 ...reply,
               }),
@@ -117,14 +123,21 @@ function EditorFlushEnvironmentHost(props: { readonly environmentId: Environment
   const { environmentId } = props;
   const [clientId] = useState(() => `scient-editors-${randomUUID()}`);
   const respond = useAtomCommand(respondToEditorFlush, { reportFailure: false });
+  const resolve = useAtomCommand(locateEditorFiles, { reportFailure: false });
   const respondLatest = useStableCallback((response: EditorFlushResponse) =>
     respond({ environmentId, input: response }),
   );
+  const locateLatest = useStableCallback((requestId: string): LocateFiles => async (files) => {
+    const result = await resolve({ environmentId, input: { clientId, requestId, files } });
+    if (result._tag !== "Success") throw new Error("The server could not place the files.");
+    return result.value.files;
+  });
   const [consumer] = useState(() =>
     createEditorFlushConsumerAtom({
       requestsAtom: editorFlushRequests({ environmentId, input: { clientId } }),
       clientId,
       environmentId,
+      locate: locateLatest,
       respond: respondLatest,
     }),
   );

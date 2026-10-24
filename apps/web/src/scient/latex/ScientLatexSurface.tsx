@@ -134,7 +134,8 @@ import { useLatexSourceRecovery } from "./useLatexSourceRecovery";
 import { LatexVisualRecoveryBar } from "./LatexVisualRecovery";
 import { useLatexSourceIdentity } from "./visualPdfPublication";
 import { prepareLatexDocument } from "./prepareLatexDocument";
-import { latexDocumentInputs } from "./latexDocumentInputs";
+import { latexDocumentInputs, type LatexInputState } from "./latexDocumentInputs";
+import type { LatexBackgroundCommit } from "./LatexVisualEditor";
 import { useLatexAutoBuild } from "./useLatexAutoBuild";
 import {
   DEFAULT_LATEX_COMPILATION,
@@ -648,6 +649,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [hasLocalVisualDraft, setHasLocalVisualDraft] = useState(false);
   const finishVisualEditingRef = useRef<(() => boolean) | null>(null);
+  const backgroundVisualCommitRef = useRef<LatexBackgroundCommit | null>(null);
   const localVisualDraftRef = useRef(false);
   const [lastEditAt, setLastEditAt] = useState(0);
   const [visualProjectState, setVisualProjectState] = useState<{
@@ -1326,6 +1328,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const registerFinishVisualEditing = (finish: (() => boolean) | null) => {
     finishVisualEditingRef.current = finish;
   };
+  const registerBackgroundVisualCommit = (commit: LatexBackgroundCommit | null) => {
+    backgroundVisualCommitRef.current = commit;
+  };
   const reportLocalVisualDraft = (pending: boolean) => {
     localVisualDraftRef.current = pending;
     setHasLocalVisualDraft(pending);
@@ -1341,6 +1346,13 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         root: target?.relativePath ?? props.relativePath,
         finish: () => finishVisualEditingRef.current?.() ?? !localVisualDraftRef.current,
         pending: () => localVisualDraftRef.current,
+        // Without a mounted Visual editor, only its reported draft remains.
+        inspect: (): LatexInputState =>
+          backgroundVisualCommitRef.current?.inspect() ??
+          (localVisualDraftRef.current ? "unconverted" : "clean"),
+        commit: (): LatexInputState =>
+          backgroundVisualCommitRef.current?.commit() ??
+          (localVisualDraftRef.current ? "unconverted" : "clean"),
       }),
     [props.environmentId, props.cwd, props.relativePath, target?.relativePath],
   );
@@ -2405,6 +2417,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                           );
                       }}
                       registerFinishEditing={registerFinishVisualEditing}
+                      registerBackgroundCommit={registerBackgroundVisualCommit}
                     />
                   </Suspense>
                 </ReaderBarHostContext>

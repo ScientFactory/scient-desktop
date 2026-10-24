@@ -289,6 +289,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.documentsReleaseDocumentPdf]: "documents",
   // SCIENT-FORK:START — Scient editor flush RPCs.
   [WS_METHODS.editorsFlushConnect]: "editors",
+  [WS_METHODS.editorsFlushResolve]: "editors",
   [WS_METHODS.editorsFlushRespond]: "editors",
   // SCIENT-FORK:END
   [WS_METHODS.serverStartProviderConnection]: "server",

@@ -68,8 +68,7 @@ export function registerRenameParticipant(
   };
 }
 
-/** Whether every editor of `documentId` is settled: none is composing text with an input method. */
-export function participantsReady(documentId: string): boolean {
+function participantsReady(documentId: string): boolean {
   for (const participant of participants.get(documentId) ?? []) {
     try {
       if (!participant.readyToMove()) return false;

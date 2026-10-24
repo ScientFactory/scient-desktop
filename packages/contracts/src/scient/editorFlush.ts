@@ -5,7 +5,9 @@ import { TrimmedNonEmptyString } from "../baseSchemas.ts";
 /**
  * The server asks every open window of its environment to save the editors
  * of one folder, and waits for each window's answer. Windows connect once
- * (a stream of requests) and answer each request separately.
+ * (a stream of requests), ask the server which of their editors' files are in
+ * the folder (the server compares physical identity, so every spelling of a
+ * path counts), and answer each request separately.
  */
 export const EditorFlushWindow = Schema.Struct({
   clientId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
@@ -56,10 +58,39 @@ export const EditorFlushFileFailure = Schema.Struct({
 });
 export type EditorFlushFileFailure = typeof EditorFlushFileFailure.Type;
 
+/** The files of a window's editors, as the window names them. */
+export const EditorFlushResolveInput = Schema.Struct({
+  clientId: EditorFlushWindow.fields.clientId,
+  requestId: EditorFlushRequest.fields.requestId,
+  files: Schema.Array(
+    Schema.Struct({
+      cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+      relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+    }),
+  ).check(Schema.isMaxLength(MAX_FILES)),
+});
+export type EditorFlushResolveInput = typeof EditorFlushResolveInput.Type;
+
+/**
+ * Where each file is, in the order asked: inside the folder (with its path
+ * relative to the checkout), outside it, or unknown when the server could not
+ * tell. A window treats an unknown file holding unsaved text as a failure.
+ */
+export const EditorFlushFileLocation = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("inside"), path: FilePath }),
+  Schema.Struct({ status: Schema.Literal("outside") }),
+  Schema.Struct({ status: Schema.Literal("unknown") }),
+]);
+export type EditorFlushFileLocation = typeof EditorFlushFileLocation.Type;
+
+export const EditorFlushResolveResult = Schema.Struct({
+  files: Schema.Array(EditorFlushFileLocation).check(Schema.isMaxLength(MAX_FILES)),
+});
+export type EditorFlushResolveResult = typeof EditorFlushResolveResult.Type;
+
 /** One window's answer: the editors it saved, and every one it could not. */
 export const EditorFlushResponse = Schema.Struct({
   clientId: EditorFlushWindow.fields.clientId,
-  connectionId: ConnectionId,
   requestId: EditorFlushRequest.fields.requestId,
   saved: Schema.Array(FilePath).check(Schema.isMaxLength(MAX_FILES)),
   failures: Schema.Array(EditorFlushFileFailure).check(Schema.isMaxLength(MAX_FILES)),

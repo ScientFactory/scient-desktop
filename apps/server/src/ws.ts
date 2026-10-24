@@ -2008,7 +2008,11 @@ export const layerWsRpc = (
           Stream.unwrap(documentHostBroker.connect(input)),
         [WS_METHODS.documentsHostRespond]: (input) => documentHostBroker.respond(input),
         // SCIENT-FORK:START — windows answer the server's editor flush requests.
-        ...makeEditorFlushRpcHandlers({ observeRpcEffect, observeRpcStream }),
+        ...makeEditorFlushRpcHandlers({
+          observeRpcEffect,
+          observeRpcStream,
+          sessionId: currentSessionId,
+        }),
         // SCIENT-FORK:END
         [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),

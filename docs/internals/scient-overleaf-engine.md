@@ -357,35 +357,51 @@ attempt.
 
 Text a person typed is on disk only once the window holding it has saved it.
 `scient/editorFlush/EditorFlush.ts` lets a server operation ask every window
-connected to this environment to save its editors for one folder, and wait:
+of this environment to save its editors for one folder, and wait:
 `flushFolder({ checkoutRoot, folder, timeout })`. Nothing calls it yet; the
 Overleaf agent tools will, before prepare and again before confirm.
 
-- Each window subscribes once (`editors.flushConnect`, a stream of requests)
-  and answers each request (`editors.flushRespond`) with the files it saved and
-  every file it could not save, named relative to the checkout, with the
-  reason: `unconverted-input` (visual input not yet source), `composing` (an
-  input method is composing), `save-failed`, or `conflict` (the file changed
-  outside an editor holding unsaved text). Both need the filesystem write
-  scope; a window that cannot save does not take part.
-- The result is `NoWindowOpen` when no window is connected (nothing is
-  unsaved), or `Answered` with one outcome per window and `allSaved`. A window
-  that does not answer within the timeout, or disconnects first, is
-  `Unanswered` and names the window (its client id and connection); it is never
-  a success. A window that reconnects replaces its earlier connection, failing
-  that connection's open requests as disconnected.
+- Each window subscribes once (`editors.flushConnect`), asks where its
+  editors' files are (`editors.flushResolve`), and answers
+  (`editors.flushRespond`) with the files it saved and every file it could not
+  save, named relative to the checkout, with the reason: `unconverted-input`
+  (visual input not yet source), `composing` (an input method is composing),
+  `save-failed`, or `conflict` (the file changed outside an editor holding
+  unsaved text). All three need the filesystem write scope.
+- A window is known by the authenticated session of its connection and the
+  id it chose. Another session can neither replace it nor answer or resolve
+  for it. A window that reconnects replaces its own earlier connection.
+- Membership is not the set of open streams. A window whose connection drops
+  stays present for a grace (10 seconds): a request asks it, sends the request
+  again when it is back, and counts it `Unanswered` (`disconnected`) if it is
+  not. A window that registers while a request is open is asked too, and the
+  request waits for it. A service younger than the grace waits that long for
+  a first window before reporting `NoWindowOpen`. Each window has the timeout
+  from when it is asked.
+- The result is `NoWindowOpen` (no window present: nothing is unsaved),
+  `FolderUnavailable` (the folder could not be examined), or `Answered` with
+  one outcome per window and `allSaved`. An unanswered window is never a
+  success.
+- Files are placed by physical identity (`folderIdentity.ts`): the folder is
+  known by device and inode, and a file is inside when a folder physically
+  holding it is that folder, so a symlinked spelling or another letter case
+  finds it. A file not yet on disk is placed by its nearest existing folder. A
+  file the server cannot place (`unknown`) fails when its editor holds unsaved
+  text.
 - The window side (`apps/web/src/scient/editorFlush/`) uses the existing save
-  pipelines only: LaTeX Visual fields are finished first
-  (`latexDocumentInputs.finishWhere`), then open documents are flushed through
-  the document registry (a retained pending input or a composing editor fails
-  the file), then ordinary file editors through
-  `WorkspaceFileSessionRegistry.flushWhere`, the same flush a last lease's
-  release runs. A file is under the folder when its environment matches and
-  its absolute path (`cwd` joined with its relative path) lies inside
-  `checkoutRoot`/`folder`, compared lexically (Windows paths without regard to
-  case or separator). A window that opened the folder through another spelling
-  of the path (a symlink) is not matched; its unsaved draft stays protected by
-  the outside-change conflict.
+  pipelines only. LaTeX Visual input of editors whose own file is inside is
+  committed in the background, as the editor's idle save does: focus,
+  selection and open fields stay as they are, and input that cannot become
+  source this way (an open title field, a raw block) is reported
+  `unconverted-input`. An editor of a file outside the folder whose document's
+  root is inside is only inspected. Then open documents are flushed through
+  the document registry, and ordinary file editors through
+  `WorkspaceFileSessionRegistry.flushWhere`. Source editors and the Markdown
+  Visual editor register their composition state (`editorComposition.ts`).
+- Right before answering, every editor in the folder (and every one the
+  server could not place) is checked again at once, including editors opened
+  meanwhile. If any has unsaved text the whole save runs once more; a file
+  still unsaved then fails as edited again.
 
 ## Remaining integration gates
 

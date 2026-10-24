@@ -1,6 +1,7 @@
 /**
- * The window side of the editor flush: each window connects for requests
- * and answers each one.
+ * The window side of the editor flush: each window connects for requests,
+ * asks where its editors' files are, and answers each request. Every call is
+ * bound to the session that authenticated this connection.
  *
  * @module EditorFlushRpcHandlers
  */
@@ -13,21 +14,33 @@ import { EditorFlush } from "./EditorFlush.ts";
 export const makeEditorFlushRpcHandlers = ({
   observeRpcEffect,
   observeRpcStream,
-}: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream">) =>
+  sessionId,
+}: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
+  /** The authenticated session of this WebSocket connection. */
+  readonly sessionId: string;
+}) =>
   ({
     [WS_METHODS.editorsFlushConnect]: (input) =>
       observeRpcStream(
         WS_METHODS.editorsFlushConnect,
-        Stream.unwrap(EditorFlush.use((flush) => flush.connect(input))),
+        Stream.unwrap(EditorFlush.use((flush) => flush.connect(sessionId, input))),
+        { "rpc.aggregate": "editors" },
+      ),
+    [WS_METHODS.editorsFlushResolve]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.editorsFlushResolve,
+        EditorFlush.use((flush) => flush.resolve(sessionId, input)),
         { "rpc.aggregate": "editors" },
       ),
     [WS_METHODS.editorsFlushRespond]: (input) =>
       observeRpcEffect(
         WS_METHODS.editorsFlushRespond,
-        EditorFlush.use((flush) => flush.respond(input)),
+        EditorFlush.use((flush) => flush.respond(sessionId, input)),
         { "rpc.aggregate": "editors" },
       ),
   }) satisfies ScientRpcHandlerSubset<
     typeof WsWorkspaceRpcGroup,
-    typeof WS_METHODS.editorsFlushConnect | typeof WS_METHODS.editorsFlushRespond
+    | typeof WS_METHODS.editorsFlushConnect
+    | typeof WS_METHODS.editorsFlushResolve
+    | typeof WS_METHODS.editorsFlushRespond
   >;

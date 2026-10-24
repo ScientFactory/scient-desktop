@@ -1,10 +1,21 @@
 import type { MarkdownPersistenceTarget } from "../markdownEditor/persistence/markdownPersistenceRegistry";
 
+/** A Visual editor's input: in the source, held by an input method, or not yet source. */
+export type LatexInputState = "clean" | "composing" | "unconverted";
+
 interface InputOwner {
   readonly target: MarkdownPersistenceTarget;
   readonly root: string;
   readonly finish: () => boolean;
   readonly pending: () => boolean;
+  /** The input's state, changing nothing. */
+  readonly inspect: () => LatexInputState;
+  /**
+   * Turns pending input into source as the editor's own idle save does,
+   * keeping focus, selection and the open control; input that cannot become
+   * source stays where it is.
+   */
+  readonly commit: () => LatexInputState;
 }
 
 /** Unpublished fields belong to their editor, before a file session can see them. */
@@ -46,20 +57,45 @@ export class LatexDocumentInputs {
     return this.relevant(target, paths).some((owner) => owner.pending());
   }
 
+  /** The files of every editor, and the root files of their documents. */
+  targets(): ReadonlyArray<MarkdownPersistenceTarget> {
+    return [...this.owners].flatMap((owner) => [
+      owner.target,
+      { ...owner.target, relativePath: owner.root },
+    ]);
+  }
+
   /**
-   * Finishes the input of every editor whose file, or whose document's root
-   * file, `select` picks. Returns the editors that could not finish (still
-   * composing, or holding input that could not become source: `pending`),
-   * each named by the picked file: its own when picked, else its root.
+   * Commits, in the background, the input of every editor whose own file
+   * `inside` picks. An editor whose file is elsewhere but whose document's
+   * root is picked is only inspected: its input is never touched, and any
+   * not yet in source is reported under the root. Returns the editors whose
+   * input is not in source, each named by the picked file.
    */
-  finishWhere(
-    select: (target: MarkdownPersistenceTarget) => boolean,
-  ): ReadonlyArray<{ readonly target: MarkdownPersistenceTarget; readonly pending: boolean }> {
+  commitWhere(inside: (target: MarkdownPersistenceTarget) => boolean): ReadonlyArray<{
+    readonly target: MarkdownPersistenceTarget;
+    readonly state: Exclude<LatexInputState, "clean">;
+  }> {
     return [...this.owners].flatMap((owner) => {
       const root = { ...owner.target, relativePath: owner.root };
-      const picked = select(owner.target) ? owner.target : select(root) ? root : null;
-      if (picked === null || owner.finish()) return [];
-      return [{ target: picked, pending: owner.pending() }];
+      const own = inside(owner.target);
+      if (!own && !inside(root)) return [];
+      const state = own ? owner.commit() : owner.inspect();
+      return state === "clean" ? [] : [{ target: own ? owner.target : root, state }];
+    });
+  }
+
+  /** The same report as `commitWhere`, changing nothing. */
+  inspectWhere(inside: (target: MarkdownPersistenceTarget) => boolean): ReadonlyArray<{
+    readonly target: MarkdownPersistenceTarget;
+    readonly state: Exclude<LatexInputState, "clean">;
+  }> {
+    return [...this.owners].flatMap((owner) => {
+      const root = { ...owner.target, relativePath: owner.root };
+      const own = inside(owner.target);
+      if (!own && !inside(root)) return [];
+      const state = owner.inspect();
+      return state === "clean" ? [] : [{ target: own ? owner.target : root, state }];
     });
   }
 }

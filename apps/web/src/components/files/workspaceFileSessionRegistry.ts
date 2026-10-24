@@ -327,6 +327,31 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
     );
   }
 
+  /** The file of every session that has one. */
+  sessionTargets(): ReadonlyArray<MarkdownPersistenceTarget> {
+    return [...this.entries.values()].flatMap((entry) =>
+      entry.target === undefined ? [] : [entry.target],
+    );
+  }
+
+  /**
+   * The sessions `select` picks whose text is not all saved, read at once:
+   * edits not yet confirmed, a write in flight, a pending rename, or a save
+   * problem awaiting review.
+   */
+  unsavedWhere(select: (target: MarkdownPersistenceTarget) => boolean): ReadonlyArray<{
+    readonly target: MarkdownPersistenceTarget;
+    readonly problem: WorkspaceFileSessionProblem | null;
+  }> {
+    return [...this.entries.values()].flatMap((entry) => {
+      if (entry.target === undefined || !select(entry.target)) return [];
+      const coordinator = entry.coordinator;
+      const blocked = coordinator.requiresRecovery || coordinator.getRenameIntent() !== null;
+      if (!blocked && !coordinator.hasPendingChanges) return [];
+      return [{ target: entry.target, problem: blocked ? this.problemOf(entry) : null }];
+    });
+  }
+
   /** Why a session's flush left its text unsaved, from what the session last saw. */
   private problemOf(entry: SessionEntry<A, E>): WorkspaceFileSessionProblem {
     const attention = entry.coordinator.publicationAttention;
