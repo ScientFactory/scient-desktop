@@ -157,7 +157,7 @@ const ScientOverleafStatusTool = Tool.make("scient_overleaf_status", {
 
 const ScientOverleafPreviewTool = Tool.make("scient_overleaf_preview", {
   description:
-    "Show what a sync of one link would bring in from Overleaf and send to it, with any conflicts, changing nothing on Overleaf (like git status and git diff before a push). It fetches from Overleaf. If an earlier sync was interrupted, it finishes that first, so it saves the folder's open editors before anything else, and stops if one cannot be saved. Pass choices to see the result of settling conflicts, and files to see a per-file decision. Sync with scient_overleaf_sync.",
+    "Show what a sync of one link would bring in from Overleaf and send to it, with any conflicts, changing nothing on Overleaf (like git status and git diff before a push). It fetches from Overleaf. If an earlier sync was interrupted, it settles that first (which may write the folder), so it saves the folder's open editors before anything else, and stops if one cannot be saved. Pass choices to see the result of settling conflicts, and files to see a per-file decision. Sync with scient_overleaf_sync.",
   parameters: Schema.Struct({
     connectionId: ConnectionId,
     choices: Schema.optional(Choices),
@@ -205,7 +205,7 @@ const ScientOverleafConnectTool = Tool.make("scient_overleaf_connect", {
 
 const ScientOverleafSyncTool = Tool.make("scient_overleaf_sync", {
   description:
-    "Sync one linked folder with Overleaf: save the folder's open editors, bring Overleaf's changes in, then send the folder's changes (like git pull then git push). New files, deletions, renames and older versions are all synced, then reported; new files that are build output, hidden or Scient's own are skipped unless sent with files.send, and files.keepOnlyHere keeps a new file only on this computer. Only a conflict stops it: then nothing was applied, and the result lists each conflict's key and allowed choices; call again with choices and reviewedRemote from that result. If Overleaf changed since, the choices don't answer the new review and the result asks again. For choice markers, edit each marked file to merge the two versions, remove every conflict mark, then sync again; a file with marks is not sent. If the thread works in another worktree, this syncs the linked copy and says so. Read `lines` and act on them.",
+    "Sync one linked folder with Overleaf: save the folder's open editors, bring Overleaf's changes in, then send the folder's changes (like git pull then git push). New files, deletions, renames and older versions are all synced, then reported; new files that are build output, hidden or Scient's own are skipped unless sent with files.send, and files.keepOnlyHere keeps a new file only on this computer. Only a conflict stops it: none of that review's changes are applied (an earlier attempt of the same sync may already have brought Overleaf's changes in, and the result says when it might have), and the result lists each conflict's key and allowed choices; call again with choices and reviewedRemote from that result. If Overleaf changed since, the choices don't answer the new review and the result asks again. For choice markers, edit each marked file to merge the two versions, remove every conflict mark, then sync again; a file with marks is not sent. If the thread works in another worktree, this syncs the linked copy and says so. Read `lines` and act on them.",
   parameters: Schema.Struct({
     connectionId: ConnectionId,
     choices: Schema.optional(Choices),
@@ -230,7 +230,7 @@ const ScientOverleafSyncTool = Tool.make("scient_overleaf_sync", {
 
 const ScientOverleafKeptCopiesTool = Tool.make("scient_overleaf_kept_copies", {
   description:
-    "List the copies a sync kept of files it replaced, or restore one. Without restore: each copy's path, when it was kept, and its revisions. With restore: save the folder's open editors, then put that copy back in the folder; the file it replaces is kept as a copy in turn. Pass applyId, kept, keptRevision and currentRevision exactly as the listing gave them. The restored file goes to Overleaf at the next sync.",
+    "List the copies a sync kept of files it replaced, or restore one. Without restore: each copy's path, when it was kept, and its revisions. With restore: save the folder's open editors, then put that copy back in the folder; the file it replaces is kept as a copy in turn. Pass applyId, kept, keptRevision and currentRevision exactly as the listing gave them. A restored file is a local change that the next sync sends like any other.",
   parameters: Schema.Struct({
     connectionId: ConnectionId,
     restore: Schema.optional(
@@ -274,7 +274,7 @@ const ScientOverleafKeptCopiesTool = Tool.make("scient_overleaf_kept_copies", {
 
 const ScientOverleafManageTool = Tool.make("scient_overleaf_manage", {
   description:
-    "Manage one link. disconnect unlinks the folder from Overleaf; nothing is deleted on either side, and linking the same folder to the same project again keeps its history. relink records the link's folder (`folder`, project-relative) in this thread's copy of the project, after the folder moved or status says relink. recover saves the folder's open editors, then finishes an interrupted sync and checks Overleaf for earlier sends that got no answer. cancel asks this link's running sync to stop before its next step; a step already applying or sending finishes.",
+    "Manage one link. disconnect unlinks the folder from Overleaf; nothing is deleted on either side, and linking the same folder to the same project again keeps its history. relink records the link's folder (`folder`, project-relative) in this thread's copy of the project, after the folder moved or status says relink. recover saves the folder's open editors, then settles an interrupted sync (the result says whether its changes reached the folder) and checks Overleaf for earlier sends that got no answer. cancel asks this link's running sync to stop before its next step; a step already applying or sending finishes.",
   parameters: Schema.Struct({
     connectionId: ConnectionId,
     action: Schema.Literals(["disconnect", "relink", "recover", "cancel"]),
@@ -284,7 +284,11 @@ const ScientOverleafManageTool = Tool.make("scient_overleaf_manage", {
     lines: Lines,
     result: Schema.Union([
       ScientOverleafManageResult,
-      ScientOverleafRecoverResult,
+      Schema.Struct({
+        ...ScientOverleafRecoverResult.fields,
+        /** How the interrupted apply ended; null when there was none. */
+        outcome: Schema.NullOr(Schema.Literals(["complete", "replan", "attention"])),
+      }),
       ScientOverleafCancelResult,
     ]),
   }),

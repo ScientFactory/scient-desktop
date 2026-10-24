@@ -383,7 +383,7 @@ describe("Overleaf tool handlers", () => {
       );
       expect(cancelled.lines[0]).toContain("Asked this link's running sync to stop");
       expect(recovered.lines).toEqual([
-        "No interrupted sync to finish.",
+        "No interrupted sync to settle.",
         "Earlier sends #3 arrived on Overleaf.",
         "Sends #4 still have no answer; Scient never sends them again.",
       ]);
@@ -434,7 +434,7 @@ describe("Overleaf tool handlers", () => {
         reviewedRemote: "b".repeat(40),
       }).pipe(provide(overleaf));
       expect(same.lines[0]).toBe(
-        "Stopped at a conflict before applying: none of this review's changes were applied or sent.",
+        "Stopped at a conflict before applying this review: none of its changes were applied or sent.",
       );
       // The next call needs the review's Overleaf tree with its choices.
       expect(same.lines[1]).toContain(`reviewedRemote ${"b".repeat(40)}`);
@@ -892,6 +892,103 @@ describe("Overleaf tool handlers", () => {
         `1 conflict to settle. Call again with one choice per key and reviewedRemote ${"b".repeat(40)}:`,
       );
       expect(previewed.lines).toContain("- key k: main.tex; allowed: mine, theirs, markers");
+    }),
+  );
+
+  it.effect("a stop after a possible earlier attempt describes only what stopped", () =>
+    Effect.gen(function* () {
+      const linesFor = (outcome: unknown) =>
+        overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+          provide(fakeOverleaf({ sync: () => Effect.succeed(outcome) as never })),
+          Effect.map((result) => result.lines),
+        );
+      const outcomes = [
+        {
+          _tag: "refused",
+          refusal: { reason: "remote-forbidden", path: "lib", kind: "repository" },
+        },
+        { _tag: "unsettled", reason: "folder-kept-changing" },
+        { _tag: "cancelled", stage: "before-apply" },
+      ];
+      for (const outcome of outcomes) {
+        const lines = yield* linesFor(outcome);
+        // The service doesn't say whether an earlier attempt applied changes: never "nothing".
+        expect(
+          lines.some((line) => /nothing (changed|more|was applied)/iu.test(line)),
+          outcome._tag,
+        ).toBe(false);
+        expect(lines).toContain(
+          "If Overleaf changed while this sync was sending, an earlier attempt may already have brought its changes into the folder; scient_overleaf_status shows the folder now.",
+        );
+      }
+      expect((yield* linesFor(outcomes[0]))[0]).toBe(
+        "This sync stopped: Overleaf has content Scient will not write (a link, Git LFS pointer, repository or reserved name) (lib).",
+      );
+      // A preview's refusal is about a sync that hasn't run.
+      const previewed = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
+        provide(
+          fakeOverleaf({
+            preview: () =>
+              Effect.succeed({ _tag: "refused", refusal: { reason: "walk-limit" } }) as never,
+          }),
+        ),
+      );
+      expect(previewed.lines[0]).toBe(
+        "A sync can't run now: the folder has more than 5,000 entries. Choose a narrower folder.",
+      );
+    }),
+  );
+
+  it.effect("recovery says what its own apply established", () =>
+    Effect.gen(function* () {
+      const recoverWith = (recovered: unknown) =>
+        overleafManageForInvocation({ connectionId: "c-1", action: "recover" }).pipe(
+          provide(fakeOverleaf({ recover: () => Effect.succeed(recovered) as never })),
+        );
+      const adopted = (outcome: string, interrupted: ReadonlyArray<unknown> = []) => ({
+        _tag: "recovered",
+        adopted: { applyId: "a", outcome, interrupted, markerPaths: [], baseGeneration: 1 },
+        attempts: { accepted: [], unresolved: [] },
+      });
+      const complete = yield* recoverWith(adopted("complete"));
+      expect(complete.lines).toEqual([
+        "Finished an interrupted sync: what it was applying is now in the folder.",
+      ]);
+      expect(complete.result).toMatchObject({ recovered: true, outcome: "complete" });
+      const replanned = yield* recoverWith(adopted("replan"));
+      expect(replanned.lines[0]).toBe(
+        "Settled an interrupted sync without writing: a file here had changed, so what it was bringing in is not in the folder. Sync again to bring it in.",
+      );
+      expect(replanned.result).toMatchObject({ recovered: true, outcome: "replan" });
+      const attention = yield* recoverWith(adopted("attention", [["main.tex"]]));
+      expect(attention.lines[0]).toContain(
+        "Settled an interrupted sync, but part of the folder needs attention",
+      );
+      expect(attention.lines[0]).toContain("applying stopped partway in 1 file group");
+      for (const result of [replanned, attention])
+        expect(result.lines.some((line) => line.startsWith("Finished"))).toBe(false);
+      const none = yield* recoverWith({ _tag: "none", attempts: null });
+      expect(none.lines).toEqual([
+        "No interrupted sync to settle.",
+        "Overleaf could not be reached to check earlier sends.",
+      ]);
+      expect(none.result).toMatchObject({ recovered: false, outcome: null });
+
+      // A preview that settled an interrupted sync first says it may have written the folder.
+      let prepared = 0;
+      const previewed = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
+        provide(
+          fakeOverleaf({
+            preview: () =>
+              Effect.sync(() =>
+                ++prepared === 1
+                  ? { _tag: "recovered", recovery: { outcome: "replan" } }
+                  : { _tag: "refused", refusal: { reason: "walk-limit" } },
+              ) as never,
+          }),
+        ),
+      );
+      expect(previewed.lines[0]).toContain("An interrupted earlier sync was settled first");
     }),
   );
 });

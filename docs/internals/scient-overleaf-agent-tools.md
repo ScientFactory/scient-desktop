@@ -40,15 +40,15 @@ earlier receipt instead of running again; a retried tool call is a new request.
 
 ## Tools
 
-| Tool                          | Input                                                                             | Result                                                                                                                                                                                                                                                                    |
-| ----------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scient_overleaf_status`      | `connectionId?`                                                                   | `tokenSaved`; the project's active `connections` (with `linkedHere`); a status per link, offline (`ScientOverleafStatus`), or the error that kept one from being read.                                                                                                    |
-| `scient_overleaf_preview`     | `connectionId`, `choices?`, `files?`                                              | `link`, `preview`: the review (incoming, outgoing, conflicts with keys and allowed choices, `remoteTree`, new files with `selected` and `skippedBecause`, files kept only here, warnings, marked files), a refusal, or `recovered`. Fetches; changes nothing on Overleaf. |
-| `scient_overleaf_connect`     | `project` (link or ID), `mode` (`new-folder` or `link-folder`), `folder`          | `result` (`done` with the connection, or `refused` with a reason), `firstSync` (a preview of the first sync), `suggestNewFolder`.                                                                                                                                         |
-| `scient_overleaf_sync`        | `connectionId`, `choices?`, `reviewedRemote?`, `files?`                           | `link`, `result` (`synced`, `needs-decision`, `refused`, `duplicate`, `unsettled`, `cancelled`, as the route returns it).                                                                                                                                                 |
-| `scient_overleaf_kept_copies` | `connectionId`, `restore?` (`applyId`, `kept`, `keptRevision`, `currentRevision`) | `link`, `copies` (after any restore), `restored` (`restored`, `not-restored`, `needs-attention`, `stale`, `unknown-copy`, `duplicate`, or null).                                                                                                                          |
-| `scient_overleaf_manage`      | `connectionId`, `action` (`disconnect`, `relink`, `recover`, `cancel`), `folder?` | `result`: the manage result; for `recover`, whether an apply was finished and which earlier sends were found accepted or are still unresolved; for `cancel`, `requested` or `nothing-running`.                                                                            |
-| `scient_overleaf_token`       | `action` (`status`, `save`, `remove`), `secretRef?`                               | `saved`.                                                                                                                                                                                                                                                                  |
+| Tool                          | Input                                                                             | Result                                                                                                                                                                                                                                                                     |
+| ----------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scient_overleaf_status`      | `connectionId?`                                                                   | `tokenSaved`; the project's active `connections` (with `linkedHere`); a status per link, offline (`ScientOverleafStatus`), or the error that kept one from being read.                                                                                                     |
+| `scient_overleaf_preview`     | `connectionId`, `choices?`, `files?`                                              | `link`, `preview`: the review (incoming, outgoing, conflicts with keys and allowed choices, `remoteTree`, new files with `selected` and `skippedBecause`, files kept only here, warnings, marked files), a refusal, or `recovered`. Fetches; changes nothing on Overleaf.  |
+| `scient_overleaf_connect`     | `project` (link or ID), `mode` (`new-folder` or `link-folder`), `folder`          | `result` (`done` with the connection, or `refused` with a reason), `firstSync` (a preview of the first sync), `suggestNewFolder`.                                                                                                                                          |
+| `scient_overleaf_sync`        | `connectionId`, `choices?`, `reviewedRemote?`, `files?`                           | `link`, `result` (`synced`, `needs-decision`, `refused`, `duplicate`, `unsettled`, `cancelled`, as the route returns it).                                                                                                                                                  |
+| `scient_overleaf_kept_copies` | `connectionId`, `restore?` (`applyId`, `kept`, `keptRevision`, `currentRevision`) | `link`, `copies` (after any restore), `restored` (`restored`, `not-restored`, `needs-attention`, `stale`, `unknown-copy`, `duplicate`, or null).                                                                                                                           |
+| `scient_overleaf_manage`      | `connectionId`, `action` (`disconnect`, `relink`, `recover`, `cancel`), `folder?` | `result`: the manage result; for `recover`, whether there was an interrupted apply and how it ended (`outcome`: `complete`, `replan` or `attention`), and which earlier sends were found accepted or are still unresolved; for `cancel`, `requested` or `nothing-running`. |
+| `scient_overleaf_token`       | `action` (`status`, `save`, `remove`), `secretRef?`                               | `saved`.                                                                                                                                                                                                                                                                   |
 
 - **Choices** are `{ key, choice }` with `choice` one of `mine`, `theirs`,
   `markers`, keyed by a conflict's key from the last preview or sync.
@@ -86,9 +86,17 @@ earlier receipt instead of running again; a retried tool call is a new request.
   copy that changed).
 - **Retries.** When a send found Overleaf moved, the sync runs once more; the
   result says an earlier attempt already brought Overleaf's changes in, and its
-  lists describe the last attempt. A sync stopped at a conflict says only that
-  this review's changes were not applied: the service's `needs-decision` result
-  does not say whether an earlier attempt in the same sync applied changes.
+  lists describe the last attempt. The service's other outcomes (`needs-decision`,
+  `refused`, `unsettled`, `cancelled`) don't say whether an earlier attempt of the
+  same sync applied changes, so their lines describe only the review or step that
+  stopped ("This sync stopped: …", "none of this review's changes were applied")
+  and add that an earlier attempt may already have brought Overleaf's changes in.
+  A preview's refusal says a sync can't run now, nothing more.
+- **Recovery wording.** Recover (and a preview that settles an interrupted sync
+  first) says what the recovery's own apply established: `complete` puts what it
+  was applying in the folder, `replan` wrote nothing (sync again), `attention`
+  needs a look. A preview that recovered first says so, since that may have
+  written the folder.
 - **Restore wording.** `restored` only when the restore's apply completed;
   `not-restored` when the file changed meanwhile and nothing was written, and
   `needs-attention` when it may have stopped partway.

@@ -29,6 +29,7 @@ import {
   connectionLine,
   linkedElsewhereLine,
   previewLines,
+  recoveryLines,
   statusLines,
   syncLines,
 } from "./resultLines.ts";
@@ -463,8 +464,8 @@ export const overleafPreviewForInvocation = Effect.fn("ScientOverleafToolkit.pre
   }) {
     const overleaf = yield* OverleafSync;
     const caller = yield* callerOf;
-    // Preparing may finish an interrupted sync, which writes the folder: editors first.
-    const { link, value: result } = yield* afterSavingEditors(
+    // Preparing may settle an interrupted sync, which writes the folder: editors first.
+    const { link, value: prepared } = yield* afterSavingEditors(
       overleaf,
       caller,
       input.connectionId,
@@ -478,13 +479,28 @@ export const overleafPreviewForInvocation = Effect.fn("ScientOverleafToolkit.pre
           savedFolder,
         };
         return Effect.flatMap(overleaf.preview(request), (first) =>
-          // An interrupted sync was finished first; the preview is of what is there now.
-          first._tag === "recovered" ? overleaf.preview(request) : Effect.succeed(first),
+          // An interrupted sync was settled first; the preview is of what is there now.
+          first._tag === "recovered"
+            ? Effect.map(overleaf.preview(request), (result) => ({ result, settledFirst: true }))
+            : Effect.succeed({ result: first, settledFirst: false }),
         );
       },
     );
-    const preview = previewView(result);
-    return { lines: withLinkLine(link, previewLines(preview)), link, preview };
+    const preview = previewView(prepared.result);
+    const lines = previewLines(preview);
+    return {
+      lines: withLinkLine(
+        link,
+        prepared.settledFirst && preview._tag !== "recovered"
+          ? [
+              "An interrupted earlier sync was settled first, which may have written the folder; this preview is of the folder as it is now.",
+              ...lines,
+            ]
+          : lines,
+      ),
+      link,
+      preview,
+    };
   },
 );
 
@@ -517,7 +533,7 @@ export const overleafConnectForInvocation = Effect.fn("ScientOverleafToolkit.con
       connectionLine(connected.connection),
       connected.reconnected
         ? "Reconnected: this folder's earlier link to the same project was restored with its history."
-        : "Connected. No file was changed and nothing was sent yet.",
+        : "Connected. Connecting wrote no file into the folder and sent nothing.",
     ];
     // What the first sync would do. A preview that cannot run leaves the link in place.
     const firstSync = yield* afterSavingEditors(
@@ -748,7 +764,7 @@ export const overleafManageForInvocation = Effect.fn("ScientOverleafToolkit.mana
         };
       }
       case "recover": {
-        // Recovery finishes an interrupted apply, which writes the folder: editors first.
+        // Recovery settles an interrupted apply, which may write the folder: editors first.
         const { value: recovered } = yield* afterSavingEditors(
           overleaf,
           caller,
@@ -756,16 +772,14 @@ export const overleafManageForInvocation = Effect.fn("ScientOverleafToolkit.mana
           "Nothing was recovered.",
           (savedFolder) => overleaf.recover({ caller, connectionId, savedFolder }),
         );
+        const adopted = recovered._tag === "recovered" ? recovered.adopted : null;
         const result = {
-          recovered: recovered._tag === "recovered",
+          recovered: adopted !== null,
+          outcome: adopted?.outcome ?? null,
           accepted: recovered.attempts?.accepted ?? null,
           unresolved: recovered.attempts?.unresolved ?? null,
         };
-        const lines = [
-          result.recovered
-            ? "Finished an interrupted sync in the folder."
-            : "No interrupted sync to finish.",
-        ];
+        const lines = recoveryLines(adopted);
         if (result.accepted === null)
           lines.push("Overleaf could not be reached to check earlier sends.");
         else {
@@ -786,7 +800,7 @@ export const overleafManageForInvocation = Effect.fn("ScientOverleafToolkit.mana
           lines: [
             result._tag === "requested"
               ? "Asked this link's running sync to stop before its next step. A step already applying or sending finishes, and its result stands."
-              : "No sync is running for this link.",
+              : "No sync of this link is running in Scient now.",
           ],
           result,
         };

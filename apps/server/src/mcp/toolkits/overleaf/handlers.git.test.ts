@@ -86,7 +86,7 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
         const reviewedRemote = stopped.result.review.remoteTree;
         const key = stopped.result.review.conflicts[0]!.key;
         expect(stopped.lines[0]).toBe(
-          "Stopped at a conflict before applying: none of this review's changes were applied or sent.",
+          "Stopped at a conflict before applying this review: none of its changes were applied or sent.",
         );
         expect(stopped.lines[1]).toContain(`reviewedRemote ${reviewedRemote}`);
         expect(

@@ -227,52 +227,64 @@ const publicationLines = (
   }
 };
 
-/** Why a review could not be built (pr-c-design.md section 4.4). */
-const refusalLine = (refusal: ScientOverleafRefusal): string => {
+/**
+ * Why a review could not be built (pr-c-design.md section 4.4): a clause about that
+ * review only. The caller says whose review it was; nothing here describes what an
+ * earlier attempt of the same sync did.
+ */
+const refusalReason = (refusal: ScientOverleafRefusal): string => {
   const at = refusal.path === undefined ? "" : ` (${refusal.path})`;
   switch (refusal.reason) {
     case "remote-file-limit":
     case "candidate-file-limit":
-      return "Nothing changed: more than 2,000 files to sync. Choose a narrower folder.";
+      return "more than 2,000 files to sync. Choose a narrower folder.";
     case "remote-too-large":
     case "candidate-too-large":
-      return "Nothing changed: more than 250 MiB to sync. Choose a narrower folder.";
+      return "more than 250 MiB to sync. Choose a narrower folder.";
     case "remote-file-too-large":
     case "candidate-file-too-large":
-      return `Nothing changed: a file is over 50,000,000 bytes, which Overleaf refuses${at}.`;
+      return `a file is over 50,000,000 bytes, which Overleaf refuses${at}.`;
     case "remote-forbidden":
-      return `Nothing changed: Overleaf has content Scient will not write (a link, Git LFS pointer, repository or reserved name)${at}.`;
+      return `Overleaf has content Scient will not write (a link, Git LFS pointer, repository or reserved name)${at}.`;
     case "path-alias":
     case "alias-rename":
-      return "Nothing changed: two names differ only by letter case or Unicode spelling, which this Mac or Overleaf cannot hold apart. Rename one of them.";
+      return "two names differ only by letter case or Unicode spelling, which this Mac or Overleaf cannot hold apart. Rename one of them.";
     case "unreviewed-path":
     case "remote-collides-with-excluded":
-      return `Nothing changed: Overleaf has a file where this folder has something that is not synced${at}. Move or rename it here or on Overleaf.`;
+      return `Overleaf has a file where this folder has something that is not synced${at}. Move or rename it here or on Overleaf.`;
     case "local-only-limit":
-      return "Nothing changed: too many files are kept only on this computer. Choose a narrower folder.";
+      return "too many files are kept only on this computer. Choose a narrower folder.";
     case "folder-unavailable":
-      return "Nothing changed: the linked folder is missing or is not a folder. Relink it if it moved.";
+      return "the linked folder is missing or is not a folder. Relink it if it moved.";
     case "walk-limit":
-      return "Nothing changed: the folder has more than 5,000 entries. Choose a narrower folder.";
+      return "the folder has more than 5,000 entries. Choose a narrower folder.";
     case "managed-limit":
-      return "Nothing changed: more than 2,000 files to sync. Choose a narrower folder.";
+      return "more than 2,000 files to sync. Choose a narrower folder.";
     case "total-too-large":
-      return "Nothing changed: more than 250 MiB to sync. Choose a narrower folder.";
+      return "more than 250 MiB to sync. Choose a narrower folder.";
     case "file-too-large":
-      return `Nothing changed: a synced file is over 50,000,000 bytes${at}.`;
+      return `a synced file is over 50,000,000 bytes${at}.`;
     case "unstable":
-      return `Nothing changed: a file changed while it was read${at}. Sync again.`;
+      return `a file changed while it was read${at}. Sync again.`;
     case "unreadable":
     case "not-a-file":
-      return `Nothing changed: a synced file could not be read as a file${at}.`;
+      return `a synced file could not be read as a file${at}.`;
     case "lfs-pointer":
-      return `Nothing changed: a Git LFS pointer cannot be synced${at}.`;
+      return `a Git LFS pointer cannot be synced${at}.`;
     case "alias":
-      return `Nothing changed: a synced file is on disk under a name that differs only by letter case or Unicode spelling${at}. Rename it back.`;
+      return `a synced file is on disk under a name that differs only by letter case or Unicode spelling${at}. Rename it back.`;
     default:
-      return `Nothing changed: the sync was refused (${refusal.reason})${at}.`;
+      return `the review was refused (${refusal.reason})${at}.`;
   }
 };
+
+/**
+ * Any outcome but `synced` can follow an earlier attempt of the same sync that
+ * applied Overleaf's changes and then found Overleaf moved while sending; the
+ * service's other outcomes don't say whether it did.
+ */
+const EARLIER_ATTEMPT =
+  "If Overleaf changed while this sync was sending, an earlier attempt may already have brought its changes into the folder; scient_overleaf_status shows the folder now.";
 
 const sendTense = (publication: ScientOverleafPublication): SendTense =>
   publication._tag === "accepted" ? "sent" : publication._tag === "unknown" ? "maybe" : "unsent";
@@ -359,25 +371,28 @@ export const syncLines = (result: ScientOverleafSyncResult): string[] => {
       // The service does not say whether an earlier attempt in this sync applied
       // changes before Overleaf moved, so only this review is said to be unapplied.
       return [
-        "Stopped at a conflict before applying: none of this review's changes were applied or sent.",
+        "Stopped at a conflict before applying this review: none of its changes were applied or sent.",
         ...conflictLines(result.review),
+        EARLIER_ATTEMPT,
         ...activityLines(result.activity),
       ];
     case "refused":
-      return [refusalLine(result.refusal)];
+      return [`This sync stopped: ${refusalReason(result.refusal)}`, EARLIER_ATTEMPT];
     case "duplicate":
       return ["This request already ran; nothing ran again."];
     case "unsettled":
       return [
         result.reason === "folder-kept-changing"
-          ? "The folder kept changing while the sync read it, so nothing more was done. Sync again when the edits settle."
-          : "The sync could not settle on one review, so nothing more was done. Sync again.",
+          ? "The folder kept changing while the sync read it, so it stopped there. Sync again when the edits settle."
+          : "The sync could not settle on one review, so it stopped there. Sync again.",
+        EARLIER_ATTEMPT,
       ];
     case "cancelled":
       return [
         result.stage === "before-prepare"
-          ? "The sync stopped on request before reading the folder again; nothing more was applied or sent."
-          : "The sync stopped on request before applying; nothing more was applied or sent.",
+          ? "The sync stopped on request before reading the folder again."
+          : "The sync stopped on request before applying the review it had built.",
+        EARLIER_ATTEMPT,
       ];
   }
 };
@@ -398,10 +413,46 @@ export const previewLines = (preview: ScientOverleafPreviewResult): string[] => 
     case "review":
       return reviewLines(preview.review);
     case "refused":
-      return [refusalLine(preview.refusal)];
+      return [`A sync can't run now: ${refusalReason(preview.refusal)}`];
     case "recovered":
       return [
-        "An interrupted earlier sync was finished. Preview again to see what a sync would do.",
+        "An interrupted earlier sync was settled first. Preview again to see what a sync would do; scient_overleaf_status shows the folder now.",
+      ];
+  }
+};
+
+/**
+ * How a recovery ended, from its own apply outcome: only `complete` puts what the
+ * interrupted sync was applying into the folder.
+ */
+export const recoveryLines = (
+  adopted: {
+    readonly outcome: "complete" | "replan" | "attention";
+    readonly interrupted: ReadonlyArray<unknown>;
+    readonly markerPaths: ReadonlyArray<string>;
+  } | null,
+): string[] => {
+  if (adopted === null) return ["No interrupted sync to settle."];
+  switch (adopted.outcome) {
+    case "complete":
+      return ["Finished an interrupted sync: what it was applying is now in the folder."];
+    case "replan":
+      return [
+        "Settled an interrupted sync without writing: a file here had changed, so what it was bringing in is not in the folder. Sync again to bring it in.",
+      ];
+    case "attention":
+      return [
+        `Settled an interrupted sync, but part of the folder needs attention: ${[
+          ...(adopted.interrupted.length > 0
+            ? [
+                `applying stopped partway in ${plural(adopted.interrupted.length, "file group")}, which the next sync shows as conflicts to settle`,
+              ]
+            : []),
+          ...(adopted.markerPaths.length > 0 ? ["files have conflict marks"] : []),
+          ...(adopted.interrupted.length === 0 && adopted.markerPaths.length === 0
+            ? ["a file or a kept copy changed while it was written"]
+            : []),
+        ].join("; ")}. Check scient_overleaf_status, then sync again.`,
       ];
   }
 };
@@ -414,10 +465,10 @@ export const connectionLine = (
   `${connection.folder === "" ? "The project's top folder" : `${connection.folder}/`} is linked to Overleaf project ${connection.projectId} (connectionId ${connection.connectionId}${connection.state === "archived" ? ", disconnected" : ""}; ${plural(connection.completedSyncCount, "completed sync")})${connection.linkedHere === false ? `, in the copy at ${connection.checkoutRoot}` : ""}.`;
 
 const REASON_TEXT: Record<string, string> = {
-  "apply-pending": "an interrupted sync will be finished by the next sync or a recover",
+  "apply-pending": "an interrupted sync is waiting; the next sync or a recover settles it",
   "interrupted-files": "files an interrupted sync left half done are a conflict to settle",
   "conflict-marks": "files have conflict marks to merge",
-  staging: "folders an interrupted change left in place; the next sync finishes it",
+  staging: "folders an interrupted change left in place; the next sync settles them",
   "folder-changed":
     "the folder moved, its disk is away, or the project's link to this checkout changed; relink it",
   "unresolved-sends": "earlier sends have no answer yet; a sync or recover checks them",
