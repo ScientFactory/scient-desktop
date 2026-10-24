@@ -208,22 +208,26 @@ export type MutationPoint =
 export interface RetainedMutationHooks {
   readonly at?: (point: MutationPoint) => Promise<void>;
 }
+/** Why a request was refused before anything changed, where a caller can say more. */
+export type RetainedRefusal = "kept-folder-not-empty";
 export class RetainedMutationError extends Error {
   readonly reason: "intent" | "unavailable" | "target" | "recovery";
   readonly recoveryId: string;
   readonly retainedPaths: ReadonlyArray<string>;
+  readonly refusal: RetainedRefusal | undefined;
   constructor(
     reason: "intent" | "unavailable" | "target" | "recovery",
     message: string,
     recoveryId: string,
     retainedPaths: ReadonlyArray<string> = [],
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly refusal?: RetainedRefusal },
   ) {
     super(message, options);
     this.name = "RetainedMutationError";
     this.reason = reason;
     this.recoveryId = recoveryId;
     this.retainedPaths = retainedPaths;
+    this.refusal = options?.refusal;
   }
 }
 export const bytesRevision = (bytes: Uint8Array) =>
