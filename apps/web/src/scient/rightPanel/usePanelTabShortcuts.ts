@@ -3,11 +3,11 @@ import type { PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import type { ChatShortcutCommands } from "~/components/chat/useChatShortcuts";
 import type { RightPanelSurface } from "~/rightPanelStore";
-import type { useActivePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
 
 import { panelFilesToggleApplies, usePanelFilesOpen } from "./PanelFilesColumn";
 import { adjacentPanelSurface, canDuplicatePanelSurface } from "./panelTabCommands";
 import { duplicatePanelSurface } from "./panelTabDuplication";
+import type { TabDepartureGuard } from "./tabHistory";
 
 /**
  * The side panel's tab shortcuts for the chat's shortcut map (a new tab, the next
@@ -23,7 +23,7 @@ export function usePanelTabShortcuts<E>(input: {
   readonly addNewTab: () => void;
   readonly canOperatePreview: boolean;
   readonly browserAvailable: boolean;
-  readonly runAfterPendingFileSave: ReturnType<typeof useActivePendingSurfaceDeparture>;
+  readonly runAfterPendingFileSave: TabDepartureGuard;
   readonly openPreview: OpenPreviewMutation<E>;
   readonly previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>;
   readonly addTerminal: () => void;
