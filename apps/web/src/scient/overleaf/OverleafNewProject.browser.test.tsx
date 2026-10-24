@@ -26,7 +26,7 @@ vi.mock("./createProjectForOverleaf", () => project);
 const openNewThread = vi.hoisted(() => vi.fn());
 vi.mock("~/hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => openNewThread }));
 
-const { OverleafNewProjectDialogHost, overleafAddProjectItem } =
+const { OverleafNewProjectDialogHost, insertOverleafAddProjectItem, overleafAddProjectItem } =
   await import("./OverleafNewProject");
 const { resetOverleafStoreForTests } = await import("./overleafStore");
 
@@ -110,6 +110,30 @@ async function chooseOverleafProject() {
 }
 
 describe("Add project ▸ Overleaf project", () => {
+  it("sits right after GitHub in the sources, or after Git URL without GitHub", () => {
+    const env = EnvironmentId.make("local");
+    const values = (sources: Array<{ readonly value: string }>) =>
+      sources.map((item) => item.value.replace(`action:add-project:${env}:`, ""));
+    const input = { environmentId: env, location: "~/", isPrimary: false };
+    const withGithub = ["new", "browse", "url", "github", "gitlab:not-ready"].map((source) => ({
+      value: `action:add-project:${env}:${source}`,
+    }));
+    insertOverleafAddProjectItem(withGithub, input);
+    expect(values(withGithub)).toEqual([
+      "new",
+      "browse",
+      "url",
+      "github",
+      "overleaf",
+      "gitlab:not-ready",
+    ]);
+    const withoutGithub = ["browse", "url", "gitlab"].map((source) => ({
+      value: `action:add-project:${env}:${source}`,
+    }));
+    insertOverleafAddProjectItem(withoutGithub, input);
+    expect(values(withoutGithub)).toEqual(["browse", "url", "overleaf", "gitlab"]);
+  });
+
   it("makes the Scient project, then brings the paper in as a subfolder and syncs it", async () => {
     reset(false);
     client.connectOverleaf.mockResolvedValue({ _tag: "done", connection: summary });

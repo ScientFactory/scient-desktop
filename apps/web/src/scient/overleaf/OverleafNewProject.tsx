@@ -52,6 +52,26 @@ export function overleafAddProjectItem(input: {
   };
 }
 
+/**
+ * Places the Overleaf project choice in the Add project sources: right after
+ * GitHub, or after Git URL when GitHub is not listed, else last.
+ */
+export function insertOverleafAddProjectItem(
+  sources: Array<{ readonly value: string }>,
+  input: Parameters<typeof overleafAddProjectItem>[0],
+): void {
+  const prefix = `action:add-project:${input.environmentId}:`;
+  const after = (source: string) =>
+    sources.findIndex(
+      (item) =>
+        item.value === `${prefix}${source}` || item.value === `${prefix}${source}:not-ready`,
+    );
+  const anchor = after("github") >= 0 ? after("github") : after("url");
+  const item = overleafAddProjectItem(input);
+  if (anchor >= 0) sources.splice(anchor + 1, 0, item);
+  else sources.push(item);
+}
+
 function isAbsolutePath(path: string): boolean {
   return path.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(path);
 }
