@@ -246,7 +246,7 @@ const ForkHistorySearchRequest = Schema.Struct({
  * free of a sort. Rows carry the original message's rowid (0 once only the
  * frozen copy is left) and merge with the index hits before ranking.
  */
-export const forkHistoryHitsQuery = (
+const forkHistoryHitsQuery = (
   sql: SqlClient.SqlClient,
   { substrings, projectId, excludedThreadIds }: typeof ForkHistorySearchRequest.Encoded,
 ) => sql`
