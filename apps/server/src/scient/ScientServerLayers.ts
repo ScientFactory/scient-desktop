@@ -48,6 +48,7 @@ import { scientThreadQueueHttpApiLayer } from "./threadQueue/http.ts";
 import { scientConversationExportHttpApiLayer } from "./conversationExport/http.ts";
 import * as ConversationExportFiles from "./conversationExport/ConversationExportFiles.ts";
 import * as ConversationExportService from "./conversationExport/ConversationExportService.ts";
+import * as EditorFlush from "./editorFlush/EditorFlush.ts";
 import * as ConversationSnapshotService from "./conversationExport/ConversationSnapshotService.ts";
 import { scientConversationImportHttpApiLayer } from "./conversationImport/http.ts";
 import * as ConversationImportStaging from "./conversationImport/ConversationImportStaging.ts";
@@ -195,6 +196,9 @@ export function makeScientRouteServices<
       Layer.provide(ComputeSessionServiceLive),
       Layer.provide(ScientificRuntimePreferencesLive),
       Layer.provide(ScientLatexServicesLive),
+      // One server-lifetime set of connected windows, shared by the WebSocket
+      // handlers that windows answer on and the tools that ask them.
+      Layer.provide(EditorFlush.layer),
     );
 
   /** Self-update that hands running threads to the next server. */

@@ -11,6 +11,7 @@ import {
 
 import { readLocalApi } from "~/localApi";
 import { registerRenameParticipant } from "~/scient/markdownEditor/persistence/renameOpenDocument";
+import { editorCompositions } from "../editorFlush/editorComposition";
 import { Button } from "~/components/ui/button";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { attachShortcutHost } from "../keyboard/host";
@@ -282,6 +283,15 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
       registerRenameParticipant(documentIdentity(props.persistence), {
         readyToMove: () => !composingRef.current && controller.view?.composing !== true,
       }),
+    [controller, props.persistence],
+  );
+  // A folder flush names this file while an input method is composing here.
+  useEffect(
+    () =>
+      editorCompositions.register(
+        () => props.persistence.target,
+        () => composingRef.current || controller.view?.composing === true,
+      ),
     [controller, props.persistence],
   );
 
