@@ -6,15 +6,17 @@
  * the folder is synced (and, for a current record, the mark dropped); a fresh
  * file layer then finds the marked record on its next settled read and
  * finishes the discard, so no hidden copy keeps the bytes or the room. A kept
- * copy that is a folder goes with everything in it, also when killed between
- * its files; one that cannot be removed stays listed without failing anything
- * else, and goes when discarded again.
+ * copy that is a folder goes only while it is empty: a discard of one with
+ * anything in it is refused before it marks anything, and a mark already on
+ * one leaves it (and whatever it links to or has mounted in it) as it is,
+ * listed, without failing anything else.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -33,6 +35,10 @@ import { makeApplierFiles } from "./WorkspaceApplier.files.testkit.ts";
 import { fixture } from "./WorkspaceApplier.testkit.ts";
 
 const canPublish = await nativePublicationHost();
+/** macOS can mount a disk image in a test. */
+const diskImages =
+  HostProcess.Platform.defaultValue() === "darwin" &&
+  NodeChildProcess.spawnSync("/usr/bin/hdiutil", ["help"]).status !== null;
 const child = NodePath.join(import.meta.dirname, "RetainedDiscard.crash-child.ts");
 const exists = (path: string) =>
   NodeFSP.lstat(path).then(
@@ -107,6 +113,70 @@ async function legacyVersion(h: Harness, helper: string) {
   return listed.versions[0]!;
 }
 
+/**
+ * The version of `main.tex` a record of `kind` keeps, made a folder (a folder
+ * that stood where the file was is kept as it stood), holding `files`.
+ */
+const folderVersion = async (
+  h: Harness,
+  helper: string,
+  kind: "current" | "legacy",
+  files: Record<string, string> = {},
+) => {
+  const kept = kind === "current" ? await savedVersion(h) : await legacyVersion(h, helper);
+  const directory = NodePath.dirname(kept.retainedPath),
+    leaf = kept.versionId.split(":")[1]!,
+    copy = NodePath.join(directory, leaf);
+  await NodeFSP.rm(copy);
+  await NodeFSP.rm(kept.retainedPath, { force: true });
+  await NodeFSP.mkdir(copy);
+  for (const [name, text] of Object.entries(files)) {
+    await NodeFSP.mkdir(NodePath.dirname(NodePath.join(copy, name)), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(copy, name), text);
+  }
+  return { versionId: kept.versionId, directory, leaf, copy };
+};
+type Kept = Awaited<ReturnType<typeof folderVersion>>;
+/** The discard mark a crashed (or older) discard left: the journal's, or a legacy tombstone. */
+const markDiscard = async (kind: "current" | "legacy", kept: Kept) => {
+  if (kind === "legacy")
+    return durableJson(NodePath.join(kept.directory, `discard-${kept.leaf}.json`), {
+      version: 1,
+      discarded: true,
+    });
+  const record = await readRetainedRecord(kept.directory);
+  if (record.version !== 2) throw new Error("A current record was expected.");
+  await durableJson(NodePath.join(kept.directory, "record.json"), {
+    ...record,
+    discarded: [...record.discarded, kept.leaf],
+    discarding: [kept.leaf],
+    generation: record.generation + 1,
+  });
+};
+/** A fresh file layer, as after a restart, and the work that must go on beside a kept folder. */
+const goesOn = async (h: Harness, helper: string) => {
+  const fresh = await h.run(
+    makeApplierFiles({ root: h.root, helper, retainedHooks: {} }).pipe(
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+  await h.run(fresh.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void));
+  await h.run(fresh.getMutationEpoch({ cwd: h.cwd }));
+  const listed = await h.run(fresh.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }));
+  await h.run(
+    fresh.writeFile({
+      cwd: h.cwd,
+      relativePath: `beside-${listed.versions.length}.tex`,
+      contents: "new\n",
+      createOnly: true,
+      mutationId: `beside-${listed.versions.length}`,
+    }),
+  );
+  expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("now\n");
+  return listed.versions.map((version) => version.versionId);
+};
+const kinds = ["current", "legacy"] as const;
+
 describe.skipIf(!canPublish)("a discard after real process death", () => {
   it.live.each(
     (["current", "legacy"] as const).flatMap((kind) =>
@@ -171,130 +241,153 @@ describe.skipIf(!canPublish)("a discard after real process death", () => {
       }),
   );
 
-  /**
-   * The version of `main.tex` a record of `kind` keeps, made a folder holding
-   * two files: a folder that stood where the file was is kept as it stood.
-   */
-  const folderVersion = async (h: Harness, helper: string, kind: "current" | "legacy") => {
-    const kept = kind === "current" ? await savedVersion(h) : await legacyVersion(h, helper);
-    const directory = NodePath.dirname(kept.retainedPath),
-      leaf = kept.versionId.split(":")[1]!,
-      copy = NodePath.join(directory, leaf);
-    await NodeFSP.rm(copy);
-    await NodeFSP.rm(kept.retainedPath, { force: true });
-    await NodeFSP.mkdir(NodePath.join(copy, "inner"), { recursive: true });
-    await NodeFSP.writeFile(NodePath.join(copy, "a.tex"), "kept a\n");
-    await NodeFSP.writeFile(NodePath.join(copy, "inner", "b.tex"), "kept b\n");
-    return { versionId: kept.versionId, directory, copy };
-  };
-  /** A fresh file layer, as after a restart, and the work that must go on beside a kept folder. */
-  const goesOn = async (h: Harness, helper: string) => {
-    const fresh = await h.run(
-      makeApplierFiles({ root: h.root, helper, retainedHooks: {} }).pipe(
-        Effect.provide(NodeServices.layer),
-      ),
-    );
-    await h.run(fresh.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void));
-    await h.run(fresh.getMutationEpoch({ cwd: h.cwd }));
-    const listed = await h.run(fresh.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }));
-    await h.run(
-      fresh.writeFile({
-        cwd: h.cwd,
-        relativePath: `beside-${listed.versions.length}.tex`,
-        contents: "new\n",
-        createOnly: true,
-        mutationId: `beside-${listed.versions.length}`,
-      }),
-    );
-    expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("now\n");
-    return { fresh, listed };
-  };
-
-  it.live.each(["current", "legacy"] as const)(
-    "discards a kept folder of a %s record, and everything after goes on",
-    (kind) =>
-      fixture(async (h) => {
-        const helper = (await filePublicationTestHelper())!;
-        const kept = await folderVersion(h, helper, kind);
-        await h.run(
-          h.files.discardFileVersion({
-            cwd: h.cwd,
-            relativePath: "main.tex",
-            versionId: kept.versionId,
-          }),
-        );
-        expect(await exists(kept.copy)).toBe(false);
-        const { listed } = await goesOn(h, helper);
-        expect(listed.versions.map((version) => version.versionId)).not.toContain(kept.versionId);
-      }),
-  );
-
-  it.live.each(["current", "legacy"] as const)(
-    "finishes the discard of a kept folder of a %s record killed between its files",
-    (kind) =>
-      fixture(async (h) => {
-        const helper = (await filePublicationTestHelper())!;
-        const kept = await folderVersion(h, helper, kind);
-        const first = NodePath.join(kept.copy, "a.tex");
-        const job: DiscardCrashJob = {
-          root: h.root,
+  it.live.each(kinds)("discards an empty kept folder of a %s record", (kind) =>
+    fixture(async (h) => {
+      const helper = (await filePublicationTestHelper())!;
+      const kept = await folderVersion(h, helper, kind);
+      await h.run(
+        h.files.discardFileVersion({
           cwd: h.cwd,
-          helper,
           relativePath: "main.tex",
           versionId: kept.versionId,
-          kill: { when: "after", path: first },
-        };
-        const jobPath = NodePath.join(h.root, "discard-crash.json");
-        await NodeFSP.writeFile(jobPath, JSON.stringify(job));
-        const run = NodeChildProcess.spawnSync(process.execPath, [child, jobPath], {
-          encoding: "utf8",
-          timeout: 60_000,
+        }),
+      );
+      expect(await exists(kept.copy)).toBe(false);
+      expect(await goesOn(h, helper)).not.toContain(kept.versionId);
+    }),
+  );
+
+  it.live.each(kinds)(
+    "refuses a kept folder of a %s record with files in it before marking anything",
+    (kind) =>
+      fixture(async (h) => {
+        const helper = (await filePublicationTestHelper())!;
+        const kept = await folderVersion(h, helper, kind, { "inner/b.tex": "kept b\n" });
+        const before = await NodeFSP.readFile(NodePath.join(kept.directory, "record.json"), "utf8");
+        const refused = await h.run(
+          Effect.flip(
+            h.files.discardFileVersion({
+              cwd: h.cwd,
+              relativePath: "main.tex",
+              versionId: kept.versionId,
+            }),
+          ),
+        );
+        expect(refused).toMatchObject({
+          _tag: "WorkspaceFileMutationUnavailableError",
+          reason: "kept-folder-not-empty",
+          publicationOutcome: "unchanged",
         });
-        expect(run.signal, run.stderr).toBe("SIGKILL");
-        expect(await exists(first)).toBe(false);
-        expect(await exists(NodePath.join(kept.copy, "inner", "b.tex"))).toBe(true);
-        const { listed } = await goesOn(h, helper);
-        expect(await exists(kept.copy)).toBe(false);
-        expect(listed.versions.map((version) => version.versionId)).not.toContain(kept.versionId);
+        expect(await NodeFSP.readFile(NodePath.join(kept.directory, "record.json"), "utf8")).toBe(
+          before,
+        );
+        expect(await exists(NodePath.join(kept.directory, `discard-${kept.leaf}.json`))).toBe(
+          false,
+        );
+        expect(await NodeFSP.readFile(NodePath.join(kept.copy, "inner", "b.tex"), "utf8")).toBe(
+          "kept b\n",
+        );
+        expect(await goesOn(h, helper)).toContain(kept.versionId);
       }),
   );
 
-  it.live.each(["current", "legacy"] as const)(
-    "a %s discard that cannot finish stays listed, fails nothing else, and finishes when asked again",
+  it.live.each(kinds)(
+    "leaves a marked kept folder of a %s record with anything in it, never reaching through it, and fails nothing else",
+    (kind) =>
+      fixture(async (h) => {
+        const helper = (await filePublicationTestHelper())!;
+        // Outside the record: a workspace folder the kept folder links to.
+        const outside = NodePath.join(h.cwd, "outside");
+        await NodeFSP.mkdir(outside);
+        await NodeFSP.writeFile(NodePath.join(outside, "valuable.tex"), "valuable\n");
+        const kept = await folderVersion(h, helper, kind, { "inner/b.tex": "kept b\n" });
+        await NodeFSP.symlink(outside, NodePath.join(kept.copy, "link"));
+        await markDiscard(kind, kept);
+        expect(await goesOn(h, helper)).toContain(kept.versionId);
+        expect(await NodeFSP.readFile(NodePath.join(outside, "valuable.tex"), "utf8")).toBe(
+          "valuable\n",
+        );
+        expect(await NodeFSP.readFile(NodePath.join(kept.copy, "inner", "b.tex"), "utf8")).toBe(
+          "kept b\n",
+        );
+        expect(await exists(NodePath.join(kept.copy, "link"))).toBe(true);
+        // Emptied, the next settlement finishes the discard.
+        await NodeFSP.rm(NodePath.join(kept.copy, "inner"), { recursive: true });
+        await NodeFSP.unlink(NodePath.join(kept.copy, "link"));
+        expect(await goesOn(h, helper)).not.toContain(kept.versionId);
+        expect(await exists(kept.copy)).toBe(false);
+        expect(await NodeFSP.readFile(NodePath.join(outside, "valuable.tex"), "utf8")).toBe(
+          "valuable\n",
+        );
+      }),
+  );
+
+  it.live.each(kinds)(
+    "removes a marked kept copy of a %s record that became a link as a name only",
+    (kind) =>
+      fixture(async (h) => {
+        const helper = (await filePublicationTestHelper())!;
+        const outside = NodePath.join(h.cwd, "outside");
+        await NodeFSP.mkdir(outside);
+        await NodeFSP.writeFile(NodePath.join(outside, "valuable.tex"), "valuable\n");
+        const kept = await folderVersion(h, helper, kind);
+        await markDiscard(kind, kept);
+        // Replaced by a link to a workspace folder after it was marked.
+        await NodeFSP.rmdir(kept.copy);
+        await NodeFSP.symlink(outside, kept.copy);
+        expect(await goesOn(h, helper)).not.toContain(kept.versionId);
+        expect(await exists(kept.copy)).toBe(false);
+        expect(await NodeFSP.readFile(NodePath.join(outside, "valuable.tex"), "utf8")).toBe(
+          "valuable\n",
+        );
+      }),
+  );
+});
+
+describe.skipIf(!canPublish || !diskImages)("a discard beside a mounted volume", () => {
+  it.live.each(kinds)(
+    "never removes anything on a volume mounted in a marked kept folder of a %s record",
     (kind) =>
       fixture(async (h) => {
         const helper = (await filePublicationTestHelper())!;
         const kept = await folderVersion(h, helper, kind);
-        // Nothing can be removed from `inner` while it is closed to writing.
-        const inner = NodePath.join(kept.copy, "inner");
-        await NodeFSP.chmod(inner, 0o500);
+        const image = NodePath.join(h.root, "volume.dmg"),
+          volume = NodePath.join(kept.copy, "volume");
+        NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
+          "create",
+          "-quiet",
+          "-size",
+          "8m",
+          "-fs",
+          "HFS+",
+          "-volname",
+          "SCTKEPT",
+          image,
+        ]);
+        await NodeFSP.mkdir(volume);
+        NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
+          "attach",
+          "-quiet",
+          "-nobrowse",
+          "-mountpoint",
+          volume,
+          image,
+        ]);
         try {
-          const refused = await h.run(
-            Effect.result(
-              h.files.discardFileVersion({
-                cwd: h.cwd,
-                relativePath: "main.tex",
-                versionId: kept.versionId,
-              }),
-            ),
+          await NodeFSP.writeFile(NodePath.join(volume, "external.tex"), "external\n");
+          await markDiscard(kind, kept);
+          expect(await goesOn(h, helper)).toContain(kept.versionId);
+          expect(await NodeFSP.readFile(NodePath.join(volume, "external.tex"), "utf8")).toBe(
+            "external\n",
           );
-          expect(refused._tag).toBe("Failure");
-          const { listed } = await goesOn(h, helper);
-          expect(listed.versions.map((version) => version.versionId)).toContain(kept.versionId);
-          expect(await NodeFSP.readFile(NodePath.join(inner, "b.tex"), "utf8")).toBe("kept b\n");
+          await NodeFSP.writeFile(NodePath.join(volume, "later.tex"), "later\n");
+          await goesOn(h, helper);
+          expect(await NodeFSP.readFile(NodePath.join(volume, "later.tex"), "utf8")).toBe(
+            "later\n",
+          );
         } finally {
-          await NodeFSP.chmod(inner, 0o700);
+          NodeChildProcess.execFileSync("/usr/bin/hdiutil", ["detach", "-force", "-quiet", volume]);
         }
-        await h.run(
-          h.files.discardFileVersion({
-            cwd: h.cwd,
-            relativePath: "main.tex",
-            versionId: kept.versionId,
-          }),
-        );
-        expect(await exists(kept.copy)).toBe(false);
-        const { listed } = await goesOn(h, helper);
-        expect(listed.versions.map((version) => version.versionId)).not.toContain(kept.versionId);
       }),
   );
 });
