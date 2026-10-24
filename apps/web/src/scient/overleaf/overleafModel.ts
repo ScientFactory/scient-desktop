@@ -314,11 +314,31 @@ export interface OverleafResultView {
 
 const fileCount = (count: number) => plural(count, "file");
 
+/** The files a review holds back for their conflict marks, and those an apply left marked. */
+function heldPaths(
+  review: ScientOverleafReview,
+  markerPaths: ReadonlyArray<string> = [],
+): string[] {
+  return [...new Set([...markerPaths, ...review.unresolvedMarkers])].sort();
+}
+
+/** Held files wait while everything else syncs; they are always named (design section 4.2). */
+function heldLine(held: ReadonlyArray<string>): string {
+  const named =
+    held.length <= 3
+      ? held.join(", ")
+      : `${held.slice(0, 3).join(", ")} and ${held.length - 3} more`;
+  return `Waiting for conflict marks to be settled: ${named}.`;
+}
+
 /** The headline counts for a review that was applied, and whether its send reached Overleaf. */
-function countsTitle(review: ScientOverleafReview, sent: boolean): string {
+function countsTitle(review: ScientOverleafReview, sent: boolean, held: number): string {
   const incoming = review.incoming.length;
   const outgoing = sent ? review.outgoing.length : 0;
-  if (incoming === 0 && outgoing === 0) return "Up to date with Overleaf";
+  if (incoming === 0 && outgoing === 0)
+    return held > 0
+      ? `${fileCount(held)} ${held === 1 ? "waits" : "wait"} for conflicts`
+      : "Up to date with Overleaf";
   const parts: string[] = [];
   if (incoming > 0) parts.push(`${fileCount(incoming)} came in`);
   if (outgoing > 0)
@@ -369,7 +389,7 @@ function warningLines(review: ScientOverleafReview): string[] {
 /** What the sync's send did, when it didn't simply arrive. */
 function publicationLine(
   publication: Extract<ScientOverleafSyncResult, { _tag: "synced" }>["publication"],
-  markerPaths: ReadonlyArray<string>,
+  held: ReadonlyArray<string>,
 ): { readonly line: string | null; readonly tone: OverleafResultView["tone"] } {
   switch (publication._tag) {
     case "none":
@@ -379,7 +399,7 @@ function publicationLine(
       switch (publication.reason) {
         case "markers":
           return {
-            line: `Nothing was sent: ${fileCount(markerPaths.length || 1)} still ${markerPaths.length === 1 ? "has" : "have"} conflict marks. Settle them and sync again.`,
+            line: `Nothing was sent: ${fileCount(held.length || 1)} still ${held.length === 1 ? "has" : "have"} conflict marks. Settle them and sync again.`,
             tone: "warning",
           };
         case "kept-copy-changed":
@@ -470,23 +490,20 @@ export function overleafResultView(result: ScientOverleafSyncResult): OverleafRe
   switch (result._tag) {
     case "synced": {
       const sent = result.publication._tag === "accepted";
-      const publication = publicationLine(result.publication, result.markerPaths);
+      const held = heldPaths(result.review, result.markerPaths);
+      const publication = publicationLine(result.publication, held);
       const lines = [
         ...progress,
         ...(publication.line ? [publication.line] : []),
         ...warningLines(result.review),
-        ...(result.markerPaths.length > 0 && result.publication._tag !== "blocked"
-          ? [
-              `${fileCount(result.markerPaths.length)} still ${result.markerPaths.length === 1 ? "has" : "have"} conflict marks.`,
-            ]
-          : []),
+        ...(held.length > 0 ? [heldLine(held)] : []),
         ...(result.interrupted > 0
           ? [`An interrupted sync left ${fileCount(result.interrupted)} to settle.`]
           : []),
         ...contextLines(result.activity, result.linkedElsewhere),
       ];
       return {
-        title: countsTitle(result.review, sent),
+        title: countsTitle(result.review, sent, held.length),
         lines,
         tone: publication.tone,
         hasChanges: result.review.incoming.length > 0 || result.review.outgoing.length > 0,
@@ -502,6 +519,9 @@ export function overleafResultView(result: ScientOverleafSyncResult): OverleafRe
           progress.length === 0
             ? "Nothing was changed yet. Choose how to settle each one, then sync again."
             : "None of these was changed yet. Choose how to settle each one, then sync again.",
+          ...(result.review.unresolvedMarkers.length > 0
+            ? [heldLine(heldPaths(result.review))]
+            : []),
           ...contextLines(result.activity, result.linkedElsewhere),
         ],
         tone: "warning",
