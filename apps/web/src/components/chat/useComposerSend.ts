@@ -596,10 +596,7 @@ export function useComposerSend(input: ComposerSendInput) {
             beginExtractedSubmission({
               target: composerDraftTarget,
               queueEdit,
-              hasSeparateAction: () =>
-                Boolean(
-                  steerRequested || directAnnotation || directPrompt || approvalFeedbackTarget,
-                ),
+              hasSeparateAction: () => Boolean(steerRequested || directAnnotation || directPrompt),
               dispatch: startThreadTurn,
               onDraftCleared: () => {
                 if (currentRouteThreadKeyRef.current === routeThreadKey) {
@@ -783,63 +780,6 @@ export function useComposerSend(input: ComposerSendInput) {
             terminalContexts: effectiveComposerTerminalContexts,
             elementContextCount: composerPreviewAnnotations.length + effectiveReviewComments.length,
           });
-          if (approvalFeedbackTarget !== undefined) {
-            if (queueEdit || extractedIntent) {
-              setThreadError(
-                activeThread.id,
-                "Finish the captured queue submission before sending approval feedback.",
-              );
-              return;
-            }
-            if (
-              composerImages.length > 0 ||
-              effectiveComposerFiles.length > 0 ||
-              effectiveComposerTerminalContexts.length > 0 ||
-              composerPreviewAnnotations.length > 0 ||
-              effectiveReviewComments.length > 0 ||
-              composerThreadContexts.length > 0
-            ) {
-              setThreadError(
-                activeThread.id,
-                "Send approval feedback without attachments or added context.",
-              );
-              return;
-            }
-            const currentApproval = pendingApprovalsRef.current.find(
-              (approval) => approval.requestId === approvalFeedbackTarget.requestId,
-            );
-            if (
-              !isCurrentDraft() ||
-              promptRef.current !== promptForSend ||
-              composerRef.current?.hasPendingAttachments() ||
-              composerRef.current?.getSendContext().shownPendingApprovalIds[0] !==
-                approvalFeedbackTarget.requestId ||
-              currentApproval?.responseCapability !== "live" ||
-              !currentApproval.supportsFeedback ||
-              respondingRequestIdsRef.current.includes(approvalFeedbackTarget.requestId)
-            )
-              return;
-            const feedbackDraftAtReply = useComposerDraftStore
-              .getState()
-              .getComposerDraft(composerDraftTarget);
-            const feedbackResult = await settlePromise(() =>
-              sendApprovalFeedback(currentApproval, trimmed, onRespondToApprovalStable),
-            );
-            if (
-              feedbackResult._tag === "Success" &&
-              feedbackResult.value &&
-              isCurrentDraft() &&
-              useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) ===
-                feedbackDraftAtReply &&
-              promptRef.current === promptForSend &&
-              !composerRef.current?.hasPendingAttachments()
-            ) {
-              promptRef.current = "";
-              clearComposerDraftContent(composerDraftTarget);
-              composerRef.current?.resetCursorState();
-            }
-            return;
-          }
           const standaloneForkCommand =
             !directAnnotation &&
             directPrompt === null &&
@@ -1238,6 +1178,59 @@ export function useComposerSend(input: ComposerSendInput) {
             });
           }
 
+          // Feedback declines the shown request for good, so it runs only after local commands and
+          // every rejection above have accepted the send. A captured queue record is not feedback:
+          // it keeps its own redirect, declining shown approvals and dispatching as recorded.
+          if (approvalFeedbackTarget !== undefined && !queueEdit && !extractedIntent) {
+            if (
+              composerImages.length > 0 ||
+              effectiveComposerFiles.length > 0 ||
+              effectiveComposerTerminalContexts.length > 0 ||
+              composerPreviewAnnotations.length > 0 ||
+              effectiveReviewComments.length > 0 ||
+              composerThreadContexts.length > 0
+            ) {
+              setThreadError(
+                activeThread.id,
+                "Send approval feedback without attachments or added context.",
+              );
+              return;
+            }
+            const currentApproval = pendingApprovalsRef.current.find(
+              (approval) => approval.requestId === approvalFeedbackTarget.requestId,
+            );
+            if (
+              !isCurrentDraft() ||
+              promptRef.current !== promptForSend ||
+              composerRef.current?.hasPendingAttachments() ||
+              composerRef.current?.getSendContext().shownPendingApprovalIds[0] !==
+                approvalFeedbackTarget.requestId ||
+              currentApproval?.responseCapability !== "live" ||
+              !currentApproval.supportsFeedback ||
+              respondingRequestIdsRef.current.includes(approvalFeedbackTarget.requestId)
+            )
+              return;
+            const feedbackDraftAtReply = useComposerDraftStore
+              .getState()
+              .getComposerDraft(composerDraftTarget);
+            const feedbackResult = await settlePromise(() =>
+              sendApprovalFeedback(currentApproval, trimmed, onRespondToApprovalStable),
+            );
+            if (
+              feedbackResult._tag === "Success" &&
+              feedbackResult.value &&
+              isCurrentDraft() &&
+              useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) ===
+                feedbackDraftAtReply &&
+              promptRef.current === promptForSend &&
+              !composerRef.current?.hasPendingAttachments()
+            ) {
+              promptRef.current = "";
+              clearComposerDraftContent(composerDraftTarget);
+              composerRef.current?.resetCursorState();
+            }
+            return;
+          }
           const sendGeneration = ++composerSendGenerationRef.current;
           let submittedMessageId: MessageId | null = null;
           let requestAccepted = false;

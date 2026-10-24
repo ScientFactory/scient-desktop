@@ -37,12 +37,13 @@ const STATUS_ACTIONS: readonly PullRequestAction[] = [
 ];
 const CHECK_PRIORITY = {
   failure: 0,
-  "action-required": 1,
-  pending: 2,
-  cancelled: 3,
-  neutral: 4,
-  skipped: 5,
-  success: 6,
+  warning: 1,
+  "action-required": 2,
+  pending: 3,
+  cancelled: 4,
+  neutral: 5,
+  skipped: 6,
+  success: 7,
 };
 
 export function PullRequestStatusMenu(props: RowProps) {

@@ -293,7 +293,7 @@ it.effect("reads Forgejo jobs that did not run as finished checks", () =>
       result.checks.map((check) => [check.name, check.status]),
       [
         ["deploy", "skipped"],
-        ["audit", "neutral"],
+        ["audit", "warning"],
         ["docs", "pending"],
       ],
     );

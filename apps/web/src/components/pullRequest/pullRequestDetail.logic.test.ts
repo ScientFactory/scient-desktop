@@ -53,7 +53,16 @@ import {
   resolveBaseFreshness,
   buildPullRequestTimeline,
   writePullRequestDetailSnapshot,
+  classifyPullRequestChecks,
+  describePullRequestChecks,
+  groupPullRequestChecks,
 } from "./pullRequestDetail.logic";
+import {
+  pullRequestCheckStatusLabel,
+  pullRequestChecksState,
+  pullRequestChecksStatePresentation,
+  summarizePullRequestChecks,
+} from "./pullRequestPresentation";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 describe("pull request checkout commands", () => {
@@ -201,6 +210,36 @@ describe("pull request primary control", () => {
         autoMergeEnabled: undefined,
       }),
     ).toBe("merge");
+  });
+});
+describe("pull request warning checks", () => {
+  const warning: PullRequestCheck = {
+    name: "lint",
+    status: "warning",
+    description: null,
+    url: null,
+  };
+  const success: PullRequestCheck = {
+    name: "build",
+    status: "success",
+    description: null,
+    url: null,
+  };
+
+  it("keeps terminal warnings distinct from passing and failed checks", () => {
+    expect(classifyPullRequestChecks([warning, success])).toBe("warning");
+    expect(describePullRequestChecks([warning, success])).toBe("1 warning");
+    expect(groupPullRequestChecks([warning, success])).toEqual({
+      attention: [warning],
+      running: [],
+      completed: [success],
+    });
+    expect(pullRequestCheckStatusLabel(warning)).toBe("Warning");
+    expect(pullRequestChecksState([warning, success])).toBe("warning");
+    expect(pullRequestChecksStatePresentation("warning").label).toBe(
+      "Some checks finished with warnings",
+    );
+    expect(summarizePullRequestChecks([warning, success])).toBe("1 warning");
   });
 });
 

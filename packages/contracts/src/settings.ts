@@ -1711,9 +1711,9 @@ export const ServerSettingsPatch = Schema.Struct({
    * Per-project entry replacement: each entry replaces that project's whole
    * override set and `null` removes it.
    *
-   * `providerInstances` is the one exception: an entry that omits the key keeps
-   * the stored value instead of clearing it, so a client built before that
-   * field existed cannot wipe it by editing another key.
+   * Entries from older clients preserve omitted `providerInstances` and
+   * `threadTitleInstructions`. Send `null` for title instructions to restore
+   * inheritance; an empty string remains an explicit project override.
    */
   projectSettingsOverrides: Schema.optionalKey(
     Schema.Record(
@@ -1721,6 +1721,7 @@ export const ServerSettingsPatch = Schema.Struct({
       Schema.NullOr(
         Schema.Struct({
           ...ProjectSettingsOverrides.fields,
+          threadTitleInstructions: Schema.optionalKey(Schema.NullOr(TrimmedString)),
           sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
         }),
       ),

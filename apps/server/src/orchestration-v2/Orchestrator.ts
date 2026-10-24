@@ -473,6 +473,12 @@ export class OrchestratorV2 extends Context.Service<OrchestratorV2, Orchestrator
   "t3/orchestration-v2/Orchestrator/OrchestratorV2",
 ) {}
 
+/** Only a server caller walking this thread's subtree may suppress its outbox walk. */
+export const DelegatedStopHandledByCaller = Context.Reference<ThreadId | undefined>(
+  "t3/orchestration-v2/Orchestrator/DelegatedStopHandledByCaller",
+  { defaultValue: () => undefined },
+);
+
 /** Run ordinals can skip values: a queued run moves past newer runs when it starts. */
 function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
   return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
@@ -11298,7 +11304,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (projection.thread.deletedAt !== null) return undefined;
     // Queued after the interrupt, since a thread's effects run in order.
     const stopDelegatedTasks =
-      command.stopDelegatedTasks === false ||
+      (yield* DelegatedStopHandledByCaller) === command.threadId ||
       !projection.subagents.some(
         (task) => task.origin === "app_owned" && task.childThreadId !== null,
       )

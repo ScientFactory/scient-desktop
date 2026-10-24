@@ -246,6 +246,14 @@ export function useComposerAttachmentIntake(input: {
       addPreparingComposerImages(attachmentTargetKey, preparingImages);
     if (questionAttachmentTarget)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, acceptedImages.length);
+    const preparingIds = new Set(preparingImages.map((image) => image.id));
+    // Runs at commit and again in the finally. The size check keeps an empty second run from
+    // recreating a cleared question's count: `-0` is not a decrement.
+    const releasePreparingImages = () => {
+      const removed = removePreparingComposerImages(attachmentTargetKey, preparingIds);
+      if (questionAttachmentTarget && removed.size > 0)
+        changeQuestionAttachmentPreparation(questionAttachmentTarget, -removed.size);
+    };
     const stageAttachments = async (): Promise<boolean> => {
       const staged = await stageComposerAttachmentBatch({
         images: preparingImages,
@@ -299,6 +307,9 @@ export function useComposerAttachmentIntake(input: {
               });
             }
           }
+          // Same tick as the draft insert below, with nothing that could render in between, so
+          // the strip swaps each placeholder for its ready tile under one key in one render.
+          releasePreparingImages();
           const nextImages: ComposerImageAttachment[] = images.map(({ id, file }) => ({
             type: "image",
             id,
@@ -329,14 +340,7 @@ export function useComposerAttachmentIntake(input: {
       if (staged.error !== null) setThreadError(threadId, staged.error);
       return staged.inserted;
     };
-    return await stageAttachments().finally(() => {
-      const removed = removePreparingComposerImages(
-        attachmentTargetKey,
-        new Set(preparingImages.map((image) => image.id)),
-      );
-      if (questionAttachmentTarget)
-        changeQuestionAttachmentPreparation(questionAttachmentTarget, -removed.size);
-    });
+    return await stageAttachments().finally(releasePreparingImages);
   };
 
   const removeComposerImage = (imageId: string) => {

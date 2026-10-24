@@ -1,6 +1,11 @@
 import type { PullRequestActivity, PullRequestCheck, PullRequestComment } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { pullRequestChecksSummary, pullRequestReviewSummary } from "./pullRequestStatus";
+import {
+  checkStatus,
+  pullRequestChecksStatus,
+  pullRequestChecksSummary,
+  pullRequestReviewSummary,
+} from "./pullRequestStatus";
 
 const author = { login: "julius", name: null, avatarUrl: null };
 function review(state: string, at: string): PullRequestComment {
@@ -81,5 +86,22 @@ describe("mobile overview check status", () => {
     expect(
       pullRequestChecksSummary({ checks: [check("success"), check("pending"), check("failure")] }),
     ).toMatchObject({ title: "1 check failing", count: "1 of 3" });
+  });
+
+  it("keeps terminal warnings distinct from passed checks", () => {
+    const warning = check("warning");
+    expect(checkStatus(warning)).toMatchObject({
+      label: "Warning",
+      icon: "exclamationmark.triangle",
+    });
+    expect(pullRequestChecksSummary({ checks: [check("success"), warning] })).toMatchObject({
+      title: "1 check has warnings",
+      count: "1 of 2",
+      icon: "exclamationmark.triangle",
+    });
+    expect(pullRequestChecksStatus("warning")).toEqual({
+      icon: "exclamationmark.triangle",
+      tint: "accent-warning-foreground",
+    });
   });
 });

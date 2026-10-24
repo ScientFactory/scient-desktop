@@ -4072,9 +4072,11 @@ function ChatViewContent(props: ChatViewProps) {
                     ? null
                     : announcedRun(activeActivityRun, serverProjection?.runs ?? [])
                 }
+                // The detail's own run: activeLatestRun falls back to the shell's run while the
+                // detail loads, which would make that incomplete frame look current.
                 detailBehindShell={
                   !paintOnlyDisplayedTimeline &&
-                  isDetailBehindShell(activeLatestRun, activeThreadShell?.latestRun ?? null)
+                  isDetailBehindShell(serverLatestRun, activeThreadShell?.latestRun ?? null)
                 }
                 runningRunId={paintOnlyDisplayedTimeline ? null : activeRunningTurnId}
                 turnDiffSummaries={

@@ -5,7 +5,9 @@ import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   ProviderInstanceId,
+  ServerSettingsPatch,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "./model.ts";
 import {
@@ -340,6 +342,53 @@ describe("projectSettingsOverrides patches", () => {
       [projectId]: { defaultThreadEnvMode: "local" },
       [otherProjectId]: { defaultAutoPull: false },
     });
+  });
+
+  it.each(["Keep scientific terminology.", ""])(
+    "preserves project title instructions %j when an older client edits another setting",
+    (threadTitleInstructions) => {
+      const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        threadTitleInstructions: "Use the environment's title convention.",
+        projectSettingsOverrides: {
+          [projectId]: { threadTitleInstructions, defaultAutoPull: true },
+        },
+      });
+      const patch = Schema.decodeSync(ServerSettingsPatch)({
+        projectSettingsOverrides: { [projectId]: { defaultAutoPull: false } },
+      });
+      const saved = applyServerSettingsPatch(current, patch);
+      const resolved = resolveProjectSettings(saved, projectId);
+
+      expect(resolved.settings.threadTitleInstructions).toBe(threadTitleInstructions);
+      expect(resolved.sources.threadTitleInstructions).toBe("project");
+      expect(resolved.settings.defaultAutoPull).toBe(false);
+    },
+  );
+
+  it("restores inherited title instructions without clearing another project override", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      threadTitleInstructions: "Use the environment's title convention.",
+      projectSettingsOverrides: {
+        [projectId]: { threadTitleInstructions: "Use project terminology.", defaultAutoPull: true },
+      },
+    });
+    const patch = Schema.decodeSync(ServerSettingsPatch)(
+      JSON.parse(
+        JSON.stringify({
+          projectSettingsOverrides: {
+            [projectId]: clearProjectSettingsOverrides(current, projectId, [
+              "threadTitleInstructions",
+            ]),
+          },
+        }),
+      ),
+    );
+    const saved = applyServerSettingsPatch(current, patch);
+    const resolved = resolveProjectSettings(saved, projectId);
+
+    expect(resolved.settings.threadTitleInstructions).toBe(current.threadTitleInstructions);
+    expect(resolved.sources.threadTitleInstructions).toBe("environment");
+    expect(saved.projectSettingsOverrides[projectId]).toEqual({ defaultAutoPull: true });
   });
 });
 

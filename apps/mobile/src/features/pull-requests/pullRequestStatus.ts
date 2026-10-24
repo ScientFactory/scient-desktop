@@ -71,6 +71,12 @@ export function checkStatus(check: PullRequestCheck) {
         icon: "exclamationmark.circle",
         tint: "accent-danger-foreground",
       } as const;
+    case "warning":
+      return {
+        label: "Warning",
+        icon: "exclamationmark.triangle",
+        tint: "accent-warning-foreground",
+      } as const;
     case "action-required":
       return {
         label: "Action required",
@@ -92,6 +98,7 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
   const failed = pr.checks.filter((check) => check.status === "failure").length;
   const required = pr.checks.filter((check) => check.status === "action-required").length;
   const pending = pr.checks.filter((check) => check.status === "pending").length;
+  const warning = pr.checks.filter((check) => check.status === "warning").length;
   const passed = pr.checks.filter((check) => check.status === "success").length;
   const count = pr.checks.length ? `${passed} of ${pr.checks.length}` : undefined;
   if (failed)
@@ -116,6 +123,14 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
       title: "Checks running",
       count: `${pending} pending`,
       icon: "clock",
+      tint: "accent-warning-foreground",
+    } as const;
+  if (warning)
+    return {
+      label: `${warning} ${warning === 1 ? "check" : "checks"} with warnings`,
+      title: `${warning} ${warning === 1 ? "check has" : "checks have"} warnings`,
+      count,
+      icon: "exclamationmark.triangle",
       tint: "accent-warning-foreground",
     } as const;
   if (passed)
@@ -219,5 +234,7 @@ export function pullRequestChecksStatus(state: PullRequestChecksState) {
     return { icon: "checkmark.circle", tint: "accent-adaptive-emerald-600-400" } as const;
   if (state === "failing")
     return { icon: "xmark.circle.fill", tint: "accent-danger-foreground" } as const;
+  if (state === "warning")
+    return { icon: "exclamationmark.triangle", tint: "accent-warning-foreground" } as const;
   return { icon: "clock", tint: "accent-warning-foreground" } as const;
 }

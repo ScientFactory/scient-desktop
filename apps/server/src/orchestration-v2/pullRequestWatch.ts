@@ -60,7 +60,11 @@ export function evaluatePullRequestWatch(
 
     const required = detail.checks.filter((check) => check.required === true);
     const gate = required.length > 0 ? required : detail.checks;
-    const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
+    // GitHub accepts neutral/skipped; terminal Forgejo warnings never satisfy the gate.
+    const passedNow = gate.every(
+      (check) =>
+        check.status === "success" || check.status === "skipped" || check.status === "neutral",
+    );
     const gateNames = gate.map((check) => check.name);
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
     // A required job created and finished between two passes is never seen pending. Without
@@ -76,6 +80,9 @@ export function evaluatePullRequestWatch(
         : [];
     const settled =
       failed.length === 0 && detail.checks.every((check) => check.status !== "pending");
+    const warningOwed = owed.some((name) =>
+      detail.checks.some((check) => check.name === name && check.status === "warning"),
+    );
     owedChecks = owed;
     if (passedNow && (!passed || gateGrew)) {
       changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
@@ -86,7 +93,10 @@ export function evaluatePullRequestWatch(
               .map((check) => check.name)
           : [];
     } else if (settled && owed.length > 0) {
-      changes.push({ kind: "checks-passed", count: detail.checks.length, required: false });
+      // A warning settles an advisory obligation but never earns a passed-check notice.
+      if (!warningOwed) {
+        changes.push({ kind: "checks-passed", count: detail.checks.length, required: false });
+      }
       owedChecks = [];
     }
     passed = passedNow;

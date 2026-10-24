@@ -119,7 +119,8 @@ be selected again. The option is hidden when the connected environment needs a s
 
 To change how titles are written, add **Thread title instructions** in **Settings → General →
 Text generation**, such as a length limit or an identifier to put first. They apply to new and
-regenerated titles. Select a project to give it its own instructions.
+regenerated titles. Select a project to give it its own instructions. An empty project value
+disables extra instructions for that project; clearing its override restores the environment value.
 
 Agents connected through Scient can use the same server-owned metadata workflow to rename a thread,
 regenerate its title, or link and unlink a pull request. These changes appear on web, desktop, and

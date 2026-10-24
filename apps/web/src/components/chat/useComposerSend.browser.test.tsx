@@ -22,6 +22,7 @@ import {
   useComposerDraftStore,
   composerTargetKey,
   createEmptyThreadDraft,
+  useComposerThreadDraft,
 } from "../../composerDraftStore";
 import * as session from "../../state/session";
 import * as extracted from "../../scient/threadQueue/extractedIntentSend";
@@ -327,8 +328,10 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
     let removeImage:
       | ReturnType<typeof useComposerAttachmentIntake>["removeComposerImage"]
       | undefined;
+    const duplicateImageCommits: string[][] = [];
     function Owner() {
       const preparing = usePreparingComposerImages(composerTargetKey(target));
+      const readyImages = useComposerThreadDraft(target).images;
       const onSend = useComposerSend(input).onSend;
       const sendMultiple = useMultipleModelSend(input);
       const implementPlan = useImplementPlanInNewThread({
@@ -396,6 +399,13 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
         sendMultiple,
         implementPlan,
       ]);
+      // The attachment strip keys ready and preparing tiles by image id.
+      useLayoutEffect(() => {
+        const duplicated = readyImages.flatMap((image) =>
+          preparing.some((candidate) => candidate.id === image.id) ? [image.id] : [],
+        );
+        if (duplicated.length > 0) duplicateImageCommits.push(duplicated);
+      }, [preparing, readyImages]);
       return null;
     }
     // Navigation is a command adapter here, not the fixture router.
@@ -423,6 +433,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
         return preparingImages;
       },
       storage,
+      duplicateImageCommits,
       route,
       command: bindings.command,
       get context() {
@@ -626,6 +637,74 @@ describe("mounted composer send admission owner", () => {
     ).toBe(before);
   });
 
+  it.each(["/plan", "/default", "/fork"])(
+    "runs the local %s command without declining a shown feedback request",
+    async (prompt) => {
+      const requestId = RuntimeRequestId.make("local-command-feedback");
+      const respond = vi.fn();
+      const handleInteractionModeChange = vi.fn();
+      const onForkConversation = vi.fn();
+      await using fixture = await setup({
+        pendingApprovals: [
+          {
+            requestId,
+            requestKind: "command",
+            createdAt: "2026-10-24T00:00:00Z",
+            responseCapability: "live",
+            supportsFeedback: true,
+          },
+        ],
+        onRespondToApproval: respond,
+        handleInteractionModeChange,
+        onForkConversation,
+      });
+      fixture.context = { ...fixture.context, prompt, shownPendingApprovalIds: [requestId] };
+      fixture.input.promptRef.current = prompt;
+      useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, prompt);
+      await fixture.send();
+      expect(respond).not.toHaveBeenCalled();
+      expect(fixture.command).not.toHaveBeenCalled();
+      expect(onForkConversation).toHaveBeenCalledTimes(prompt === "/fork" ? 1 : 0);
+      expect(handleInteractionModeChange.mock.calls).toEqual(
+        prompt === "/fork" ? [] : [[prompt.slice(1)]],
+      );
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)
+          ?.prompt ?? "",
+      ).toBe("");
+    },
+  );
+
+  it("leaves a shown feedback request and its draft alone when the provider rejects the text", async () => {
+    const requestId = RuntimeRequestId.make("rejected-feedback");
+    const respond = vi.fn();
+    await using fixture = await setup({
+      pendingApprovals: [
+        {
+          requestId,
+          requestKind: "command",
+          createdAt: "2026-10-24T00:00:00Z",
+          responseCapability: "live",
+          supportsFeedback: true,
+        },
+      ],
+      onRespondToApproval: respond,
+    });
+    const composer = fixture.input.composerRef.current;
+    if (!composer) throw new Error("Expected the synthetic composer");
+    fixture.input.composerRef.current = { ...composer, validateProviderInput: () => false };
+    fixture.context = { ...fixture.context, shownPendingApprovalIds: [requestId] };
+    const before = useComposerDraftStore
+      .getState()
+      .getComposerDraft(fixture.input.composerDraftTarget);
+    await fixture.send();
+    expect(respond).not.toHaveBeenCalled();
+    expect(fixture.command).not.toHaveBeenCalled();
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget),
+    ).toBe(before);
+  });
+
   it("does not answer a feedback request after navigation during queue recovery", async () => {
     const requestId = RuntimeRequestId.make("stale-feedback");
     const respond = vi.fn();
@@ -681,15 +760,37 @@ describe("mounted composer send admission owner", () => {
       expect.stringContaining("could not be read"),
     );
   });
-  it("fences a transferred draft and replays its frozen native admission after a lost ACK", async () => {
+  async function replaysFrozenAdmissionAfterLostAck(feedbackShown: boolean) {
     const frameSubmittedMessage = vi.fn();
     const setOptimisticUserMessages = vi.fn();
-    await using fixture = await setup({ frameSubmittedMessage, setOptimisticUserMessages });
+    const requestId = RuntimeRequestId.make("captured-feedback");
+    const respond = vi.fn(async () => AsyncResult.success(undefined));
+    await using fixture = await setup({
+      frameSubmittedMessage,
+      setOptimisticUserMessages,
+      // A captured queue record is not feedback: it declines shown approvals and dispatches.
+      pendingApprovals: feedbackShown
+        ? [
+            {
+              requestId,
+              requestKind: "command",
+              createdAt: "2026-10-24T00:00:00Z",
+              responseCapability: "live",
+              supportsFeedback: true,
+            },
+          ]
+        : [],
+      onRespondToApproval: respond,
+    });
+    fixture.context = {
+      ...fixture.context,
+      shownPendingApprovalIds: feedbackShown ? [requestId] : [],
+    };
     await using edits = new AsyncDisposableStack();
     const sessionsBefore = useQueueEditSessions.getState();
     const stashBefore = usePromptStashStore.getState();
     const key = composerTargetKey(fixture.input.composerDraftTarget);
-    const journalKey = "00000000-0000-4000-8000-000000000001";
+    const journalKey = `00000000-0000-4000-8000-00000000000${feedbackShown ? 2 : 1}`;
     const ordinary = useComposerDraftStore
       .getState()
       .getComposerDraft(fixture.input.composerDraftTarget);
@@ -762,6 +863,7 @@ describe("mounted composer send admission owner", () => {
     });
     const first = fixture.command.mock.calls[0]?.[0];
     expect(await readExtractedIntent(journalKey)).toMatchObject({ phase: "submitted-unknown" });
+    expect(respond.mock.calls).toEqual(feedbackShown ? [[requestId, "decline"]] : []);
     fixture.context = {
       ...fixture.context,
       selectedModel: "later-model",
@@ -777,7 +879,13 @@ describe("mounted composer send admission owner", () => {
       useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget)
         ?.prompt ?? "",
     ).toBe("");
-  });
+    // The frozen retry replays its recorded admission without a second decline.
+    expect(respond).toHaveBeenCalledTimes(feedbackShown ? 1 : 0);
+  }
+  it.each([false, true])(
+    "fences a transferred draft and replays its frozen native admission after a lost ACK (shown feedback request: %s)",
+    replaysFrozenAdmissionAfterLostAck,
+  );
   it.each([false, true])(
     "waits for implementation visibility before navigating and keeps the authored draft (visible: %s)",
     async (visible) => {
@@ -1236,7 +1344,7 @@ describe("mounted composer send admission owner", () => {
     expect(draftSendState(fixture.input.routeThreadKey).sendInFlight.current).toBe(false);
   });
 
-  it("stages a mixed attachment batch before committing either kind", async () => {
+  it("stages a mixed attachment batch before committing either kind and swaps its placeholder in one commit", async () => {
     await using fixture = await setup();
     const converted =
       Promise.withResolvers<
@@ -1264,6 +1372,7 @@ describe("mounted composer send admission owner", () => {
     expect(countPreparingComposerImages(composerTargetKey(fixture.input.composerDraftTarget))).toBe(
       0,
     );
+    expect(fixture.duplicateImageCommits).toEqual([]);
   });
 
   it("rechecks current attachment bytes after conversion and rejects the whole new batch", async () => {

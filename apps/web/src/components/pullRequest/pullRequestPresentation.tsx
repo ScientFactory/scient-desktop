@@ -11,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
+  CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotIcon,
@@ -207,9 +208,18 @@ const CHECK_STATUS_PRESENTATION = {
   cancelled: { label: "Cancelled", Icon: CircleXIcon, toneClassName: "text-destructive" },
   skipped: { label: "Skipped", Icon: CircleSlashIcon, toneClassName: "text-muted-foreground/70" },
   neutral: { label: "Neutral", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground/70" },
+  warning: {
+    label: "Warning",
+    Icon: CircleAlertIcon,
+    toneClassName: "text-amber-600 dark:text-amber-400/90",
+  },
 } as const satisfies Record<
   PullRequestCheckStatus,
-  { label: string; Icon: typeof CircleCheckIcon | typeof Spinner; toneClassName: string }
+  {
+    label: string;
+    Icon: typeof CircleCheckIcon | typeof Spinner | typeof CircleAlertIcon;
+    toneClassName: string;
+  }
 >;
 
 function isWorkflowApprovalCheck(check: Pick<PullRequestCheck, "status" | "url">): boolean {
@@ -249,6 +259,11 @@ const CHECKS_STATE_PRESENTATION = {
     Icon: CircleXIcon,
     toneClassName: "text-destructive",
   },
+  warning: {
+    label: "Some checks finished with warnings",
+    Icon: CircleAlertIcon,
+    toneClassName: "text-amber-600 dark:text-amber-400/90",
+  },
   pending: {
     label: "Some checks haven't completed yet",
     Icon: CircleDotIcon,
@@ -256,7 +271,11 @@ const CHECKS_STATE_PRESENTATION = {
   },
 } as const satisfies Record<
   PullRequestChecksState,
-  { label: string; Icon: typeof CircleCheckIcon; toneClassName: string }
+  {
+    label: string;
+    Icon: typeof CircleCheckIcon | typeof CircleAlertIcon;
+    toneClassName: string;
+  }
 >;
 
 export function pullRequestChecksStatePresentation(state: PullRequestChecksState) {
@@ -270,6 +289,7 @@ export function pullRequestChecksState(
   const statuses = new Set(checks.map((check) => check.status));
   if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
   if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+  if (statuses.has("warning")) return "warning";
   return statuses.has("success") ? "passing" : null;
 }
 
@@ -522,6 +542,7 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
     (check) => check.status === "failure" || check.status === "cancelled",
   ).length;
   const pending = checks.filter((check) => check.status === "pending").length;
+  const warning = checks.filter((check) => check.status === "warning").length;
   const passed = checks.filter((check) => check.status === "success").length;
   if (failed > 0) return `${failed} of ${checks.length} failing`;
   if (workflowApprovalRequired > 0 && otherActionRequired > 0) {
@@ -534,5 +555,6 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
     return `${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
   }
   if (pending > 0) return `${pending} of ${checks.length} running`;
+  if (warning > 0) return `${warning} warning${warning === 1 ? "" : "s"}`;
   return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
 }

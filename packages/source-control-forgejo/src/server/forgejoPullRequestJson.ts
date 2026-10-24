@@ -214,9 +214,8 @@ export function forgejoCommit(commit: typeof ForgejoCommit.Type): PullRequestCom
   };
 }
 
-// Forgejo Actions reports a job that did not run as `skipped` and a cancelled one as `failure`,
-// and `warning` is finished without being a pass. Only `pending` and states we do not know may
-// hold a watch open.
+// Forgejo Actions reports a job that did not run as `skipped` and a cancelled one as `failure`.
+// A `warning` is terminal but not successful; unknown states remain pending.
 function forgejoCheckStatus(state: string): PullRequestCheckStatus {
   switch (state) {
     case "success":
@@ -227,7 +226,7 @@ function forgejoCheckStatus(state: string): PullRequestCheckStatus {
     case "skipped":
       return "skipped";
     case "warning":
-      return "neutral";
+      return "warning";
     default:
       return "pending";
   }

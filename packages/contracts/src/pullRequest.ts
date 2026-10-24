@@ -52,7 +52,7 @@ export const PullRequestListFilters = Schema.Struct({
 });
 export type PullRequestListFilters = typeof PullRequestListFilters.Type;
 
-export const PullRequestChecksState = Schema.Literals(["passing", "failing", "pending"]);
+export const PullRequestChecksState = Schema.Literals(["passing", "failing", "warning", "pending"]);
 export type PullRequestChecksState = typeof PullRequestChecksState.Type;
 
 export const PullRequestMergeability = Schema.Literals(["mergeable", "conflicting", "unknown"]);
@@ -103,6 +103,7 @@ export const PullRequestCheckStatus = Schema.Literals([
   "failure",
   "skipped",
   "neutral",
+  "warning",
   "cancelled",
 ]);
 export type PullRequestCheckStatus = typeof PullRequestCheckStatus.Type;

@@ -5,6 +5,11 @@ import {
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
+import {
+  ForgejoStatus,
+  forgejoChecks,
+} from "@t3tools/source-control-forgejo/server/forgejoPullRequestJson";
 
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
@@ -37,6 +42,22 @@ const check = (name: string, status: PullRequestCheck["status"]): PullRequestChe
   description: null,
   url: `https://ci.example/${name}`,
 });
+const forgejoWarningCheck = (context: string): PullRequestCheck => {
+  const [warning] = forgejoChecks(
+    [
+      Schema.decodeSync(ForgejoStatus)({
+        context,
+        status: "warning",
+        description: "finished with warnings",
+        target_url: null,
+        updated_at: "2026-10-11T00:00:00Z",
+      }),
+    ],
+    "https://forgejo.test/acme/web/pulls/1",
+  );
+  if (warning === undefined) throw new Error("Forgejo warning fixture did not parse");
+  return warning;
+};
 
 type Detail = Parameters<typeof evaluatePullRequestWatch>[1];
 
@@ -132,6 +153,58 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(waiting.next, gated, noRemarks).changes, [
       { kind: "checks-passed", count: 2, required: true },
     ]);
+  });
+  it("does not report a parsed Forgejo warning as a required-check pass", () => {
+    const requiredWarning = { ...forgejoWarningCheck("lint"), required: true };
+    const result = evaluatePullRequestWatch(
+      watch(),
+      detail({
+        provider: SourceControlProviderKind.make("forgejo"),
+        checks: [requiredWarning],
+      }),
+      noRemarks,
+    );
+
+    assert.deepEqual(result.changes, []);
+    assert.isFalse(result.next.passed);
+  });
+
+  it("settles an owed advisory warning without reporting the checks passed", () => {
+    const provider = SourceControlProviderKind.make("forgejo");
+    const required = { ...check("required", "success"), required: true };
+    const early = evaluatePullRequestWatch(
+      watch(),
+      detail({ provider, checks: [required, check("lint", "pending")] }),
+      noRemarks,
+    );
+    assert.deepEqual(early.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    assert.deepEqual(early.next.owedChecks, ["lint"]);
+
+    const warning = evaluatePullRequestWatch(
+      early.next,
+      detail({ provider, checks: [required, forgejoWarningCheck("lint")] }),
+      noRemarks,
+    );
+    assert.deepEqual(warning.changes, []);
+    assert.deepEqual(warning.next.owedChecks, []);
+    assert.isTrue(warning.next.passed);
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        warning.next,
+        detail({ provider, checks: [required, forgejoWarningCheck("lint")] }),
+        noRemarks,
+      ).changes,
+      [],
+    );
+  });
+
+  it("continues to treat neutral and skipped checks as passed", () => {
+    const result = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [check("neutral", "neutral"), check("skipped", "skipped")] }),
+      noRemarks,
+    );
+    assert.deepEqual(result.changes, [{ kind: "checks-passed", count: 2, required: false }]);
   });
 
   // regression: #23712 required checks woke the agent early and the rest finishing never did

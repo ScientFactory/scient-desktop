@@ -93,6 +93,7 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
+import { DelegatedStopHandledByCaller } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -2457,10 +2458,10 @@ const make = Effect.gen(function* () {
             type: "thread.stop",
             commandId,
             threadId: current.childThreadId,
-            stopDelegatedTasks: false,
             ...(reason === undefined ? {} : { reason }),
           })
           .pipe(
+            Effect.provideService(DelegatedStopHandledByCaller, current.childThreadId),
             Effect.mapError((error) =>
               failure(
                 "task_not_cancellable",

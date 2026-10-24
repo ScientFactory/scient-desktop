@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   ContextTransferId,
@@ -6,6 +7,7 @@ import {
   MessageId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  OrchestrationV2RpcSchemas,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -29,6 +31,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import { CLAUDE_PROVIDER } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -39,6 +43,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -52,23 +57,31 @@ const adapter = {
   openSession: () => Effect.die("Runs here never reach a provider"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 const layerDatabase = SqlitePersistence.layerMemory;
-const layerTest = ThreadManagementService.layer.pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(
-      layerDatabase,
-      ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-      EventStore.layer.pipe(Layer.provide(layerDatabase)),
-      EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
-      ProviderReplayHarness.layerWithRegistry(
-        { name: "thread-stop" },
-        ProviderAdapterRegistry.layerFromAdapters([adapter]),
-        { databaseLayer: layerDatabase, runEffectWorker: false },
+const makeLayerTest = (
+  stopDelegatedTasks?: ThreadManagementService.ThreadManagementServiceShape["stopDelegatedTasks"],
+) =>
+  ThreadManagementService.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        layerDatabase,
+        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        EventStore.layer.pipe(Layer.provide(layerDatabase)),
+        EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "thread-stop" },
+          ProviderAdapterRegistry.layerFromAdapters([adapter]),
+          {
+            databaseLayer: layerDatabase,
+            runEffectWorker: false,
+            ...(stopDelegatedTasks === undefined ? {} : { threads: { stopDelegatedTasks } }),
+          },
+        ),
       ),
     ),
-  ),
-  Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-);
+    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+  );
+const layerTest = makeLayerTest();
 
 const encodeEffectRequest = Schema.encodeSync(Schema.fromJsonString(OrchestrationEffectRequestV2));
 
@@ -605,6 +618,92 @@ it.effect.each(["run.interrupt", "thread.stop"] as const)(
         [stopCommandId],
       );
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  ["decoded", "active"],
+  ["decoded", "idle"],
+  ["unfiltered", "active"],
+  ["unfiltered", "idle"],
+] as const)(
+  "a %s public Stop cannot suppress child cleanup with false on an %s parent",
+  ([entry, parentState]) => {
+    let stopDelegatedTasks:
+      | ThreadManagementService.ThreadManagementServiceShape["stopDelegatedTasks"]
+      | undefined;
+    const layer = makeLayerTest((input) =>
+      Effect.suspend(() => {
+        assert.isDefined(stopDelegatedTasks);
+        return stopDelegatedTasks!(input);
+      }),
+    ).pipe(
+      Layer.provideMerge(
+        Layer.merge(
+          NodeServices.layer,
+          ProjectCloneTracker.layer.pipe(
+            Layer.provide(Layer.mock(SourceControlRepositoryService)({})),
+          ),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sql = yield* SqlClient.SqlClient;
+      stopDelegatedTasks = threads.stopDelegatedTasks;
+      const parentThreadId = ThreadId.make(`thread:public-stop:${entry}:${parentState}`);
+      yield* createWatchingThread(parentThreadId, 12);
+      yield* send(parentThreadId, "parent work", "start_immediately");
+      const childThreadId = yield* delegate(parentThreadId, "child work");
+      const grandchildThreadId = yield* delegate(childThreadId, "grandchild work");
+      yield* send(childThreadId, "held follow-up", "queue_after_active");
+      if (parentState === "idle") {
+        const run = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+        const now = yield* DateTime.now;
+        yield* projections.apply({
+          id: EventId.make(`event:public-stop:${entry}:parent-completed`),
+          type: "run.updated",
+          threadId: parentThreadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...run, status: "completed", completedAt: now },
+        });
+      }
+      assert.deepEqual((yield* threadState(childThreadId)).runs, ["starting", "queued"]);
+      const command = {
+        type: "thread.stop" as const,
+        commandId: CommandId.make(`public-stop:${entry}:${parentState}`),
+        threadId: parentThreadId,
+        stopDelegatedTasks: false,
+      };
+      const publicCommand =
+        entry === "decoded"
+          ? yield* Schema.decodeEffect(OrchestrationV2RpcSchemas.dispatchCommand.input)(command)
+          : command;
+      yield* ThreadMessageIntake.dispatchCommand(publicCommand);
+      // The fixture never starts a provider; keep the real Stop effect and its worker.
+      yield* sql`
+        DELETE FROM orchestration_v2_effect_outbox WHERE command_id != ${command.commandId}
+      `;
+      yield* worker.drain();
+      assert.deepEqual(yield* threadState(parentThreadId), {
+        runs: [parentState === "active" ? "interrupted" : "completed"],
+        watched: [],
+      });
+      assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted", "queued:held"]);
+      assert.deepEqual((yield* threadState(grandchildThreadId)).runs, ["interrupted"]);
+      const walks = yield* sql<{ readonly command_id: string }>`
+        SELECT command_id FROM orchestration_v2_effect_outbox
+        WHERE effect_type = 'delegated-tasks.stop'
+      `;
+      assert.deepEqual(
+        walks.map((row) => row.command_id),
+        [command.commandId],
+      );
+    }).pipe(Effect.provide(layer));
+  },
 );
 
 it.effect("a repeated Stop that changes nothing still stops the delegated tasks", () =>

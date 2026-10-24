@@ -9,6 +9,7 @@ import {
   resolveProjectProviderInstanceEnabled,
   type ResolvedServerSettings,
   type ServerSettings,
+  type ServerSettingsPatch,
   type T3ProjectFile,
   type ThreadEnvMode,
   type WorktreeCleanupRules,
@@ -215,12 +216,15 @@ export function clearProjectSettingsOverrides(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
   projectId: ProjectId,
   keys: readonly ProjectScopedServerSettingKey[],
-): ProjectSettingsOverrides | null {
+): NonNullable<ServerSettingsPatch["projectSettingsOverrides"]>[ProjectId] {
   const current = settings.projectSettingsOverrides[projectId];
   if (current === undefined) return null;
   const next = { ...current };
   for (const key of keys) delete next[key];
-  return Object.keys(next).length === 0 ? null : next;
+  if (Object.keys(next).length === 0) return null;
+  return keys.includes("threadTitleInstructions")
+    ? { ...next, threadTitleInstructions: null }
+    : next;
 }
 
 export function resolveWorktreeCleanup(
