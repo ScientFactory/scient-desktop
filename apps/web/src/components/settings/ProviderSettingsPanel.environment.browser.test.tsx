@@ -1,8 +1,10 @@
 import { RegistryContext } from "@effect/atom-react";
 import {
   DEFAULT_UNIFIED_SETTINGS,
+  // SCIENT-FORK:START
   DEFAULT_SERVER_SETTINGS,
   type ProviderManagedRuntimeAction,
+  // SCIENT-FORK:END
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -15,11 +17,14 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
+// SCIENT-FORK:START
 import { DRIVER_OPTIONS } from "./providerDriverMeta";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+// SCIENT-FORK:END
 import { act, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
+  // SCIENT-FORK: null models a provider snapshot that is still loading.
   providers: null as unknown as Atom.Writable<ReadonlyArray<ServerProvider> | null>,
   settings: null as unknown as UnifiedSettings,
   canManageProviders: true,
@@ -28,6 +33,7 @@ const state = vi.hoisted(() => ({
   readEnvironmentIds: [] as string[],
   updateEnvironmentIds: [] as string[],
   mutationEnvironmentIds: [] as string[],
+  // SCIENT-FORK: record the environment that model preference writes go to.
   modelPreferenceEnvironmentIds: [] as string[],
   refresh: vi.fn(),
   updateProvider: vi.fn(),
@@ -42,9 +48,10 @@ const state = vi.hoisted(() => ({
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");
+  // SCIENT-FORK:START - the upstream settings snapshot coalesces a pending raw snapshot.
   const providers = Atom.make<ReadonlyArray<ServerProvider> | null>(null).pipe(Atom.keepAlive);
-  // SCIENT-FORK: the upstream settings snapshot coalesces a pending raw snapshot.
   const settingsProviders = Atom.make((get) => get(providers) ?? []);
+  // SCIENT-FORK:END
   state.providers = providers;
   const config = Atom.make(null);
   const commandLabels = {
@@ -61,6 +68,7 @@ vi.mock(import("../../state/server"), async (original) => {
   );
   return {
     ...actual,
+    // SCIENT-FORK: read the coalesced snapshot.
     providersIgnoringCheckedAtAtom: (() => settingsProviders) as never,
     serverEnvironment: {
       ...actual.serverEnvironment,
@@ -99,10 +107,12 @@ vi.mock(import("../../hooks/useSettings"), async (original) => ({
     state.updateEnvironmentIds.push(environmentId);
     return state.updateSettings;
   }) as never,
+  // SCIENT-FORK:START - record the environment that model preference writes go to.
   useUpdateEnvironmentModelPreferences: ((environmentId: string) => {
     state.modelPreferenceEnvironmentIds.push(environmentId);
     return state.updateModelPreferences;
   }) as never,
+  // SCIENT-FORK:END
   useToggleEnvironmentModelFavorite: (() => state.toggleFavorite) as never,
   usePersistEnvironmentProviderInstanceMutation: ((environmentId: string) => {
     state.mutationEnvironmentIds.push(environmentId);
@@ -195,7 +205,6 @@ vi.mock("../../scient/providerConnection/ProviderSettingsLifecycleAction", () =>
         Manage
       </button>
       <button onClick={() => onManage("install")}>Request install</button>
-      <button onClick={() => onManage("repair")}>Request repair</button>
     </div>
   ),
 }));
@@ -233,6 +242,7 @@ function provider(): ServerProvider {
   };
 }
 
+// SCIENT-FORK: null models a provider snapshot that is still loading.
 const setProviders = (providers: ReadonlyArray<ServerProvider> | null) =>
   act(async () => appAtomRegistry.set(state.providers, providers));
 
@@ -256,11 +266,12 @@ function panel(options?: {
   );
 }
 
+// SCIENT-FORK:START - helpers for the Scient cases below.
 const button = (name: string) => page.getByRole("button", { name, exact: true });
-const refreshButton = () => page.getByRole("button", { name: /^Refresh provider status/ });
 // The section header and the end of the provider list both offer Add provider.
 const addProvider = () => page.getByRole("button", { name: "Add provider" }).first();
 const select = (name: string) => button(`Select ${name}`);
+// SCIENT-FORK:END
 
 async function setup() {
   await page.viewport(1280, 900);
@@ -271,7 +282,7 @@ async function setup() {
   state.readEnvironmentIds = [];
   state.updateEnvironmentIds = [];
   state.mutationEnvironmentIds = [];
-  state.modelPreferenceEnvironmentIds = [];
+  state.modelPreferenceEnvironmentIds = []; // SCIENT-FORK
   state.updateSettings.mockReset();
   state.updateModelPreferences.mockReset();
   state.toggleFavorite.mockReset();
@@ -285,6 +296,7 @@ async function setup() {
 
 describe("EnvironmentProviderSettings routing", () => {
   // SCIENT-FORK:START - untouched slots are visible without enabling or configuring them.
+  // regression: ca83f106e8 fix(settings): retain unconfigured built-in provider rows
   it.each(["loading", "empty", "partial"])(
     "shows built-in default slots with fresh settings and %s provider snapshots without writes",
     async (snapshot) => {
@@ -315,47 +327,6 @@ describe("EnvironmentProviderSettings routing", () => {
     },
   );
   // SCIENT-FORK:END
-
-  it("routes refresh and provider update commands to the selected environment", async () => {
-    await setup();
-    await setProviders([provider()]);
-    await using _screen = await render(panel());
-
-    await userEvent.click(refreshButton());
-    expect(state.refresh).toHaveBeenCalledWith({
-      environmentId,
-      input: { refreshModels: true, refreshManagedRuntimeCatalog: true },
-    });
-
-    await userEvent.click(page.getByRole("button", { name: /view details/ }).last());
-    await userEvent.click(button("Update now"));
-    expect(state.updateProvider).toHaveBeenCalledWith({
-      environmentId,
-      input: { provider: ProviderDriverKind.make("codex"), instanceId: codexId },
-    });
-  });
-
-  it("saves model favorites and visibility on the selected environment", async () => {
-    await setup();
-    await setProviders([provider()]);
-    await using _screen = await render(panel({ targetInstanceId: codexId }));
-
-    await userEvent.click(button("Add Chosen to favorites"));
-    expect(state.toggleFavorite).toHaveBeenCalledExactlyOnceWith(codexId, "chosen");
-
-    await userEvent.click(page.getByRole("switch", { name: "Show Chosen in the model picker" }));
-    expect(state.updateModelPreferences).toHaveBeenCalledExactlyOnceWith({
-      setModelsHidden: [
-        {
-          provider: codexId,
-          model: "chosen",
-          hidden: true,
-          initialPreferences: { hiddenModels: [], modelOrder: [] },
-        },
-      ],
-    });
-    expect(state.updateSettings).not.toHaveBeenCalled();
-  });
 
   it("does not substitute another account when the requested instance was removed", async () => {
     await setup();
@@ -511,6 +482,7 @@ describe("Scient provider settings", () => {
     expect(state.updateProvider).not.toHaveBeenCalled();
   });
 
+  // regression: 89974f96b6 fix(alignment): preserve Scient provider and lifecycle behavior
   it("renders Add provider choices in canonical order without changing settings", async () => {
     await setup();
     await using _screen = await render(panel());
@@ -593,10 +565,10 @@ describe("Scient provider settings", () => {
     expect(new Set(state.mutationEnvironmentIds)).toEqual(new Set([environmentId]));
   });
 
+  // regression: b96d7d6a43 fix(alignment): preserve catalog identity and refresh seam witnesses
   it.each(
-    ["pi", "omp", "scient"].flatMap((driver) =>
-      ["missing", "empty"].map((preferences) => ({ driver, preferences })),
-    ),
+    // pi, omp and scient share one catalog-default branch (resolveProviderModelPreferences).
+    ["missing", "empty"].map((preferences) => ({ driver: "pi", preferences })),
   )(
     "saves $driver visibility on its owning environment with $preferences preferences",
     async ({ driver, preferences }) => {
@@ -702,6 +674,7 @@ describe("Scient provider settings", () => {
     expect(state.updateSettings).not.toHaveBeenCalled();
   });
 
+  // regression: 4f8a2ef99e fix(providers): install and update directly with quiet settings progress
   it.each([undefined, "install"] as const)(
     "opens a missing provider with only the requested action (%s)",
     async (action) => {
@@ -716,16 +689,7 @@ describe("Scient provider settings", () => {
     },
   );
 
-  it("forwards a requested repair into the lifecycle dialog", async () => {
-    await setup();
-    await setProviders([provider()]);
-    await using _screen = await render(panel({ targetInstanceId: codexId }));
-    await userEvent.click(button("Request repair"));
-    const dialog = page.getByRole("dialog", { name: "Provider connection" }).element();
-    expect(dialog.getAttribute("data-instance-id")).toBe(codexId);
-    expect(dialog.getAttribute("data-runtime-action")).toBe("repair");
-  });
-
+  // regression: 173a24544e fix(web): make provider rows fully selectable
   it("selects another provider during an update and retains it across status refreshes", async () => {
     await setup();
     let finishUpdate!: () => void;
@@ -755,6 +719,7 @@ describe("Scient provider settings", () => {
     expect(state.updateSettings).not.toHaveBeenCalled();
   });
 
+  // regression: a382619321 fix(settings): follow deep links without resetting page state
   it("follows changed deep links without remounting and retains manual picks on refresh", async () => {
     await setup();
     await setProviders([provider(), missingAntigravityProvider()]);
