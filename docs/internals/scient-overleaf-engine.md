@@ -385,7 +385,10 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
   review's and the folder, captured exactly as the review captured it, gives
   the same inventory digest (every field, each read file by its SHA-256), the
   review stands as it is and is not built again (no Git work); any difference
-  builds it again as above. Before anything is written it
+  builds it again as above. The record's revision and both epochs are read
+  again after that capture, as a build reads them after its own, so a
+  credential renewed while the folder is read makes the review stale
+  (`credential-epoch`) rather than applied. Before anything is written it
   checks room:
   for every kept copy the apply could add, and for every group an interruption
   could leave as a forced conflict (at most 2,000 paths each). Then, before the
