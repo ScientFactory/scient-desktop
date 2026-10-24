@@ -9,6 +9,7 @@ import {
   Sigma,
 } from "lucide-react";
 
+import { OverleafMark } from "../files/ExternalFolderMarks";
 import type { ScientRightPanelSurface } from "./surfaces";
 
 /** The project files sign: the Files tab, the Files card and the Show files button. */
@@ -31,5 +32,7 @@ export function ScientRightPanelSurfaceIcon(props: { readonly surface: ScientRig
       return <File className="size-3 shrink-0" />;
     case "skill":
       return <BookOpenText className="size-3 shrink-0" />;
+    case "overleaf-review":
+      return <OverleafMark aria-hidden className="size-3 shrink-0" />;
   }
 }
