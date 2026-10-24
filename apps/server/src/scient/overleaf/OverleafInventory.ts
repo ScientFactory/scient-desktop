@@ -6,10 +6,13 @@
  * The connection holds the files in its base plus additions the user selects.
  * There is no `.gitignore` evaluation. Repositories, links, reserved and
  * application folders, operating-system droppings and Git LFS pointers are
- * never included. Build leftovers and anything inside a hidden folder are
- * listed but unchecked. Only managed files, selected additions and paths the
- * review asks for are read in full; other additions are read only far enough
- * to recognize a forbidden format.
+ * never included. New files are sent by default; a rule, evaluated at every
+ * capture and never remembered, skips build leftovers, hidden files, Scient's
+ * own project files at the checkout's top and files too large for Overleaf
+ * (pr-c-design section 5). Only managed files, selected additions, local-only
+ * files being sent and paths the review asks for are read in full; other
+ * additions are read only far enough to recognize a forbidden format, and one
+ * too large is not read at all.
  *
  * Every limit is enforced before the bytes or entries it bounds are read. A
  * file, or a folder above it, that changes while it is read fails the capture;
@@ -18,6 +21,8 @@
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+
+import { SCIENT_AGENTS_FILE, SCIENT_PROJECT_FILE } from "@scientfactory/project-init";
 
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 import { manuscriptPathProblem } from "./manuscriptPaths.ts";
@@ -102,6 +107,8 @@ const BUILD_OUTPUT = [
   ".toc",
   ".bbl",
 ];
+/** Files Scient writes at a project's top for itself; never part of a paper there. */
+const SCIENT_PROJECT_FILES = new Set([SCIENT_AGENTS_FILE, SCIENT_PROJECT_FILE]);
 
 export type OverleafExclusionReason =
   | "reserved"
@@ -136,11 +143,23 @@ export interface OverleafCapturedFile {
   readonly revision: string;
 }
 
+/**
+ * Why a new file is left out unless someone selects it (pr-c-design section 5).
+ * A rule evaluated at every capture, never a remembered choice. `too-large`
+ * is over Overleaf's file limit: never read, and selecting it is refused.
+ */
+export type OverleafUncheckedReason =
+  | "too-large"
+  | "build-output"
+  | "hidden"
+  | "scient-project-file";
+
 export interface OverleafAddition {
   readonly path: string;
   readonly size: number;
+  /** Sent unless deselected: no rule skips it. */
   readonly checkedByDefault: boolean;
-  readonly uncheckedReason: "build-output" | "hidden" | null;
+  readonly uncheckedReason: OverleafUncheckedReason | null;
 }
 
 export interface OverleafInventory {
@@ -148,9 +167,13 @@ export interface OverleafInventory {
   readonly captured: ReadonlyMap<string, OverleafCapturedFile>;
   /** Managed paths with no file on disk (deleted, renamed, or replaced by a folder). */
   readonly missingManaged: ReadonlyArray<string>;
-  /** Files that are neither managed nor local-only, for the review's addition list. */
+  /** Files that are neither managed nor local-only, and not selected, for the review's addition list. */
   readonly additions: ReadonlyArray<OverleafAddition>;
-  /** Local-only paths present on disk. Never read. */
+  /** Additions selected, explicitly or by default, and read in full. */
+  readonly selectedAdditions: ReadonlyArray<OverleafAddition>;
+  /** Local-only files read in full to be sent. */
+  readonly sentLocalOnly: ReadonlyArray<string>;
+  /** Local-only paths present on disk and not being sent. Never read. */
   readonly localOnly: ReadonlyArray<string>;
   /** Folders on disk, so Overleaf content can be checked against them. */
   readonly folders: ReadonlyArray<string>;
@@ -186,8 +209,10 @@ export type OverleafInventoryRefusal =
    * or Unicode form. Treating it as deleted would remove it from Overleaf.
    */
   | { readonly reason: "alias"; readonly path: string; readonly onDisk: string }
-  /** A selected or requested path is not an addition this walk can include. */
-  | { readonly reason: "not-selectable"; readonly path: string };
+  /** A selected, requested or sent path is not a file this walk can include. */
+  | { readonly reason: "not-selectable"; readonly path: string }
+  /** A path to send from the local-only list is not on it. */
+  | { readonly reason: "not-local-only"; readonly path: string };
 
 export interface OverleafInventoryInput {
   /** Real absolute path of the manuscript folder. */
@@ -197,6 +222,21 @@ export interface OverleafInventoryInput {
   readonly localOnlyPaths: ReadonlyArray<string>;
   /** Additions the user checked in the review. */
   readonly selectedAdditions: ReadonlyArray<string>;
+  /**
+   * The review's default selection: every addition no rule skips is selected
+   * too, except `except` (kept only on this computer on purpose). With
+   * `lenient`, the selections come from an earlier review, and a selected or
+   * sent path that is no longer selectable is left out instead of refused: the
+   * review then differs from the earlier one and replaces it.
+   */
+  readonly defaultSelection?: {
+    readonly except: ReadonlyArray<string>;
+    readonly lenient: boolean;
+  };
+  /** Local-only files to send: read in full like selected additions. */
+  readonly sendLocalOnly: ReadonlyArray<string>;
+  /** The folder is the checkout's top, where Scient keeps its own project files. */
+  readonly atCheckoutTop: boolean;
   /**
    * Further paths to read in full: local-only files or unchecked additions that
    * collide with Overleaf content and must be preserved, not treated as absent.
@@ -231,6 +271,20 @@ const ancestorsOf = (path: string) => {
 interface Identity {
   readonly dev: bigint;
   readonly ino: bigint;
+}
+
+/** The rule that leaves a new file out by default, judged again at every capture. */
+function uncheckedReason(
+  file: { readonly path: string; readonly size: number; readonly hidden: boolean },
+  fileBytes: number,
+  atCheckoutTop: boolean,
+): OverleafUncheckedReason | null {
+  if (file.size > fileBytes) return "too-large";
+  if (BUILD_OUTPUT.some((suffix) => file.path.toLowerCase().endsWith(suffix)))
+    return "build-output";
+  if (file.hidden) return "hidden";
+  if (atCheckoutTop && SCIENT_PROJECT_FILES.has(file.path)) return "scient-project-file";
+  return null;
 }
 
 /** Walks the folder within the limits and captures the files the review needs. */
@@ -379,8 +433,9 @@ export async function captureOverleafInventory(
 
     const managed = new Set(input.managedPaths);
     const localOnly = new Set(input.localOnlyPaths);
-    const selected = new Set(input.selectedAdditions);
     const requested = new Set(input.requestedPaths);
+    const lenient = input.defaultSelection?.lenient ?? false;
+    const keptHere = new Set(input.defaultSelection?.except ?? []);
     const staging = new Set(input.stagingPaths);
 
     const files: Array<{ path: string; size: number; hidden: boolean }> = [];
@@ -448,7 +503,11 @@ export async function captureOverleafInventory(
           excluded.push({ path, reason: "invalid-path" });
         } else {
           const stat = await NodeFSP.lstat(absolute(path)).catch(() => null);
-          files.push({ path, size: stat?.size ?? 0, hidden: next.hidden });
+          files.push({
+            path,
+            size: stat?.size ?? 0,
+            hidden: next.hidden || entry.name.startsWith("."),
+          });
         }
       }
     }
@@ -473,42 +532,76 @@ export async function captureOverleafInventory(
       if (alias !== undefined && alias !== path && !folders.has(path))
         throw new Refused({ reason: "alias", path, onDisk: alias });
     }
-    for (const path of [...selected, ...requested]) {
+    for (const path of requested) {
       if (!present.has(path) || managed.has(path))
         throw new Refused({ reason: "not-selectable", path });
     }
+    const sizes = new Map(files.map((file) => [file.path, file.size]));
+    /** Whether `path` can be selected; refuses why not unless lenient. */
+    const selectable = (path: string, fromLocalOnly: boolean) => {
+      const refusal: OverleafInventoryRefusal | null =
+        fromLocalOnly && !localOnly.has(path)
+          ? { reason: "not-local-only", path }
+          : !present.has(path) || managed.has(path) || (!fromLocalOnly && localOnly.has(path))
+            ? { reason: "not-selectable", path }
+            : (sizes.get(path) ?? 0) > limits.fileBytes
+              ? { reason: "file-too-large", path }
+              : null;
+      if (refusal !== null && !lenient) throw new Refused(refusal);
+      return refusal === null;
+    };
+    const selected = new Set(input.selectedAdditions.filter((path) => selectable(path, false)));
+    const sent = new Set(input.sendLocalOnly.filter((path) => selectable(path, true)));
 
     const captured = new Map<string, OverleafCapturedFile>();
     const additions: OverleafAddition[] = [];
+    const selectedAdditions: OverleafAddition[] = [];
     const localOnlyPresent: string[] = [];
     let capturedBytes = 0;
     const account = (size: number) => {
       capturedBytes += size;
       if (capturedBytes > limits.totalBytes) throw new Refused({ reason: "total-too-large" });
     };
+    const capture = async (path: string) => {
+      if (captured.size >= limits.managedFiles) throw new Refused({ reason: "managed-limit" });
+      const bytes = await readStable(path, account);
+      if (isOverleafLfsPointer(bytes)) throw new Refused({ reason: "lfs-pointer", path });
+      captured.set(path, { bytes, revision: bytesRevision(bytes) });
+    };
     for (const file of files) {
-      const capture = managed.has(file.path) || selected.has(file.path) || requested.has(file.path);
-      if (capture) {
-        if (captured.size >= limits.managedFiles) throw new Refused({ reason: "managed-limit" });
-        const bytes = await readStable(file.path, account);
-        if (isOverleafLfsPointer(bytes))
-          throw new Refused({ reason: "lfs-pointer", path: file.path });
-        captured.set(file.path, { bytes, revision: bytesRevision(bytes) });
-      } else if (localOnly.has(file.path)) {
+      if (managed.has(file.path) || requested.has(file.path) || sent.has(file.path)) {
+        await capture(file.path);
+        continue;
+      }
+      if (localOnly.has(file.path)) {
         localOnlyPresent.push(file.path);
+        continue;
+      }
+      const reason = uncheckedReason(file, limits.fileBytes, input.atCheckoutTop);
+      const addition: OverleafAddition = {
+        path: file.path,
+        size: file.size,
+        checkedByDefault: reason === null,
+        uncheckedReason: reason,
+      };
+      if (selected.has(file.path)) {
+        await capture(file.path);
+        selectedAdditions.push(addition);
+        continue;
+      }
+      // A file too large for Overleaf is never read; an LFS pointer is small.
+      const prefix = reason === "too-large" ? null : await readPrefix(file.path);
+      if (prefix !== null && isOverleafLfsPointer(prefix)) {
+        excluded.push({ path: file.path, reason: "lfs-pointer" });
+      } else if (
+        input.defaultSelection !== undefined &&
+        reason === null &&
+        !keptHere.has(file.path)
+      ) {
+        await capture(file.path);
+        selectedAdditions.push(addition);
       } else {
-        const prefix = await readPrefix(file.path);
-        if (prefix !== null && isOverleafLfsPointer(prefix)) {
-          excluded.push({ path: file.path, reason: "lfs-pointer" });
-          continue;
-        }
-        const build = BUILD_OUTPUT.some((suffix) => file.path.toLowerCase().endsWith(suffix));
-        additions.push({
-          path: file.path,
-          size: file.size,
-          checkedByDefault: !build && !file.hidden,
-          uncheckedReason: build ? "build-output" : file.hidden ? "hidden" : null,
-        });
+        additions.push(addition);
       }
     }
 
@@ -520,6 +613,10 @@ export async function captureOverleafInventory(
         captured,
         missingManaged: [...managed].filter((path) => !present.has(path)).sort(byPath),
         additions: additions.toSorted((left, right) => byPath(left.path, right.path)),
+        selectedAdditions: selectedAdditions.toSorted((left, right) =>
+          byPath(left.path, right.path),
+        ),
+        sentLocalOnly: [...sent].sort(byPath),
         localOnly: localOnlyPresent.toSorted(byPath),
         folders: [...folders.keys()].filter((path) => path !== "").sort(byPath),
         excluded: excluded.toSorted((left, right) => byPath(left.path, right.path)),
