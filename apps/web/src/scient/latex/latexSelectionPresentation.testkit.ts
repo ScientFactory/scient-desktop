@@ -74,32 +74,80 @@ export function observeLatexSelectionPresentation(root: HTMLElement) {
     };
   };
   let published: ReturnType<typeof capture> = null;
+  let publishedAt: number | null = null;
   const receive = () => {
     published = capture();
+    publishedAt = performance.now();
   };
   root.addEventListener("scient-latex-selection-scope", receive, true);
   return {
     async wait() {
-      await vi.waitFor(() => {
-        const current = capture();
-        expect(current).not.toBeNull();
-        expect(published?.element).toBe(current?.element);
-        const { origin: before, scopes, selection, ...state } = published!;
-        const {
-          origin: after,
-          scopes: currentScopes,
-          selection: currentSelection,
-          ...currentState
-        } = current!;
-        expect(state).toEqual(currentState);
-        const dx = before && after ? after.x - before.x : 0;
-        const dy = before && after ? after.y - before.y : 0;
-        expectTranslated(scopes, currentScopes, dx, dy);
-        expectTranslated(selection, currentSelection, dx, dy);
-      });
+      try {
+        // The browser default is 5 s for eventual readiness. A publication that lags the
+        // live selection by more than a second is a visible repaint delay, so this keeps 1 s.
+        await vi.waitFor(
+          () => {
+            const current = capture();
+            expect(current).not.toBeNull();
+            expect(published?.element).toBe(current?.element);
+            const { origin: before, scopes, selection, ...state } = published!;
+            const {
+              origin: after,
+              scopes: currentScopes,
+              selection: currentSelection,
+              ...currentState
+            } = current!;
+            expect(state).toEqual(currentState);
+            const dx = before && after ? after.x - before.x : 0;
+            const dy = before && after ? after.y - before.y : 0;
+            expectTranslated(scopes, currentScopes, dx, dy);
+            expectTranslated(selection, currentSelection, dx, dy);
+          },
+          { timeout: 1_000 },
+        );
+      } catch (error) {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}\n${describePresentation(root, published?.origin ?? null, publishedAt)}`,
+          { cause: error },
+        );
+      }
     },
     [Symbol.dispose]() {
       root.removeEventListener("scient-latex-selection-scope", receive, true);
     },
   };
+}
+
+const formatRect = (rect: DOMRect | undefined) =>
+  rect
+    ? `(${rect.x.toFixed(2)}, ${rect.y.toFixed(2)}) ${rect.width.toFixed(2)}x${rect.height.toFixed(2)}`
+    : "none";
+
+/**
+ * Tells a whole-field move (every rectangle shifted with its scroller: harmless) from a
+ * misplaced outline (the overlay or field moved alone: a presentation bug).
+ */
+function describePresentation(
+  root: HTMLElement,
+  publishedOrigin: { x: number; y: number } | null,
+  publishedAt: number | null,
+) {
+  const field = readLatexSelection(root)?.element;
+  const overlay = root.querySelector<HTMLElement>(".scient-latex-selection-overlay");
+  const scrolls: string[] = [];
+  for (let node: HTMLElement | null = field ?? root; node; node = node.parentElement) {
+    if (node.scrollTop || node.scrollLeft)
+      scrolls.push(
+        `${node.localName}.${[...node.classList].join(".")} ${node.scrollLeft},${node.scrollTop}`,
+      );
+  }
+  const published = publishedOrigin
+    ? `(${publishedOrigin.x.toFixed(2)}, ${publishedOrigin.y.toFixed(2)})`
+    : "none";
+  return [
+    `scroll offsets (left,top): ${scrolls.join("; ") || "none"}; window ${scrollX},${scrollY}`,
+    `overlay origin: now ${formatRect(overlay?.getBoundingClientRect())}, at publish ${published}`,
+    `field rect: ${formatRect(field?.getBoundingClientRect())}`,
+    `since last publish: ${publishedAt === null ? "never published" : `${(performance.now() - publishedAt).toFixed(1)} ms`}`,
+  ].join("\n");
 }

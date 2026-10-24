@@ -646,6 +646,9 @@ it("capitalizes a section name as it is typed, keeping the caret in place", asyn
   expect(onRename).toHaveBeenCalledWith("Research notes");
 });
 
+// The slide answers the crossing itself: it keeps a 1 s budget rather than the 5 s
+// default that browser tests give eventual readiness.
+const SLIDE_BUDGET_MS = 1_000;
 it("slides a header as soon as the pointer crosses its midpoint and commits the shown slot", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
@@ -663,18 +666,21 @@ it("slides a header as soon as the pointer crosses its midpoint and commits the 
 
   expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0);
   await pointer(_fixture, "pointermove", document, x, header.top + header.height / 2 - 2);
-  await vi.waitFor(() =>
-    expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
+  await vi.waitFor(
+    () => expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
+    { timeout: SLIDE_BUDGET_MS },
   );
 
   expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40);
   await pointer(_fixture, "pointermove", document, x, header.top + header.height / 2 + 2);
-  await vi.waitFor(() =>
-    expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0),
+  await vi.waitFor(
+    () => expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0),
+    { timeout: SLIDE_BUDGET_MS },
   );
   await pointer(_fixture, "pointermove", document, x, header.top + header.height / 2 - 2);
-  await vi.waitFor(() =>
-    expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
+  await vi.waitFor(
+    () => expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
+    { timeout: SLIDE_BUDGET_MS },
   );
   await pointer(_fixture, "pointerup", document, x, header.top + header.height / 2 - 2);
 

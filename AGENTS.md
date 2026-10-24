@@ -165,6 +165,26 @@ yield polling loops, or browser frame/transition waits. Browser assertions use
 Skipped tests need a tracking issue and reason. Mock factories must not spread
 real modules that load Shiki or diff workers.
 
+#### Deterministic browser tests
+
+CI runners lay out pages several times slower than a developer Mac, so a test
+that passes locally can still race there.
+
+- Wait on the state you check: a receipt, an owner's event, or a measurement.
+  Never wait a fixed delay or a number of frames or steps, and do not let fake
+  time stand in for rendering: a fake clock does not lay out or measure.
+- `vi.waitFor`, `expect.poll` and `expect.element` default to 5 s in the browser
+  project, for eventual readiness. A test that checks something happens quickly
+  states its own `timeout`.
+- Unmount before restoring fake timers: acquire `fakeTimers()` on the stack that
+  outlives the rendered tree. A loop that drives the clock stops when the test's
+  `signal` aborts.
+- Prove a flaky-test fix under CI-like slowness and a targeted probe (a delayed
+  observer, grammar load or visibility report): fail before, pass after, under
+  the same condition. `SCIENT_TEST_CPU_THROTTLE=<rate>` slows each test page's
+  CPU through Chromium (4 is about a fast runner, 6 a slow one, 8 a stress run):
+  `SCIENT_TEST_CPU_THROTTLE=6 vp test run <file>` in `apps/web`.
+
 Web component tests are `*.browser.test.tsx` and render through
 `apps/web/test/render.tsx`. Acquire test changes with `using` / `await using`
 so disposal restores them even on failure; avoid module-level screens and
