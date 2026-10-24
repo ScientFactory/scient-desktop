@@ -19,6 +19,7 @@ import {
   useScientProjectFolderActions,
 } from "~/scient/commandPalette/scientCommandPalette";
 import { useOverleafPaletteItems } from "~/scient/overleaf/overleafPaletteItems";
+import { overleafAddProjectItem } from "~/scient/overleaf/OverleafNewProject";
 // SCIENT-FORK:END
 import {
   canCreateProjectInEnvironment,
@@ -1142,6 +1143,13 @@ function OpenCommandPaletteDialog(props: {
           await startAddProjectBrowse(environmentId);
         },
       },
+      // SCIENT-FORK:START — Add project ▸ Overleaf project
+      overleafAddProjectItem({
+        environmentId,
+        location: getAddProjectInitialQueryForEnvironment(environmentId),
+        isPrimary: environmentId === primaryEnvironmentId,
+      }),
+      // SCIENT-FORK:END
     ];
 
     if (newProjectsRootFor(environmentId) !== null) {

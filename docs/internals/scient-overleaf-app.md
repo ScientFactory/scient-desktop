@@ -27,12 +27,14 @@ is deleted on either side).
 | `overleaf/OverleafSettings.tsx`              | Source Control ▸ Overleaf, Project Settings ▸ Overleaf.                                                                                                                                                                                                                     |
 | `overleaf/OverleafKeptCopies.tsx`            | Kept copies inside "Retained file versions".                                                                                                                                                                                                                                |
 | `overleaf/overleafPaletteItems.tsx`          | "Sync with Overleaf" in the command palette.                                                                                                                                                                                                                                |
+| `overleaf/OverleafNewProject.tsx`            | Add project ▸ Overleaf project: the palette entry and the dialog host mounted in `__root.tsx`.                                                                                                                                                                              |
+| `overleaf/createProjectForOverleaf.ts`       | Makes the Scient project as Add project does: register, then Scient setup.                                                                                                                                                                                                  |
 | `overleaf/useOverleafFolderConnect.tsx`      | The Files panel's Connect dialog and the tree's marks.                                                                                                                                                                                                                      |
 
 Hooks in upstream files, each between `SCIENT-FORK` markers: `FileBrowserPanel.tsx` (Connect
 button, right-click **Connect to ▸ Overleaf…**, row marks, icon sprite), `FilePreviewPanel.tsx`
-(the chip), `CommandPalette.tsx` (palette items), `SourceControlSettings.tsx` and
-`ProjectSettingsPanel.tsx` (settings). Scient-owned files changed in place: the right-panel
+(the chip), `CommandPalette.tsx` (palette items, Add project ▸ Overleaf project), `SourceControlSettings.tsx` and
+`ProjectSettingsPanel.tsx` (settings), `__root.tsx` (the new-project dialog's host). Scient-owned files changed in place: the right-panel
 surface list, content and icon, `ScientFileVersionHistory.tsx`, `ScientLatexSurface.tsx`
 (conflict notice), `FileBrowserToolbarActions.tsx` and `useScientLazyWorkspaceTree.ts`.
 
@@ -181,6 +183,17 @@ not expose the project's title, so the folder can't be named from it. **Link** u
 folder, or a typed one from Project Settings. With no token saved the dialog asks for it, saves it
 first, then connects and runs the first sync with `quiet`.
 
+**Add project ▸ Overleaf project** opens the same dialog with `newProject`: a project name, a
+location (Add project's starting folder, plus the system folder chooser on this computer) and the
+paper's folder name (default `paper`); no Link choice. Connect saves the token, makes the project
+(`createProjectForOverleaf`: the server resolves the root, the project is registered with
+`createWorkspaceRootIfMissing` as Add project does, Scient setup runs for an ordinary folder, and a
+folder that already is a project is used as it is), then connects with `create: true` into the
+subfolder and syncs. The paper never goes at the project's top. A refusal after the project is made
+says so and keeps the project; the project fields lock, and Connect again only links. Closing the
+dialog opens a new thread in the project. Overleaf's title isn't available, so the project is named
+from the typed name.
+
 ## Kept copies
 
 The "Retained file versions" popover lists the link's kept copies of the open file (`keptCopies`,
@@ -211,4 +224,3 @@ are disabled while editing is.
 
 - Undo of a send: engine addition first.
 - Settings ▸ Overleaf "Test" of the token: no route.
-- Add project ▸ Overleaf project (a new Scient project with the paper in a subfolder).

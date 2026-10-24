@@ -54,6 +54,10 @@ Scient and your collaborators on Overleaf. Each Overleaf project gets its own
 folder, such as `paper/`; code, data and analysis stay outside it. See
 [Overleaf](overleaf.md).
 
+To start from an Overleaf project, open **Add project** and choose **Overleaf
+project**. Scient makes a new project with the paper in a `paper/` subfolder
+(you can rename it), links it and runs the first sync.
+
 ## Optional Scient project setup
 
 Before a local or remote folder is registered, Scient checks only its small

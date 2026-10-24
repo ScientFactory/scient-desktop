@@ -55,6 +55,7 @@ Every way opens the same **Connect to Overleaf** dialog:
 | ---------------- | ------------------------------------------------------------------ |
 | The Files bar    | The Connect button (a folder with arrows) ▸ **Overleaf…**          |
 | The file tree    | Right-click a folder ▸ **Connect to ▸ Overleaf…**                  |
+| Add project      | **Overleaf project**, for a new Scient project (see below)         |
 | Project Settings | **Overleaf ▸ Link a folder…** or **Bring in an Overleaf project…** |
 | Ask the agent    | For example: "Bring my Overleaf project into a `paper` folder."    |
 
@@ -73,6 +74,27 @@ In the dialog:
 
 Google Drive, OneDrive and Dropbox are listed in the Connect menu as **Coming
 soon**.
+
+### Start a new project from Overleaf
+
+**Add project ▸ Overleaf project** makes a Scient project with the paper in a
+subfolder of it, never at its top. That leaves room for more papers and for
+your analysis, and keeps Scient's own files (`AGENTS.md`, `PROJECT.md`,
+`.scient/`) out of Overleaf. The dialog asks for:
+
+1. the Overleaf project's **link** or **ID**;
+2. the **project name** and its **location** (where Add project browses from;
+   the folder button opens your computer's folder chooser). The project's folder
+   is made there, named after the project; a folder that already is a project is
+   used as it is;
+3. the **paper folder**, `paper` until you rename it;
+4. your token, if none is saved yet.
+
+**Connect** makes the project, links the paper folder and runs the first sync,
+then shows its result. If Overleaf refuses the link after the project is made,
+the dialog says so and keeps the project: fix the link and **Connect** again,
+or close the dialog and connect later from the Files bar. Closing the dialog
+opens the new project.
 
 ## Sync
 
@@ -245,6 +267,8 @@ Linking the same folder to the same project again picks up where it left off.
 | A folder with that name already has files.                           | Pick another name, or link that folder instead.                           |
 | This folder, or one inside or around it, is linked already.          | Use the existing link, or unlink it first.                                |
 | This Overleaf project is linked to another folder of this project.   | Sync that folder instead.                                                 |
+| The project wasn't made: _reason_                                    | Fix what the reason says (often the location), then **Connect** again.    |
+| The project is made, but Overleaf isn't linked yet.                  | Fix what follows it, then **Connect** again; the project stays.           |
 | _file_ couldn't be saved, so nothing was synced.                     | Save the file (finish Visual editor input), then sync again.              |
 | Another Overleaf operation is running on this folder.                | Wait for it to finish.                                                    |
 | A pull, branch switch or checkpoint restore is changing the project. | Sync again after it.                                                      |
