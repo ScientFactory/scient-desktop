@@ -149,8 +149,11 @@ settled read, epoch or write that finds it holds it and finishes the removals
 (each may already have happened). Without the mark a discard killed between
 the copy and its view left the view holding the old bytes, hidden from the
 listing yet counted against the retention budget
-(`RetainedDiscard.crash.test.ts` kills a child before the copy goes, between
-the two, and after both).
+A legacy record (journal version 1) is never finished, so every lease that
+finds it holds it; its discard writes a durable tombstone (`discard-<copy>.json`)
+before the same removals, and settlement finishes any whose copy or view is
+still there (`RetainedDiscard.crash.test.ts` kills a child before the copy goes,
+between the two, and after both, for both kinds of record).
 
 Finding the records still reads every record its store keeps, on each
 discovery (several per write). A finished record already read is taken from
