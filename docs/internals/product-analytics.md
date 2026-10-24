@@ -68,7 +68,11 @@ installed runtime. Revision 5 names every settings page in `settings.viewed`
 the desktop derives its page list from the settings sidebar, and a test fails
 when a page is missing from the contract. Revision 6 adds `feature.viewed` with
 `feature: latex-visual` and UI-owned `scient.operation.*` with
-`operationKind: latex-visual-edit`. Installation state is aggregated per provider driver: it is
+`operationKind: latex-visual-edit`. Revision 7 names Scient Agent (`scient`),
+Oh My Pi (`omp`), Muse (`muse`) and ACP Registry (`acpRegistry`) instead of
+collapsing them into `other`. Only these fixed driver kinds are added; custom
+provider labels, configured instance IDs and runtime paths remain private.
+Installation state is aggregated per provider driver: it is
 true when at least one settled configured instance is installed. The envelope
 remains schema version 1.
 Legacy events may omit `contractRevision`; new events carry the bounded revision.
@@ -80,8 +84,8 @@ registered event. Regenerate and compare both repositories from the desktop root
 ```sh
 node packages/scient-analytics/src/generateConformance.ts \
   --wire=/absolute/website/workers/events/src/eventContract.ts \
-  packages/scient-analytics/fixtures/contract-v6.json \
-  /absolute/website/workers/events/fixtures/contract-v6.json
+  packages/scient-analytics/fixtures/contract-v7.json \
+  /absolute/website/workers/events/fixtures/contract-v7.json
 # Repeat with --check to verify exact source/corpus parity without writing.
 ```
 
@@ -194,8 +198,40 @@ rather than attributing an unproven interval. Terminal failures/stops can consum
 tokens but usage remains Product-class, separate from Essential failures.
 
 Existing provider discovery/readiness events mean observed ready, not a current
-signed-in account inventory; existing sent-turn events measure attempted model
-use and attachment-count buckets. Existing voice/import/compute/export outcomes
+signed-in account inventory. V2 `provider.turn.sent` measures a live,
+committed run admission (including queued work) or a new accepted steering
+message on an existing run, deduplicated by the local message identity. It is an accepted prompt
+submission, not proof of provider delivery, an answer, or a human action.
+Progress updates, queued-to-steer promotions, retries, restart continuations,
+restored terminal history and legacy queue hydration do not produce new submissions. Driver attribution
+uses the canonical run event or configured instance's driver, never the instance
+name. Consent/identity changes clear the bounded observation state and never
+backfill earlier admissions. Consent/deletion controls establish the sequenced
+event tail's committed watermark before acknowledging the new collection period;
+recording checks the captured epoch again synchronously. Buffered earlier-period
+events are excluded without dropping the first fresh prompt after acknowledgement.
+Steering items carry optional canonical `inputAlreadyAdmitted` provenance:
+held Droid re-delivery and queue promotion are not first admissions, even after
+local correlation state resets. Unknown legacy provenance is not counted.
+An unavailable watermark fails closed without preventing Off or erasure.
+The event subscription waits for the first valid watermark and can initialize
+after a later successful boundary; the fail-closed sentinel never becomes a
+permanent upstream stream cursor.
+The observer does not read message text or
+attachments; unknown input presence is omitted and attachment count stays
+`unknown`, rather than claiming an empty prompt. Existing explicit input
+booleans and attachment buckets from older producers remain accepted.
+
+Scient Agent uses the existing installation observations, installed-state
+changes, lifecycle operations, submissions, terminal outcomes and token usage.
+Latest observed installed profiles, successful install operations, and profiles
+that submitted prompts are separate measures, not unique people or all-time
+installation totals. The gateway's `analytics:insights` report exposes these
+per-provider measures and daily submission counts for non-development builds.
+Old `other` labels and missing submission events cannot be recovered from
+collected data. Deploy the revision-7 gateway before releasing this producer;
+accurate coverage requires updating clients with sharing enabled.
+Existing voice/import/compute/export outcomes
 remain their authoritative measurements. This pass does not add generic error
 capture, arbitrary preference values, precise attention tracking, or reconstruct
 unreported history. Offline/retry durability starts at local outbox acceptance;
