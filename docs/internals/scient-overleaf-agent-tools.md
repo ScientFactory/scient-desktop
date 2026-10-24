@@ -47,6 +47,7 @@ earlier receipt instead of running again; a retried tool call is a new request.
 | `scient_overleaf_connect`     | `project` (link or ID), `mode` (`new-folder` or `link-folder`), `folder`          | `result` (`done` with the connection, or `refused` with a reason), `firstSync` (a preview of the first sync), `suggestNewFolder`.                                                                                                                                                                                                  |
 | `scient_overleaf_sync`        | `connectionId`, `choices?`, `reviewedRemote?`, `files?`                           | `link`, `result` (`synced`, `needs-decision`, `refused`, `duplicate`, `unsettled`, `cancelled`, as the route returns it).                                                                                                                                                                                                          |
 | `scient_overleaf_kept_copies` | `connectionId`, `restore?` (`applyId`, `kept`, `keptRevision`, `currentRevision`) | `link`, `copies` (after any restore), `restored` (`restored`, `not-restored`, `needs-attention`, `stale`, `unknown-copy`, `duplicate`, or null).                                                                                                                                                                                   |
+| `scient_overleaf_undo`        | `connectionId`, `attemptNumber?`                                                  | Without `attemptNumber`: `sends`, the sends that can be undone, newest first, each with its `changes`. With it: `result` (`ScientOverleafUndoResult`: `undone` with `restored`, `removed`, `recreated`, `skipped` with reasons, `outcome` and the `sync` after it; `not-eligible`; `refused`; `duplicate`). Both return `link`.    |
 | `scient_overleaf_manage`      | `connectionId`, `action` (`disconnect`, `relink`, `recover`, `cancel`), `folder?` | `result`: the manage result; for `recover`, whether there was an interrupted apply and how it ended (`outcome`: `complete`, `replan` or `attention`), and which earlier sends were found accepted or are still unresolved; for `cancel`, `requested` or `nothing-running`. Recover also returns `link`, naming the copy it ran in. |
 | `scient_overleaf_token`       | `action` (`status`, `save`, `remove`), `secretRef?`                               | `saved`.                                                                                                                                                                                                                                                                                                                           |
 
@@ -155,7 +156,6 @@ scheduled webhook tasks use), and passes the value only to
 
 ## Not yet
 
-Undo (an action on the manage tool, saving editors first) waits for its engine
-PR. Start fresh after damaged
+Start fresh after damaged
 history, testing a token without syncing, and bringing an Overleaf project in as
 a new Scient project have no service operation yet.

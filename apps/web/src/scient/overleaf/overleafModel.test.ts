@@ -18,6 +18,7 @@ import {
   operationErrorText,
   overleafChipView,
   overleafResultView,
+  overleafUndoView,
   parseOverleafProjectInput,
   refusalText,
   workspacePathOf,
@@ -453,5 +454,29 @@ describe("conflict marks", () => {
     const message = askAgentMessage(["paper/main.tex"]);
     expect(message).toContain("- paper/main.tex");
     expect(message).toContain("explain your choices");
+  });
+
+  it("says what an undo put back and left, and never calls a replan put back", () => {
+    const undone = {
+      _tag: "undone" as const,
+      restored: ["main.tex"],
+      removed: ["new.tex"],
+      recreated: [],
+      skipped: [{ path: "notes.tex", reason: "changed" as const }],
+      sync: null,
+    };
+    expect(overleafUndoView({ ...undone, outcome: "complete" })).toEqual({
+      title: "Put back 2 files",
+      lines: ["Left as it is: notes.tex (edited since)."],
+      tone: "success",
+      needsDecision: false,
+    });
+    expect(overleafUndoView({ ...undone, outcome: "replan" }).title).toBe("Nothing was put back");
+    expect(overleafUndoView({ ...undone, outcome: "attention" }).title).toBe(
+      "Undo needs attention",
+    );
+    expect(overleafUndoView({ _tag: "not-eligible", reason: "unresolved" }).lines).toEqual([
+      "Overleaf never answered this send.",
+    ]);
   });
 });

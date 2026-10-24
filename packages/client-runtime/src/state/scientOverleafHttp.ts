@@ -7,6 +7,7 @@ import type {
   ScientOverleafPreviewRequest,
   ScientOverleafRestoreRequest,
   ScientOverleafSyncRequest,
+  ScientOverleafUndoRequest,
   ScientOverleafWorkspaceRequest,
 } from "@t3tools/contracts";
 
@@ -22,11 +23,11 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
  * credential. Scient-owned end to end; mirrors `scientWordExportHttp.ts`.
  */
 
-/** Token, list, status and kept copies: reads that never reach Overleaf. */
+/** Token, list, status, kept copies and undoable sends: reads that never reach Overleaf. */
 const READ_TIMEOUT_MS = 60_000;
 /**
- * Connect, preview, sync and restore fetch from Overleaf, write the folder and
- * send. The server bounds each step itself; this only keeps a lost connection
+ * Connect, preview, sync, restore and undo fetch from Overleaf, write the folder
+ * and send. The server bounds each step itself; this only keeps a lost connection
  * from waiting forever.
  */
 const OVERLEAF_OPERATION_TIMEOUT_MS = 15 * 60_000;
@@ -185,6 +186,35 @@ export const restoreEnvironmentOverleafKeptCopy = Effect.fn(
     timeoutMs: OVERLEAF_OPERATION_TIMEOUT_MS,
     url: (urls) => urls.restoreKept(),
     run: ({ client, headers }) => client.restoreKept({ headers, payload: input.request }),
+  });
+});
+
+export const listEnvironmentOverleafUndoableSends = Effect.fn(
+  "clientRuntime.state.listEnvironmentOverleafUndoableSends",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientOverleafConnectionRequest;
+}) {
+  return yield* request({
+    prepared: input.prepared,
+    timeoutMs: READ_TIMEOUT_MS,
+    url: (urls) => urls.undoableSends(),
+    run: ({ client, headers }) => client.undoableSends({ headers, payload: input.request }),
+  });
+});
+
+/** Puts back what Overleaf had before one accepted send, then syncs. */
+export const undoEnvironmentOverleafSend = Effect.fn(
+  "clientRuntime.state.undoEnvironmentOverleafSend",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientOverleafUndoRequest;
+}) {
+  return yield* request({
+    prepared: input.prepared,
+    timeoutMs: OVERLEAF_OPERATION_TIMEOUT_MS,
+    url: (urls) => urls.undo(),
+    run: ({ client, headers }) => client.undo({ headers, payload: input.request }),
   });
 });
 

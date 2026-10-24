@@ -12,6 +12,8 @@ import type {
   ScientOverleafReview,
   ScientOverleafStatus,
   ScientOverleafSyncResult,
+  ScientOverleafUndoableSends,
+  ScientOverleafUndoResult,
   ScientOverleafWarning,
 } from "@t3tools/contracts";
 
@@ -475,6 +477,97 @@ export const previewLines = (preview: ScientOverleafPreviewResult): string[] => 
       ];
   }
 };
+
+const UNDO_SKIP_TEXT: Record<
+  Extract<ScientOverleafUndoResult, { _tag: "undone" }>["skipped"][number]["reason"],
+  string
+> = {
+  changed: "edited since that send",
+  "already-undone": "already Overleaf's earlier version",
+  "name-clash": "another file or folder is in its place",
+  "too-large": "Overleaf's earlier version is too large to put back",
+};
+
+/** What an undo put back and left alone, then what the sync after it did (design section 4.3). */
+export const undoLines = (attemptNumber: number, result: ScientOverleafUndoResult): string[] => {
+  switch (result._tag) {
+    case "undone": {
+      const lines: string[] = [];
+      const put = [
+        ...(result.restored.length > 0 ? [`restored ${named(result.restored)}`] : []),
+        ...(result.removed.length > 0
+          ? [`removed ${named(result.removed)} (the send added them)`]
+          : []),
+        ...(result.recreated.length > 0
+          ? [`wrote back ${named(result.recreated)} (the send deleted them)`]
+          : []),
+      ].join("; ");
+      switch (result.outcome) {
+        case null:
+          lines.push(`Nothing of send #${attemptNumber} was put back.`);
+          break;
+        case "complete":
+          lines.push(
+            `Put back what Overleaf had before send #${attemptNumber}: ${put}. The files it replaced are kept as copies.`,
+          );
+          break;
+        case "replan":
+          lines.push(
+            `The undo of send #${attemptNumber} wrote nothing: the folder changed while it ran. Call again.`,
+          );
+          break;
+        default:
+          lines.push(
+            `The undo of send #${attemptNumber} needs attention: it may have stopped partway, or a file changed while it was written. Check scient_overleaf_status before syncing.`,
+          );
+      }
+      if (result.skipped.length > 0)
+        lines.push(
+          `Left as it is: ${named(result.skipped.map((skip) => `${skip.path} (${UNDO_SKIP_TEXT[skip.reason]})`))}.`,
+        );
+      if (result.sync !== null) lines.push("Then it synced:", ...syncLines(result.sync));
+      return lines;
+    }
+    case "not-eligible":
+      switch (result.reason) {
+        case "not-recorded":
+          return [
+            `Send #${attemptNumber} is not recorded (the last 64 sends are). Nothing changed.`,
+          ];
+        case "unresolved":
+          return [
+            `Overleaf never answered send #${attemptNumber}, so what it changed is not known. Nothing changed.`,
+          ];
+        case "not-sent":
+          return [`Send #${attemptNumber} was never sent. Nothing changed.`];
+        case "out-of-date":
+          return [
+            `Overleaf refused send #${attemptNumber} as out of date, so it changed nothing there. Nothing changed.`,
+          ];
+        case "history-unavailable":
+          return [
+            `Scient no longer holds what send #${attemptNumber} replaced, so it can't be undone. Nothing changed.`,
+          ];
+      }
+      return [];
+    case "refused":
+      return [`Nothing was undone: ${refusalReason(result.refusal)}`];
+    case "duplicate":
+      return ["This undo already ran; nothing ran again."];
+  }
+};
+
+/** The sends Undo can put back, newest first, with what each changed on Overleaf. */
+export const undoableSendLines = (sends: ScientOverleafUndoableSends["sends"]): string[] =>
+  sends.length === 0
+    ? ["No send of this link can be undone."]
+    : [
+        "Sends you can undo, newest first:",
+        ...sends.map(
+          (send) =>
+            `- send #${send.attemptNumber} (${send.recordedAt}): ${named(send.changes.map(changeText))}.`,
+        ),
+      ];
 
 /** An interrupted sync an operation finished before its own work, when its result can't carry it. */
 export const firstSettledLine = (settled: Settled): string => settledLine(settled, true);

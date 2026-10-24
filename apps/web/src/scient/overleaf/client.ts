@@ -11,6 +11,8 @@ import {
   restoreEnvironmentOverleafKeptCopy,
   saveEnvironmentOverleafToken,
   syncEnvironmentOverleaf,
+  undoEnvironmentOverleafSend,
+  listEnvironmentOverleafUndoableSends,
 } from "@t3tools/client-runtime/state/scient-overleaf";
 import type {
   EnvironmentId,
@@ -20,6 +22,7 @@ import type {
   ScientOverleafPreviewRequest,
   ScientOverleafRestoreRequest,
   ScientOverleafSyncRequest,
+  ScientOverleafUndoRequest,
 } from "@t3tools/contracts";
 
 import { runtime } from "../../lib/runtime";
@@ -120,6 +123,26 @@ export async function restoreOverleafKeptCopy(
 ) {
   return runtime.runPromise(
     restoreEnvironmentOverleafKeptCopy({ prepared: prepared(environmentId), request }),
+  );
+}
+
+/** The sends Undo can put back, newest first, with what each changed on Overleaf. */
+export async function listOverleafUndoableSends(
+  environmentId: EnvironmentId,
+  request: ScientOverleafConnectionRequest,
+) {
+  return runtime.runPromise(
+    listEnvironmentOverleafUndoableSends({ prepared: prepared(environmentId), request }),
+  );
+}
+
+/** Puts back what Overleaf had before one send, then syncs. */
+export async function undoOverleafSend(
+  environmentId: EnvironmentId,
+  request: ScientOverleafUndoRequest,
+) {
+  return runtime.runPromise(
+    undoEnvironmentOverleafSend({ prepared: prepared(environmentId), request }),
   );
 }
 

@@ -668,6 +668,18 @@ coordinator's per-connection reservations.
   Per-file decisions (`files.keepOnlyHere`, `files.send`) go to the engine's
   selections, applied to the review's own capture and carried through rebuilt
   reviews; reviews list every new file with its selection and skip reason.
+  **Undo** (`OverleafSync.undo`, attempt number and request ID) saves the
+  folder's editors, runs the coordinator's undo, and when its apply completed
+  syncs at once under the same hold, with a receipt derived from the request's
+  (64 characters, so no client request ID equals it): the restored files go out
+  as ordinary local changes, and only a conflict stops. A repeated request is
+  the undo's `duplicate` and syncs nothing. A refusal the sync meets after the
+  undo wrote the folder is its `sync` result (`refused`), never an error that
+  hides the undo. It claims the connection's running sync like a sync, so
+  cancel reaches it. `undoableSends` lists the newest ten accepted sends whose
+  commits are still held, each with its changes (the parent tree against the
+  sent tree), reading the private repository only; older ones are undone by
+  number. HTTP: `undo/sends` (read scope) and `undo` (operate scope).
   **Editors first.** Every service operation that may write the folder (sync,
   preview, recovery, kept-copy restore, undo) takes the connection, reads the
   folder the link names inside that hold, asks every window to save that
