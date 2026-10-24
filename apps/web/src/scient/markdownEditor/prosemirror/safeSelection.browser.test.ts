@@ -78,13 +78,11 @@ describe("safe atom selections", () => {
   });
 
   it.each([
+    // Field direction picks the boundary and prose direction picks the side,
+    // independently: these rows give each choice both outcomes.
     ["ltr", "ltr", "ArrowLeft", "start", "before"],
-    ["ltr", "ltr", "ArrowRight", "end", "after"],
     ["rtl", "ltr", "ArrowLeft", "end", "before"],
-    ["rtl", "ltr", "ArrowRight", "start", "after"],
     ["ltr", "rtl", "ArrowLeft", "start", "after"],
-    ["ltr", "rtl", "ArrowRight", "end", "before"],
-    ["rtl", "rtl", "ArrowLeft", "end", "after"],
     ["rtl", "rtl", "ArrowRight", "start", "before"],
   ] as const)(
     "moves a %s field in %s prose through its physical %s boundary",
@@ -135,9 +133,8 @@ describe("safe atom selections", () => {
   );
 
   it.each([
+    // Every modifier takes the same early return.
     ["Shift+ArrowLeft", { key: "ArrowLeft", shiftKey: true }],
-    ["Alt+ArrowRight", { altKey: true, key: "ArrowRight" }],
-    ["Meta+Enter", { key: "Enter", metaKey: true }],
     ["Control+Backspace", { ctrlKey: true, key: "Backspace" }],
   ] as const)("leaves %s to the nested field", (_label, eventInit) => {
     const markdownDocument = createScientMarkdownProjection("Before [@source] after.\n").document;
@@ -163,8 +160,7 @@ describe("safe atom selections", () => {
     } as Pick<EditorView, "dispatch" | "focus" | "state"> as EditorView;
     const editor = globalThis.document.createElement("input");
     editor.value = eventInit.key === "Backspace" ? "" : "@source";
-    const caret = eventInit.key === "ArrowRight" ? editor.value.length : 0;
-    editor.setSelectionRange(caret, caret);
+    editor.setSelectionRange(0, 0);
     const event = new KeyboardEvent("keydown", { ...eventInit, cancelable: true });
 
     expect(

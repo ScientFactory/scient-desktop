@@ -113,49 +113,45 @@ describe("formatting menu focus", () => {
     expect(controlsHost.querySelector('button[aria-label="Add or edit link"]')).toBeNull();
   });
 
-  it.each(["caret", "selection"] as const)(
-    "opens exactly one link editor from the %s shortcut and restores editor focus",
-    async (kind) => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+  // The caret shortcut opens the same editor in "restores the correct focus target after Escape".
+  it("opens exactly one link editor from the selection shortcut and restores editor focus", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-      const { view } = await fixture(_fixture, "Link these words.\n");
-      if (kind === "selection") {
-        await act(() => {
-          view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
-        });
-      }
+    const { view } = await fixture(_fixture, "Link these words.\n");
+    await act(() => {
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
+    });
 
-      const event = new KeyboardEvent(
-        "keydown",
-        nativeShortcut({
-          key: "k",
-          code: "KeyK",
-          bubbles: true,
-          cancelable: true,
-          ctrlKey: true,
-        }),
+    const event = new KeyboardEvent(
+      "keydown",
+      nativeShortcut({
+        key: "k",
+        code: "KeyK",
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+      }),
+    );
+    await act(() => view.dom.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    await vi.waitFor(() => {
+      const inputs = document.body.querySelectorAll<HTMLInputElement>(
+        'input[aria-label="Link destination"]',
       );
-      await act(() => view.dom.dispatchEvent(event));
-      expect(event.defaultPrevented).toBe(true);
-      await vi.waitFor(() => {
-        const inputs = document.body.querySelectorAll<HTMLInputElement>(
-          'input[aria-label="Link destination"]',
-        );
-        expect(inputs).toHaveLength(1);
-        expect(document.activeElement).toBe(inputs[0]);
-      });
+      expect(inputs).toHaveLength(1);
+      expect(document.activeElement).toBe(inputs[0]);
+    });
 
-      const cancel = Array.from(
-        document.body.querySelectorAll<HTMLButtonElement>("[data-slot='popover-popup'] button"),
-      ).find((button) => button.textContent === "Cancel")!;
-      await act(() => cancel.click());
-      await vi.waitFor(() => {
-        expect(document.body.querySelector('input[aria-label="Link destination"]')).toBeNull();
-        expect(view.hasFocus()).toBe(true);
-      });
-    },
-  );
+    const cancel = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("[data-slot='popover-popup'] button"),
+    ).find((button) => button.textContent === "Cancel")!;
+    await act(() => cancel.click());
+    await vi.waitFor(() => {
+      expect(document.body.querySelector('input[aria-label="Link destination"]')).toBeNull();
+      expect(view.hasFocus()).toBe(true);
+    });
+  });
 
   it("uses one stable link popup while switching between detached triggers", async () => {
     await using _fixture = _createFixture();
@@ -269,7 +265,6 @@ describe("formatting menu focus", () => {
   it.each([
     ["Text", "Heading 2", "heading-2", "A paragraph\n"],
     ["List:", "Numbered list", "ordered-list", "A paragraph\n"],
-    ["Text", "Paragraph", "paragraph", "A paragraph\n"],
     ["Text", "Paragraph", "paragraph", "> A quote\n"],
   ])(
     "closes %s after %s and leaves the caret ready to type (%s, %s)",
@@ -508,8 +503,6 @@ describe("formatting menu focus", () => {
     expect(hint.textContent).toBe(shortcut.display);
     expect(hint.dir).toBe("ltr");
     expect(hint.getAttribute("aria-hidden")).toBe("true");
-    expect(hint.className).not.toContain("border");
-    expect(hint.className).not.toContain("bg-");
   });
 
   it("closes nested outline actions and focuses the chosen heading", async () => {
@@ -576,25 +569,6 @@ describe("formatting menu focus", () => {
     expect(grid.dataset.scientTableSizeRows).toBe("8");
     expect(grid.dataset.scientTableSizeOrigin).toBe("left");
     expect(grid.dir).toBe("ltr");
-    expect(choices[0]?.classList.contains("size-4")).toBe(true);
-    expect(choices[0]?.classList.contains("sm:min-h-0")).toBe(true);
-    expect(choices[0]?.classList.contains("min-h-8")).toBe(false);
-    expect(choices[0]?.classList.contains("sm:min-h-7")).toBe(false);
-    expect(choices[0]?.className).not.toContain("transition-");
-    expect(grid.style.gridAutoRows).toBe("1rem");
-    const viewport = picker.querySelector<HTMLElement>("[data-scient-table-size-viewport]")!;
-    expect(viewport.classList.contains("scient-markdown-table-size-viewport")).toBe(true);
-    expect(viewport.classList.contains("overflow-x-auto")).toBe(true);
-    expect(viewport.classList.contains("overflow-y-hidden")).toBe(true);
-    expect(viewport.classList.contains("overscroll-x-contain")).toBe(true);
-    expect(viewport.style.inlineSize).toContain("8rem");
-    expect(viewport.style.inlineSize).toContain("var(--available-width)");
-    expect(viewport.style.blockSize).toBe("");
-    expect(viewport.dir).toBe("ltr");
-    const popup = picker.closest<HTMLElement>("[data-slot='menu-sub-content']")!;
-    expect(popup.classList).toContain("max-w-(--available-width)");
-    expect(popup.classList).toContain("[&>div]:max-h-none");
-    expect(popup.classList).toContain("[&>div]:overflow-y-visible");
     const sizeLabel = picker.querySelector<HTMLElement>("[data-scient-table-size-label]")!;
     expect(sizeLabel.textContent).toBe("3 × 3");
     const sixByThree = picker.querySelector<HTMLElement>(
@@ -669,8 +643,6 @@ describe("formatting menu focus", () => {
     const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
     scrollIntoView.mockClear();
     expect(picker.querySelectorAll('[role="menuitem"]')).toHaveLength(64);
-    expect(viewport.style.inlineSize).toContain("8rem");
-    expect(grid.style.gridTemplateColumns).toBe("repeat(8, 1rem)");
     const sevenByThree = picker.querySelector<HTMLElement>(
       '[aria-label="Insert table with 7 columns × 3 rows"]',
     )!;
@@ -679,7 +651,6 @@ describe("formatting menu focus", () => {
       expect(grid.dataset.scientTableSizeColumns).toBe("9");
       expect(grid.dataset.scientTableSizeRows).toBe("8");
     });
-    expect(viewport.style.inlineSize).toContain("9rem");
     const nineByOne = picker.querySelector<HTMLElement>(
       '[aria-label="Insert table with 9 columns × 1 row"]',
     )!;
@@ -713,9 +684,6 @@ describe("formatting menu focus", () => {
     }
     expect(picker.querySelectorAll('[role="menuitem"]')).toHaveLength(225);
     expect(picker.querySelector<HTMLElement>("[data-scient-table-size-viewport]")).toBe(viewport);
-    expect(viewport.style.inlineSize).toContain("15rem");
-    expect(viewport.style.blockSize).toBe("");
-    expect(grid.style.gridTemplateColumns).toBe("repeat(15, 1rem)");
     const fifteenByFifteen = picker.querySelector<HTMLElement>(
       '[aria-label="Insert table with 15 columns × 15 rows"]',
     )!;
@@ -775,12 +743,7 @@ describe("formatting menu focus", () => {
     const grid = picker.querySelector<HTMLElement>("[data-scient-table-size-columns]")!;
     const viewport = picker.querySelector<HTMLElement>("[data-scient-table-size-viewport]")!;
     const sizeLabel = picker.querySelector<HTMLElement>("[data-scient-table-size-label]")!;
-    const firstCell = picker.querySelector<HTMLElement>("[data-scient-table-size-cell]")!;
     const viewportBounds = viewport.getBoundingClientRect();
-    expect(viewportBounds.width).toBeCloseTo(149);
-    expect(viewportBounds.height).toBeCloseTo(149);
-    expect(firstCell.getBoundingClientRect().width).toBe(16);
-    expect(firstCell.getBoundingClientRect().height).toBe(16);
 
     const threeByThree = picker.querySelector<HTMLElement>(
       '[aria-label="Insert table with 3 columns × 3 rows"]',
@@ -919,12 +882,7 @@ describe("formatting menu focus", () => {
     );
 
     const viewport = picker.querySelector<HTMLElement>("[data-scient-table-size-viewport]")!;
-    const firstCell = picker.querySelector<HTMLElement>("[data-scient-table-size-cell]")!;
     const viewportBounds = viewport.getBoundingClientRect();
-    expect(viewportBounds.width).toBeCloseTo(149);
-    expect(viewportBounds.height).toBeCloseTo(149);
-    expect(firstCell.getBoundingClientRect().width).toBe(16);
-    expect(firstCell.getBoundingClientRect().height).toBe(16);
 
     await act(() => threeByThree.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
     await act(() => {

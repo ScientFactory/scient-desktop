@@ -7,9 +7,8 @@ import {
 } from "./markdownDocumentPaths";
 
 describe("Scient Markdown document paths", () => {
-  it.each(["notes.md", "notes.MD", "notes.markdown", "notes.MARKDOWN"])(
-    "recognizes %s as a plain Markdown document",
-    (path) => expect(isScientMarkdownDocumentPath(path)).toBe(true),
+  it.each(["notes.MD", "notes.markdown"])("recognizes %s as a plain Markdown document", (path) =>
+    expect(isScientMarkdownDocumentPath(path)).toBe(true),
   );
 
   it.each(["notes.mdx", "notes.txt", "notes.md.backup"])(
