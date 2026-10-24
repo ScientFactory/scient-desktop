@@ -39,8 +39,9 @@ the same limits as before.
 
 ### Timing
 
-`OverleafSync.bench.test.ts` syncs 1, 10 and 50 files each way against a local
-bare repository with the real applier and prints the time of each stage. It is
+`OverleafSync.bench.test.ts` syncs 1, 10 and 50 files each way, and 300 files
+from Overleaf into one folder, against a local bare repository with the real
+applier and prints the time of each stage. It is
 skipped unless asked for; from `apps/server`:
 
 ```sh
@@ -86,7 +87,7 @@ record kept in the same folder):
 - A lease binds each directory it locks natively when it is taken, walking the
   path from `/` without following links, and is refused if any identity
   differs. The bindings handed to it for a directory on itself (every ancestor
-  up to the volume's edge, each kept record's folder, a retention folder) are
+  up to the volume's edge, each held record's folder, a retention folder) are
   therefore observed in process on macOS and Linux: the path is canonical and
   names a directory, not a link, with that device and inode. A path that is
   not canonical, or Windows, still asks the helper.
@@ -103,6 +104,56 @@ record kept in the same folder):
   entries changes too, so a record store is asked about on each write.
 
 Journals, their syncs and the order of every step are unchanged.
+
+What a lease holds of the kept records (`bindingsFor` in
+`WorkspaceFileMutations.ts`). A write first looks at every record kept for its
+folder and for its path, to finish any a crash left unfinished before it
+touches the folder. It holds exclusively the folder of each record it may
+write into, and no other:
+
+- its own record;
+- every record not finished: settlement may finish it. This includes an index
+  whose journal is not written yet (a write in flight) and a journal that
+  cannot be read;
+- the records of its own path still asking for attention, because its refusal
+  makes a view of their kept copies in them.
+
+Settled reads, the workspace epoch and the publication fence (`withRoot`) hold
+only unfinished records; listing, discarding and reviewing one file's versions
+(`withParent`) still hold all of that file's records, since they write views,
+discards and reviews into them. A finished record (a version 2 journal at
+`done`) is final: its target, mutation id, outcome and published revision never
+change, its journal is replaced in one rename so a read sees it whole, and
+whoever writes into it holds it. The target's folder and the workspace root are
+held as before (exclusive folder, shared ancestors), so two writes in one folder
+still run one at a time. Holding every record found, as the file layer once did,
+made the lease grow by one folder with every write ever kept in that folder:
+an incoming sync of 300 files into one folder stopped at file 236, past the 256
+folders a native lease can bind, and each write took longer than the one before.
+`WorkspaceFileMutations.lease.test.ts` checks that a save's lease and a settled
+read's lease stay the same size as records accumulate, and that a save succeeds
+beside 300 finished records; the benchmark's `incoming 300` case syncs 300 new
+files into one folder.
+
+Finding the records still reads every record its store keeps, on each
+discovery (several per write). A finished record already read is taken from
+memory while its folders and journal stand as they did just before it was read
+(each folder still private, with the same inode, mode and times; the journal
+with the same inode, size and times): a finished journal changes only by being
+replaced through a rename. Anything else is read and decoded as before. A
+discovery made under a lease is reused after settlement when settlement had
+nothing to finish, since the lease keeps the others' records as they are. A
+retained write qualifies its target once, at publication, and once more first
+only when a folder stands in the file's place and is removed.
+
+What stays bounded only by the folder tree: a lease binds every folder from a
+written folder up to the volume's edge, and those of the retention stores. A
+file nested so deep that one write would need more than 256 folders cannot be
+written. Before an apply is recorded, confirm and undo ask the applier
+(`WorkspaceApplier.fits`, counting with `retainedWriteFolders`) whether every
+changed path fits, counting each folder up to `/`, the record stores and every
+record a lease would hold; if not they refuse with `OverleafRetainedLimitError`
+`folder-depth` and nothing is written (`OverleafCoordinator.leaseRoom.test.ts`).
 
 On macOS/Linux an explicitly supplied host-owned helper can exchange the staged
 file with the manuscript atomically. Compile the shipped C source with:
@@ -391,7 +442,8 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
   (`credential-epoch`) rather than applied. Before anything is written it
   checks room:
   for every kept copy the apply could add, and for every group an interruption
-  could leave as a forced conflict (at most 2,000 paths each). Then, before the
+  could leave as a forced conflict (at most 2,000 paths each), and that every
+  write fits one native lease (`folder-depth`). Then, before the
   applier runs, it records the receipt, a local snapshot, the intent pin and
   `activeApply`, in that order.
 - **Adoption** is one document replacement:

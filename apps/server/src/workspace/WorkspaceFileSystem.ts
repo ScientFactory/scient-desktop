@@ -872,6 +872,7 @@ export const make = Effect.gen(function* () {
     );
   const {
     registerRetainedFileHistory,
+    retainedWriteFolders,
     prepareRetainedDirectory,
     listFileVersions,
     discardFileVersion,
@@ -896,6 +897,7 @@ export const make = Effect.gen(function* () {
     replaceFileRetained,
     removeFileRetained,
     registerRetainedFileHistory,
+    retainedWriteFolders,
     prepareRetainedDirectory,
     listFileVersions,
     discardFileVersion,

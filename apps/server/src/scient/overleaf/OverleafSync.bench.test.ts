@@ -1,8 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
 /**
- * How long one sync takes, stage by stage: 1, 10 and 50 files coming from
- * Overleaf, and 1, 10 and 50 going to it, against a real local bare repository
- * with the real applier. Skipped unless asked for; run it from `apps/server`:
+ * How long one sync takes, stage by stage: 1, 10, 50 and 300 files coming
+ * from Overleaf, and 1, 10 and 50 going to it, against a real local bare
+ * repository with the real applier. The 300 case puts every file in one folder,
+ * past the 256 folders one native lease can bind. Skipped unless asked for; run it from `apps/server`:
  *
  *   SCIENT_OVERLEAF_BENCH=1 node_modules/.bin/vp test run src/scient/overleaf/OverleafSync.bench.test.ts --testTimeout=0
  *
@@ -101,7 +102,10 @@ describe.skipIf(!canApply || process.env.SCIENT_OVERLEAF_BENCH !== "1")(
   () => {
     it.live.each(
       (["incoming", "outgoing"] as const).flatMap((direction) =>
-        [1, 10, 50].map((count) => ({ direction, count })),
+        (direction === "incoming" ? [1, 10, 50, 300] : [1, 10, 50]).map((count) => ({
+          direction,
+          count,
+        })),
       ),
     )("$direction $count", ({ direction, count }) => measure(direction, count));
 

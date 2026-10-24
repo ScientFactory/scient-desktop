@@ -491,6 +491,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, holding back a file with confli
           synced: { "main.tex": doc("one"), "other.tex": "O" },
           remote: { "main.tex": doc("theirs"), "other.tex": "O" },
           applier: (real) => ({
+            ...real,
             apply: (input) =>
               Effect.map(real.apply(input), (result) => ({ ...result, unitsDone: false })),
           }),

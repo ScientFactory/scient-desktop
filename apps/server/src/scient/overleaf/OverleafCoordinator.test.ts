@@ -608,6 +608,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           remote: { "main.tex": "B" },
           applier: (real) =>
             WorkspaceApplier.of({
+              ...real,
               apply: (input) =>
                 real.apply(input).pipe(
                   Effect.flatMap((result) => {
@@ -1256,6 +1257,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
     (changed: boolean) =>
     (real: WorkspaceApplier["Service"]): WorkspaceApplier["Service"] =>
       WorkspaceApplier.of({
+        ...real,
         apply: (input) =>
           real.apply(input).pipe(
             Effect.flatMap((result) => {
