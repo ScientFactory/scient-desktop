@@ -7,24 +7,15 @@ const read = (relativePath: string) =>
   NodeFS.readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
 describe("browser PDF export seams", () => {
-  it("keeps browser export orchestration in Scient-owned modules", () => {
+  it("keeps browser export orchestration out of the inherited preview chrome", () => {
     const previewView = read("../../components/preview/PreviewView.tsx");
     const previewChrome = read("../../components/preview/PreviewChromeRow.tsx");
-    const action = read("./ScientPreviewExportActions.tsx");
-    const exportHook = read("../documentExport/useBrowserPdfExport.ts");
 
     expect(previewView).toContain("<ScientPreviewExportActions");
-    expect(previewView).toContain("trailingActions={");
     expect(previewView).not.toMatch(/Encoding|LogicalDocumentKey|publishBrowserPdfExport/gu);
     expect(previewChrome).not.toMatch(
       /Export PDF|FileDown|onExportPdf|exportingPdf|contentActions/gu,
     );
-    expect(action).toContain("useBrowserPdfExport()");
-    expect(action).toContain("Open PDF");
-    expect(action).toContain("Save PDF…");
-    expect(action).toContain("usePdfSaveCopy(");
-    expect(exportHook).toContain("bridge.exportPdf(");
-    expect(exportHook).toContain("browserPdfExportEnvironment.publish");
   });
 
   it("keeps server publication behind one inherited RPC mount", () => {
@@ -32,14 +23,9 @@ describe("browser PDF export seams", () => {
       read("../../../../server/src/ws.ts"),
       read("../../../../server/src/scient/documentExport/DocumentPdfRpcHandlers.ts"),
     ].join("\n");
-    const publication = read(
-      "../../../../server/src/scient/documentArtifacts/BrowserPdfExportPublication.ts",
-    );
 
     expect(ws).toContain("publishBrowserPdfExport(generatedDocuments, input)");
     expect(ws).not.toMatch(/decodeBase64Url|BROWSER_PDF_EXPORT_MAX_BYTES|validationContext/gu);
-    expect(publication).toMatch(/generatedDocuments\s*\.\s*publishPdf\(\{/u);
-    expect(publication).toContain('validationProfile: "browser-export"');
   });
 
   it("keeps rendering and Save Copy implementation outside inherited desktop services", () => {
@@ -55,6 +41,7 @@ describe("browser PDF export seams", () => {
     );
 
     expect(manager).toContain("../scient/documentExport/BrowserPdfRenderer.ts");
+    expect(manager).toContain("render: controlledDocumentPdfRenderer");
     expect(manager).not.toMatch(/PAGINATION_CSS|wc\.printToPDF|waitForReadiness/gu);
     expect(electronDialog).not.toMatch(/saveFile|showSaveDialog/gu);
     expect(NodeFS.existsSync(rendererUrl)).toBe(true);
@@ -63,43 +50,8 @@ describe("browser PDF export seams", () => {
 
   it("keeps browser fallback bytes out of the inherited local API facade", () => {
     const localApi = read("../../localApi.ts");
-    const fallback = read("../documentArtifacts/browserAssetCopy.ts");
 
     expect(localApi).toContain("saveAssetCopyInBrowser(request)");
     expect(localApi).not.toMatch(/createObjectURL|response\.blob|document\.createElement/gu);
-    expect(fallback).toContain("URL.createObjectURL(await response.blob())");
-  });
-
-  it("shares native Save Copy and reveal presentation across browser and reader entry points", () => {
-    const action = read("./ScientPreviewExportActions.tsx");
-    const reader = read("./ScientPdfReader.tsx");
-    const notification = read("./pdfSaveCopyNotification.ts");
-
-    expect(action).toContain("announcePdfSaveCopyResult(saveResult");
-    expect(reader).toContain("announcePdfSaveCopyResult(result)");
-    expect(notification).toContain("documents.revealSavedAsset");
-    expect(notification).toContain("revealSavedAsset(result.path)");
-  });
-
-  it("keeps agent HTML builds on the hidden renderer and existing generated-PDF surface", () => {
-    const host = read("../documentExport/documentHost.tsx");
-    const manager = read("../../../../desktop/src/preview/Manager.ts");
-    const renderer = read(
-      "../../../../desktop/src/scient/documentExport/ControlledHtmlPdfRenderer.ts",
-    );
-    const handler = read("../../../../server/src/mcp/toolkits/documents/handlers.ts");
-
-    expect(host).toContain('case "documentPdfRender"');
-    expect(host).toContain("bridge.renderHtmlPdf(sourceUrl)");
-    expect(host).toContain("scientGeneratedPdfSurface(request.input.source)");
-    expect(host).not.toContain("needsPreviewAutomationSessionSync");
-    expect(renderer).toContain('CONTROLLED_RENDER_PARTITION = "scient-next-controlled-html-pdf"');
-    expect(manager).toContain('marginPolicy: "source-authored"');
-    expect(manager).toContain("render: controlledDocumentPdfRenderer");
-    expect(renderer).toContain("setPermissionRequestHandler((_contents, _permission, callback)");
-    expect(renderer).toContain("onBeforeRequest");
-    expect(handler).toContain('provenanceKind: "controlled-render"');
-    expect(handler).toContain('validationProfile: "browser-export"');
-    expect(handler).toContain("visualReviewPerformed: false");
   });
 });

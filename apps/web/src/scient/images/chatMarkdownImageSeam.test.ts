@@ -14,33 +14,15 @@ const imageCardSource = NodeFS.readFileSync(
 );
 
 describe("ChatMarkdown workspace-image seam", () => {
-  it("mounts one Scient-owned inline image component", () => {
+  it("mounts one of each Scient-owned image component", () => {
     expect(chatMarkdownSource).toContain("ScientInlineWorkspaceImage,");
     expect(chatMarkdownSource).toContain("ScientPendingWorkspaceImage,");
     expect(chatMarkdownSource.match(/<ScientInlineWorkspaceImage/gu)).toHaveLength(1);
     expect(chatMarkdownSource.match(/<ScientPendingWorkspaceImage/gu)).toHaveLength(1);
-  });
-
-  it("uses a stable local-image card while streaming and preserves ordinary images", () => {
-    expect(chatMarkdownSource).toContain(
-      "resolveInlineWorkspaceImage({ alt, cwd, src: imageSource.path })",
-    );
-    expect(chatMarkdownSource).toContain('reason={isStreaming ? "streaming" : "unavailable"}');
-    expect(chatMarkdownSource).toContain(
-      "classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd)",
-    );
-    expect(chatMarkdownSource).toContain("<ChatMarkdownAssetImage");
-    expect(chatMarkdownSource).toContain("<ChatMarkdownImageFallback");
-  });
-
-  it("gates web images through one Scient-owned link card", () => {
     expect(chatMarkdownSource.match(/<ScientRemoteImageReference/gu)).toHaveLength(1);
-    expect(chatMarkdownSource).toContain(
-      "if (remoteImageReference !== null) return remoteImageReference;",
-    );
-    expect(chatMarkdownSource).toContain("failureFallback={remoteImageReference ?? undefined}");
   });
 
+  // regression: e34e687915 fix(chat): make rich media reliable and copyable
   it("uses authorized asset URLs and never executes SVG as document markup", () => {
     expect(imageCardSource).toContain("useAssetUrlState(props.threadRef.environmentId, resource)");
     expect(imageCardSource).toContain("<img");

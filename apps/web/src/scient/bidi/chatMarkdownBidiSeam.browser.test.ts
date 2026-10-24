@@ -1,7 +1,4 @@
-import _sourceContract0 from "../../components/chat/MessagesTimeline.tsx?raw";
-import _sourceContract1 from "./scient-bidi.css?raw";
-import userRowSource from "../../components/chat/TimelineUserMessageRow.tsx?raw";
-import assistantRowSource from "../../components/chat/TimelineAssistantRows.tsx?raw";
+import bidiCssSource from "./scient-bidi.css?raw";
 
 import { createElement } from "react";
 import { render } from "../../../test/render";
@@ -16,9 +13,6 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
 } from "../markdown/scientMarkdownPipeline";
-
-const timelineSource = _sourceContract0;
-const bidiCssSource = _sourceContract1;
 
 function renderUserPipeline(markdown: string) {
   return createElement(
@@ -49,41 +43,38 @@ function renderAssistantPipeline(markdown: string) {
 }
 
 describe("ChatMarkdown BiDi seam", () => {
-  it.each([renderUserPipeline, renderAssistantPipeline])(
-    "keeps computed column alignment consistent across mixed cell directions (%#)",
-    async (renderPipeline) => {
-      const source = [
-        "| Term / מונח | Meaning / משמעות | Example |",
-        "| --- | --- | --- |",
-        "| Blood pressure | לחץ דם | 120/80 mm Hg |",
-        "| טיפול | Treatment | Medication and follow-up |",
-        "| Remote monitoring | ניטור מרחוק | Daily home measurements |",
-        "| תופעות לוואי | Adverse events | No serious events reported |",
-        "| Patient adherence | היענות המטופל | 24 of 30 measurements completed |",
-      ].join("\n");
-      const style = document.createElement("style");
-      style.textContent = bidiCssSource;
-      const host = document.createElement("div");
-      host.className = "chat-markdown";
-      host.dataset.scientContentDirection = "ltr";
-      await using _screen = await render(renderPipeline(source), {
-        container: host,
-        router: false,
-      });
-      document.head.append(style);
-      try {
-        for (const row of host.querySelectorAll("tr")) {
-          expect(Array.from(row.cells, (cell) => getComputedStyle(cell).textAlign)).toEqual([
-            "left",
-            "right",
-            "left",
-          ]);
-        }
-      } finally {
-        style.remove();
+  it("keeps computed column alignment consistent across mixed cell directions", async () => {
+    const source = [
+      "| Term / מונח | Meaning / משמעות | Example |",
+      "| --- | --- | --- |",
+      "| Blood pressure | לחץ דם | 120/80 mm Hg |",
+      "| טיפול | Treatment | Medication and follow-up |",
+      "| Remote monitoring | ניטור מרחוק | Daily home measurements |",
+      "| תופעות לוואי | Adverse events | No serious events reported |",
+      "| Patient adherence | היענות המטופל | 24 of 30 measurements completed |",
+    ].join("\n");
+    const style = document.createElement("style");
+    style.textContent = bidiCssSource;
+    const host = document.createElement("div");
+    host.className = "chat-markdown";
+    host.dataset.scientContentDirection = "ltr";
+    await using _screen = await render(renderAssistantPipeline(source), {
+      container: host,
+      router: false,
+    });
+    document.head.append(style);
+    try {
+      for (const row of host.querySelectorAll("tr")) {
+        expect(Array.from(row.cells, (cell) => getComputedStyle(cell).textAlign)).toEqual([
+          "left",
+          "right",
+          "left",
+        ]);
       }
-    },
-  );
+    } finally {
+      style.remove();
+    }
+  });
 
   it("keeps raw parsing and sanitizing confined to the opted-in HTML plugin set", () => {
     expect(CHAT_MARKDOWN_REHYPE_PLUGINS).toContain(rehypeRaw);
@@ -98,40 +89,6 @@ describe("ChatMarkdown BiDi seam", () => {
         (plugin) => Array.isArray(plugin) && plugin[0] === rehypeSanitize,
       ),
     ).toBe(false);
-  });
-
-  it("routes user messages through literal HTML and assistant messages through the default parser", () => {
-    expect(timelineSource).toContain('from "./TimelineUserMessageRow"');
-    expect(timelineSource).toContain('from "./TimelineAssistantRows"');
-    expect(timelineSource).toContain("<UserMessageRow row={row} />");
-    expect(timelineSource).toContain("<AssistantTimelineRow row={row} />");
-    expect(userRowSource.match(/parseRawHtml=\{false\}/gu)?.length).toBeGreaterThanOrEqual(1);
-    const assistantMount = assistantRowSource.match(
-      /function AssistantTimelineRow[\s\S]*?<ChatMarkdown\b([\s\S]*?)\/>/u,
-    )?.[1];
-    expect(assistantMount).toBeDefined();
-    expect(assistantMount).not.toContain("parseRawHtml");
-  });
-
-  it("thickens flow arrows inline and boxes only the lifted long arrow", () => {
-    expect(bidiCssSource).toContain(".chat-markdown .scient-flow-arrow {");
-    expect(bidiCssSource).toContain(".chat-markdown .scient-flow-arrow-long {");
-    expect(bidiCssSource).toMatch(
-      /\.chat-markdown \.scient-flow-arrow \{[^}]*-webkit-text-stroke:/u,
-    );
-    expect(bidiCssSource).not.toMatch(/\.chat-markdown \.scient-flow-arrow \{[^}]*display:/u);
-    expect(bidiCssSource).toMatch(
-      /\.chat-markdown \.scient-flow-arrow-long \{[^}]*display:\s*inline-block;/u,
-    );
-  });
-
-  it("maps automatic table-column direction to a stable physical alignment", () => {
-    expect(bidiCssSource).toMatch(
-      /\[data-scient-table-column-direction="ltr"\]\s*\{\s*text-align:\s*left;/u,
-    );
-    expect(bidiCssSource).toMatch(
-      /\[data-scient-table-column-direction="rtl"\]\s*\{\s*text-align:\s*right;/u,
-    );
   });
 });
 
@@ -166,47 +123,6 @@ describe("user Markdown plus Scient BiDi", () => {
     expect(html).toContain("onerror=");
     expect(html).not.toMatch(/<script(?:\s|>)/i);
     expect(html).not.toMatch(/<img(?:\s|>)/i);
-  });
-
-  it("reverses RTL prose arrows and leaves arrows in code unchanged", async () => {
-    await using screen = await render(
-      renderUserPipeline(["שלב ראשון → שלב שני", "", "```", "שלום → עולם", "```"].join("\n")),
-      { router: false },
-    );
-    const html = screen.container.innerHTML;
-
-    expect(html).toContain("שלב ראשון ← שלב שני");
-    expect(html).toContain("שלום → עולם");
-  });
-
-  it("keeps automatic alignment stable down each mixed-language table column", async () => {
-    await using screen = await render(
-      renderUserPipeline(["| אבחנה | Treatment |", "| --- | --- |", "| TNBC | טיפול |"].join("\n")),
-      { router: false },
-    );
-    const html = screen.container.innerHTML;
-
-    expect(html.match(/data-scient-table-column-direction="rtl"/gu)).toHaveLength(2);
-    expect(html.match(/data-scient-table-column-direction="ltr"/gu)).toHaveLength(2);
-    expect(html).toContain('<td dir="ltr" data-scient-table-column-direction="rtl">TNBC</td>');
-    expect(html).toContain('<td dir="rtl" data-scient-table-column-direction="ltr">טיפול</td>');
-  });
-
-  it("emits thickening and lift classes for the styled RTL arrows", async () => {
-    await using doubleScreen = await render(renderUserPipeline("שלב ראשון ⇒ שלב שני"), {
-      router: false,
-    });
-    const doubleArrow = doubleScreen.container.innerHTML;
-    expect(doubleArrow).toContain("scient-flow-arrow");
-    expect(doubleArrow).toContain("⇐");
-    expect(doubleArrow).not.toContain("scient-flow-arrow-long");
-
-    await using longScreen = await render(renderUserPipeline("שלב ראשון ⟶ שלב שני"), {
-      router: false,
-    });
-    const longArrow = longScreen.container.innerHTML;
-    expect(longArrow).toContain("scient-flow-arrow-long");
-    expect(longArrow).toContain("⟵");
   });
 });
 

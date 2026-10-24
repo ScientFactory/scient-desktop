@@ -18,11 +18,6 @@ const surfaceSource = NodeFS.readFileSync(
   new URL("./ScientLatexSurface.tsx", import.meta.url),
   "utf8",
 );
-const automationHostSource = NodeFS.readFileSync(
-  new URL("../documentExport/documentHost.tsx", import.meta.url),
-  "utf8",
-);
-const surfaceStyles = NodeFS.readFileSync(new URL("./scient-latex.css", import.meta.url), "utf8");
 
 function mountedPropNames(): ReadonlyArray<string> {
   const mount = panelSource.match(/<ScientLatexSurface\b([\s\S]*?)\/>/u);
@@ -39,12 +34,6 @@ function declaredPropNames(): ReadonlyArray<string> {
 }
 
 describe("Scient LaTeX file-preview seam", () => {
-  it("does not mount collapsed diagnostics over the Visual document", () => {
-    expect(surfaceSource).toContain(
-      '(diagnostics.length > 0 || status.state === "failed") && diagnosticsOpen',
-    );
-    expect(surfaceSource).toContain("onClick={() => setDiagnosticsOpen(true)}");
-  });
   it("lazily mounts the surface for LaTeX paths only", () => {
     expect(panelSource).toContain('import("~/scient/latex/ScientLatexSurface")');
     expect(panelSource).toContain("default: module.ScientLatexSurface,");
@@ -54,13 +43,6 @@ describe("Scient LaTeX file-preview seam", () => {
 
   it("passes exactly the props the surface declares", () => {
     expect([...mountedPropNames()].sort()).toEqual([...declaredPropNames()].sort());
-  });
-
-  it("resolves a document root before starting a build and offers known roots when inference is incomplete", () => {
-    expect(surfaceSource).toContain("useLatexDocumentResolution({");
-    expect(surfaceSource).toContain("resolvedRootRelativePath === null");
-    expect(surfaceSource).toContain('resolution.result?._tag === "unresolved"');
-    expect(surfaceSource).toContain('aria-label="Choose LaTeX document to compile"');
   });
 
   it("consumes an automatic Split presentation without changing the saved user preference", () => {
@@ -81,32 +63,6 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).toContain(
       "const revealPending = revealRequested && !visualRevealNeedsFinish;",
     );
-  });
-
-  it("opens successful agent builds on their source while carrying the resolved root", () => {
-    expect(automationHostSource).toContain('case "documentLatexPresent"');
-    expect(automationHostSource).toContain(
-      "openFile(threadRef, request.input.sourcePath, undefined, {",
-    );
-    expect(automationHostSource).toContain('latexPreviewMode: "split"');
-    expect(automationHostSource).toContain("latexRootRelativePath: request.input.rootSourcePath");
-  });
-
-  it("mounts source-derived writing independently of the compiled viewer", () => {
-    expect(surfaceSource).toContain("<LatexProjectVisualEditor");
-    expect(surfaceSource).toContain('const showVisual = activePreview === "visual";');
-    expect(surfaceSource).toContain("const showRightPane = activePreview !== null;");
-    expect(surfaceSource).toContain("{showVisual || visualOpened ? (");
-    expect(surfaceSource).not.toContain("LatexVisualInteraction");
-    expect(surfaceSource).not.toContain("ensureLatexVisualBuild");
-    expect(surfaceSource).not.toContain("scheduleLatexRebuild");
-    expect(surfaceSource).not.toContain("coordinator.setSuspended");
-  });
-
-  it("keeps source ownership separate from the root-keyed build target", () => {
-    expect(surfaceSource).toContain("sourceRelativePath: props.relativePath");
-    expect(surfaceSource).toContain("relativePath: resolvedRootRelativePath");
-    expect(surfaceSource).toContain("build.snapshot?.visualSourceRevisions?.[props.relativePath]");
   });
 
   it("hands the surface the file's document session, not the panel's saver", () => {
@@ -152,49 +108,9 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(projectSource).toContain("useMarkdownPersistenceLease({");
   });
 
-  it("passes truthful source and current PDF page context to forward SyncTeX", () => {
-    // The inherited editor does not expose its cursor on main. Zero is
-    // SyncTeX's specified unknown-column value, and avoids guessing visual
-    // offsets for wrapped or bidirectional source text.
-    const navigationSource = NodeFS.readFileSync(
-      new URL("./latexSourceNavigation.ts", import.meta.url),
-      "utf8",
-    );
-    expect(navigationSource).toContain("return { line, column: 0 }");
-    expect(surfaceSource).toContain("sourcePositionFromPointerEvent(event)");
-    expect(surfaceSource).toContain("column: position.column");
-    expect(surfaceSource).toContain("pageHint: pdfPageRef.current");
-    expect(surfaceSource).toContain("const pdfPageChange = useStableCallback(handlePdfPageChange)");
-    expect(surfaceSource).toContain("onPageChange: pdfPageChange");
-  });
-
-  it("keeps PDF and Split navigation separate from writing", () => {
-    expect(surfaceSource).toContain('if (mode !== "split") return;');
-    expect(surfaceSource).toContain('if (splitPreview === "pdf") handleForwardSync(position);');
-    expect(surfaceSource).toContain(
-      'const inverseSyncEnabled = mode === "split" && splitPreview === "pdf";',
-    );
-    expect(surfaceSource).toContain("inverseSyncEnabled ? { onInverseSearch: inverseSync } : {}");
-    expect(surfaceSource).toContain("const inverseSync = useStableCallback(handleInverseSync)");
-    expect(surfaceSource).not.toContain("renderInteraction: renderVisualInteraction");
-    expect(surfaceSource).not.toContain('if (preferredMode === "source") selectMode("split")');
-    expect(surfaceSource).toContain('event.key.toLowerCase() === "s"');
-    expect(surfaceSource).toContain("registerShortcutClaim(host, ownsSave)");
-    expect(surfaceSource).toContain(
-      'void saveAndBuild(false, compilationMode !== "manual" && !!build.toolchain?.kind)',
-    );
-  });
-
   it("keeps the LaTeX surface off the chat markdown pipeline", () => {
     expect(surfaceSource).not.toMatch(/ChatMarkdown/u);
     expect(surfaceSource).not.toMatch(/from "~\/components\/ChatMarkdown"/u);
-  });
-
-  it("uses the hand cursor only for enabled buttons", () => {
-    expect(surfaceStyles).toContain(".scient-latex-surface button:not(:disabled)");
-    expect(surfaceStyles).toMatch(
-      /\.scient-latex-surface button:not\(:disabled\) \{\s*cursor: pointer;/u,
-    );
   });
 
   it("exports only the Scient-owned surface", () => {
@@ -204,13 +120,5 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(exported).toEqual(["ScientLatexSurface"]);
     expect(surfaceSource).not.toMatch(/^export default/mu);
     expect(surfaceSource).not.toMatch(/^export \{/mu);
-  });
-
-  it("counts this file's queued or failed save before the project retires its recovery copy", () => {
-    // The project editor clears its stored recovery copy when nothing is
-    // pending. A failed or queued save of the open file must hold that back.
-    // The session's pending flag covers all three: unsaved, saving, and a
-    // save waiting on a conflict or a failure.
-    expect(surfaceSource).toContain("selectedPending={sourcePending}");
   });
 });

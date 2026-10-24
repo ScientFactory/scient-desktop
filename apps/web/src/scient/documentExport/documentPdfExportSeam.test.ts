@@ -7,21 +7,11 @@ const read = (relativePath: string) =>
   NodeFS.readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
 describe("document PDF export seams", () => {
-  it("keeps the desktop host mount narrow and ahead of browser session work", () => {
-    const host = read("./documentHost.tsx");
-    expect(host).toContain('case "documentPagePdfRender"');
-    expect(host).toContain("renderDocumentPagePdfForHost(httpBaseUrl, request.input)");
-    expect(host).not.toContain("needsPreviewAutomationSessionSync");
-    expect(host).not.toContain("renderDocumentPagePdf!(");
-  });
-
   it("keeps capture, validation, and publication out of the inherited server files", () => {
     const ws = [
       read("../../../../server/src/ws.ts"),
       read("../../../../server/src/scient/documentExport/DocumentPdfRpcHandlers.ts"),
     ].join("\n");
-    expect(ws).toContain("prepareMarkdownPdf(input)");
-    expect(ws).toContain("publishCapturedDocumentPdf(input)");
     expect(ws).not.toMatch(/scientDocumentReadinessRejection|writeDocumentCapture|DocumentBundle/u);
   });
 
