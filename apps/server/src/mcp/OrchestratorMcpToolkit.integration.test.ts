@@ -234,7 +234,7 @@ function makeDeterministicAdapter(input: {
   readonly terminalGate?: (
     turn: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Deferred.Deferred<void> | undefined;
-  readonly afterTurnStarted?: (
+  readonly beforeAdmissionReturns?: (
     turn: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Effect.Effect<void>;
   readonly afterTurnCompleted?: (
@@ -351,11 +351,11 @@ function makeDeterministicAdapter(input: {
                   },
                 },
               ]);
+              if (input.beforeAdmissionReturns !== undefined) {
+                yield* input.beforeAdmissionReturns(turnInput);
+              }
               // Native admission returns before terminal events; held results cannot occupy worker slots.
               const terminalFiber = yield* Effect.gen(function* () {
-                if (input.afterTurnStarted !== undefined) {
-                  yield* input.afterTurnStarted(turnInput);
-                }
                 if (terminalGate !== undefined) {
                   yield* Deferred.await(terminalGate);
                 } else if (!input.shouldComplete(turnInput)) {
@@ -715,7 +715,7 @@ describe("orchestrator MCP toolkit", () => {
               afterTurnCompleted: recordNativeTerminal,
               capturedTurns,
               // Fence this delivery's actual adapter entry, not merely its committed run status.
-              afterTurnStarted: (turn) =>
+              beforeAdmissionReturns: (turn) =>
                 turn.message.messageId === firstFanoutMessageId
                   ? Effect.gen(function* () {
                       yield* Deferred.succeed(fanoutFirstAdapterEntered, undefined);

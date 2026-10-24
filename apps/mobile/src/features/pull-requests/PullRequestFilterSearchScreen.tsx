@@ -5,6 +5,7 @@ import {
   ProjectId,
   PULL_REQUEST_FILTER_MAX_LABEL_GROUPS,
   PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH,
+  setPullRequestFilterLabel,
   type PullRequestFilterOptionKind,
   type PullRequestFilterOptionsInput,
 } from "@t3tools/contracts";
@@ -93,7 +94,8 @@ export function PullRequestFilterSearchScreen({
   const hosted = useAtomValue(optionsFamily(key));
   const selectedLabels = controls.filters.labels?.flat() ?? [];
   const labelLimitReached =
-    kind === "labels" && selectedLabels.length >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS;
+    kind === "labels" &&
+    (controls.filters.labels?.length ?? 0) >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS;
   const author = controls.filters.author;
   const selected = kind === "labels" ? selectedLabels : author ? [author] : [];
   const rows = pullRequestFilterChoices({
@@ -122,16 +124,11 @@ export function PullRequestFilterSearchScreen({
       navigation.goBack();
       return;
     }
-    if (labelLimitReached && !isSelected(value)) return;
-    const labels = isSelected(value)
-      ? selectedLabels.filter((label) => label.toLowerCase() !== value.toLowerCase())
-      : [...selectedLabels, value];
+    const labels = setPullRequestFilterLabel(controls.filters.labels, value, !isSelected(value));
+    if (labels === controls.filters.labels) return;
     listControls.setControls(environmentId, {
       ...controls,
-      filters: {
-        ...controls.filters,
-        labels: labels.length ? labels.map((label) => [label]) : undefined,
-      },
+      filters: { ...controls.filters, labels },
     });
   };
   const placeholder = kind === "labels" ? "Search labels" : "Search authors";
@@ -172,8 +169,8 @@ export function PullRequestFilterSearchScreen({
             ) : null}
             {labelLimitReached ? (
               <Text className="text-sm text-foreground-muted">
-                Select up to {PULL_REQUEST_FILTER_MAX_LABEL_GROUPS} labels. Deselect one to choose
-                another.
+                Select up to {PULL_REQUEST_FILTER_MAX_LABEL_GROUPS} label filters. Clear one to
+                choose another.
               </Text>
             ) : null}
           </View>

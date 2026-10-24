@@ -89,13 +89,16 @@ state. Clearing a migrated token does not leave an adopted legacy copy behind.
   reviews last. Smaller changes come first within each readiness group, and finished reviews follow
   open work when all states are visible.
 - Forgejo warning checks stay distinct from passed checks. A watcher does not report an
-  all-required-checks-passed result while a required check has a warning.
+  all-required-checks-passed result while a required check has a warning. Older apps keep showing
+  these checks as pending rather than incorrectly treating them as passed.
 - Filter by author or labels. GitHub, GitLab, Forgejo, and GitCafe search option values on the host;
   Azure DevOps and Bitbucket use only facets from pull requests already loaded. Searches return at
   most 100 matches; refine the query when Scient says more are available. A supported repository
   search failure keeps options from successful repositories visible and marks the results
   incomplete; if failures leave no options, Scient reports an error rather than a complete empty
   result.
+  Up to ten label filters can be combined. Existing groups keep their OR alternatives when edited;
+  remove every alternative from a group to free its filter slot.
 - The list sends each filter to a host when that host supports it; filters without host support
   narrow the pull requests already loaded. Author ranking by merges still uses loaded results. See
   label and change-size context on each row, and sort the displayed results by readiness, update

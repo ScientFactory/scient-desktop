@@ -214,7 +214,7 @@ export function forgejoCommit(commit: typeof ForgejoCommit.Type): PullRequestCom
 }
 
 // Forgejo Actions reports a job that did not run as `skipped` and a cancelled one as `failure`.
-// Warnings use the shipped neutral status plus an additive outcome; unknown states stay pending.
+// Warnings retain released clients' pending status; their additive outcome is terminal.
 function forgejoCheckStatus(state: string): PullRequestCheck["status"] {
   switch (state) {
     case "success":
@@ -224,8 +224,10 @@ function forgejoCheckStatus(state: string): PullRequestCheck["status"] {
       return "failure";
     case "skipped":
       return "skipped";
+    // SCIENT-FORK:START — Released clients classify neutral as passing.
     case "warning":
-      return "neutral";
+      return "pending";
+    // SCIENT-FORK:END
     default:
       return "pending";
   }
@@ -246,7 +248,9 @@ export function forgejoChecks(
           ? (URL.parse(status.target_url, pullRequestUrl)?.href ?? null)
           : null,
         status: forgejoCheckStatus(status.status),
+        // SCIENT-FORK:START — Old decoders ignore the outcome; current readers need it.
         ...(status.status === "warning" ? { outcome: "warning" as const } : {}),
+        // SCIENT-FORK:END
       },
     })),
   );

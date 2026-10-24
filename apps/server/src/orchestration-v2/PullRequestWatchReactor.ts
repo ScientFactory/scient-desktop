@@ -538,7 +538,9 @@ export const make = Effect.gen(function* () {
       fingerprint: group.fingerprint,
       inFlight:
         detail.mergeability === "unknown" ||
-        detail.checks.some((check) => check.status === "pending"),
+        // SCIENT-FORK:START — The compatibility status can outlive an active check.
+        detail.checks.some((check) => check.outcome !== "warning" && check.status === "pending"),
+      // SCIENT-FORK:END
       remarksComplete: plan.activity ? remarks !== null : (last?.remarksComplete ?? false),
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,

@@ -1,5 +1,9 @@
 import { RegistryContext } from "@effect/atom-react";
-import type { PullRequestFilterOptions, PullRequestFilterOptionsInput } from "@t3tools/contracts";
+import type {
+  PullRequestFilterOptions,
+  PullRequestFilterOptionsInput,
+  PullRequestListFilters,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act, useState } from "react";
@@ -136,13 +140,13 @@ import { PullRequestFilterSearchScreen } from "./PullRequestFilterSearchScreen";
 
 function setup(
   replies: ReadonlyArray<readonly [string, SearchResult]>,
-  labels: readonly string[] = [],
+  labels?: PullRequestListFilters["labels"],
 ) {
   harness.replies = new Map(replies);
   harness.requests = [];
   harness.initialControls = {
     ...DEFAULT_PR_LIST_CONTROLS,
-    filters: labels.length ? { labels: labels.map((label) => [label]) } : {},
+    filters: labels ? { labels } : {},
   };
   harness.controls = null;
   harness.searchItem = null;
@@ -229,12 +233,36 @@ describe("hosted pull-request picker admission", () => {
 
   it("disables an eleventh label but reopens admission after a deselection", () => {
     const labels = Array.from({ length: 10 }, (_, index) => `label-${index}`);
-    using screen = setup([["healthy", healthy()]], labels);
+    using screen = setup(
+      [["healthy", healthy()]],
+      labels.map((label) => [label]),
+    );
     expect(screen.row("label-10").disabled).toBe(true);
     expect(screen.row("label-0").disabled).toBe(false);
     act(() => screen.row("label-0").click());
     expect(screen.row("label-10").disabled).toBe(false);
     act(() => screen.row("label-10").click());
     expect(harness.controls?.filters.labels?.flat()).toEqual([...labels.slice(1), "label-10"]);
+  });
+
+  it("counts label groups and keeps an OR group's alternatives through each edit", () => {
+    const singletons = Array.from({ length: 8 }, (_, index) => [`label-${index}`]);
+    // One OR pair and eight single labels: nine groups holding ten names.
+    using screen = setup([["healthy", healthy()]], [["size:S", "size:XS"], ...singletons]);
+    expect(screen.row("label-8").disabled).toBe(false);
+    act(() => screen.row("label-8").click());
+    expect(harness.controls?.filters.labels).toEqual([
+      ["size:S", "size:XS"],
+      ...singletons,
+      ["label-8"],
+    ]);
+    expect(screen.row("label-9").disabled).toBe(true);
+    act(() => screen.row("size:XS").click());
+    expect(harness.controls?.filters.labels).toEqual([["size:S"], ...singletons, ["label-8"]]);
+    expect(screen.row("label-9").disabled).toBe(true);
+    act(() => screen.row("size:S").click());
+    expect(screen.row("label-9").disabled).toBe(false);
+    act(() => screen.row("label-9").click());
+    expect(harness.controls?.filters.labels).toEqual([...singletons, ["label-8"], ["label-9"]]);
   });
 });

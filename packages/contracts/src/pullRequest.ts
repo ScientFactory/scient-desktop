@@ -990,6 +990,35 @@ export function resolvePullRequestAuthorFilter(
   return viewer === null || viewer === undefined || viewer.trim().length === 0 ? trimmed : viewer;
 }
 
+// SCIENT-FORK:START — Checkbox edits must preserve persisted AND/OR filter semantics.
+/** Each group is an AND requirement whose names are OR alternatives. */
+export function setPullRequestFilterLabel(
+  labels: PullRequestListFilters["labels"],
+  label: string,
+  selected: boolean,
+): PullRequestListFilters["labels"] {
+  if (labels === undefined) return selected ? [[label]] : labels;
+  const name = label.toLowerCase();
+  const holds = (group: ReadonlyArray<string>) => group.some((held) => held.toLowerCase() === name);
+  if (selected) {
+    return labels.length >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS || labels.some(holds)
+      ? labels
+      : [...labels, [label]];
+  }
+  const first = labels.findIndex(holds);
+  if (first < 0) return labels;
+  const kept = labels.slice(0, first);
+  for (let index = first; index < labels.length; index++) {
+    const group = labels[index]!;
+    if (index === first || holds(group)) {
+      const rest = group.filter((held) => held.toLowerCase() !== name);
+      if (rest.length > 0) kept.push(rest);
+    } else kept.push(group);
+  }
+  return kept.length > 0 ? kept : undefined;
+}
+// SCIENT-FORK:END
+
 export function pullRequestProviderRequirement(
   provider: SourceControlProviderKind,
   reason: PullRequestUnavailableReason,

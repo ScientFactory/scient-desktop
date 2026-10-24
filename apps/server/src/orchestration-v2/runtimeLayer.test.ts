@@ -2891,6 +2891,108 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["warning", "pending"] as const)(
+    "uses settled or active watch cadence for a %s check",
+    (outcome) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-cadence-${outcome}`);
+        const projectId = ProjectId.make(`pr-watch-cadence-project-${outcome}`);
+        yield* seedProject({
+          projectId,
+          title: "Watch cadence",
+          workspaceRoot: "/workspace/watch-cadence",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-cadence-create-${outcome}`),
+          threadId,
+          projectId,
+          title: "Watch cadence",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 15 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-cadence-start-${outcome}`),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
+        });
+        yield* Effect.addFinalizer(() =>
+          orchestrator
+            .dispatch({
+              type: "thread.pull-request.watch",
+              commandId: CommandId.make(`pr-watch-cadence-end-${outcome}`),
+              threadId,
+              ...key,
+              watching: false,
+            })
+            .pipe(Effect.orDie),
+        );
+        let detailReads = 0;
+        const reactor = yield* PullRequestWatchReactor.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              Layer.mock(PullRequestService.PullRequestService)({
+                detail: () =>
+                  Effect.sync(() => {
+                    detailReads++;
+                    return {
+                      ...watchedPullRequestDetail({
+                        projectId,
+                        number: 15,
+                        at: "2026-10-02T12:00:00.000Z",
+                      }),
+                      checks: [
+                        {
+                          name: "lint",
+                          status: "pending" as const,
+                          ...(outcome === "warning" ? { outcome: "warning" as const } : {}),
+                          description: null,
+                          url: null,
+                          required: true,
+                        },
+                      ],
+                    };
+                  }),
+                activity: () =>
+                  Effect.succeed({
+                    comments: [],
+                    commentCount: 0,
+                    commentsTruncated: false,
+                    reviewThreads: [],
+                    commits: [],
+                  }),
+              }),
+            ),
+          ),
+        );
+        yield* reactor.sweep;
+        yield* TestClock.adjust("2 minutes");
+        yield* reactor.sweep;
+        assert.equal(detailReads, outcome === "warning" ? 1 : 2);
+        yield* TestClock.adjust("8 minutes");
+        yield* reactor.sweep;
+        assert.equal(detailReads, outcome === "warning" ? 2 : 3);
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        assert.deepEqual(
+          messages.flatMap((message) => message.notification?.summary ?? []),
+          [],
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("finishes owed checks once after pending sweeps, a restart, and a re-watch", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

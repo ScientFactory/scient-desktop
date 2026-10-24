@@ -1,5 +1,8 @@
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
-import { PULL_REQUEST_FILTER_MAX_LABEL_GROUPS } from "@t3tools/contracts";
+import {
+  PULL_REQUEST_FILTER_MAX_LABEL_GROUPS,
+  setPullRequestFilterLabel,
+} from "@t3tools/contracts";
 import { useMemo } from "react";
 import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
@@ -83,7 +86,11 @@ export function PullRequestListFilters(props: {
   const { value } = props;
   const projects = useProjectsInSidebarOrder(props.projects);
   const selectedLabels = value.filters.labels?.flat() ?? [];
-  const selectedLabelSet = new Set(selectedLabels);
+  const selectedLabelNames = new Set(selectedLabels.map((label) => label.toLowerCase()));
+  // Hosts match label names case-insensitively, and so does the group edit.
+  const labelSelected = (label: string) => selectedLabelNames.has(label.toLowerCase());
+  const labelLimitReached =
+    (value.filters.labels?.length ?? 0) >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS;
   const author = value.filters.author;
   const select = (event: string) => {
     let selection: unknown;
@@ -132,21 +139,9 @@ export function PullRequestListFilters(props: {
         break;
       }
       case "label": {
-        if (
-          !selectedLabels.includes(next) &&
-          selectedLabels.length >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS
-        )
-          break;
-        const labels = selectedLabels.includes(next)
-          ? selectedLabels.filter((label) => label !== next)
-          : [...selectedLabels, next];
-        props.onChange({
-          ...value,
-          filters: {
-            ...value.filters,
-            labels: labels.length ? labels.map((label) => [label]) : undefined,
-          },
-        });
+        const labels = setPullRequestFilterLabel(value.filters.labels, next, !labelSelected(next));
+        if (labels !== value.filters.labels)
+          props.onChange({ ...value, filters: { ...value.filters, labels } });
         break;
       }
       case "labels":
@@ -268,12 +263,8 @@ export function PullRequestListFilters(props: {
       return {
         id: id("label", label),
         title: label,
-        state: selectedLabelSet.has(label) ? ("on" as const) : ("off" as const),
-        attributes: {
-          disabled:
-            selectedLabels.length >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS &&
-            !selectedLabelSet.has(label),
-        },
+        state: labelSelected(label) ? ("on" as const) : ("off" as const),
+        attributes: { disabled: labelLimitReached && !labelSelected(label) },
         ...(color ? { image: "circle.fill", imageColor: color } : {}),
       };
     }),

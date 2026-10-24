@@ -11,6 +11,7 @@ import type {
 import {
   PULL_REQUEST_FILTER_MAX_LABEL_GROUPS,
   PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH,
+  setPullRequestFilterLabel,
 } from "@t3tools/contracts";
 import {
   CircleCheckIcon,
@@ -380,19 +381,25 @@ function PullRequestLabelChoices({
   scope,
   onChange,
 }: {
-  value: ReadonlyArray<string>;
+  value: PullRequestListFilters["labels"];
   options: ReadonlyArray<PullRequestLabelFacet>;
   scope: ReadonlyArray<PullRequestFilterOptionScope>;
-  onChange: (labels: ReadonlyArray<string>) => void;
+  onChange: (labels: PullRequestListFilters["labels"]) => void;
 }) {
   const [query, setQuery] = useState("");
   const hosted = useHostedFilterOptions(scope, "labels", query);
-  const selected = new Set(value.map((name) => name.toLowerCase()));
-  const limitReached = value.length >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS;
+  const names = (value ?? []).flatMap((group) => group);
+  const selected = new Set(names.map((name) => name.toLowerCase()));
+  const limitReached = (value?.length ?? 0) >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS;
   const choices = pullRequestLabelChoices(options, hosted.labels, query);
   const visible = [
-    ...value
-      .filter((name) => !choices.some((option) => option.name.toLowerCase() === name.toLowerCase()))
+    // Two groups may offer the same name as an alternative; it is one choice here.
+    ...names
+      .filter(
+        (name, index) =>
+          names.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index &&
+          !choices.some((option) => option.name.toLowerCase() === name.toLowerCase()),
+      )
       .map((name) => ({ name, color: null, count: 0 })),
     ...choices,
   ];
@@ -423,7 +430,8 @@ function PullRequestLabelChoices({
       ) : null}
       {limitReached ? (
         <MenuItem disabled>
-          Choose at most {PULL_REQUEST_FILTER_MAX_LABEL_GROUPS} labels; remove one to choose another
+          Choose at most {PULL_REQUEST_FILTER_MAX_LABEL_GROUPS} label filters; clear one to choose
+          another
         </MenuItem>
       ) : null}
       {visible.map((option) => {
@@ -435,12 +443,8 @@ function PullRequestLabelChoices({
             checked={selected.has(key)}
             disabled={limitReached && !selected.has(key)}
             onCheckedChange={(next) => {
-              if (next && limitReached) return;
-              onChange(
-                next
-                  ? [...value, option.name]
-                  : value.filter((name) => name.toLowerCase() !== option.name.toLowerCase()),
-              );
+              const labels = setPullRequestFilterLabel(value, option.name, next);
+              if (labels !== value) onChange(labels);
             }}
           >
             <span className="flex min-w-0 items-center gap-2">
@@ -469,18 +473,19 @@ function PullRequestLabelFilter({
   scope,
   onChange,
 }: {
-  value: ReadonlyArray<string>;
+  value: PullRequestListFilters["labels"];
   options: ReadonlyArray<PullRequestLabelFacet>;
   scope: ReadonlyArray<PullRequestFilterOptionScope>;
-  onChange: (labels: ReadonlyArray<string>) => void;
+  onChange: (labels: PullRequestListFilters["labels"]) => void;
 }) {
+  const selectedCount = (value ?? []).flatMap((group) => group).length;
   return (
     <MenuSub>
       <MenuSubTrigger>
         <TagIcon aria-hidden className="size-3.5" />
         <span className="flex-1">Labels</span>
         <span className="text-xs text-muted-foreground">
-          {value.length === 0 ? "Any" : `${value.length} selected`}
+          {selectedCount === 0 ? "Any" : `${selectedCount} selected`}
         </span>
       </MenuSubTrigger>
       <MenuSubPopup>
@@ -621,14 +626,10 @@ export function PullRequestFiltersMenu({
           onChange={(author) => updateFilters({ author })}
         />
         <PullRequestLabelFilter
-          value={selectedLabels}
+          value={filters.labels}
           options={labelOptions}
           scope={optionScope}
-          onChange={(labels) =>
-            updateFilters({
-              labels: labels.length === 0 ? undefined : labels.map((label) => [label]),
-            })
-          }
+          onChange={(labels) => updateFilters({ labels })}
         />
         <PullRequestFilterRadioSubmenu
           label="Draft"

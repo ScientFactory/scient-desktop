@@ -30,17 +30,15 @@ function setup() {
   harness.hosted = { labels: [], authors: [], truncated: false, error: null, isPending: false };
   harness.filters = null;
 }
-const EMPTY_LABELS: readonly string[] = [];
-const LABEL_OPTIONS = Array.from({ length: 11 }, (_, index) => ({
-  name: `label-${index}`,
-  color: null,
-  count: 0,
-}));
+const NO_FILTERS: PullRequestListFilters = {};
+const LABEL_OPTIONS = [
+  ...Array.from({ length: 11 }, (_, index) => `label-${index}`),
+  "size:S",
+  "size:XS",
+].map((name) => ({ name, color: null, count: 0 }));
 
-function Fixture({ labels = EMPTY_LABELS }: { readonly labels?: readonly string[] }) {
-  const [filters, setFilters] = useState<PullRequestListFilters>(() =>
-    labels.length ? { labels: labels.map((label) => [label]) } : {},
-  );
+function Fixture({ initial = NO_FILTERS }: { readonly initial?: PullRequestListFilters }) {
+  const [filters, setFilters] = useState(initial);
   return (
     <PullRequestFiltersMenu
       state="open"
@@ -98,7 +96,9 @@ it("keeps the displayed search within the shared hundred-character request bound
 it("admits a new label only after one of ten selections is removed", async () => {
   setup();
   const labels = Array.from({ length: 10 }, (_, index) => `label-${index}`);
-  await using screen = await render(<Fixture labels={labels} />);
+  await using screen = await render(
+    <Fixture initial={{ labels: labels.map((label) => [label]) }} />,
+  );
   await userEvent.click(screen.getByRole("button", { name: /^Filters/ }));
   await userEvent.click(screen.getByRole("menuitem", { name: /^Labels/ }));
   const extra = screen.getByRole("menuitemcheckbox", { name: "label-10" });
@@ -107,4 +107,28 @@ it("admits a new label only after one of ten selections is removed", async () =>
   await expect.element(extra).not.toHaveAttribute("aria-disabled", "true");
   await userEvent.click(extra);
   expect(harness.filters?.labels?.flat()).toEqual([...labels.slice(1), "label-10"]);
+});
+
+it("counts label groups and keeps an OR group's alternatives through each edit", async () => {
+  setup();
+  const singletons = Array.from({ length: 8 }, (_, index) => [`label-${index}`]);
+  // One OR pair and eight single labels: nine groups holding ten names.
+  await using screen = await render(
+    <Fixture initial={{ labels: [["size:S", "size:XS"], ...singletons] }} />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+  await userEvent.click(screen.getByRole("menuitem", { name: /^Labels/ }));
+  const tenth = screen.getByRole("menuitemcheckbox", { name: "label-8" });
+  const extra = screen.getByRole("menuitemcheckbox", { name: "label-9" });
+  await expect.element(tenth).not.toHaveAttribute("aria-disabled", "true");
+  await userEvent.click(tenth);
+  expect(harness.filters?.labels).toEqual([["size:S", "size:XS"], ...singletons, ["label-8"]]);
+  await expect.element(extra).toHaveAttribute("aria-disabled", "true");
+  await userEvent.click(screen.getByRole("menuitemcheckbox", { name: "size:XS" }));
+  expect(harness.filters?.labels).toEqual([["size:S"], ...singletons, ["label-8"]]);
+  await expect.element(extra).toHaveAttribute("aria-disabled", "true");
+  await userEvent.click(screen.getByRole("menuitemcheckbox", { name: "size:S" }));
+  await expect.element(extra).not.toHaveAttribute("aria-disabled", "true");
+  await userEvent.click(extra);
+  expect(harness.filters?.labels).toEqual([...singletons, ["label-8"], ["label-9"]]);
 });
