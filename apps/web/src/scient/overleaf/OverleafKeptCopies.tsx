@@ -26,6 +26,21 @@ const RESTORE_TEXT: Record<"restored" | "stale" | "unknown-copy" | "duplicate", 
   duplicate: "That restore already ran.",
 };
 
+// Outside the component: the React Compiler does not compile try/finally.
+async function settleOverleafOperation(
+  task: () => Promise<void>,
+  failed: (error: unknown) => void,
+  settled: () => void,
+): Promise<void> {
+  try {
+    await task();
+  } catch (error) {
+    failed(error);
+  } finally {
+    settled();
+  }
+}
+
 /** From another worktree: the kept copies are the linked copy's; this offers to open it there. */
 function KeptInLinkedCopy(props: {
   readonly environmentId: EnvironmentId;
@@ -120,27 +135,30 @@ export function OverleafKeptCopies(props: {
   );
 
   const restore = async (copy: KeptCopy) => {
-    if (copy.keptRevision === null) return;
+    const { keptRevision } = copy;
+    if (keptRevision === null) return;
     setBusy(true);
     setMessage(null);
-    try {
-      const result = await restoreOverleafKeptCopy(environmentId, {
-        workspaceRoot: cwd,
-        connectionId: connection.connectionId,
-        requestId: overleafRequestId(),
-        applyId: copy.applyId,
-        kept: copy.kept,
-        keptRevision: copy.keptRevision,
-        currentRevision: copy.currentRevision,
-      });
-      setMessage(RESTORE_TEXT[result._tag]);
-      await load(connection.connectionId);
-    } catch (error) {
-      setMessage(operationErrorText(error));
-    } finally {
-      setBusy(false);
-      void reloadOverleafWorkspaces(environmentId, cwd);
-    }
+    await settleOverleafOperation(
+      async () => {
+        const result = await restoreOverleafKeptCopy(environmentId, {
+          workspaceRoot: cwd,
+          connectionId: connection.connectionId,
+          requestId: overleafRequestId(),
+          applyId: copy.applyId,
+          kept: copy.kept,
+          keptRevision,
+          currentRevision: copy.currentRevision,
+        });
+        setMessage(RESTORE_TEXT[result._tag]);
+        await load(connection.connectionId);
+      },
+      (error) => setMessage(operationErrorText(error)),
+      () => {
+        setBusy(false);
+        void reloadOverleafWorkspaces(environmentId, cwd);
+      },
+    );
   };
 
   return (
