@@ -40,9 +40,16 @@ const writes = [];
 let promptId;
 const run = async (index) => {
   let chunk = "";
+  let terminating = false;
   const flush = () => { if (chunk) process.stdout.write(chunk); chunk = ""; };
   for (const step of plan[index] ?? []) {
-    if (step.sleep !== undefined) {
+    if (step.onTermination) {
+      flush();
+      const termination = Promise.withResolvers();
+      process.once("SIGTERM", termination.resolve);
+      await termination.promise;
+      terminating = true;
+    } else if (step.sleep !== undefined) {
       flush();
       await new Promise((resolve) => setTimeout(resolve, step.sleep));
     } else if (step.respond === "prompt") {
@@ -63,6 +70,7 @@ const run = async (index) => {
     }
   }
   flush();
+  if (terminating) process.stdout.end(() => process.exit(0));
 };
 let buffer = "";
 process.stdin.on("data", (data) => {
@@ -90,7 +98,8 @@ process.stdin.on("data", (data) => {
 type Step =
   | { readonly respond: true | "prompt" | "malformed" | "rejected" }
   | { readonly update: "requested" | Record<string, string> }
-  | { readonly sleep: number };
+  | { readonly sleep: number }
+  | { readonly onTermination: true };
 const RESPOND: Step = { respond: true };
 const APPLY: Step = { update: "requested" };
 const decodePid = Schema.decodeSync(Schema.NumberFromString);
@@ -481,12 +490,16 @@ describe("confirmed config writes", () => {
   live("ends the connection when a write is interrupted after it was sent", () =>
     scoped(
       Effect.gen(function* () {
+        // The late answer is released by cancellation, never by an elapsed-time budget.
         const runtime = yield* scriptedRuntime([
-          [{ sleep: 300 }, RESPOND, { sleep: 100 }, APPLY],
-          [RESPOND, { sleep: 600 }, { update: { model: "c" } }],
+          [{ onTermination: true }, RESPOND, APPLY],
+          [RESPOND, { update: { model: "c" } }],
         ]);
+        const received = yield* runtime.awaitWriteReceived.pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
         const first = yield* runtime.setModel("b").pipe(Effect.forkScoped);
-        yield* runtime.awaitWriteReceived;
+        yield* Fiber.join(received);
         yield* Fiber.interrupt(first);
         const second = yield* timed(runtime.setModel("b"));
         expect((failure(second.exit) as Error | undefined)?.message).toBe(

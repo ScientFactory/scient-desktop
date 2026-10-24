@@ -154,20 +154,23 @@ describe("evaluatePullRequestWatch", () => {
       { kind: "checks-passed", count: 2, required: true },
     ]);
   });
-  it("does not report a parsed Forgejo warning as a required-check pass", () => {
-    const requiredWarning = { ...forgejoWarningCheck("lint"), required: true };
-    const result = evaluatePullRequestWatch(
-      watch(),
-      detail({
-        provider: SourceControlProviderKind.make("forgejo"),
-        checks: [requiredWarning],
-      }),
-      noRemarks,
-    );
+  it.each(["pending", "neutral"] as const)(
+    "does not report a Forgejo warning as passed with a %s wire status",
+    (status) => {
+      const requiredWarning = { ...forgejoWarningCheck("lint"), status, required: true };
+      const result = evaluatePullRequestWatch(
+        watch(),
+        detail({
+          provider: SourceControlProviderKind.make("forgejo"),
+          checks: [requiredWarning],
+        }),
+        noRemarks,
+      );
 
-    assert.deepEqual(result.changes, []);
-    assert.isFalse(result.next.passed);
-  });
+      assert.deepEqual(result.changes, []);
+      assert.isFalse(result.next.passed);
+    },
+  );
 
   it("settles an owed advisory warning without reporting the checks passed", () => {
     const provider = SourceControlProviderKind.make("forgejo");

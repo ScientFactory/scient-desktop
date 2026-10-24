@@ -2945,9 +2945,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             Layer.mergeAll(
               NodeServices.layer,
               Layer.mock(PullRequestService.PullRequestService)({
-                detail: () =>
+                detail: (input) =>
                   Effect.sync(() => {
-                    detailReads++;
+                    if (input.projectId === projectId) detailReads++;
                     return {
                       ...watchedPullRequestDetail({
                         projectId,

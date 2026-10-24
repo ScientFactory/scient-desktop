@@ -204,7 +204,7 @@ describe("Scient nested code editor", () => {
         (span) => span.textContent === "flowchart",
       )?.style.color;
     // Module and grammar readiness precede CodeMirror's decoration publication.
-    await import("./mermaidCodeHighlighting");
+    await waitForTestReceipt(context.signal, import("./mermaidCodeHighlighting"));
     {
       const painted = Promise.withResolvers<void>();
       const observeColor = () => {
@@ -219,7 +219,7 @@ describe("Scient nested code editor", () => {
         attributeFilter: ["style"],
       });
       observeColor();
-      await getSyntaxHighlighterPromise("mermaid");
+      await waitForTestReceipt(context.signal, getSyntaxHighlighterPromise("mermaid"));
       await waitForTestReceipt(context.signal, painted.promise);
     }
     expect(keywordColor()).toBeTruthy();
