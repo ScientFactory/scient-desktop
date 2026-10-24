@@ -592,17 +592,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current alignment through
-`fef851bee09102641061aeb78a3092c2ba2c72ab` is recorded in
-[the 2026-10-24 fef851bee0 receipt](docs/internals/t3-upstream-sync-20261024-fef851bee0.md).
-Literal merge `4eea0c3f2b630ad16cfff2e5152eea5713466f46` has owned base `c7b630d5d4e839646654f13f610e6bf551771968` (the
-head of Scient PR #640) and the frozen official target as parents, retaining all
-26 official commits after `52628d863e`. Typecheck, lint, all six seam checks, the
-affected suites, the maintained alignment checks, build and desktop and release
-smoke pass. Hosted CI on the exact head is the full-suite gate, after #640 merges
-and owned main is caught up. Merge, release and native, live-provider and visual
-acceptance remain separate. The
-[previous receipt](docs/internals/t3-upstream-sync-20261024-52628d863e.md)
-retains its own boundaries and evidence, including Scient PR #640.
+`d53873b6a4799e87afd63c8d288ef0089f5a3748` is recorded in
+[the 2026-10-24 d53873b6a4 receipt](docs/internals/t3-upstream-sync-20261024-d53873b6a4.md).
+Literal merge `8d4dd69b89121d748c23d6373c0a2635ac2f2c4e` has owned base `59e27699a9f3db73f0981460906bb10a85b85f65` (the fef851bee0 alignment) and the frozen
+official target as parents, retaining all 16 official commits after `fef851bee0`,
+mostly upstream's source-control forge refactor and Cmd+K search. Typecheck, lint,
+seam checks and every package's full suite pass. Hosted CI on the exact head is
+required after Scient PRs #640 and #651 merge. Merge, release and native,
+live-provider and visual acceptance remain separate. The
+[previous receipt](docs/internals/t3-upstream-sync-20261024-fef851bee0.md)
+retains its own boundaries and evidence.
 Native V2, scientific capabilities, immutable migrations, database durability and
 all cloud, telemetry, relay, updater, mobile publication and release holds remain.
 
