@@ -531,6 +531,25 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     );
   };
   /**
+   * Removes `path` and, where it is a folder (a kept copy may be one: a folder
+   * that stood where a file was), everything in it, never following a link: a
+   * link is removed as a name. Whatever is already gone is skipped, so a removal
+   * a crash interrupted part way is finished by running it again.
+   */
+  const removeKept = async (path: string): Promise<void> => {
+    const gone = (e: NodeJS.ErrnoException) => {
+      if (e.code !== "ENOENT") throw e;
+    };
+    const stat = await NodeFSP.lstat(path).catch((e: NodeJS.ErrnoException) => {
+      gone(e);
+      return null;
+    });
+    if (stat === null) return;
+    if (!stat.isDirectory()) return NodeFSP.unlink(path).catch(gone);
+    for (const name of await NodeFSP.readdir(path)) await removeKept(NodePath.join(path, name));
+    await NodeFSP.rmdir(path).catch(gone);
+  };
+  /**
    * Removes discarded copies, each before its view (a view made meanwhile is
    * then removed too, or never made), and syncs the folder. Each removal may
    * already have happened.
@@ -542,9 +561,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   ) => {
     for (const leaf of leaves)
       for (const name of [leaf, viewName(target, leaf)])
-        await NodeFSP.unlink(NodePath.join(directory, name)).catch((e: NodeJS.ErrnoException) => {
-          if (e.code !== "ENOENT") throw e;
-        });
+        await removeKept(NodePath.join(directory, name));
     await syncDirectory(directory);
   };
   /** Finishes a version 2 discard: its removals, then (only then) the mark goes. */
@@ -814,20 +831,27 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       if (record.version === 1) {
         // A legacy discard leaves a durable tombstone (`discard-<copy>.json`) before
         // its removals: one a crash interrupted is finished here, under this lease.
-        const pending: (typeof retainedFileNames)[number][] = [];
-        for (const leaf of retainedFileNames)
-          if (await legacyDiscardPending(directory, record.target, leaf)) pending.push(leaf);
-        if (pending.length > 0) {
+        // A removal that fails stays for the next settlement or an explicit discard
+        // (the copy stays listed): it never fails the work that found it.
+        try {
+          const pending: (typeof retainedFileNames)[number][] = [];
+          for (const leaf of retainedFileNames)
+            if (await legacyDiscardPending(directory, record.target, leaf)) pending.push(leaf);
+          if (pending.length > 0) {
+            settled = true;
+            await removeDiscarded(directory, record.target, pending);
+          }
+        } catch {
           settled = true;
-          await removeDiscarded(directory, record.target, pending);
         }
         continue;
       }
       if (record.phase === "done") {
         // A discard a crash interrupted: this lease holds the record, so finish it.
+        // As above, one that fails stays marked (and listed) for a later try.
         if ((record.discarding ?? []).length > 0) {
           settled = true;
-          await finishDiscard(directory, record);
+          await finishDiscard(directory, record).catch(() => undefined);
         }
         continue;
       }
@@ -3112,7 +3136,13 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           let retainedBytes = 0;
           for (const entry of records)
             for (const leaf of retainedFileNames) {
-              if (entry.record?.version === 2 && entry.record.discarded.includes(leaf)) continue;
+              // A copy whose discard has not finished stays listed, so it can be discarded again.
+              if (
+                entry.record?.version === 2 &&
+                entry.record.discarded.includes(leaf) &&
+                !(entry.record.discarding ?? []).includes(leaf)
+              )
+                continue;
               const file = NodePath.join(entry.directory, leaf);
               let stat;
               try {
