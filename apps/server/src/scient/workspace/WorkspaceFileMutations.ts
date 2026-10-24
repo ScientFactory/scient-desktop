@@ -506,21 +506,51 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     entry.record?.version === 2 &&
     entry.record.phase === "done" &&
     (entry.record.discarding ?? []).length === 0;
+  /** The name of a copy's view, as `retainedViewPath` makes it. */
+  const viewName = (target: string, leaf: (typeof retainedFileNames)[number]) => {
+    const extension = NodePath.extname(target);
+    return `view-${leaf}${/^\.[a-zA-Z0-9]{1,16}$/u.test(extension) ? extension : ".txt"}`;
+  };
+  /** Whether a legacy discard's tombstone stands while its copy or view is still there. */
+  const legacyDiscardPending = async (
+    directory: string,
+    target: string,
+    leaf: (typeof retainedFileNames)[number],
+  ) => {
+    const present = (name: string) =>
+      NodeFSP.lstat(NodePath.join(directory, name)).then(
+        () => true,
+        (e: NodeJS.ErrnoException) => {
+          if (e.code === "ENOENT") return false;
+          throw e;
+        },
+      );
+    return (
+      (await present(`discard-${leaf}.json`)) &&
+      ((await present(leaf)) || (await present(viewName(target, leaf))))
+    );
+  };
   /**
-   * Removes the copies a discard names, each before its view (a view made
-   * meanwhile is then removed too, or never made), syncs the folder and only
-   * then drops the mark. Each step may already have happened.
+   * Removes discarded copies, each before its view (a view made meanwhile is
+   * then removed too, or never made), and syncs the folder. Each removal may
+   * already have happened.
    */
-  const finishDiscard = async (directory: string, record: RetainedRecord) => {
-    if (record.version !== 2) return;
-    const extension = NodePath.extname(record.target),
-      safeExtension = /^\.[a-zA-Z0-9]{1,16}$/u.test(extension) ? extension : ".txt";
-    for (const leaf of record.discarding ?? [])
-      for (const name of [leaf, `view-${leaf}${safeExtension}`])
+  const removeDiscarded = async (
+    directory: string,
+    target: string,
+    leaves: ReadonlyArray<(typeof retainedFileNames)[number]>,
+  ) => {
+    for (const leaf of leaves)
+      for (const name of [leaf, viewName(target, leaf)])
         await NodeFSP.unlink(NodePath.join(directory, name)).catch((e: NodeJS.ErrnoException) => {
           if (e.code !== "ENOENT") throw e;
         });
     await syncDirectory(directory);
+  };
+  /** Finishes a version 2 discard: its removals, then (only then) the mark goes. */
+  const finishDiscard = async (directory: string, record: RetainedRecord) => {
+    if (record.version !== 2) return;
+    await removeDiscarded(directory, record.target, record.discarding ?? []);
     const { discarding: _, ...rest } = record;
     await durableJson(NodePath.join(directory, "record.json"), {
       ...rest,
@@ -780,7 +810,19 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   ) => {
     let settled = false;
     for (const { directory, record, mutationId } of records) {
-      if (!record || record.version !== 2 || directory === skipDirectory) continue;
+      if (!record || directory === skipDirectory) continue;
+      if (record.version === 1) {
+        // A legacy discard leaves a durable tombstone (`discard-<copy>.json`) before
+        // its removals: one a crash interrupted is finished here, under this lease.
+        const pending: (typeof retainedFileNames)[number][] = [];
+        for (const leaf of retainedFileNames)
+          if (await legacyDiscardPending(directory, record.target, leaf)) pending.push(leaf);
+        if (pending.length > 0) {
+          settled = true;
+          await removeDiscarded(directory, record.target, pending);
+        }
+        continue;
+      }
       if (record.phase === "done") {
         // A discard a crash interrupted: this lease holds the record, so finish it.
         if ((record.discarding ?? []).length > 0) {
@@ -3161,23 +3203,14 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             await finishDiscard(found.directory, marked);
             return { versionId: input.versionId };
           }
+          // A legacy record: its tombstone is the durable mark, written before the removals.
           await durableJson(NodePath.join(found.directory, `discard-${match[2]}.json`), {
             version: 1,
             discarded: true,
           });
-          await NodeFSP.unlink(NodePath.join(found.directory, match[2]!)).catch(
-            (e: NodeJS.ErrnoException) => {
-              if (e.code !== "ENOENT") throw e;
-            },
-          );
-          const extension = NodePath.extname(found.target ?? resolved.target),
-            safeExtension = /^\.[a-zA-Z0-9]{1,16}$/u.test(extension) ? extension : ".txt";
-          await NodeFSP.unlink(
-            NodePath.join(found.directory, `view-${match[2]}${safeExtension}`),
-          ).catch((e: NodeJS.ErrnoException) => {
-            if (e.code !== "ENOENT") throw e;
-          });
-          await syncDirectory(found.directory);
+          await removeDiscarded(found.directory, found.target ?? resolved.target, [
+            match[2] as (typeof retainedFileNames)[number],
+          ]);
           return { versionId: input.versionId };
         },
         signal,
