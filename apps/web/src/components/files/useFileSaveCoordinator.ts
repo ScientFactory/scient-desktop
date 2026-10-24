@@ -28,7 +28,7 @@ import {
 } from "~/scient/markdownEditor/persistence/documentFailureReason";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 // SCIENT-FORK:START
-import { notifyWorkspaceFileSaved } from "~/scient/fileSurfaces/workspaceFileSaves";
+import { notifyWorkspaceFileSaved } from "~/scient/files/workspaceFileSaves";
 // SCIENT-FORK:END
 
 import type { FileSaveCoordinator, FileSaveResolutionAction } from "./fileSaveCoordinator";

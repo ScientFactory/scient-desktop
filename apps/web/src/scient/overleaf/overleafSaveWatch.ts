@@ -5,7 +5,7 @@ import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence
 import {
   subscribeWorkspaceFileSaves,
   type WorkspaceFileSaveTarget,
-} from "~/scient/fileSurfaces/workspaceFileSaves";
+} from "~/scient/files/workspaceFileSaves";
 
 import { noteOverleafFileSaved } from "./overleafStore";
 
