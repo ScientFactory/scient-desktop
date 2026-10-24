@@ -1058,7 +1058,12 @@ presentation cutover to Codex, Claude or external Oh My Pi during upstream merge
 
 `scient-omp-seams.json` inventories owned code and the anchored `upstreamMounts`
 and shared `scientMounts`; shared integration points are not wholly OMP-owned.
-Analytics sends OMP as the gateway's existing `other` provider and is not a mount.
+The revision-7 analytics contract preserves `omp` and `scient` as separate bounded
+categories instead of folding them into `other`. Its shared allowlist, conformance
+generator and generated fixture are anchored `scientMounts`, not OMP-owned code.
+Deploy the revision-7 gateway before releasing this producer; old `other` records
+cannot be re-attributed. Analytics meanings and consent/content boundaries remain
+in `docs/internals/product-analytics.md`.
 `scripts/scient-seam-check.mjs --base --head` checks this inventory with the
 onboarding, skills, analysis and LaTeX seams in the upstream-provenance workflow.
 Keep this RPC client separate from Pi's RPC client.

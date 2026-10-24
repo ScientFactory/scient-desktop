@@ -66,6 +66,42 @@ const decodeForkTypeJson = Schema.decodeUnknownSync(forkTypeJsonCodec);
 const encodeUnknownForkTypeJson = Schema.encodeUnknownSync(forkTypeJsonCodec);
 const encodeUnknownForkJson = Schema.encodeUnknownSync(OrchestrationV2TurnItemJson);
 
+describe("first-admission metadata compatibility", () => {
+  it.each([undefined, false, true])("round trips optional admission provenance %s", (admitted) => {
+    const item = decodeOrchestrationV2TurnItem({
+      id: "admission-item",
+      threadId: "admission-thread",
+      type: "user_message",
+      messageId: "admission-message",
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      createdBy: "user",
+      creationSource: "web",
+      inputIntent: "steer",
+      ...(admitted === undefined ? {} : { inputAlreadyAdmitted: admitted }),
+      text: "synthetic",
+      attachments: [],
+    });
+    for (const encoded of [encodeOrchestrationV2TurnItemJson(item), encodeForkTypeJson(item)]) {
+      expect(decodeOrchestrationV2TurnItemJson(encoded)).toEqual(item);
+      expect(decodeForkTypeJson(encoded)).toEqual(item);
+      expect(encoded).toMatchObject(
+        admitted === undefined ? {} : { inputAlreadyAdmitted: admitted },
+      );
+    }
+  });
+});
+
 describe("portable message fork boundary compatibility", () => {
   it.each(
     (["before", "after"] as const).map((position) => ({

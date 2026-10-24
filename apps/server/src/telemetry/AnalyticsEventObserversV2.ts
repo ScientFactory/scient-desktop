@@ -4,10 +4,11 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
-import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
@@ -28,8 +29,18 @@ function remember<K, V>(map: Map<K, V>, key: K, value: V) {
   map.set(key, value);
 }
 
-/** Correlates only live V2 outcomes. Private identifiers never enter emitted properties. */
+/** Correlates live V2 admissions, steering and outcomes; IDs stay in bounded local maps. */
 export function createV2AnalyticsEventMapper() {
+  const submissions = new Map<string, true>();
+  const runMetadata = new Map<
+    string,
+    {
+      instanceId: string;
+      model: string;
+      runtimeMode: string | undefined;
+      interactionMode: string | undefined;
+    }
+  >();
   const runs = new Map<
     string,
     {
@@ -52,11 +63,71 @@ export function createV2AnalyticsEventMapper() {
     entry: OrchestrationV2DomainEvent,
     context: EventContext = {},
   ): ReadonlyArray<Observation> => {
+    if (
+      entry.type === "turn-item.updated" &&
+      entry.payload.type === "user_message" &&
+      entry.payload.inputIntent === "steer" &&
+      entry.payload.inputAlreadyAdmitted === false
+    ) {
+      const item = entry.payload;
+      const driver = entry.driver ?? context.driver;
+      if (
+        item.runId === null ||
+        driver === undefined ||
+        submissions.has(item.messageId) ||
+        item.startedAt === null ||
+        DateTime.toEpochMillis(item.startedAt) !== DateTime.toEpochMillis(entry.occurredAt)
+      )
+        return [];
+      remember(submissions, item.messageId, true);
+      const known = runMetadata.get(item.runId);
+      const metadata = known?.instanceId === entry.providerInstanceId ? known : undefined;
+      return [
+        {
+          name: "provider.turn.sent",
+          properties: {
+            provider: driver,
+            model: metadata?.model,
+            runtimeMode: metadata?.runtimeMode,
+            interactionMode: metadata?.interactionMode,
+          },
+        },
+      ];
+    }
     if (entry.type === "run.created" || entry.type === "run.updated") {
       const run = entry.payload;
       const key = run.id;
       if (terminals.has(key)) return [];
       const driver = entry.driver ?? context.driver;
+      if (
+        entry.type === "run.created" &&
+        (run.legacyQueue !== undefined || run.restartContinuationOfRunId !== undefined)
+      )
+        remember(submissions, run.userMessageId, true);
+      remember(runMetadata, key, {
+        instanceId: run.providerInstanceId,
+        model: run.modelSelection.model,
+        runtimeMode: run.runtimeMode,
+        interactionMode: run.interactionMode,
+      });
+      const observations: Observation[] = [];
+      if (
+        entry.type === "run.created" &&
+        driver !== undefined &&
+        !["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(run.status) &&
+        !submissions.has(run.userMessageId)
+      ) {
+        remember(submissions, run.userMessageId, true);
+        observations.push({
+          name: "provider.turn.sent",
+          properties: {
+            provider: driver,
+            model: run.modelSelection.model,
+            runtimeMode: run.runtimeMode,
+            interactionMode: run.interactionMode,
+          },
+        });
+      }
       if (
         (run.status === "running" || run.status === "waiting") &&
         run.startedAt !== null &&
@@ -71,7 +142,9 @@ export function createV2AnalyticsEventMapper() {
           hasAttachment: false,
         });
       }
-      if (!["completed", "failed", "cancelled", "interrupted"].includes(run.status)) return [];
+      if (!["completed", "failed", "cancelled", "interrupted"].includes(run.status))
+        return observations;
+      runMetadata.delete(key);
       remember(terminals, key, true);
       const correlation = runs.get(key);
       runs.delete(key);
@@ -183,6 +256,8 @@ export function createV2AnalyticsEventMapper() {
     return [];
   };
   const clear = () => {
+    submissions.clear();
+    runMetadata.clear();
     runs.clear();
     terminals.clear();
     forks.clear();
@@ -208,42 +283,98 @@ export const makeV2AnalyticsObservers = Effect.gen(function* () {
     }
     return status.available && status.consent !== "off";
   });
-  const record = (observations: ReadonlyArray<Observation>) =>
-    Effect.forEach(observations, (entry) => analytics.record(entry.name, entry.properties), {
-      discard: true,
-    });
-  return {
-    enabled,
-    event: (entry: OrchestrationV2DomainEvent, context?: EventContext) =>
-      enabled.pipe(
-        Effect.flatMap((allow) => (allow ? record(mapper.event(entry, context)) : Effect.void)),
-      ),
-    providers: (snapshot: ReadonlyArray<ServerProvider>) =>
-      enabled.pipe(
-        Effect.flatMap((allow) => (allow ? record(lifecycle.observe(snapshot)) : Effect.void)),
-      ),
-  };
+  const record = (observations: ReadonlyArray<Observation>, recordingEpoch: number) =>
+    Effect.forEach(
+      observations,
+      (entry) => analytics.record(entry.name, entry.properties, recordingEpoch),
+      {
+        discard: true,
+      },
+    );
+  const event = Effect.fn("V2AnalyticsObservers.event")(function* (
+    entry: OrchestrationV2DomainEvent,
+    context?: EventContext,
+    expectedEpoch?: number,
+  ) {
+    if (!(yield* enabled)) return;
+    const recordingEpoch = yield* analytics.collectionEpoch;
+    if (expectedEpoch !== undefined && expectedEpoch !== recordingEpoch) return;
+    yield* record(mapper.event(entry, context), recordingEpoch);
+  });
+  const providers = Effect.fn("V2AnalyticsObservers.providers")(function* (
+    snapshot: ReadonlyArray<ServerProvider>,
+  ) {
+    if (!(yield* enabled)) return;
+    yield* record(lifecycle.observe(snapshot), yield* analytics.collectionEpoch);
+  });
+  return { enabled, event, providers };
 });
 
 /** Disabled hosts acquire no observers; only live committed V2 events are observed. */
 export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
   const analytics = yield* AnalyticsService;
   if (!(yield* analytics.status).available) return;
-  const orchestration = yield* Orchestrator.OrchestratorV2;
+  if (analytics.observeCollectionBoundary === undefined) return;
+  const sink = yield* EventSink.EventSinkV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const providers = yield* ProviderRegistry;
   const instances = yield* ProviderInstanceRegistry;
   const observer = yield* makeV2AnalyticsObservers;
+  let streamEpoch = -1;
+  let afterSequence = Infinity;
+  let boundaryGeneration = 0;
+  const firstCursor = yield* Deferred.make<number>();
+  yield* Effect.acquireRelease(
+    analytics.observeCollectionBoundary(async (epoch, phase) => {
+      const generation = ++boundaryGeneration;
+      // Invalidate immediately, then acquire the new period's cutoff BEFORE
+      // consent/deletion acknowledges. A first fresh event cannot become its
+      // own cutoff, and an older queued tail cannot cross this boundary.
+      streamEpoch = -1;
+      afterSequence = Infinity;
+      // Invalidating must not delay stopping delivery or remote erasure on a
+      // database lookup. Only the ready boundary acquires the next watermark.
+      if (phase === "invalidated") return;
+      const cutoff = await Effect.runPromise(
+        sink
+          .latestSequence()
+          .pipe(
+            Effect.tapError(() =>
+              Effect.logWarning(
+                "Analytics collection watermark unavailable; observation remains fenced",
+              ),
+            ),
+          ),
+      );
+      if (!Number.isSafeInteger(cutoff) || cutoff < 0)
+        throw new Error("Invalid analytics watermark");
+      if (generation !== boundaryGeneration) return;
+      afterSequence = cutoff;
+      streamEpoch = epoch;
+      await Effect.runPromise(Deferred.succeed(firstCursor, cutoff));
+    }),
+    (unsubscribe) => Effect.sync(unsubscribe),
+  );
   yield* observer.providers(yield* providers.getProviders);
   yield* providers.streamChanges.pipe(Stream.runForEach(observer.providers), Effect.forkScoped);
-  yield* orchestration.streamDomainEvents.pipe(
-    Stream.runForEach((entry) =>
+  // The subscription cursor is immutable. Never pass the fail-closed Infinity
+  // sentinel upstream: wait for a successful boundary, including recovery from
+  // an unavailable initial read or a superseded registration.
+  yield* Stream.unwrap(
+    Deferred.await(firstCursor).pipe(
+      Effect.map((cursor) => sink.stream({ afterSequence: cursor })),
+    ),
+  ).pipe(
+    Stream.runForEach((stored) =>
       Effect.gen(function* () {
+        const expectedEpoch = yield* analytics.collectionEpoch;
+        if (expectedEpoch !== streamEpoch || stored.sequence <= afterSequence) return;
         if (!(yield* observer.enabled)) return;
+        const entry = stored.event;
         const instanceId =
           entry.type === "run.updated" || entry.type === "run.created"
             ? entry.payload.providerInstanceId
-            : undefined;
+            : entry.providerInstanceId;
         const instance =
           instanceId === undefined ? undefined : yield* instances.getInstance(instanceId);
         const fork = entry.type === "thread.created" ? entry.payload.conversationFork : undefined;
@@ -253,13 +384,17 @@ export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
                 .getThreadShell(fork.sourceThreadId)
                 .pipe(Effect.orElseSucceed(() => null))
             : null;
-        yield* observer.event(entry, {
-          ...(instance === undefined ? {} : { driver: instance.driverKind }),
-          ...(origin === null ? {} : { refork: origin.forkLineage != null }),
-        });
+        yield* observer.event(
+          entry,
+          {
+            ...(instance === undefined ? {} : { driver: instance.driverKind }),
+            ...(origin === null ? {} : { refork: origin.forkLineage != null }),
+          },
+          expectedEpoch,
+        );
       }).pipe(Effect.ignoreCause({ log: true })),
     ),
     Effect.catchCause((cause) => Effect.logWarning("Native analytics observer stopped", { cause })),
     Effect.forkScoped,
   );
-});
+}).pipe(Effect.catchCause(() => Effect.logWarning("Native analytics observer could not start")));
