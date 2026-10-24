@@ -208,8 +208,8 @@ export function makeScientRouteServices<
       Layer.provide(ScientificRuntimePreferencesLive),
       Layer.provide(ScientLatexServicesLive),
       Layer.provide(OverleafSyncLive),
-      // The agent tools save editors through this seam; the editor-save request connects here.
-      Layer.provide(OverleafEditorSave.layerNotConnected),
+      // The agent tools save a folder's editors through the editor-save request.
+      Layer.provide(OverleafEditorSave.layerFromEditorFlush),
       // One server-lifetime set of connected windows, shared by the WebSocket
       // handlers that windows answer on and the tools that ask them.
       Layer.provide(EditorFlush.layer),

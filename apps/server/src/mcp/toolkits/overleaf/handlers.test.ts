@@ -72,13 +72,32 @@ const summary = {
   linkedHere: true,
 };
 
+/**
+ * Fills what the service always reports and these tests don't vary: a sync that
+ * neither retried nor first settled an interrupted sync, unless a test says so.
+ */
+const withProgress = (name: string, result: unknown) => {
+  const value = result as { readonly _tag?: string };
+  if (name === "sync" && value._tag !== "duplicate")
+    return { retried: false, settled: null, ...value };
+  if (name === "preview" && value._tag === "review") return { settled: null, ...value };
+  return result;
+};
+
 /** A service whose every operation not given fails the test. */
 const fakeOverleaf = (overrides: Partial<OverleafSyncShape>): OverleafSyncShape =>
   new Proxy({ list: () => Effect.succeed([summary]), ...overrides } as OverleafSyncShape, {
-    get: (target, name: string) =>
-      name in target
-        ? target[name as keyof OverleafSyncShape]
-        : () => Effect.die(new Error(`unexpected OverleafSync.${name}`)),
+    get: (target, name: string) => {
+      if (!(name in target)) return () => Effect.die(new Error(`unexpected OverleafSync.${name}`));
+      const operation = target[name as keyof OverleafSyncShape];
+      return typeof operation === "function"
+        ? (...args: ReadonlyArray<unknown>) =>
+            Effect.map(
+              (operation as (...input: ReadonlyArray<unknown>) => Effect.Effect<unknown>)(...args),
+              (result) => withProgress(name, result),
+            )
+        : operation;
+    },
   });
 
 const provide =
@@ -128,7 +147,11 @@ describe("Overleaf tool handlers", () => {
           unanswered: [],
         },
         { _tag: "failed", failures: [], unanswered: [{ window: "window-2", reason: "timeout" }] },
-        { _tag: "unavailable" },
+        {
+          _tag: "failed",
+          failures: [{ path: "paper", reason: "folder-unavailable" }],
+          unanswered: [],
+        },
       ];
       for (const outcome of outcomes) {
         const saver = recordingEditorSave(outcome);
@@ -800,122 +823,124 @@ describe("Overleaf tool handlers", () => {
     }),
   );
 
-  it.effect("after an automatic retry, says the earlier attempt already brought changes in", () =>
-    Effect.gen(function* () {
-      const review = (
-        incoming: ReadonlyArray<unknown>,
-        conflicts: ReadonlyArray<unknown> = [],
-      ) => ({
-        reviewId: "r",
-        digest: "d",
-        remoteTree: "b".repeat(40),
-        upToDate: false,
-        needsDecision: conflicts.length > 0,
-        incoming,
-        outgoing: [],
-        conflicts,
-        warnings: [],
-        unresolvedMarkers: [],
-        collisions: [],
-        selectedAdditions: [],
-        additions: [],
-        localOnly: [],
-      });
-      const synced = (options: {
-        readonly incoming: ReadonlyArray<unknown>;
-        readonly retried: boolean;
-        readonly publication: unknown;
-      }) =>
-        overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+  it.effect(
+    "after an automatic retry, says the first attempt applied a review and sent nothing",
+    () =>
+      Effect.gen(function* () {
+        const review = (
+          incoming: ReadonlyArray<unknown>,
+          conflicts: ReadonlyArray<unknown> = [],
+        ) => ({
+          reviewId: "r",
+          digest: "d",
+          remoteTree: "b".repeat(40),
+          upToDate: false,
+          needsDecision: conflicts.length > 0,
+          incoming,
+          outgoing: [],
+          conflicts,
+          warnings: [],
+          unresolvedMarkers: [],
+          collisions: [],
+          selectedAdditions: [],
+          additions: [],
+          localOnly: [],
+        });
+        const synced = (options: {
+          readonly incoming: ReadonlyArray<unknown>;
+          readonly retried: boolean;
+          readonly publication: unknown;
+        }) =>
+          overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+            provide(
+              fakeOverleaf({
+                sync: () =>
+                  Effect.succeed({
+                    _tag: "synced",
+                    review: review(options.incoming),
+                    adopted: {
+                      applyId: "x",
+                      outcome: "complete",
+                      interrupted: [],
+                      markerPaths: [],
+                      baseGeneration: 1,
+                    },
+                    publication: options.publication,
+                    retried: options.retried,
+                    activity: [],
+                    linkedElsewhere: false,
+                  }) as never,
+              }),
+            ),
+            Effect.map((result) => result.lines),
+          );
+        const retried = yield* synced({
+          incoming: [{ kind: "modified", path: "other.tex" }],
+          retried: true,
+          publication: { _tag: "accepted", attemptNumber: 2 },
+        });
+        expect(retried[0]).toBe(
+          "The first attempt applied a review to the folder, then Overleaf changed while it was sending, so nothing was sent and the sync ran again; the lines below describe the last attempt.",
+        );
+        expect(retried[1]).toBe("In the last attempt, 1 file came in from Overleaf: other.tex.");
+        expect(retried.some((line) => /nothing (was )?applied/iu.test(line))).toBe(false);
+
+        // A first sync: the new file is named, and nothing is said to have been sent.
+        const first = yield* synced({
+          incoming: [{ kind: "added", path: "main.tex" }],
+          retried: false,
+          publication: { _tag: "none" },
+        });
+        expect(first).toEqual(["1 file came in from Overleaf: main.tex (new)."]);
+
+        // Nothing came in, and the folder changed after the apply.
+        const unverified = yield* synced({
+          incoming: [],
+          retried: false,
+          publication: { _tag: "not-verified" },
+        });
+        expect(unverified[0]).toBe(
+          "Nothing was sent: the folder changed after the apply. Sync again; the new edit goes with the next sync.",
+        );
+        expect(unverified.some((line) => line.includes("came in"))).toBe(false);
+
+        // A preview with a conflict names its key, choices and the review's Overleaf tree.
+        const previewed = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
           provide(
             fakeOverleaf({
-              sync: () =>
+              preview: () =>
                 Effect.succeed({
-                  _tag: "synced",
-                  review: review(options.incoming),
-                  adopted: {
-                    applyId: "x",
-                    outcome: "complete",
-                    interrupted: [],
-                    markerPaths: [],
-                    baseGeneration: 1,
-                  },
-                  publication: options.publication,
-                  retried: options.retried,
-                  activity: [],
-                  linkedElsewhere: false,
+                  _tag: "review",
+                  review: review(
+                    [],
+                    [
+                      {
+                        key: "k",
+                        paths: ["main.tex"],
+                        allowed: ["mine", "theirs", "markers"],
+                        chosen: null,
+                      },
+                    ],
+                  ),
                 }) as never,
             }),
           ),
-          Effect.map((result) => result.lines),
         );
-      const retried = yield* synced({
-        incoming: [{ kind: "modified", path: "other.tex" }],
-        retried: true,
-        publication: { _tag: "accepted", attemptNumber: 2 },
-      });
-      expect(retried[0]).toContain(
-        "An earlier attempt had already brought Overleaf's changes into the folder",
-      );
-      expect(retried[1]).toBe("In the last attempt, 1 file came in from Overleaf: other.tex.");
-      expect(retried.some((line) => /nothing (was )?applied/iu.test(line))).toBe(false);
-
-      // A first sync: the new file is named, and nothing is said to have been sent.
-      const first = yield* synced({
-        incoming: [{ kind: "added", path: "main.tex" }],
-        retried: false,
-        publication: { _tag: "none" },
-      });
-      expect(first).toEqual(["1 file came in from Overleaf: main.tex (new)."]);
-
-      // Nothing came in, and the folder changed after the apply.
-      const unverified = yield* synced({
-        incoming: [],
-        retried: false,
-        publication: { _tag: "not-verified" },
-      });
-      expect(unverified[0]).toBe(
-        "Nothing was sent: the folder changed after the apply. Sync again; the new edit goes with the next sync.",
-      );
-      expect(unverified.some((line) => line.includes("came in"))).toBe(false);
-
-      // A preview with a conflict names its key, choices and the review's Overleaf tree.
-      const previewed = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
-        provide(
-          fakeOverleaf({
-            preview: () =>
-              Effect.succeed({
-                _tag: "review",
-                review: review(
-                  [],
-                  [
-                    {
-                      key: "k",
-                      paths: ["main.tex"],
-                      allowed: ["mine", "theirs", "markers"],
-                      chosen: null,
-                    },
-                  ],
-                ),
-              }) as never,
-          }),
-        ),
-      );
-      expect(previewed.lines).toContain(
-        `1 conflict to settle. Call again with one choice per key and reviewedRemote ${"b".repeat(40)}:`,
-      );
-      expect(previewed.lines).toContain("- key k: main.tex; allowed: mine, theirs, markers");
-    }),
+        expect(previewed.lines).toContain(
+          `1 conflict to settle. Call again with one choice per key and reviewedRemote ${"b".repeat(40)}:`,
+        );
+        expect(previewed.lines).toContain("- key k: main.tex; allowed: mine, theirs, markers");
+      }),
   );
 
-  it.effect("a stop after a possible earlier attempt describes only what stopped", () =>
+  it.effect("a stop says what stopped, and what the sync did before it, from the result", () =>
     Effect.gen(function* () {
       const linesFor = (outcome: unknown) =>
         overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
           provide(fakeOverleaf({ sync: () => Effect.succeed(outcome) as never })),
           Effect.map((result) => result.lines),
         );
-      const outcomes = [
+      const stops = [
         {
           _tag: "refused",
           refusal: { reason: "remote-forbidden", path: "lib", kind: "repository" },
@@ -923,20 +948,33 @@ describe("Overleaf tool handlers", () => {
         { _tag: "unsettled", reason: "folder-kept-changing" },
         { _tag: "cancelled", stage: "before-apply" },
       ];
-      for (const outcome of outcomes) {
-        const lines = yield* linesFor(outcome);
-        // The service doesn't say whether an earlier attempt applied changes: never "nothing".
-        expect(
-          lines.some((line) => /nothing (changed|more|was applied)/iu.test(line)),
-          outcome._tag,
-        ).toBe(false);
-        expect(lines).toContain(
-          "If Overleaf changed while this sync was sending, an earlier attempt may already have brought its changes into the folder; scient_overleaf_status shows the folder now.",
-        );
-      }
-      expect((yield* linesFor(outcomes[0]))[0]).toBe(
+      const STOP = [
         "This sync stopped: Overleaf has content Scient will not write (a link, Git LFS pointer, repository or reserved name) (lib).",
-      );
+        "The folder kept changing while the sync read it, so it stopped there. Sync again when the edits settle.",
+        "The sync stopped on request before applying the review it had built.",
+      ];
+      for (const [index, stop] of stops.entries()) {
+        // Nothing happened before the stop: the stop is the whole result, with no hedge.
+        expect(yield* linesFor(stop)).toEqual([STOP[index]]);
+        // An interrupted sync finished first, and a retried attempt: both said exactly.
+        expect(
+          yield* linesFor({
+            ...stop,
+            retried: true,
+            settled: {
+              applyId: "s",
+              outcome: "complete",
+              interrupted: [],
+              markerPaths: [],
+              baseGeneration: 1,
+            },
+          }),
+        ).toEqual([
+          "First finished an interrupted sync: what it was applying is now in the folder.",
+          "The first attempt applied a review to the folder, then Overleaf changed while it was sending, so nothing was sent and the sync ran again; the lines below describe the last attempt.",
+          STOP[index],
+        ]);
+      }
       // A preview's refusal is about a sync that hasn't run.
       const previewed = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
         provide(
@@ -946,9 +984,36 @@ describe("Overleaf tool handlers", () => {
           }),
         ),
       );
-      expect(previewed.lines[0]).toBe(
+      expect(previewed.lines).toEqual([
         "A sync can't run now: the folder has more than 5,000 entries. Choose a narrower folder.",
+      ]);
+      // A refusal still reports the interrupted sync the preview finished first.
+      const settledThenRefused = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
+        provide(
+          fakeOverleaf({
+            preview: () =>
+              Effect.succeed({
+                _tag: "refused",
+                refusal: { reason: "walk-limit" },
+                settled: {
+                  applyId: "s",
+                  outcome: "attention",
+                  interrupted: [],
+                  markerPaths: ["main.tex"],
+                  baseGeneration: 1,
+                },
+              }) as never,
+          }),
+        ),
       );
+      expect(settledThenRefused.lines).toEqual([
+        "First settled an interrupted sync, but part of the folder needs attention: files have conflict marks. Check scient_overleaf_status, then sync again.",
+        "A sync can't run now: the folder has more than 5,000 entries. Choose a narrower folder.",
+      ]);
+      expect(settledThenRefused.preview).toMatchObject({
+        _tag: "refused",
+        settled: { outcome: "attention", interrupted: 0, markerPaths: ["main.tex"] },
+      });
     }),
   );
 
@@ -996,13 +1061,60 @@ describe("Overleaf tool handlers", () => {
             preview: () =>
               Effect.sync(() =>
                 ++prepared === 1
-                  ? { _tag: "recovered", recovery: { outcome: "replan" } }
+                  ? {
+                      _tag: "recovered",
+                      recovery: { outcome: "replan", interrupted: [], markerPaths: [] },
+                    }
                   : { _tag: "refused", refusal: { reason: "walk-limit" } },
               ) as never,
           }),
         ),
       );
-      expect(previewed.lines[0]).toContain("An interrupted earlier sync was settled first");
+      expect(previewed.lines.slice(0, 2)).toEqual([
+        "First recovered an interrupted sync without writing anything.",
+        "A sync can't run now: the folder has more than 5,000 entries. Choose a narrower folder.",
+      ]);
+      // A review carries what the service settled before building it.
+      const reviewed = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
+        provide(
+          fakeOverleaf({
+            preview: () =>
+              Effect.succeed({
+                _tag: "review",
+                settled: {
+                  applyId: "s",
+                  outcome: "complete",
+                  interrupted: [],
+                  markerPaths: [],
+                  baseGeneration: 1,
+                },
+                review: {
+                  reviewId: "r",
+                  digest: "d",
+                  remoteTree: "b".repeat(40),
+                  upToDate: true,
+                  needsDecision: false,
+                  incoming: [],
+                  outgoing: [],
+                  conflicts: [],
+                  warnings: [],
+                  unresolvedMarkers: [],
+                  collisions: [],
+                  selectedAdditions: [],
+                  additions: [],
+                  localOnly: [],
+                },
+              }) as never,
+          }),
+        ),
+      );
+      expect(reviewed.lines).toEqual([
+        "First finished an interrupted sync: what it was applying is now in the folder.",
+        "Up to date: nothing would come in or be sent.",
+      ]);
+      expect(reviewed.preview).toMatchObject({
+        settled: { outcome: "complete", interrupted: 0, markerPaths: [] },
+      });
     }),
   );
 

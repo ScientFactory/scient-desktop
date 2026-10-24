@@ -4,14 +4,14 @@
  * call it first; anything but `saved` stops them before they change a file,
  * and the result names the file that could not be saved.
  *
- * This is the one seam between the Overleaf tools and the server request that
- * asks every open window to save (the editor-save request, its own PR). Until
- * that request is connected here, `layerNotConnected` answers `unavailable`, so
- * nothing syncs over editor text that may be unsaved.
+ * This is the one seam between the Overleaf tools and the editor-save request
+ * (`EditorFlush`), which asks every open window of this server to save.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+
+import * as EditorFlush from "../editorFlush/EditorFlush.ts";
 
 /** Why one editor's text is still not on disk. */
 export interface OverleafEditorSaveFailure {
@@ -39,9 +39,7 @@ export type OverleafEditorSaveResult =
       readonly _tag: "failed";
       readonly failures: ReadonlyArray<OverleafEditorSaveFailure>;
       readonly unanswered: ReadonlyArray<OverleafEditorSaveUnanswered>;
-    }
-  /** No editor-save request is connected to this server. */
-  | { readonly _tag: "unavailable" };
+    };
 
 export class OverleafEditorSave extends Context.Service<
   OverleafEditorSave,
@@ -55,7 +53,53 @@ export class OverleafEditorSave extends Context.Service<
   }
 >()("t3/scient/overleaf/OverleafEditorSave") {}
 
-/** Until the editor-save request is connected: every save is `unavailable`. */
-export const layerNotConnected = Layer.succeed(OverleafEditorSave, {
-  saveFolder: () => Effect.succeed({ _tag: "unavailable" } as const),
-});
+/** How long each window has to save, and the whole request, before it counts as failed. */
+const WINDOW_TIMEOUT = "10 seconds";
+const OVERALL_TIMEOUT = "30 seconds";
+
+/**
+ * Every open window of this server saves the folder's editors. No window open
+ * means nothing is unsaved; anything else that is not all saved names the files
+ * and windows that stopped it.
+ */
+export const layerFromEditorFlush = Layer.effect(
+  OverleafEditorSave,
+  Effect.gen(function* () {
+    const flush = yield* EditorFlush.EditorFlush;
+    return {
+      saveFolder: (input) =>
+        flush
+          .flushFolder({ ...input, timeout: WINDOW_TIMEOUT, overallTimeout: OVERALL_TIMEOUT })
+          .pipe(
+            Effect.map((result): OverleafEditorSaveResult => {
+              switch (result._tag) {
+                case "NoWindowOpen":
+                  return { _tag: "saved" };
+                case "FolderUnavailable":
+                  return {
+                    _tag: "failed",
+                    failures: [{ path: input.folder, reason: "folder-unavailable" }],
+                    unanswered: [],
+                  };
+                case "Answered":
+                  return result.allSaved
+                    ? { _tag: "saved" }
+                    : {
+                        _tag: "failed",
+                        failures: result.windows.flatMap((window) =>
+                          window._tag === "Failed"
+                            ? window.failures.map(({ path, reason }) => ({ path, reason }))
+                            : [],
+                        ),
+                        unanswered: result.windows.flatMap((window) =>
+                          window._tag === "Unanswered"
+                            ? [{ window: window.window.clientId, reason: window.reason }]
+                            : [],
+                        ),
+                      };
+              }
+            }),
+          ),
+    };
+  }),
+);

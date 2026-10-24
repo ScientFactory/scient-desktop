@@ -278,13 +278,64 @@ const refusalReason = (refusal: ScientOverleafRefusal): string => {
   }
 };
 
+/** An interrupted earlier sync an operation finished first, as the result reports it. */
+type Settled = {
+  readonly outcome: string;
+  readonly interrupted: number;
+  readonly markerPaths: ReadonlyArray<string>;
+};
+
 /**
- * Any outcome but `synced` can follow an earlier attempt of the same sync that
- * applied Overleaf's changes and then found Overleaf moved while sending; the
- * service's other outcomes don't say whether it did.
+ * How finishing an interrupted sync ended, from its own apply outcome: only
+ * `complete` puts what it was applying into the folder, and `replan` wrote nothing.
+ * `first` when it ran before the operation's own work.
  */
-const EARLIER_ATTEMPT =
-  "If Overleaf changed while this sync was sending, an earlier attempt may already have brought its changes into the folder; scient_overleaf_status shows the folder now.";
+const settledLine = (settled: Settled, first: boolean): string => {
+  const sentence = (verb: string, rest: string) =>
+    first ? `First ${verb} ${rest}` : `${verb.charAt(0).toUpperCase()}${verb.slice(1)} ${rest}`;
+  switch (settled.outcome) {
+    case "complete":
+      return sentence(
+        "finished",
+        "an interrupted sync: what it was applying is now in the folder.",
+      );
+    case "replan":
+      return sentence(
+        "recovered",
+        first
+          ? "an interrupted sync without writing anything."
+          : "an interrupted sync without writing anything; a fresh review is needed. Sync again.",
+      );
+    default:
+      return sentence(
+        "settled",
+        `an interrupted sync, but part of the folder needs attention: ${[
+          ...(settled.interrupted > 0
+            ? [
+                `applying stopped partway in ${plural(settled.interrupted, "file group")}, which the next sync shows as conflicts to settle`,
+              ]
+            : []),
+          ...(settled.markerPaths.length > 0 ? ["files have conflict marks"] : []),
+          ...(settled.interrupted === 0 && settled.markerPaths.length === 0
+            ? ["a file or a kept copy changed while it was written"]
+            : []),
+        ].join("; ")}. Check scient_overleaf_status, then sync again.`,
+      );
+  }
+};
+
+/** What the service reports a sync did before the outcome it ends with. */
+const progressLines = (progress: {
+  readonly retried: boolean;
+  readonly settled: Settled | null;
+}): string[] => [
+  ...(progress.settled === null ? [] : [settledLine(progress.settled, true)]),
+  ...(progress.retried
+    ? [
+        "The first attempt applied a review to the folder, then Overleaf changed while it was sending, so nothing was sent and the sync ran again; the lines below describe the last attempt.",
+      ]
+    : []),
+];
 
 const sendTense = (publication: ScientOverleafPublication): SendTense =>
   publication._tag === "accepted" ? "sent" : publication._tag === "unknown" ? "maybe" : "unsent";
@@ -349,51 +400,48 @@ const incomingLines = (result: Extract<ScientOverleafSyncResult, { _tag: "synced
 export const syncLines = (result: ScientOverleafSyncResult): string[] => {
   switch (result._tag) {
     case "synced": {
-      // An out-of-date send starts one new attempt: the first one's changes are already in the
-      // folder, and this result describes only the last attempt.
-      const lines: string[] = result.retried
-        ? [
-            "Overleaf changed while sending, so this sync ran again. An earlier attempt had already brought Overleaf's changes into the folder; the lines below describe the last attempt.",
-          ]
-        : [];
-      lines.push(...incomingLines(result));
-      lines.push(...publicationLines(result.publication, result.review, result.markerPaths));
-      if (lines.length === 0) lines.push("Up to date: nothing came in and nothing needed sending.");
+      const lines = [
+        ...incomingLines(result),
+        ...publicationLines(result.publication, result.review, result.markerPaths),
+      ];
+      if (lines.length === 0)
+        lines.push(
+          result.retried
+            ? "In the last attempt, nothing came in and nothing needed sending."
+            : "Up to date: nothing came in and nothing needed sending.",
+        );
       lines.push(...fileLines(result.review));
       lines.push(...warningLines(result.review.warnings, sendTense(result.publication)));
       if (result.publication._tag !== "blocked" || result.publication.reason !== "markers") {
         const marked = [...new Set([...result.markerPaths, ...result.review.unresolvedMarkers])];
         if (marked.length > 0) lines.push(markerLine(marked));
       }
-      lines.push(...activityLines(result.activity));
-      return lines;
+      return [...progressLines(result), ...lines, ...activityLines(result.activity)];
     }
     case "needs-decision":
-      // The service does not say whether an earlier attempt in this sync applied
-      // changes before Overleaf moved, so only this review is said to be unapplied.
       return [
+        ...progressLines(result),
         "Stopped at a conflict before applying this review: none of its changes were applied or sent.",
         ...conflictLines(result.review),
-        EARLIER_ATTEMPT,
         ...activityLines(result.activity),
       ];
     case "refused":
-      return [`This sync stopped: ${refusalReason(result.refusal)}`, EARLIER_ATTEMPT];
+      return [...progressLines(result), `This sync stopped: ${refusalReason(result.refusal)}`];
     case "duplicate":
       return ["This request already ran; nothing ran again."];
     case "unsettled":
       return [
+        ...progressLines(result),
         result.reason === "folder-kept-changing"
           ? "The folder kept changing while the sync read it, so it stopped there. Sync again when the edits settle."
           : "The sync could not settle on one review, so it stopped there. Sync again.",
-        EARLIER_ATTEMPT,
       ];
     case "cancelled":
       return [
+        ...progressLines(result),
         result.stage === "before-prepare"
           ? "The sync stopped on request before reading the folder again."
           : "The sync stopped on request before applying the review it had built.",
-        EARLIER_ATTEMPT,
       ];
   }
 };
@@ -412,9 +460,15 @@ const activityLines = (
 export const previewLines = (preview: ScientOverleafPreviewResult): string[] => {
   switch (preview._tag) {
     case "review":
-      return reviewLines(preview.review);
+      return [
+        ...(preview.settled === null ? [] : [settledLine(preview.settled, true)]),
+        ...reviewLines(preview.review),
+      ];
     case "refused":
-      return [`A sync can't run now: ${refusalReason(preview.refusal)}`];
+      return [
+        ...(preview.settled === null ? [] : [settledLine(preview.settled, true)]),
+        `A sync can't run now: ${refusalReason(preview.refusal)}`,
+      ];
     case "recovered":
       return [
         "An interrupted earlier sync was settled first. Preview again to see what a sync would do; scient_overleaf_status shows the folder now.",
@@ -422,41 +476,13 @@ export const previewLines = (preview: ScientOverleafPreviewResult): string[] => 
   }
 };
 
-/**
- * How a recovery ended, from its own apply outcome: only `complete` puts what the
- * interrupted sync was applying into the folder.
- */
-export const recoveryLines = (
-  adopted: {
-    readonly outcome: "complete" | "replan" | "attention";
-    readonly interrupted: ReadonlyArray<unknown>;
-    readonly markerPaths: ReadonlyArray<string>;
-  } | null,
-): string[] => {
-  if (adopted === null) return ["No interrupted sync to settle."];
-  switch (adopted.outcome) {
-    case "complete":
-      return ["Finished an interrupted sync: what it was applying is now in the folder."];
-    case "replan":
-      return [
-        "Recovered an interrupted sync without writing anything; a fresh review is needed. Sync again.",
-      ];
-    case "attention":
-      return [
-        `Settled an interrupted sync, but part of the folder needs attention: ${[
-          ...(adopted.interrupted.length > 0
-            ? [
-                `applying stopped partway in ${plural(adopted.interrupted.length, "file group")}, which the next sync shows as conflicts to settle`,
-              ]
-            : []),
-          ...(adopted.markerPaths.length > 0 ? ["files have conflict marks"] : []),
-          ...(adopted.interrupted.length === 0 && adopted.markerPaths.length === 0
-            ? ["a file or a kept copy changed while it was written"]
-            : []),
-        ].join("; ")}. Check scient_overleaf_status, then sync again.`,
-      ];
-  }
-};
+/** An interrupted sync an operation finished before its own work, when its result can't carry it. */
+export const firstSettledLine = (settled: Settled): string => settledLine(settled, true);
+
+/** How a recovery ended, from its own apply outcome (null: there was none). */
+export const recoveryLines = (settled: Settled | null): string[] => [
+  settled === null ? "No interrupted sync to settle." : settledLine(settled, false),
+];
 
 export const connectionLine = (
   connection: ScientOverleafConnectionSummary & {

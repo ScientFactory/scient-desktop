@@ -482,9 +482,9 @@ coordinator's per-connection reservations.
 Text a person typed is on disk only once the window holding it has saved it.
 `scient/editorFlush/EditorFlush.ts` lets a server operation ask every window
 of this environment to save its editors for one folder, and wait:
-`flushFolder({ checkoutRoot, folder, timeout, overallTimeout })`. Nothing
-calls it yet; the Overleaf agent tools will, before prepare and again before
-confirm.
+`flushFolder({ checkoutRoot, folder, timeout, overallTimeout })`. The
+Overleaf agent tools call it through `OverleafEditorSave.layerFromEditorFlush`
+before any call that may write the folder.
 
 - Each window subscribes once (`editors.flushConnect`), asks where its
   editors' files are (`editors.flushResolve`), answers (`editors.flushRespond`)
@@ -554,8 +554,8 @@ confirm.
 
 The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
 defines the remaining work and tracks each step's status. The agent tools save
-open editors through `OverleafEditorSave`, which stops them until the
-editor-save request is connected there; the screens come next. Derive
+open editors through `OverleafEditorSave` (connected to the editor-save request)
+before any call that may write the folder; the screens come next. Derive
 interrupted operations in status (a `running` receipt whose operation is no
 longer live was interrupted). The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can

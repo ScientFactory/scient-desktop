@@ -85,19 +85,21 @@ earlier receipt instead of running again; a retried tool call is a new request.
   that content; one that needs attention may have stopped partway, and
   the result says why (interrupted file groups, conflict marks, or a file or kept
   copy that changed).
-- **Retries.** When a send found Overleaf moved, the sync runs once more; the
-  result says an earlier attempt already brought Overleaf's changes in, and its
-  lists describe the last attempt. The service's other outcomes (`needs-decision`,
-  `refused`, `unsettled`, `cancelled`) don't say whether an earlier attempt of the
-  same sync applied changes, so their lines describe only the review or step that
-  stopped ("This sync stopped: …", "none of this review's changes were applied")
-  and add that an earlier attempt may already have brought Overleaf's changes in.
-  A preview's refusal says a sync can't run now, nothing more.
+- **What a sync did first.** Every sync result but `duplicate` carries
+  `retried` (the first attempt applied a review, then Overleaf moved while it
+  was sending: nothing was sent and the sync ran again) and `settled` (an
+  interrupted earlier sync it finished first, with that apply's outcome). The
+  result says each, exactly, before its own lines ("First finished an interrupted
+  sync: …", "The first attempt applied a review to the folder, then …"), and
+  says nothing about them when they say nothing happened. The stop lines then
+  describe only the review or step that stopped ("This sync stopped: …", "none
+  of this review's changes were applied"). A preview carries `settled` the same
+  way; its refusal says a sync can't run now.
 - **Recovery wording.** Recover (and a preview that settles an interrupted sync
   first) says what the recovery's own apply established: `complete` puts what it
   was applying in the folder, `replan` wrote nothing and needs a fresh review (sync again), `attention`
-  needs a look. A preview that recovered first says so, since that may have
-  written the folder.
+  needs a look. A preview that finished an interrupted sync first says how,
+  since that wrote the folder.
 - **Restore wording.** `restored` only when the restore's apply completed;
   `not-restored` when the restore wrote nothing (list again and retry), and
   `needs-attention` when it may have stopped partway.
@@ -127,11 +129,12 @@ or went away). `saved` also covers "no window is open". The editor-save request
 (`EditorFlush.flushFolder`) maps onto it directly: no window open or every
 window saved is `saved`; any failed or unanswered window is `failed`.
 
-The service is the one seam to the editor-save request (its own PR). Until that
-request is connected, the server provides `layerNotConnected`, which answers
-`unavailable`: the sync and restore tools stop rather than read a folder whose
-editors may hold unsaved text. `OverleafEditorSave.testkit.ts` records calls for
-tests.
+The service is the one seam to the editor-save request: the server provides
+`layerFromEditorFlush`, which asks every open window through `EditorFlush`
+(each window has 10 seconds, the whole request 30), sharing one `EditorFlush`
+with the WebSocket handlers the windows answer on. A folder the request cannot
+examine is a failed save of that folder. `OverleafEditorSave.testkit.ts` records
+calls for tests.
 
 ## The token
 

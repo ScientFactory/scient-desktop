@@ -80,8 +80,10 @@ import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handlers.ts";
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
+// SCIENT-FORK:START — Overleaf agent tools.
 import { ScientOverleafToolkitHandlersLive } from "./toolkits/overleaf/handlers.ts";
 import { ScientOverleafToolkit } from "./toolkits/overleaf/tools.ts";
+// SCIENT-FORK:END
 import { ScientComputeToolkitHandlersLive } from "./toolkits/compute/handlers.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { ScientThreadsToolkitHandlersLive } from "./toolkits/threads/handlers.ts";
@@ -1244,9 +1246,11 @@ const ScientDocumentsToolkitRegistrationLive = registerScientToolkit(ScientDocum
   Layer.provide(ScientDocumentsToolkitHandlersLive),
 );
 
+// SCIENT-FORK:START — Overleaf agent tools.
 export const ScientOverleafToolkitRegistrationLive = registerScientToolkit(
   ScientOverleafToolkit,
 ).pipe(Layer.provide(ScientOverleafToolkitHandlersLive));
+// SCIENT-FORK:END
 
 export const ScientComputeToolkitRegistrationLive = registerScientToolkit(
   ScientComputeToolkit,
@@ -1334,7 +1338,9 @@ export const layer = Layer.mergeAll(
   ScientSourcesToolkitRegistrationLive,
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,
+  // SCIENT-FORK:START — Overleaf agent tools.
   ScientOverleafToolkitRegistrationLive,
+  // SCIENT-FORK:END
   ScientComputeToolkitRegistrationLive,
   ScientThreadsToolkitRegistrationLive,
   layerPreviewToolkit,

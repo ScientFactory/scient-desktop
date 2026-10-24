@@ -222,7 +222,7 @@ If the thread works in a separate worktree, the tools act on the copy the link b
 
 ## Conflicts
 
-Only a conflict stops a sync. None of the stopped review's changes are applied, though an earlier attempt of the same sync may already have brought Overleaf's changes in; the result says when it might have. Each conflict has a key and allowed choices:
+Only a conflict stops a sync. None of the stopped review's changes are applied; the result first says if the sync finished an interrupted sync or applied an earlier attempt before it stopped. Each conflict has a key and allowed choices:
 
 - \`mine\` keeps this computer's version; \`theirs\` takes Overleaf's.
 - \`markers\` writes both versions into the file between conflict marks (\`<<<<<<<\`, \`=======\`, \`>>>>>>>\`).

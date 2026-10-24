@@ -22,12 +22,14 @@ import {
   type OverleafSavedFolder,
   type OverleafSyncShape,
 } from "../../../scient/overleaf/OverleafSync.ts";
-import { refusalView, syncView } from "../../../scient/overleaf/http.ts";
+import type { OverleafAdopted } from "../../../scient/overleaf/OverleafCoordinator.ts";
+import { refusalView, settledView, syncView } from "../../../scient/overleaf/http.ts";
 import type { ConflictChoice } from "../../../scient/overleaf/syncRules.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import {
   connectionLine,
   linkedElsewhereLine,
+  firstSettledLine,
   previewLines,
   recoveryLines,
   statusLines,
@@ -285,11 +287,6 @@ const saveEditors = Effect.fn("ScientOverleafToolkit.saveEditors")(function* (
         saved.failures.map((failure) => failure.path),
       );
     }
-    case "unavailable":
-      return yield* toolError(
-        "editor-save-failed",
-        `Scient cannot ask its windows to save open editors yet. ${nothing}`,
-      );
   }
 });
 
@@ -333,14 +330,20 @@ const afterSavingEditors = Effect.fn("ScientOverleafToolkit.afterSavingEditors")
 const withLinkLine = (link: Link, lines: ReadonlyArray<string>) =>
   link.linkedElsewhere ? [linkedElsewhereLine(link.checkoutRoot), ...lines] : [...lines];
 
+/** `earlier`: an interrupted sync a first prepare settled before this one built the review. */
 const previewView = (
   result: Effect.Success<ReturnType<OverleafSyncShape["preview"]>>,
+  earlier: OverleafAdopted | null,
 ): ScientOverleafPreviewResult => {
   switch (result._tag) {
     case "review":
-      return result;
+      return { ...result, settled: settledView(result.settled ?? earlier) };
     case "refused":
-      return { _tag: "refused", refusal: refusalView(result.refusal) };
+      return {
+        _tag: "refused",
+        refusal: refusalView(result.refusal),
+        settled: settledView(result.settled ?? earlier),
+      };
     case "recovered":
       return { _tag: "recovered" };
   }
@@ -481,23 +484,22 @@ export const overleafPreviewForInvocation = Effect.fn("ScientOverleafToolkit.pre
         return Effect.flatMap(overleaf.preview(request), (first) =>
           // An interrupted sync was settled first; the preview is of what is there now.
           first._tag === "recovered"
-            ? Effect.map(overleaf.preview(request), (result) => ({ result, settledFirst: true }))
-            : Effect.succeed({ result: first, settledFirst: false }),
+            ? Effect.map(overleaf.preview(request), (result) => ({
+                result,
+                earlier: first.recovery as OverleafAdopted | null,
+              }))
+            : Effect.succeed({ result: first, earlier: null as OverleafAdopted | null }),
         );
       },
     );
-    const preview = previewView(prepared.result);
-    const lines = previewLines(preview);
+    const preview = previewView(prepared.result, prepared.earlier);
+    // A review or refusal carries what was settled first; a second recovery can't.
+    const earlier = preview._tag === "recovered" ? settledView(prepared.earlier) : null;
     return {
-      lines: withLinkLine(
-        link,
-        prepared.settledFirst && preview._tag !== "recovered"
-          ? [
-              "An interrupted earlier sync was settled first, which may have written the folder; this preview is of the folder as it is now.",
-              ...lines,
-            ]
-          : lines,
-      ),
+      lines: withLinkLine(link, [
+        ...(earlier === null ? [] : [firstSettledLine(earlier)]),
+        ...previewLines(preview),
+      ]),
       link,
       preview,
     };
@@ -543,7 +545,7 @@ export const overleafConnectForInvocation = Effect.fn("ScientOverleafToolkit.con
       "The first sync was not previewed.",
       (savedFolder) => overleaf.preview({ caller, connectionId, savedFolder }),
     ).pipe(
-      Effect.map(({ value }) => previewView(value)),
+      Effect.map(({ value }) => previewView(value, null)),
       Effect.catch((error) =>
         Effect.map(toToolError(error), (mapped) => {
           lines.push(`The first sync could not be previewed: ${mapped.message}`);
@@ -780,7 +782,7 @@ export const overleafManageForInvocation = Effect.fn("ScientOverleafToolkit.mana
           accepted: recovered.attempts?.accepted ?? null,
           unresolved: recovered.attempts?.unresolved ?? null,
         };
-        const lines = recoveryLines(adopted);
+        const lines = recoveryLines(settledView(adopted));
         if (result.accepted === null)
           lines.push("Overleaf could not be reached to check earlier sends.");
         else {
