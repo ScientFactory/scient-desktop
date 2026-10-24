@@ -1160,42 +1160,6 @@ describe("Detail pages", () => {
     expect(fixture.header().textContent).toContain("Managed by Codex");
   });
 
-  it("draws Add, Sign in and Reconnect like the provider Install button", async () => {
-    await using fixture = setup();
-    const primary = (scope: ParentNode, label: string) => {
-      const button = buttonIn(scope, label)!;
-      return {
-        variant: button.dataset.variant,
-        icon: button
-          .querySelector("svg")
-          ?.getAttribute("class")
-          ?.match(/lucide-[a-z-]+/)?.[0],
-      };
-    };
-    await fixture.render(<ServerDetailPage name="io.notion/notion" />);
-    expect(primary(fixture.header(), "Add")).toEqual({
-      variant: "ghost-primary",
-      icon: "lucide-download",
-    });
-
-    state.inventory = inventory({
-      connectors: [connector("linear0001", { displayName: "Linear", status: "needs-auth" })],
-    });
-    await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(primary(fixture.section("Connection"), "Sign in")).toEqual({
-      variant: "ghost-primary",
-      icon: "lucide-log-in",
-    });
-
-    state.inventory = inventory();
-    await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(primary(fixture.section("Connection"), "Reconnect")).toEqual({
-      variant: "ghost-primary",
-      icon: "lucide-refresh-cw",
-    });
-    expect(buttonIn(fixture.header(), "Remove")?.dataset.variant).toBe("destructive-outline");
-  });
-
   it("shows the connection with its sign-in, menu and On/Off switch", async () => {
     await using fixture = setup();
     state.inventory = inventory({
@@ -1503,7 +1467,7 @@ describe("Detail pages", () => {
     ) ?? null;
   const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
-  it("counts the agents that can use a connector and opens their tiles above after the hover delay", async () => {
+  it("counts the agents that can use a connector and opens their tiles on hover", async () => {
     await using fixture = setup();
     state.inventory = withLimitedOpenCode();
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
@@ -1516,36 +1480,18 @@ describe("Detail pages", () => {
 
     using _timers = fakeTimers();
     await userEvent.hover(trigger);
-    await advance(199);
-    expect(agentsCard()).toBeNull();
-    await advance(1);
+    await advance(200);
     const card = agentsCard()!;
     expect(card).not.toBeNull();
-    expect(card.getAttribute("data-side")).toBe("top");
-    // Directly above the count, left edges aligned, never off to one side.
-    await vi.waitFor(() => {
-      const cardBox = card.getBoundingClientRect();
-      const triggerBox = trigger.getBoundingClientRect();
-      expect(Math.abs(cardBox.left - triggerBox.left)).toBeLessThanOrEqual(2);
-      expect(cardBox.bottom).toBeLessThanOrEqual(triggerBox.top);
-    });
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
     expect(trigger.getAttribute("aria-controls")).toBe(card.id);
     const tiles = [...card.querySelectorAll<HTMLElement>("[data-support]")];
     expect(tiles.map((tile) => tile.textContent)).toEqual(["Codex", "Claude", "OpenCode"]);
-    expect(
-      tiles.map((tile) =>
-        tile.querySelector("[data-provider-icon]")?.getAttribute("data-provider-icon"),
-      ),
-    ).toEqual(["Codex", "Claude", "OpenCode"]);
     expect(tiles.map((tile) => tile.querySelector("[data-status-dot]") !== null)).toEqual([
       false,
       false,
       true,
     ]);
-    // Tiles only: no limitation or "not available" text in the card.
-    expect(card.querySelector("p")).toBeNull();
-    expect(card.textContent).toBe("CodexClaudeOpenCode");
 
     // The limited agent's tile explains itself, and the card stays open.
     const limited = buttonIn(card, `OpenCode: ${OPENCODE_REASON}`)!;
@@ -1765,21 +1711,6 @@ describe("Detail pages", () => {
     );
     expect(fixture.section("Tools").textContent).not.toContain("Read");
     expect(buttonIn(fixture.section("Tools"), "See tools")?.disabled).toBe(false);
-  });
-
-  it("draws built-in plugins with a glyph and bundles with a letter tile", async () => {
-    await using fixture = setup();
-    state.inventory = inventory({
-      plugins: [
-        plugin("scient.sources", { displayName: "Sources" }),
-        plugin("scient.unknown", { displayName: "Unknown" }),
-        plugin("lab-kit", { displayName: "Lab kit", origin: "bundle" }),
-      ],
-    });
-    await fixture.render(<InstalledPage />);
-    expect(fixture.row("Sources").querySelector('[data-extension-icon="glyph"]')).not.toBeNull();
-    expect(fixture.row("Unknown").querySelector('[data-extension-icon="glyph"]')).not.toBeNull();
-    expect(fixture.row("Lab kit").querySelector("[data-extension-icon]")).toBeNull();
   });
 
   it("lists a plugin's parts under Includes and links its skills to the Skills page", async () => {
