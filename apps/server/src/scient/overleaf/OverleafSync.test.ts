@@ -1382,4 +1382,79 @@ describe.skipIf(!canApply)("OverleafSync", () => {
       }),
     ),
   );
+  it.live("keeps a new file only here when asked, and lists what the rule skips", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A" } } });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* write(NodePath.join(w.main, "paper"), {
+          "notes.txt": "mine",
+          "fig.tex": "F",
+          ".latexmkrc": "x",
+        });
+        const kept = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s1",
+          files: { keepOnlyHere: ["notes.txt"] },
+        });
+        if (kept._tag !== "synced") return yield* Effect.die(kept);
+        expect(kept.publication).toMatchObject({ _tag: "accepted" });
+        expect(Object.keys(yield* w.overleafNow(PROJECT)).sort()).toEqual(["fig.tex", "main.tex"]);
+        expect(kept.review.additions).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: ".latexmkrc",
+              selected: false,
+              skippedBecause: "hidden",
+            }),
+          ]),
+        );
+      }),
+    ),
+  );
+
+  it.live("sends a file kept only here and a file the rule skips when asked", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A" } } });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* write(NodePath.join(w.main, "paper"), { "notes.txt": "mine", ".latexmkrc": "x" });
+        yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s1",
+          files: { keepOnlyHere: ["notes.txt"] },
+        });
+        const sent = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s2",
+          files: { send: ["notes.txt", ".latexmkrc"] },
+        });
+        expect(sent).toMatchObject({ _tag: "synced", publication: { _tag: "accepted" } });
+        expect(Object.keys(yield* w.overleafNow(PROJECT)).sort()).toEqual([
+          ".latexmkrc",
+          "main.tex",
+          "notes.txt",
+        ]);
+      }),
+    ),
+  );
 });

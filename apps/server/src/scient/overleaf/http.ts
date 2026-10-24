@@ -197,6 +197,7 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
               caller: workspace(payload.workspaceRoot),
               connectionId: payload.connectionId,
               ...(choices ? { choices } : {}),
+              ...(payload.files ? { files: payload.files } : {}),
             }),
           );
           switch (result._tag) {
@@ -221,6 +222,7 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
               requestId: payload.requestId,
               ...(choices ? { choices } : {}),
               ...(payload.reviewedRemote ? { reviewedRemote: payload.reviewedRemote } : {}),
+              ...(payload.files ? { files: payload.files } : {}),
             }),
           );
           return syncView(outcome);

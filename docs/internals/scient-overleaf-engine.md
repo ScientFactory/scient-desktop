@@ -437,7 +437,12 @@ coordinator's per-connection reservations.
   with the default selections; a review whose every conflict has a choice is
   confirmed at once with its acknowledgements. A review rebuilt because the
   folder changed is confirmed the same way, up to three times. An out-of-date
-  push starts one new sync. The coordinator's confirmations inside a sync use
+  push starts one new sync. Conflict choices answer one Overleaf tree
+  (`reviewedRemote`); when Overleaf has moved, a review that still has conflicts
+  is shown again without them, and one that has none is confirmed as usual.
+  Per-file decisions (`files.keepOnlyHere`, `files.send`) keep a new file only
+  here or send a skipped or kept-only file; reviews list every new file with its
+  selection and skip reason. The coordinator's confirmations inside a sync use
   server-made 64-character request IDs, which no client request ID can equal.
   **Cancel** asks the running sync to stop at its next stage boundary (before
   it prepares again, or before it applies); an apply or send already started

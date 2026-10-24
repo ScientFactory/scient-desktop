@@ -378,11 +378,9 @@ export class OverleafReservationOwner extends Context.Reference<string | null>(
  * Status reads and refused requests never take or release it. A fiber that already
  * holds the connection (`OverleafReservationOwner`) runs `body` under that hold.
  */
-export const reserveOverleafConnection = Effect.fn("OverleafCoordinator.reserve")(function* <
-  A,
-  E,
-  R,
->(
+// Untraced: it wraps every coordinator operation, whose own span already covers it,
+// and an extra span would change the failures operations report.
+export const reserveOverleafConnection = Effect.fnUntraced(function* <A, E, R>(
   reservations: OverleafReservations,
   connectionId: string,
   body: (operationId: string) => Effect.Effect<A, E, R>,

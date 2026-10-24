@@ -61,6 +61,14 @@ import * as OverleafStateStoreModule from "./OverleafStateStore.ts";
 import type { ConflictChoice } from "./syncRules.ts";
 import * as WorkspaceApplierModule from "./WorkspaceApplier.ts";
 
+/** Per-file decisions on what a sync sends (pr-c-design section 5). */
+export interface OverleafFileDecisions {
+  /** New files to keep only on this computer (remembered until sent). */
+  readonly keepOnlyHere?: ReadonlyArray<string> | undefined;
+  /** Files to send anyway: ones the rule skips, or ones kept only on this computer. */
+  readonly send?: ReadonlyArray<string> | undefined;
+}
+
 /** Who is asking: a window naming its workspace, or an agent's thread. Resolved on the server. */
 export type OverleafCaller =
   | { readonly _tag: "workspace"; readonly workspaceRoot: string }
@@ -142,6 +150,15 @@ export interface OverleafReviewView {
   readonly unresolvedMarkers: ReadonlyArray<string>;
   readonly collisions: ReadonlyArray<string>;
   readonly selectedAdditions: ReadonlyArray<string>;
+  /** Every new file: whether this sync sends it, and why it is left out by default. */
+  readonly additions: ReadonlyArray<{
+    readonly path: string;
+    readonly size: number;
+    readonly selected: boolean;
+    readonly skippedBecause: string | null;
+  }>;
+  /** Files kept only on this computer; `send` can send them. */
+  readonly localOnly: ReadonlyArray<string>;
 }
 
 const viewOverleafReview = (review: OverleafReview): OverleafReviewView => ({
@@ -162,6 +179,13 @@ const viewOverleafReview = (review: OverleafReview): OverleafReviewView => ({
   unresolvedMarkers: review.unresolvedMarkers,
   collisions: review.collisions,
   selectedAdditions: review.binding.selectedAdditions,
+  additions: review.additions.map((addition) => ({
+    path: addition.path,
+    size: addition.size,
+    selected: addition.selected,
+    skippedBecause: addition.uncheckedReason,
+  })),
+  localOnly: review.localOnly,
 });
 
 /** What one sync did, in the order a person or agent reads it. */
@@ -560,14 +584,15 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     readonly caller: OverleafCaller;
     readonly connectionId: string;
     readonly choices?: ReadonlyMap<string, ConflictChoice>;
+    readonly files?: OverleafFileDecisions;
   }) {
     const { guard } = yield* authorize(input.caller, input.connectionId);
     yield* requireToken;
     const prepared = yield* engine(
       guard,
-      coordinator.prepare({
-        connectionId: input.connectionId,
-        ...(input.choices ? { selections: selectionsWith(input.choices) } : {}),
+      Effect.gen(function* () {
+        const selections = yield* selectionsFor(input, input.choices ?? new Map());
+        return yield* coordinator.prepare({ connectionId: input.connectionId, selections });
       }),
     );
     if (prepared._tag === "review")
@@ -575,10 +600,39 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     return prepared;
   });
 
-  /** Conflict choices with the default additions; collisions are found by the review itself. */
-  const selectionsWith = (
+  /**
+   * The engine's selections for a request: the default new-file selection, the
+   * conflict choices, and any per-file decisions. "Keep only here" leaves a new
+   * file out (remembered); "send" sends a file the rule skips or one kept only
+   * here. Per-file decisions need to know which paths are new files, so a first
+   * review with the defaults is read; collisions are found by the review itself.
+   */
+  const selectionsFor = Effect.fn("OverleafSync.selectionsFor")(function* (
+    input: { readonly connectionId: string; readonly files?: OverleafFileDecisions },
     choices: ReadonlyMap<string, ConflictChoice>,
-  ): OverleafCoordinator.OverleafSelections => ({ collisionPaths: [], choices });
+  ) {
+    const keep = new Set(input.files?.keepOnlyHere ?? []);
+    const send = new Set(input.files?.send ?? []);
+    if (keep.size === 0 && send.size === 0)
+      return { collisionPaths: [], choices } satisfies OverleafCoordinator.OverleafSelections;
+    const first = yield* coordinator.prepare({
+      connectionId: input.connectionId,
+      selections: { collisionPaths: [], choices },
+    });
+    if (first._tag !== "review")
+      return { collisionPaths: [], choices } satisfies OverleafCoordinator.OverleafSelections;
+    const additions = new Set(first.review.additions.map((addition) => addition.path));
+    return {
+      selectedAdditions: first.review.additions
+        .filter(
+          (addition) => (addition.selected || send.has(addition.path)) && !keep.has(addition.path),
+        )
+        .map((addition) => addition.path),
+      sendLocalOnly: [...send].filter((path) => !additions.has(path)),
+      collisionPaths: [],
+      choices,
+    } satisfies OverleafCoordinator.OverleafSelections;
+  });
 
   const sync = Effect.fn("OverleafSync.sync")(function* (input: {
     readonly caller: OverleafCaller;
@@ -592,6 +646,8 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
      * new content: the sync asks again.
      */
     readonly reviewedRemote?: string;
+    /** Per-file decisions: keep a new file only here, or send a skipped or kept file. */
+    readonly files?: OverleafFileDecisions;
   }) {
     const { document, guard, linkedElsewhere } = yield* authorize(input.caller, input.connectionId);
     yield* requireToken;
@@ -628,6 +684,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       readonly requestId: string;
       readonly choices?: ReadonlyMap<string, ConflictChoice>;
       readonly reviewedRemote?: string;
+      readonly files?: OverleafFileDecisions;
     },
     document: OverleafConnectionDocument,
     guard: (connection: OverleafConnectionDocument) => Effect.Effect<boolean>,
@@ -646,6 +703,8 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
         [
           "sync",
           input.reviewedRemote ?? "",
+          ...(input.files?.keepOnlyHere ?? []).map((path) => `keep=${path}`).sort(),
+          ...(input.files?.send ?? []).map((path) => `send=${path}`).sort(),
           ...[...(input.choices ?? new Map())].map(([key, choice]) => `${key}=${choice}`).sort(),
         ].join("\0"),
       ),
@@ -688,6 +747,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       readonly requestId: string;
       readonly choices?: ReadonlyMap<string, ConflictChoice>;
       readonly reviewedRemote?: string;
+      readonly files?: OverleafFileDecisions;
     },
     document: OverleafConnectionDocument,
     linkedElsewhere: boolean,
@@ -709,11 +769,12 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       review.conflicts.length > 0 &&
       decidedAgainst !== null &&
       review.binding.remoteTree !== decidedAgainst;
-    const prepareInput = {
-      connectionId: input.connectionId,
-      ...(input.choices ? { selections: selectionsWith(input.choices) } : {}),
-    };
     for (let attempt = 0; ; attempt++) {
+      // Per attempt, so a file that appears meanwhile gets the default rule.
+      const prepareInput = {
+        connectionId: input.connectionId,
+        selections: yield* selectionsFor(input, input.choices ?? new Map()),
+      };
       // Cancellation stops at stage boundaries only: never inside an apply or a send.
       if (running.cancelled)
         return { _tag: "cancelled", stage: "before-prepare" } satisfies OverleafSyncOutcome;
@@ -729,15 +790,23 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
         if (decidedAgainst === null && input.choices !== undefined && review.conflicts.length > 0)
           decidedAgainst = review.binding.remoteTree;
         if (askAgain(review)) {
-          const fresh = yield* coordinator.prepare({ connectionId: input.connectionId });
+          // The decided choices no longer apply: build the review without them. Only a
+          // conflict still needing a choice stops; otherwise it is confirmed as usual.
+          const fresh = yield* coordinator.prepare({
+            connectionId: input.connectionId,
+            selections: yield* selectionsFor(input, new Map()),
+          });
           if (fresh._tag !== "review")
             return { _tag: "unsettled", reason: "overleaf-moved" } satisfies OverleafSyncOutcome;
-          return {
-            _tag: "needs-decision",
-            review: viewOverleafReview(fresh.review),
-            activity: yield* activityNow,
-            linkedElsewhere,
-          } satisfies OverleafSyncOutcome;
+          if (fresh.review.conflicts.length > 0)
+            return {
+              _tag: "needs-decision",
+              review: viewOverleafReview(fresh.review),
+              activity: yield* activityNow,
+              linkedElsewhere,
+            } satisfies OverleafSyncOutcome;
+          review = fresh.review;
+          decidedAgainst = null;
         }
         const view = viewOverleafReview(review);
         if (view.needsDecision)

@@ -47,6 +47,12 @@ export const ScientOverleafConnectRequest = Schema.Struct({
 });
 export type ScientOverleafConnectRequest = typeof ScientOverleafConnectRequest.Type;
 
+/** Per-file decisions: keep new files only here, or send skipped or kept-only files. */
+const FileDecisions = Schema.Struct({
+  keepOnlyHere: Schema.optional(Schema.Array(ManuscriptPath).check(Schema.isMaxLength(2_000))),
+  send: Schema.optional(Schema.Array(ManuscriptPath).check(Schema.isMaxLength(2_000))),
+});
+
 const Choice = Schema.Struct({
   key: Schema.String.check(Schema.isMaxLength(200)),
   choice: ScientOverleafConflictChoice,
@@ -56,6 +62,7 @@ export const ScientOverleafPreviewRequest = Schema.Struct({
   workspaceRoot: WorkspaceRoot,
   connectionId: ConnectionId,
   choices: Schema.optional(Schema.Array(Choice).check(Schema.isMaxLength(4_000))),
+  files: Schema.optional(FileDecisions),
 });
 export type ScientOverleafPreviewRequest = typeof ScientOverleafPreviewRequest.Type;
 
@@ -64,6 +71,7 @@ export const ScientOverleafSyncRequest = Schema.Struct({
   connectionId: ConnectionId,
   requestId: RequestId,
   choices: Schema.optional(Schema.Array(Choice).check(Schema.isMaxLength(4_000))),
+  files: Schema.optional(FileDecisions),
   /** The `remoteTree` of the review whose conflicts `choices` answer. */
   reviewedRemote: Schema.optional(Schema.String.check(Schema.isPattern(/^[0-9a-f]{40,64}$/u))),
 });
@@ -198,6 +206,15 @@ export const ScientOverleafReview = Schema.Struct({
   unresolvedMarkers: Schema.Array(ManuscriptPath),
   collisions: Schema.Array(ManuscriptPath),
   selectedAdditions: Schema.Array(ManuscriptPath),
+  additions: Schema.Array(
+    Schema.Struct({
+      path: ManuscriptPath,
+      size: Schema.Number,
+      selected: Schema.Boolean,
+      skippedBecause: Schema.NullOr(Schema.String),
+    }),
+  ),
+  localOnly: Schema.Array(ManuscriptPath),
 });
 export type ScientOverleafReview = typeof ScientOverleafReview.Type;
 
