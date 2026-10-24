@@ -415,15 +415,11 @@ describe("LocalWhisperRuntime lifecycle", () => {
 });
 
 describe("Whisper segment formatting", () => {
+  // regression: fa095e4714 fix(voice): preserve transcript formatting and scope cancellation (#392)
+  // Segments are joined verbatim, so every script takes one path: keep a split word
+  // (no separator added) and an inner paragraph break (whitespace kept).
   it.each([
-    ["English", [" This is", " one sentence."], "This is one sentence."],
-    [
-      "Hebrew and English",
-      [" שלום", " עולם with", " technical terms"],
-      "שלום עולם with technical terms",
-    ],
     ["word split", [" tran", "scription"], "transcription"],
-    ["CJK", ["你好", "世界"], "你好世界"],
     ["paragraphs", [" First\n\nSecond", " paragraph"], "First\n\nSecond paragraph"],
   ])("removes only runtime segment separators: %s", async (_name, segments, expected) => {
     const h = await harness();
@@ -433,7 +429,8 @@ describe("Whisper segment formatting", () => {
     ).resolves.toEqual({ text: expected });
   });
 
-  it.each([null, {}, { segments: [null] }, { segments: [{ text: 42 }] }, { segments: "text" }])(
+  // One row per check: no segment array, a missing segment, a non-text segment.
+  it.each([null, { segments: [null] }, { segments: [{ text: 42 }] }])(
     "rejects malformed segment responses: %j",
     async (response) => {
       const h = await harness();

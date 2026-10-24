@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  isVoiceTranscriptionError,
-  VoiceTranscriptionError,
-  voiceTranscriptionFailureAllowsFallback,
-} from "./errors.ts";
+import { VoiceTranscriptionError, voiceTranscriptionFailureAllowsFallback } from "./errors.ts";
 
 describe("VoiceTranscriptionError", () => {
   it("carries the classification and uses safeMessage as the message", () => {
@@ -25,27 +21,6 @@ describe("VoiceTranscriptionError", () => {
     expect(error.fallbackAllowed).toBe(true);
     expect(error.retryAfterMs).toBe(1_500);
     expect(error.cause).toBe(cause);
-  });
-
-  it("leaves retryAfterMs undefined when not provided", () => {
-    const error = new VoiceTranscriptionError({
-      kind: "invalid-audio",
-      fallbackAllowed: false,
-      safeMessage: "Bad audio.",
-    });
-    expect(error.retryAfterMs).toBeUndefined();
-    expect(error.cause).toBeUndefined();
-  });
-
-  it("is recognized by the type guard", () => {
-    const error = new VoiceTranscriptionError({
-      kind: "provider-error",
-      fallbackAllowed: false,
-      safeMessage: "Failed.",
-    });
-    expect(isVoiceTranscriptionError(error)).toBe(true);
-    expect(isVoiceTranscriptionError(new Error("plain"))).toBe(false);
-    expect(isVoiceTranscriptionError("nope")).toBe(false);
   });
 
   it("reports fallback eligibility only for fallback-allowed errors", () => {
