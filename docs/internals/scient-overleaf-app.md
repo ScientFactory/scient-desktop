@@ -107,7 +107,10 @@ changes** when there were changes, and a conflict opens the review tab instead. 
 dialog runs the same function with `quiet` and shows the result itself.
 
 Headline counts: incoming is the review's incoming changes; "sent" counts outgoing changes only
-when the publication is `accepted`.
+when the publication is `accepted`. Files held for their conflict marks (the review's
+`unresolvedMarkers` and the apply's `markerPaths`) are always named, "Waiting for conflict marks
+to be settled: …", after a sync that moved nothing too (its headline is then "N files wait for
+conflicts") and beside a conflict.
 
 ## The review tab
 
