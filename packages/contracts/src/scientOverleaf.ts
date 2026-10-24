@@ -366,6 +366,8 @@ export const ScientOverleafUndoRequest = Schema.Struct({
   requestId: RequestId,
   /** The accepted send to undo, by its number (`send #N` in a sync result). */
   attemptNumber: Schema.Int.check(Schema.isGreaterThan(0)),
+  /** The pending per-file decisions, which the sync after the undo carries like any sync. */
+  files: Schema.optional(FileDecisions),
 });
 export type ScientOverleafUndoRequest = typeof ScientOverleafUndoRequest.Type;
 
@@ -417,6 +419,8 @@ export const ScientOverleafUndoResult = Schema.Union([
   }),
   Schema.Struct({ _tag: Schema.Literal("refused"), refusal: ScientOverleafRefusal }),
   Schema.Struct({ _tag: Schema.Literal("duplicate") }),
+  /** Stopped on request after saving editors, before anything was put back. */
+  Schema.Struct({ _tag: Schema.Literal("cancelled") }),
 ]);
 export type ScientOverleafUndoResult = typeof ScientOverleafUndoResult.Type;
 

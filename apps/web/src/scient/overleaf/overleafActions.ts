@@ -82,13 +82,7 @@ export async function runOverleafSync(
   }
   setOverleafSyncing(environmentId, connection.connectionId, true);
   try {
-    // Every sync, from any entry point, carries the link's pending per-file decisions,
-    // reconciled with the review shown; they are cleared only when a sync applies.
-    const carried = pendingOverleafDecisions(
-      readOverleafWorkspace(environmentId, workspaceRoot),
-      connection.connectionId,
-    );
-    const files = fileDecisionsRequest(carried);
+    const { carried, files } = pendingFilesRequest(environmentId, workspaceRoot, connection);
     const result = await syncOverleaf(environmentId, {
       workspaceRoot,
       connectionId: connection.connectionId,
@@ -99,15 +93,7 @@ export async function runOverleafSync(
             ...(decision.reviewedRemote ? { reviewedRemote: decision.reviewedRemote } : {}),
           }
         : {}),
-      ...(files.keepOnlyHere.length > 0 || files.send.length > 0 || files.release.length > 0
-        ? {
-            files: {
-              ...(files.keepOnlyHere.length > 0 ? { keepOnlyHere: [...files.keepOnlyHere] } : {}),
-              ...(files.send.length > 0 ? { send: [...files.send] } : {}),
-              ...(files.release.length > 0 ? { release: [...files.release] } : {}),
-            },
-          }
-        : {}),
+      ...files,
     });
     recordOverleafSync(environmentId, connection.connectionId, result, carried);
     if (!context.quiet) reportOverleafSync(context, result);
@@ -129,9 +115,40 @@ export async function runOverleafSync(
 }
 
 /**
+ * Every sync, from any entry point (Undo's follow-up sync included), carries the
+ * link's pending per-file decisions, reconciled with the review shown; they are
+ * cleared only when a sync applies.
+ */
+function pendingFilesRequest(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+  connection: Pick<OverleafConnection, "connectionId">,
+) {
+  const carried = pendingOverleafDecisions(
+    readOverleafWorkspace(environmentId, workspaceRoot),
+    connection.connectionId,
+  );
+  const files = fileDecisionsRequest(carried);
+  return {
+    carried,
+    files:
+      files.keepOnlyHere.length > 0 || files.send.length > 0 || files.release.length > 0
+        ? {
+            files: {
+              ...(files.keepOnlyHere.length > 0 ? { keepOnlyHere: [...files.keepOnlyHere] } : {}),
+              ...(files.send.length > 0 ? { send: [...files.send] } : {}),
+              ...(files.release.length > 0 ? { release: [...files.release] } : {}),
+            },
+          }
+        : {},
+  };
+}
+
+/**
  * Undoes one accepted send (design section 4.3): the server saves the folder's
- * editors, puts back what Overleaf had before it, then syncs. The sync's result
- * is recorded like any other; a conflict opens the review tab.
+ * editors, puts back what Overleaf had before it, then syncs with the link's
+ * pending per-file decisions, like any sync. The sync's result is recorded like
+ * any other; a conflict opens the review tab.
  */
 export async function runOverleafUndo(
   context: Pick<
@@ -143,14 +160,16 @@ export async function runOverleafUndo(
   const { environmentId, workspaceRoot, connection } = context;
   setOverleafSyncing(environmentId, connection.connectionId, true);
   try {
+    const { carried, files } = pendingFilesRequest(environmentId, workspaceRoot, connection);
     const result = await undoOverleafSend(environmentId, {
       workspaceRoot,
       connectionId: connection.connectionId,
       requestId: overleafRequestId(),
       attemptNumber,
+      ...files,
     });
     if (result._tag === "undone" && result.sync !== null) {
-      recordOverleafSync(environmentId, connection.connectionId, result.sync);
+      recordOverleafSync(environmentId, connection.connectionId, result.sync, carried);
       if (result.sync._tag === "needs-decision") context.openReview?.();
     }
     return result;
