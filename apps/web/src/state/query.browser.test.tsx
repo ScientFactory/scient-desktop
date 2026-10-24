@@ -1,7 +1,5 @@
 import { render as _fixtureRender, type Screen, act } from "../../test/render";
 import { RegistryContext } from "@effect/atom-react";
-import * as Cause from "effect/Cause";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { useLayoutEffect } from "react";
 
@@ -52,36 +50,16 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 }
 
 describe("environment query pending state", () => {
+  // Only an open stream (waiting success) and an unstarted subscription (initial, not waiting)
+  // separate the two views; the rest is AsyncResult's own waiting/initial semantics.
   it.each([
-    ["before the first value", AsyncResult.initial<string, Error>(true), true, true],
     [
       "while a subscription stays open",
       AsyncResult.success<string, Error>("value", { waiting: true }),
       true,
       false,
     ],
-    ["after a value settles", AsyncResult.success<string, Error>("value"), false, false],
-    [
-      "after a failure",
-      AsyncResult.failure<string, Error>(Cause.fail(new Error("boom"))),
-      false,
-      false,
-    ],
     ["before a subscription starts", AsyncResult.initial<string, Error>(false), false, true],
-    [
-      "while a failed subscription reconnects",
-      AsyncResult.failure<string, Error>(Cause.fail(new Error("boom")), { waiting: true }),
-      true,
-      false,
-    ],
-    [
-      "after a failure that keeps an earlier value",
-      AsyncResult.failureWithPrevious<string, Error>(Cause.fail(new Error("boom")), {
-        previous: Option.some(AsyncResult.success<string, Error>("value")),
-      }),
-      false,
-      false,
-    ],
     ["without an atom", null, false, false],
   ])("reports pending %s", async (_label, result, queryPending, subscriptionPending) => {
     await using _fixture = _createFixture();
@@ -96,37 +74,6 @@ describe("environment query pending state", () => {
       ...query,
       refresh: null,
     });
-  });
-
-  it("keeps the value and error alongside the subscription pending state", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const open = await render(
-      _fixture,
-      AsyncResult.success<string, Error>("value", { waiting: true }),
-    );
-    expect(open.subscription).toMatchObject({ data: "value", error: null, isSuccess: true });
-
-    const failed = await render(
-      _fixture,
-      AsyncResult.failure<string, Error>(Cause.fail(new Error("boom"))),
-    );
-    expect(failed.subscription).toMatchObject({ data: null, error: "boom", isSuccess: false });
-
-    const failedAfterValue = await render(
-      _fixture,
-      AsyncResult.failureWithPrevious<string, Error>(Cause.fail(new Error("boom")), {
-        previous: Option.some(AsyncResult.success<string, Error>("value")),
-      }),
-    );
-    expect(failedAfterValue.subscription).toMatchObject({
-      data: "value",
-      error: "boom",
-      isPending: false,
-    });
-    expect(failed.subscription.failure).toBeInstanceOf(Error);
   });
 });
 

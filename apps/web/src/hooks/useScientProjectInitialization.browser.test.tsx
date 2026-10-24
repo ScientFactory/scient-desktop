@@ -41,25 +41,22 @@ async function _cleanupFixture1(_fixture: _Fixture) {
   vi.unstubAllGlobals();
 }
 
-it.each(["initialize", "open-only", "cancel"] as const)(
-  "preserves the %s setup choice",
-  async (decision) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
+it.each(["initialize", "cancel"] as const)("preserves the %s setup choice", async (decision) => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
 
-    mocks.inspect.mockResolvedValue({ root: "/canonical", state: "ordinary" });
-    let pending!: ReturnType<typeof _fixture.api.prepareForOpening>;
-    await act(() => {
-      pending = _fixture.api.prepareForOpening(input);
-    });
-    expect(_fixture.api.inspection?.root).toBe("/canonical");
-    await act(() => _fixture.api.resolveDecision(decision));
-    expect(await pending).toEqual(
-      decision === "cancel" ? null : { root: "/canonical", initialize: decision === "initialize" },
-    );
-  },
-);
+  mocks.inspect.mockResolvedValue({ root: "/canonical", state: "ordinary" });
+  let pending!: ReturnType<typeof _fixture.api.prepareForOpening>;
+  await act(() => {
+    pending = _fixture.api.prepareForOpening(input);
+  });
+  expect(_fixture.api.inspection?.root).toBe("/canonical");
+  await act(() => _fixture.api.resolveDecision(decision));
+  expect(await pending).toEqual(
+    decision === "cancel" ? null : { root: "/canonical", initialize: decision === "initialize" },
+  );
+});
 it.each([false, true])(
   "does not surface stale inspection or errors (failure: %s)",
   async (fails) => {

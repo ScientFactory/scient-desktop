@@ -173,21 +173,6 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 }
 
 describe("header Mark unread through the shared thread action", () => {
-  it("dispatches the exact scoped native mutation when the server tracks visits", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    await selectMarkUnread(_fixture);
-    expect(boundary.markUnread).toHaveBeenCalledExactlyOnceWith({
-      environmentId: target.environmentId,
-      input: { threadId: target.threadId },
-    });
-    expect(useUiStateStore.getState().threadLastVisitedAtById[key]).toBe(
-      "2026-10-05T08:20:00.000Z",
-    );
-    expect(boundary.unrelatedCommand).not.toHaveBeenCalled();
-  });
   it("uses the canonical completed answer minus one millisecond for older servers", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

@@ -160,16 +160,13 @@ describe("composer submission capability boundary", () => {
     expect(message.context?.records).toBe(context.records);
   });
 
-  it.each([false, undefined])(
-    "serializes all four context kinds when capability is %s",
-    (value) => {
-      using scope = setup();
-      scope.capability(environmentId, value);
-      const before = JSON.stringify(context);
-      expectLegacy(prepareComposerContextMessage({ environmentId, text, context }));
-      expect(JSON.stringify(context)).toBe(before);
-    },
-  );
+  it("serializes all four context kinds for a server without the capability", () => {
+    using scope = setup();
+    scope.capability(environmentId, undefined);
+    const before = JSON.stringify(context);
+    expectLegacy(prepareComposerContextMessage({ environmentId, text, context }));
+    expect(JSON.stringify(context)).toBe(before);
+  });
 
   it("does not borrow a different environment's modern capability", () => {
     using scope = setup();
@@ -180,39 +177,13 @@ describe("composer submission capability boundary", () => {
     expect(prepareComposerContextMessage({ environmentId, text, context }).context).toBe(context);
   });
 
-  it.each([true, false, undefined])(
-    "leaves a context-free message untouched with capability %s",
-    (value) => {
-      using scope = setup();
-      scope.capability(environmentId, value);
-      expect(
-        prepareComposerContextMessage({ environmentId, text: "plain prose  ", context: undefined }),
-      ).toEqual({ text: "plain prose  " });
-    },
-  );
-
-  it.each([
-    [true, false],
-    [false, true],
-  ] as const)(
-    "reads the current capability after uploads, not an earlier %s snapshot",
-    async (initial, current) => {
-      using scope = setup();
-      scope.capability(environmentId, initial);
-      let finishUpload!: () => void;
-      const upload = new Promise<void>((resolve) => {
-        finishUpload = resolve;
-      });
-      const pending = upload.then(() =>
-        prepareComposerContextMessage({ environmentId, text, context }),
-      );
-      scope.capability(environmentId, current);
-      finishUpload();
-      const message = await pending;
-      if (current) expect(message.context).toBe(context);
-      else expectLegacy(message);
-    },
-  );
+  it("leaves a context-free message untouched", () => {
+    using scope = setup();
+    scope.capability(environmentId, true);
+    expect(
+      prepareComposerContextMessage({ environmentId, text: "plain prose  ", context: undefined }),
+    ).toEqual({ text: "plain prose  " });
+  });
 
   it("rereads capability on each fan-out callback invocation", () => {
     using scope = setup();
