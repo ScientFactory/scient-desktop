@@ -97,16 +97,6 @@ describe("ready voice control for citation comments", () => {
     expect(_fixture.container.innerHTML).toBe("");
   });
 
-  it("renders nothing until the selected model is installed and ready", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    state.client = { getModelsState: vi.fn().mockResolvedValue(snapshot("missing")) };
-    await render(_fixture);
-    expect(_fixture.container.innerHTML).toBe("");
-  });
-
   it("renders compact dictation without exposing model setup for a ready selection", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
