@@ -1,9 +1,9 @@
 # Building the mobile Screens dependency
 
 The mobile v5 stack uses a committed tarball from the
-[T3 Screens fork](https://github.com/pingdotgg/react-native-screens/tree/t3-v5.0.0-t3.37).
+[T3 Screens fork](https://github.com/PixPMusic/react-native-screens/tree/t3-v5.0.0-t3.43).
 The fork owns the integration changes. Scient applies one narrow local patch,
-`patches/react-native-screens@5.0.0-t3.37.patch`, so removing a collapsed detail
+`patches/react-native-screens@5.0.0-t3.43.patch`, so removing a collapsed detail
 navigation controller checks its top screen's removal guard. Keep this exception
 registered in `pnpm-workspace.yaml` and regenerate the lockfile after patch changes.
 pnpm keys the patch by exact version: an archive update renames and re-keys it
