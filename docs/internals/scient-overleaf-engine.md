@@ -683,7 +683,11 @@ coordinator's per-connection reservations.
   before anything is put back; once the undo's apply has started it finishes,
   and the sync after it stops at its first boundary. The request's per-file
   decisions (`files`) go to that sync like any sync's, and are part of its
-  receipt's digest, so a file kept only on this computer stays there. `undoableSends` lists the newest ten accepted sends whose
+  receipt's digest. Undo never writes a path kept only on this computer, whether
+  recorded (`localOnlyPaths`) or asked for with the request (`keepOnlyHere`,
+  passed to the coordinator and part of the undo receipt's digest): it is skipped
+  as `kept-only-here`, so it is never made part of the sync and never reaches
+  Overleaf. `undoableSends` lists the newest ten accepted sends whose
   commits are still held, each with its changes (the parent tree against the
   sent tree), reading the private repository only; older ones are undone by
   number. HTTP: `undo/sends` (read scope) and `undo` (operate scope).
