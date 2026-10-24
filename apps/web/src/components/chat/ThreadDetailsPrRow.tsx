@@ -42,7 +42,7 @@ import {
 import { PullRequestChecksPopover } from "../pullRequest/PullRequestChecksPopover";
 import {
   pullRequestChecksState,
-  PullRequestCheckStatusIcon,
+  pullRequestChecksStatePresentation,
   PullRequestDiffStat,
   resolvePullRequestState,
 } from "../pullRequest/pullRequestPresentation";
@@ -178,6 +178,8 @@ export function ThreadDetailsPrRow({
   const conflicting = isPullRequestConflicting(detail);
   const checksState = detail === null ? "none" : classifyPullRequestChecks(detail.checks);
   const checksRollup = detail === null ? null : pullRequestChecksState(detail.checks);
+  const checkPresentation =
+    checksState === "none" ? null : pullRequestChecksStatePresentation(checksState);
   const selectedMergeMethod = resolvePullRequestMergeMethod(
     allowedPullRequestMergeMethods(detail),
     null,
@@ -266,18 +268,11 @@ export function ThreadDetailsPrRow({
                 {detail.baseBranch} ← {detail.headBranch}
               </div>
             </div>
-            {detail.state === "open" && checksState !== "none" ? (
+            {detail.state === "open" && checkPresentation !== null ? (
               <div className="flex min-w-0 items-center gap-2">
-                <PullRequestCheckStatusIcon
-                  status={
-                    checksState === "failing"
-                      ? "failure"
-                      : checksState === "pending"
-                        ? "pending"
-                        : checksState === "warning"
-                          ? "warning"
-                          : "success"
-                  }
+                <checkPresentation.Icon
+                  aria-hidden
+                  className={cn("size-3.5 shrink-0", checkPresentation.toneClassName)}
                 />
                 <div className="min-w-0 truncate text-foreground/75">
                   {describePullRequestChecks(detail.checks)}

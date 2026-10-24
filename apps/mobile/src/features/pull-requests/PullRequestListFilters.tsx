@@ -1,4 +1,5 @@
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
+import { PULL_REQUEST_FILTER_MAX_LABEL_GROUPS } from "@t3tools/contracts";
 import { useMemo } from "react";
 import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
@@ -131,9 +132,14 @@ export function PullRequestListFilters(props: {
         break;
       }
       case "label": {
+        if (
+          !selectedLabels.includes(next) &&
+          selectedLabels.length >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS
+        )
+          break;
         const labels = selectedLabels.includes(next)
           ? selectedLabels.filter((label) => label !== next)
-          : [...selectedLabels, next].slice(0, 10);
+          : [...selectedLabels, next];
         props.onChange({
           ...value,
           filters: {
@@ -263,6 +269,11 @@ export function PullRequestListFilters(props: {
         id: id("label", label),
         title: label,
         state: selectedLabelSet.has(label) ? ("on" as const) : ("off" as const),
+        attributes: {
+          disabled:
+            selectedLabels.length >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS &&
+            !selectedLabelSet.has(label),
+        },
         ...(color ? { image: "circle.fill", imageColor: color } : {}),
       };
     }),

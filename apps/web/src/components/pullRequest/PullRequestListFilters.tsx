@@ -9,6 +9,10 @@ import type {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import {
+  PULL_REQUEST_FILTER_MAX_LABEL_GROUPS,
+  PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH,
+} from "@t3tools/contracts";
+import {
   CircleCheckIcon,
   CircleDashedIcon,
   CircleSlashIcon,
@@ -252,7 +256,7 @@ function useHostedFilterOptions(
   kind: PullRequestFilterOptionsInput["kind"],
   query: string,
 ) {
-  const typed = query.trim().slice(0, 100);
+  const typed = query.trim();
   const sent = useDebouncedValue(typed, OPTION_SEARCH_DEBOUNCE_MS);
   const hosted = usePullRequestFilterOptions(
     scope.map(({ environmentId, input }) => ({
@@ -301,7 +305,10 @@ function PullRequestAuthorChoices({
         autoFocus
         busy={hosted.isPending}
         value={query}
-        onChange={(event) => setQuery(event.currentTarget.value)}
+        maxLength={PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH}
+        onChange={(event) =>
+          setQuery(event.currentTarget.value.slice(0, PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH))
+        }
         placeholder="Search authors"
         aria-label="Search authors"
       />
@@ -325,7 +332,11 @@ function PullRequestAuthorChoices({
             </span>
           </MenuRadioItem>
         ))}
-        {notice !== null ? <MenuItem disabled>{notice}</MenuItem> : null}
+        {notice !== null ? (
+          <MenuItem disabled>
+            <span role="status">{notice}</span>
+          </MenuItem>
+        ) : null}
       </MenuRadioGroup>
     </>
   );
@@ -377,6 +388,7 @@ function PullRequestLabelChoices({
   const [query, setQuery] = useState("");
   const hosted = useHostedFilterOptions(scope, "labels", query);
   const selected = new Set(value.map((name) => name.toLowerCase()));
+  const limitReached = value.length >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS;
   const choices = pullRequestLabelChoices(options, hosted.labels, query);
   const visible = [
     ...value
@@ -397,11 +409,23 @@ function PullRequestLabelChoices({
         autoFocus
         busy={hosted.isPending}
         value={query}
-        onChange={(event) => setQuery(event.currentTarget.value)}
+        maxLength={PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH}
+        onChange={(event) =>
+          setQuery(event.currentTarget.value.slice(0, PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH))
+        }
         placeholder="Search labels"
         aria-label="Search labels"
       />
-      {notice !== null ? <MenuItem disabled>{notice}</MenuItem> : null}
+      {notice !== null ? (
+        <MenuItem disabled>
+          <span role="status">{notice}</span>
+        </MenuItem>
+      ) : null}
+      {limitReached ? (
+        <MenuItem disabled>
+          Choose at most {PULL_REQUEST_FILTER_MAX_LABEL_GROUPS} labels; remove one to choose another
+        </MenuItem>
+      ) : null}
       {visible.map((option) => {
         const key = option.name.toLowerCase();
         const dot = pullRequestLabelColor(option.color);
@@ -409,13 +433,15 @@ function PullRequestLabelChoices({
           <MenuCheckboxItem
             key={key}
             checked={selected.has(key)}
-            onCheckedChange={(next) =>
+            disabled={limitReached && !selected.has(key)}
+            onCheckedChange={(next) => {
+              if (next && limitReached) return;
               onChange(
                 next
                   ? [...value, option.name]
                   : value.filter((name) => name.toLowerCase() !== option.name.toLowerCase()),
-              )
-            }
+              );
+            }}
           >
             <span className="flex min-w-0 items-center gap-2">
               <span
@@ -600,7 +626,7 @@ export function PullRequestFiltersMenu({
           scope={optionScope}
           onChange={(labels) =>
             updateFilters({
-              labels: labels.length === 0 ? undefined : labels.slice(0, 10).map((label) => [label]),
+              labels: labels.length === 0 ? undefined : labels.map((label) => [label]),
             })
           }
         />

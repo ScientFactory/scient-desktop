@@ -10,6 +10,7 @@ import * as Ref from "effect/Ref";
 import * as Deferred from "effect/Deferred";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
 import * as DateTime from "effect/DateTime";
 import { type OrchestrationV2ProviderSession } from "@t3tools/contracts";
 import { ProviderTurnId } from "@t3tools/contracts";
@@ -236,6 +237,9 @@ function makeDeterministicAdapter(input: {
   readonly afterTurnStarted?: (
     turn: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Effect.Effect<void>;
+  readonly afterTurnCompleted?: (
+    turn: ProviderAdapter.ProviderAdapterV2TurnInput,
+  ) => Effect.Effect<void>;
   readonly response: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) => string;
   readonly steerReceived?: (
     steer: ProviderAdapter.ProviderAdapterV2SteerInput,
@@ -250,6 +254,7 @@ function makeDeterministicAdapter(input: {
     openSession: (sessionInput) =>
       Effect.gen(function* () {
         const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        const sessionScope = yield* Scope.Scope;
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -270,6 +275,7 @@ function makeDeterministicAdapter(input: {
           });
         const runOrdinals = new Map<ProviderTurnId, number>();
         const turnInputs = new Map<ProviderTurnId, ProviderAdapter.ProviderAdapterV2TurnInput>();
+        const terminalFibers = new Map<ProviderTurnId, Fiber.Fiber<void>>();
 
         return {
           instanceId: input.instanceId,
@@ -345,74 +351,81 @@ function makeDeterministicAdapter(input: {
                   },
                 },
               ]);
-              if (input.afterTurnStarted !== undefined) {
-                yield* input.afterTurnStarted(turnInput);
-              }
-              if (terminalGate !== undefined) {
-                yield* Deferred.await(terminalGate);
-              } else if (!input.shouldComplete(turnInput)) {
-                return;
-              }
-              const response = input.response(turnInput);
-              yield* publish([
-                {
-                  type: "provider_turn.updated",
-                  driver: input.driver,
-                  providerTurn: {
-                    id: providerTurnId,
-                    providerThreadId: turnInput.providerThread.id,
-                    nodeId: turnInput.rootNodeId,
-                    runAttemptId: turnInput.attemptId,
-                    nativeTurnRef: {
-                      driver: input.driver,
-                      nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
-                      strength: "strong",
+              // Native admission returns before terminal events; held results cannot occupy worker slots.
+              const terminalFiber = yield* Effect.gen(function* () {
+                if (input.afterTurnStarted !== undefined) {
+                  yield* input.afterTurnStarted(turnInput);
+                }
+                if (terminalGate !== undefined) {
+                  yield* Deferred.await(terminalGate);
+                } else if (!input.shouldComplete(turnInput)) {
+                  return;
+                }
+                const response = input.response(turnInput);
+                yield* publish([
+                  {
+                    type: "provider_turn.updated",
+                    driver: input.driver,
+                    providerTurn: {
+                      id: providerTurnId,
+                      providerThreadId: turnInput.providerThread.id,
+                      nodeId: turnInput.rootNodeId,
+                      runAttemptId: turnInput.attemptId,
+                      nativeTurnRef: {
+                        driver: input.driver,
+                        nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
+                        strength: "strong",
+                      },
+                      ordinal: turnInput.providerTurnOrdinal,
+                      status: "completed",
+                      startedAt: eventTime,
+                      completedAt: eventTime,
                     },
-                    ordinal: turnInput.providerTurnOrdinal,
-                    status: "completed",
-                    startedAt: eventTime,
-                    completedAt: eventTime,
                   },
-                },
-                {
-                  type: "turn_item.updated",
-                  driver: input.driver,
-                  turnItem: {
-                    id: TurnItemId.make(
-                      `turn-item:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
-                    ),
-                    threadId: turnInput.threadId,
-                    runId: turnInput.runId,
-                    nodeId: turnInput.rootNodeId,
+                  {
+                    type: "turn_item.updated",
+                    driver: input.driver,
+                    turnItem: {
+                      id: TurnItemId.make(
+                        `turn-item:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                      ),
+                      threadId: turnInput.threadId,
+                      runId: turnInput.runId,
+                      nodeId: turnInput.rootNodeId,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: turnInput.runOrdinal * 100 + 1,
+                      status: "completed",
+                      title: null,
+                      startedAt: eventTime,
+                      completedAt: eventTime,
+                      updatedAt: eventTime,
+                      type: "assistant_message",
+                      messageId: MessageId.make(
+                        `message:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                      ),
+                      text: response,
+                      streaming: false,
+                    },
+                  },
+                  {
+                    type: "turn.terminal",
+                    driver: input.driver,
                     providerThreadId: turnInput.providerThread.id,
                     providerTurnId,
-                    nativeItemRef: null,
-                    parentItemId: null,
-                    ordinal: turnInput.runOrdinal * 100 + 1,
+                    runOrdinal: turnInput.runOrdinal,
                     status: "completed",
-                    title: null,
-                    startedAt: eventTime,
-                    completedAt: eventTime,
-                    updatedAt: eventTime,
-                    type: "assistant_message",
-                    messageId: MessageId.make(
-                      `message:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
-                    ),
-                    text: response,
-                    streaming: false,
+                    failure: null,
+                    threadDisposition: "reusable",
                   },
-                },
-                {
-                  type: "turn.terminal",
-                  driver: input.driver,
-                  providerThreadId: turnInput.providerThread.id,
-                  providerTurnId,
-                  runOrdinal: turnInput.runOrdinal,
-                  status: "completed",
-                  failure: null,
-                  threadDisposition: "reusable",
-                },
-              ]);
+                ]);
+                if (input.afterTurnCompleted !== undefined) {
+                  yield* input.afterTurnCompleted(turnInput);
+                }
+              }).pipe(Effect.forkIn(sessionScope));
+              terminalFibers.set(providerTurnId, terminalFiber);
             }),
           steerTurn: (steer) => {
             const received = input.steerReceived?.(steer);
@@ -422,6 +435,9 @@ function makeDeterministicAdapter(input: {
           },
           interruptTurn: ({ providerThread, providerTurnId }) =>
             Effect.gen(function* () {
+              const terminalFiber = terminalFibers.get(providerTurnId);
+              if (terminalFiber !== undefined) yield* Fiber.interrupt(terminalFiber);
+              terminalFibers.delete(providerTurnId);
               const turnInput = turnInputs.get(providerTurnId);
               const completedAt = yield* DateTime.now;
               if (turnInput !== undefined) {
@@ -479,10 +495,29 @@ function waitForProjection(
   return waitForDurableProjection(orchestrator, threadId, predicate).pipe(
     Effect.timeout("5 seconds"),
     Effect.tapError((error) =>
-      Effect.logError("orchestrator-mcp.test.projection-milestone-failed", {
-        milestone: milestone ?? "unlabeled",
-        threadId,
-        error,
+      Effect.gen(function* () {
+        const observed = yield* Effect.exit(orchestrator.getThreadProjection(threadId));
+        yield* Effect.logError("orchestrator-mcp.test.projection-milestone-failed", {
+          milestone: milestone ?? "unlabeled",
+          threadId,
+          error,
+          observed: JSON.stringify(
+            observed._tag === "Failure"
+              ? { diagnosticCause: observed.cause }
+              : {
+                  runs: observed.value.runs.map(({ id, status, delegatedCompletion }) => ({
+                    id,
+                    status,
+                    delegatedCompletion,
+                  })),
+                  tasks: observed.value.subagents.map(({ id, status, completionDelivery }) => ({
+                    id,
+                    status,
+                    completionDelivery,
+                  })),
+                },
+          ),
+        });
       }),
     ),
   );
@@ -634,6 +669,25 @@ describe("orchestrator MCP toolkit", () => {
           const fanoutFirstAdapterEntered = yield* Deferred.make<void>();
           const fanoutFirstStartedGate = yield* Deferred.make<void>();
           let firstFanoutMessageId: MessageId | undefined;
+          type NativeTerminal = { readonly threadId: ThreadId; readonly messageId: MessageId };
+          const nativeTerminals: NativeTerminal[] = [];
+          const nativeTerminalEvents = yield* Queue.unbounded<NativeTerminal>();
+          const recordNativeTerminal = (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+            Effect.gen(function* () {
+              const terminal = { threadId: turn.threadId, messageId: turn.message.messageId };
+              nativeTerminals.push(terminal);
+              yield* Queue.offer(nativeTerminalEvents, terminal);
+            });
+          const awaitNativeTerminal = (matches: (terminal: NativeTerminal) => boolean) =>
+            Effect.suspend(() =>
+              nativeTerminals.some(matches)
+                ? Effect.void
+                : Stream.fromQueue(nativeTerminalEvents).pipe(
+                    Stream.filter(matches),
+                    Stream.take(1),
+                    Stream.runDrain,
+                  ),
+            );
           // These fixture-owned prompts define mock routing and results; provider
           // guidance remains visible in the captured prepared input.
           const claudePrompts = new Map<string, string>();
@@ -658,6 +712,7 @@ describe("orchestrator MCP toolkit", () => {
                 ...CodexProviderCapabilitiesV2,
                 turns: { ...CodexProviderCapabilitiesV2.turns, supportsActiveSteering: false },
               },
+              afterTurnCompleted: recordNativeTerminal,
               capturedTurns,
               // Fence this delivery's actual adapter entry, not merely its committed run status.
               afterTurnStarted: (turn) =>
@@ -681,6 +736,7 @@ describe("orchestrator MCP toolkit", () => {
               instanceId: claudeInstanceId,
               driver: ProviderDriverKind.make("claudeAgent"),
               capabilities: ClaudeProviderCapabilitiesV2,
+              afterTurnCompleted: recordNativeTerminal,
               capturedTurns,
               shouldComplete: (turn) => claudePrompt(turn) !== cancellationPrompt,
               terminalGate: (turn) =>
@@ -1129,17 +1185,24 @@ describe("orchestrator MCP toolkit", () => {
               });
             const firstCoalesced = yield* coalescedTask("one");
             const secondCoalesced = yield* coalescedTask("two");
-            const coalescedTaskIds = [firstCoalesced, secondCoalesced].map((result) => {
-              const taskEvent = result.storedEvents.find(
-                (stored) =>
-                  stored.event.type === "subagent.updated" &&
-                  stored.event.payload.origin === "app_owned",
-              );
-              if (taskEvent?.event.type !== "subagent.updated") {
-                throw new Error("Coalesced delegated task projection missing.");
-              }
-              return taskEvent.event.payload.id;
-            });
+            const coalescedTaskIds = yield* Effect.forEach(
+              [firstCoalesced, secondCoalesced],
+              (result) =>
+                Effect.gen(function* () {
+                  const taskEvent = result.storedEvents.find(
+                    (stored) =>
+                      stored.event.type === "subagent.updated" &&
+                      stored.event.payload.origin === "app_owned",
+                  );
+                  if (taskEvent?.event.type !== "subagent.updated") {
+                    throw new Error("Coalesced delegated task projection missing.");
+                  }
+                  const childThreadId = taskEvent.event.payload.childThreadId;
+                  if (childThreadId === null) throw new Error("Coalesced child thread missing.");
+                  yield* awaitNativeTerminal((terminal) => terminal.threadId === childThreadId);
+                  return taskEvent.event.payload.id;
+                }),
+            );
             const coalescedProjection = yield* waitForProjection(
               orchestrator,
               parentThreadId,
@@ -3503,8 +3566,12 @@ describe("orchestrator MCP toolkit", () => {
                   Effect.andThen(
                     settings.updateSettings({
                       projectSettingsOverrides: {
-                        [projectId]:
-                          beforeDisabledSettings.projectSettingsOverrides[projectId] ?? null,
+                        [projectId]: {
+                          ...beforeDisabledSettings.projectSettingsOverrides[projectId],
+                          providerInstances:
+                            beforeDisabledSettings.projectSettingsOverrides[projectId]
+                              ?.providerInstances ?? {},
+                        },
                       },
                     }),
                   ),
@@ -4803,6 +4870,7 @@ describe("orchestrator MCP toolkit", () => {
                         projection.providerTurns.some((turn) => turn.status === "running"),
                       "fanout-child-running",
                     );
+                    yield* worker.drain();
                     const childRun = child.runs.find((run) => run.status === "running");
                     if (childRun === undefined) {
                       return yield* Effect.die(new Error("Fan-out child run missing."));
@@ -4814,6 +4882,7 @@ describe("orchestrator MCP toolkit", () => {
                       runId: childRun.id,
                       reason: "Finish this fan-out child.",
                     });
+                    yield* worker.drain();
                   }),
                 { discard: true },
               );
@@ -4923,6 +4992,10 @@ describe("orchestrator MCP toolkit", () => {
             yield* Deferred.succeed(fanoutFirstStartedGate, undefined);
             yield* Deferred.succeed(firstFanoutDeliveryGate, undefined);
             messageTerminalGates.delete(firstFanoutDelivery.messageId);
+            yield* awaitNativeTerminal(
+              (terminal) => terminal.messageId === firstFanoutDelivery.messageId,
+            );
+            yield* worker.drain();
             const secondReserved = yield* waitForProjection(
               orchestrator,
               fanoutParentThreadId,
@@ -4978,6 +5051,10 @@ describe("orchestrator MCP toolkit", () => {
 
             messageTerminalGates.delete(secondFanoutDelivery.messageId);
             yield* Deferred.succeed(secondFanoutDeliveryGate, undefined);
+            yield* awaitNativeTerminal(
+              (terminal) => terminal.messageId === secondFanoutDelivery.messageId,
+            );
+            yield* worker.drain();
             const thirdReserved = yield* waitForProjection(
               orchestrator,
               fanoutParentThreadId,
@@ -4992,6 +5069,10 @@ describe("orchestrator MCP toolkit", () => {
             }
             expect(sortedIds(thirdFanoutDelivery.taskIds)).toEqual(idsOf(duringSecond));
             yield* dispatchFanoutDelivery("third", thirdFanoutDelivery);
+            yield* awaitNativeTerminal(
+              (terminal) => terminal.messageId === thirdFanoutDelivery.messageId,
+            );
+            yield* worker.drain();
             const fanoutDrained = yield* waitForProjection(
               orchestrator,
               fanoutParentThreadId,

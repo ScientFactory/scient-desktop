@@ -1,8 +1,9 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
-import { ProjectId, type PullRequestSummary } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
+import type { PullRequestFilterOptions, PullRequestSummary } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  mergePullRequestFilterOptionsView,
   newestPullRequestObservation,
   newestPullRequestSummary,
   threadPullRequestLinkToSummary,
@@ -112,5 +113,33 @@ describe("pull request summary cache", () => {
         stale.projectId,
       ),
     ).toBeNull();
+  });
+});
+
+describe("pull request filter-option state", () => {
+  it("keeps healthy options and exposes host failures alongside environment failures", () => {
+    const labels = [{ name: "release", color: null }];
+    const authors = [{ login: "octocat", name: null, avatarUrl: null }];
+    const partialFailure = "Some repositories could not be searched.";
+    const queryError = "The environment request failed.";
+
+    const view = mergePullRequestFilterOptionsView(
+      [
+        [
+          EnvironmentId.make("healthy"),
+          { labels, authors, truncated: false } satisfies PullRequestFilterOptions,
+        ],
+        [
+          EnvironmentId.make("partial"),
+          { labels: [], authors: [], truncated: false, partialFailure },
+        ],
+      ],
+      queryError,
+    );
+
+    expect(view.labels).toEqual(labels);
+    expect(view.authors).toEqual(authors);
+    expect(view.truncated).toBe(false);
+    expect(view.error?.split("\n")).toEqual([queryError, partialFailure]);
   });
 });

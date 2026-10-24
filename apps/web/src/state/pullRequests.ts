@@ -8,8 +8,9 @@ import {
 import type {
   EnvironmentId,
   ProjectId,
-  PullRequestListInput,
+  PullRequestFilterOptions,
   PullRequestFilterOptionsInput,
+  PullRequestListInput,
   PullRequestListStatsInput,
   PullRequestListEntry,
   PullRequestRef,
@@ -383,15 +384,36 @@ export function usePullRequestListStats(
   return { stats, isPending: query.isPending, refresh: query.refresh };
 }
 
+export function mergePullRequestFilterOptionsView(
+  values: ReadonlyArray<readonly [EnvironmentId, PullRequestFilterOptions]>,
+  queryError: string | null,
+) {
+  const labels: PullRequestFilterOptions["labels"][number][] = [];
+  const authors: PullRequestFilterOptions["authors"][number][] = [];
+  const errors = new Set<string>();
+  if (queryError !== null) errors.add(queryError);
+  let truncated = false;
+  for (const [, options] of values) {
+    labels.push(...options.labels);
+    authors.push(...options.authors);
+    truncated ||= options.truncated;
+    if (options.partialFailure !== undefined) errors.add(options.partialFailure);
+  }
+  return {
+    labels,
+    authors,
+    truncated,
+    error: errors.size === 0 ? null : [...errors].join("\n"),
+  };
+}
+
 export function usePullRequestFilterOptions(
   targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestFilterOptionsInput>>,
 ) {
   const query = usePullRequestFilterOptionsQuery(targets);
   return {
-    labels: query.values.flatMap(([, options]) => options.labels),
-    authors: query.values.flatMap(([, options]) => options.authors),
-    truncated: query.values.some(([, options]) => options.truncated),
-    error: query.error,
+    ...mergePullRequestFilterOptionsView(query.values, query.error),
     isPending: query.isPending,
+    refresh: query.refresh,
   };
 }

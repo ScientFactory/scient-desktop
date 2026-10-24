@@ -5,6 +5,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import {
   ForwardCompatibleArray,
+  ForwardCompatibleOptional,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -35,6 +36,9 @@ const PullRequestQualifierValues = Schema.Array(PullRequestQualifierValue).check
   Schema.isMaxLength(10),
 );
 
+export const PULL_REQUEST_FILTER_MAX_LABEL_GROUPS = 10;
+export const PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH = 100;
+
 export const PullRequestListFilters = Schema.Struct({
   draft: Schema.optional(Schema.Literals(["only", "hide"])),
   review: Schema.optional(
@@ -46,7 +50,11 @@ export const PullRequestListFilters = Schema.Struct({
    * satisfy every group, and a group holding several names is satisfied by any one of them —
    * `label:size:S,size:XS` finds either size.
    */
-  labels: Schema.optional(Schema.Array(PullRequestQualifierValues).check(Schema.isMaxLength(10))),
+  labels: Schema.optional(
+    Schema.Array(PullRequestQualifierValues).check(
+      Schema.isMaxLength(PULL_REQUEST_FILTER_MAX_LABEL_GROUPS),
+    ),
+  ),
   excludedLabels: Schema.optional(PullRequestQualifierValues),
   author: Schema.optional(PullRequestQualifierValue),
 });
@@ -103,7 +111,6 @@ export const PullRequestCheckStatus = Schema.Literals([
   "failure",
   "skipped",
   "neutral",
-  "warning",
   "cancelled",
 ]);
 export type PullRequestCheckStatus = typeof PullRequestCheckStatus.Type;
@@ -111,6 +118,9 @@ export type PullRequestCheckStatus = typeof PullRequestCheckStatus.Type;
 export const PullRequestCheck = Schema.Struct({
   name: TrimmedNonEmptyString,
   status: PullRequestCheckStatus,
+  // SCIENT-FORK:START — released clients require the shipped status literals.
+  outcome: ForwardCompatibleOptional(Schema.Literal("warning")),
+  // SCIENT-FORK:END
   description: Schema.NullOr(Schema.String),
   url: Schema.NullOr(Schema.String),
   required: Schema.optional(Schema.Boolean),
@@ -535,7 +545,9 @@ export const PullRequestFilterOptionsInput = Schema.Struct({
   projectId: Schema.optional(ProjectId),
   projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
   host: Schema.optional(TrimmedNonEmptyString),
-  query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+  query: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH)),
+  ),
 });
 export type PullRequestFilterOptionsInput = typeof PullRequestFilterOptionsInput.Type;
 
@@ -543,6 +555,9 @@ export const PullRequestFilterOptions = Schema.Struct({
   labels: Schema.Array(PullRequestLabel),
   authors: Schema.Array(PullRequestActor),
   truncated: Schema.Boolean,
+  // SCIENT-FORK:START — failed repositories are not a capped, otherwise complete search.
+  partialFailure: Schema.optional(TrimmedNonEmptyString),
+  // SCIENT-FORK:END
 });
 export type PullRequestFilterOptions = typeof PullRequestFilterOptions.Type;
 

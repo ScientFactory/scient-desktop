@@ -59,6 +59,7 @@ import {
 } from "./pullRequestDetail.logic";
 import {
   pullRequestCheckStatusLabel,
+  pullRequestCheckStatusPresentation,
   pullRequestChecksState,
   pullRequestChecksStatePresentation,
   summarizePullRequestChecks,
@@ -215,7 +216,8 @@ describe("pull request primary control", () => {
 describe("pull request warning checks", () => {
   const warning: PullRequestCheck = {
     name: "lint",
-    status: "warning",
+    status: "neutral",
+    outcome: "warning",
     description: null,
     url: null,
   };
@@ -227,19 +229,51 @@ describe("pull request warning checks", () => {
   };
 
   it("keeps terminal warnings distinct from passing and failed checks", () => {
+    const neutral: PullRequestCheck = {
+      name: "neutral",
+      status: "neutral",
+      description: null,
+      url: null,
+    };
+    const skipped: PullRequestCheck = {
+      name: "skipped",
+      status: "skipped",
+      description: null,
+      url: null,
+    };
     expect(classifyPullRequestChecks([warning, success])).toBe("warning");
     expect(describePullRequestChecks([warning, success])).toBe("1 warning");
-    expect(groupPullRequestChecks([warning, success])).toEqual({
+    expect(groupPullRequestChecks([warning, success, neutral, skipped])).toEqual({
       attention: [warning],
       running: [],
-      completed: [success],
+      completed: [success, neutral, skipped],
     });
     expect(pullRequestCheckStatusLabel(warning)).toBe("Warning");
+    expect(pullRequestCheckStatusPresentation(warning)).toMatchObject({
+      label: "Warning",
+      toneClassName: "text-amber-600 dark:text-amber-400/90",
+    });
+    expect(pullRequestCheckStatusPresentation(neutral).label).toBe("Neutral");
     expect(pullRequestChecksState([warning, success])).toBe("warning");
     expect(pullRequestChecksStatePresentation("warning").label).toBe(
       "Some checks finished with warnings",
     );
     expect(summarizePullRequestChecks([warning, success])).toBe("1 warning");
+  });
+
+  it("treats warning outcomes as terminal before checking their status", () => {
+    for (const status of ["pending", "failure"] as const) {
+      const warning = { ...success, status, outcome: "warning" as const };
+      expect(classifyPullRequestChecks([warning])).toBe("warning");
+      expect(describePullRequestChecks([warning])).toBe("1 warning");
+      expect(groupPullRequestChecks([warning])).toEqual({
+        attention: [warning],
+        running: [],
+        completed: [],
+      });
+      expect(pullRequestChecksState([warning])).toBe("warning");
+      expect(summarizePullRequestChecks([warning])).toBe("1 warning");
+    }
   });
 });
 
@@ -690,6 +724,26 @@ describe("fix findings handoff", () => {
     expect(handoff.prompt).toContain("typecheck");
     expect(handoff.prompt).toContain("6 further findings were omitted");
   });
+  it.each(["neutral", "pending", "failure"] as const)(
+    "does not turn a %s warning outcome into a failing-check handoff",
+    (status) => {
+      const genuine = buildFixFindingsHandoff({
+        ...base,
+        reviewThreads: [],
+        checks: [failingCheck],
+      });
+      expect(genuine.prompt).toContain(failingCheck.name);
+      const withWarning = buildFixFindingsHandoff({
+        ...base,
+        reviewThreads: [],
+        checks: [
+          failingCheck,
+          { ...failingCheck, name: "advisory-warning", status, outcome: "warning" },
+        ],
+      });
+      expect(withWarning).toEqual(genuine);
+    },
+  );
 });
 
 describe("findings that cannot be attached", () => {

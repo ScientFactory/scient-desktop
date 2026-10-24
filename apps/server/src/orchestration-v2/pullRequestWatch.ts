@@ -30,10 +30,6 @@ export interface PullRequestWatchReport {
   readonly exhausted: boolean;
 }
 
-// "action-required" is a finished check that needs someone, so the agent hears about it.
-const isFailedCheck = (check: PullRequestCheck) =>
-  check.status === "failure" || check.status === "cancelled" || check.status === "action-required";
-
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
@@ -53,7 +49,14 @@ export function evaluatePullRequestWatch(
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   if (detail.checks.length > 0) {
-    const failed = detail.checks.filter(isFailedCheck);
+    // Action-required checks need attention; a warning outcome is terminal but never a failure.
+    const failed = detail.checks.filter(
+      (check) =>
+        check.outcome !== "warning" &&
+        (check.status === "failure" ||
+          check.status === "cancelled" ||
+          check.status === "action-required"),
+    );
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
     failedChecks = failed.map((check) => check.name);
@@ -63,7 +66,8 @@ export function evaluatePullRequestWatch(
     // GitHub accepts neutral/skipped; terminal Forgejo warnings never satisfy the gate.
     const passedNow = gate.every(
       (check) =>
-        check.status === "success" || check.status === "skipped" || check.status === "neutral",
+        check.outcome !== "warning" &&
+        (check.status === "success" || check.status === "skipped" || check.status === "neutral"),
     );
     const gateNames = gate.map((check) => check.name);
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
@@ -79,9 +83,10 @@ export function evaluatePullRequestWatch(
             .map((check) => check.name)
         : [];
     const settled =
-      failed.length === 0 && detail.checks.every((check) => check.status !== "pending");
+      failed.length === 0 &&
+      detail.checks.every((check) => check.outcome === "warning" || check.status !== "pending");
     const warningOwed = owed.some((name) =>
-      detail.checks.some((check) => check.name === name && check.status === "warning"),
+      detail.checks.some((check) => check.name === name && check.outcome === "warning"),
     );
     owedChecks = owed;
     if (passedNow && (!passed || gateGrew)) {
@@ -89,7 +94,12 @@ export function evaluatePullRequestWatch(
       owedChecks =
         required.length > 0
           ? detail.checks
-              .filter((check) => check.required !== true && check.status === "pending")
+              .filter(
+                (check) =>
+                  check.required !== true &&
+                  check.outcome !== "warning" &&
+                  check.status === "pending",
+              )
               .map((check) => check.name)
           : [];
     } else if (settled && owed.length > 0) {

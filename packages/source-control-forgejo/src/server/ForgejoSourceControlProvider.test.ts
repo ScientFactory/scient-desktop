@@ -290,11 +290,11 @@ it.effect("reads Forgejo jobs that did not run as finished checks", () =>
       number: 1,
     });
     assert.deepStrictEqual(
-      result.checks.map((check) => [check.name, check.status]),
+      result.checks.map((check) => [check.name, check.status, check.outcome]),
       [
-        ["deploy", "skipped"],
-        ["audit", "warning"],
-        ["docs", "pending"],
+        ["deploy", "skipped", undefined],
+        ["audit", "neutral", "warning"],
+        ["docs", "pending", undefined],
       ],
     );
   }).pipe(

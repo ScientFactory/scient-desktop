@@ -198,6 +198,26 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
+  it("settles a warning outcome even when its status appears pending", () => {
+    const provider = SourceControlProviderKind.make("forgejo");
+    const required = { ...check("required", "success"), required: true };
+    const early = evaluatePullRequestWatch(
+      watch(),
+      detail({ provider, checks: [required, check("lint", "pending")] }),
+      noRemarks,
+    );
+    const warning = { ...check("lint", "pending"), outcome: "warning" as const };
+    const settled = evaluatePullRequestWatch(
+      early.next,
+      detail({ provider, checks: [required, warning] }),
+      noRemarks,
+    );
+
+    assert.deepEqual(settled.changes, []);
+    assert.deepEqual(settled.next.owedChecks, []);
+    assert.isTrue(settled.next.passed);
+  });
+
   it("continues to treat neutral and skipped checks as passed", () => {
     const result = evaluatePullRequestWatch(
       watch(),

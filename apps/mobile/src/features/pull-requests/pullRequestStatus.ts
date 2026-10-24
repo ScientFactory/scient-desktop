@@ -58,6 +58,13 @@ export function pullRequestConflict(pr: {
 }
 
 export function checkStatus(check: PullRequestCheck) {
+  if (check.outcome === "warning") {
+    return {
+      label: "Warning",
+      icon: "exclamationmark.triangle",
+      tint: "accent-warning-foreground",
+    } as const;
+  }
   switch (check.status) {
     case "success":
       return {
@@ -70,12 +77,6 @@ export function checkStatus(check: PullRequestCheck) {
         label: "Failed",
         icon: "exclamationmark.circle",
         tint: "accent-danger-foreground",
-      } as const;
-    case "warning":
-      return {
-        label: "Warning",
-        icon: "exclamationmark.triangle",
-        tint: "accent-warning-foreground",
       } as const;
     case "action-required":
       return {
@@ -94,12 +95,34 @@ export function checkStatus(check: PullRequestCheck) {
   }
 }
 
+const CHECK_PRIORITY: Record<PullRequestCheck["status"], number> = {
+  failure: 0,
+  "action-required": 2,
+  pending: 3,
+  cancelled: 4,
+  neutral: 5,
+  skipped: 6,
+  success: 7,
+};
+
+export function pullRequestCheckPriority(check: PullRequestCheck): number {
+  return check.outcome === "warning" ? 1 : CHECK_PRIORITY[check.status];
+}
+
 export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) {
-  const failed = pr.checks.filter((check) => check.status === "failure").length;
-  const required = pr.checks.filter((check) => check.status === "action-required").length;
-  const pending = pr.checks.filter((check) => check.status === "pending").length;
-  const warning = pr.checks.filter((check) => check.status === "warning").length;
-  const passed = pr.checks.filter((check) => check.status === "success").length;
+  const failed = pr.checks.filter(
+    (check) => check.outcome !== "warning" && check.status === "failure",
+  ).length;
+  const required = pr.checks.filter(
+    (check) => check.outcome !== "warning" && check.status === "action-required",
+  ).length;
+  const pending = pr.checks.filter(
+    (check) => check.outcome !== "warning" && check.status === "pending",
+  ).length;
+  const warning = pr.checks.filter((check) => check.outcome === "warning").length;
+  const passed = pr.checks.filter(
+    (check) => check.outcome !== "warning" && check.status === "success",
+  ).length;
   const count = pr.checks.length ? `${passed} of ${pr.checks.length}` : undefined;
   if (failed)
     return {

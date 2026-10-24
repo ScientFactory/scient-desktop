@@ -215,8 +215,11 @@ export function pullRequestFilterOptionNotice(input: {
   readonly truncated: boolean;
 }): string | null {
   if (input.isPending) return null;
-  if (input.visibleCount === 0 && input.error !== null)
-    return `Couldn't search ${input.kind} on the host`;
+  if (input.error !== null) {
+    const failure =
+      input.visibleCount === 0 ? input.error : `Results are incomplete: ${input.error}`;
+    return input.truncated ? `${failure}. More matches are available; refine your search` : failure;
+  }
   if (input.truncated) return "More matches are available; refine your search";
   if (input.visibleCount === 0) return `No ${input.kind} found`;
   return null;

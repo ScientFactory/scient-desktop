@@ -2,6 +2,7 @@ import type { PullRequestActivity, PullRequestCheck, PullRequestComment } from "
 import { describe, expect, it } from "vite-plus/test";
 import {
   checkStatus,
+  pullRequestCheckPriority,
   pullRequestChecksStatus,
   pullRequestChecksSummary,
   pullRequestReviewSummary,
@@ -25,8 +26,17 @@ function activity(
 ): Pick<PullRequestActivity, "comments" | "commits"> {
   return { comments, commits: [] };
 }
-function check(status: PullRequestCheck["status"]): PullRequestCheck {
-  return { name: status, status, url: null, description: null };
+function check(
+  status: PullRequestCheck["status"],
+  outcome?: PullRequestCheck["outcome"],
+): PullRequestCheck {
+  return {
+    name: status,
+    status,
+    ...(outcome === undefined ? {} : { outcome }),
+    url: null,
+    description: null,
+  };
 }
 
 describe("mobile overview review status", () => {
@@ -89,7 +99,7 @@ describe("mobile overview check status", () => {
   });
 
   it("keeps terminal warnings distinct from passed checks", () => {
-    const warning = check("warning");
+    const warning = check("neutral", "warning");
     expect(checkStatus(warning)).toMatchObject({
       label: "Warning",
       icon: "exclamationmark.triangle",
@@ -99,9 +109,27 @@ describe("mobile overview check status", () => {
       count: "1 of 2",
       icon: "exclamationmark.triangle",
     });
+    expect(checkStatus(check("neutral")).label).toBe("Neutral");
+    expect(checkStatus(check("skipped")).label).toBe("Skipped");
+    expect(
+      [check("success"), check("neutral"), warning, check("pending")].toSorted(
+        (left, right) => pullRequestCheckPriority(left) - pullRequestCheckPriority(right),
+      ),
+    ).toEqual([warning, check("pending"), check("neutral"), check("success")]);
     expect(pullRequestChecksStatus("warning")).toEqual({
       icon: "exclamationmark.triangle",
       tint: "accent-warning-foreground",
     });
+  });
+
+  it("treats warning outcomes as terminal before checking their status", () => {
+    for (const status of ["pending", "failure"] as const) {
+      const warning = check(status, "warning");
+      expect(checkStatus(warning).label).toBe("Warning");
+      expect(pullRequestChecksSummary({ checks: [warning] })).toMatchObject({
+        title: "1 check has warnings",
+        icon: "exclamationmark.triangle",
+      });
+    }
   });
 });

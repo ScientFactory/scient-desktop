@@ -268,15 +268,16 @@ function mergeProjectSettingsOverridesPatch(
   patch: Readonly<NonNullable<ServerSettingsPatch["projectSettingsOverrides"]>>,
 ): Record<string, ProjectSettingsOverrides> {
   const next = new Map(Object.entries(current));
-  for (const [projectId, entry] of Object.entries(patch)) {
-    if (entry === null) {
-      next.delete(projectId);
-      continue;
-    }
+  for (const [projectId, patchEntry] of Object.entries(patch)) {
+    // SCIENT-FORK:START — released clients send `null` once every key they know is gone. They know
+    // `providerInstances`, so `null` clears it; title instructions are newer and stay, as an omitted
+    // key does.
+    const entry: NonNullable<typeof patchEntry> = patchEntry ?? { providerInstances: {} };
+    // SCIENT-FORK:END
     const storedProviderInstances = current[projectId]?.providerInstances;
     const storedTitleInstructions = current[projectId]?.threadTitleInstructions;
     const { threadTitleInstructions, ...overrides } = entry;
-    next.set(projectId, {
+    const merged: ProjectSettingsOverrides = {
       ...overrides,
       ...(threadTitleInstructions === undefined
         ? storedTitleInstructions === undefined
@@ -288,7 +289,15 @@ function mergeProjectSettingsOverridesPatch(
       ...(Object.hasOwn(entry, "providerInstances") || storedProviderInstances === undefined
         ? {}
         : { providerInstances: storedProviderInstances }),
-    });
+    };
+    // SCIENT-FORK:START — an explicit `providerInstances: {}` reset leaves no override behind.
+    const { providerInstances, ...rest } = merged;
+    if (Object.keys(rest).length === 0 && Object.keys(providerInstances ?? {}).length === 0) {
+      next.delete(projectId);
+      continue;
+    }
+    // SCIENT-FORK:END
+    next.set(projectId, merged);
   }
   return Object.fromEntries(next);
 }

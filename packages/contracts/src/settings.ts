@@ -1708,12 +1708,12 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   /**
-   * Per-project entry replacement: each entry replaces that project's whole
-   * override set and `null` removes it.
-   *
-   * Entries from older clients preserve omitted `providerInstances` and
-   * `threadTitleInstructions`. Send `null` for title instructions to restore
-   * inheritance; an empty string remains an explicit project override.
+   * Per-project replacement clears ordinary scoped keys absent from the entry.
+   * A non-null entry preserves omitted `providerInstances` and
+   * `threadTitleInstructions`. A `null` entry clears ordinary settings and
+   * provider-instance overrides but keeps title instructions so released clients
+   * can reset the settings they know. Explicit `threadTitleInstructions: null`
+   * restores inheritance; an empty string remains an explicit project override.
    */
   projectSettingsOverrides: Schema.optionalKey(
     Schema.Record(

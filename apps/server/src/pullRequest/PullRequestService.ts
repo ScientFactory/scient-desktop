@@ -440,6 +440,14 @@ function toPullRequestError(
         });
 }
 
+function preferredPullRequestError(
+  errors: ReadonlyArray<PullRequestProviderError>,
+  operation: string,
+): PullRequestError | undefined {
+  const error = errors.find(isProviderUnusable) ?? errors[0];
+  return error === undefined ? undefined : toPullRequestError(operation)(error);
+}
+
 function withRateLimitBackoff(
   api: PullRequestProviderApi,
   host: string,
@@ -1216,10 +1224,8 @@ export const make = Effect.gen(function* () {
           ? []
           : [result.error],
       );
-      const blocking = errors.find(isProviderUnusable) ?? errors[0];
-      if (blocking) {
-        return yield* toPullRequestError("list")(blocking);
-      }
+      const failure = preferredPullRequestError(errors, "list");
+      if (failure !== undefined) return yield* failure;
 
       return {
         viewers: viewers as PullRequestListResult["viewers"],
@@ -2443,9 +2449,16 @@ export const make = Effect.gen(function* () {
         keyOf: (label) => label.name,
         textsOf: (label) => [label.name],
       });
-      if (items.length === 0 && errors.length > 0)
-        return yield* toPullRequestError("filterOptions")(errors[0]!);
-      return { labels: items, authors: [], truncated };
+      const failure = preferredPullRequestError(errors, "filterOptions");
+      if (items.length === 0 && failure !== undefined) return yield* failure;
+      return {
+        labels: items,
+        authors: [],
+        truncated,
+        ...(failure === undefined
+          ? {}
+          : { partialFailure: `Some repositories could not be searched. ${failure.message}` }),
+      };
     }
     const { pages, errors } = yield* gather<PullRequestActor>((project) =>
       project.api.searchRepositoryAuthors?.(refOf(project)),
@@ -2455,9 +2468,16 @@ export const make = Effect.gen(function* () {
       keyOf: (author) => author.login,
       textsOf: (author) => [author.login, author.name],
     });
-    if (items.length === 0 && errors.length > 0)
-      return yield* toPullRequestError("filterOptions")(errors[0]!);
-    return { labels: [], authors: items, truncated };
+    const failure = preferredPullRequestError(errors, "filterOptions");
+    if (items.length === 0 && failure !== undefined) return yield* failure;
+    return {
+      labels: [],
+      authors: items,
+      truncated,
+      ...(failure === undefined
+        ? {}
+        : { partialFailure: `Some repositories could not be searched. ${failure.message}` }),
+    };
   });
 
   const labelCandidates: PullRequestService["Service"]["labelCandidates"] = (input) =>

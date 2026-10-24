@@ -88,9 +88,19 @@ state. Clearing a migrated token does not leave an adopted legacy copy behind.
   see passing and approved reviews first, passing reviews awaiting approval next, and conflicting
   reviews last. Smaller changes come first within each readiness group, and finished reviews follow
   open work when all states are visible.
-- Filter the list by author or labels, rank authors by merges in the loaded results, see label and
-  change-size context on each row, and sort the results currently shown by readiness, update time,
-  creation time, or change size. Your filters, search, scope, and sort are restored when you return.
+- Forgejo warning checks stay distinct from passed checks. A watcher does not report an
+  all-required-checks-passed result while a required check has a warning.
+- Filter by author or labels. GitHub, GitLab, Forgejo, and GitCafe search option values on the host;
+  Azure DevOps and Bitbucket use only facets from pull requests already loaded. Searches return at
+  most 100 matches; refine the query when Scient says more are available. A supported repository
+  search failure keeps options from successful repositories visible and marks the results
+  incomplete; if failures leave no options, Scient reports an error rather than a complete empty
+  result.
+- The list sends each filter to a host when that host supports it; filters without host support
+  narrow the pull requests already loaded. Author ranking by merges still uses loaded results. See
+  label and change-size context on each row, and sort the displayed results by readiness, update
+  time, creation time, or change size. Your filters, search, scope, and sort are restored when you
+  return.
 - Merge now, or on GitHub, GitLab, and Azure DevOps, leave an auto-merge instruction with a chosen
   strategy while checks are outstanding; see the completed state in the same control after the
   pull request merges

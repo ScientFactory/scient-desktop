@@ -892,6 +892,47 @@ it.effect("offers each label once across repositories, despite one that cannot b
     );
     assert.strictEqual(reads.filter((repository) => repository === "pingdotgg/t3code").length, 1);
     assert.strictEqual(result.truncated, false);
+    assert.ok(result.partialFailure);
+  }),
+);
+
+it.effect("keeps healthy author options and marks a failed repository as incomplete", () =>
+  Effect.gen(function* () {
+    const provider = SourceControlProviderKind.make("github");
+    const authFailure = new PullRequestProviderError({
+      provider,
+      operation: "searchRepositoryAuthors",
+      reason: "unauthenticated",
+      detail: "Private authentication detail",
+    });
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "healthy", workspaceRoot: "/a", repository: "acme/healthy" }),
+        project({ id: "p2", title: "broken", workspaceRoot: "/b", repository: "acme/broken" }),
+      ],
+      providers: [
+        fakeProvider(provider, {
+          searchRepositoryAuthors: ({ repository }) =>
+            repository === "acme/broken"
+              ? Effect.fail(authFailure)
+              : Effect.succeed({
+                  items: [{ login: "theo", name: "Theo", avatarUrl: null }],
+                  truncated: false,
+                }),
+        }),
+      ],
+    });
+
+    const result = yield* service.filterOptions({ kind: "authors", query: "theo" });
+
+    assert.deepStrictEqual(
+      result.authors.map((author) => author.login),
+      ["theo"],
+    );
+    assert.strictEqual(result.truncated, false);
+    const partialFailure = result.partialFailure;
+    assert.ok(partialFailure);
+    assert.strictEqual(partialFailure.includes("Private authentication detail"), false);
   }),
 );
 
@@ -923,6 +964,47 @@ it.effect.each(["labels", "authors"] as const)(
         operation: "filterOptions",
         detail: requestFailed.detail,
       });
+    }),
+);
+
+it.effect.each(["labels", "authors"] as const)(
+  "prefers unusable-host guidance when every %s option search fails",
+  (kind) =>
+    Effect.gen(function* () {
+      const provider = SourceControlProviderKind.make("github");
+      const authFailure = new PullRequestProviderError({
+        provider,
+        operation: kind === "labels" ? "listRepositoryLabels" : "searchRepositoryAuthors",
+        reason: "unauthenticated",
+        detail: "Private authentication detail",
+      });
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "broken", workspaceRoot: "/a", repository: "acme/broken" }),
+          project({
+            id: "p2",
+            title: "unavailable",
+            workspaceRoot: "/b",
+            repository: "acme/unavailable",
+          }),
+        ],
+        providers: [
+          fakeProvider(provider, {
+            listRepositoryLabels: ({ repository }) =>
+              Effect.fail(repository === "acme/broken" ? requestFailed : authFailure),
+            searchRepositoryAuthors: ({ repository }) =>
+              Effect.fail(repository === "acme/broken" ? requestFailed : authFailure),
+          }),
+        ],
+      });
+
+      const error = yield* Effect.flip(service.filterOptions({ kind }));
+
+      expect(error).toMatchObject({
+        _tag: "PullRequestUnavailableError",
+        reason: "cli-unauthenticated",
+      });
+      expect(error.message).not.toContain("Private authentication detail");
     }),
 );
 

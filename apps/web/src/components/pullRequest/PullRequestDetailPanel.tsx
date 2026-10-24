@@ -1112,7 +1112,9 @@ export function PullRequestDetailPanel({
   // List rollups can omit workflows awaiting approval. Only refreshed detail can clear those.
   const checksState =
     latestChecksState !== "failing" &&
-    detail?.checks.some((check) => check.status === "action-required")
+    detail?.checks.some(
+      (check) => check.outcome !== "warning" && check.status === "action-required",
+    )
       ? "pending"
       : latestChecksState;
   const checksStale = checksState !== detailChecksState;

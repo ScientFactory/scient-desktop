@@ -312,29 +312,49 @@ export function isPullRequestConflicting(
 
 export type PullRequestChecksState = "none" | "pending" | "failing" | "warning" | "passing";
 
+const isWarningCheck = (check: Pick<PullRequestCheck, "outcome">) => check.outcome === "warning";
+
 export function classifyPullRequestChecks(
   checks: ReadonlyArray<PullRequestCheck>,
 ): PullRequestChecksState {
   if (checks.length === 0) return "none";
-  if (checks.some((check) => check.status === "failure" || check.status === "cancelled")) {
+  if (
+    checks.some(
+      (check) =>
+        !isWarningCheck(check) && (check.status === "failure" || check.status === "cancelled"),
+    )
+  ) {
     return "failing";
   }
-  if (checks.some((check) => check.status === "pending" || check.status === "action-required")) {
+  if (
+    checks.some(
+      (check) =>
+        !isWarningCheck(check) &&
+        (check.status === "pending" || check.status === "action-required"),
+    )
+  ) {
     return "pending";
   }
-  if (checks.some((check) => check.status === "warning")) return "warning";
+  if (checks.some(isWarningCheck)) return "warning";
   return "passing";
 }
 
 export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
   if (checks.length === 0) return "No checks reported";
   const failed = checks.filter(
-    (check) => check.status === "failure" || check.status === "cancelled",
+    (check) =>
+      !isWarningCheck(check) && (check.status === "failure" || check.status === "cancelled"),
   ).length;
-  const pending = checks.filter((check) => check.status === "pending").length;
-  const actionRequired = checks.filter((check) => check.status === "action-required").length;
-  const warning = checks.filter((check) => check.status === "warning").length;
-  const passed = checks.filter((check) => check.status === "success").length;
+  const pending = checks.filter(
+    (check) => !isWarningCheck(check) && check.status === "pending",
+  ).length;
+  const actionRequired = checks.filter(
+    (check) => !isWarningCheck(check) && check.status === "action-required",
+  ).length;
+  const warning = checks.filter(isWarningCheck).length;
+  const passed = checks.filter(
+    (check) => !isWarningCheck(check) && check.status === "success",
+  ).length;
   const parts: Array<string> = [];
   if (pending > 0) parts.push(`${pending} of ${checks.length} running`);
   if (actionRequired > 0) parts.push(`${actionRequired} of ${checks.length} awaiting action`);
@@ -350,11 +370,19 @@ export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck
 
 export function groupPullRequestChecks(checks: ReadonlyArray<PullRequestCheck>) {
   return {
-    attention: checks.filter((check) =>
-      ["failure", "cancelled", "action-required", "warning"].includes(check.status),
+    attention: checks.filter(
+      (check) =>
+        isWarningCheck(check) ||
+        check.status === "failure" ||
+        check.status === "cancelled" ||
+        check.status === "action-required",
     ),
-    running: checks.filter((check) => check.status === "pending"),
-    completed: checks.filter((check) => ["success", "skipped", "neutral"].includes(check.status)),
+    running: checks.filter((check) => !isWarningCheck(check) && check.status === "pending"),
+    completed: checks.filter(
+      (check) =>
+        !isWarningCheck(check) &&
+        (check.status === "success" || check.status === "skipped" || check.status === "neutral"),
+    ),
   };
 }
 
@@ -917,7 +945,10 @@ export function buildFixFindingsHandoff(input: {
       return [`${boundedField(comment.author?.login ?? "ghost")}${where}: ${boundedField(body)}`];
     });
   const failingChecks = input.checks
-    .filter((check) => check.status === "failure" || check.status === "cancelled")
+    .filter(
+      (check) =>
+        check.outcome !== "warning" && (check.status === "failure" || check.status === "cancelled"),
+    )
     .map((check) =>
       boundedField(check.description ? `${check.name}: ${check.description}` : check.name),
     );

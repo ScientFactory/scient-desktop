@@ -217,14 +217,15 @@ export function clearProjectSettingsOverrides(
   projectId: ProjectId,
   keys: readonly ProjectScopedServerSettingKey[],
 ): NonNullable<ServerSettingsPatch["projectSettingsOverrides"]>[ProjectId] {
-  const current = settings.projectSettingsOverrides[projectId];
-  if (current === undefined) return null;
-  const next = { ...current };
+  // SCIENT-FORK:START — a `null` entry keeps saved title instructions for clients that cannot see
+  // them, so clearing them must say so even when nothing else remains.
+  const next = { ...settings.projectSettingsOverrides[projectId] };
   for (const key of keys) delete next[key];
-  if (Object.keys(next).length === 0) return null;
-  return keys.includes("threadTitleInstructions")
+  const entry = keys.includes("threadTitleInstructions")
     ? { ...next, threadTitleInstructions: null }
     : next;
+  return Object.keys(entry).length === 0 ? null : entry;
+  // SCIENT-FORK:END
 }
 
 export function resolveWorktreeCleanup(
