@@ -80,6 +80,7 @@ describe("VegaLiteChartCard server fallback", () => {
 });
 
 describe("VegaLiteChartDialog expanded actions", () => {
+  // regression: e34e687915 fix(chat): make rich media reliable and copyable
   it("exports from the expanded live controller and retains source actions", () => {
     for (const label of [
       "Copy source",
@@ -97,6 +98,7 @@ describe("VegaLiteChartDialog expanded actions", () => {
     expect(chartCardSource).toContain("source={source}");
   });
 
+  // regression: e34e687915 fix(chat): make rich media reliable and copyable
   it("keeps an open expanded chart mounted while the inline view reloads", () => {
     expect(chartCardSource).toContain("(ready || expanded) && parsedSource.parsed != null");
   });

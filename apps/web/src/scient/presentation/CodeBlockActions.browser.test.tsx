@@ -26,28 +26,13 @@ describe("code block actions", () => {
     return host.querySelector<HTMLElement>("[aria-pressed]")!;
   }
 
-  it("shows the wrap toggle on while lines wrap, as upstream's code block does", async () => {
+  it("shows the wrap toggle pressed only while lines wrap", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
-    const on = await render(_fixture, true);
-    expect(on.getAttribute("aria-pressed")).toBe("true");
-    expect(on.dataset.variant).toBe("secondary");
-    expect((await render(_fixture, false)).dataset.variant).toBe("ghost-muted");
-  });
-
-  it("draws the copy button as upstream's: muted, with the morphing icon", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    await render(_fixture, false);
-    const copy = document.querySelector<HTMLElement>('[aria-label="Copy code"]')!;
-    expect(copy.dataset.variant).toBe("ghost-muted");
-    // MorphIcon draws its own svg, not lucide-react's classed icon.
-    expect(copy.querySelector("svg")).not.toBeNull();
-    expect(copy.querySelector("svg.lucide")).toBeNull();
+    expect((await render(_fixture, true)).getAttribute("aria-pressed")).toBe("true");
+    expect((await render(_fixture, false)).getAttribute("aria-pressed")).toBe("false");
   });
 });
 

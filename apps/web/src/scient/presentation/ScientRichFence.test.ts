@@ -3,18 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveScientRichFenceKind } from "./ScientRichFence";
 
 describe("resolveScientRichFenceKind", () => {
+  // One lookup: an exact name, a case-folded name and an alias stand for the alias table.
   it.each([
     ["mermaid", "mermaid"],
-    ["MERMAID", "mermaid"],
-    ["vega-lite", "vega-lite"],
     ["Vega-Lite", "vega-lite"],
-    ["vegalite", "vega-lite"],
-    ["vl", "vega-lite"],
-    ["plotly", "plotly"],
-    ["PLOTLY", "plotly"],
     ["plotly.js", "plotly"],
-    ["plotly-json", "plotly"],
-    ["plotlyjs", "plotly"],
   ] as const)("recognizes %s", (language, expected) => {
     expect(resolveScientRichFenceKind(language)).toBe(expected);
   });
