@@ -339,9 +339,18 @@ export const ScientOverleafKeptCopies = Schema.Struct({
 });
 export type ScientOverleafKeptCopies = typeof ScientOverleafKeptCopies.Type;
 
-export const ScientOverleafRestoreResult = Schema.Struct({
-  _tag: Schema.Literals(["restored", "stale", "unknown-copy", "duplicate"]),
-});
+/** How a local apply (a kept-copy restore, an undo) ended. */
+const ScientOverleafApplyOutcome = Schema.Literals(["complete", "replan", "attention"]);
+
+/**
+ * A kept-copy restore. `restored` ran its apply, and `outcome` says how it ended:
+ * only `complete` put the copy back; `replan` wrote nothing (the folder changed
+ * first); `attention` may have stopped partway. The others wrote nothing.
+ */
+export const ScientOverleafRestoreResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("restored"), outcome: ScientOverleafApplyOutcome }),
+  Schema.Struct({ _tag: Schema.Literals(["stale", "unknown-copy", "duplicate"]) }),
+]);
 export type ScientOverleafRestoreResult = typeof ScientOverleafRestoreResult.Type;
 
 /**

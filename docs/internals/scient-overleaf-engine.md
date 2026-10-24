@@ -424,7 +424,10 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
   The file it replaces is kept (state `kept`), the base never moves, and the
   restored bytes are a local change for the next review. A restore the applier
   cannot finish leaves its file as a forced conflict, beside those already
-  recorded.
+  recorded. `restored` always says how its apply ended (`adopted.outcome`), and
+  HTTP carries it (`{ _tag: "restored", outcome }`, `http.ts` `restoreView`,
+  which the agent tool reads too): only `complete` put the copy back, and a
+  `replan` (the folder changed first) wrote nothing.
 - **Undo** puts back what Overleaf had before one accepted send, named by its
   attempt number (design section 4.3). Any other attempt, or one no longer
   recorded (the last 64 are), is `not-eligible` with the reason. Under the same

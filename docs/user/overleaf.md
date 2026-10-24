@@ -212,7 +212,8 @@ Overleaf; your version from before the sync is always kept.
 Whenever a sync replaces or removes your file, Scient keeps the version it
 replaced. Open the file's **Retained file versions** menu (the clock in its
 header): **Kept by Overleaf sync** lists them, each with **Restore**. A restored
-file is an ordinary change that the next sync sends. In another worktree the
+file is an ordinary change that the next sync sends. If the file changes while
+it is being restored, nothing is written and the menu says so: restore again. In another worktree the
 copies are the main copy's: **Open there** opens the file on the main copy.
 
 ## Worktrees
