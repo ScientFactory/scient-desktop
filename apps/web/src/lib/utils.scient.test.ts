@@ -1,6 +1,7 @@
 import { describe, assert, it } from "vite-plus/test";
 import { resizeCursorForPlatform } from "./utils";
 
+// regression: 017821d992 fix(web): improve platform cursor behavior (#301)
 describe("resizeCursorForPlatform", () => {
   it("preserves the barred resize cursors outside Windows", () => {
     assert.strictEqual(resizeCursorForPlatform("horizontal", "MacIntel"), "col-resize");

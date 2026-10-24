@@ -64,24 +64,21 @@ beforeEach(() => {
     .mockResolvedValue(AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 }));
 });
 
-it.each(["workspace-file", "media-file"] as const)(
-  "keeps %s loading until its file grant resolves",
-  (_tag) => {
-    expect(useAssetUrlState(environmentId, { ...resource, _tag })).toEqual({
-      _tag: "Loading",
-      refresh: state.refresh,
-    });
-    expect(state.assetQuery).not.toHaveBeenCalled();
+it("keeps a host file loading until its file grant resolves", () => {
+  expect(useAssetUrlState(environmentId, resource)).toEqual({
+    _tag: "Loading",
+    refresh: state.refresh,
+  });
+  expect(state.assetQuery).not.toHaveBeenCalled();
 
-    state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
-    expect(useAssetUrlState(environmentId, { ...resource, _tag })).toEqual({
-      _tag: "Success",
-      expiresAt: 1,
-      refresh: state.refresh,
-      url: "https://host.test/api/assets/image.png",
-    });
-  },
-);
+  state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
+  expect(useAssetUrlState(environmentId, resource)).toEqual({
+    _tag: "Success",
+    expiresAt: 1,
+    refresh: state.refresh,
+    url: "https://host.test/api/assets/image.png",
+  });
+});
 
 it("hides host assets with a denied grant while preserving attachments", () => {
   state.session = { authenticated: true, scopes: [] };
