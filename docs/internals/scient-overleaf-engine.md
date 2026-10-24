@@ -21,6 +21,27 @@ retain their original spelling. This is a conservative portability policy,
 not a claim about every filesystem's complete filename equivalence relation.
 The generated table carries its upstream source hash and Unicode license.
 
+`OverleafGitExecutor` runs each Git command with an environment built from
+scratch (its own `HOME`, configuration, hooks folder and askpass) in a scratch
+folder under its runtime root, removed afterwards. On macOS it runs the real Git
+of the selected developer tools (`xcode-select -p`, then Command Line Tools,
+then Xcode), resolved once, never the `/usr/bin/git` launcher: that launcher
+runs `xcrun`, which records every new `HOME` in a shared database in the user's
+temporary folder (`getconf DARWIN_USER_TEMP_DIR`, whatever `TMPDIR` says),
+rewriting it on every command (it grew to 84 MB, with 22 GB of leftover partial
+copies) and costing about 0.1 s per command. A Git found earlier on `PATH`
+(Homebrew, `/usr/local`) is used as before.
+
+### Timing
+
+`OverleafSync.bench.test.ts` syncs 1, 10 and 50 files each way against a local
+bare repository with the real applier and prints the time of each stage. It is
+skipped unless asked for; from `apps/server`:
+
+```sh
+SCIENT_OVERLEAF_BENCH=1 node_modules/.bin/vp test run src/scient/overleaf/OverleafSync.bench.test.ts --testTimeout=0
+```
+
 ## Local application
 
 `WorkspaceApplier` receives immutable captured, desired, base and remote trees,
