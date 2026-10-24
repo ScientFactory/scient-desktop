@@ -667,6 +667,53 @@ describe.skipIf(!canApply)("OverleafSync", () => {
       }),
     ),
   );
+  it.live("a new folder at an archived folder's path starts a new link, not the archive's", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O" } } });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+        yield* w.service.disconnect({ caller: w.at(w.main), connectionId: id, requestId: "d1" });
+        // The archived folder is moved aside and a new, empty one is brought in at its path.
+        yield* Effect.promise(() =>
+          NodeFSP.rename(NodePath.join(w.main, "paper"), NodePath.join(w.main, "paper-old")),
+        );
+        const again = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c2",
+        });
+        if (again._tag !== "connected") return yield* Effect.die(again);
+        expect(again.reconnected).toBe(false);
+        expect(again.connection.connectionId).not.toBe(id);
+        // Its first sync brings Overleaf's files in; nothing is deleted on Overleaf.
+        expect(
+          yield* w.service.sync({
+            caller: w.at(w.main),
+            connectionId: again.connection.connectionId,
+            requestId: "s2",
+          }),
+        ).toMatchObject({ _tag: "synced" });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "A", "other.tex": "O" });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("A");
+        // The archive is kept as it was.
+        const archived = yield* w.store.readConnection(id);
+        if (archived._tag !== "ready") return yield* Effect.die(archived);
+        expect(archived.document.state).toBe("archived");
+      }),
+    ),
+  );
+
   it.live("never reactivates another project's archive of the same folder", () =>
     run(
       Effect.gen(function* () {
@@ -1025,6 +1072,54 @@ describe.skipIf(!canApply)("OverleafSync", () => {
       }),
     ),
   );
+  it.live("says when it first finished an interrupted sync, and only then", () =>
+    run(
+      Effect.gen(function* () {
+        let crash = false;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "before\n" } },
+          // The process stops once the apply wrote the folder, before the record took it in.
+          at: (point) => (point === "applied" && crash ? Effect.die("stopped") : Effect.void),
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const folder = NodePath.join(w.main, "paper");
+        const first = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s1",
+        });
+        expect(first).toMatchObject({ _tag: "synced", retried: false, settled: null });
+        yield* w.collaborate(PROJECT, { "main.tex": "after\n" });
+        crash = true;
+        const stopped = yield* Effect.exit(
+          w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+        );
+        expect(stopped._tag).toBe("Failure");
+        crash = false;
+
+        // The preview finishes the interrupted sync first, and says so.
+        const previewed = yield* w.service.preview({ caller: w.at(w.main), connectionId: id });
+        expect(previewed).toMatchObject({
+          _tag: "review",
+          settled: { outcome: "complete", markerPaths: [] },
+        });
+        expect(yield* read(folder, "main.tex")).toBe("after\n");
+        // Nothing is left to settle: the next sync says nothing settled.
+        expect(
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
+        ).toMatchObject({ _tag: "synced", retried: false, settled: null });
+      }),
+    ),
+  );
+
   it.live("asks again when Overleaf moved after the conflict was decided", () =>
     run(
       Effect.gen(function* () {
@@ -1071,7 +1166,14 @@ describe.skipIf(!canApply)("OverleafSync", () => {
           choices: new Map([[stopped.review.conflicts[0]!.key, "mine"]]),
           reviewedRemote: stopped.review.remoteTree,
         });
-        expect(decided).toMatchObject({ _tag: "needs-decision", review: { needsDecision: true } });
+        // The first attempt applied the choice, then Overleaf moved while sending: the
+        // result says the sync ran again, so a reader knows that attempt wrote the folder.
+        expect(decided).toMatchObject({
+          _tag: "needs-decision",
+          review: { needsDecision: true },
+          retried: true,
+          settled: null,
+        });
         expect((yield* w.overleafNow(PROJECT))["main.tex"]).toBe("theirs-v2-unreviewed\n");
       }),
     ),

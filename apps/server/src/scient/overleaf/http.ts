@@ -16,7 +16,7 @@ import {
   failEnvironmentInternal,
   requireEnvironmentScope,
 } from "../../auth/http.ts";
-import type { OverleafPublication } from "./OverleafCoordinator.ts";
+import type { OverleafAdopted, OverleafPublication } from "./OverleafCoordinator.ts";
 import { OverleafSync, type OverleafCaller, type OverleafSyncOutcome } from "./OverleafSync.ts";
 import type { ConflictChoice } from "./syncRules.ts";
 
@@ -78,6 +78,15 @@ const publicationView = (publication: OverleafPublication): ScientOverleafPublic
   ...("attemptNumber" in publication ? { attemptNumber: publication.attemptNumber } : {}),
 });
 
+export const settledView = (settled: OverleafAdopted | null) =>
+  settled === null
+    ? null
+    : {
+        outcome: settled.outcome,
+        interrupted: settled.interrupted.length,
+        markerPaths: settled.markerPaths,
+      };
+
 export const syncView = (outcome: OverleafSyncOutcome): ScientOverleafSyncResult => {
   switch (outcome._tag) {
     case "synced":
@@ -89,18 +98,42 @@ export const syncView = (outcome: OverleafSyncOutcome): ScientOverleafSyncResult
         markerPaths: outcome.adopted.markerPaths,
         publication: publicationView(outcome.publication),
         retried: outcome.retried,
+        settled: settledView(outcome.settled),
         activity: outcome.activity,
         linkedElsewhere: outcome.linkedElsewhere,
       };
     case "needs-decision":
-      return outcome;
+      return {
+        _tag: "needs-decision",
+        review: outcome.review,
+        retried: outcome.retried,
+        settled: settledView(outcome.settled),
+        activity: outcome.activity,
+        linkedElsewhere: outcome.linkedElsewhere,
+      };
     case "refused":
-      return { _tag: "refused", refusal: refusalView(outcome.refusal) };
+      return {
+        _tag: "refused",
+        refusal: refusalView(outcome.refusal),
+        retried: outcome.retried,
+        settled: settledView(outcome.settled),
+      };
     case "duplicate":
       return { _tag: "duplicate", category: outcome.receipt.resultCategory };
     case "unsettled":
+      return {
+        _tag: "unsettled",
+        reason: outcome.reason,
+        retried: outcome.retried,
+        settled: settledView(outcome.settled),
+      };
     case "cancelled":
-      return outcome;
+      return {
+        _tag: "cancelled",
+        stage: outcome.stage,
+        retried: outcome.retried,
+        settled: settledView(outcome.settled),
+      };
   }
 };
 
@@ -204,7 +237,7 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
           );
           switch (result._tag) {
             case "review":
-              return result;
+              return { ...result, settled: settledView(result.settled) };
             case "refused":
               return { _tag: "refused" as const, refusal: refusalView(result.refusal) };
             case "recovered":
