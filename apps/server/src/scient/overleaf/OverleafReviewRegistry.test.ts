@@ -24,9 +24,12 @@ const binding: OverleafReviewBinding = {
   collisionPaths: [],
   choices: [],
   interrupted: [],
-  recordedMarkerPaths: [],
+  recordedMarkers: [],
   unresolvedMarkers: [],
   candidateTree: "e".repeat(40),
+  publicationTree: "e".repeat(40),
+  heldPaths: [],
+  carriedMarkers: [],
   conflictKeys: [],
   markerPaths: [],
   warnings: [{ kind: "rename", from: "a.tex", to: "b.tex" }],
@@ -158,6 +161,10 @@ describe("overleafReviewStaleness", () => {
     ["inventory", { newLocalOnly: ["new.txt"] }],
     ["inventory", { collisionPaths: ["notes.txt"] }],
     ["inventory", { unresolvedMarkers: ["main.tex"] }],
+    ["inventory", { recordedMarkers: [{ path: "b.tex", overleafPaths: ["a.tex"] }] }],
+    // Held files change what is sent, not the local result.
+    ["review", { publicationTree: "f".repeat(40) }],
+    ["review", { heldPaths: ["main.tex"] }],
     ["review", { warnings: [] }],
   ] as const)("reports %s", (reason, change) => {
     expect(overleafReviewStaleness(binding, { ...binding, ...change })).toBe(reason);

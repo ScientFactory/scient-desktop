@@ -40,6 +40,7 @@ import {
   overleafRequiredPins,
   UNRESOLVED_ATTEMPT_LIMIT,
   type OverleafConnectionDocument,
+  type OverleafMarkerRecord,
   type OverleafOperationReceipt,
   type OverleafPublicationAttempt,
 } from "./OverleafConnectionState.ts";
@@ -340,6 +341,22 @@ const LOCAL_SNAPSHOT_LIMIT = 10;
 
 const byPath = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 const unique = (paths: Iterable<string>) => [...new Set(paths)].sort(byPath);
+/** Conflict-material records, one per folder path, each keeping every Overleaf path recorded for it. */
+const mergeMarkers = (
+  ...lists: ReadonlyArray<ReadonlyArray<OverleafMarkerRecord>>
+): ReadonlyArray<OverleafMarkerRecord> => {
+  const overleafPaths = new Map<string, string[]>();
+  for (const list of lists)
+    for (const record of list)
+      overleafPaths.set(record.path, [
+        ...(overleafPaths.get(record.path) ?? []),
+        ...record.overleafPaths,
+      ]);
+  return unique(overleafPaths.keys()).map((path) => ({
+    path,
+    overleafPaths: unique(overleafPaths.get(path)!),
+  }));
+};
 const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
 type FileRead =
   | {
@@ -618,7 +635,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         collisionPaths: requested,
         choices: input.selections.choices,
         interrupted: connection.forcedConflicts,
-        markerPaths: connection.markerPaths,
+        markers: connection.markers,
         epochs: { checkout: input.checkoutEpoch, credential: credentialEpoch() },
         scratch,
       }).pipe(
@@ -760,11 +777,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
             }),
           ).values(),
         ],
-        markerPaths: unique([
-          ...connection.markerPaths,
-          ...link.priorMarkers,
-          ...result.markerPaths,
-        ]),
+        markers: mergeMarkers(
+          connection.markers,
+          link.markers,
+          result.markerPaths.map((path) => ({ path, overleafPaths: [path] })),
+        ),
         stagingPaths: unique([...connection.stagingPaths, ...result.stagingPaths]),
         retention: {
           ...connection.retention,
@@ -773,7 +790,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
             ...(yield* keptByThisApply(
               () => "kept",
               connection.completedSyncCount,
-              connection.markerPaths,
+              connection.markers.map((record) => record.path),
             )),
           ],
         },
@@ -825,7 +842,13 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       managedPaths: unique(candidate.map((entry) => entry.path)),
       localOnlyPaths: unique(link.localOnly),
       forcedConflicts: result.interrupted.map((group) => unique(group)),
-      markerPaths: unique([...result.markerPaths, ...link.priorMarkers]),
+      // Files still held, at their paths after this apply, and those given new marks
+      // that still have them. A file merged in the editor has one path, which no rename
+      // touches (`OverleafReview`). A record stays until its file's marks are gone.
+      markers: mergeMarkers(
+        link.markers,
+        result.markerPaths.map((path) => ({ path, overleafPaths: [path] })),
+      ),
       stagingPaths: unique([...connection.stagingPaths, ...result.stagingPaths]),
       retention: { ...connection.retention, copies },
       // The base moved, so a publication still unknown is overtaken (contract section 6).
@@ -874,14 +897,17 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     );
     yield* hook(options, "adopted");
     return {
-      applyId: link.applyId,
-      outcome: result.outcome,
-      interrupted: result.interrupted,
-      markerPaths: result.markerPaths,
-      baseGeneration:
-        connection.base.generation +
-        (result.outcome === "replan" || link.kind === "retained-restore" ? 0 : 1),
-    } satisfies OverleafAdopted;
+      adopted: {
+        applyId: link.applyId,
+        outcome: result.outcome,
+        interrupted: result.interrupted,
+        markerPaths: result.markerPaths,
+        baseGeneration:
+          connection.base.generation +
+          (result.outcome === "replan" || link.kind === "retained-restore" ? 0 : 1),
+      } satisfies OverleafAdopted,
+      applied: result,
+    };
   });
 
   /** Recovers a linked apply, under a section of its own or one a bulk change holds. */
@@ -902,7 +928,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           yield* verifyFolders(connection);
           return {
             _tag: "recovered" as const,
-            adopted: yield* runLinked(repo, connection),
+            adopted: (yield* runLinked(repo, connection)).adopted,
           };
         }),
       within ? { within } : undefined,
@@ -1071,15 +1097,30 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     readonly requestId: string;
     readonly review: OverleafReview;
     readonly adopted: OverleafAdopted;
+    readonly applied: WorkspaceApplyResult;
   }) {
-    const { repo, review } = input;
+    const { repo, review, applied } = input;
     const connection = yield* readActive(input.connectionId);
-    // Only a whole apply with nothing left to review is sent. A late writer's bytes in
-    // a copy this apply kept may be newer work than the candidate.
+    const held = new Set(review.binding.heldPaths);
+    // Conflict marks in held files are the one reason for attention that still lets
+    // the rest go out (design 4.2): every unit done, the folder holding exactly the
+    // local target, and nothing else to review.
+    const marksOnly =
+      applied.outcome === "attention" &&
+      applied.unitsDone &&
+      applied.matchesTarget &&
+      applied.retained.every((kept) => !kept.changed) &&
+      applied.markerPaths.every((path) => held.has(path));
+    // Otherwise only a whole apply with nothing left to review is sent. A late writer's
+    // bytes in a copy this apply kept may be newer work than the candidate.
     const blocked =
-      input.adopted.outcome !== "complete" || connection.forcedConflicts.length > 0
+      (applied.outcome !== "complete" && !marksOnly) || connection.forcedConflicts.length > 0
         ? ("attention" as const)
-        : connection.markerPaths.length > 0
+        : // Every file recorded with conflict material is one this review holds back.
+          connection.markers.some(
+              (record) =>
+                !held.has(record.path) || record.overleafPaths.some((path) => !held.has(path)),
+            )
           ? ("markers" as const)
           : connection.stagingPaths.length > 0
             ? ("staging" as const)
@@ -1095,12 +1136,13 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       publication,
     });
     if (blocked !== null) return outcome({ _tag: "blocked", reason: blocked });
-    const { candidateTree, remoteCommit, remoteTree } = review.binding;
-    if (candidateTree === remoteTree) return outcome({ _tag: "none" });
-    // The folder must hold exactly the candidate now, over the whole publication domain
-    // (contract section 5): every path the plan read or wrote, so an explicit deletion
-    // must still be absent. What is sent is built from the repository's objects, never
-    // read from the folder after this.
+    const { publicationTree, remoteCommit, remoteTree } = review.binding;
+    if (publicationTree === remoteTree) return outcome({ _tag: "none" });
+    // Outside the held files, the folder must hold exactly what is sent, over the whole
+    // publication domain (contract section 5): every path the plan read or wrote, so an
+    // explicit deletion must still be absent. Held files are work in progress and are
+    // not compared. What is sent is built from the repository's objects, never read
+    // from the folder after this.
     const plan = review.applyPlan;
     const domain = [
       ...new Set([
@@ -1110,8 +1152,28 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         ...plan.target.keys(),
       ]),
     ];
-    if ((yield* capturedTree(repo, connection, domain)) !== candidateTree)
-      return outcome({ _tag: "not-verified" });
+    const now = yield* capturedTree(repo, connection, domain);
+    const outsideHeld = (tree: string) =>
+      Effect.map(
+        repos.readTree({ repo, tree }),
+        (entries) =>
+          new Map(
+            entries
+              .filter((entry) => !held.has(entry.path))
+              .map((entry) => [entry.path, entry.oid]),
+          ),
+      );
+    if (now === null) return outcome({ _tag: "not-verified" });
+    if (now !== publicationTree) {
+      const folder = yield* outsideHeld(now);
+      const sent = yield* outsideHeld(publicationTree);
+      if (
+        held.size === 0 ||
+        folder.size !== sent.size ||
+        [...folder].some(([path, oid]) => sent.get(path) !== oid)
+      )
+        return outcome({ _tag: "not-verified" });
+    }
     // A program still holding a file this apply replaced may have written into its kept
     // copy since adoption: newer work than the candidate. Each copy is checked again; a
     // change is recorded and stops the send.
@@ -1134,9 +1196,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       });
       return outcome({ _tag: "blocked", reason: "kept-copy-changed" });
     }
+    // The attempt records the publication tree; acceptance makes it the base, where a
+    // held file keeps Overleaf's version at Overleaf's paths, as the apply set it.
     const candidateCommit = yield* repos.commit({
       repo,
-      tree: candidateTree,
+      tree: publicationTree,
       parents: [remoteCommit],
       message: "Sync from Scient",
     });
@@ -1164,7 +1228,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           branch: connection.remote.branch,
           parentCommit: remoteCommit,
           candidateCommit,
-          candidateTree,
+          candidateTree: publicationTree,
           baseGeneration: connection.base.generation,
           outcome: "unknown",
           evidence: null,
@@ -1393,7 +1457,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               // A sync with changes to send records one more attempt, which must fit beside
               // every send still unresolved.
               if (
-                review.binding.candidateTree !== review.binding.remoteTree &&
+                review.binding.publicationTree !== review.binding.remoteTree &&
                 connection.attempts.filter((attempt) =>
                   isOverleafAttemptUnresolved(attempt.outcome),
                 ).length +
@@ -1429,13 +1493,14 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                     ...review.binding.newLocalOnly,
                   ]),
                   priorMarkers: review.binding.unresolvedMarkers,
+                  markers: review.binding.carriedMarkers,
                 },
                 updatedAt: DateTime.formatIso(yield* DateTime.now),
               };
               yield* replaceWithPins(repo, connection, withLink);
               linked = true;
               yield* hook(options, "linked");
-              const adopted = yield* runLinked(repo, withLink, review.applyPlan);
+              const { adopted, applied } = yield* runLinked(repo, withLink, review.applyPlan);
               return {
                 _tag: "applied" as const,
                 adopted,
@@ -1446,6 +1511,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   requestId: input.requestId,
                   review,
                   adopted,
+                  applied,
                 }),
                 verified: { keys: section.keys, epoch: section.epoch },
               };
@@ -1611,9 +1677,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               );
               if (copy === undefined || connection.base.commit === null)
                 return { _tag: "unknown-copy" as const };
-              // Conflict material kept as the main version is tracked again once back.
+              // Conflict material kept as the main version is tracked again once back,
+              // held at the path it returns to.
               const priorMarkers =
                 copy.markers && input.kept === copy.kept ? [copy.relativePath] : [];
+              const markers = priorMarkers.map((path) => ({ path, overleafPaths: [path] }));
               // Room for what the restore keeps, for the path it may bring back into the
               // sync, for the group it may leave and for the conflict material it tracks
               // again, before anything is written.
@@ -1636,7 +1704,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   connectionId: input.connectionId,
                   limit: "conflict-group",
                 });
-              if (unique([...connection.markerPaths, ...priorMarkers]).length > MANAGED_PATH_LIMIT)
+              if (mergeMarkers(connection.markers, markers).length > MANAGED_PATH_LIMIT)
                 return yield* new OverleafRetainedLimitError({
                   connectionId: input.connectionId,
                   limit: "marker-paths",
@@ -1675,6 +1743,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   remoteCommit: connection.base.commit,
                   localOnly: connection.localOnlyPaths,
                   priorMarkers,
+                  markers,
                 },
                 updatedAt: DateTime.formatIso(yield* DateTime.now),
               };
@@ -1688,7 +1757,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               );
               return {
                 _tag: "restored" as const,
-                adopted: yield* runLinked(repo, withLink, {
+                adopted: (yield* runLinked(repo, withLink, {
                   base: captured,
                   remote: new Map([[copy.relativePath, input.keptRevision]]),
                   captured,
@@ -1696,7 +1765,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   renames: [],
                   conflicts: [],
                   markerPaths: [],
-                }),
+                })).adopted,
               };
             }),
           );

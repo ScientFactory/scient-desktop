@@ -388,7 +388,7 @@ describe("OverleafStateStore", () => {
           );
 
           yield* Effect.promise(() =>
-            NodeFSP.writeFile(file, JSON.stringify({ ...document, schemaVersion: 2 })),
+            NodeFSP.writeFile(file, JSON.stringify({ ...document, schemaVersion: 3 })),
           );
           expect(yield* store.readConnection("connection-1")).toEqual({ _tag: "unsupported" });
           const unsupportedBytes = yield* Effect.promise(() => NodeFSP.readFile(file, "utf8"));
@@ -410,6 +410,61 @@ describe("OverleafStateStore", () => {
           expect(yield* store.readConnection("connection-2")).toEqual({ _tag: "corrupt" });
         }),
       ),
+  );
+
+  it.live("reads a version 1 document as file records and writes it back as the current one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* temporaryRoot();
+        const { store } = yield* openStore(root);
+        const document = overleafConnectionFixture();
+        yield* store.createConnection(document);
+        const file = NodePath.join(connectionsDirectory(root), "connection-1.json");
+        // Version 1 recorded conflict material by folder path, a pending apply's too.
+        const { markers: _markers, ...current } = document;
+        const link = {
+          applyId: "apply-1",
+          kind: "sync-apply",
+          operationId: "operation-1",
+          planDigest: "a".repeat(64),
+          baseGeneration: 0,
+          intentTree: "5".repeat(40),
+          remoteCommit: "7".repeat(40),
+          localOnly: [],
+          priorMarkers: ["b.tex"],
+        };
+        const old = {
+          ...current,
+          schemaVersion: 1,
+          markerPaths: ["a.tex", "b.tex"],
+          activeApply: link,
+        };
+        yield* Effect.promise(() => NodeFSP.writeFile(file, JSON.stringify(old)));
+        const read = yield* store.readConnection("connection-1");
+        expect(read).toEqual({
+          _tag: "ready",
+          document: {
+            ...document,
+            markers: [
+              { path: "a.tex", overleafPaths: ["a.tex"] },
+              { path: "b.tex", overleafPaths: ["b.tex"] },
+            ],
+            activeApply: { ...link, markers: [{ path: "b.tex", overleafPaths: ["b.tex"] }] },
+          },
+        });
+        if (read._tag !== "ready") return;
+        yield* store.replaceConnection({ expectedRevision: 1, next: revised(read.document) });
+        const written = yield* Effect.promise(() => NodeFSP.readFile(file, "utf8"));
+        expect(written).toContain('"schemaVersion":2');
+        expect(written).not.toContain("markerPaths");
+
+        // A damaged older document is reported damaged, not as another release's.
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(file, JSON.stringify({ ...old, markerPaths: ["/absolute.tex"] })),
+        );
+        expect(yield* store.readConnection("connection-1")).toEqual({ _tag: "corrupt" });
+      }),
+    ),
   );
 
   it.live("returns the original receipt for a repeated request and refuses a reused ID", () =>

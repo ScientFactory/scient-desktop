@@ -998,7 +998,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         // A later sync finds the material gone and stops tracking it.
         w.setRemote({ "main.tex": "resolved", "other.tex": "O2" });
         expect(yield* w.sync("request-2")).toMatchObject({ _tag: "applied" });
-        expect((yield* w.connection).markerPaths).toEqual([]);
+        expect((yield* w.connection).markers).toEqual([]);
         const copy = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).find(
           (entry) => entry.relativePath === "main.tex",
         )!;
@@ -1012,7 +1012,9 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             currentRevision: copy.currentRevision,
           }),
         ).toMatchObject({ _tag: "restored" });
-        expect((yield* w.connection).markerPaths).toEqual(["main.tex"]);
+        expect((yield* w.connection).markers).toEqual([
+          { path: "main.tex", overleafPaths: ["main.tex"] },
+        ]);
       }),
     ),
   );
@@ -1127,7 +1129,10 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           next: {
             ...current,
             revision: current.revision + 1,
-            markerPaths: Array.from({ length: 2_000 }, (_, n) => `marked-${n}.tex`),
+            markers: Array.from({ length: 2_000 }, (_, n) => ({
+              path: `marked-${n}.tex`,
+              overleafPaths: [`marked-${n}.tex`],
+            })),
             updatedAt: "2026-10-22T12:00:00.000Z",
           },
         });
@@ -1149,7 +1154,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         expect(yield* read(w.folder, "main.tex")).toBe("resolved");
         const after = yield* w.connection;
         expect(after.activeApply).toBeNull();
-        expect(after.markerPaths).toHaveLength(2_000);
+        expect(after.markers).toHaveLength(2_000);
       }),
     ),
   );

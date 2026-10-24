@@ -226,6 +226,7 @@ describe("overleafTransitionViolation", () => {
       remoteCommit: oid("7"),
       localOnly: [],
       priorMarkers: [],
+      markers: [],
     };
     const applying = next(first, { activeApply: link });
     // The apply's result advances the base and clears its link in one replacement.
@@ -282,6 +283,7 @@ describe("overleafTransitionViolation", () => {
       remoteCommit: oid("7"),
       localOnly: [],
       priorMarkers: [],
+      markers: [],
     };
     const applying = next(synced, { activeApply: link });
     expect(overleafTransitionViolation(synced, applying, NOW)).toBeNull();
@@ -328,6 +330,7 @@ describe("overleafTransitionViolation", () => {
         remoteCommit: oid("7"),
         localOnly: [],
         priorMarkers: [],
+        markers: [],
       },
     });
     expect(violation(applying, { retention: freshVault })).toBe("vault-replaced-while-referenced");

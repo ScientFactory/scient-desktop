@@ -127,7 +127,7 @@ const withScenario = <A, E>(
             collisionPaths: options.request ?? [],
             choices: options.choices ?? new Map(),
             interrupted: [],
-            markerPaths: [],
+            markers: [],
             epochs: { checkout: 1, credential: 1 },
             scratch: NodePath.join(root, "scratch"),
             ...options,
@@ -397,7 +397,10 @@ describe("buildOverleafReview", () => {
       ({ review }) =>
         Effect.gen(function* () {
           const built = reviewOf(
-            yield* review({ interrupted: [["half.tex"]], markerPaths: ["main.tex"] }),
+            yield* review({
+              interrupted: [["half.tex"]],
+              markers: [{ path: "main.tex", overleafPaths: ["main.tex"] }],
+            }),
           );
           expect(built.conflicts.map((conflict) => [conflict.paths, conflict.origins])).toEqual([
             [["half.tex"], ["interrupted"]],
@@ -687,7 +690,9 @@ describe("buildOverleafReview", () => {
       ({ review, connection }) =>
         Effect.gen(function* () {
           const plain = reviewOf(yield* review());
-          const recorded = reviewOf(yield* review({ markerPaths: ["main.tex"] }));
+          const recorded = reviewOf(
+            yield* review({ markers: [{ path: "main.tex", overleafPaths: ["main.tex"] }] }),
+          );
           expect(recorded.digest).not.toBe(plain.digest);
           // The same facts with object keys in another order digest the same.
           const reordered = reviewOf(
@@ -703,6 +708,68 @@ describe("buildOverleafReview", () => {
             }),
           );
           expect(reordered.digest).toBe(plain.digest);
+        }),
+    ),
+  );
+
+  it.live("binds both trees and the held files, and sends nothing of a held file", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m", "other.tex": "o" },
+        local: {
+          "main.tex": "<<<<<<< Scient\nx\n=======\ny\n>>>>>>> Overleaf\n",
+          "other.tex": "o2",
+        },
+        remote: { "main.tex": "m", "other.tex": "o" },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          const plain = reviewOf(yield* review());
+          expect(plain.binding.heldPaths).toEqual([]);
+          expect(plain.binding.publicationTree).toBe(plain.binding.candidateTree);
+          expect(plain.outgoing).toEqual([
+            { kind: "modified", path: "main.tex" },
+            { kind: "modified", path: "other.tex" },
+          ]);
+          const held = reviewOf(
+            yield* review({ markers: [{ path: "main.tex", overleafPaths: ["main.tex"] }] }),
+          );
+          expect(held.binding.heldPaths).toEqual(["main.tex"]);
+          expect(held.binding.carriedMarkers).toEqual([
+            { path: "main.tex", overleafPaths: ["main.tex"] },
+          ]);
+          expect(held.binding.publicationTree).not.toBe(held.binding.candidateTree);
+          expect(held.outgoing).toEqual([{ kind: "modified", path: "other.tex" }]);
+          // The folder keeps its marks: the local target is unchanged.
+          expect(held.binding.candidateTree).toBe(plain.binding.candidateTree);
+          expect(held.digest).not.toBe(plain.digest);
+        }),
+    ),
+  );
+
+  it.live("refuses a held file whose Overleaf path the result makes a folder", () =>
+    withScenario(
+      {
+        // The marked file was renamed from fig to chapter.tex while held; fig is now a folder.
+        base: { fig: "F" },
+        local: {
+          "chapter.tex": "<<<<<<< Scient\nx\n=======\ny\n>>>>>>> Overleaf\n",
+          "fig/plot.tex": "P",
+        },
+        remote: { fig: "F" },
+        connection: { managedPaths: ["fig", "chapter.tex"] },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          expect(
+            yield* review({
+              select: ["fig/plot.tex"],
+              markers: [{ path: "chapter.tex", overleafPaths: ["fig"] }],
+            }),
+          ).toEqual({
+            _tag: "refused",
+            refusal: { reason: "held-file-clash", path: "fig", other: "fig/plot.tex" },
+          });
         }),
     ),
   );

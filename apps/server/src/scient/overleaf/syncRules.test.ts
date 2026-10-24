@@ -13,6 +13,8 @@ import {
   firstStaleFile,
   guardedPaths,
   hasConflictMarkers,
+  heldFiles,
+  publicationTree,
   unitOutcome,
 } from "./syncRules.ts";
 
@@ -254,6 +256,107 @@ describe("advanceBase", () => {
         }),
       ),
     ).toEqual({ "a.tex": "original" });
+  });
+});
+
+describe("heldFiles", () => {
+  const held = (input: Partial<Parameters<typeof heldFiles>[0]>) =>
+    heldFiles({
+      recorded: [],
+      fresh: [],
+      local: tree({}),
+      remote: tree({}),
+      target: tree({}),
+      localRenames: [],
+      remoteRenames: [],
+      marked: () => true,
+      ...input,
+    });
+
+  it("holds a file given new marks at its one path", () => {
+    expect(
+      held({ fresh: ["a.tex"], local: tree({ "a.tex": "1" }), target: tree({ "a.tex": "m" }) }),
+    ).toEqual({ paths: ["a.tex"], unresolved: [], carried: [] });
+  });
+
+  it("follows a recorded file renamed in the folder, keeping its Overleaf path", () => {
+    expect(
+      held({
+        recorded: [{ path: "a.tex", overleafPaths: ["a.tex"] }],
+        local: tree({ "b.tex": "m" }),
+        remote: tree({ "a.tex": "1" }),
+        target: tree({ "b.tex": "m" }),
+        localRenames: [{ from: "a.tex", to: "b.tex" }],
+      }),
+    ).toEqual({
+      paths: ["a.tex", "b.tex"],
+      unresolved: ["b.tex"],
+      carried: [{ path: "b.tex", overleafPaths: ["a.tex"] }],
+    });
+  });
+
+  it("follows a recorded file Overleaf renamed to where the result puts it", () => {
+    expect(
+      held({
+        recorded: [{ path: "a.tex", overleafPaths: ["a.tex"] }],
+        local: tree({ "a.tex": "m" }),
+        remote: tree({ "c.tex": "1" }),
+        target: tree({ "c.tex": "m" }),
+        remoteRenames: [{ from: "a.tex", to: "c.tex" }],
+      }),
+    ).toEqual({
+      paths: ["a.tex", "c.tex"],
+      unresolved: ["a.tex"],
+      carried: [{ path: "c.tex", overleafPaths: ["c.tex"] }],
+    });
+  });
+
+  it("finds a recorded file still marked by its record even after an earlier rename", () => {
+    // The folder renamed a.tex to b.tex while marked; Overleaf still has a.tex.
+    expect(
+      held({
+        recorded: [{ path: "b.tex", overleafPaths: ["a.tex"] }],
+        local: tree({ "b.tex": "m" }),
+        remote: tree({ "a.tex": "2" }),
+        target: tree({ "b.tex": "m2" }),
+      }).paths,
+    ).toEqual(["a.tex", "b.tex"]);
+  });
+
+  it("holds nothing for a recorded file whose marks are gone or that was deleted", () => {
+    const record = { path: "a.tex", overleafPaths: ["a.tex"] };
+    expect(
+      held({
+        recorded: [record],
+        local: tree({ "a.tex": "resolved" }),
+        target: tree({ "a.tex": "resolved" }),
+        marked: () => false,
+      }),
+    ).toEqual({ paths: [], unresolved: [], carried: [] });
+    expect(held({ recorded: [record] })).toEqual({ paths: [], unresolved: [], carried: [] });
+  });
+
+  it("keeps no record for a held file the result removes", () => {
+    expect(
+      held({
+        recorded: [{ path: "a.tex", overleafPaths: ["a.tex"] }],
+        local: tree({ "a.tex": "m" }),
+      }),
+    ).toEqual({ paths: ["a.tex"], unresolved: ["a.tex"], carried: [] });
+  });
+});
+
+describe("publicationTree", () => {
+  it("sets every held path to Overleaf's entry, or absent where Overleaf has none", () => {
+    expect(
+      plain(
+        publicationTree({
+          target: tree({ "b.tex": "marked", "other.tex": "mine" }),
+          remote: tree({ "a.tex": "theirs", "other.tex": "old" }),
+          held: ["a.tex", "b.tex"],
+        }),
+      ),
+    ).toEqual({ "a.tex": "theirs", "other.tex": "mine" });
   });
 });
 

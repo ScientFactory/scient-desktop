@@ -346,6 +346,99 @@ export function advanceBase(input: {
   return out;
 }
 
+/** A file whose Scient conflict material is not settled yet, as recorded. */
+interface MarkerRecord {
+  /** Where the file is in the folder: where its marks are looked for. */
+  readonly path: string;
+  /** The file's paths on Overleaf. */
+  readonly overleafPaths: ReadonlyArray<string>;
+}
+
+/**
+ * The files one sync holds back because they have conflict marks: each file is
+ * held whole, every path it has in the base, the folder and on Overleaf, linked
+ * by renames on either side. Held are the files that get new marks (`fresh`) and
+ * the recorded ones whose file still has marks. A recorded file is looked for at
+ * its folder path, or where a rename in the folder took it; one found nowhere is
+ * not held (it was deleted). Without this, a marked file renamed on either side
+ * sent the rename, or its marks, to Overleaf.
+ */
+export function heldFiles(input: {
+  readonly recorded: ReadonlyArray<MarkerRecord>;
+  /** Folder paths where this sync writes new conflict material. */
+  readonly fresh: ReadonlyArray<string>;
+  readonly local: FileTree;
+  readonly remote: FileTree;
+  /** What the folder will hold after this sync. */
+  readonly target: FileTree;
+  /** Renames from the base to the folder, and from the base to Overleaf. */
+  readonly localRenames: ReadonlyArray<Rename>;
+  readonly remoteRenames: ReadonlyArray<Rename>;
+  /** Whether the folder's file at `path` has conflict marks now. */
+  readonly marked: (path: string) => boolean;
+}): {
+  /** Every path of every held file. */
+  readonly paths: ReadonlyArray<string>;
+  /** Recorded files still marked, at their folder paths now. */
+  readonly unresolved: ReadonlyArray<string>;
+  /** Their records once this sync is applied; a file the result no longer holds has none. */
+  readonly carried: ReadonlyArray<MarkerRecord>;
+} {
+  const renames = [...input.localRenames, ...input.remoteRenames];
+  const held = new Set<string>();
+  const unresolved = new Set<string>();
+  const carried = new Map<string, Set<string>>();
+  for (const record of input.recorded) {
+    const known = [record.path, ...record.overleafPaths];
+    const current = input.local.has(record.path)
+      ? record.path
+      : input.localRenames.find(
+          (rename) => known.includes(rename.from) && input.local.has(rename.to),
+        )?.to;
+    if (current === undefined || !input.marked(current)) continue;
+    unresolved.add(current);
+    const identity = closeOverRenames([...known, current], renames);
+    for (const path of identity) held.add(path);
+    // Where the file is after this sync: where it is now, or where Overleaf's rename takes it.
+    const after = input.target.has(current)
+      ? current
+      : input.remoteRenames.find(
+          (rename) => identity.includes(rename.from) && input.target.has(rename.to),
+        )?.to;
+    if (after === undefined) continue;
+    const overleaf = carried.get(after) ?? new Set<string>();
+    for (const path of identity) if (input.remote.has(path)) overleaf.add(path);
+    carried.set(after, overleaf);
+  }
+  for (const path of closeOverRenames(input.fresh, renames)) held.add(path);
+  return {
+    paths: [...held].sort(),
+    unresolved: [...unresolved].sort(),
+    carried: [...carried.keys()]
+      .sort()
+      .map((path) => ({ path, overleafPaths: [...carried.get(path)!].sort() })),
+  };
+}
+
+/**
+ * What is sent while files are held: the result with every held path set to
+ * Overleaf's entry, or absent where Overleaf has none. Overleaf sees neither a
+ * held file's marks nor its renames until the marks are gone.
+ */
+export function publicationTree(input: {
+  readonly target: FileTree;
+  readonly remote: FileTree;
+  readonly held: ReadonlyArray<string>;
+}): Map<string, string> {
+  const out = new Map(input.target);
+  for (const path of input.held) {
+    const oid = input.remote.get(path);
+    if (oid === undefined) out.delete(path);
+    else out.set(path, oid);
+  }
+  return out;
+}
+
 export type EarlierPublish =
   /** Overleaf holds, or held, exactly what was sent. The base becomes what was sent. */
   | "accepted"

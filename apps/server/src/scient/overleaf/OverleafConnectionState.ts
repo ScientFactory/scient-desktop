@@ -6,11 +6,17 @@
  *
  * Ephemeral reviews are deliberately absent: they never survive a restart.
  */
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 
-export const OVERLEAF_CONNECTION_SCHEMA_VERSION = 1;
+/**
+ * Version 2 records conflict material by file identity (`markers`). Version 1
+ * documents, which recorded it by folder path alone, are read and upgraded
+ * (`decodeOverleafConnectionDocument`); a later version is reported unsupported.
+ */
+export const OVERLEAF_CONNECTION_SCHEMA_VERSION = 2;
 /** Prior bases kept reachable for recovery classification. */
 const PRIOR_BASE_LIMIT = 20;
 const LOCAL_SNAPSHOT_LIMIT = 10;
@@ -87,8 +93,28 @@ const LocalSnapshot = Schema.Struct({
 
 export const OverleafApplyKind = Schema.Literals(["sync-apply", "retained-restore"]);
 
+/**
+ * One file holding Scient conflict material that is not settled yet. While it
+ * has marks, every one of its paths keeps Overleaf's version in what is sent:
+ * the file is held back, everything else goes out.
+ */
+const OverleafMarkerRecord = Schema.Struct({
+  /** Where the file is in the folder: where its marks are looked for. */
+  path: ManuscriptPath,
+  /** The file's paths on Overleaf, linked by renames on either side. */
+  overleafPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+});
+export type OverleafMarkerRecord = typeof OverleafMarkerRecord.Type;
+const MarkerRecords = Schema.Array(OverleafMarkerRecord).check(
+  Schema.isMaxLength(MANAGED_PATH_LIMIT),
+  // One record per folder path.
+  Schema.makeFilter(
+    (records) => new Set(records.map((record) => record.path)).size === records.length,
+  ),
+);
+
 /** The connection's pointer to an applier intent that may still need recovery. */
-const ApplyLink = Schema.Struct({
+const applyLinkFields = {
   applyId: OverleafServerId,
   kind: OverleafApplyKind,
   operationId: OverleafServerId,
@@ -101,7 +127,13 @@ const ApplyLink = Schema.Struct({
   remoteCommit: Oid,
   /** The reviewed local-only set after this apply: kept entries less promoted collisions, plus new ones. */
   localOnly: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  /** Folder paths, before the apply, of files whose unsettled conflict material it may keep a copy of. */
   priorMarkers: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+};
+const ApplyLink = Schema.Struct({
+  ...applyLinkFields,
+  /** Recorded files still held after this apply, at their paths after it. */
+  markers: MarkerRecords,
 });
 
 export const OverleafAttemptOutcome = Schema.Literals([
@@ -216,7 +248,7 @@ function sameJson(left: unknown, right: unknown): boolean {
   );
 }
 
-export const OverleafConnectionDocument = Schema.Struct({
+const documentFields = {
   schemaVersion: Schema.Literal(OVERLEAF_CONNECTION_SCHEMA_VERSION),
   connectionId: OverleafServerId,
   revision: Positive,
@@ -251,7 +283,7 @@ export const OverleafConnectionDocument = Schema.Struct({
     Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
   ).check(Schema.isMaxLength(FORCED_CONFLICT_LIMIT)),
   /** Files where Scient wrote conflict material that may still be unresolved. */
-  markerPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  markers: MarkerRecords,
   /** The applier's structural source copies in the folder; never captured, never deleted automatically. */
   stagingPaths: Schema.Array(Schema.String.check(Schema.isMaxLength(4_096))).check(
     Schema.isMaxLength(MANAGED_PATH_LIMIT),
@@ -266,7 +298,8 @@ export const OverleafConnectionDocument = Schema.Struct({
   attempts: Schema.Array(PublicationAttempt).check(Schema.isMaxLength(ATTEMPT_LIMIT)),
   createdAt: IsoTime,
   updatedAt: IsoTime,
-}).check(
+};
+export const OverleafConnectionDocument = Schema.Struct(documentFields).check(
   // Relations within one document; a document violating them is never written or trusted.
   Schema.makeFilter((document) => {
     const numbers = new Set(document.attempts.map((attempt) => attempt.attemptNumber));
@@ -286,6 +319,47 @@ export const OverleafConnectionDocument = Schema.Struct({
   }),
 );
 export type OverleafConnectionDocument = typeof OverleafConnectionDocument.Type;
+
+/** Version 1: conflict material recorded by folder path alone. */
+const { markers: _markers, ...version1Fields } = documentFields;
+const OverleafConnectionDocumentV1 = Schema.Struct({
+  ...version1Fields,
+  schemaVersion: Schema.Literal(1),
+  markerPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  activeApply: Schema.NullOr(Schema.Struct(applyLinkFields)),
+});
+const decodeCurrent = Schema.decodeUnknownExit(Schema.fromJsonString(OverleafConnectionDocument));
+const decodeVersion1 = Schema.decodeUnknownExit(
+  Schema.fromJsonString(OverleafConnectionDocumentV1),
+);
+const validateDocument = Schema.decodeUnknownExit(OverleafConnectionDocument);
+
+/**
+ * Reads a stored document: the current version, or a version 1 document upgraded.
+ * Version 1 tracked no renames, so each recorded path is its file's only path, in
+ * the folder and on Overleaf; a pending apply's recorded paths become its records.
+ * The upgrade is in memory; the next replacement writes the current version.
+ * Null when the text is neither, or the upgrade breaks a document rule.
+ */
+export function decodeOverleafConnectionDocument(text: string): OverleafConnectionDocument | null {
+  const current = decodeCurrent(text);
+  if (Exit.isSuccess(current)) return current.value;
+  const old = decodeVersion1(text);
+  if (Exit.isFailure(old)) return null;
+  const { markerPaths, activeApply, ...rest } = old.value;
+  const recordsOf = (paths: ReadonlyArray<string>) =>
+    [...new Set(paths)].map((path) => ({ path, overleafPaths: [path] }));
+  const upgraded = validateDocument({
+    ...rest,
+    schemaVersion: OVERLEAF_CONNECTION_SCHEMA_VERSION,
+    markers: recordsOf(markerPaths),
+    activeApply:
+      activeApply === null
+        ? null
+        : { ...activeApply, markers: recordsOf(activeApply.priorMarkers) },
+  });
+  return Exit.isSuccess(upgraded) ? upgraded.value : null;
+}
 
 /** A duplicate request returns this record; it never starts another worker. */
 export const OverleafOperationReceipt = Schema.Struct({

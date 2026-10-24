@@ -174,7 +174,7 @@ export function overleafReviewStaleness(
     !same(binding.selectedAdditions, fresh.selectedAdditions) ||
     !same(binding.newLocalOnly, fresh.newLocalOnly) ||
     !same(binding.collisionPaths, fresh.collisionPaths) ||
-    !same(binding.recordedMarkerPaths, fresh.recordedMarkerPaths) ||
+    !same(binding.recordedMarkers, fresh.recordedMarkers) ||
     !same(binding.unresolvedMarkers, fresh.unresolvedMarkers)
   )
     return "inventory";

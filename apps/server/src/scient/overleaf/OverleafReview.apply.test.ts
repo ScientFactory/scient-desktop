@@ -116,7 +116,7 @@ const review = Effect.fnUntraced(function* (
     collisionPaths: [],
     choices: input.choices ?? new Map(),
     interrupted: [],
-    markerPaths: [],
+    markers: [],
     epochs: { checkout: 1, credential: 1 },
     scratch: NodePath.join(input.root, "scratch"),
   }).pipe(Effect.provideService(OverleafRepository.OverleafRepository, repos));
