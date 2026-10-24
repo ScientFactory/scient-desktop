@@ -179,9 +179,9 @@ export interface OverleafInventory {
   readonly selectedAdditions: ReadonlyArray<OverleafAddition>;
   /**
    * Additions left out on purpose, to keep only on this computer: sent by
-   * default yet not selected, or named in the default selection's `except`
-   * whatever the rule says of them now (a deselected file that has grown too
-   * large stays deliberately kept).
+   * default yet not selected, or named in the default selection's `except` or
+   * in `keepOnlyHere`, whatever the rule says of them now (a deselected file
+   * that has grown too large stays deliberately kept).
    */
   readonly deselected: ReadonlyArray<string>;
   /** Local-only files read in full to be sent. */
@@ -248,6 +248,18 @@ export interface OverleafInventoryInput {
   };
   /** Local-only files to send: read in full like selected additions. */
   readonly sendLocalOnly: ReadonlyArray<string>;
+  /**
+   * Paths to send whatever the rule says, judged on this capture: a new file is
+   * selected (one too large is refused), a local-only file is sent, and a file
+   * already managed needs nothing more. Lenient like the other selections.
+   */
+  readonly send?: ReadonlyArray<string>;
+  /**
+   * New files to keep only on this computer on purpose, judged on this capture
+   * and whatever the rule says of them. Wins over every selection. A path that
+   * is not a new file here is ignored; a local-only one stays local-only.
+   */
+  readonly keepOnlyHere?: ReadonlyArray<string>;
   /** The folder is the checkout's top, where Scient keeps its own project files. */
   readonly atCheckoutTop: boolean;
   /**
@@ -464,7 +476,9 @@ export async function captureOverleafInventory(
     const localOnly = new Set(input.localOnlyPaths);
     const requested = new Set(input.requestedPaths);
     const lenient = input.defaultSelection?.lenient ?? false;
-    const except = new Set(input.defaultSelection?.except ?? []);
+    const keep = new Set(input.keepOnlyHere ?? []);
+    /** Additions left out on purpose: never selected by default, and remembered. */
+    const deliberate = new Set([...(input.defaultSelection?.except ?? []), ...keep]);
     const staging = new Set(input.stagingPaths);
 
     const files: Array<{ path: string; size: number; hidden: boolean }> = [];
@@ -579,8 +593,20 @@ export async function captureOverleafInventory(
       if (refusal !== null && !lenient) throw new Refused(refusal);
       return refusal === null;
     };
-    const selected = new Set(input.selectedAdditions.filter((path) => selectable(path, false)));
-    const sent = new Set(input.sendLocalOnly.filter((path) => selectable(path, true)));
+    // Keeping a file only here wins over every request to send it.
+    const selected = new Set(
+      input.selectedAdditions.filter((path) => !keep.has(path) && selectable(path, false)),
+    );
+    const sent = new Set(
+      input.sendLocalOnly.filter((path) => !keep.has(path) && selectable(path, true)),
+    );
+    for (const path of input.send ?? []) {
+      // Already managed, or read in full as a collision: sent with the sync as it is.
+      if (keep.has(path) || managed.has(path) || requested.has(path)) continue;
+      if (localOnly.has(path)) {
+        if (selectable(path, true)) sent.add(path);
+      } else if (selectable(path, false)) selected.add(path);
+    }
 
     const captured = new Map<string, OverleafCapturedFile>();
     const additions: OverleafAddition[] = [];
@@ -631,7 +657,7 @@ export async function captureOverleafInventory(
       if (
         input.defaultSelection !== undefined &&
         listed.checkedByDefault &&
-        !except.has(file.path)
+        !deliberate.has(file.path)
       ) {
         await capture(file.path);
         selectedAdditions.push(listed);
@@ -652,7 +678,7 @@ export async function captureOverleafInventory(
           byPath(left.path, right.path),
         ),
         deselected: additions
-          .filter((entry) => entry.checkedByDefault || except.has(entry.path))
+          .filter((entry) => entry.checkedByDefault || deliberate.has(entry.path))
           .map((entry) => entry.path)
           .sort(byPath),
         sentLocalOnly: [...sent].sort(byPath),

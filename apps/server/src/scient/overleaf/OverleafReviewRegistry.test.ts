@@ -22,6 +22,8 @@ const binding: OverleafReviewBinding = {
   selectedAdditions: [],
   newLocalOnly: [],
   sentLocalOnly: [],
+  keepOnlyHere: [],
+  send: [],
   collisionPaths: [],
   choices: [],
   interrupted: [],

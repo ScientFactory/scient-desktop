@@ -101,6 +101,13 @@ export interface OverleafReviewBinding {
   readonly newLocalOnly: ReadonlyArray<string>;
   /** Local-only files this review sends; they leave the local-only list and become managed. */
   readonly sentLocalOnly: ReadonlyArray<string>;
+  /**
+   * The requests to keep files only here and to send files, as asked. A
+   * replacement review applies them again to its own capture, so a file that
+   * comes and goes, or changes size, keeps the decision made for it.
+   */
+  readonly keepOnlyHere: ReadonlyArray<string>;
+  readonly send: ReadonlyArray<string>;
   /** Never-synchronized local files captured because Overleaf has content at their place. */
   readonly collisionPaths: ReadonlyArray<string>;
   readonly choices: ReadonlyArray<readonly [string, ConflictChoice]>;
@@ -197,6 +204,11 @@ export interface OverleafReviewInput {
   readonly remote: { readonly commit: string; readonly tree: string };
   /** Paths the inventory read in full because of an earlier `needs-capture`. */
   readonly collisionPaths: ReadonlyArray<string>;
+  /** The `keepOnlyHere` and `send` requests the inventory applied, recorded in the binding. */
+  readonly requests?: {
+    readonly keepOnlyHere: ReadonlyArray<string>;
+    readonly send: ReadonlyArray<string>;
+  };
   /** Choices by conflict key. Keys of groups that no longer exist are ignored. */
   readonly choices: ReadonlyMap<string, ConflictChoice>;
   /** File identities an earlier apply left interrupted: forced conflicts. */
@@ -712,6 +724,8 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     // Deselected default additions are remembered as local-only once the review is applied.
     newLocalOnly: sorted(newLocalOnly),
     sentLocalOnly: sorted(sent),
+    keepOnlyHere: sorted(new Set(input.requests?.keepOnlyHere ?? [])),
+    send: sorted(new Set(input.requests?.send ?? [])),
     collisionPaths: sorted(requested),
     choices: conflicts.flatMap((conflict) =>
       conflict.chosen === null ? [] : [[conflict.key, conflict.chosen] as const],

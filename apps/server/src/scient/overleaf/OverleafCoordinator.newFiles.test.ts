@@ -237,6 +237,117 @@ describe.skipIf(!canApply)("OverleafCoordinator, new files", () => {
     ),
   );
 
+  it.live("keeps a file asked to stay here through a disappearance and return", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ synced: { "main.tex": "M" }, remote: { "main.tex": "M" } });
+        const kept = NodePath.join(w.folder, "k.tex");
+        yield* write(w.folder, { "k.tex": "mine" });
+        const review = yield* prepared(w, {
+          keepOnlyHere: ["k.tex"],
+          collisionPaths: [],
+          choices: new Map(),
+        });
+        expect(review.binding.newLocalOnly).toEqual(["k.tex"]);
+        yield* Effect.promise(() => NodeFSP.rm(kept));
+        const gone = yield* confirmed(w, review);
+        if (gone._tag !== "stale") return yield* Effect.die(gone);
+        expect(gone.review.binding.newLocalOnly).toEqual([]);
+        expect(gone.review.binding.keepOnlyHere).toEqual(["k.tex"]);
+        // Back before the replacement is confirmed: still the file asked to stay here.
+        yield* Effect.promise(() => NodeFSP.writeFile(kept, "mine again"));
+        const back = yield* confirmed(w, gone.review, "request-2");
+        if (back._tag !== "stale") return yield* Effect.die(back);
+        expect(back.review.binding.selectedAdditions).toEqual([]);
+        expect(back.review.binding.newLocalOnly).toEqual(["k.tex"]);
+        expect(yield* confirmed(w, back.review, "request-3")).toMatchObject({ _tag: "applied" });
+        expect((yield* w.connection).localOnlyPaths).toEqual(["k.tex"]);
+      }),
+    ),
+  );
+
+  it.live("keeps a file asked to stay here that the rule skips, after it shrinks", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ synced: { "main.tex": "M" }, remote: { "main.tex": "M" } });
+        const big = NodePath.join(w.folder, "data.bin");
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(big, "");
+          await NodeFSP.truncate(big, 50_000_001);
+        });
+        const review = yield* prepared(w, {
+          keepOnlyHere: ["data.bin"],
+          collisionPaths: [],
+          choices: new Map(),
+        });
+        expect(review.binding.newLocalOnly).toEqual(["data.bin"]);
+        yield* Effect.promise(() => NodeFSP.writeFile(big, "small"));
+        expect(yield* confirmed(w, review)).toMatchObject({ _tag: "applied" });
+        expect((yield* w.connection).localOnlyPaths).toEqual(["data.bin"]);
+        expect((yield* prepared(w)).upToDate).toBe(true);
+      }),
+    ),
+  );
+
+  it.live(
+    "carries requests to keep and send through a rebuild; new files follow the defaults",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({ synced: { "main.tex": "M" }, remote: { "main.tex": "M" } });
+          yield* write(w.folder, { "k.tex": "K", ".env": "E", "fig.tex": "F" });
+          const review = yield* prepared(w, {
+            keepOnlyHere: ["k.tex"],
+            send: [".env"],
+            collisionPaths: [],
+            choices: new Map(),
+          });
+          expect(review.binding.selectedAdditions).toEqual([".env", "fig.tex"]);
+          yield* write(w.folder, { "late.tex": "L" });
+          const stale = yield* confirmed(w, review);
+          if (stale._tag !== "stale") return yield* Effect.die(stale);
+          expect(stale.review.binding).toMatchObject({
+            selectedAdditions: [".env", "fig.tex", "late.tex"],
+            newLocalOnly: ["k.tex"],
+            keepOnlyHere: ["k.tex"],
+            send: [".env"],
+          });
+          expect(yield* confirmed(w, stale.review, "request-2")).toMatchObject({
+            _tag: "applied",
+          });
+          const after = yield* w.connection;
+          expect(after.localOnlyPaths).toEqual(["k.tex"]);
+          expect([...after.managedPaths].sort()).toEqual([
+            ".env",
+            "fig.tex",
+            "late.tex",
+            "main.tex",
+          ]);
+        }),
+      ),
+  );
+
+  it.live("sends a rule-skipped file on request, and a repeated request is satisfied", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "M" },
+          remote: { "main.tex": "M" },
+        });
+        yield* write(w.folder, { ".latexmkrc": "rc" });
+        const selections = { send: [".latexmkrc"], collisionPaths: [], choices: new Map() };
+        const review = yield* prepared(w, selections);
+        expect(review.binding.selectedAdditions).toEqual([".latexmkrc"]);
+        expect(yield* confirmed(w, review)).toMatchObject({ publication: { _tag: "accepted" } });
+        expect((yield* w.overleafNow).contents).toEqual({ "main.tex": "M", ".latexmkrc": "rc" });
+        // A retry after it was applied: already synced, nothing more to do.
+        const again = yield* prepared(w, selections);
+        expect(again.upToDate).toBe(true);
+      }),
+    ),
+  );
+
   it.live("never reads or sends a new file over Overleaf's limit, and refuses selecting it", () =>
     run(
       Effect.gen(function* () {

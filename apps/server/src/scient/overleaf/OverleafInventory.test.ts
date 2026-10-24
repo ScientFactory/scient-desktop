@@ -378,6 +378,55 @@ describe("captureOverleafInventory", () => {
     expect([...rebuilt.captured.keys()]).toEqual(["notes.tex"]);
   });
 
+  it("sends on request whatever the rule says, and keeps on request whatever it says", async () => {
+    const root = await folder({
+      "main.tex": "m",
+      ".env": "e",
+      "main.aux": "aux",
+      "fig.tex": "f",
+      "private.txt": "p",
+      "big.bin": "0123456789",
+    });
+    const base = {
+      limits: { fileBytes: 5 },
+      managedPaths: ["main.tex"],
+      localOnlyPaths: ["private.txt"],
+      defaultSelection: { except: [], lenient: false },
+    };
+    const inventory = await captured(root, {
+      ...base,
+      // main.tex is already managed: nothing more to do.
+      send: [".env", "private.txt", "main.tex", "fig.tex"],
+      // Kept wins over send; a path that is not a new file is ignored.
+      keepOnlyHere: ["fig.tex", "main.aux", "absent.txt"],
+    });
+    expect([...inventory.captured.keys()].sort()).toEqual([".env", "main.tex", "private.txt"]);
+    expect(inventory.selectedAdditions.map((addition) => addition.path)).toEqual([".env"]);
+    expect(inventory.sentLocalOnly).toEqual(["private.txt"]);
+    // Rule-skipped main.aux is remembered because it was asked for; big.bin is not.
+    expect(inventory.deselected).toEqual(["fig.tex", "main.aux"]);
+    // Keeping a managed file here is not a new-file decision: it is still synced.
+    expect(
+      (await captured(root, { ...base, keepOnlyHere: ["main.tex"] })).captured.has("main.tex"),
+    ).toBe(true);
+    expect(await refusal(root, { ...base, send: ["big.bin"] })).toEqual({
+      reason: "file-too-large",
+      path: "big.bin",
+    });
+    expect(await refusal(root, { ...base, send: ["absent.txt"] })).toEqual({
+      reason: "not-selectable",
+      path: "absent.txt",
+    });
+    // With explicit selections too, keeping wins and is remembered.
+    const explicit = await captured(root, {
+      selectedAdditions: ["fig.tex"],
+      keepOnlyHere: ["fig.tex", ".env"],
+    });
+    expect(explicit.selectedAdditions).toEqual([]);
+    expect(explicit.deselected).toContain(".env");
+    expect(explicit.deselected).toContain("fig.tex");
+  });
+
   it("leaves an LFS pointer out of the default selection instead of refusing", async () => {
     const pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 1\n";
     const root = await folder({ "data.bin": pointer, "main.tex": "m" });

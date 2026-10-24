@@ -273,6 +273,15 @@ settles earlier sends, and lists and restores kept copies.
   when the review is applied and become managed. A path not on the list is
   `not-local-only`, one not in the folder `not-selectable`. A file Overleaf
   already has is managed and synced whatever its name.
+- **Per-file requests.** `keepOnlyHere` and `send` are judged on the review's
+  own capture, with the defaults applying to every other file. `keepOnlyHere`
+  keeps a new file only on this computer and remembers it, whatever the rule
+  says of it; it wins over every request to send, ignores a path that is not a
+  new file, and leaves a local-only one local-only. `send` selects a skipped
+  new file (refusing one too large), sends a local-only one, and is already
+  satisfied for a managed one, so a retry after the apply succeeds. Both are
+  recorded in the binding and applied again by every replacement review, so a
+  kept file that disappears and returns, or shrinks, stays kept.
 - **Confirm.** Inside the section, it checks the folder and retention
   identities, captures the folder again and rebuilds the review with the same
   choices, the same selected and sent files, the same deliberate deselections,

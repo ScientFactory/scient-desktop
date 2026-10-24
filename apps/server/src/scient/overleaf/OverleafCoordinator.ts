@@ -171,6 +171,20 @@ export interface OverleafSelections {
   readonly selectedAdditions?: ReadonlyArray<string>;
   /** Files kept only on this computer to send now; they become managed once applied. */
   readonly sendLocalOnly?: ReadonlyArray<string>;
+  /**
+   * Files to send whatever the default rule says, judged on the review's own
+   * capture: a skipped new file is selected (one too large is refused), a file
+   * kept only here is sent, and one already synced needs nothing more, so a
+   * retry after it was applied succeeds. Every other file follows the defaults.
+   */
+  readonly send?: ReadonlyArray<string>;
+  /**
+   * New files to keep only on this computer, whatever the rule says of them,
+   * judged on the review's own capture and remembered once applied. Wins over
+   * every request to send. A path that is not a new file is ignored, and one
+   * already kept here stays kept. Every other file follows the defaults.
+   */
+  readonly keepOnlyHere?: ReadonlyArray<string>;
   /** Local paths read in full because Overleaf has content at their place. */
   readonly collisionPaths: ReadonlyArray<string>;
   readonly choices: ReadonlyMap<string, ConflictChoice>;
@@ -600,16 +614,25 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     readonly checkoutEpoch: number;
   }) {
     const { connection, repo, replacing } = input;
+    const requests =
+      replacing !== undefined
+        ? { keepOnlyHere: replacing.keepOnlyHere, send: replacing.send }
+        : {
+            keepOnlyHere: input.selections.keepOnlyHere ?? [],
+            send: input.selections.send ?? [],
+          };
     const selection =
       replacing !== undefined
         ? {
             selectedAdditions: replacing.selectedAdditions,
             sendLocalOnly: replacing.sentLocalOnly,
+            ...requests,
             defaultSelection: { except: replacing.newLocalOnly, lenient: true },
           }
         : {
             selectedAdditions: input.selections.selectedAdditions ?? [],
             sendLocalOnly: input.selections.sendLocalOnly ?? [],
+            ...requests,
             ...(input.selections.selectedAdditions === undefined
               ? { defaultSelection: { except: [], lenient: false } }
               : {}),
@@ -644,6 +667,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         inventory: captured.inventory,
         remote: input.remote,
         collisionPaths: requested,
+        requests,
         choices: input.selections.choices,
         interrupted: connection.forcedConflicts,
         markerPaths: connection.markerPaths,
