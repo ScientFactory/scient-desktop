@@ -13,6 +13,35 @@ const rectSnapshot = ({ x, y, width, height, top, right, bottom, left }: DOMRect
   left,
 });
 
+// Half of Chrome's 1/64px layout unit. Adding a measured translation to a measured
+// position can differ from the browser's own measurement by float rounding alone,
+// while any real misplacement is at least one layout unit.
+const POSITION_TOLERANCE = 1 / 128;
+
+/** Sizes are exact; positions must match after the common translation. */
+function expectTranslated(
+  published: ReadonlyArray<ReturnType<typeof rectSnapshot>>,
+  current: ReadonlyArray<ReturnType<typeof rectSnapshot>>,
+  dx: number,
+  dy: number,
+) {
+  expect(published.map(({ width, height }) => ({ width, height }))).toEqual(
+    current.map(({ width, height }) => ({ width, height })),
+  );
+  const offsets = published.flatMap((rect, index) => {
+    const now = current[index]!;
+    return [
+      rect.x + dx - now.x,
+      rect.left + dx - now.left,
+      rect.right + dx - now.right,
+      rect.y + dy - now.y,
+      rect.top + dy - now.top,
+      rect.bottom + dy - now.bottom,
+    ];
+  });
+  expect(offsets.filter((offset) => Math.abs(offset) > POSITION_TOLERANCE)).toEqual([]);
+}
+
 /** A receipt from the selection owner's completed native geometry publication. */
 export function observeLatexSelectionPresentation(root: HTMLElement) {
   const capture = () => {
@@ -65,12 +94,8 @@ export function observeLatexSelectionPresentation(root: HTMLElement) {
         expect(state).toEqual(currentState);
         const dx = before && after ? after.x - before.x : 0;
         const dy = before && after ? after.y - before.y : 0;
-        const translated = (rects: typeof scopes) =>
-          rects.map((rect) =>
-            rectSnapshot(new DOMRect(rect.x + dx, rect.y + dy, rect.width, rect.height)),
-          );
-        expect(translated(scopes)).toEqual(currentScopes);
-        expect(translated(selection)).toEqual(currentSelection);
+        expectTranslated(scopes, currentScopes, dx, dy);
+        expectTranslated(selection, currentSelection, dx, dy);
       });
     },
     [Symbol.dispose]() {
