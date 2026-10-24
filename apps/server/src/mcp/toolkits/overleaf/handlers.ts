@@ -592,7 +592,8 @@ export const overleafSyncForInvocation = Effect.fn("ScientOverleafToolkit.sync")
       }),
   );
   const result = syncView(outcome);
-  // Choices answer conflicts as they stood; when Overleaf moved, they were not applied.
+  // Choices answer the review they were made for. When Overleaf moved, the new review
+  // needs new answers; an earlier attempt of this sync may already have applied them.
   const askedAgain =
     result._tag === "needs-decision" &&
     (input.choices?.length ?? 0) > 0 &&
@@ -604,7 +605,7 @@ export const overleafSyncForInvocation = Effect.fn("ScientOverleafToolkit.sync")
       link,
       askedAgain
         ? [
-            "Overleaf changed since the review your choices answered, so they were not applied. Decide again for the conflicts below.",
+            "Overleaf changed after the review your choices answered, so they don't answer this new review (an earlier attempt of this sync may already have applied them to the folder). Decide again for the conflicts below.",
             ...lines,
           ]
         : lines,

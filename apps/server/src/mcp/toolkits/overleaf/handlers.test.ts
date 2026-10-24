@@ -390,7 +390,7 @@ describe("Overleaf tool handlers", () => {
     }),
   );
 
-  it.effect("says when Overleaf moved under the choices, so they were not applied", () =>
+  it.effect("says when Overleaf moved under the choices, so they don't answer the new review", () =>
     Effect.gen(function* () {
       const review = {
         reviewId: "r",
@@ -422,7 +422,11 @@ describe("Overleaf tool handlers", () => {
         choices: [{ key: "k1", choice: "mine" }],
         reviewedRemote: "a".repeat(40),
       }).pipe(provide(overleaf));
-      expect(moved.lines[0]).toContain("Overleaf changed since the review your choices answered");
+      expect(moved.lines[0]).toContain(
+        "Overleaf changed after the review your choices answered, so they don't answer this new review",
+      );
+      // An earlier attempt may already have applied them: never say they weren't.
+      expect(moved.lines.join("\n")).not.toContain("not applied");
       expect(moved.lines).toContain(`- key k2: main.tex; allowed: mine, theirs`);
       const same = yield* overleafSyncForInvocation({
         connectionId: "c-1",

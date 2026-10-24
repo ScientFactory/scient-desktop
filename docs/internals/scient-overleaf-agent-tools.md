@@ -72,9 +72,11 @@ earlier receipt instead of running again; a retried tool call is a new request.
   files kept only here, and new files over 50 MB, which stay here.
 - **Choices and `reviewedRemote`.** A result that lists conflicts gives the
   review's `remoteTree`; the agent passes it back as `reviewedRemote` with its
-  choices. If Overleaf moved since, the service applies nothing and returns a
-  fresh review that needs a decision; the tool's first line then says the
-  choices were not applied.
+  choices. If Overleaf moved since, the result is a fresh review that needs a
+  decision; the tool's first line says the choices don't answer this new review.
+  It never says they were not applied: when the first attempt applied them and
+  Overleaf changed while sending, the retry stops at the new review with the
+  choices already in the folder.
 - **Cancel** asks the link's running sync (in this server) to stop at its next
   stage boundary; an apply or send in progress finishes.
 - **Incoming wording.** Overleaf's changes are said to have come in only when the
