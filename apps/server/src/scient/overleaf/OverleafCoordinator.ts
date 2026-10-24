@@ -813,7 +813,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
    * built on, and the folder, captured exactly as the review captured it, holds the
    * same files with the same bytes (and the same new, local-only, skipped and
    * missing ones). The review is a function of those alone, so then it stands as
-   * it is; otherwise it is built again.
+   * it is; otherwise it is built again. The record and both epochs are read again
+   * after the capture, as a build reads them after its own: one renewed while the
+   * folder was read makes the review stale, as a build would.
    */
   const unchangedSince = Effect.fn("OverleafCoordinator.unchangedSince")(function* (input: {
     readonly review: OverleafReview;
@@ -823,17 +825,23 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   }) {
     const { binding } = input.review;
     const capture = capturesOf.get(input.review);
+    const sameRecordAndEpochs = (connection: OverleafConnectionDocument, checkoutEpoch: number) =>
+      connection.revision === binding.connectionRevision &&
+      checkoutEpoch === binding.checkoutEpoch &&
+      credentialEpoch() === binding.credentialEpoch;
     if (
       capture === undefined ||
-      input.connection.revision !== binding.connectionRevision ||
-      input.checkoutEpoch !== binding.checkoutEpoch ||
-      credentialEpoch() !== binding.credentialEpoch ||
+      !sameRecordAndEpochs(input.connection, input.checkoutEpoch) ||
       input.remote.commit !== binding.remoteCommit ||
       input.remote.tree !== binding.remoteTree
     )
       return false;
     const again = yield* Effect.promise(() => captureOverleafInventory(capture.input));
-    return again._tag === "captured" && overleafInventoryDigest(again.inventory) === capture.digest;
+    if (again._tag !== "captured" || overleafInventoryDigest(again.inventory) !== capture.digest)
+      return false;
+    const connection = yield* readActive(input.connection.connectionId);
+    const checkout = yield* barrier.current(folderOf(connection));
+    return sameRecordAndEpochs(connection, checkout.epoch);
   });
 
   /** Captures the folder and builds the review, reading requested collisions in full. */
