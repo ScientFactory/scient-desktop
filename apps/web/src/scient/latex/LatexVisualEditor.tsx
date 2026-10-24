@@ -361,6 +361,7 @@ import { pagedSheetAt, pagedSheetTop } from "./latexPagedSheets";
 import { readLatexGraphicsPhysicalSize } from "./latexGraphicsImage";
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { checkpointVisualDraft, flushVisualDraft, readVisualDraftForSource } from "./visualDrafts";
+import type { LatexInputState } from "./latexDocumentInputs";
 
 import {
   applyLatexVisualDocumentChange,
@@ -5776,6 +5777,13 @@ export interface LatexVisualEditorProps {
   readonly cwd?: string | undefined;
   readonly relativePath?: string | undefined;
   readonly registerFinishEditing?: (finish: (() => boolean) | null) => void;
+  /** Background saving: commit or inspect pending input without moving focus. */
+  readonly registerBackgroundCommit?: (input: LatexBackgroundCommit | null) => void;
+}
+
+export interface LatexBackgroundCommit {
+  readonly inspect: () => LatexInputState;
+  readonly commit: () => LatexInputState;
 }
 
 /** Projects in this thread when no worker is available; null when the source cannot be projected. */
@@ -7880,6 +7888,35 @@ function LatexVisualEditorReady(
     });
     return () => registerFinishEditing?.(null);
   }, [editor, registerFinishEditing, activeMath]);
+
+  const registerBackgroundCommit = props.registerBackgroundCommit;
+  useLayoutEffect(() => {
+    const composing = () => {
+      if (editor?.view.composing) return true;
+      const scope = editor?.view.dom.closest(".scient-latex-visual-workspace") ?? editor?.view.dom;
+      return [...composingFields.current].some(
+        (field) => field instanceof globalThis.Node && scope?.contains(field) === true,
+      );
+    };
+    const state = (): LatexInputState =>
+      composing() ? "composing" : pendingFields.current.size > 0 ? "unconverted" : "clean";
+    registerBackgroundCommit?.({
+      inspect: state,
+      commit: () => {
+        if (composing()) return "composing";
+        // The publications each field and the typing task make on their own
+        // when idle: nothing is blurred, dismissed or closed.
+        editor?.view.dom
+          .querySelectorAll("[data-table-cell]")
+          .forEach((field) => field.dispatchEvent(new Event("scient-latex-flush-field")));
+        activeMath.get()?.flush();
+        flushTypingRef.current();
+        flushSourceEditRef.current();
+        return state();
+      },
+    });
+    return () => registerBackgroundCommit?.(null);
+  }, [editor, registerBackgroundCommit, activeMath]);
 
   const onEditingChange = props.onEditingChange;
   useEffect(() => () => onEditingChange(false), [onEditingChange]);
