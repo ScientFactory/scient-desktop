@@ -81,7 +81,7 @@ function shouldUseSidebarUpdateReleaseNotesPopover(
   );
 }
 
-export function shouldShowSidebarUpdateRestartIcon(state: DesktopUpdateState | null): boolean {
+function shouldShowSidebarUpdateRestartIcon(state: DesktopUpdateState | null): boolean {
   return state?.status === "error" && state.errorContext === "install";
 }
 
