@@ -294,7 +294,13 @@ export type OverleafUndoResult =
   /** Only a send Overleaf accepted, still recorded, has something known to undo. */
   | {
       readonly _tag: "not-eligible";
-      readonly reason: "not-recorded" | "unresolved" | "not-sent" | "out-of-date";
+      readonly reason:
+        | "not-recorded"
+        | "unresolved"
+        | "not-sent"
+        | "out-of-date"
+        /** Scient no longer holds what Overleaf had before that send, or what it sent. */
+        | "history-unavailable";
     }
   /** The folder could not be captured as a sync captures it; nothing was written. */
   | { readonly _tag: "refused"; readonly refusal: OverleafInventoryRefusal }
@@ -697,7 +703,13 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     }
   });
 
-  /** Writes the refs `next` needs, then replaces the document; refs it no longer needs go after. */
+  /**
+   * Writes the refs `next` needs, then replaces the document; refs it no longer needs
+   * go after. What the repository holds decides, not the previous document's list: a
+   * required ref found missing (one a record from before it was required never got)
+   * is written again. Only while its object is still there, so an object already gone
+   * never blocks the replacement; new refs name objects just written and must succeed.
+   */
   const replaceWithPins = Effect.fn("OverleafCoordinator.replaceWithPins")(function* (
     repo: string,
     previous: OverleafConnectionDocument,
@@ -705,8 +717,13 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   ) {
     const before = new Map(overleafRequiredPins(previous).map((pin) => [pin.name, pin.oid]));
     const after = overleafRequiredPins(next);
-    for (const pin of after)
-      if (before.get(pin.name) !== pin.oid) yield* repos.setRef({ repo, ...pin });
+    const held = yield* repos.listRefs({ repo });
+    for (const pin of after) {
+      if (held.get(pin.name) === pin.oid) continue;
+      if (before.get(pin.name) === pin.oid)
+        yield* repos.setRef({ repo, ...pin }).pipe(Effect.ignore);
+      else yield* repos.setRef({ repo, ...pin });
+    }
     yield* store.replaceConnection({ expectedRevision: previous.revision, next });
     const kept = new Set(after.map((pin) => pin.name));
     for (const name of before.keys())
@@ -806,10 +823,14 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         (entry) => entry.path,
       );
       const synced = restored.filter((path) => !link.localOnly.includes(path));
+      const retired = new Set(link.retired ?? []);
       return {
         ...connection,
         revision: connection.revision + 1,
-        managedPaths: unique([...connection.managedPaths, ...synced]),
+        managedPaths: unique([
+          ...connection.managedPaths.filter((path) => !retired.has(path)),
+          ...synced,
+        ]),
         localOnlyPaths: unique(link.localOnly),
         forcedConflicts: [
           ...new Map(
@@ -1782,7 +1803,14 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     connection: OverleafConnectionDocument,
     attempt: OverleafPublicationAttempt,
   ) {
-    const parentTree = yield* repos.treeOf({ repo, commit: attempt.parentCommit });
+    // Both commits must still be held; a record from before accepted sends were pinned
+    // may name ones that are gone.
+    const parentTree = yield* repos.findTree({ repo, commit: attempt.parentCommit });
+    if (
+      parentTree === null ||
+      (yield* repos.findTree({ repo, commit: attempt.candidateCommit })) !== attempt.candidateTree
+    )
+      return { _tag: "history-unavailable" as const };
     const entries = Effect.fnUntraced(function* (tree: string) {
       return new Map(
         (yield* repos.readTree({ repo, tree })).map((entry) => [entry.path, entry.oid]),
@@ -1997,6 +2025,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 };
               const plan = yield* undoPlan(repo, connection, attempt);
               if (plan._tag === "refused") return plan;
+              if (plan._tag === "history-unavailable")
+                return { _tag: "not-eligible" as const, reason: "history-unavailable" as const };
               const summary = {
                 _tag: "undone" as const,
                 restored: plan.restored,
@@ -2022,18 +2052,28 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 conflicts: [],
                 markerPaths: [],
               } satisfies OverleafReview["applyPlan"];
-              // Room for every copy it keeps, every file it brings back into the sync
-              // and every group it may leave, before anything is written.
+              // Room for every copy it keeps, the files the sync manages afterwards and
+              // every group it may leave, before anything is written.
               const written = [...plan.targets.keys()];
-              const returning = written.filter(
-                (path) => !connection.managedPaths.includes(path),
-              ).length;
-              if (connection.retention.copies.length + plan.current.size > RETAINED_COPY_LIMIT)
+              // Adoption records one kept copy per path a step touched, whatever it
+              // keeps there: the displaced file, or a staged or provisional version
+              // that interference left (further versions sit inside that one record).
+              // A file written where none stood can still leave one.
+              const touched = new Set([...plan.current.keys(), ...written]).size;
+              if (connection.retention.copies.length + touched > RETAINED_COPY_LIMIT)
                 return yield* new OverleafRetainedLimitError({
                   connectionId: input.connectionId,
                   limit: "kept-copies",
                 });
-              if (connection.managedPaths.length + returning > MANAGED_PATH_LIMIT)
+              // Files it removes leave the managed set and files it writes join it, so
+              // undoing a rename at the limit fits. A removed path still in the base or a
+              // forced conflict is read by every capture anyway.
+              const retired = plan.removed.filter((path) => connection.managedPaths.includes(path));
+              const managedAfter = unique([
+                ...connection.managedPaths.filter((path) => !retired.includes(path)),
+                ...written,
+              ]);
+              if (managedAfter.length > MANAGED_PATH_LIMIT)
                 return yield* new OverleafRetainedLimitError({
                   connectionId: input.connectionId,
                   limit: "managed-paths",
@@ -2068,6 +2108,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   localOnly: connection.localOnlyPaths.filter((path) => !written.includes(path)),
                   priorMarkers: [],
                   undoneAttempt: attempt.attemptNumber,
+                  retired,
                 },
                 updatedAt: DateTime.formatIso(yield* DateTime.now),
               };

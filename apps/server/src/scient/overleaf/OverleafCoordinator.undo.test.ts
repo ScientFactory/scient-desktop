@@ -13,7 +13,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
-import type { OverleafPublicationAttempt } from "./OverleafConnectionState.ts";
+import type {
+  OverleafConnectionDocument,
+  OverleafPublicationAttempt,
+} from "./OverleafConnectionState.ts";
 import { CONNECTION, canApply, read, run, world, write } from "./OverleafCoordinator.testkit.ts";
 
 type World = Effect.Success<ReturnType<typeof world>>;
@@ -47,12 +50,12 @@ const pinned = (w: World, attemptNumber: number) =>
   );
 
 /** One accepted send of `main.tex` and `other.tex`, on a scripted Overleaf. */
-const sentTwoFiles = (at?: Parameters<typeof world>[0]["at"]) =>
+const sentTwoFiles = (options: Pick<Parameters<typeof world>[0], "at" | "limits"> = {}) =>
   Effect.gen(function* () {
     const w = yield* world({
       synced: { "main.tex": "A", "other.tex": "O", "third.tex": "T" },
       remote: { "main.tex": "A", "other.tex": "O", "third.tex": "T" },
-      ...(at ? { at } : {}),
+      ...options,
     });
     yield* write(w.folder, { "main.tex": "A2", "other.tex": "O2", "third.tex": "T2" });
     expect(yield* w.sync("send-1")).toMatchObject({
@@ -252,9 +255,10 @@ describe.skipIf(!canApply)("OverleafCoordinator, undo", () => {
     let crash = false;
     return run(
       Effect.gen(function* () {
-        const w = yield* sentTwoFiles((point) =>
-          crash && point === "applied" ? Effect.die(new Error("process died")) : Effect.void,
-        );
+        const w = yield* sentTwoFiles({
+          at: (point) =>
+            crash && point === "applied" ? Effect.die(new Error("process died")) : Effect.void,
+        });
         const before = yield* w.connection;
         crash = true;
         expect(Exit.isFailure(yield* Effect.exit(undo(w, 1)))).toBe(true);
@@ -398,6 +402,157 @@ describe.skipIf(!canApply)("OverleafCoordinator, undo", () => {
         expect(yield* pinned(w, 1)).toEqual([null, null]);
         expect((yield* pinned(w, 65)).every((oid) => oid !== null)).toBe(true);
         expect(yield* undo(w, 1)).toEqual({ _tag: "not-eligible", reason: "not-recorded" });
+      }),
+    ),
+  );
+
+  it.live("reserves a kept copy for every path it touches, a file it recreates included", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A", "gone.tex": "G" },
+          remote: { "main.tex": "A", "gone.tex": "G" },
+        });
+        yield* write(w.folder, { "main.tex": "A2" });
+        yield* remove(w.folder, "gone.tex");
+        expect(yield* w.sync("send-1")).toMatchObject({ publication: { _tag: "accepted" } });
+        // One record short of the limit: room for the file it replaces, not also for
+        // a version a step could keep where it recreates gone.tex.
+        const sent = yield* w.connection;
+        const filler = (
+          index: number,
+        ): OverleafConnectionDocument["retention"]["copies"][number] => ({
+          applyId: "earlier",
+          relativePath: `earlier/${index}.tex`,
+          revision: "sha256:0",
+          state: "kept",
+          retainedAt: sent.updatedAt,
+          retainedAtSyncCount: sent.completedSyncCount,
+          kept: `earlier/files/step-${index}/retained`,
+          markers: false,
+          versions: [],
+          stamp: "0:0",
+        });
+        yield* w.store.replaceConnection({
+          expectedRevision: sent.revision,
+          next: {
+            ...sent,
+            revision: sent.revision + 1,
+            retention: {
+              ...sent.retention,
+              copies: [
+                ...sent.retention.copies,
+                ...Array.from({ length: 4_095 - sent.retention.copies.length }, (_, index) =>
+                  filler(index),
+                ),
+              ],
+            },
+          },
+        });
+        const before = yield* w.connection;
+        expect(yield* Effect.flip(undo(w, 1))).toMatchObject({
+          _tag: "OverleafRetainedLimitError",
+          limit: "kept-copies",
+        });
+        const after = yield* w.connection;
+        expect(after.revision).toBe(before.revision);
+        expect(after.activeApply).toBeNull();
+        expect(yield* read(w.folder, "main.tex")).toBe("A2");
+        expect(yield* read(w.folder, "gone.tex")).toBeNull();
+      }),
+    ),
+  );
+
+  it.live("rewrites pins found missing, and Undo is not eligible once the history is gone", () =>
+    run(
+      Effect.gen(function* () {
+        // No earlier base kept, so only the attempt's pins hold the send's commits.
+        const w = yield* sentTwoFiles({ limits: { priorBases: 0 } });
+        const unpin = Effect.forEach(["parent", "candidate"], (side) =>
+          w.repos.deleteRef({ repo: w.repo, name: `attempt/1/${side}` }),
+        );
+        // As a record from before accepted sends were pinned: the refs were never written.
+        yield* unpin;
+        w.setRemote({ "main.tex": "A2", "other.tex": "O2", "third.tex": "T3" });
+        expect(yield* w.sync("later-1")).toMatchObject({ publication: { _tag: "none" } });
+        expect((yield* pinned(w, 1)).every((oid) => oid !== null)).toBe(true);
+        // Once the objects are gone, Undo says so instead of failing in Git.
+        yield* unpin;
+        yield* w.collectGarbage;
+        expect(yield* undo(w, 1)).toEqual({
+          _tag: "not-eligible",
+          reason: "history-unavailable",
+        });
+        expect(yield* read(w.folder, "main.tex")).toBe("A2");
+      }),
+    ),
+  );
+
+  it.live("undoes a rename in a project at the managed-file limit", () =>
+    run(
+      Effect.gen(function* () {
+        const chapter = "chapter text that moves, long enough to be found as a rename\n";
+        const w = yield* world({
+          synced: { "main.tex": "M", "old.tex": chapter },
+          remote: { "main.tex": "M", "old.tex": chapter },
+        });
+        yield* write(w.folder, { "new.tex": chapter });
+        yield* remove(w.folder, "old.tex");
+        expect(yield* syncSelecting(w, "send-1", ["new.tex"])).toMatchObject({
+          publication: { _tag: "accepted" },
+        });
+        // Paths the connection manages up to the limit (absent from the folder here).
+        const sent = yield* w.connection;
+        const fillers = Array.from(
+          { length: 2_000 - sent.managedPaths.length },
+          (_, index) => `fillers/${index}.tex`,
+        );
+        yield* w.store.replaceConnection({
+          expectedRevision: sent.revision,
+          next: {
+            ...sent,
+            revision: sent.revision + 1,
+            managedPaths: [...sent.managedPaths, ...fillers].sort(),
+          },
+        });
+        expect(yield* undo(w, 1)).toMatchObject({
+          _tag: "undone",
+          removed: ["new.tex"],
+          recreated: ["old.tex"],
+          adopted: { outcome: "complete" },
+        });
+        const after = yield* w.connection;
+        expect(after.managedPaths).toHaveLength(2_000);
+        expect(after.managedPaths).toContain("old.tex");
+        expect(after.managedPaths).not.toContain("new.tex");
+        expect(yield* read(w.folder, "old.tex")).toBe(chapter);
+      }),
+    ),
+  );
+
+  it.live("forgets reviews across a restart, and restarts more than once", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ synced: { "main.tex": "A" }, remote: { "main.tex": "A" } });
+        yield* write(w.folder, { "main.tex": "B" });
+        const prepared = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        if (prepared._tag !== "review") return yield* Effect.die(prepared);
+        const first = yield* w.restart();
+        expect(
+          yield* first.coordinator.confirm({
+            connectionId: CONNECTION,
+            requestId: "request-1",
+            reviewId: prepared.review.id,
+            digest: prepared.review.digest,
+            acknowledgements: prepared.review.binding.acknowledgements,
+          }),
+        ).toMatchObject({ _tag: "review-refused" });
+        // The second restart takes the lease the first one's store held.
+        const second = yield* w.restart();
+        expect(yield* second.coordinator.prepare({ connectionId: CONNECTION })).toMatchObject({
+          _tag: "review",
+        });
+        expect(yield* read(w.folder, "main.tex")).toBe("B");
       }),
     ),
   );

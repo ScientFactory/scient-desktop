@@ -124,7 +124,7 @@ export const world = (input: {
       Effect.provideService(OverleafGitExecutor.OverleafGitExecutor, git),
     );
     // The store has a scope of its own, so a restart can release its lease.
-    const storeScope = yield* Scope.make();
+    let storeScope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(storeScope, Exit.void));
     const store = yield* OverleafStateStore.make({ root: stateRoot, volumeUuid }).pipe(
       Scope.provide(storeScope),
@@ -352,8 +352,21 @@ export const world = (input: {
        */
       restart: Effect.fnUntraced(function* () {
         yield* Scope.close(storeScope, Exit.void);
-        const next = yield* OverleafStateStore.make({ root: stateRoot, volumeUuid });
-        return { store: next, coordinator: yield* coordinatorWith(next) };
+        storeScope = yield* Scope.make();
+        const next = yield* OverleafStateStore.make({ root: stateRoot, volumeUuid }).pipe(
+          Scope.provide(storeScope),
+        );
+        // Reviews live in memory: none survives a restart.
+        const coordinator = yield* OverleafCoordinator.make({
+          ...options,
+          registry: makeOverleafReviewRegistry(),
+        }).pipe(
+          Effect.provideService(OverleafStateStore.OverleafStateStore, next),
+          Effect.provideService(OverleafRepository.OverleafRepository, repos),
+          Effect.provideService(WorkspaceApplier, applier),
+          Effect.provideService(CheckoutBarrier, makeCheckoutBarrier()),
+        );
+        return { store: next, coordinator };
       }),
       /** Drops every object of the private repository that no ref reaches. */
       collectGarbage: Effect.gen(function* () {

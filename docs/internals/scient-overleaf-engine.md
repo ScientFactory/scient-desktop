@@ -181,7 +181,10 @@ recorded that is unresolved or accepted) that cleanup must keep. An accepted
 attempt keeps its pins until it is pruned, so Undo stays possible after its
 bases rotate out or Overleaf's history is rewritten. A pending undo
 (`sync-undo` apply link) names its attempt, and a document is valid only while
-that attempt is recorded as accepted, so it cannot be pruned meanwhile.
+that attempt is recorded as accepted, so it cannot be pruned meanwhile. The
+coordinator writes required refs by what the repository holds, not by the
+previous document's list: a required ref found missing is written again while
+its object exists, and never blocks the replacement when the object is gone.
 
 Request receipts are created once per request ID. A repeat with the same
 payload returns the original receipt instead of running again; reuse with a
@@ -315,11 +318,17 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
   the earlier version). A file it would recreate is skipped (`name-clash`) when
   another spelling of it or of a folder above it is on disk, a file stands
   where a folder above it must go, or the result would not be a valid tree;
-  one larger than a restore reads is `too-large`. Room for kept copies,
-  returning managed paths and interruptible groups is checked before anything
-  is written. It then runs as a `sync-undo` apply, adopted like a restore:
+  one larger than a restore reads is `too-large`. An attempt whose commits the
+  private repository no longer holds is `not-eligible` (`history-unavailable`).
+  Before anything is written it checks room for one kept copy per path it
+  touches (recreated files included: interference can leave a version there),
+  for the managed set afterwards (files it removes leave it, files it writes
+  join it, so a rename at the 2,000-file limit fits) and for interruptible
+  groups. It then runs as a `sync-undo` apply, adopted like a restore:
   displaced files are kept (`kept`), the base never moves, nothing is sent,
-  and the files it wrote are managed again (taken off the local-only list).
+  and the managed set becomes the one checked (the link records the removed
+  paths, `retired`); written files are taken off the local-only list. Removed
+  paths still in the base or a forced conflict stay in every capture.
   Recovery resumes the same intent, and a repeated request returns the
   receipt. Saving open editors first is the caller's job.
 

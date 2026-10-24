@@ -326,6 +326,11 @@ describe("overleafTransitionViolation", () => {
     expect(isValid({ ...sent, activeApply: unnamed })).toBe(false);
     expect(isValid({ ...sent, activeApply: { ...link, kind: "retained-restore" } })).toBe(false);
     expect(isValid({ ...sent, activeApply: { ...link, undoneAttempt: 2 } })).toBe(false);
+    // Only an undo retires managed paths.
+    expect(isValid({ ...sent, activeApply: { ...link, retired: ["main.tex"] } })).toBe(true);
+    expect(isValid({ ...sent, activeApply: { ...unnamed, kind: "sync-apply", retired: [] } })).toBe(
+      false,
+    );
     expect(isValid({ ...sent, activeApply: link, attempts: [] })).toBe(false);
     expect(
       isValid({

@@ -109,8 +109,16 @@ const ApplyLink = Schema.Struct({
   priorMarkers: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
   /** The accepted attempt an undo puts back; present exactly for `sync-undo`. */
   undoneAttempt: Schema.optionalKey(Positive),
+  /** Managed paths an undo removes, which adoption takes out of the managed set. */
+  retired: Schema.optionalKey(
+    Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  ),
 }).check(
-  Schema.makeFilter((link) => (link.kind === "sync-undo") === (link.undoneAttempt !== undefined)),
+  Schema.makeFilter(
+    (link) =>
+      (link.kind === "sync-undo") === (link.undoneAttempt !== undefined) &&
+      (link.kind === "sync-undo" || link.retired === undefined),
+  ),
 );
 
 export const OverleafAttemptOutcome = Schema.Literals([
