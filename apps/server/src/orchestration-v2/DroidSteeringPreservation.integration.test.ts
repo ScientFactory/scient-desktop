@@ -793,6 +793,14 @@ it.effect(
           "No cancel or follow-up while the native tool is unfinished",
         );
         heldOwner(held.projection, initial);
+        assert.isTrue(
+          held.projection.turnItems.some(
+            (item) =>
+              item.type === "user_message" &&
+              item.inputIntent === "steer" &&
+              item.inputAlreadyAdmitted === false,
+          ),
+        );
         yield* h.release("finish-run");
         yield* h.waitFor((p) =>
           p.turnItems.some(
@@ -808,6 +816,15 @@ it.effect(
             JSON.stringify(event.payload).includes("native prompt: follow-up"),
         );
         assert.deepEqual(yield* h.wire, ["first", "cancel", "follow-up"]);
+        const delivered = yield* h.orchestrator.getThreadProjection(h.threadId);
+        assert.isTrue(
+          delivered.turnItems.some(
+            (item) =>
+              item.type === "user_message" &&
+              item.inputIntent === "steer" &&
+              item.inputAlreadyAdmitted === true,
+          ),
+        );
         yield* h.release("finish-prompt");
         yield* h.waitFor((p) => p.runs[0]?.status === "waiting");
         yield* h.worker.drain(12);
