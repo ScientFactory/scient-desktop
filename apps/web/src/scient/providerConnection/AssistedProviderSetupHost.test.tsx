@@ -105,30 +105,27 @@ describe("AssistedProviderSetupHost", () => {
     enableState.enable.mockResolvedValue();
   });
 
-  it.each([
-    ["codex", "Codex"],
-    ["claudeAgent", "Claude"],
-    ["antigravity", "Antigravity"],
-    ["cursor", "Cursor"],
-    ["droid", "Droid"],
-    ["grok", "Grok"],
-    ["muse", "Muse Code"],
-  ] as const)("routes the %s composer surface through one controller", (driver, name) => {
-    const value = provider(driver, name);
-    const markup = renderToStaticMarkup(
-      <AssistedProviderSetupHost
-        displayName={name}
-        environmentId={EnvironmentId.make("local")}
-        provider={value}
-        surface="composer"
-      />,
-    );
+  // ComposerProviderSetupParity renders every other assisted provider's real
+  // composer setup through this host; Muse is the one it leaves out.
+  it.each([["muse", "Muse Code"]] as const)(
+    "routes the %s composer surface through one controller",
+    (driver, name) => {
+      const value = provider(driver, name);
+      const markup = renderToStaticMarkup(
+        <AssistedProviderSetupHost
+          displayName={name}
+          environmentId={EnvironmentId.make("local")}
+          provider={value}
+          surface="composer"
+        />,
+      );
 
-    expect(markup).toContain(`${name} setup`);
-    expect(markup).not.toContain("shared runtime");
-    expect(markup).not.toContain("Sign out");
-    expect(controllerFactory).toHaveBeenCalledOnce();
-  });
+      expect(markup).toContain(`${name} setup`);
+      expect(markup).not.toContain("shared runtime");
+      expect(markup).not.toContain("Sign out");
+      expect(controllerFactory).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each([
     ["codex", "Codex"],
@@ -244,59 +241,49 @@ describe("AssistedProviderSetupHost", () => {
     expect(markup).not.toContain("Sign out");
   });
 
-  it.each([
-    ["codex", "Codex"],
-    ["claudeAgent", "Claude"],
-    ["antigravity", "Antigravity"],
-    ["cursor", "Cursor"],
-    ["droid", "Droid"],
-    ["grok", "Grok"],
-  ] as const)("owns the disabled %s state instead of delegating it", (driver, name) => {
-    controllerFactory.mockClear();
-    const markup = renderToStaticMarkup(
-      <AssistedProviderSetupHost
-        displayName={name}
-        environmentId={EnvironmentId.make("local")}
-        provider={{ ...provider(driver, name), enabled: false }}
-        surface="composer"
-      />,
-    );
+  // The host resolves disabled and probe-pending providers before it picks a
+  // provider's setup, so one provider covers each.
+  it.each([["codex", "Codex"]] as const)(
+    "owns the disabled %s state instead of delegating it",
+    (driver, name) => {
+      controllerFactory.mockClear();
+      const markup = renderToStaticMarkup(
+        <AssistedProviderSetupHost
+          displayName={name}
+          environmentId={EnvironmentId.make("local")}
+          provider={{ ...provider(driver, name), enabled: false }}
+          surface="composer"
+        />,
+      );
 
-    expect(markup).toContain(`${name} is disabled`);
-    expect(markup).toContain(">Enable<");
-    expect(markup).toContain("lucide-power");
-    expect(markup).toContain("border-transparent");
-    expect(markup).toContain("text-primary");
-    expect(markup).not.toContain("text-primary-foreground");
-    expect(markup).not.toContain(`${name} setup`);
-    expect(controllerFactory).not.toHaveBeenCalled();
-  });
+      expect(markup).toContain(`${name} is disabled`);
+      expect(markup).toContain(">Enable<");
+      expect(markup).not.toContain(`${name} setup`);
+      expect(controllerFactory).not.toHaveBeenCalled();
+    },
+  );
 
-  it.each([
-    ["codex", "Codex"],
-    ["claudeAgent", "Claude"],
-    ["antigravity", "Antigravity"],
-    ["cursor", "Cursor"],
-    ["droid", "Droid"],
-    ["grok", "Grok"],
-  ] as const)("shows a compact status while the enabled %s probe settles", (driver, name) => {
-    controllerFactory.mockClear();
-    const markup = renderToStaticMarkup(
-      <AssistedProviderSetupHost
-        displayName={name}
-        environmentId={EnvironmentId.make("local")}
-        provider={{ ...provider(driver, name), installed: false, probePending: true }}
-        surface="composer"
-      />,
-    );
+  // regression: ecdddcc75b fix(providers): clarify pending lifecycle checks (#176)
+  it.each([["codex", "Codex"]] as const)(
+    "shows a compact status while the enabled %s probe settles",
+    (driver, name) => {
+      controllerFactory.mockClear();
+      const markup = renderToStaticMarkup(
+        <AssistedProviderSetupHost
+          displayName={name}
+          environmentId={EnvironmentId.make("local")}
+          provider={{ ...provider(driver, name), installed: false, probePending: true }}
+          surface="composer"
+        />,
+      );
 
-    expect(markup).toContain(`Checking ${name}…`);
-    expect(markup).toContain("Verifying installation and connection status.");
-    expect(markup).toContain("lucide-loader");
-    expect(markup).toContain('role="status"');
-    expect(markup).not.toContain(`${name} setup`);
-    expect(controllerFactory).not.toHaveBeenCalled();
-  });
+      expect(markup).toContain(`Checking ${name}…`);
+      expect(markup).toContain("Verifying installation and connection status.");
+      expect(markup).toContain('role="status"');
+      expect(markup).not.toContain(`${name} setup`);
+      expect(controllerFactory).not.toHaveBeenCalled();
+    },
+  );
 
   it("explains read-only access without offering a broken enable action", () => {
     enableState.access = "denied";

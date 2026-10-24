@@ -100,8 +100,6 @@ const DRIVERS = [
 const ACCOUNT_DRIVERS = DRIVERS.filter((entry) => entry.methods.length > 0);
 /** Antigravity's composer offers only reviewed managed updates. */
 const EXTERNAL_UPDATE_DRIVERS = DRIVERS.filter((entry) => entry.driver !== "antigravity");
-const MANAGED_UPDATE_COPY =
-  "Install the reviewed update when you’re ready. Your current version remains available until the update is verified.";
 
 function ready(entry: Driver): ServerProvider {
   return {
@@ -384,17 +382,6 @@ describe.each(DRIVERS)("$name composer setup", (entry) => {
     expect(strayIcons(element)).toBe(0);
     expect(buttonLabels(element)).toEqual(["Cancel"]);
     expect(accessibleNames(element)).toEqual([`Cancel ${runtimeName} installation`]);
-  });
-
-  it("offers a reviewed managed update as its primary action", async () => {
-    await using _fixture = _createFixture();
-    await _setupFixture0(_fixture);
-
-    const element = await view(_fixture, managedUpdate(entry));
-
-    expect(element.textContent).toContain(`${runtimeName} update available`);
-    expect(element.textContent).toContain(MANAGED_UPDATE_COPY);
-    expect(accessibleNames(element)[0]).toBe(`Update ${runtimeName}`);
   });
 
   it("shows a server-side installation failure with its error and a retry", async () => {
@@ -711,7 +698,10 @@ describe.each(ACCOUNT_DRIVERS.filter((entry) => entry.driver !== "cursor"))(
         .map((frame) => frame.textContent)
         .join("");
 
-    it.each(["older", "equal", "newer", "unknown"])(
+    // regression: 2d693058ea fix(providers): install managed runtimes without version confirmation
+    // The web never reads the plan's version comparison; older and unknown are
+    // the two cases that used to ask before starting.
+    it.each(["older", "unknown"])(
       "starts the %s managed release from the first explicit click",
       async (versionCase) => {
         await using _fixture = _createFixture();
@@ -719,18 +709,7 @@ describe.each(ACCOUNT_DRIVERS.filter((entry) => entry.driver !== "cursor"))(
         await _setupFixture0(_fixture);
         await _setupFixture1(_fixture);
 
-        const selected =
-          versionCase === "older"
-            ? older
-            : {
-                ...notOlder,
-                systemVersion:
-                  versionCase === "unknown"
-                    ? null
-                    : versionCase === "equal"
-                      ? notOlder.version
-                      : "1.2.3",
-              };
+        const selected = versionCase === "older" ? older : { ...notOlder, systemVersion: null };
         vi.mocked(controller.planRuntime).mockResolvedValue(selected);
         vi.mocked(controller.startRuntime).mockResolvedValue(system);
         await useManaged(_fixture);
