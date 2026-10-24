@@ -56,6 +56,8 @@ export interface OverleafWorkspaceSnapshot {
   readonly previewing: ReadonlySet<string>;
   /** Why the last read of a link's changes failed. */
   readonly previewErrors: ReadonlyMap<string, string>;
+  /** What the last read of a link's changes did first: an interrupted sync it finished. */
+  readonly previewNotes: ReadonlyMap<string, string>;
   /**
    * Per-file decisions waiting for the next sync, by connection. Kept here, not
    * in the tab, so opening a file (which replaces the tab) doesn't lose them.
@@ -79,6 +81,7 @@ const EMPTY: OverleafWorkspaceSnapshot = {
   syncedAt: new Map(),
   previewing: new Set(),
   previewErrors: new Map(),
+  previewNotes: new Map(),
   fileDecisions: new Map(),
   submittedDecisions: new Map(),
 };
@@ -109,6 +112,7 @@ const EMPTY_LIFECYCLE: Lifecycle = {
   syncedAt: new Map(),
   previewing: new Set(),
   previewErrors: new Map(),
+  previewNotes: new Map(),
   fileDecisions: new Map(),
   submittedDecisions: new Map(),
 };
@@ -437,12 +441,16 @@ export function recordOverleafSync(
       else record.delete(connectionId);
       submittedDecisions = record;
     }
+    // A sync's own result says what it did first; a read's note no longer describes the tab.
+    const previewNotes = new Map(current.previewNotes);
+    previewNotes.delete(connectionId);
     const next = {
       ...current,
       reviews,
       syncedAt,
       fileDecisions,
       submittedDecisions,
+      previewNotes,
       lastSync: new Map(current.lastSync).set(connectionId, { result, at }),
     };
     return result._tag === "needs-decision"
@@ -490,6 +498,7 @@ export function forgetOverleafConnection(environmentId: EnvironmentId, connectio
       submittedDecisions: without(current.submittedDecisions),
       lastSync: without(current.lastSync),
       previewErrors: without(current.previewErrors),
+      previewNotes: without(current.previewNotes),
     };
   });
 }
@@ -519,7 +528,12 @@ export function finishOverleafPreview(
   connectionId: string,
   startedAt: number,
   outcome:
-    | { readonly _tag: "review"; readonly review: ScientOverleafReview }
+    | {
+        readonly _tag: "review";
+        readonly review: ScientOverleafReview;
+        /** What the read did first: an interrupted sync it finished, which wrote the folder. */
+        readonly note?: string | null;
+      }
     | { readonly _tag: "failed"; readonly message: string },
 ): void {
   const versionKey = reviewKeyOf(environmentId, connectionId);
@@ -531,14 +545,17 @@ export function finishOverleafPreview(
     previewing.delete(connectionId);
     if (superseded) return { ...snapshot, previewing };
     const previewErrors = new Map(snapshot.previewErrors);
+    const previewNotes = new Map(snapshot.previewNotes);
     const reviews = new Map(snapshot.reviews);
+    previewNotes.delete(connectionId);
     if (outcome._tag === "failed") previewErrors.set(connectionId, outcome.message);
     else {
       previewErrors.delete(connectionId);
+      if (outcome.note) previewNotes.set(connectionId, outcome.note);
       // Replaced only by a successful read: a failed one leaves the shown review.
       reviews.set(connectionId, { review: outcome.review, applied: false, sent: false });
     }
-    const next = { ...snapshot, previewing, previewErrors, reviews };
+    const next = { ...snapshot, previewing, previewErrors, previewNotes, reviews };
     return outcome._tag === "review"
       ? { ...next, fileDecisions: pruneDecisions(next, connectionId) }
       : next;
