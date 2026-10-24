@@ -592,28 +592,21 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current alignment through
-`2c8bdf6177159d8fcd12a897d7c9311f6eb93237` is recorded in
-[the 2026-10-23 receipt](docs/internals/t3-upstream-sync-20261023-2c8bdf6177.md).
-Literal merge `29f4ebb106d541307e8b2eb9251e41b9dd5cf703` has exact owned-main
-base `3ca9472f3cf5dd0e7b8d885a2e9bc876db31d5bc` and the frozen official target as
-parents, retaining all 151 additional donor commits after `21da3061aa`.
-Ordinary owned-main catch-ups preserve that merge: `2551263540432343ac6d9b3acb4551b7742015d0`
-includes `be0eaf41518376062d8945709e91b4ab0792a70b`;
-`94fde5e77561a699a30f7c6425d8a0848539b1c8` includes
-`d5c9445fc1ce5326355e80e45f073e91d4169119`; and
-`d7823dce9238cba7f958f3b04ad1ddd4a20072c5` includes
-`87e2e1f4d485c1a957566c27b6ffee621a3f95b4`.
-Local automated qualification covers all 46 workspace test tasks through fresh
-affected checks and exact unchanged-input reuse, including 488 current Overleaf
-cases and the complete 13,022-case web suite. Current-owned-main provenance and all
-six staged seam checks pass. The catch-ups retain the unmounted Overleaf foundation,
-short send admission and network-outside-checkout behavior; the web CI change is
-a job cap, not a test timeout. The owner approved the isolated localhost visual
-review and authorized push and merge in Scient PR #638. Hosted CI remains a required
-PR and merge-queue gate; native-device, authenticated live-provider, signing and
-release acceptance remain separate. The
-[previous receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md)
-retains its own boundaries and evidence, including Scient PR #614.
+`52628d863e977e1a8b16644141fd00ba96640b16` is recorded in
+[the 2026-10-24 receipt](docs/internals/t3-upstream-sync-20261024-52628d863e.md)
+([Scient PR #640](https://github.com/ScientFactory/scient-desktop/pull/640)).
+Literal merges `f6e88b251e5b0353a75907bf9321ffe86779ef2b` (through `9a391eb3f5`) and
+`ff0613ccdbcec8d2a5daadafe1a86de76777cdf9` (through the frozen target, owned base
+`ff6d9ef643066d0487ef588586c181712f97fd22`) retain all 74 official commits after
+`2c8bdf6177`. Ordinary owned-main catch-up `ef95f9275e8df06b12a6dd34d68f083be3d726fe`
+includes `fde0d9e373efc3fc8fdf1470148fde94c35077be` as Git's automatic merge.
+Typecheck, lint, provenance, all six seam checks, the maintained alignment checks
+(after correcting their drifted map), build and desktop and release smoke pass on the
+caught-up tree. Hosted CI on the exact head is the full-suite gate; three CI failures
+seen on the earlier head are owned-main flakes recorded in the receipt. Merge,
+release and native, live-provider and visual acceptance remain separate. The
+[previous receipt](docs/internals/t3-upstream-sync-20261023-2c8bdf6177.md)
+retains its own boundaries and evidence, including Scient PR #638.
 Native V2, scientific capabilities, immutable migrations, database durability and
 all cloud, telemetry, relay, updater, mobile publication and release holds remain.
 
