@@ -594,6 +594,64 @@ const assistantEnd = (message: Record<string, unknown>) => ({
 });
 
 describe("Oh My Pi content ownership", () => {
+  it.effect("streams delta-only message updates without cumulative snapshots", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("turn");
+      // The `messageUpdates: "delta"` projection: `message` keeps only its role
+      // and `assistantMessageEvent` has no `partial`.
+      const update = (assistantMessageEvent: Record<string, unknown>) => ({
+        type: "message_update",
+        messageId: "answer",
+        message: { role: "assistant" },
+        assistantMessageEvent,
+      });
+      yield* h.wire.send(
+        { type: "agent_start" },
+        {
+          type: "message_start",
+          messageId: "answer",
+          message: { role: "assistant", responseId: "current", content: [] },
+        },
+        update({ type: "thinking_start", contentIndex: 0 }),
+        update({ type: "thinking_delta", contentIndex: 0, delta: "Re" }),
+        update({ type: "thinking_delta", contentIndex: 0, delta: "ason" }),
+        update({ type: "thinking_end", contentIndex: 0, content: "Reason" }),
+        update({ type: "text_start", contentIndex: 1 }),
+        update({ type: "text_delta", contentIndex: 1, delta: "Hel" }),
+        update({ type: "text_delta", contentIndex: 1, delta: "lo" }),
+        update({ type: "text_end", contentIndex: 1, content: "Hello" }),
+        update({ type: "toolcall_start", contentIndex: 2, id: "call", toolName: "edit" }),
+        update({ type: "toolcall_delta", contentIndex: 2, delta: '{"path":' }),
+        {
+          type: "message_end",
+          messageId: "answer",
+          message: {
+            role: "assistant",
+            responseId: "current",
+            stopReason: "toolUse",
+            content: [
+              { type: "thinking", thinking: "Reason" },
+              { type: "text", text: "Hello" },
+              { type: "toolCall", id: "call", name: "edit", arguments: { path: "a" } },
+            ],
+          },
+        },
+      );
+      const updates = yield* h.settleFrames;
+      expect(updates.filter((u) => u.type === "reasoning-delta")).toMatchObject([
+        { delta: "Re" },
+        { delta: "ason" },
+      ]);
+      expect(updates.filter((u) => u.type === "assistant-delta")).toMatchObject([
+        { delta: "Hel" },
+        { delta: "lo" },
+      ]);
+      expect(updates.filter((u) => u.type === "content-snapshot")).toEqual([]);
+      yield* Scope.close(h.scope, Exit.void);
+    }),
+  );
+
   it.effect(
     "reconciles only the open envelope from agent_end after earlier tool-only messages",
     () =>

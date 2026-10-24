@@ -2618,7 +2618,10 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         });
         const filters = h.peer.state.frames.filter((frame) => frame.type === "set_event_filter");
         assert.equal(filters.length, scenario.filters);
-        if (filters.length) assert.deepEqual(filters[0]?.events, [...OMP_KNOWN_EVENT_TYPES]);
+        if (filters.length) {
+          assert.deepEqual(filters[0]?.events, [...OMP_KNOWN_EVENT_TYPES]);
+          assert.equal(filters[0]?.messageUpdates, "delta");
+        }
         assert.equal(h.runtime.providerSession.status, "ready");
         yield* h.send(1, "Quiet text turn", []);
         assert.equal(
