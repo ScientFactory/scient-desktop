@@ -107,8 +107,14 @@ const BUILD_OUTPUT = [
   ".toc",
   ".bbl",
 ];
-/** Files Scient writes at a project's top for itself; never part of a paper there. */
-const SCIENT_PROJECT_FILES = new Set([SCIENT_AGENTS_FILE, SCIENT_PROJECT_FILE]);
+/**
+ * Files Scient writes at a project's top for itself; never part of a paper there.
+ * Compared by collision key: on a disk that ignores letter case, `agents.md` is
+ * the file Scient reads and writes as `AGENTS.md`.
+ */
+const SCIENT_PROJECT_FILES = new Set(
+  [SCIENT_AGENTS_FILE, SCIENT_PROJECT_FILE].map(manuscriptCollisionKey),
+);
 
 export type OverleafExclusionReason =
   | "reserved"
@@ -171,6 +177,13 @@ export interface OverleafInventory {
   readonly additions: ReadonlyArray<OverleafAddition>;
   /** Additions selected, explicitly or by default, and read in full. */
   readonly selectedAdditions: ReadonlyArray<OverleafAddition>;
+  /**
+   * Additions left out on purpose, to keep only on this computer: sent by
+   * default yet not selected, or named in the default selection's `except`
+   * whatever the rule says of them now (a deselected file that has grown too
+   * large stays deliberately kept).
+   */
+  readonly deselected: ReadonlyArray<string>;
   /** Local-only files read in full to be sent. */
   readonly sentLocalOnly: ReadonlyArray<string>;
   /** Local-only paths present on disk and not being sent. Never read. */
@@ -283,7 +296,12 @@ function uncheckedReason(
   if (BUILD_OUTPUT.some((suffix) => file.path.toLowerCase().endsWith(suffix)))
     return "build-output";
   if (file.hidden) return "hidden";
-  if (atCheckoutTop && SCIENT_PROJECT_FILES.has(file.path)) return "scient-project-file";
+  if (
+    atCheckoutTop &&
+    !file.path.includes("/") &&
+    SCIENT_PROJECT_FILES.has(manuscriptCollisionKey(file.path))
+  )
+    return "scient-project-file";
   return null;
 }
 
@@ -407,16 +425,27 @@ export async function captureOverleafInventory(
     }
   };
 
-  const readPrefix = async (path: string): Promise<Uint8Array | null> => {
+  /**
+   * The opened file's size and its first bytes, or null bytes when it is now too
+   * large to send: the listing's size may be stale, so the file is judged by the
+   * handle before anything is read. Null when it cannot be read as a file.
+   */
+  const readPrefix = async (
+    path: string,
+  ): Promise<{ readonly size: number; readonly prefix: Uint8Array | null } | null> => {
     let handle: NodeFSP.FileHandle | undefined;
     try {
       handle = await NodeFSP.open(
         absolute(path),
-        NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW,
+        // Non-blocking, so a pipe swapped in after the listing cannot stall the walk.
+        NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
       );
+      const stat = await handle.stat();
+      if (!stat.isFile()) return null;
+      if (stat.size > limits.fileBytes) return { size: stat.size, prefix: null };
       const buffer = new Uint8Array(OVERLEAF_PREFIX_BYTES);
       const { bytesRead } = await handle.read(buffer, 0, OVERLEAF_PREFIX_BYTES, 0);
-      return buffer.subarray(0, bytesRead);
+      return { size: stat.size, prefix: buffer.subarray(0, bytesRead) };
     } catch {
       // An unreadable unchecked addition is still listed; reading it in full would refuse it.
       return null;
@@ -435,7 +464,7 @@ export async function captureOverleafInventory(
     const localOnly = new Set(input.localOnlyPaths);
     const requested = new Set(input.requestedPaths);
     const lenient = input.defaultSelection?.lenient ?? false;
-    const keptHere = new Set(input.defaultSelection?.except ?? []);
+    const except = new Set(input.defaultSelection?.except ?? []);
     const staging = new Set(input.stagingPaths);
 
     const files: Array<{ path: string; size: number; hidden: boolean }> = [];
@@ -577,31 +606,37 @@ export async function captureOverleafInventory(
         localOnlyPresent.push(file.path);
         continue;
       }
-      const reason = uncheckedReason(file, limits.fileBytes, input.atCheckoutTop);
-      const addition: OverleafAddition = {
-        path: file.path,
-        size: file.size,
-        checkedByDefault: reason === null,
-        uncheckedReason: reason,
+      const addition = (size: number): OverleafAddition => {
+        const reason = uncheckedReason({ ...file, size }, limits.fileBytes, input.atCheckoutTop);
+        return {
+          path: file.path,
+          size,
+          checkedByDefault: reason === null,
+          uncheckedReason: reason,
+        };
       };
       if (selected.has(file.path)) {
         await capture(file.path);
-        selectedAdditions.push(addition);
+        selectedAdditions.push(addition(file.size));
         continue;
       }
-      // A file too large for Overleaf is never read; an LFS pointer is small.
-      const prefix = reason === "too-large" ? null : await readPrefix(file.path);
-      if (prefix !== null && isOverleafLfsPointer(prefix)) {
+      // A file too large for Overleaf is never read, judged again on the opened
+      // file; an LFS pointer is small.
+      const opened = file.size > limits.fileBytes ? null : await readPrefix(file.path);
+      if (opened !== null && opened.prefix !== null && isOverleafLfsPointer(opened.prefix)) {
         excluded.push({ path: file.path, reason: "lfs-pointer" });
-      } else if (
+        continue;
+      }
+      const listed = addition(opened?.size ?? file.size);
+      if (
         input.defaultSelection !== undefined &&
-        reason === null &&
-        !keptHere.has(file.path)
+        listed.checkedByDefault &&
+        !except.has(file.path)
       ) {
         await capture(file.path);
-        selectedAdditions.push(addition);
+        selectedAdditions.push(listed);
       } else {
-        additions.push(addition);
+        additions.push(listed);
       }
     }
 
@@ -616,6 +651,10 @@ export async function captureOverleafInventory(
         selectedAdditions: selectedAdditions.toSorted((left, right) =>
           byPath(left.path, right.path),
         ),
+        deselected: additions
+          .filter((entry) => entry.checkedByDefault || except.has(entry.path))
+          .map((entry) => entry.path)
+          .sort(byPath),
         sentLocalOnly: [...sent].sort(byPath),
         localOnly: localOnlyPresent.toSorted(byPath),
         folders: [...folders.keys()].filter((path) => path !== "").sort(byPath),

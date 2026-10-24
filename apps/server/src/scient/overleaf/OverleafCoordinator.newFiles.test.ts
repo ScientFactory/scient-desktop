@@ -95,12 +95,13 @@ describe.skipIf(!canApply)("OverleafCoordinator, new files", () => {
           synced: { "main.tex": "M" },
           remote: { "main.tex": "M" },
         });
-        yield* write(w.folder, { "AGENTS.md": "a", "PROJECT.md": "p", "fig.tex": "F" });
+        // Another letter case names the same file on a disk that ignores it.
+        yield* write(w.folder, { "AGENTS.md": "a", "project.md": "p", "fig.tex": "F" });
         const review = yield* prepared(w);
         expect(review.binding.selectedAdditions).toEqual(["fig.tex"]);
         expect(skipped(review)).toEqual([
           ["AGENTS.md", "scient-project-file"],
-          ["PROJECT.md", "scient-project-file"],
+          ["project.md", "scient-project-file"],
         ]);
         expect(yield* confirmed(w, review)).toMatchObject({ _tag: "applied" });
         expect((yield* w.connection).localOnlyPaths).toEqual([]);
@@ -195,6 +196,43 @@ describe.skipIf(!canApply)("OverleafCoordinator, new files", () => {
           "local.tex",
           "main.tex",
         ]);
+      }),
+    ),
+  );
+
+  it.live("keeps a deselected file only here even if it grows too large before confirm", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "M" },
+          remote: { "main.tex": "M" },
+        });
+        yield* write(w.folder, { "notes.txt": "mine" });
+        const review = yield* prepared(w, {
+          selectedAdditions: [],
+          collisionPaths: [],
+          choices: new Map(),
+        });
+        expect(review.binding.newLocalOnly).toEqual(["notes.txt"]);
+        // Sparse: too large for Overleaf, so the rule now skips it as well. The edit
+        // to main.tex makes the review stale, so confirm offers a replacement.
+        yield* Effect.promise(() =>
+          NodeFSP.truncate(NodePath.join(w.folder, "notes.txt"), 50_000_001),
+        );
+        yield* write(w.folder, { "main.tex": "M2" });
+        const stale = yield* confirmed(w, review);
+        if (stale._tag !== "stale") return yield* Effect.die(stale);
+        expect(stale.review.binding.newLocalOnly).toEqual(["notes.txt"]);
+        expect(yield* confirmed(w, stale.review, "request-2")).toMatchObject({
+          publication: { _tag: "accepted" },
+        });
+        expect((yield* w.connection).localOnlyPaths).toEqual(["notes.txt"]);
+        // Small again, it stays on this computer.
+        yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(w.folder, "notes.txt"), "n2"));
+        yield* write(w.folder, { "main.tex": "M3" });
+        expect(yield* w.sync("request-3")).toMatchObject({ publication: { _tag: "accepted" } });
+        expect((yield* w.overleafNow).contents).toEqual({ "main.tex": "M3" });
       }),
     ),
   );

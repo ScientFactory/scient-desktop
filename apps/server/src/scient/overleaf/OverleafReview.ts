@@ -508,10 +508,9 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     return { _tag: "needs-capture", paths: collisions.capture } satisfies OverleafReviewResult;
 
   // Only a deliberate choice is remembered: an addition sent by default that the
-  // selection left out. Additions a rule skips are judged again at every sync.
-  const newLocalOnly = inventory.additions
-    .filter((addition) => addition.checkedByDefault)
-    .map((addition) => addition.path);
+  // selection left out, or one an earlier review left out on purpose. Additions a
+  // rule skips are judged again at every sync.
+  const newLocalOnly = inventory.deselected;
   const sent = new Set(inventory.sentLocalOnly);
   const keptLocalOnly = connection.localOnlyPaths.filter(
     (path) => !requested.has(path) && !sent.has(path),

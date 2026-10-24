@@ -316,6 +316,68 @@ describe("captureOverleafInventory", () => {
     expect(rebuilt.additions.map((addition) => addition.path)).toEqual(["huge.bin"]);
   });
 
+  it("skips Scient's own files at the top under any letter case", async () => {
+    const root = await folder({ "agents.md": "a", "Project.MD": "p", "sub/agents.md": "s" });
+    const inventory = await captured(root, {
+      atCheckoutTop: true,
+      defaultSelection: { except: [], lenient: false },
+    });
+    expect(inventory.selectedAdditions.map((addition) => addition.path)).toEqual(["sub/agents.md"]);
+    expect(
+      inventory.additions.map((addition) => [addition.path, addition.uncheckedReason]),
+    ).toEqual([
+      ["Project.MD", "scient-project-file"],
+      ["agents.md", "scient-project-file"],
+    ]);
+  });
+
+  it("judges a file that grew after the listing by the opened file, reading none of it", async () => {
+    // Read even by prefix, the grown `.env` would be recognized as an LFS pointer and excluded.
+    const pointer = `version https://git-lfs.github.com/spec/v1\n${"x".repeat(40)}\n`;
+    const root = await folder({ "a.tex": "a", "sub/.env": "x", "sub/notes.txt": "n" });
+    const limits = { fileBytes: pointer.length - 1 };
+    const inventory = await captured(root, {
+      limits,
+      managedPaths: ["a.tex"],
+      defaultSelection: { except: [], lenient: false },
+      afterRead: async (path) => {
+        if (path !== "a.tex") return;
+        await NodeFSP.writeFile(NodePath.join(root, "sub/.env"), pointer);
+        await NodeFSP.writeFile(NodePath.join(root, "sub/notes.txt"), pointer.replace("v", "w"));
+      },
+    });
+    expect(inventory.excluded).toEqual([]);
+    expect([...inventory.captured.keys()]).toEqual(["a.tex"]);
+    expect(inventory.additions).toEqual([
+      {
+        path: "sub/.env",
+        size: pointer.length,
+        checkedByDefault: false,
+        uncheckedReason: "too-large",
+      },
+      {
+        path: "sub/notes.txt",
+        size: pointer.length,
+        checkedByDefault: false,
+        uncheckedReason: "too-large",
+      },
+    ]);
+  });
+
+  it("keeps a deliberate deselection whatever the rule says of the file now", async () => {
+    const root = await folder({ "big.txt": "0123456789", "notes.tex": "n", "main.aux": "aux" });
+    const limits = { fileBytes: 5 };
+    // Explicit selections: every default file left out is deliberate; rule-skipped ones are not.
+    expect((await captured(root, { limits })).deselected).toEqual(["notes.tex"]);
+    // A replacement review: big.txt was deselected before it grew too large.
+    const rebuilt = await captured(root, {
+      limits,
+      defaultSelection: { except: ["big.txt", "gone.txt"], lenient: true },
+    });
+    expect(rebuilt.deselected).toEqual(["big.txt"]);
+    expect([...rebuilt.captured.keys()]).toEqual(["notes.tex"]);
+  });
+
   it("leaves an LFS pointer out of the default selection instead of refusing", async () => {
     const pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 1\n";
     const root = await folder({ "data.bin": pointer, "main.tex": "m" });

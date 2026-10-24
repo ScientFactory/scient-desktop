@@ -259,9 +259,12 @@ settles earlier sends, and lists and restores kept copies.
   empty one, is used exactly as given. The rule is judged again at every
   capture and never remembered: build leftovers, hidden files (any path
   segment starting with `.`, the file's own name included), Scient's own
-  `AGENTS.md` and `PROJECT.md` when the linked folder is the checkout's top,
+  `AGENTS.md` and `PROJECT.md` (under any letter case or Unicode spelling,
+  compared by collision key) when the linked folder is the checkout's top,
   and files over 50,000,000 bytes. A file too large is never read, not even a
-  prefix, and selecting it is refused (`file-too-large`); an LFS pointer is
+  prefix: the opened file's type and size are checked again before its first
+  bytes are read, so one that grew after the listing is marked too large.
+  Selecting one is refused (`file-too-large`); an LFS pointer is
   left out of the default selection rather than refused. Each review lists
   every addition with whether it is selected and why it is skipped. On
   confirm, only an addition sent by default that the selection left out joins
@@ -273,7 +276,9 @@ settles earlier sends, and lists and restores kept copies.
 - **Confirm.** Inside the section, it checks the folder and retention
   identities, captures the folder again and rebuilds the review with the same
   choices, the same selected and sent files, the same deliberate deselections,
-  and the default rule for anything else. A file that appeared meanwhile is
+  and the default rule for anything else. A deliberate deselection is kept
+  whatever the rule now says of the file (one that grew too large stays kept
+  only here). A file that appeared meanwhile is
   therefore selected by default, never taken for a "keep only here", and a
   selected file that is gone is left out instead of refused, so the rebuilt
   review differs and replaces the stale one. Capture reads the base's paths, the managed paths and
