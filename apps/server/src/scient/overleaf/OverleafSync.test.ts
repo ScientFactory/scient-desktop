@@ -1558,38 +1558,85 @@ describe.skipIf(!canApply)("OverleafSync", () => {
       }),
     ),
   );
-  it.live("refuses to sync a folder other than the one whose editors were saved", () =>
-    run(
-      Effect.gen(function* () {
-        const w = yield* world();
-        const connected = yield* w.service.connect({
-          caller: w.at(w.main),
-          folder: "paper",
-          create: true,
-          project: PROJECT,
-          requestId: "c1",
-        });
-        if (connected._tag !== "connected") return yield* Effect.die(connected);
-        const id = connected.connection.connectionId;
-        expect(
-          yield* Effect.flip(
-            w.service.sync({
-              caller: w.at(w.main),
-              connectionId: id,
-              requestId: "s1",
-              savedFolder: { checkoutRoot: w.main, folder: "other" },
-            }),
-          ),
-        ).toMatchObject({ _tag: "OverleafSyncRefusedError", reason: "folder-changed" });
-        expect(
-          yield* w.service.sync({
+  it.live(
+    "saves the folder's open editors before every operation that may write it, and stops over one that can't",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world();
+          const connected = yield* w.service.connect({
             caller: w.at(w.main),
-            connectionId: id,
-            requestId: "s2",
-            savedFolder: { checkoutRoot: w.main, folder: "paper" },
-          }),
-        ).toMatchObject({ _tag: "synced" });
-      }),
-    ),
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          const paper = NodePath.join(w.main, "paper");
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+          yield* w.collaborate(PROJECT, { "main.tex": "from Overleaf, edited" });
+          yield* write(paper, { "main.tex": "edited here" });
+          w.editorSaves.length = 0;
+          w.setEditorSave({
+            _tag: "failed",
+            failures: [{ path: "paper/main.tex", reason: "composing" }],
+            unanswered: [{ window: "window-2", reason: "timeout" }],
+          });
+          const caller = w.at(w.main);
+          const refusals = [
+            yield* Effect.flip(w.service.sync({ caller, connectionId: id, requestId: "s2" })),
+            yield* Effect.flip(w.service.preview({ caller, connectionId: id })),
+            yield* Effect.flip(w.service.recover({ caller, connectionId: id })),
+            yield* Effect.flip(
+              w.service.restoreKept({
+                caller,
+                connectionId: id,
+                requestId: "r1",
+                applyId: "unknown",
+                kept: "unknown",
+                keptRevision: "unknown",
+                currentRevision: null,
+              }),
+            ),
+          ];
+          for (const refused of refusals) {
+            expect(refused).toMatchObject({
+              _tag: "OverleafEditorUnsavedError",
+              failures: [{ path: "paper/main.tex", reason: "composing" }],
+              unanswered: [{ window: "window-2", reason: "timeout" }],
+            });
+            expect(refused.message).toContain("paper/main.tex (composing)");
+          }
+          // Each asked every window to save the linked folder, and changed nothing.
+          expect(w.editorSaves).toEqual(
+            Array.from({ length: 4 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
+          );
+          expect(yield* read(paper, "main.tex")).toBe("edited here");
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "from Overleaf, edited" });
+          expect(yield* w.service.status({ caller, connectionId: id })).toMatchObject({
+            busy: false,
+          });
+
+          // The save runs inside the operation's hold on the link: a relink can't move
+          // the folder between the save and the operation's own reads.
+          let relink: unknown = null;
+          w.setEditorSave(
+            { _tag: "saved" },
+            Effect.flip(
+              w.service
+                .relink({ caller, connectionId: id, folder: "paper", requestId: "l1" })
+                .pipe(Effect.provideService(OverleafReservationOwner, null)),
+            ).pipe(
+              Effect.tap((error) => Effect.sync(() => (relink = error))),
+              Effect.ignore,
+            ),
+          );
+          // Nothing ran for the refused request, so the same request now syncs.
+          const synced = yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
+          expect(synced).toMatchObject({ _tag: "needs-decision" });
+          expect(relink).toMatchObject({ _tag: "OverleafOperationActiveError" });
+        }),
+      ),
   );
 });

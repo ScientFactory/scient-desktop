@@ -5,7 +5,6 @@ import { McpServer } from "effect/ai";
 
 import { ScientOverleafToolkitRegistrationLive } from "../../McpHttpServer.ts";
 import { scientOperationCatalog } from "../../ScientOperationCatalog.ts";
-import { OverleafEditorSave } from "../../../scient/overleaf/OverleafEditorSave.ts";
 import { OverleafSync } from "../../../scient/overleaf/OverleafSync.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { workspaceResolverForTest } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
@@ -13,7 +12,6 @@ import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 
 const TestLayer = ScientOverleafToolkitRegistrationLive.pipe(
   Layer.provide(Layer.mock(OverleafSync)({})),
-  Layer.provide(Layer.mock(OverleafEditorSave)({})),
   Layer.provide(Layer.mock(SecretRequests)({})),
   Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
   Layer.provideMerge(McpServer.McpServer.layer),

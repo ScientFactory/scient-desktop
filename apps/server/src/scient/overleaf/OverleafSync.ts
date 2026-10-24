@@ -9,6 +9,10 @@
  * out-of-date push starts one new sync. The engine's own rules are unchanged:
  * everything still goes through the exact review that was built.
  *
+ * Editors first (pr-c-design.md sections 4.3 and 6): every operation that may
+ * write the folder saves the folder's open editors in every window before it
+ * reads anything, holding the connection from the save to its end.
+ *
  * Authority (contract rules 2 and 3, pr-c-design.md section 6): a request names
  * the caller's workspace or thread, which the server resolves. A connection is
  * used only while its own checkout is still the binding it recorded, and only by
@@ -54,21 +58,13 @@ import * as OverleafGitExecutor from "./OverleafGitExecutor.ts";
 import { newOverleafId } from "./OverleafGitExecutor.ts";
 import * as OverleafRepositoryModule from "./OverleafRepository.ts";
 import { OverleafRepository } from "./OverleafRepository.ts";
+import { OverleafEditorSave, type OverleafEditorSaveResult } from "./OverleafEditorSave.ts";
 import { macVolumeUuid, type OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
 import type { OverleafReview } from "./OverleafReview.ts";
 import { OverleafStateStore } from "./OverleafStateStore.ts";
 import * as OverleafStateStoreModule from "./OverleafStateStore.ts";
 import type { ConflictChoice } from "./syncRules.ts";
 import * as WorkspaceApplierModule from "./WorkspaceApplier.ts";
-
-/**
- * The folder whose open editors the caller saved before asking: an operation that
- * may write the folder runs only while the link still names that folder.
- */
-export interface OverleafSavedFolder {
-  readonly checkoutRoot: string;
-  readonly folder: string;
-}
 
 /** Per-file decisions on what a sync sends (pr-c-design section 5). */
 export interface OverleafFileDecisions {
@@ -107,8 +103,6 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
       /** Git is missing or older than 2.39. */
       "git-unavailable",
       "git-failed",
-      /** The link moved to another folder while the caller was saving its editors. */
-      "folder-changed",
     ]),
   },
 ) {
@@ -132,9 +126,35 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
         return "Overleaf sync needs Git 2.39 or newer on this computer.";
       case "git-failed":
         return "Git failed while talking to Overleaf.";
-      case "folder-changed":
-        return "The linked folder changed while open editors were being saved. Try again.";
     }
+  }
+}
+
+/**
+ * An open editor of the linked folder could not save, or a window did not answer
+ * the request to save (pr-c-design.md sections 4.3, 4.4 and 6). The operation
+ * stopped before it read or changed a file. Its reason is `editor-unsaved`.
+ */
+export class OverleafEditorUnsavedError extends Schema.TaggedError<OverleafEditorUnsavedError>()(
+  "OverleafEditorUnsavedError",
+  {
+    /** Files that could not be saved, relative to the checkout, with the window's reason. */
+    failures: Schema.Array(Schema.Struct({ path: Schema.String, reason: Schema.String })),
+    /** Windows that did not answer: they may hold unsaved text. */
+    unanswered: Schema.Array(Schema.Struct({ window: Schema.String, reason: Schema.String })),
+  },
+) {
+  override get message(): string {
+    const files = this.failures
+      .slice(0, 12)
+      .map((failure) => `${failure.path} (${failure.reason})`);
+    const windows = this.unanswered
+      .slice(0, 12)
+      .map((window) => `window ${window.window} (${window.reason})`);
+    return `Open editors were not all saved: ${[
+      ...(files.length === 0 ? [] : [`could not save ${files.join(", ")}`]),
+      ...(windows.length === 0 ? [] : [`did not answer: ${windows.join(", ")}`]),
+    ].join("; ")}. Nothing was changed.`;
   }
 }
 
@@ -223,6 +243,7 @@ type Progress = { -readonly [K in keyof OverleafSyncProgress]: OverleafSyncProgr
 /** Errors a person or agent can act on; anything else is an internal failure. */
 export const OVERLEAF_ACTIONABLE_ERRORS: ReadonlySet<string> = new Set([
   "OverleafSyncRefusedError",
+  "OverleafEditorUnsavedError",
   "OverleafOperationActiveError",
   "OverleafConnectionNotReadyError",
   "OverleafRetainedLimitError",
@@ -357,6 +378,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const bindings = yield* WorkspaceBindingStore.WorkspaceBindingStore;
   const store = yield* OverleafStateStore;
   const repos = yield* OverleafRepository;
+  const editors = yield* OverleafEditorSave;
   const volumeUuid = options.volumeUuid ?? macVolumeUuid;
   const reservations = OverleafCoordinator.makeOverleafReservations();
   /** Advances on every token change; reviews built before it are stale. */
@@ -516,31 +538,38 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     );
 
   /**
-   * Runs `body` holding the connection, after checking that it still links the folder
-   * whose editors the caller saved; any other request is refused meanwhile, so a
-   * relink can't slip in between that check and the operation's own reads.
+   * Saves the linked folder's open editors in every window, then runs `body`, holding
+   * the connection from before the save to the end (pr-c-design.md sections 4.3 and
+   * 6). Every operation that may write the folder goes through here: a sync, a
+   * preview or recovery (either may finish an interrupted apply), a kept-copy
+   * restore and an undo. The folder saved is the one the link names inside the hold,
+   * so a relink can't move it between the save and the operation's own reads. A
+   * failed save refuses with the files and windows that stopped it, before anything
+   * is read or written.
    */
-  const holdingSavedFolder = <A, E, R>(
-    connectionId: string,
-    savedFolder: OverleafSavedFolder | undefined,
-    body: Effect.Effect<A, E, R>,
-  ) =>
-    savedFolder === undefined
-      ? body
-      : OverleafCoordinator.reserveOverleafConnection(reservations, connectionId, (owner) =>
-          Effect.gen(function* () {
-            const read = yield* store.readConnection(connectionId);
-            if (
-              read._tag !== "ready" ||
-              read.document.checkout.canonicalRoot !== savedFolder.checkoutRoot ||
-              read.document.folder.relativePath !== savedFolder.folder
-            )
-              return yield* new OverleafSyncRefusedError({ reason: "folder-changed" });
-            return yield* body.pipe(
-              Effect.provideService(OverleafCoordinator.OverleafReservationOwner, owner),
-            );
-          }),
+  const savingEditorsFirst = <A, E, R>(connectionId: string, body: Effect.Effect<A, E, R>) =>
+    OverleafCoordinator.reserveOverleafConnection(reservations, connectionId, (owner) =>
+      Effect.gen(function* () {
+        const read = yield* store.readConnection(connectionId);
+        if (read._tag !== "ready")
+          return yield* new OverleafCoordinator.OverleafConnectionNotReadyError({
+            connectionId,
+            reason: read._tag,
+          });
+        const saved: OverleafEditorSaveResult = yield* editors.saveFolder({
+          checkoutRoot: read.document.checkout.canonicalRoot,
+          folder: read.document.folder.relativePath,
+        });
+        if (saved._tag === "failed")
+          return yield* new OverleafEditorUnsavedError({
+            failures: saved.failures,
+            unanswered: saved.unanswered,
+          });
+        return yield* body.pipe(
+          Effect.provideService(OverleafCoordinator.OverleafReservationOwner, owner),
         );
+      }),
+    );
 
   /**
    * The connection, if the caller may use it: its checkout is still the binding it
@@ -711,17 +740,15 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     readonly connectionId: string;
     readonly choices?: ReadonlyMap<string, ConflictChoice>;
     readonly files?: OverleafFileDecisions;
-    /** Preparing may finish an interrupted apply, which writes the folder. */
-    readonly savedFolder?: OverleafSavedFolder;
   }) {
     const { guard } = yield* authorize(input.caller, input.connectionId);
     yield* requireToken;
     const progress: Progress = { retried: false, settled: null };
+    // Preparing may finish an interrupted apply, which writes the folder: editors first.
     const prepared = yield* engine(
       guard,
-      holdingSavedFolder(
+      savingEditorsFirst(
         input.connectionId,
-        input.savedFolder,
         Effect.gen(function* () {
           const prepareInput = {
             connectionId: input.connectionId,
@@ -779,8 +806,6 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     readonly reviewedRemote?: string;
     /** Per-file decisions: keep a new file only here, or send a skipped or kept file. */
     readonly files?: OverleafFileDecisions;
-    /** The folder whose editors the caller saved first; the sync refuses if the link moved. */
-    readonly savedFolder?: OverleafSavedFolder;
   }) {
     const { document, guard, linkedElsewhere } = yield* authorize(input.caller, input.connectionId);
     yield* requireToken;
@@ -792,24 +817,12 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       });
     const running = { operationId: newOverleafId(), cancelled: false };
     syncs.set(input.connectionId, running);
-    // The connection is held for the whole sync, gaps included: a disconnect or relink
-    // can't slip in between its steps. Its own coordinator calls run under this hold.
-    return yield* OverleafCoordinator.reserveOverleafConnection(
-      reservations,
+    // The connection is held for the whole sync, from saving the folder's editors on,
+    // gaps included: a disconnect or relink can't slip in between its steps. Its own
+    // coordinator calls run under this hold.
+    return yield* savingEditorsFirst(
       input.connectionId,
-      (owner) =>
-        Effect.gen(function* () {
-          if (input.savedFolder !== undefined) {
-            const read = yield* store.readConnection(input.connectionId);
-            if (
-              read._tag !== "ready" ||
-              read.document.checkout.canonicalRoot !== input.savedFolder.checkoutRoot ||
-              read.document.folder.relativePath !== input.savedFolder.folder
-            )
-              return yield* new OverleafSyncRefusedError({ reason: "folder-changed" });
-          }
-          return yield* syncClaimed(input, document, guard, linkedElsewhere, running);
-        }).pipe(Effect.provideService(OverleafCoordinator.OverleafReservationOwner, owner)),
+      syncClaimed(input, document, guard, linkedElsewhere, running),
     ).pipe(
       Effect.ensuring(
         Effect.sync(() => {
@@ -1048,17 +1061,16 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     }
   });
 
+  /** Settles an interrupted apply, which may write the folder: editors first. */
   const recover = Effect.fn("OverleafSync.recover")(function* (input: {
     readonly caller: OverleafCaller;
     readonly connectionId: string;
-    readonly savedFolder?: OverleafSavedFolder;
   }) {
     const { guard } = yield* authorize(input.caller, input.connectionId);
     return yield* engine(
       guard,
-      holdingSavedFolder(
+      savingEditorsFirst(
         input.connectionId,
-        input.savedFolder,
         coordinator.recover({ connectionId: input.connectionId }),
       ),
     );
@@ -1072,17 +1084,17 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     return yield* engine(guard, coordinator.keptCopies({ connectionId: input.connectionId }));
   });
 
+  /** Puts a kept copy back in the folder: editors first. */
   const restoreKept = Effect.fn("OverleafSync.restoreKept")(function* (
     input: {
       readonly caller: OverleafCaller;
-      readonly savedFolder?: OverleafSavedFolder;
     } & Parameters<OverleafCoordinator.OverleafCoordinator["Service"]["restoreKept"]>[0],
   ) {
     const { guard } = yield* authorize(input.caller, input.connectionId);
-    const { caller: _caller, savedFolder, ...request } = input;
+    const { caller: _caller, ...request } = input;
     return yield* engine(
       guard,
-      holdingSavedFolder(input.connectionId, savedFolder, coordinator.restoreKept(request)),
+      savingEditorsFirst(input.connectionId, coordinator.restoreKept(request)),
     );
   });
 
