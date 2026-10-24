@@ -57,6 +57,8 @@ import { scientWordExportHttpApiLayer } from "./pandoc/http.ts";
 import * as PandocManagedTool from "./pandoc/PandocManagedTool.ts";
 import * as PandocWordConverter from "./pandoc/PandocWordConverter.ts";
 import * as WordFileExport from "./pandoc/WordFileExport.ts";
+import { scientOverleafHttpApiLayer } from "./overleaf/http.ts";
+import * as OverleafSync from "./overleaf/OverleafSync.ts";
 
 // Skill discovery and selected-turn delivery share one live policy/catalog.
 export const ScientSkillsLayerLive = ScientSkillManagement.layer.pipe(
@@ -164,6 +166,13 @@ export function makeScientRouteServices<
     Layer.provide(LatexTexDirectory.layer),
   );
 
+  // Overleaf manual sync: one service for the routes and the agent tools, with its
+  // own state store, private repositories and applier under `stateDir/overleaf`.
+  const OverleafSyncLive = OverleafSync.layer.pipe(
+    Layer.provide(WorkspaceBindingResolverLayerLive),
+    Layer.provide(WorkspaceBindingStore.layer),
+  );
+
   /** Scient HTTP API groups, provided in order after the upstream groups. */
   const provideScientHttpApiGroups = <A, E, R>(self: Layer.Layer<A, E, R>) =>
     self.pipe(
@@ -177,6 +186,7 @@ export function makeScientRouteServices<
       Layer.provide(scientConversationExportHttpApiLayer),
       Layer.provide(scientConversationImportHttpApiLayer),
       Layer.provide(scientWordExportHttpApiLayer),
+      Layer.provide(scientOverleafHttpApiLayer),
     );
 
   /** Scient services behind the routes, provided in order. */
@@ -193,6 +203,7 @@ export function makeScientRouteServices<
       // One server-lifetime set of connected windows, shared by the WebSocket
       // handlers that windows answer on and the tools that ask them.
       Layer.provide(EditorFlush.layer),
+      Layer.provide(OverleafSyncLive),
     );
 
   /** Self-update that hands running threads to the next server. */
