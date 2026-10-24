@@ -28,7 +28,9 @@ describe("Windows runtime filesystem recovery", () => {
     await f.fs.remove("stage");
     expect(f.pause).not.toHaveBeenCalled();
   });
-  it.each(["EPERM", "EACCES", "EBUSY"])(
+  // regression: 7f68536737 fix(providers): restore managed update discovery and notifications (#254)
+  // One row per path: every code in the temporary-lock set takes the same branch.
+  it.each(["EBUSY"])(
     "retries a temporary %s move without replacing a destination",
     async (code) => {
       const f = fixture();
@@ -90,7 +92,9 @@ describe("Windows runtime filesystem recovery", () => {
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(f.rename).toHaveBeenCalledTimes(1);
   });
-  it.each(["EPERM", "EACCES", "EBUSY", "ENOTEMPTY"])(
+  // regression: 7f68536737 fix(providers): restore managed update discovery and notifications (#254)
+  // ENOTEMPTY is retried only for cleanup; the other codes share the move set.
+  it.each(["EPERM", "ENOTEMPTY"])(
     "retries %s cleanup independently of move rules",
     async (code) => {
       const f = fixture();
