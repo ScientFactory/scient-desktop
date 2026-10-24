@@ -102,7 +102,7 @@ async function mount(_fixture: _Fixture) {
   });
   const render = async (
     text: string,
-    options: { isStreaming?: boolean; githubMedia?: boolean } = {},
+    options: { isStreaming?: boolean; sourceControlMedia?: boolean } = {},
   ) =>
     await act(
       async () =>
@@ -114,7 +114,7 @@ async function mount(_fixture: _Fixture) {
             text={text}
             parseRawHtml
             isStreaming={options.isStreaming ?? false}
-            githubMedia={options.githubMedia ?? false}
+            sourceControlMedia={options.sourceControlMedia ?? false}
           />,
         ),
     );
@@ -436,14 +436,14 @@ describe("web images in chat", () => {
 
     const { host, render, images } = await mount(_fixture);
     const markdown = "![shot](https://github.com/user-attachments/assets/0123-abcd)";
-    await render(markdown, { githubMedia: true });
+    await render(markdown, { sourceControlMedia: true });
 
     expect(host.querySelector('[role="group"]')).toBeNull();
     expect(requestedImageSources(images, host)).toEqual(["https://signed.test/asset.png"]);
     await images.release(host);
 
     testState.assetState = "failure";
-    await render(`${markdown}\n`, { githubMedia: true });
+    await render(`${markdown}\n`, { sourceControlMedia: true });
 
     expect(remoteRequests(images, host).filter((src) => src.includes("github.com"))).toEqual([]);
     expect(host.querySelector('[role="group"]')?.getAttribute("aria-label")).toBe(

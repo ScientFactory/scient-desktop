@@ -1,15 +1,9 @@
 import {
-  SourceControlProviderKind,
   type PullRequestCheck,
   PullRequestComment,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
-import * as Schema from "effect/Schema";
-import {
-  ForgejoStatus,
-  forgejoChecks,
-} from "@t3tools/source-control-forgejo/server/forgejoPullRequestJson";
 
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
@@ -42,27 +36,36 @@ const check = (name: string, status: PullRequestCheck["status"]): PullRequestChe
   description: null,
   url: `https://ci.example/${name}`,
 });
-const forgejoWarningCheck = (context: string): PullRequestCheck => {
-  const [warning] = forgejoChecks(
-    [
-      Schema.decodeSync(ForgejoStatus)({
-        context,
-        status: "warning",
-        description: "finished with warnings",
-        target_url: null,
-        updated_at: "2026-10-11T00:00:00Z",
-      }),
-    ],
-    "https://forgejo.test/acme/web/pulls/1",
-  );
-  if (warning === undefined) throw new Error("Forgejo warning fixture did not parse");
-  return warning;
-};
+// SCIENT-FORK:START — a Forgejo "warning" status as the Forgejo reader maps it: pending on the
+// wire for released clients, with the outcome current readers settle on. The mapping itself is
+// tested beside the reader in @t3tools/source-control-forgejo (forgejoPullRequestJson.test.ts).
+const forgejoWarningCheck = (context: string): PullRequestCheck => ({
+  name: context,
+  status: "pending",
+  outcome: "warning",
+  description: "finished with warnings",
+  url: null,
+});
+// SCIENT-FORK:END
 
 type Detail = Parameters<typeof evaluatePullRequestWatch>[1];
 
+const capabilities = (checksAlwaysReport: boolean): Detail["capabilities"] => ({
+  diff: true,
+  comment: true,
+  actions: [],
+  mergeMethods: [],
+  search: false,
+  review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+  reviewers: { request: false, listCandidates: false },
+  checksAlwaysReport,
+});
+
+// SCIENT-FORK: Forgejo declares no `checksAlwaysReport`; its watch tests read it by capabilities.
+const forgejoCapabilities = capabilities(false);
+
 const detail = (overrides: Partial<Detail> = {}): Detail => ({
-  provider: SourceControlProviderKind.make("github"),
+  capabilities: capabilities(true),
   headSha: "aaaaaaaaaa",
   checks: [check("lint", "success"), check("test", "pending")],
   mergeability: "mergeable",
@@ -161,7 +164,7 @@ describe("evaluatePullRequestWatch", () => {
       const result = evaluatePullRequestWatch(
         watch(),
         detail({
-          provider: SourceControlProviderKind.make("forgejo"),
+          capabilities: forgejoCapabilities,
           checks: [requiredWarning],
         }),
         noRemarks,
@@ -173,11 +176,10 @@ describe("evaluatePullRequestWatch", () => {
   );
 
   it("settles an owed advisory warning without reporting the checks passed", () => {
-    const provider = SourceControlProviderKind.make("forgejo");
     const required = { ...check("required", "success"), required: true };
     const early = evaluatePullRequestWatch(
       watch(),
-      detail({ provider, checks: [required, check("lint", "pending")] }),
+      detail({ capabilities: forgejoCapabilities, checks: [required, check("lint", "pending")] }),
       noRemarks,
     );
     assert.deepEqual(early.changes, [{ kind: "checks-passed", count: 1, required: true }]);
@@ -185,7 +187,10 @@ describe("evaluatePullRequestWatch", () => {
 
     const warning = evaluatePullRequestWatch(
       early.next,
-      detail({ provider, checks: [required, forgejoWarningCheck("lint")] }),
+      detail({
+        capabilities: forgejoCapabilities,
+        checks: [required, forgejoWarningCheck("lint")],
+      }),
       noRemarks,
     );
     assert.deepEqual(warning.changes, []);
@@ -194,7 +199,10 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(
       evaluatePullRequestWatch(
         warning.next,
-        detail({ provider, checks: [required, forgejoWarningCheck("lint")] }),
+        detail({
+          capabilities: forgejoCapabilities,
+          checks: [required, forgejoWarningCheck("lint")],
+        }),
         noRemarks,
       ).changes,
       [],
@@ -202,17 +210,16 @@ describe("evaluatePullRequestWatch", () => {
   });
 
   it("settles a warning outcome even when its status appears pending", () => {
-    const provider = SourceControlProviderKind.make("forgejo");
     const required = { ...check("required", "success"), required: true };
     const early = evaluatePullRequestWatch(
       watch(),
-      detail({ provider, checks: [required, check("lint", "pending")] }),
+      detail({ capabilities: forgejoCapabilities, checks: [required, check("lint", "pending")] }),
       noRemarks,
     );
     const warning = { ...check("lint", "pending"), outcome: "warning" as const };
     const settled = evaluatePullRequestWatch(
       early.next,
-      detail({ provider, checks: [required, warning] }),
+      detail({ capabilities: forgejoCapabilities, checks: [required, warning] }),
       noRemarks,
     );
 
@@ -369,6 +376,28 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  it("wakes once per edit of a remark seen at the watermark, never for the agent's own", () => {
+    const seen = remark("ci-bot", "2026-10-10T19:52:40.000Z");
+    const watching = watch({
+      headSha: "aaaaaaaaaa",
+      remarksThrough: seen.createdAt,
+      remarkIds: [seen.id],
+      wakes: 2,
+    });
+    assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [seen]).changes, []);
+    const edited = { ...seen, editedAt: "2026-10-10T20:04:50.000Z" };
+    const first = evaluatePullRequestWatch(watching, detail(), [edited]);
+    assert.deepEqual(first.changes, [{ kind: "remarks", remarks: [edited] }]);
+    assert.strictEqual(first.next.remarksThrough, edited.editedAt);
+    assert.deepEqual(evaluatePullRequestWatch(first.next, detail(), [edited]).changes, []);
+    const again = { ...seen, editedAt: "2026-10-10T20:05:50.000Z" };
+    const second = evaluatePullRequestWatch(first.next, detail(), [again]);
+    assert.deepEqual(second.changes, [{ kind: "remarks", remarks: [again] }]);
+    assert.deepEqual(evaluatePullRequestWatch(second.next, detail(), [again]).changes, []);
+    const own = { ...edited, author: { login: "agent-user", name: null, avatarUrl: null } };
+    assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [own]).changes, []);
+  });
+
   it("does not treat a failed check read as a rerun", () => {
     const failed = detail({ checks: [check("lint", "failure")] });
     const reported = evaluatePullRequestWatch(watch(), failed, noRemarks);
@@ -460,11 +489,8 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(pushed.flat(), ["no-checks"]);
   });
 
-  it("never reports missing checks on a host whose checks it cannot read", () => {
-    const azure = detail({
-      provider: SourceControlProviderKind.make("azure-devops"),
-      checks: [],
-    });
-    assert.isTrue(anHourLater(watch(), azure).every((kinds) => kinds.length === 0));
+  it("never reports missing checks on a host where an empty list says nothing", () => {
+    const silent = detail({ capabilities: capabilities(false), checks: [] });
+    assert.isTrue(anHourLater(watch(), silent).every((kinds) => kinds.length === 0));
   });
 });

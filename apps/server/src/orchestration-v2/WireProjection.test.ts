@@ -23,6 +23,7 @@ import {
   projectDomainEventForWire,
 } from "./WireProjection.ts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
+import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import { MAX_TOOL_OUTPUT_IMAGES, toolOutputImages } from "@t3tools/shared/toolOutput";
 import { historicalSubagentsToRuntime } from "../../../../packages/client-runtime/src/state/historicalSubagentRuntime.ts";
 
@@ -299,7 +300,7 @@ describe("orchestration V2 wire projection", () => {
       updatedAt: now,
     } satisfies OrchestrationV2ThreadProjection;
 
-    const shell = threadShellFromProjection(projection);
+    const shell = threadShellFromProjection(projection, threadPullRequestsOf);
 
     expect(shell.latestVisibleMessage).toBeNull();
     expect(JSON.stringify(shell).length).toBeLessThan(2_000);

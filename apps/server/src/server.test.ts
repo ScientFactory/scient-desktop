@@ -322,8 +322,7 @@ import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
-import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
-import * as ServerSourceControlHost from "./sourceControl/ServerSourceControlHost.ts";
+import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -1481,13 +1480,8 @@ const buildAppUnderTest = (options?: {
             ? FetchHttpClient.layer
             : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
         ),
-        Layer.provide(
-          GitHubRest.layerWithDependencies.pipe(
-            Layer.provide(ServerSourceControlHost.layer),
-            Layer.provide(VcsDriverRegistry.layer),
-            Layer.provideMerge(VcsProcess.layer),
-          ),
-        ),
+        // Hosts are read through each driver's own services; no route test reads host media.
+        Layer.provide(Layer.succeed(SourceControlBuiltInDrivers.SourceControlDrivers, [])),
         Layer.provide(gitVcsDriverLayer),
         Layer.provide(serverSettingsLayer),
         Layer.provide(ThreadCommandExecutor.layer),
@@ -11752,6 +11746,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 source: "assistant",
                 snippet: "Search reached the final response.",
                 messageCreatedAt: "2026-06-01T00:01:00.000Z",
+                // Upstream's indexed search ranks matches: an exact phrase, one hit.
+                quality: 1.25,
+                hits: 1,
+                messageId: MessageId.make("assistant-0"),
               },
             ]);
           }),

@@ -95,6 +95,7 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   type AssetCreateUrlInput,
+  SOURCE_CONTROL_MEDIA_ASSET,
   RpcClientId,
   EnvironmentAuthorizationError,
   type ProjectId,
@@ -2095,7 +2096,7 @@ export const layerWsRpc = (
             input.resource._tag === "attachment" ||
             input.resource._tag === "native-app-icon" ||
             input.resource._tag === "tool-output-image" ||
-            input.resource._tag === "github-media"
+            input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET
           ) {
             return yield* issueAssetUrl({ resource: input.resource });
           }

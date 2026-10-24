@@ -14,7 +14,11 @@ import {
 } from "@t3tools/shared/markdownLinks";
 import { isAbsolutePath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
-import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  AuthOrchestrationOperateScope,
+  SOURCE_CONTROL_MEDIA_ASSET,
+} from "@t3tools/contracts";
 // SCIENT-FORK:START — scientific refinements extend the shared markdown pipeline.
 import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
@@ -57,7 +61,6 @@ import {
   type ServerProviderSkill,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -189,12 +192,9 @@ import {
   stripRepeatedWorkspacePrefix,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
-import {
-  parseChangeRequestUrl,
-  pullRequestCandidateUrlFromReferenceAutolink,
-  resolvePullRequestPreviewTarget,
-  useOpenChangeRequestLink,
-} from "~/lib/openPullRequestLink";
+import { resolvePullRequestPreviewTarget } from "@t3tools/client-runtime/change-request-links";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
@@ -308,9 +308,9 @@ interface ChatMarkdownProps {
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
-  /** Loads GitHub-hosted media through `cwd`'s GitHub credential, which a private repository's
-      uploads need; without it those images and videos load unauthenticated and 404. */
-  githubMedia?: boolean | undefined;
+  /** Loads media a source control host keeps behind a credential through the server, which holds
+      `cwd`'s; without it a private repository's uploads load unauthenticated and 404. */
+  sourceControlMedia?: boolean | undefined;
   // SCIENT-FORK:START — a broken file link may resolve to the one changed file it names.
   /** Files the turn that produced this message changed, relative to `cwd`. A
       link whose location does not exist resolves to one of them only when it
@@ -552,7 +552,7 @@ function useChatMarkdownState({
   onImageExpand,
   renderContextReference,
   headingLevelOffset = 0,
-  githubMedia = false,
+  sourceControlMedia = false,
   // SCIENT-FORK:START — a broken file link may resolve to the one changed file it names.
   changedFiles,
   // SCIENT-FORK:END
@@ -826,14 +826,14 @@ function useChatMarkdownState({
       !pullRequestLinking.canLink(href)
     )
       return null;
-    const parsed = parseChangeRequestUrl(href);
-    return parsed === null ? null : { ...parsed, url: href };
+    const parsed = sourceControlClients.parseChangeRequestUrl(href)?.link;
+    return parsed === undefined ? null : { ...parsed, url: href };
   };
   const linkedThreadPullRequestFor = (href: string) => {
     if (threadRef === undefined || !pullRequestLinking.isLinked(readThreadShell(threadRef), href))
       return null;
-    const parsed = parseChangeRequestUrl(href);
-    return parsed === null ? null : { ...parsed, url: href };
+    const parsed = sourceControlClients.parseChangeRequestUrl(href)?.link;
+    return parsed === undefined ? null : { ...parsed, url: href };
   };
   const updateThreadPullRequestLink = async (href: string, linked: boolean) => {
     if (threadRef === undefined || (!linked && linkedThreadPullRequestFor(href) === null)) return;
@@ -1080,7 +1080,7 @@ function useChatMarkdownState({
     environmentId,
     expandMedia,
     fileLinkChip,
-    githubMedia,
+    sourceControlMedia,
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
@@ -1325,14 +1325,16 @@ const CHAT_MARKDOWN_COMPONENTS = {
       );
       const pullRequestCopy =
         pullRequestAutolink === "commit"
-          ? /\/commit\/([0-9a-f]{40})$/iu.exec(href ?? "")?.[1]
-          : pullRequestAutolink === "reference"
+          ? /\/commit\/([0-9a-f]{7,40})$/iu.exec(href ?? "")?.[1]
+          : pullRequestAutolink === "reference" || pullRequestAutolink === "mention"
             ? plainHastText(node)
             : undefined;
       const isPullRequestAutolink = pullRequestCopy !== undefined;
       const confirmBeforeOpen = pullRequestAutolink === "reference";
       const pullRequestCandidateUrl =
-        confirmBeforeOpen && href ? pullRequestCandidateUrlFromReferenceAutolink(href) : href;
+        confirmBeforeOpen && href
+          ? sourceControlClients.changeRequestUrlFromReferenceAutolink(href)
+          : href;
       const pullRequestPreviewTarget = pullRequestCandidateUrl
         ? resolvePullRequestPreviewTarget({
             environmentId,
@@ -1604,7 +1606,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       expandMedia,
       cwd,
       environmentId,
-      githubMedia,
+      sourceControlMedia,
       imageBaseDir,
       threadRef,
       workspaceMutationId,
@@ -1642,8 +1644,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
     const directUri = imageSource._tag === "Direct" ? imageSource.uri : null;
-    const githubMediaUrl =
-      directUri === null ? null : githubMediaFetchUrl(resolveProtocolRelativeMediaUrl(directUri));
+    const hostMediaUrl =
+      directUri === null
+        ? null
+        : (sourceControlClients.mediaUrl(resolveProtocolRelativeMediaUrl(directUri))?.fetchUrl ??
+          null);
     // SCIENT-FORK:START — web images render as a referenced link until the user loads one, and
     // standalone workspace images render as Scient image cards (scient/images).
     const image =
@@ -1676,16 +1681,16 @@ const CHAT_MARKDOWN_COMPONENTS = {
     if (workspaceImageCard !== null) return workspaceImageCard;
     // SCIENT-FORK:END
     if (
-      githubMedia &&
+      sourceControlMedia &&
       cwd !== undefined &&
       environmentId !== null &&
       directUri !== null &&
-      githubMediaUrl !== null
+      hostMediaUrl !== null
     ) {
       return (
         <ChatMarkdownAssetImage
           environmentId={environmentId}
-          resource={{ _tag: "github-media", cwd, url: githubMediaUrl }}
+          resource={{ _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd, url: hostMediaUrl }}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}
@@ -1698,7 +1703,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           framed={false}
           // SCIENT-FORK:START — the direct fallback is gated: an unsignable web asset becomes the
           // link card instead of a direct fetch.
-          fallbackSrc={remoteImageReference === null ? githubMediaUrl : undefined}
+          fallbackSrc={remoteImageReference === null ? hostMediaUrl : undefined}
           failureFallback={remoteImageReference ?? undefined}
           // SCIENT-FORK:END
           onImageExpand={imageExpand}

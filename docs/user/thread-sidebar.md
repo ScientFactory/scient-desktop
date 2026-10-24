@@ -365,6 +365,17 @@ On web and desktop, right-click a pull request link in a thread and choose
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
+## Find threads
+
+On web and desktop, press `Cmd/Ctrl+K` to open the command palette and search threads across
+connected environments by title, branch, pull request, or project. Threads you open often or
+recently rank higher, and for three weeks the thread you last picked for a query ranks higher when
+you type that query again. Threads whose messages contain all your words appear below, under **In
+messages**, and open at the matching message. Message search needs at least one word of three or
+more letters, or two for Chinese, Japanese, and Korean. On mobile, the thread list search also
+lists message matches and opens them at the matching message; on an iPad with a keyboard, `Cmd+K`
+opens the same palette.
+
 ## Environment icons
 
 When you are connected to more than one environment, every thread that lives somewhere other than

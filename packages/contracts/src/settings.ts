@@ -918,10 +918,6 @@ export const UsageAccountingSourceConfig = Schema.Struct({
 });
 export type UsageAccountingSourceConfig = typeof UsageAccountingSourceConfig.Type;
 
-export const GitHubHost = TrimmedNonEmptyString.pipe(
-  Schema.decodeTo(Schema.String, SchemaTransformation.toLowerCase()),
-);
-
 export const SourceControlHostSettings = Schema.Record(Schema.String, Schema.Unknown);
 export type SourceControlHostSettings = typeof SourceControlHostSettings.Type;
 

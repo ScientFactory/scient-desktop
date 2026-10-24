@@ -70,6 +70,7 @@ import { McpSchema, McpServer } from "effect/ai";
 
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
+import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
   emptyMcpReplayPrompt,
   withIssuedCodexMcpReplayExpectations,
@@ -2109,7 +2110,9 @@ describe("orchestrator MCP toolkit", () => {
             expect(
               (yield* orchestrator.getThreadShell(parentThreadId))?.pendingRuntimeRequest,
             ).toMatchObject({ kind: "user_input" });
-            expect(threadShellFromProjection(asked).pendingRuntimeRequest).toMatchObject({
+            expect(
+              threadShellFromProjection(asked, threadPullRequestsOf).pendingRuntimeRequest,
+            ).toMatchObject({
               kind: "user_input",
             });
             yield* secretRequests.answer({
