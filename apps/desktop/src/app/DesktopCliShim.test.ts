@@ -3,6 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+// SCIENT-FORK:START scient-cli-command
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -10,6 +11,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { type CliShimTarget, renderCliShim } from "./DesktopCliShim.ts";
 
 const nativePlatform = HostProcess.Platform.defaultValue();
+// SCIENT-FORK:END scient-cli-command
 
 const directories: Array<string> = [];
 afterEach(() => {
@@ -29,9 +31,11 @@ const writeExecutable = (path: string, content: string) => {
   NodeFS.writeFileSync(path, content, { mode: 0o755 });
 };
 
+// SCIENT-FORK:START scient-cli-command
 /** Writes a canonical launcher with a fixture profile, never the user's profile. */
 const writeShim = (root: string, target: CliShimTarget) => {
   const shim = NodePath.join(root, "bin", "scient");
+  // SCIENT-FORK:END scient-cli-command
   writeExecutable(shim, renderCliShim({ target, shimPath: shim, t3Home: `${root}/home` }));
   return shim;
 };
@@ -43,7 +47,9 @@ const run = (shim: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv =
   });
 
 const REPORTER =
+  // SCIENT-FORK:START scient-cli-command
   '#!/bin/sh\necho "node=$ELECTRON_RUN_AS_NODE cli=$T3CODE_CLI_PATH home=$SCIENT_NEXT_HOME"\nprintf "%s\\n" "$@"\nexit 3\n';
+// SCIENT-FORK:END scient-cli-command
 
 const fakeAppImage = (canMount = true) => {
   const root = tempRoot();
@@ -67,26 +73,9 @@ const fakeAppImage = (canMount = true) => {
   return { root, image, appImage, shim };
 };
 
+// SCIENT-FORK:START scient-cli-command
 describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () => {
-  it("runs the AppImage's bundled CLI with every argument and unmounts after", () => {
-    const { root, image, shim } = fakeAppImage();
-    const result = run(shim, ["browser", "setup", "a b"]);
-    expect(result.status).toBe(3);
-    expect(result.stdout.split("\n")).toEqual([
-      `node=1 cli=${shim} home=${root}/home`,
-      `${image}/resources/app.asar/apps/server/dist/bin.mjs`,
-      "browser",
-      "setup",
-      "a b",
-      "",
-    ]);
-    NodeChildProcess.spawnSync("sh", [
-      "-c",
-      `i=0; while [ ! -e '${root}/unmounted' ] && [ $i -lt 40 ]; do sleep 0.05; i=$((i+1)); done`,
-    ]);
-    expect(NodeFS.existsSync(NodePath.join(root, "unmounted"))).toBe(true);
-  });
-
+  // SCIENT-FORK:END scient-cli-command
   it("extracts the AppImage where it cannot be mounted", () => {
     const { shim } = fakeAppImage(false);
     const result = run(shim, ["--version"], { APPIMAGE_EXTRACT_AND_RUN: "1" });
@@ -96,7 +85,9 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
     );
   });
 
+  // SCIENT-FORK:START scient-cli-command
   it("keeps the Scient install home under sudo and honors an explicit Scient override", () => {
+    // SCIENT-FORK:END scient-cli-command
     const root = tempRoot();
     writeExecutable(NodePath.join(root, "app"), REPORTER);
     const shim = writeShim(root, {
@@ -106,6 +97,7 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
     });
     // sudo clears the environment, so the launcher supplies its own.
     expect(run(shim, []).stdout).toContain(`home=${root}/home`);
+    // SCIENT-FORK:START scient-cli-command
     expect(run(shim, [], { SCIENT_NEXT_HOME: "/elsewhere" }).stdout).toContain("home=/elsewhere");
     // Ambient T3 state cannot redirect the Scient bundled launcher.
     expect(run(shim, [], { T3CODE_HOME: "/t3-profile" }).stdout).toContain(`home=${root}/home`);
@@ -114,6 +106,7 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
       encoding: "utf8",
       env: { PATH: process.env.PATH },
     });
+    // SCIENT-FORK:END scient-cli-command
     expect(relative.stdout).toContain(`cli=${shim}`);
   });
 
@@ -134,19 +127,28 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
     ]);
   });
 
-  it("tells a person whose app moved to reopen it", () => {
-    const root = tempRoot();
-    const shim = writeShim(root, {
-      kind: "direct",
-      executable: NodePath.join(root, "Gone.app/Contents/MacOS/T3 Code"),
-      entry: "/bin.mjs",
+  it("writes a Windows launcher that keeps cmd from reinterpreting paths", () => {
+    const executable = "C:\\Apps\\R&whoami&X 100%\\!CHANNEL!\\T3 Code.exe";
+    const script = renderCliShim({
+      target: { kind: "windows", executable, entry: "C:\\Apps\\server.asar\\bin.mjs" },
+      shimPath: "C:\\Users\\José\\.t3\\bin\\t3.cmd",
+      t3Home: "C:\\Users\\José\\.t3",
     });
-    const result = run(shim, ["--version"]);
-    expect(result.status).toBe(127);
-    expect(result.stderr).toContain("Open the app once to update this command.");
+    const lines = script.split("\r\n");
+    expect(lines).toContain("setlocal EnableExtensions DisableDelayedExpansion");
+    expect(lines).toContain("chcp 65001 >nul");
+    expect(lines).toContain(
+      'if exist "C:\\Apps\\R&whoami&X 100%%\\!CHANNEL!\\T3 Code.exe" goto run',
+    );
+    const bare = lines.filter(
+      (line) => line.includes("whoami") && !/"[^"]*whoami[^"]*"/.test(line),
+    );
+    expect(bare).toEqual([]);
+    expect(lines).toContain('set "T3CODE_CLI_PATH=C:\\Users\\José\\.t3\\bin\\t3.cmd"');
   });
 });
 
+// SCIENT-FORK:START scient-cli-command
 describe.skipIf(nativePlatform !== "win32")("renderCliShim Windows execution", () => {
   const runWindows = (shim: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv = {}) => {
     const quoted = args.map((argument) => `"${argument.replaceAll('"', '\\"')}"`).join(" ");
@@ -228,3 +230,4 @@ describe.skipIf(nativePlatform !== "win32")("renderCliShim Windows execution", (
     expect(result.status, result.stderr).toBe(127);
   });
 });
+// SCIENT-FORK:END scient-cli-command

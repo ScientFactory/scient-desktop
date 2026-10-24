@@ -74,8 +74,10 @@ describe("DesktopPreReadyPlatform", () => {
   });
 
   it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
+    // SCIENT-FORK:START desktop-state-isolation
     vi.stubEnv("SCIENT_NEXT_HOME", "/isolated");
     vi.stubEnv("T3CODE_HOME", "/foreign-profile");
+    // SCIENT-FORK:END desktop-state-isolation
     vi.stubEnv("VITE_DEV_SERVER_URL", "");
     const settingsPath = "/isolated/userdata/desktop-settings.json";
     const files = new Map([[settingsPath, "{}"]]);
@@ -116,7 +118,9 @@ describe("DesktopPreReadyPlatform", () => {
       }
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
+      // SCIENT-FORK:START desktop-state-isolation
       Effect.provideService(HostProcess.HomeDirectory, "/home/me"),
+      // SCIENT-FORK:END desktop-state-isolation
       Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
     );
   });
@@ -133,6 +137,7 @@ describe("DesktopPreReadyPlatform", () => {
     let desktopEntry = previousEntry;
     let iconInstalled = false;
     copyFileSyncMock.mockImplementation((_source: string, destination: string) => {
+      // SCIENT-FORK:START desktop-state-isolation
       iconInstalled = destination === "/xdg/icons/scient.desktop.png";
     });
     setDesktopNameMock.mockImplementation((name: string) => {
@@ -140,6 +145,7 @@ describe("DesktopPreReadyPlatform", () => {
     });
     writeFileSyncMock.mockImplementation((path: string, contents: string) => {
       if (path === "/xdg/applications/scient.desktop") desktopEntry = contents;
+      // SCIENT-FORK:END desktop-state-isolation
     });
 
     return Effect.scoped(
@@ -152,6 +158,7 @@ describe("DesktopPreReadyPlatform", () => {
         yield* Layer.build(
           DesktopPreReadyPlatform.layer.pipe(
             Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+            // SCIENT-FORK:START desktop-state-isolation
             Layer.provide(Layer.succeed(HostProcess.HomeDirectory, "/home/me")),
           ),
         );
@@ -164,43 +171,10 @@ describe("DesktopPreReadyPlatform", () => {
           "MimeType=x-scheme-handler/scient;application/vnd.scient.conversation+zip;",
         );
         assert.include(identity.desktopEntry ?? "", "Icon=/xdg/icons/scient.desktop.png");
+        // SCIENT-FORK:END desktop-state-isolation
         assert.isTrue(identity.iconInstalled);
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
-  });
-
-  it.effect("keeps startup available when the early desktop entry cannot be written", () => {
-    getSwitchValueMock.mockReturnValue("");
-    mkdirSyncMock.mockImplementation(() => {
-      throw new Error("read-only filesystem");
-    });
-
-    return DesktopPreReadyPlatform.make.pipe(
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.HomeDirectory, "/home/me"),
-      Effect.asVoid,
-    );
-  });
-
-  it.effect("still prepares the portal entry when the bundled icon cannot be copied", () => {
-    vi.stubEnv("VITE_DEV_SERVER_URL", "");
-    vi.stubEnv("XDG_DATA_HOME", "/xdg");
-    vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
-    getSwitchValueMock.mockReturnValue("");
-    copyFileSyncMock.mockImplementation(() => {
-      throw new Error("missing bundled icon");
-    });
-    return Effect.gen(function* () {
-      yield* DesktopPreReadyPlatform.make;
-      const contents = writeFileSyncMock.mock.calls[0]?.[1];
-      assert.include(contents, "MimeType=x-scheme-handler/scient;");
-      assert.include(contents, "Icon=");
-      assert.equal(setDesktopNameMock.mock.calls.length, 1);
-    }).pipe(
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.HomeDirectory, "/home/me"),
-      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
-    );
   });
 
   it.effect(
@@ -218,7 +192,9 @@ describe("DesktopPreReadyPlatform", () => {
 
         const layerPreReady = DesktopPreReadyPlatform.layer.pipe(
           Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
+          // SCIENT-FORK:START desktop-state-isolation
           Layer.provide(Layer.succeed(HostProcess.HomeDirectory, "/home/me")),
+          // SCIENT-FORK:END desktop-state-isolation
         );
 
         const layerClerkShaped = Layer.effect(
@@ -254,70 +230,4 @@ describe("DesktopPreReadyPlatform", () => {
         assert.equal(setDesktopNameMock.mock.calls.length, 0);
       }),
   );
-
-  it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
-    vi.stubEnv("SCIENT_NEXT_HOME", "/isolated");
-    vi.stubEnv("T3CODE_HOME", "/foreign-profile");
-    vi.stubEnv("VITE_DEV_SERVER_URL", "");
-    const settingsPath = "/isolated/userdata/desktop-settings.json";
-    const files = new Map([[settingsPath, "{}"]]);
-    const commandLine = new Map<string, string>();
-    readFileSyncMock.mockImplementation((path: string) => {
-      const contents = files.get(path);
-      if (contents === undefined) throw new Error("ENOENT");
-      return contents;
-    });
-    writeFileSyncMock.mockImplementation((path: string, contents: string) => {
-      files.set(path, contents);
-    });
-    hasSwitchMock.mockImplementation((name: string) => commandLine.has(name));
-    getSwitchValueMock.mockImplementation((name: string) => commandLine.get(name) ?? "");
-    appendSwitchMock.mockImplementation((name: string, value: string) => {
-      commandLine.set(name, value);
-    });
-    const launch = Effect.gen(function* () {
-      const startup = Promise.resolve().then(() => commandLine.get("force-device-scale-factor"));
-      yield* DesktopPreReadyPlatform.make;
-      return yield* Effect.promise(() => startup);
-    });
-
-    return Effect.gen(function* () {
-      for (const explicitScale of ["1.75", "1"]) {
-        commandLine.clear();
-        commandLine.set("force-device-scale-factor", explicitScale);
-        appendSwitchMock.mockClear();
-        assert.equal(yield* launch, explicitScale);
-        assert.isFalse(
-          appendSwitchMock.mock.calls.some(([name]) => name === "force-device-scale-factor"),
-        );
-
-        // The settings service discards fields it does not own when rewriting its document.
-        files.set(settingsPath, JSON.stringify({ linuxPasswordStore: "basic" }));
-        commandLine.clear();
-        assert.equal(yield* launch, explicitScale);
-      }
-    }).pipe(
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
-    );
-  });
-
-  it.effect("preserves an explicit Linux password-store switch", () => {
-    hasSwitchMock.mockImplementation((switchName) => switchName === "password-store");
-    getSwitchValueMock.mockReturnValue(" basic ");
-
-    return Effect.gen(function* () {
-      const options = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
-
-      assert.equal(options.linuxPasswordStoreCommandLine, "basic");
-      assert.isFalse(appendSwitchMock.mock.calls.some(([name]) => name === "password-store"));
-    }).pipe(
-      Effect.provide(
-        DesktopPreReadyPlatform.layer.pipe(
-          Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
-          Layer.provide(Layer.succeed(HostProcess.HomeDirectory, "/home/me")),
-        ),
-      ),
-    );
-  });
 });

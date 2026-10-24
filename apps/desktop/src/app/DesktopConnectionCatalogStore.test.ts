@@ -54,7 +54,9 @@ function layerFor(
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
+  // SCIENT-FORK:START scient-keychain-free-empty-catalog
   layerSafeStorage = layerSafeStorageFor(encryptionAvailable, failDecrypt),
+  // SCIENT-FORK:END scient-keychain-free-empty-catalog
 ) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -68,7 +70,9 @@ function layerFor(
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
+      // SCIENT-FORK:START scient-keychain-free-empty-catalog
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ SCIENT_NEXT_HOME: baseDir })),
+      // SCIENT-FORK:END scient-keychain-free-empty-catalog
     ),
   );
   const layerDependencies = Layer.mergeAll(
@@ -90,6 +94,8 @@ function layerFor(
 const withStore = <A, E, R>(
   effect: Effect.Effect<A, E, R | DesktopConnectionCatalogStore.DesktopConnectionCatalogStore>,
   encryptionAvailable = true,
+  // SCIENT-FORK:START scient-keychain-free-empty-catalog
+  // regression: 43220d4af7 fix(desktop): avoid Keychain access for empty connection catalogs
   layerSafeStorage = layerSafeStorageFor(encryptionAvailable),
 ) =>
   Effect.gen(function* () {
@@ -227,6 +233,7 @@ describe("DesktopConnectionCatalogStore", () => {
         );
       }),
   );
+  // SCIENT-FORK:END scient-keychain-free-empty-catalog
 
   it.effect("persists, reads, and clears an encrypted connection catalog", () =>
     withStore(

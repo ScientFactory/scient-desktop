@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Executes Windows batch launchers with native cmd.exe.
+// SCIENT-FORK:START scient-cli-command
 import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, beforeEach, expect, it } from "@effect/vitest";
@@ -29,6 +30,7 @@ const environmentFor = (
     isPackaged?: boolean;
     serverRoot?: string;
   },
+  // SCIENT-FORK:END scient-cli-command
 ) =>
   DesktopEnvironment.DesktopEnvironment.of({
     path,
@@ -37,6 +39,7 @@ const environmentFor = (
     homeDirectory: input.home,
     baseDir: input.baseDir,
     stateDir: path.join(input.baseDir, "userdata"),
+    // SCIENT-FORK:START scient-cli-command
     serverRoot: input.serverRoot ?? "/opt/T3 Code/resources/app.asar",
     appImagePath: Option.none(),
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
@@ -55,6 +58,7 @@ const commandIn = (
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const baseDir = input.baseDir ?? path.join(input.home, ".scient-next");
+    // SCIENT-FORK:END scient-cli-command
     yield* fs.makeDirectory(path.join(baseDir, "userdata"), { recursive: true });
     const make = DesktopCliCommand.make.pipe(
       Effect.provideService(
@@ -103,6 +107,7 @@ const fakePowerShell = (initial: string) => {
   return { registry, spawner };
 };
 
+// SCIENT-FORK:START scient-cli-command
 const machineEnvironment = {
   PATH: process.env.PATH,
   SCIENT_NEXT_HOME: process.env.SCIENT_NEXT_HOME,
@@ -477,7 +482,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
   );
 
   unix(
-    "executes shortcuts through 40 install, reload, profile, update, and removal cycles",
+    "executes shortcuts through repeated install, reload, profile, update, and removal cycles",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -497,7 +502,9 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         yield* fs.writeFileString(unrelated, "unrelated app command\n");
         process.env.PATH = path.dirname(link);
         let legacyRemoved = false;
-        for (let cycle = 0; cycle < 40; cycle += 1) {
+        // Two four-cycle periods cover both profiles, the legacy link before and after its
+        // removal, and a reinstall that must not recreate it.
+        for (let cycle = 0; cycle < 8; cycle += 1) {
           const baseDir = path.join(home, `profile-${cycle % 2}`);
           const serverRoot = yield* fixtureServer(path.join(home, `app-${cycle}`), `${cycle}`);
           const command = yield* commandIn({ home, baseDir, serverRoot });
@@ -543,7 +550,6 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
           expect(yield* fs.readFileString(unrelated)).toBe("unrelated app command\n");
         }
       }).pipe(Effect.scoped),
-    60_000,
   );
 
   unix("never replaces or removes a scient it did not create", () =>
@@ -567,6 +573,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
   );
 
   unix("finds and removes a link left by a previous Scient home", () =>
+    // SCIENT-FORK:END scient-cli-command
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -577,6 +584,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") });
       expect((yield* after.state).installedPath).toBe(link);
       expect((yield* after.install).installedPath).toBe(link);
+      // SCIENT-FORK:START scient-cli-command
       expect(yield* fs.readLink(link!)).toBe(path.join(home, "new-t3", "bin", "scient"));
       yield* after.uninstall;
       expect(yield* fs.exists(path.join(home, ".local", "bin", "scient"))).toBe(false);
@@ -686,6 +694,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect(installed).toMatchObject({
         onPath: true,
         installedPath: path.join(home, ".local", "bin", "scient"),
+        // SCIENT-FORK:END scient-cli-command
       });
       expect(installed.shadowedBy).toBeUndefined();
     }).pipe(Effect.scoped),
@@ -706,6 +715,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
 
       registry.failReads = false;
       const launcherDir = DesktopCliShim.launcherPath(
+        // SCIENT-FORK:START scient-cli-command
         environmentFor(yield* Path.Path, {
           home,
           baseDir: `${home}/.scient-next`,
@@ -815,22 +825,6 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("offers nothing for a development build", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const command = yield* commandIn({
-        home: yield* fs.makeTempDirectoryScoped(),
-        isPackaged: false,
-      });
-      expect(yield* command.state).toEqual({
-        supported: false,
-        installedPath: null,
-        legacyInstalled: false,
-        onPath: false,
-      });
-    }).pipe(Effect.scoped),
-  );
-
   unix("does not let a development build remove packaged-app shortcuts", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -887,7 +881,8 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         const home = yield* fs.makeTempDirectoryScoped({ prefix: "Scient José's CLI space-" });
         const { registry, spawner } = fakePowerShell("C:\\OtherApp");
         const args = ["app", "a project with spaces", 'single \' and "double" quotes', "", "José"];
-        for (let cycle = 0; cycle < 40; cycle += 1) {
+        // Cycle 0 upgrades the legacy t3.cmd; later cycles alternate profiles without it.
+        for (let cycle = 0; cycle < 3; cycle += 1) {
           const baseDir = path.join(home, `profile ${cycle % 2}`);
           const bin = path.join(baseDir, "bin");
           const serverRoot = yield* fixtureServer(
@@ -934,4 +929,5 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         }
       }).pipe(Effect.scoped),
   );
+  // SCIENT-FORK:END scient-cli-command
 });

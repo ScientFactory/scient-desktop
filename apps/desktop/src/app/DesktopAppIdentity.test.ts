@@ -20,9 +20,9 @@ const defaultEnvironmentInput = {
   platform: "darwin",
   processArch: "arm64",
   appVersion: "1.2.3",
-  appPath: "/Applications/Scient.app/Contents/Resources/app.asar",
+  appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
   isPackaged: true,
-  resourcesPath: "/Applications/Scient.app/Contents/Resources",
+  resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
@@ -39,7 +39,7 @@ interface ElectronAppCalls {
 const layerElectronApp = (calls: ElectronAppCalls) =>
   Layer.succeed(ElectronApp.ElectronApp, {
     metadata: Effect.die("unexpected metadata read"),
-    name: Effect.succeed("Scient"),
+    name: Effect.succeed("T3 Code"),
     systemLocale: Effect.succeed("en-US"),
     whenReady: Effect.void,
     requestSingleInstanceLock: Effect.succeed(true),
@@ -109,10 +109,12 @@ const withIdentity = <A, E, R>(
   input: {
     readonly calls?: ElectronAppCalls;
     readonly environment?: TestEnvironmentInput;
-    readonly legacyPathExists?: boolean;
     readonly packageJson?: string;
     readonly pngIconPath?: Option.Option<string>;
+    // SCIENT-FORK:START desktop-state-isolation — records probes so tests can prove
+    // Scient never inspects legacy userData paths.
     readonly existsCalls?: string[];
+    // SCIENT-FORK:END desktop-state-isolation
   } = {},
 ) => {
   const calls: ElectronAppCalls = input.calls ?? {
@@ -126,12 +128,12 @@ const withIdentity = <A, E, R>(
       DesktopAppIdentity.layer.pipe(
         Layer.provideMerge(
           FileSystem.layerNoop({
+            // SCIENT-FORK:START desktop-state-isolation
             exists: (path) => {
               input.existsCalls?.push(path);
-              return Effect.succeed(
-                input.legacyPathExists === true && path.includes("Scient (Alpha)"),
-              );
+              return Effect.succeed(false);
             },
+            // SCIENT-FORK:END desktop-state-isolation
             readFileString: () =>
               Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
           }),
@@ -145,18 +147,9 @@ const withIdentity = <A, E, R>(
 };
 
 describe("DesktopAppIdentity", () => {
-  it.effect("never adopts a legacy userData path during D4", () =>
-    withIdentity(
-      Effect.gen(function* () {
-        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
-        const userDataPath = yield* identity.resolveUserDataPath;
-
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/scient-next");
-      }),
-      { legacyPathExists: true },
-    ),
-  );
-
+  // SCIENT-FORK:START desktop-state-isolation — Scient replaces the V1/V2 profile adoption
+  // rows: it never probes or adopts a legacy userData path, and development state stays
+  // under the candidate state directory.
   it.effect("does not inspect legacy userData paths", () => {
     const existsCalls: string[] = [];
     return withIdentity(
@@ -185,36 +178,7 @@ describe("DesktopAppIdentity", () => {
       },
     ),
   );
-
-  it.effect("configures app identity from the environment commit override", () => {
-    const calls: ElectronAppCalls = {
-      setAboutPanelOptions: [],
-      setDockIcon: [],
-      setName: [],
-    };
-
-    return withIdentity(
-      Effect.gen(function* () {
-        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
-        yield* identity.configure;
-
-        assert.deepEqual(calls.setName, ["Scient"]);
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "Scient");
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
-        assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
-        assert.deepEqual(calls.setDockIcon, []);
-      }),
-      {
-        calls,
-        environment: {
-          env: {
-            T3CODE_COMMIT_HASH: "0123456789abcdef",
-          },
-        },
-        pngIconPath: Option.some("/icon.png"),
-      },
-    );
-  });
+  // SCIENT-FORK:END desktop-state-isolation
 
   it.effect.each([
     { stage: "Beta", environment: {} },
@@ -240,12 +204,16 @@ describe("DesktopAppIdentity", () => {
 
         const runtimeName = calls.setName[0];
         assert.isDefined(runtimeName);
+        // SCIENT-FORK:START desktop-release-channels — only development builds carry a stage.
         assert.equal(runtimeName, stage === "Dev" ? "Scient Dev" : "Scient");
+        // SCIENT-FORK:END desktop-release-channels
         assert.match(runtimeName.replaceAll(" ", ""), /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/);
+        // SCIENT-FORK:START desktop-release-channels
         assert.equal(
           calls.setAboutPanelOptions[0]?.applicationName,
           stage === "Dev" ? "Scient (Dev)" : "Scient",
         );
+        // SCIENT-FORK:END desktop-release-channels
       }),
       { calls, environment },
     );

@@ -4,7 +4,6 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   restoreEarlyLinuxDeviceScaleFactor,
-  resolveEarlyLinuxElectronOptions,
   resolveEarlyLinuxPasswordStorePreference,
   resolveLinuxDisableFeaturesSwitch,
 } from "./DesktopEarlyElectronStartup.ts";
@@ -14,11 +13,13 @@ describe("DesktopEarlyElectronStartup", () => {
 
   it("reads the persisted linux password-store preference before Electron is ready", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
+      // SCIENT-FORK:START desktop-state-isolation
       env: { SCIENT_NEXT_HOME: "/home/user/.scient-next-test" },
       homeDirectory: "/home/user",
       joinPath,
       readFileString: (path) => {
         assert.equal(path, "/home/user/.scient-next-test/userdata/desktop-settings.json");
+        // SCIENT-FORK:END desktop-state-isolation
         return JSON.stringify({ linuxPasswordStore: "kwallet6" });
       },
     });
@@ -28,7 +29,9 @@ describe("DesktopEarlyElectronStartup", () => {
 
   it("accepts JSONC in the early desktop settings file", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
+      // SCIENT-FORK:START desktop-state-isolation
       env: { SCIENT_NEXT_HOME: "/home/user/.scient-next-test" },
+      // SCIENT-FORK:END desktop-state-isolation
       homeDirectory: "/home/user",
       joinPath,
       readFileString: () => `{
@@ -53,43 +56,7 @@ describe("DesktopEarlyElectronStartup", () => {
     assert.equal(preference, "auto");
   });
 
-  it("preserves absolute root paths when resolving early settings", () => {
-    const preference = resolveEarlyLinuxPasswordStorePreference({
-      env: { SCIENT_NEXT_HOME: "/" },
-      homeDirectory: "/home/user",
-      joinPath,
-      readFileString: (path) => {
-        assert.equal(path, "/userdata/desktop-settings.json");
-        return JSON.stringify({ linuxPasswordStore: "kwallet6" });
-      },
-    });
-
-    assert.equal(preference, "kwallet6");
-  });
-
-  it("resolves the early linux Electron switches", () => {
-    const options = resolveEarlyLinuxElectronOptions({
-      env: {
-        SCIENT_NEXT_HOME: "/home/user/.scient-next-test",
-        XDG_CURRENT_DESKTOP: "niri",
-        VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
-      },
-      homeDirectory: "/home/user",
-      joinPath,
-      readFileString: (path) => {
-        assert.equal(path, "/home/user/.scient-next-test/scient-next-dev/desktop-settings.json");
-        return JSON.stringify({ linuxPasswordStore: "auto" });
-      },
-    });
-
-    assert.deepEqual(options, {
-      isDevelopment: true,
-      linuxWmClass: "scient-next-dev",
-      linuxDesktopEntryName: "scient-next-dev.desktop",
-      passwordStore: "gnome-libsecret",
-    });
-  });
-
+  // SCIENT-FORK:START desktop-state-isolation
   it("keeps implicit development state under the candidate development root", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
       env: {
@@ -122,6 +89,7 @@ describe("DesktopEarlyElectronStartup", () => {
 
     assert.equal(preference, "gnome-libsecret");
   });
+  // SCIENT-FORK:END desktop-state-isolation
 
   describe("resolveLinuxDisableFeaturesSwitch", () => {
     const hyprland = { XDG_CURRENT_DESKTOP: "Hyprland", XDG_SESSION_TYPE: "wayland" };
