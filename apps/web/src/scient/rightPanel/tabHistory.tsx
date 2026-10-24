@@ -109,7 +109,7 @@ function retargetTab(history: ThreadHistory, fromId: string, toId: string): Thre
  * file opened from another tab become history; closing a tab is not a move,
  * and a closed tab leaves the history.
  */
-export function recordTabHistoryChange(
+function recordTabHistoryChange(
   threadKey: string,
   next: ThreadRightPanelState | undefined,
   previous: ThreadRightPanelState | undefined,

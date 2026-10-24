@@ -34,7 +34,7 @@ export function usePanelFilesOpen() {
  * list in the file viewer, Diff has its own file list, Files is the tree itself,
  * and a New tab offers Files as a card.
  */
-export function panelFilesColumnApplies(surface: RightPanelSurface | null | undefined): boolean {
+function panelFilesColumnApplies(surface: RightPanelSurface | null | undefined): boolean {
   if (!surface) return false;
   if (surface.kind === "scient") return surface.module !== "new-tab";
   return surface.kind !== "diff" && surface.kind !== "files" && surface.kind !== "file";
