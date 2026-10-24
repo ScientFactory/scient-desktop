@@ -25,6 +25,7 @@ import {
   overleafProjectUrl,
   overleafResultView,
   refusalText,
+  settledText,
   workspacePathOf,
 } from "./overleafModel";
 import {
@@ -208,17 +209,20 @@ export async function readOverleafChanges(
   const startedAt = beginOverleafPreview(environmentId, connectionId);
   try {
     const result = await previewOverleaf(environmentId, { workspaceRoot, connectionId });
+    // Reading may first finish an interrupted sync, which writes the folder: always said.
+    const settled =
+      result._tag !== "recovered" && result.settled ? settledText(result.settled) : null;
     finishOverleafPreview(
       environmentId,
       connectionId,
       startedAt,
       result._tag === "review"
-        ? { _tag: "review", review: result.review }
+        ? { _tag: "review", review: result.review, note: settled }
         : {
             _tag: "failed",
             message:
               result._tag === "refused"
-                ? refusalText(result.refusal)
+                ? [settled, refusalText(result.refusal)].filter(Boolean).join(" ")
                 : "An interrupted sync was finished first. Read the changes again.",
           },
     );
