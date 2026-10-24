@@ -11,7 +11,7 @@ import {
 import { BUILT_IN_SKILL_SOURCES } from "./BuiltInSkillSources.ts";
 
 describe("Scient built-in skill releases", () => {
-  it("embeds the six reviewed releases with explicit product-owned defaults", () => {
+  it("embeds the seven reviewed releases with explicit product-owned defaults", () => {
     expect(BUILT_IN_SKILL_RELEASES).toMatchObject([
       {
         id: "scient.workspace-readiness-review",
@@ -81,6 +81,17 @@ describe("Scient built-in skill releases", () => {
         origin: "scient",
         resources: [],
       },
+      {
+        id: "scient.overleaf-sync",
+        version: "0.1.0",
+        category: "Document creation",
+        categoryDescription: "Create polished documents and reliable final outputs.",
+        displayOrder: 70,
+        supportedScopes: ["user"],
+        defaultInvocationPolicy: "automatic",
+        origin: "scient",
+        resources: [],
+      },
     ]);
     expect(BUILT_IN_SKILL_RELEASES.every((release) => release.instructions.length > 0)).toBe(true);
     expect(Object.fromEntries(BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID)).toEqual({
@@ -90,6 +101,7 @@ describe("Scient built-in skill releases", () => {
       "scient.pdf-authoring": true,
       "scient.html-pdf-authoring": true,
       "scient.latex-authoring": true,
+      "scient.overleaf-sync": true,
     });
   });
 
@@ -185,5 +197,25 @@ describe("Scient built-in skill releases", () => {
       expect(authoringSkill.instructions).toContain("Scient chat");
       expect(authoringSkill.instructions).toContain("clickable project-relative Markdown link");
     }
+  });
+
+  it("teaches the Overleaf folder model, conflicts and the token flow without adding a gate", () => {
+    const overleaf = BUILT_IN_SKILL_RELEASES.find(
+      (release) => release.id === "scient.overleaf-sync",
+    )!;
+    expect(overleaf.description).toContain("Overleaf");
+    expect(overleaf.instructions).toContain("lives in its own folder");
+    expect(overleaf.instructions).toContain("Bring a project in as a new folder by default");
+    expect(overleaf.instructions).toContain(
+      "Keep code, data and analysis outside Overleaf folders",
+    );
+    expect(overleaf.instructions).toContain("Only a conflict stops a sync");
+    expect(overleaf.instructions).toContain("remove every mark");
+    expect(overleaf.instructions).toContain("`reviewedRemote`");
+    expect(overleaf.instructions).toContain("`files.keepOnlyHere`");
+    expect(overleaf.instructions).toContain("`request_secret`");
+    expect(overleaf.instructions).toContain("Never ask for the token in chat");
+    expect(overleaf.instructions).toContain("ask no one for approval");
+    expect(overleaf.instructions).toContain("This skill grants no tools or authority");
   });
 });

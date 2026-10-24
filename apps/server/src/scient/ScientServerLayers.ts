@@ -58,6 +58,7 @@ import * as PandocManagedTool from "./pandoc/PandocManagedTool.ts";
 import * as PandocWordConverter from "./pandoc/PandocWordConverter.ts";
 import * as WordFileExport from "./pandoc/WordFileExport.ts";
 import { scientOverleafHttpApiLayer } from "./overleaf/http.ts";
+import * as OverleafEditorSave from "./overleaf/OverleafEditorSave.ts";
 import * as OverleafSync from "./overleaf/OverleafSync.ts";
 
 // Skill discovery and selected-turn delivery share one live policy/catalog.
@@ -200,10 +201,12 @@ export function makeScientRouteServices<
       Layer.provide(ComputeSessionServiceLive),
       Layer.provide(ScientificRuntimePreferencesLive),
       Layer.provide(ScientLatexServicesLive),
+      Layer.provide(OverleafSyncLive),
+      // The agent tools save a folder's editors through the editor-save request.
+      Layer.provide(OverleafEditorSave.layerFromEditorFlush),
       // One server-lifetime set of connected windows, shared by the WebSocket
       // handlers that windows answer on and the tools that ask them.
       Layer.provide(EditorFlush.layer),
-      Layer.provide(OverleafSyncLive),
     );
 
   /** Self-update that hands running threads to the next server. */

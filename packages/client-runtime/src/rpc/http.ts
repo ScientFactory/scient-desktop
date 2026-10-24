@@ -151,10 +151,10 @@ const failRemoteRequest = (
     isScientThreadQueueOperationError(cause) ||
     isScientConversationExportError(cause) ||
     isScientConversationImportError(cause) ||
-    isScientWordExportError(cause) ||
     // SCIENT-FORK:START
-    isScientOverleafOperationError(cause)
+    isScientOverleafOperationError(cause) ||
     // SCIENT-FORK:END
+    isScientWordExportError(cause)
   ) {
     return Effect.fail(cause);
   }
