@@ -22,7 +22,13 @@ import {
   type OverleafSyncShape,
 } from "../../../scient/overleaf/OverleafSync.ts";
 import type { OverleafAdopted } from "../../../scient/overleaf/OverleafCoordinator.ts";
-import { refusalView, restoreView, settledView, syncView } from "../../../scient/overleaf/http.ts";
+import {
+  refusalView,
+  restoreView,
+  settledView,
+  syncView,
+  undoView,
+} from "../../../scient/overleaf/http.ts";
 import type { ConflictChoice } from "../../../scient/overleaf/syncRules.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import {
@@ -33,6 +39,8 @@ import {
   recoveryLines,
   statusLines,
   syncLines,
+  undoableSendLines,
+  undoLines,
 } from "./resultLines.ts";
 import { ScientOverleafToolError, ScientOverleafToolkit } from "./tools.ts";
 
@@ -640,6 +648,43 @@ export const overleafKeptCopiesForInvocation = Effect.fn("ScientOverleafToolkit.
   },
 );
 
+export const overleafUndoForInvocation = Effect.fn("ScientOverleafToolkit.undo")(function* (input: {
+  readonly connectionId: string;
+  readonly attemptNumber?: number | undefined;
+}) {
+  const overleaf = yield* OverleafSync;
+  const caller = yield* callerOf;
+  const link = yield* linkFor(overleaf, caller, input.connectionId);
+  if (input.attemptNumber === undefined) {
+    const sends = yield* mapErrors(
+      overleaf.undoableSends({ caller, connectionId: input.connectionId }),
+    );
+    return {
+      lines: withLinkLine(link, undoableSendLines(sends)),
+      link,
+      sends,
+      result: null,
+    };
+  }
+  // The service saves the folder's open editors, undoes, then syncs.
+  const result = undoView(
+    yield* mapErrors(
+      overleaf.undo({
+        caller,
+        connectionId: input.connectionId,
+        requestId: requestId(),
+        attemptNumber: input.attemptNumber,
+      }),
+    ),
+  );
+  return {
+    lines: withLinkLine(link, undoLines(input.attemptNumber, result)),
+    link,
+    sends: null,
+    result,
+  };
+});
+
 export const overleafManageForInvocation = Effect.fn("ScientOverleafToolkit.manage")(
   function* (input: {
     readonly connectionId: string;
@@ -792,6 +837,7 @@ const handlers = {
   scient_overleaf_connect: (input) => overleafConnectForInvocation(input),
   scient_overleaf_sync: (input) => overleafSyncForInvocation(input),
   scient_overleaf_kept_copies: (input) => overleafKeptCopiesForInvocation(input),
+  scient_overleaf_undo: (input) => overleafUndoForInvocation(input),
   scient_overleaf_manage: (input) => overleafManageForInvocation(input),
   scient_overleaf_token: (input) => overleafTokenForInvocation(input),
 } satisfies Parameters<typeof ScientOverleafToolkit.toLayer>[0];

@@ -8,6 +8,7 @@ import {
   cancelEnvironmentOverleafSync,
   getEnvironmentOverleafStatus,
   syncEnvironmentOverleaf,
+  undoEnvironmentOverleafSend,
 } from "./scientOverleafHttp.ts";
 
 const TARGET = new PrimaryConnectionTarget({
@@ -125,6 +126,41 @@ describe("scientOverleafHttp", () => {
         {
           url: "https://environment.example.test/api/scient/overleaf/v1/cancel",
           body: { workspaceRoot: "/work/project", connectionId: "c1" },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("posts an undo with its send number, and reads what it put back", () =>
+    Effect.gen(function* () {
+      const server = recordingFetch({
+        _tag: "undone",
+        restored: ["main.tex"],
+        removed: [],
+        recreated: [],
+        skipped: [{ path: "notes.tex", reason: "changed" }],
+        outcome: "replan",
+        sync: null,
+      });
+      const result = yield* undoEnvironmentOverleafSend({
+        prepared: PREPARED,
+        request: {
+          workspaceRoot: "/work/project",
+          connectionId: "c1",
+          requestId: "request-1",
+          attemptNumber: 4,
+        },
+      }).pipe(Effect.provide(layerRemoteHttpClient(server.fetchFn)));
+      expect(result).toMatchObject({ _tag: "undone", outcome: "replan", sync: null });
+      expect(server.requests).toEqual([
+        {
+          url: "https://environment.example.test/api/scient/overleaf/v1/undo",
+          body: {
+            workspaceRoot: "/work/project",
+            connectionId: "c1",
+            requestId: "request-1",
+            attemptNumber: 4,
+          },
         },
       ]);
     }),

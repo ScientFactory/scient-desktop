@@ -31,6 +31,7 @@ it.effect(
         "scient_overleaf_status",
         "scient_overleaf_sync",
         "scient_overleaf_token",
+        "scient_overleaf_undo",
       ]);
       for (const { tool } of tools) {
         expect(tool.inputSchema.type).toBe("object");
@@ -43,6 +44,7 @@ it.effect(
             "scient_overleaf_kept_copies",
             "scient_overleaf_manage",
             "scient_overleaf_token",
+            "scient_overleaf_undo",
           ].includes(tool.name),
         });
         // The composer's access setting is the only control: the tools need only the

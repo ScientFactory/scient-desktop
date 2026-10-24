@@ -8,6 +8,8 @@ import {
   ScientOverleafRecoverResult,
   ScientOverleafStatus,
   ScientOverleafSyncResult,
+  ScientOverleafUndoableSends,
+  ScientOverleafUndoResult,
   SecretRef,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -270,6 +272,34 @@ const ScientOverleafKeptCopiesTool = Tool.make("scient_overleaf_kept_copies", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, overleafOperation("overleaf.kept-copies"));
 
+const ScientOverleafUndoTool = Tool.make("scient_overleaf_undo", {
+  description:
+    "Undo one send to Overleaf: put back what Overleaf had before it, then sync, so collaborators' earlier text returns (after an older branch's files were sent over newer text, say, or a deletion sent by mistake). Without attemptNumber: list the sends that can be undone, newest first, with what each changed. With attemptNumber (the send # a sync result or the listing gives): save the folder's open editors, put back the earlier version of every file that send changed (removing files it added, writing back files it deleted), keep the replaced files as copies, then sync; a file edited since that send is left as it is and reported. Only a send Overleaf accepted can be undone. If the thread works in another worktree, this acts on the linked copy and says so. Read `lines` and act on them.",
+  parameters: Schema.Struct({
+    connectionId: ConnectionId,
+    attemptNumber: Schema.optional(
+      Schema.Int.check(Schema.isGreaterThan(0)).annotate({
+        description: "The send to undo, as `send #N` names it. Omit to list the sends.",
+      }),
+    ),
+  }),
+  success: Schema.Struct({
+    lines: Lines,
+    link: LinkedCopy,
+    /** The sends that can be undone; null when this call undid one. */
+    sends: Schema.NullOr(ScientOverleafUndoableSends.fields.sends),
+    result: Schema.NullOr(ScientOverleafUndoResult),
+  }),
+  failure: ScientOverleafToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Undo an Overleaf send")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, overleafOperation("overleaf.undo"));
+
 const ScientOverleafManageTool = Tool.make("scient_overleaf_manage", {
   description:
     "Manage one link. disconnect unlinks the folder from Overleaf; nothing is deleted on either side, and linking the same folder to the same project again keeps its history. relink records the link's folder (`folder`, project-relative) in this thread's copy of the project, after the folder moved or status says relink. recover saves the folder's open editors, then settles an interrupted sync (the result says whether its changes reached the folder) and checks Overleaf for earlier sends that got no answer. cancel asks this link's running sync to stop before its next step; a step already applying or sending finishes.",
@@ -328,6 +358,7 @@ export const ScientOverleafToolkit = Toolkit.make(
   ScientOverleafConnectTool,
   ScientOverleafSyncTool,
   ScientOverleafKeptCopiesTool,
+  ScientOverleafUndoTool,
   ScientOverleafManageTool,
   ScientOverleafTokenTool,
 );

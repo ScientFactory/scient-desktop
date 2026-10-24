@@ -70,6 +70,7 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
         "scient_overleaf_connect",
         "scient_overleaf_sync",
         "scient_overleaf_kept_copies",
+        "scient_overleaf_undo",
         "scient_overleaf_manage",
         "scient_overleaf_token",
       ]),

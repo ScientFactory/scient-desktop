@@ -1599,6 +1599,9 @@ describe.skipIf(!canApply)("OverleafSync", () => {
                 currentRevision: null,
               }),
             ),
+            yield* Effect.flip(
+              w.service.undo({ caller, connectionId: id, requestId: "u1", attemptNumber: 1 }),
+            ),
           ];
           for (const refused of refusals) {
             expect(refused).toMatchObject({
@@ -1610,7 +1613,7 @@ describe.skipIf(!canApply)("OverleafSync", () => {
           }
           // Each asked every window to save the linked folder, and changed nothing.
           expect(w.editorSaves).toEqual(
-            Array.from({ length: 4 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
+            Array.from({ length: 5 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
           );
           expect(yield* read(paper, "main.tex")).toBe("edited here");
           expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "from Overleaf, edited" });
@@ -1636,6 +1639,76 @@ describe.skipIf(!canApply)("OverleafSync", () => {
           const synced = yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
           expect(synced).toMatchObject({ _tag: "needs-decision" });
           expect(relink).toMatchObject({ _tag: "OverleafOperationActiveError" });
+        }),
+      ),
+  );
+
+  it.live(
+    "undo saves editors, puts back what a send changed, syncs it, and leaves a file edited since",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A" } } });
+          const connected = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          const caller = w.at(w.main);
+          const paper = NodePath.join(w.main, "paper");
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+          yield* write(paper, { "main.tex": "older branch", "notes.tex": "N" });
+          const sent = yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
+          if (sent._tag !== "synced" || sent.publication._tag !== "accepted")
+            return yield* Effect.die(sent);
+          const attemptNumber = sent.publication.attemptNumber;
+          expect(yield* w.service.undoableSends({ caller, connectionId: id })).toEqual([
+            {
+              attemptNumber,
+              recordedAt: expect.any(String),
+              changes: [
+                { kind: "modified", path: "main.tex" },
+                { kind: "added", path: "notes.tex" },
+              ],
+            },
+          ]);
+          // Edited since that send: left as it is, and sent as an ordinary change.
+          yield* write(paper, { "notes.tex": "N, edited since" });
+          w.editorSaves.length = 0;
+
+          const undone = yield* w.service.undo({
+            caller,
+            connectionId: id,
+            requestId: "u1",
+            attemptNumber,
+          });
+          expect(undone).toMatchObject({
+            _tag: "undone",
+            restored: ["main.tex"],
+            removed: [],
+            recreated: [],
+            skipped: [{ path: "notes.tex", reason: "changed" }],
+            adopted: { outcome: "complete" },
+            sync: { _tag: "synced", publication: { _tag: "accepted" } },
+          });
+          expect(w.editorSaves).toEqual([{ checkoutRoot: w.main, folder: "paper" }]);
+          expect(yield* read(paper, "main.tex")).toBe("A");
+          expect(yield* w.overleafNow(PROJECT)).toEqual({
+            "main.tex": "A",
+            "notes.tex": "N, edited since",
+          });
+          // A repeated request applies and syncs nothing again.
+          expect(
+            yield* w.service.undo({ caller, connectionId: id, requestId: "u1", attemptNumber }),
+          ).toMatchObject({ _tag: "duplicate" });
+          // Only an accepted send that is still recorded can be undone.
+          expect(
+            yield* w.service.undo({ caller, connectionId: id, requestId: "u2", attemptNumber: 99 }),
+          ).toEqual({ _tag: "not-eligible", reason: "not-recorded" });
         }),
       ),
   );
