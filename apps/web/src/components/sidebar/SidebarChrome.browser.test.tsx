@@ -9,6 +9,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import { SidebarNewThreadRow } from "../../scient/sidebar/SidebarNewThreadRow";
 import { SidebarFooter, SidebarProvider } from "../ui/sidebar";
 import { TooltipProvider } from "../ui/tooltip";
 import { SidebarUtilityMenu } from "./SidebarChrome";
@@ -579,6 +580,64 @@ it("asks above the pill before a pass that downloads this app stops running thre
   expect(run.mock.calls[0]![0].admitServer!(alvinServer as never)).toBe(true);
 });
 // SCIENT-FORK:END
+
+// regression: 4b9f781edc fix(sidebar): keep update controls within narrow layouts
+it("keeps all four utilities equally spaced and inset while updates are idle", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  await mountFooter(_fixture, 216, {
+    ...updateState,
+    status: "idle",
+    downloadedVersion: null,
+    availableVersion: null,
+  });
+  await expect
+    .element(page.getByRole("button", { name: "More sidebar actions", includeHidden: true }))
+    .not.toBeVisible();
+  const buttons = [
+    ..._fixture.host!.querySelectorAll<HTMLButtonElement>('[data-sidebar="menu-button"]'),
+  ].filter((button) => button.getClientRects().length);
+  expect(buttons).toHaveLength(4);
+  const rects = buttons.map((button) => button.getBoundingClientRect());
+  expect(rects[0]!.left - _fixture.host!.getBoundingClientRect().left).toBe(12);
+  expect(rects.slice(1).map((rect, index) => rect.left - rects[index]!.right)).toEqual([4, 4, 4]);
+});
+
+// regression: 4b9f781edc fix(sidebar): keep update controls within narrow layouts
+it("shows a compact current-project tooltip with its keyboard shortcut", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  _fixture.host = document.createElement("div");
+  Object.assign(_fixture.host.style, { width: "280px", margin: "20px" });
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(
+    <SidebarProvider className="min-h-0">
+      <TooltipProvider delay={0}>
+        <SidebarNewThreadRow
+          onNewThread={() => {}}
+          shortcutLabel="⇧⌘O"
+          inProjectShortcutLabel="⇧⌘N"
+          showInProjectHint
+        />
+      </TooltipProvider>
+    </SidebarProvider>,
+  );
+  await userEvent.hover(page.getByRole("button", { name: "New thread", exact: true }));
+  await expect.poll(() => document.querySelector('[data-slot="tooltip-popup"]')).not.toBeNull();
+  const tooltip = document.querySelector<HTMLElement>('[data-slot="tooltip-popup"]')!;
+  expect(tooltip.textContent).toBe("New thread (⇧⌘O)In current project (⇧⌘N)");
+  expect(tooltip.getBoundingClientRect().width).toBeLessThan(230);
+  if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
+    await page.screenshot({
+      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/new-thread-tooltip.png`,
+    });
+  }
+});
 
 function _createFixture() {
   const stack = new AsyncDisposableStack();

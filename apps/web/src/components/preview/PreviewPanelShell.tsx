@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import {
+  getPreviewPanelMaxWidth as getInlinePanelMaxWidth,
   type PreviewPanelInlineSize,
   usePreviewPanelInlineSize,
 } from "~/hooks/usePreviewPanelInlineSize";
@@ -18,6 +19,10 @@ import { cn } from "~/lib/utils";
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
 
 const PREVIEW_PANEL_MIN_WIDTH = 300;
+
+export function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: number): number {
+  return getInlinePanelMaxWidth(viewportWidth, containerWidth, PREVIEW_PANEL_MIN_WIDTH);
+}
 
 export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 

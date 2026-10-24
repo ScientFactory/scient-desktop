@@ -5,6 +5,7 @@ import { resolveStaleDraftDefaultModelSelection } from "./chatThreadActions";
 // regression: 67ab5e432f fix(settings): keep the default model's reasoning effort as chosen (#394)
 describe("resolveStaleDraftDefaultModelSelection", () => {
   const codex = ProviderInstanceId.make("codex");
+  const claude = ProviderInstanceId.make("claudeAgent");
   const lowDefault: ModelSelection = {
     instanceId: codex,
     model: "gpt-5.6",
@@ -19,6 +20,11 @@ describe("resolveStaleDraftDefaultModelSelection", () => {
 
   it("moves an unpicked draft to a default whose effort changed", () => {
     expect(resolveStaleDraftDefaultModelSelection(seededHigh, lowDefault)).toBe(lowDefault);
+  });
+
+  it("moves an unpicked draft to a default on another provider", () => {
+    const claudeDefault = { instanceId: claude, model: "claude-opus-4-8" };
+    expect(resolveStaleDraftDefaultModelSelection(seededHigh, claudeDefault)).toBe(claudeDefault);
   });
 
   it("leaves a draft that already uses the default alone", () => {

@@ -1795,3 +1795,183 @@ it.each([true, false])(
     }
   },
 );
+
+// regression: cf7bfd1c93 fix(web): preserve XML-like tags in user messages (#4133)
+it("preserves XML-like source inside user code spans and fences", async () => {
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...buildProps()}
+      timelineEntries={[
+        buildUserTimelineEntry(
+          [
+            'Inline `<tag attr="x">`',
+            "",
+            "```xml",
+            '<root><child enabled="true" /></root>',
+            "```",
+          ].join("\n"),
+        ),
+      ]}
+    />,
+  );
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector("[data-timeline-row-kind]")).not.toBeNull(),
+  );
+  const markup = screen.container.innerHTML;
+  expect(markup).toContain("data-inline-code");
+  expect(screen.container.querySelector("code[data-inline-code]")?.textContent).toBe(
+    '<tag attr="x">',
+  );
+  expect(screen.container.textContent).toContain('<root><child enabled="true" /></root>');
+});
+// regression: cf7bfd1c93 fix(web): preserve XML-like tags in user messages (#4133)
+// The only timeline test that fails when the sanitizer is removed from the render pipeline.
+it("sanitizes executable HTML while preserving supported assistant markup", async () => {
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...buildProps()}
+      timelineEntries={[
+        buildAssistantTimelineEntry({
+          text: [
+            '<details open onclick="globalThis.__t3Xss = 1">',
+            "<summary>Safe details</summary>",
+            "<script>globalThis.__t3Xss = 2</script>",
+            '<img src="x" onerror="globalThis.__t3Xss = 3">',
+            '<a href="javascript:globalThis.__t3Xss = 4">Unsafe link</a>',
+            "</details>",
+          ].join(""),
+        }),
+      ]}
+    />,
+  );
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector("[data-timeline-row-kind]")).not.toBeNull(),
+  );
+  const markup = screen.container.innerHTML;
+  expect(markup).toContain('data-markdown-details=""');
+  expect(markup).toContain("Safe details");
+  expect(markup).not.toMatch(/<script(?:\s|>)/i);
+  expect(markup).not.toContain("onclick=");
+  expect(markup).not.toContain("onerror=");
+  expect(markup).not.toContain("javascript:");
+  expect(markup).not.toContain("globalThis.__t3Xss");
+});
+
+// regression: f1e6f0c9bb fix(web): stop showing red x summaries for ordinary tool failures (#8395)
+it("keeps the collapsed summary icon neutral when the group ends in a failure", async () => {
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...buildProps()}
+      timelineEntries={[
+        {
+          id: "entry-completed",
+          kind: "work",
+          createdAt: "2026-03-17T19:12:28.000Z",
+          entry: {
+            id: "work-completed",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            label: "Run tests",
+            tone: "tool",
+            itemType: "command_execution",
+            toolLifecycleStatus: "completed",
+          },
+        },
+        {
+          id: "entry-failed",
+          kind: "work",
+          createdAt: "2026-03-17T19:12:29.000Z",
+          entry: {
+            id: "work-failed",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            label: "Run lint",
+            tone: "tool",
+            itemType: "command_execution",
+            toolLifecycleStatus: "failed",
+          },
+        },
+      ]}
+    />,
+  );
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector("[data-timeline-row-kind]")).not.toBeNull(),
+  );
+  const markup = screen.container.innerHTML;
+  expect(markup).toContain("Ran 2 commands");
+  expect(markup).toContain("lucide-square-terminal-lowered");
+  expect(markup).not.toContain("lucide-circle-x");
+  expect(markup).not.toContain("text-destructive");
+  expect(markup).toContain("tool call failed");
+});
+// regression: f1e6f0c9bb fix(web): stop showing red x summaries for ordinary tool failures (#8395)
+it("renders a muted failure marker for failed tool lifecycle entries", async () => {
+  const markup = await renderScientExpandedMarkup(
+    true,
+    <MessagesTimeline
+      {...buildProps()}
+      timelineEntries={[
+        {
+          id: "entry-info",
+          kind: "work",
+          createdAt: "2026-03-17T19:12:27.000Z",
+          entry: {
+            id: "work-info",
+            createdAt: "2026-03-17T19:12:27.000Z",
+            label: "Status updated",
+            tone: "info",
+          },
+        },
+        {
+          id: "entry-1",
+          kind: "work",
+          createdAt: "2026-03-17T19:12:28.000Z",
+          entry: {
+            id: "work-1",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            label: "Glob",
+            tone: "tool",
+            toolLifecycleStatus: "failed",
+            detail: "No files found",
+          },
+        },
+      ]}
+    />,
+  );
+  expect(markup).toContain("lucide-folder-open");
+  expect(markup).toContain('aria-label="Tool call failed"');
+  expect(markup).not.toContain("text-destructive");
+});
+// regression: cac738b234 fix(timeline): refine trace symbols and thought typography
+// An expanded group draws both the group summary icon and each entry's icon.
+it("marks generic dynamic tools with a wrench in an expanded group", async () => {
+  const count = 2;
+  const markup = await renderScientExpandedMarkup(
+    true,
+    <MessagesTimeline
+      {...buildProps()}
+      timelineEntries={Array.from(
+        {
+          length: count,
+        },
+        (_, index) => ({
+          id: `entry-dynamic-tool-${index}`,
+          kind: "work" as const,
+          createdAt: MESSAGE_CREATED_AT,
+          entry: {
+            id: `work-dynamic-tool-${index}`,
+            createdAt: MESSAGE_CREATED_AT,
+            toolCallId: `call-dynamic-tool-${index}`,
+            label: "lsp",
+            toolTitle: "lsp",
+            tone: "tool" as const,
+            itemType: "dynamic_tool" as const,
+            toolLifecycleStatus: "completed" as const,
+          },
+        }),
+      )}
+    />,
+  );
+  expect(markup.match(/\blucide-wrench\b/g)).toHaveLength(count + 1);
+  expect(markup).not.toContain('data-scient-symbol="mono"');
+  expect(markup).not.toContain("lucide-hammer");
+  expect(markup).not.toContain("lucide-blocks");
+});

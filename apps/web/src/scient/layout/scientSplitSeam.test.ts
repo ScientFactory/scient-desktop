@@ -7,24 +7,64 @@ const readSource = (relativePath: string): string =>
   NodeFS.readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
 describe("Scient split seams", () => {
-  it("keeps the inherited resize handle and the Scient separator independent", () => {
+  // regression: dff1da7e13 fix(web): align LaTeX split interaction
+  it("keeps inherited UI independent while aligning separator chrome", () => {
     const separator = readSource("./ResizeSeparator.tsx");
     const rightPanelHandle = readSource("../../components/preview/RightPanelResizeHandle.tsx");
 
     expect(separator).not.toMatch(/~\/scient\//u);
     expect(rightPanelHandle).not.toMatch(/~\/scient\//u);
     expect(rightPanelHandle).not.toContain("ResizeSeparator");
+    for (const visualToken of [
+      "cursor-platform-col-resize",
+      "inset-y-0 left-1/2 w-px",
+      "group-hover:bg-border",
+      "group-active:bg-primary/60",
+    ]) {
+      expect(separator).toContain(visualToken);
+      expect(rightPanelHandle).toContain(visualToken);
+    }
+    expect(separator).toContain("cursor-platform-row-resize");
+    expect(separator).toContain("inset-x-0 top-1/2 h-px");
+    expect(separator).not.toContain("-translate-x-1/2");
+    expect(separator).not.toContain("-translate-y-1/2");
+    expect(rightPanelHandle).not.toContain("-translate-x-1/2");
   });
 
-  it("keeps the Python and LaTeX splits on the shared Scient-owned behavior", () => {
-    const python = readSource("../compute/ScientComputeFileSurface.tsx");
-    const latex = readSource("../latex/ScientLatexSurface.tsx");
+  // regression: 017821d992 fix(web): improve platform cursor behavior (#301)
+  it("preserves barred resize cursors except on Windows", () => {
+    // The app stylesheet and the Scient stylesheet it imports for these cursors.
+    const appStyles = [
+      readSource("../../index.css"),
+      readSource("../presentation/scient-platform-cursors.css"),
+    ].join("\n");
 
-    for (const surface of [python, latex]) {
-      expect(surface).toContain("useScientSplit");
-      expect(surface).not.toContain("RightPanelResizeHandle");
-    }
-    expect(latex).toContain("ResizeSeparator");
-    expect(latex).not.toContain("scient-latex-divider");
+    expect(appStyles).toMatch(/\.cursor-platform-col-resize\s*\{\s*cursor: col-resize;/u);
+    expect(appStyles).toMatch(/\.cursor-platform-row-resize\s*\{\s*cursor: row-resize;/u);
+    expect(appStyles).toMatch(
+      /\.electron-windows \.cursor-platform-col-resize\s*\{\s*cursor: ew-resize;/u,
+    );
+    expect(appStyles).toMatch(
+      /\.electron-windows \.cursor-platform-row-resize\s*\{\s*cursor: ns-resize;/u,
+    );
+  });
+
+  // regression: 017821d992 fix(web): improve platform cursor behavior (#301)
+  it("uses platform-aware cursors for the complete split drag", () => {
+    const split = readSource("./useScientSplit.ts");
+
+    expect(split).toContain("resizeCursorForPlatform(");
+    expect(split).toContain('axis === "y" ? "vertical" : "horizontal"');
+  });
+
+  // regression: dff1da7e13 fix(web): align LaTeX split interaction
+  it("keeps the LaTeX split on the shared Scient-owned behavior", () => {
+    const surface = readSource("../latex/ScientLatexSurface.tsx");
+
+    expect(surface).toContain("useScientSplit");
+    expect(surface).toContain("ResizeSeparator");
+    expect(surface).toContain("LATEX_SPLIT_RATIO_STORAGE_KEY");
+    expect(surface).not.toContain("RightPanelResizeHandle");
+    expect(surface).not.toContain("scient-latex-divider");
   });
 });

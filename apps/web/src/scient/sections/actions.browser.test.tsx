@@ -140,6 +140,8 @@ describe("section membership", () => {
     expect(mocks.mutate).not.toHaveBeenCalled();
   });
 
+  // regression: 102f5feb9d fix(sections): resolve sections against each thread's own environment
+  // regression: 6628cb42d7 fix(sections): address review of environment-local sections
   it("moves a thread to General without touching any catalog", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

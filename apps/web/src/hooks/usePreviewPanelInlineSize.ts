@@ -87,7 +87,7 @@ function useViewportClampedMaxWidth(
   }, [container, hostRef, enabled, minWidth]);
   return maxWidth;
 }
-function getPreviewPanelMaxWidth(
+export function getPreviewPanelMaxWidth(
   viewportWidth: number,
   containerWidth?: number,
   minWidth = PREVIEW_PANEL_MIN_WIDTH,

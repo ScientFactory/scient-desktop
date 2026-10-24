@@ -90,6 +90,19 @@ describe("ChatMarkdown BiDi seam", () => {
       ),
     ).toBe(false);
   });
+
+  // regression: 3f2929e54b fix(web): thicken thin RTL flow arrows without boxing every glyph
+  it("thickens flow arrows inline and boxes only the lifted long arrow", () => {
+    expect(bidiCssSource).toContain(".chat-markdown .scient-flow-arrow {");
+    expect(bidiCssSource).toContain(".chat-markdown .scient-flow-arrow-long {");
+    expect(bidiCssSource).toMatch(
+      /\.chat-markdown \.scient-flow-arrow \{[^}]*-webkit-text-stroke:/u,
+    );
+    expect(bidiCssSource).not.toMatch(/\.chat-markdown \.scient-flow-arrow \{[^}]*display:/u);
+    expect(bidiCssSource).toMatch(
+      /\.chat-markdown \.scient-flow-arrow-long \{[^}]*display:\s*inline-block;/u,
+    );
+  });
 });
 
 describe("user Markdown plus Scient BiDi", () => {

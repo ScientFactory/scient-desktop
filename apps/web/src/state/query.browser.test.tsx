@@ -1,5 +1,7 @@
 import { render as _fixtureRender, type Screen, act } from "../../test/render";
 import { RegistryContext } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { useLayoutEffect } from "react";
 
@@ -74,6 +76,38 @@ describe("environment query pending state", () => {
       ...query,
       refresh: null,
     });
+  });
+
+  // regression: 5cb4bf7ba2 fix(client): stop open subscriptions from reporting pending forever
+  it("keeps the value and error alongside the subscription pending state", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const open = await render(
+      _fixture,
+      AsyncResult.success<string, Error>("value", { waiting: true }),
+    );
+    expect(open.subscription).toMatchObject({ data: "value", error: null, isSuccess: true });
+
+    const failed = await render(
+      _fixture,
+      AsyncResult.failure<string, Error>(Cause.fail(new Error("boom"))),
+    );
+    expect(failed.subscription).toMatchObject({ data: null, error: "boom", isSuccess: false });
+
+    const failedAfterValue = await render(
+      _fixture,
+      AsyncResult.failureWithPrevious<string, Error>(Cause.fail(new Error("boom")), {
+        previous: Option.some(AsyncResult.success<string, Error>("value")),
+      }),
+    );
+    expect(failedAfterValue.subscription).toMatchObject({
+      data: "value",
+      error: "boom",
+      isPending: false,
+    });
+    expect(failed.subscription.failure).toBeInstanceOf(Error);
   });
 });
 

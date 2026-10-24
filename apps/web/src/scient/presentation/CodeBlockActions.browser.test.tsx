@@ -26,13 +26,30 @@ describe("code block actions", () => {
     return host.querySelector<HTMLElement>("[aria-pressed]")!;
   }
 
-  it("shows the wrap toggle pressed only while lines wrap", async () => {
+  // regression: cff39eeba2 fix(chat): Stop shows what arrived; code blocks and thread-read rows match upstream
+  it("shows the wrap toggle on while lines wrap, as upstream's code block does", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
-    expect((await render(_fixture, true)).getAttribute("aria-pressed")).toBe("true");
-    expect((await render(_fixture, false)).getAttribute("aria-pressed")).toBe("false");
+    const on = await render(_fixture, true);
+    expect(on.getAttribute("aria-pressed")).toBe("true");
+    expect(on.dataset.variant).toBe("secondary");
+    expect((await render(_fixture, false)).dataset.variant).toBe("ghost-muted");
+  });
+
+  // regression: 010d58e874 fix(chat): Stop reaches answers that left the screen; thoughts read quietly when expanded
+  it("draws the copy button as upstream's: muted, with the morphing icon", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await render(_fixture, false);
+    const copy = document.querySelector<HTMLElement>('[aria-label="Copy code"]')!;
+    expect(copy.dataset.variant).toBe("ghost-muted");
+    // MorphIcon draws its own svg, not lucide-react's classed icon.
+    expect(copy.querySelector("svg")).not.toBeNull();
+    expect(copy.querySelector("svg.lucide")).toBeNull();
   });
 });
 

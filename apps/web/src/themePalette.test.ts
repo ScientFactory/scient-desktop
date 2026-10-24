@@ -40,6 +40,17 @@ function canonical(value: string): string {
   return color;
 }
 
+// SCIENT-FORK:START
+function expectThemeColors(
+  colors: Readonly<Record<string, string>>,
+  expected: Readonly<Record<string, string>>,
+): void {
+  for (const [role, value] of Object.entries(expected)) {
+    expect(asHex(colors[role]!)).toBe(value);
+  }
+}
+// SCIENT-FORK:END
+
 function contrastRatio(first: string, second: string): number {
   const toRgb = (value: string) => {
     const hex = asHex(value).slice(1);
@@ -129,6 +140,16 @@ describe("theme files", () => {
     },
   );
   // SCIENT-FORK:START
+
+  it("keeps the reviewed stock dark action and error colors exact", () => {
+    expectThemeColors(getStandardThemeColors("dark"), {
+      focus: "#346bf1",
+      messageAction: "#346bf1",
+      messageActionHover: "#3061d9",
+      error: "#fb414a",
+      errorForeground: "#ff6467",
+    });
+  });
 
   it("keeps the stock light action, error and update colors readable", () => {
     const colors = getStandardThemeColors("light");

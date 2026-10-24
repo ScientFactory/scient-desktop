@@ -4,6 +4,7 @@ import "../../index.css";
 import { createRef } from "react";
 
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vitest/browser";
 
 import { SidebarThreadHeader } from "../../components/sidebar/SidebarThreadHeader";
 import { SidebarProvider } from "../../components/ui/sidebar";
@@ -77,6 +78,40 @@ it("replaces the header's New thread icon with a labelled row below search", asy
   expect(row.textContent).toBe("New thread");
   row.click();
   expect(onNewThread).toHaveBeenCalledTimes(1);
+});
+
+// regression: 2e4057fdda fix(sidebar): rest the search icon and placeholder at the icon color
+it("keeps the search icon and placeholder at the icon color until hovered", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const host = await mountSidebarTop(_fixture, () => {});
+  const input = host.querySelector<HTMLInputElement>('input[aria-label="Search threads"]')!;
+  const field = input.closest<HTMLElement>("div.rounded-md")!;
+  await userEvent.unhover(field);
+  const icon = field.querySelector("svg")!;
+  const placeholderColor = () => getComputedStyle(input, "::placeholder").color;
+  const iconColor = () => getComputedStyle(icon).color;
+  const newThreadIconColor = getComputedStyle(
+    host.querySelector('[data-testid="sidebar-new-thread-row"] svg')!,
+  ).color;
+
+  // At rest, and while focused without the pointer over it, both match the
+  // sidebar's other icons.
+  expect(iconColor()).toBe(newThreadIconColor);
+  expect(placeholderColor()).toBe(newThreadIconColor);
+  input.focus();
+  expect(placeholderColor()).toBe(newThreadIconColor);
+
+  // Hovering strengthens both to the typed text's color.
+  await userEvent.hover(field);
+  const strong = getComputedStyle(input).color;
+  expect(strong).not.toBe(newThreadIconColor);
+  expect(iconColor()).toBe(strong);
+  expect(placeholderColor()).toBe(strong);
+
+  await userEvent.unhover(field);
+  expect(placeholderColor()).toBe(newThreadIconColor);
 });
 
 function _createFixture() {

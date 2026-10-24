@@ -41,6 +41,56 @@ function renderRunningActions(
     }),
   );
 }
+function renderPendingActions(isRunning: boolean) {
+  return renderMarkup(
+    createElement(ComposerPrimaryActions, {
+      compact: true,
+      canOperateThread: true,
+      pendingAction: {
+        questionIndex: 0,
+        isLastQuestion: true,
+        canAdvance: true,
+        isResponding: false,
+        isComplete: true,
+      },
+      isRunning,
+      canInterrupt: isRunning,
+      showPlanFollowUpPrompt: false,
+      promptHasText: false,
+      isSendBusy: false,
+      sendDisabledReason: null,
+      isConnecting: false,
+      isEnvironmentUnavailable: false,
+      isPreparingWorktree: false,
+      hasSendableContent: false,
+      onPreviousPendingQuestion: () => {},
+      onInterrupt: () => {},
+      onImplementPlanInNewThread: () => {},
+    }),
+  );
+}
+function renderSendButton() {
+  return renderMarkup(
+    createElement(ComposerPrimaryActions, {
+      compact: true,
+      canOperateThread: true,
+      pendingAction: null,
+      isRunning: false,
+      canInterrupt: false,
+      showPlanFollowUpPrompt: false,
+      promptHasText: true,
+      isSendBusy: false,
+      sendDisabledReason: null,
+      isConnecting: false,
+      isEnvironmentUnavailable: false,
+      isPreparingWorktree: false,
+      hasSendableContent: true,
+      onPreviousPendingQuestion: () => {},
+      onInterrupt: () => {},
+      onImplementPlanInNewThread: () => {},
+    }),
+  );
+}
 describe("ComposerPrimaryActions", () => {
   // regression: 8e449111bd fix(orchestration): cancel checkpoint preparation on Stop
   it("acknowledges Stop visibly while keeping its retry button available", async () => {
@@ -68,6 +118,20 @@ describe("ComposerPrimaryActions", () => {
   it("keeps stop as the only action while running with an empty composer", async () => {
     const markup = await renderRunningActions(true, false);
     expect(markup).toContain('aria-label="Stop generation"');
+    expect(markup).not.toContain('aria-label="Queue message"');
+  });
+  // regression: 45d9aa90ba fix(web): show Stop button while input is pending (#5554)
+  it("offers Stop generation while a running turn is waiting for user input", async () => {
+    expect(await renderPendingActions(true)).toContain('aria-label="Stop generation"');
+  });
+  // regression: 45d9aa90ba fix(web): show Stop button while input is pending (#5554)
+  it("does not offer Stop generation for a pending request without a running turn", async () => {
+    expect(await renderPendingActions(false)).not.toContain('aria-label="Stop generation"');
+  });
+  // regression: 1de7f8f93d fix(alignment): preserve provider pickers and shared Markdown path semantics
+  it("labels the idle button as submit, not queue", async () => {
+    const markup = await renderSendButton();
+    expect(markup).toContain('aria-label="Submit message"');
     expect(markup).not.toContain('aria-label="Queue message"');
   });
 });

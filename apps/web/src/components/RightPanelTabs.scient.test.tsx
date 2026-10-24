@@ -21,6 +21,18 @@ describe("RightPanelTabs context menu", () => {
     ]);
   });
 
+  // regression: d75449ca1d fix(files): reliable copy paths and calm file-failure states (#400)
+  it("offers only a full path for host files outside the workspace", () => {
+    expect(
+      buildTabContextMenuItems({
+        pathCopyFormats: ["full"],
+        mute: null,
+        surfaceIndex: 0,
+        surfaceCount: 1,
+      }).map((item) => item.id),
+    ).toEqual(["copy-full-path", "close", "close-others", "close-to-right", "close-all"]);
+  });
+
   it("preserves the preview mute action alongside the shared close actions", () => {
     expect(
       buildTabContextMenuItems({

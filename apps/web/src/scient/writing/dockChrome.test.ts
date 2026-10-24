@@ -1,6 +1,52 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Static audit for the dock overflow contract.
+import * as NodeFS from "node:fs";
+
 import { describe, expect, it } from "vite-plus/test";
 
-import { collapseDockGroups } from "./dockChrome";
+import { collapseDockGroups, dockButtonClass } from "./dockChrome";
+
+const cssSource = NodeFS.readFileSync(new URL("./dockChrome.css", import.meta.url), "utf8");
+
+describe("dock chrome overflow contract", () => {
+  // Source-text guards: each is the only test of a fix(...) commit's dock rule (a
+  // local mutation of each rule left every behavioral test green, 2026-10-25).
+  // regression: 5de892e190 fix(markdown): stop dock icons from shrinking on narrow windows
+  it("never flex-shrinks dock controls: narrow docks scroll sideways at full icon size", () => {
+    // Multi-part triggers (icon + chevron + label) used to compress against
+    // single-icon buttons, which is why only the right-hand icons shrank.
+    expect(dockButtonClass()).toContain("shrink-0");
+    expect(dockButtonClass(true)).toContain("shrink-0");
+    expect(dockButtonClass()).toContain("whitespace-nowrap");
+    expect(cssSource).toMatch(/\.scient-markdown-command-button \{[^}]*flex-shrink: 0/su);
+  });
+  // regression: 5de892e190 fix(markdown): stop dock icons from shrinking on narrow windows
+  it("keeps the dock single-line with hidden horizontal overflow", () => {
+    expect(cssSource).toMatch(
+      /\.scient-markdown-editor-dock \{[^}]*flex-wrap: nowrap[^}]*overflow-x: auto[^}]*scrollbar-width: none/su,
+    );
+  });
+  // regression: 0604b03479 fix(markdown): stabilize saving and table navigation
+  it("uses one fixed-height dock instead of adding a contextual table row", () => {
+    expect(cssSource).not.toContain(".scient-markdown-table-toolbar");
+    expect(cssSource).toMatch(
+      /\.scient-markdown-editor-dock \{[^}]*padding: 0\.25rem 0\.65rem[^}]*height: 2\.25rem[^}]*flex-wrap: nowrap/su,
+    );
+  });
+  // regression: 0604b03479 fix(markdown): stabilize saving and table navigation
+  it("uses the app control color and subtly softens only idle toolbar glyphs", () => {
+    // Labels retain the normal app-control contrast. The direct SVG glyph gets
+    // a small idle-only reduction without changing hover or active states.
+    expect(cssSource).toMatch(
+      /\.scient-markdown-command-button \{[^}]*color: var\(--contrast-muted-foreground\)/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-command-button:not\(:hover\):not\(:focus-visible\):not\(\[aria-pressed="true"\]\) > svg \{[^}]*color: color-mix\(in oklab, var\(--contrast-muted-foreground\) 80%, transparent\)/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-command-button:not\(\[data-preserve-icon-weight="true"\]\) > svg \{[^}]*stroke-width: 1\.75/su,
+    );
+  });
+});
 
 describe("collapseDockGroups", () => {
   // Mirrors the real dock: formatting pinned, direction least important.

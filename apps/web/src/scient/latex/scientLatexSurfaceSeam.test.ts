@@ -45,6 +45,17 @@ describe("Scient LaTeX file-preview seam", () => {
     expect([...mountedPropNames()].sort()).toEqual([...declaredPropNames()].sort());
   });
 
+  // regression: 3e1b6f1c5f fix(latex): build included sources from their document root
+  it("resolves a document root before starting a build and offers known roots when inference is incomplete", () => {
+    expect(surfaceSource).toContain("useLatexDocumentResolution({");
+    expect(surfaceSource).toContain(
+      'resolution.result?._tag === "resolved" ? resolution.result.rootRelativePath : null',
+    );
+    expect(surfaceSource).toContain("resolvedRootRelativePath === null");
+    expect(surfaceSource).toContain('resolution.result?._tag === "unresolved"');
+    expect(surfaceSource).toContain('aria-label="Choose LaTeX document to compile"');
+  });
+
   it("consumes an automatic Split presentation without changing the saved user preference", () => {
     expect(surfaceSource).toContain("props.latexPresentationRequest?.mode ?? initialPreviewMode()");
     expect(surfaceSource).toContain("setPreferredMode(request.mode)");
@@ -120,5 +131,16 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(exported).toEqual(["ScientLatexSurface"]);
     expect(surfaceSource).not.toMatch(/^export default/mu);
     expect(surfaceSource).not.toMatch(/^export \{/mu);
+  });
+
+  // regression: dff1da7e13 fix(web): align LaTeX split interaction
+  it("uses the hand cursor only for enabled buttons", () => {
+    const surfaceStyles = NodeFS.readFileSync(
+      new URL("./scient-latex.css", import.meta.url),
+      "utf8",
+    );
+    expect(surfaceStyles).toMatch(
+      /\.scient-latex-surface button:not\(:disabled\) \{\s*cursor: pointer;/u,
+    );
   });
 });

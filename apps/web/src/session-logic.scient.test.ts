@@ -9,7 +9,9 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  deriveActiveWorkStartedAt,
   deriveTimelineEntriesFromVisibleTurnItems,
+  isLatestRunSettled,
   workEntrySignalsSevereFailure,
 } from "./session-logic";
 
@@ -170,5 +172,124 @@ describe("Scient work-log entries", () => {
       sourceThreadId: forkId,
       itemId: call.id,
     });
+  });
+});
+
+// Rows that mutating isLatestRunSettled, deriveActiveWorkStartedAt and resolveThreadWorkingStartedAt
+// showed no other test guards; the remaining branches fail upstream session-logic and Sidebar.logic tests.
+describe("isLatestRunSettled", () => {
+  const latestRun = {
+    runId: RunId.make("run-1"),
+    status: "completed",
+    startedAt: "2026-02-27T21:10:00.000Z",
+    completedAt: "2026-02-27T21:10:06.000Z",
+  } as const;
+
+  it("returns false while the same run is still active in a running session", () => {
+    expect(
+      isLatestRunSettled(latestRun, {
+        status: "running",
+        activeRunId: RunId.make("run-1"),
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false when the latest run is still in flight by status", () => {
+    expect(
+      isLatestRunSettled(
+        {
+          runId: RunId.make("run-1"),
+          status: "running",
+          startedAt: "2026-02-27T21:10:00.000Z",
+          completedAt: null,
+        },
+        null,
+      ),
+    ).toBe(false);
+  });
+
+  it("settles on run status alone, ignoring timestamp completeness", () => {
+    expect(
+      isLatestRunSettled(
+        {
+          runId: RunId.make("run-1"),
+          status: "completed",
+          startedAt: null,
+          completedAt: "2026-02-27T21:10:06.000Z",
+        },
+        null,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false when there is no latest run at all", () => {
+    expect(isLatestRunSettled(null, null)).toBe(false);
+  });
+});
+
+describe("deriveActiveWorkStartedAt", () => {
+  const completedRun = {
+    runId: RunId.make("run-1"),
+    status: "completed",
+    requestedAt: "2026-02-27T21:09:00.000Z",
+    startedAt: "2026-02-27T21:10:00.000Z",
+    completedAt: "2026-02-27T21:10:06.000Z",
+  } as const;
+
+  it("prefers the in-flight run start while the runtime still owns that run", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        {
+          runId: RunId.make("run-1"),
+          status: "running",
+          requestedAt: "2026-02-27T21:09:00.000Z",
+          startedAt: "2026-02-27T21:10:00.000Z",
+          completedAt: null,
+        },
+        {
+          status: "running",
+          activeRunId: RunId.make("run-1"),
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:10:00.000Z");
+  });
+
+  it("falls back to the request time when an owned run never reported a start", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        {
+          runId: RunId.make("run-1"),
+          status: "preparing",
+          requestedAt: "2026-02-27T21:09:00.000Z",
+          startedAt: null,
+          completedAt: null,
+        },
+        {
+          status: "preparing",
+          activeRunId: RunId.make("run-1"),
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:09:00.000Z");
+  });
+
+  it("uses sendStartedAt once no run is active", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        completedRun,
+        {
+          status: "idle",
+          activeRunId: null,
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
+  });
+
+  it("uses sendStartedAt for a fresh send when the thread has no run history", () => {
+    expect(deriveActiveWorkStartedAt(null, null, "2026-02-27T21:11:00.000Z")).toBe(
+      "2026-02-27T21:11:00.000Z",
+    );
   });
 });

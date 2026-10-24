@@ -76,6 +76,24 @@ const staticImage = (runId: string): PreviewStaticImageSurfaceDescriptor => ({
 });
 
 describe("Scient right panel surfaces", () => {
+  // A malformed persisted entry is dropped instead of crashing the panel store's migration.
+  it("preserves a closed inline panel while discarding transient popover visibility", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {},
+        threadPanelVisibilityByThreadKey: {
+          closed: { inlineOpen: false, popoverOpen: true },
+          open: { inlineOpen: true, popoverOpen: true },
+          malformed: null,
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {},
+      threadPanelVisibilityByThreadKey: {
+        closed: { inlineOpen: false, popoverOpen: false },
+      },
+    });
+  });
   it("preserves both parallel v16 surface families when migrating to the combined schema", () => {
     const compute = scientComputeSurface({
       cwd: "/project",

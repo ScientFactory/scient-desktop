@@ -36,6 +36,14 @@ describe("versionSkew", () => {
     ).toBe(command);
     expect(command).not.toContain("npm install");
   });
+  it("keeps runner and unknown recovery on the immutable Scient release", () => {
+    const command =
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient";
+    expect(manualServerUpdateCommand("0.0.45")).toBe(command);
+    expect(manualServerUpdateCommand("0.0.45", { kind: "npx" })).toBe(command);
+    expect(manualServerUpdateCommand("0.0.45", { kind: "pnpm-dlx" })).toBe(command);
+    expect(manualServerUpdateCommand("0.0.45", { kind: "bunx" })).toBe(command);
+  });
 
   // SCIENT-FORK:END
   beforeEach(() => {

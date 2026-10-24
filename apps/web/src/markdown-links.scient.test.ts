@@ -151,6 +151,21 @@ describe("links that climb out of the workspace", () => {
   });
 });
 
+// regression: 8faf031c2d fix(web): respect case in POSIX file links (#9309)
+describe("network-share workspaces", () => {
+  it("keeps backslash UNC workspace comparisons case-insensitive", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "\\\\server\\share\\PROJECT\\src\\main.ts",
+        "\\\\Server\\Share\\Project",
+      ),
+    ).toMatchObject({
+      displayPath: "Project/src/main.ts",
+      workspaceRelativePath: "src/main.ts",
+    });
+  });
+});
+
 describe("a POSIX workspace whose name ends in a backslash", () => {
   // regression: e210e19f5e fix(files): keep POSIX folder names when joining paths
   it("keeps a plain relative link inside that workspace", () => {

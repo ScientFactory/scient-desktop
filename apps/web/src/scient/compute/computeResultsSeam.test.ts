@@ -7,6 +7,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const panelSource = NodeFS.readFileSync(NodePath.join(here, "ComputePanel.tsx"), "utf8");
+const pythonActionsSource = NodeFS.readFileSync(
+  NodePath.join(here, "ComputeFileActions.tsx"),
+  "utf8",
+);
 const rightPanelTabsSource = NodeFS.readFileSync(
   NodePath.join(here, "../../components/RightPanelTabs.tsx"),
   "utf8",
@@ -22,6 +26,30 @@ describe("compute result surface seam", () => {
     expect(primaryActions).not.toContain('label: "Compute"');
     expect(primaryActions).not.toContain('label: "Scientific computing"');
     expect(rightPanelTabsSource).toContain('label: "Scientific computing"');
+  });
+
+  // regression: a015a05c01 fix: harden scientific compute workflows
+  it("keeps runtime recovery contextual to the file toolbar", () => {
+    expect(pythonActionsSource).toContain("resolveComputeRuntimeToolbarState");
+    expect(pythonActionsSource).toContain("Scientific Computing");
+    expect(pythonActionsSource).toContain('to="/settings/scientific-computing"');
+    expect(pythonActionsSource).not.toContain("Check again");
+    expect(pythonActionsSource).toContain("computeRuntimeSetupActionLabel");
+    expect(pythonActionsSource).toContain('runtimeToolbar.kind === "switch"');
+    expect(pythonActionsSource).toContain("replaceComputeContextSession");
+    expect(pythonActionsSource).toContain("switchTarget?.label");
+    expect(pythonActionsSource).toContain("executable: target.executable");
+    expect(pythonActionsSource).not.toContain("Settings2");
+    expect(pythonActionsSource).toContain("props.onShowMatlabOneShot");
+    expect(pythonActionsSource).toContain("pinRuntimeChrome");
+    expect(pythonActionsSource).toContain(
+      'props.language.languageId !== "matlab" && !runtimeToolbar.canRun',
+    );
+    expect(panelSource).toContain("if (props.contextId === undefined) return allSessions;");
+    expect(panelSource).toContain(
+      "return allSessions.filter((session) => session.sessionId === contextBinding.sessionId);",
+    );
+    expect(panelSource).toContain("!props.embedded && contextSessions.length > 0");
   });
 
   // regression: 43ee632b0c fix(compute): refresh generated files and tighten narrow layouts

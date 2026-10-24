@@ -14,12 +14,26 @@ const imageCardSource = NodeFS.readFileSync(
 );
 
 describe("ChatMarkdown workspace-image seam", () => {
+  // regression: e34e687915 fix(chat): make rich media reliable and copyable
   it("mounts one of each Scient-owned image component", () => {
     expect(chatMarkdownSource).toContain("ScientInlineWorkspaceImage,");
     expect(chatMarkdownSource).toContain("ScientPendingWorkspaceImage,");
     expect(chatMarkdownSource.match(/<ScientInlineWorkspaceImage/gu)).toHaveLength(1);
     expect(chatMarkdownSource.match(/<ScientPendingWorkspaceImage/gu)).toHaveLength(1);
     expect(chatMarkdownSource.match(/<ScientRemoteImageReference/gu)).toHaveLength(1);
+  });
+
+  // regression: e34e687915 fix(chat): make rich media reliable and copyable
+  it("uses a stable local-image card while streaming and preserves ordinary images", () => {
+    expect(chatMarkdownSource).toContain(
+      "resolveInlineWorkspaceImage({ alt, cwd, src: imageSource.path })",
+    );
+    expect(chatMarkdownSource).toContain('reason={isStreaming ? "streaming" : "unavailable"}');
+    expect(chatMarkdownSource).toContain(
+      "classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd)",
+    );
+    expect(chatMarkdownSource).toContain("<ChatMarkdownAssetImage");
+    expect(chatMarkdownSource).toContain("<ChatMarkdownImageFallback");
   });
 
   // regression: e34e687915 fix(chat): make rich media reliable and copyable
