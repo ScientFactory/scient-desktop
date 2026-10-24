@@ -19,6 +19,7 @@ import { allowedUpdateMethods, PR_ACTION_ICONS, PR_ACTION_LABELS } from "./pullR
 import {
   checkStatus,
   pullRequestBranchSummary,
+  pullRequestCheckPriority,
   pullRequestChecksSummary,
   pullRequestReviewSummary,
   pullRequestStatus,
@@ -35,15 +36,6 @@ const STATUS_ACTIONS: readonly PullRequestAction[] = [
   "reopen",
   "revert",
 ];
-const CHECK_PRIORITY = {
-  failure: 0,
-  "action-required": 1,
-  pending: 2,
-  cancelled: 3,
-  neutral: 4,
-  skipped: 5,
-  success: 6,
-};
 
 export function PullRequestStatusMenu(props: RowProps) {
   const action = usePullRequestAction(props.params, props.pr);
@@ -120,7 +112,9 @@ export function PullRequestChecksRow(props: RowProps) {
           className="pl-8"
         >
           {props.pr.state === "open" &&
-          props.pr.checks.some((check) => check.status === "failure") ? (
+          props.pr.checks.some(
+            (check) => check.outcome !== "warning" && check.status === "failure",
+          ) ? (
             <PullRequestAgentRow {...props} task="feedback" title="Fix failing checks" />
           ) : null}
           {action.available("approve-workflows") ? (
@@ -138,7 +132,7 @@ export function PullRequestChecksRow(props: RowProps) {
             />
           ) : null}
           {[...props.pr.checks]
-            .sort((a, b) => CHECK_PRIORITY[a.status] - CHECK_PRIORITY[b.status])
+            .sort((a, b) => pullRequestCheckPriority(a) - pullRequestCheckPriority(b))
             .map((check) => {
               const status = checkStatus(check);
               const url = check.url;

@@ -481,7 +481,10 @@ export const make = Effect.gen(function* () {
   // settings write failure should not block the deletion it is cleaning up
   // after, and a server crash before a replay never revisits this project.
   const clearProjectSettingsOverrides = (projectId: ProjectId) =>
-    serverSettings.updateSettings({ projectSettingsOverrides: { [projectId]: null } }).pipe(
+    // SCIENT-FORK:START — a `null` patch entry keeps title instructions for released clients, so
+    // deletion uses the server-only removal.
+    serverSettings.removeProjectSettingsOverrides([projectId]).pipe(
+      // SCIENT-FORK:END
       Effect.asVoid,
       Effect.catchCause((cause) =>
         Effect.logWarning(

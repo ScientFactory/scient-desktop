@@ -512,51 +512,53 @@ function parseGitRemoteVerboseOutput(
   return remotes;
 }
 
-const gitCommand = (
-  process: VcsProcess.VcsProcess["Service"],
-  operation: string,
-  cwd: string,
-  args: ReadonlyArray<string>,
-  options?: {
-    readonly stdin?: string;
-    // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
-    readonly stdinBytes?: Uint8Array;
-    readonly onStdoutChunk?: VcsProcess.VcsProcessInput["onStdoutChunk"];
-    readonly onStdoutChunkEffect?: VcsProcess.VcsProcessInput["onStdoutChunkEffect"];
-    // SCIENT-FORK:END
-    readonly env?: NodeJS.ProcessEnv;
-    readonly allowNonZeroExit?: boolean;
-    readonly timeoutMs?: number;
-    readonly maxOutputBytes?: number;
-    readonly outputMode?: VcsProcess.VcsProcessInput["outputMode"];
-    readonly appendTruncationMarker?: boolean;
-  },
-) =>
-  process.run({
-    operation,
-    command: "git",
-    args: ["-C", cwd, ...args],
-    cwd,
-    spawnCwd: globalThis.process.cwd(),
-    ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
-    // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
-    ...(options?.stdinBytes !== undefined ? { stdinBytes: options.stdinBytes } : {}),
-    ...(options?.onStdoutChunk !== undefined ? { onStdoutChunk: options.onStdoutChunk } : {}),
-    ...(options?.onStdoutChunkEffect !== undefined
-      ? { onStdoutChunkEffect: options.onStdoutChunkEffect }
-      : {}),
-    // SCIENT-FORK:END
-    ...(options?.env !== undefined ? { env: options.env } : {}),
-    ...(options?.allowNonZeroExit !== undefined
-      ? { allowNonZeroExit: options.allowNonZeroExit }
-      : {}),
-    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-    ...(options?.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
-    ...(options?.outputMode !== undefined ? { outputMode: options.outputMode } : {}),
-    ...(options?.appendTruncationMarker !== undefined
-      ? { appendTruncationMarker: options.appendTruncationMarker }
-      : {}),
-  });
+const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
+  (
+    process: VcsProcess.VcsProcess["Service"],
+    operation: string,
+    cwd: string,
+    args: ReadonlyArray<string>,
+    options?: {
+      readonly stdin?: string;
+      // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
+      readonly stdinBytes?: Uint8Array;
+      readonly onStdoutChunk?: VcsProcess.VcsProcessInput["onStdoutChunk"];
+      readonly onStdoutChunkEffect?: VcsProcess.VcsProcessInput["onStdoutChunkEffect"];
+      // SCIENT-FORK:END
+      readonly env?: NodeJS.ProcessEnv;
+      readonly allowNonZeroExit?: boolean;
+      readonly timeoutMs?: number;
+      readonly maxOutputBytes?: number;
+      readonly outputMode?: VcsProcess.VcsProcessInput["outputMode"];
+      readonly appendTruncationMarker?: boolean;
+    },
+  ) =>
+    process.run({
+      operation,
+      command: "git",
+      args: ["-C", cwd, ...args],
+      cwd,
+      spawnCwd: globalThis.process.cwd(),
+      ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
+      // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
+      ...(options?.stdinBytes !== undefined ? { stdinBytes: options.stdinBytes } : {}),
+      ...(options?.onStdoutChunk !== undefined ? { onStdoutChunk: options.onStdoutChunk } : {}),
+      ...(options?.onStdoutChunkEffect !== undefined
+        ? { onStdoutChunkEffect: options.onStdoutChunkEffect }
+        : {}),
+      // SCIENT-FORK:END
+      ...(options?.env !== undefined ? { env: options.env } : {}),
+      ...(options?.allowNonZeroExit !== undefined
+        ? { allowNonZeroExit: options.allowNonZeroExit }
+        : {}),
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
+      ...(options?.outputMode !== undefined ? { outputMode: options.outputMode } : {}),
+      ...(options?.appendTruncationMarker !== undefined
+        ? { appendTruncationMarker: options.appendTruncationMarker }
+        : {}),
+    }),
+);
 
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;

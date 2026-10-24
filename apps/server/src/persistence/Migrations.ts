@@ -86,6 +86,7 @@ import Migration0068 from "./Migrations/068_CanonicalizeThreadPullRequestLinks.t
 import Migration0069 from "./Migrations/069_CodexUsageNativeTurnIndex.ts";
 import Migration0070 from "./Migrations/070_RepairClientSettlementTimestamps.ts";
 import Migration0071 from "./Migrations/071_WebhookDedupe.ts";
+import Migration0072 from "./Migrations/072_ShellStopRequestIndex.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -176,6 +177,7 @@ export const migrationEntries = [
   [69, "CodexUsageNativeTurnIndex", Migration0069],
   [70, "RepairClientSettlementTimestamps", Migration0070],
   [71, "WebhookDedupe", Migration0071],
+  [72, "ShellStopRequestIndex", Migration0072],
   // SCIENT-FORK:END
 ] as const;
 

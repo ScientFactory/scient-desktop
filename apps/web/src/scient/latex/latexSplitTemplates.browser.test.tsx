@@ -51,6 +51,29 @@ async function mount(_fixture: _Fixture, input: string, name: string, context: T
   _fixture.host.dataset.testid = "split-browser-host";
   _fixture.host.setAttribute("data-latex-split", "true");
   document.body.append(_fixture.host);
+  // Geometry can expose a lazy block before its native layout invalidation is delivered.
+  const nativeVisibility = new Map<Element, boolean>();
+  const visibilityRoots = new Set<HTMLElement>();
+  const recordVisibility = (event: Event) => {
+    if (event.target instanceof Element && "skipped" in event && typeof event.skipped === "boolean")
+      nativeVisibility.set(event.target, event.skipped);
+  };
+  const observeVisibility = (event: Event) => {
+    const root =
+      event.target instanceof Element
+        ? event.target.closest<HTMLElement>(".scient-latex-visual-document")
+        : null;
+    if (!root || visibilityRoots.has(root)) return;
+    visibilityRoots.add(root);
+    // Attach after the planner's listener, before this event reaches the editor.
+    root.addEventListener("contentvisibilityautostatechange", recordVisibility, true);
+  };
+  _fixture.host.addEventListener("contentvisibilityautostatechange", observeVisibility, true);
+  _fixture.cleanup.defer(() => {
+    _fixture.host.removeEventListener("contentvisibilityautostatechange", observeVisibility, true);
+    for (const root of visibilityRoots)
+      root.removeEventListener("contentvisibilityautostatechange", recordVisibility, true);
+  });
   _fixture.root0 = _fixture.stack.use(
     await _fixtureRender(null, { container: _fixture.host, router: false }),
   );
@@ -147,6 +170,7 @@ async function mount(_fixture: _Fixture, input: string, name: string, context: T
   await waitForTestReceipt(context.signal, sourceReady.promise);
   return {
     visual,
+    nativeVisibility,
     source: () => sourceEditor!,
     sourceSelections,
     reveals,
@@ -206,8 +230,35 @@ async function clickVisualPane(editor: ProseEditor) {
     });
   expect(editor.view.dom.contains(document.activeElement)).toBe(true);
 }
-async function scrollToWord(editor: ProseEditor, word: string, context: TestContext) {
+async function scrollToWord(
+  editor: ProseEditor,
+  word: string,
+  context: TestContext,
+  nativeVisibility: ReadonlyMap<Element, boolean>,
+) {
   const target = wordPosition(editor.view.dom, word, false).element;
+  const pendingVisibility = new Set<Element>();
+  const unskipped = Promise.withResolvers<void>();
+  const visibilityChanged = (event: Event) => {
+    if (event.target instanceof Element && "skipped" in event && event.skipped === false) {
+      pendingVisibility.delete(event.target);
+      if (pendingVisibility.size === 0) unskipped.resolve();
+    }
+  };
+  editor.view.dom.addEventListener("contentvisibilityautostatechange", visibilityChanged, true);
+  for (
+    let owner: HTMLElement | null = target;
+    owner && owner !== editor.view.dom;
+    owner = owner.parentElement
+  ) {
+    if (
+      getComputedStyle(owner).contentVisibility === "auto" &&
+      owner.checkVisibility() &&
+      nativeVisibility.get(owner) !== false
+    )
+      pendingVisibility.add(owner);
+  }
+  if (pendingVisibility.size === 0) unskipped.resolve();
   const visible = Promise.withResolvers<void>();
   const observer = new IntersectionObserver(
     (entries) => {
@@ -216,13 +267,23 @@ async function scrollToWord(editor: ProseEditor, word: string, context: TestCont
     },
     { root: editor.view.dom.closest(".scient-latex-visual-scroll") },
   );
-  using _visibility = { [Symbol.dispose]: () => observer.disconnect() };
+  using _visibility = {
+    [Symbol.dispose]: () => {
+      observer.disconnect();
+      editor.view.dom.removeEventListener(
+        "contentvisibilityautostatechange",
+        visibilityChanged,
+        true,
+      );
+    },
+  };
   observer.observe(target);
   await scrollLatexVisualTestEditor(editor, () => {
     target.scrollIntoView({ block: "center" });
   });
   // A scroll event can precede lazy-block layout and leave readiness briefly stale.
   await waitForTestReceipt(context.signal, visible.promise);
+  await waitForTestReceipt(context.signal, unskipped.promise);
 }
 it.for([
   ["26", template26, "פסקה"],
@@ -266,7 +327,7 @@ it.for([
         .toBeTruthy();
     }
     const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
-    await scrollToWord(state.visual, word, context);
+    await scrollToWord(state.visual, word, context, state.nativeVisibility);
     // Exposing an offscreen block can request another font before hit measurement.
     const target = wordPosition(state.visual.view.dom, word, false).element;
     const font = getComputedStyle(target);
@@ -279,11 +340,17 @@ it.for([
     await readyToHit(state.visual, () => wordPosition(state.visual.view.dom, word, false).box);
     const hit = wordPosition(state.visual.view.dom, word, false);
     state.visual.view.dom.dataset.testid = "active-visual-editor";
+    // Not jumping means the selected word keeps its place on screen. scrollTop alone
+    // also moves when the reading anchor holds the text still while a block above
+    // the reading line finishes its layout.
+    const wordTop = () => wordPosition(state.visual.view.dom, word, false).box.top;
     let before = scroll.scrollTop;
+    let beforeTop = wordTop();
     {
       using _clock = fakeTimers();
       const pointer = () => {
         before = scroll.scrollTop;
+        beforeTop = wordTop();
         _fixture.host.removeEventListener("pointerdown", pointer, true);
       };
       _fixture.host.addEventListener("pointerdown", pointer, true);
@@ -337,7 +404,7 @@ it.for([
           .dblClick({ position: hit.position });
       }
       const afterGesture = scroll.scrollTop;
-      expect(Math.abs(afterGesture - before), "native selection scroll").toBeLessThanOrEqual(2);
+      expect(Math.abs(wordTop() - beforeTop), "native selection scroll").toBeLessThanOrEqual(2);
       // Publish the gesture's queued source reveal without advancing recurring editor services.
       await act(() => vi.runOnlyPendingTimersAsync());
       await vi.waitFor(() => expect(state.reveals).toHaveLength(1));
@@ -350,11 +417,13 @@ it.for([
           : document.getSelection()?.toString().trim(),
       ).toBe(word);
       const afterPublish = scroll.scrollTop;
-      const scrollDelta = Math.abs(afterPublish - before);
+      const wordDelta = Math.abs(wordTop() - beforeTop);
       expect(
-        scrollDelta,
-        scrollDelta > 2
+        wordDelta,
+        wordDelta > 2
           ? JSON.stringify({
+              beforeTop,
+              afterTop: wordTop(),
               before,
               afterGesture,
               afterPublish,

@@ -36,23 +36,29 @@ export function PullRequestOverviewLoading({
               ? "Checks completed"
               : summary.checksState === "failing"
                 ? "Checks failing"
-                : summary.checksState === "pending"
-                  ? "Checks running"
-                  : "Checks"
+                : summary.checksState === "warning"
+                  ? "Checks with warnings"
+                  : summary.checksState === "pending"
+                    ? "Checks running"
+                    : "Checks"
           }
           icon={
             summary.checksState === "passing"
               ? "checkmark.circle"
               : summary.checksState === "failing"
                 ? "exclamationmark.circle"
-                : "clock"
+                : summary.checksState === "warning"
+                  ? "exclamationmark.triangle"
+                  : "clock"
           }
           tint={
             summary.checksState === "passing"
               ? "accent-adaptive-emerald-600-400"
               : summary.checksState === "failing"
                 ? "accent-danger-foreground"
-                : "accent-icon-muted"
+                : summary.checksState === "warning"
+                  ? "accent-warning-foreground"
+                  : "accent-icon-muted"
           }
         >
           <View className="h-3 w-16 rounded bg-subtle-strong" />

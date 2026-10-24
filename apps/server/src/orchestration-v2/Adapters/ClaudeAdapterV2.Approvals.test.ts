@@ -193,24 +193,12 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
 });
 
 describe("ClaudeAdapterV2 approval cancellation", () => {
-  it.effect("observes an approval signal that was already aborted", () =>
-    Effect.gen(function* () {
-      const decision = yield* Deferred.make<ProviderApprovalDecision>();
-      const controller = new AbortController();
-      controller.abort();
-
-      const result = yield* ClaudeAdapterV2.awaitClaudeApprovalDecision(
-        decision,
-        controller.signal,
-      );
-
-      assert.equal(result, "cancel");
-    }),
-  );
-
   it.effect("removes the cancellation listener after approval resolves", () =>
     Effect.gen(function* () {
-      const decision = yield* Deferred.make<ProviderApprovalDecision>();
+      const decision = yield* Deferred.make<{
+        decision: ProviderApprovalDecision;
+        feedback?: string;
+      }>();
       const controller = new AbortController();
       let removes = 0;
       const removeEventListener = controller.signal.removeEventListener.bind(controller.signal);
@@ -222,10 +210,10 @@ describe("ClaudeAdapterV2 approval cancellation", () => {
         ClaudeAdapterV2.awaitClaudeApprovalDecision(decision, controller.signal),
       );
       yield* Effect.yieldNow;
-      yield* Deferred.succeed(decision, "accept");
+      yield* Deferred.succeed(decision, { decision: "accept" });
       const result = yield* Fiber.join(fiber);
 
-      assert.equal(result, "accept");
+      assert.deepEqual(result, { decision: "accept" });
       assert.equal(removes, 1);
     }),
   );

@@ -260,29 +260,44 @@ function mergeSettingsEntries<Value>(
 }
 
 /**
- * `projectSettingsOverrides` entries otherwise replace whole (see the field's
- * doc comment in contracts), but `providerInstances` was added after clients
- * already round-trip a project's entry on every edit. A client built before
- * that addition sends an entry that never mentions the key, and a whole replace
- * would silently wipe it.
+ * Older clients round-trip project entries without newer keys. Preserve those
+ * keys unless the patch explicitly clears them.
  */
 function mergeProjectSettingsOverridesPatch(
   current: Readonly<Record<string, ProjectSettingsOverrides>>,
-  patch: Readonly<Record<string, ProjectSettingsOverrides | null>>,
+  patch: Readonly<NonNullable<ServerSettingsPatch["projectSettingsOverrides"]>>,
 ): Record<string, ProjectSettingsOverrides> {
   const next = new Map(Object.entries(current));
-  for (const [projectId, entry] of Object.entries(patch)) {
-    if (entry === null) {
-      next.delete(projectId);
-      continue;
-    }
+  for (const [projectId, patchEntry] of Object.entries(patch)) {
+    // SCIENT-FORK:START — released clients send `null` once every key they know is gone. They know
+    // `providerInstances`, so `null` clears it; title instructions are newer and stay, as an omitted
+    // key does.
+    const entry: NonNullable<typeof patchEntry> = patchEntry ?? { providerInstances: {} };
+    // SCIENT-FORK:END
     const storedProviderInstances = current[projectId]?.providerInstances;
-    next.set(projectId, {
-      ...entry,
+    const storedTitleInstructions = current[projectId]?.threadTitleInstructions;
+    const { threadTitleInstructions, ...overrides } = entry;
+    const merged: ProjectSettingsOverrides = {
+      ...overrides,
+      ...(threadTitleInstructions === undefined
+        ? storedTitleInstructions === undefined
+          ? {}
+          : { threadTitleInstructions: storedTitleInstructions }
+        : threadTitleInstructions === null
+          ? {}
+          : { threadTitleInstructions }),
       ...(Object.hasOwn(entry, "providerInstances") || storedProviderInstances === undefined
         ? {}
         : { providerInstances: storedProviderInstances }),
-    });
+    };
+    // SCIENT-FORK:START — an explicit `providerInstances: {}` reset leaves no override behind.
+    const { providerInstances, ...rest } = merged;
+    if (Object.keys(rest).length === 0 && Object.keys(providerInstances ?? {}).length === 0) {
+      next.delete(projectId);
+      continue;
+    }
+    // SCIENT-FORK:END
+    next.set(projectId, merged);
   }
   return Object.fromEntries(next);
 }
@@ -329,9 +344,7 @@ function translateLegacyProjectOverridePatch(
   }
   const currentEntries: Readonly<Record<string, ProjectSettingsOverrides>> =
     current.projectSettingsOverrides;
-  const entries = new Map<string, ProjectSettingsOverrides | null>(
-    Object.entries(rest.projectSettingsOverrides ?? {}),
-  );
+  const entries = new Map(Object.entries(rest.projectSettingsOverrides ?? {}));
   // A canonical entry in the same patch is the newer representation; a legacy
   // map must not resurrect a key that entry deliberately omits.
   const canonicalProjectIds = new Set(Object.keys(rest.projectSettingsOverrides ?? {}));
@@ -342,7 +355,7 @@ function translateLegacyProjectOverridePatch(
     if (map === undefined) return;
     for (const [projectId, value] of Object.entries(map)) {
       if (canonicalProjectIds.has(projectId)) continue;
-      const entry: ProjectSettingsOverrides = {
+      const entry = {
         ...(entries.get(projectId) ?? currentEntries[projectId] ?? {}),
       };
       if (value === null || value === undefined) {

@@ -4,6 +4,7 @@ import "vite-plus/test/config";
 const reactTests = [
   "src/features/workspace/WorkspaceToolbar.test.tsx",
   "src/features/layout/createWorkspaceStackNavigator.test.tsx",
+  "src/features/pull-requests/PullRequestFilterSearchScreen.test.tsx",
   "src/components/ui/Dialog.android.test.tsx",
   "src/features/settings/SettingsServerControlsRouteScreen.test.tsx",
   "src/features/settings/components/BranchNamingSettings.test.tsx",

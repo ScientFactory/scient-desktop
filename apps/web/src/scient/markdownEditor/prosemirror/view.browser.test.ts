@@ -21,6 +21,21 @@ import { ScientMarkdownEditorView } from "./view";
 
 // Mod means Command on the native macOS browser and Control on other hosts.
 
+/**
+ * An item of the menu open now, once rendered. A menu that is closing stays mounted
+ * until its exit finishes, so an item found in the whole document can be a stale one.
+ */
+async function openMenuItem(label: string): Promise<HTMLElement> {
+  const find = () =>
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        '[role="menu"]:not([data-closed]) [role="menuitem"]',
+      ),
+    ].find((item) => item.textContent === label);
+  await expect.poll(find).toBeDefined();
+  return find()!;
+}
+
 describe("ScientMarkdownEditorView", () => {
   it("keeps a refused field edit, selection, and Undo across a view remount", async () => {
     await using _fixture = _createFixture();
@@ -2474,12 +2489,9 @@ describe("ScientMarkdownEditorView", () => {
       more.focus();
       more.click();
     });
-    const item = [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find(
-      (entry) => entry.textContent === label,
-    )!;
-    expect(item).toBeDefined();
+    const item = await openMenuItem(label);
     await page.elementLocator(item).click();
-    expect(caption.hidden).toBe(false);
+    await expect.poll(() => caption.hidden).toBe(false);
     await expect.poll(() => document.activeElement).toBe(caption);
     expect(controller.session.session.draftSource).toBe(source);
     expect(onUserSourceChange).not.toHaveBeenCalled();
@@ -2600,10 +2612,7 @@ describe("ScientMarkdownEditorView", () => {
       "button[aria-label='More image actions']",
     )!;
     await page.elementLocator(more).click();
-    const background = [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find(
-      (item) => item.textContent === "Background: automatic",
-    )!;
-    expect(background).toBeDefined();
+    const background = await openMenuItem("Background: automatic");
     await page.elementLocator(background).click();
     expect(image.style.backgroundColor).toBe("white");
 
@@ -2623,9 +2632,7 @@ describe("ScientMarkdownEditorView", () => {
         dialog.querySelector<HTMLButtonElement>("button[aria-label='More image actions']")!,
       )
       .click();
-    const refresh = [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find(
-      (item) => item.textContent === "Refresh image",
-    )!;
+    const refresh = await openMenuItem("Refresh image");
     await page.elementLocator(refresh).click();
     expect(resolveImageSource).toHaveBeenCalledTimes(3);
     expect(

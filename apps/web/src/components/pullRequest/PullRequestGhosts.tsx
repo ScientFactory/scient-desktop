@@ -112,7 +112,9 @@ export function PullRequestDetailGhost({
     : null;
   // Passing list rollups can omit workflows awaiting approval; wait for detail to claim success.
   const checksPresentation =
-    seed?.checksState === "failing" || seed?.checksState === "pending"
+    seed?.checksState === "failing" ||
+    seed?.checksState === "warning" ||
+    seed?.checksState === "pending"
       ? pullRequestChecksStatePresentation(seed.checksState)
       : null;
   const checkout = checkoutCommand ?? null;

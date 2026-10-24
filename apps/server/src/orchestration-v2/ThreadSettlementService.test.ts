@@ -560,6 +560,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     resolveCustomModels: () => Effect.succeed([]),
     updateSettings,
     updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
+    removeProjectSettingsOverrides: () => Effect.die("Unexpected project settings removal"),
     withSettingsSnapshot: (use) => Ref.get(settings).pipe(Effect.flatMap(use)),
     streamChanges: Stream.fromPubSub(settingsChanges),
     subscribeChanges: PubSub.subscribe(settingsChanges).pipe(

@@ -419,6 +419,8 @@ describe("Scient seam snapshot verification", () => {
       "packages/contracts/src/environmentHttp.ts":
         '// Also contains MCP authorization contracts.\nconst tunnelStatus = "no_connector";\n',
       "packages/contracts/src/relay.ts": "// Cloudflare connector disconnected.\n",
+      "infra/relay/src/previewTunnelSweep.ts":
+        "  // Cloudflare refuses to delete a tunnel that still has connectors attached.\n",
     };
     for (const [path, source] of Object.entries(unrelated)) f.write(path, source);
     const result = f.inspect();

@@ -14,11 +14,13 @@ import {
   ThreadId,
   VaultSecretRef,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { HttpRouter } from "effect/http";
 
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
@@ -516,6 +518,7 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     readonly wrapEligibility?: (
       eligibility: PluginConnectorEligibility.PluginConnectorEligibilityShape,
     ) => PluginConnectorEligibility.PluginConnectorEligibilityShape;
+    readonly onStreamClosed?: Effect.Effect<void>;
   } = {},
 ) {
   const config = yield* ServerConfig.ServerConfig;
@@ -559,7 +562,24 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     Effect.sync(() =>
       HttpRouter.toWebHandler(
         Layer.mergeAll(ConnectorProxyRoute.layer, ConnectorCallbackRoute.layer).pipe(
-          Layer.provideMerge(Layer.succeed(ConnectorRuntime, runtime)),
+          Layer.provideMerge(
+            Layer.succeed(ConnectorRuntime, {
+              ...runtime,
+              forward: (request) =>
+                runtime.forward(request).pipe(
+                  Effect.map((response) =>
+                    request.method === "GET" &&
+                    response.status === 200 &&
+                    options.onStreamClosed !== undefined
+                      ? {
+                          ...response,
+                          body: response.body.pipe(Stream.ensuring(options.onStreamClosed)),
+                        }
+                      : response,
+                  ),
+                ),
+            }),
+          ),
           Layer.provideMerge(
             Layer.succeed(McpSessionRegistry.McpSessionRegistry, {
               resolve: (token: string) =>
@@ -1326,7 +1346,10 @@ describe("connector proxy", () => {
 
   it.live("holds a permit for each open stream until it ends and answers busy when full", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const streamClosed = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        onStreamClosed: Deferred.succeed(streamClosed, undefined).pipe(Effect.asVoid),
+      });
       const connectorId = yield* harness.connectSecure();
       const streams: Response[] = [];
       for (let index = 0; index < MAX_IN_FLIGHT_PER_CONNECTOR; index += 1) {
@@ -1346,11 +1369,8 @@ describe("connector proxy", () => {
       vendor.streamClosed = closed.resolve;
       yield* Effect.promise(() => streams.pop()!.body!.cancel());
       yield* Effect.promise(() => closed.promise);
-      let reopened = yield* harness.request(connectorId, { method: "GET" });
-      for (let attempt = 0; reopened.status === 503 && attempt < 1_000; attempt += 1) {
-        yield* Effect.yieldNow;
-        reopened = yield* harness.request(connectorId, { method: "GET" });
-      }
+      yield* Deferred.await(streamClosed);
+      const reopened = yield* harness.request(connectorId, { method: "GET" });
       expect(reopened.status).toBe(200);
       streams.push(reopened);
       yield* Effect.promise(() => Promise.all(streams.map((stream) => stream.body!.cancel())));

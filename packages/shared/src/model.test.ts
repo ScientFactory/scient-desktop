@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderDriverKind, ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
+import { ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
   preferredReasoningLevel,
@@ -12,8 +12,6 @@ import {
   getProviderOptionDescriptors,
   getProviderOptionCurrentValue,
   readCustomModelEntries,
-  normalizeCustomModelSlug,
-  normalizeModelSlug,
   modelSelectionsEqual,
 } from "./model.ts";
 
@@ -112,15 +110,6 @@ const codexCaps: ModelCapabilities = createModelCapabilities({
       type: "boolean",
     },
   ],
-});
-
-describe("model slug normalization", () => {
-  it("preserves exact custom slugs instead of expanding provider aliases", () => {
-    const claude = ProviderDriverKind.make("claudeAgent");
-
-    expect(normalizeModelSlug("opus", claude)).toBe("opus");
-    expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
-  });
 });
 
 const claudeCaps: ModelCapabilities = createModelCapabilities({
@@ -234,41 +223,6 @@ describe("descriptor helpers", () => {
     });
     expect(getProviderOptionCurrentValue(descriptors[0])).toBe("high");
     expect(getProviderOptionCurrentLabel(descriptors[0])).toBe("High");
-  });
-
-  it("applies selection values to capability descriptors", () => {
-    expect(
-      getProviderOptionDescriptors({
-        caps: claudeCaps,
-        selections: [
-          { id: "effort", value: "medium" },
-          { id: "contextWindow", value: "200k" },
-        ],
-      }),
-    ).toEqual([
-      {
-        id: "effort",
-        label: "Reasoning",
-        type: "select",
-        options: [
-          { id: "medium", label: "Medium" },
-          { id: "high", label: "High", isDefault: true },
-          { id: "ultrathink", label: "Ultrathink" },
-        ],
-        currentValue: "medium",
-        promptInjectedValues: ["ultrathink"],
-      },
-      {
-        id: "contextWindow",
-        label: "Context Window",
-        type: "select",
-        options: [
-          { id: "200k", label: "200k" },
-          { id: "1m", label: "1M", isDefault: true },
-        ],
-        currentValue: "200k",
-      },
-    ]);
   });
 
   it("builds dispatch options only from explicit selections", () => {

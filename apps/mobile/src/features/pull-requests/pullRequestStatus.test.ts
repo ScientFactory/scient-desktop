@@ -1,6 +1,12 @@
 import type { PullRequestActivity, PullRequestCheck, PullRequestComment } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { pullRequestChecksSummary, pullRequestReviewSummary } from "./pullRequestStatus";
+import {
+  checkStatus,
+  pullRequestCheckPriority,
+  pullRequestChecksStatus,
+  pullRequestChecksSummary,
+  pullRequestReviewSummary,
+} from "./pullRequestStatus";
 
 const author = { login: "julius", name: null, avatarUrl: null };
 function review(state: string, at: string): PullRequestComment {
@@ -20,8 +26,17 @@ function activity(
 ): Pick<PullRequestActivity, "comments" | "commits"> {
   return { comments, commits: [] };
 }
-function check(status: PullRequestCheck["status"]): PullRequestCheck {
-  return { name: status, status, url: null, description: null };
+function check(
+  status: PullRequestCheck["status"],
+  outcome?: PullRequestCheck["outcome"],
+): PullRequestCheck {
+  return {
+    name: status,
+    status,
+    ...(outcome === undefined ? {} : { outcome }),
+    url: null,
+    description: null,
+  };
 }
 
 describe("mobile overview review status", () => {
@@ -81,5 +96,40 @@ describe("mobile overview check status", () => {
     expect(
       pullRequestChecksSummary({ checks: [check("success"), check("pending"), check("failure")] }),
     ).toMatchObject({ title: "1 check failing", count: "1 of 3" });
+  });
+
+  it("keeps terminal warnings distinct from passed checks", () => {
+    const warning = check("neutral", "warning");
+    expect(checkStatus(warning)).toMatchObject({
+      label: "Warning",
+      icon: "exclamationmark.triangle",
+    });
+    expect(pullRequestChecksSummary({ checks: [check("success"), warning] })).toMatchObject({
+      title: "1 check has warnings",
+      count: "1 of 2",
+      icon: "exclamationmark.triangle",
+    });
+    expect(checkStatus(check("neutral")).label).toBe("Neutral");
+    expect(checkStatus(check("skipped")).label).toBe("Skipped");
+    expect(
+      [check("success"), check("neutral"), warning, check("pending")].toSorted(
+        (left, right) => pullRequestCheckPriority(left) - pullRequestCheckPriority(right),
+      ),
+    ).toEqual([warning, check("pending"), check("neutral"), check("success")]);
+    expect(pullRequestChecksStatus("warning")).toEqual({
+      icon: "exclamationmark.triangle",
+      tint: "accent-warning-foreground",
+    });
+  });
+
+  it("treats warning outcomes as terminal before checking their status", () => {
+    for (const status of ["pending", "failure"] as const) {
+      const warning = check(status, "warning");
+      expect(checkStatus(warning).label).toBe("Warning");
+      expect(pullRequestChecksSummary({ checks: [warning] })).toMatchObject({
+        title: "1 check has warnings",
+        icon: "exclamationmark.triangle",
+      });
+    }
   });
 });

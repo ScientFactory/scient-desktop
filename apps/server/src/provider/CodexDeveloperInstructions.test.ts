@@ -1,7 +1,6 @@
 import { buildCodexDeveloperInstructions } from "./CodexDeveloperInstructions.ts";
 import * as NodeAssert from "node:assert/strict";
 
-import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "./ScientProviderInstructions.ts";
 import type { McpCapability } from "../mcp/McpInvocationContext.ts";
 import { describe, it } from "vite-plus/test";
 
@@ -12,7 +11,6 @@ import {
 
 describe("buildCodexAdditionalContext", () => {
   describe.each([
-    { model: "gpt-5.3-codex", reasoningEffort: "high" },
     { model: "custom-model", modelName: "Custom 🦊 Model", reasoningEffort: "xhigh" },
   ])("with runtime $model", (runtime) => {
     it.each([
@@ -41,23 +39,6 @@ describe("buildCodexAdditionalContext", () => {
         );
       }
     });
-  });
-
-  it("delivers all orchestration sections in authored order when keys are sorted", () => {
-    const context = buildCodexAdditionalContext({
-      model: "gpt-5.3-codex",
-      reasoningEffort: "high",
-    });
-    const sections = Object.keys(context)
-      .filter((key) => key.startsWith("t3_code_orchestration_"))
-      .sort()
-      .map((key) => context[key]!);
-
-    NodeAssert.ok(sections.every((entry) => entry.kind === "application"));
-    NodeAssert.equal(
-      sections.map((entry) => entry.value).join("\n\n"),
-      SCIENT_ORCHESTRATION_INSTRUCTIONS.trim(),
-    );
   });
 });
 

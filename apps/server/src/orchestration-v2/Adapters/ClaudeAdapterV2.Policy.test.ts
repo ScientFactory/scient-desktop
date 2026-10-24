@@ -377,4 +377,28 @@ describe("ClaudeAdapterV2 session permissions", () => {
       },
     ]);
   });
+
+  it.each([
+    { decision: "decline", feedback: "  Use a dry run.  ", message: "Use a dry run." },
+    { decision: "decline", feedback: "   ", message: "User declined tool execution." },
+    { decision: "cancel", feedback: "Stop here.", message: "Stop here." },
+  ] as const)(
+    "returns $decision feedback $feedback to the requesting tool",
+    ({ decision, feedback, message }) => {
+      const result = ClaudeAdapterV2.permissionResultFromDecision({
+        toolName: "Bash",
+        decision,
+        feedback,
+        toolInput: { command: "rm -rf build" },
+        toolUseID: "tool-3",
+      });
+
+      assert.equal(result.behavior, "deny");
+      if (result.behavior !== "deny") {
+        return;
+      }
+      assert.equal(result.message, message);
+      assert.equal(result.interrupt, decision === "cancel" ? true : undefined);
+    },
+  );
 });

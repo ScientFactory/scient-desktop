@@ -808,7 +808,9 @@ export function PullRequestSummaryTab({
         ) : (
           detail.checks.map((check, index) => {
             const finding = { kind: "check", check } as const;
-            const failing = check.status === "failure" || check.status === "cancelled";
+            const failing =
+              check.outcome !== "warning" &&
+              (check.status === "failure" || check.status === "cancelled");
             return (
               <div
                 key={`${index}:${check.name}:${check.url ?? ""}`}
@@ -823,7 +825,7 @@ export function PullRequestSummaryTab({
                     check.url ? "cursor-pointer" : "cursor-default",
                   )}
                 >
-                  <PullRequestCheckStatusIcon status={check.status} />
+                  <PullRequestCheckStatusIcon check={check} />
                   <span className="min-w-0 flex-1 wrap-anywhere">{check.name}</span>
                   <span className="shrink-0 text-muted-foreground">
                     {pullRequestCheckStatusLabel(check)}

@@ -58,6 +58,13 @@ export function pullRequestConflict(pr: {
 }
 
 export function checkStatus(check: PullRequestCheck) {
+  if (check.outcome === "warning") {
+    return {
+      label: "Warning",
+      icon: "exclamationmark.triangle",
+      tint: "accent-warning-foreground",
+    } as const;
+  }
   switch (check.status) {
     case "success":
       return {
@@ -88,11 +95,34 @@ export function checkStatus(check: PullRequestCheck) {
   }
 }
 
+const CHECK_PRIORITY: Record<PullRequestCheck["status"], number> = {
+  failure: 0,
+  "action-required": 2,
+  pending: 3,
+  cancelled: 4,
+  neutral: 5,
+  skipped: 6,
+  success: 7,
+};
+
+export function pullRequestCheckPriority(check: PullRequestCheck): number {
+  return check.outcome === "warning" ? 1 : CHECK_PRIORITY[check.status];
+}
+
 export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) {
-  const failed = pr.checks.filter((check) => check.status === "failure").length;
-  const required = pr.checks.filter((check) => check.status === "action-required").length;
-  const pending = pr.checks.filter((check) => check.status === "pending").length;
-  const passed = pr.checks.filter((check) => check.status === "success").length;
+  const failed = pr.checks.filter(
+    (check) => check.outcome !== "warning" && check.status === "failure",
+  ).length;
+  const required = pr.checks.filter(
+    (check) => check.outcome !== "warning" && check.status === "action-required",
+  ).length;
+  const pending = pr.checks.filter(
+    (check) => check.outcome !== "warning" && check.status === "pending",
+  ).length;
+  const warning = pr.checks.filter((check) => check.outcome === "warning").length;
+  const passed = pr.checks.filter(
+    (check) => check.outcome !== "warning" && check.status === "success",
+  ).length;
   const count = pr.checks.length ? `${passed} of ${pr.checks.length}` : undefined;
   if (failed)
     return {
@@ -116,6 +146,14 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
       title: "Checks running",
       count: `${pending} pending`,
       icon: "clock",
+      tint: "accent-warning-foreground",
+    } as const;
+  if (warning)
+    return {
+      label: `${warning} ${warning === 1 ? "check" : "checks"} with warnings`,
+      title: `${warning} ${warning === 1 ? "check has" : "checks have"} warnings`,
+      count,
+      icon: "exclamationmark.triangle",
       tint: "accent-warning-foreground",
     } as const;
   if (passed)
@@ -219,5 +257,7 @@ export function pullRequestChecksStatus(state: PullRequestChecksState) {
     return { icon: "checkmark.circle", tint: "accent-adaptive-emerald-600-400" } as const;
   if (state === "failing")
     return { icon: "xmark.circle.fill", tint: "accent-danger-foreground" } as const;
+  if (state === "warning")
+    return { icon: "exclamationmark.triangle", tint: "accent-warning-foreground" } as const;
   return { icon: "clock", tint: "accent-warning-foreground" } as const;
 }

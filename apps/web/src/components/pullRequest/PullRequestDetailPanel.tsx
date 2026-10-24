@@ -1112,7 +1112,9 @@ export function PullRequestDetailPanel({
   // List rollups can omit workflows awaiting approval. Only refreshed detail can clear those.
   const checksState =
     latestChecksState !== "failing" &&
-    detail?.checks.some((check) => check.status === "action-required")
+    detail?.checks.some(
+      (check) => check.outcome !== "warning" && check.status === "action-required",
+    )
       ? "pending"
       : latestChecksState;
   const checksStale = checksState !== detailChecksState;
@@ -1440,14 +1442,14 @@ export function PullRequestDetailPanel({
                       <TooltipPopup side="top">{detail.headBranch}</TooltipPopup>
                     </Tooltip>
                   </span>
-                  <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2 text-2xs">
+                  <span className="ml-auto inline-flex shrink-0 items-baseline justify-end gap-2 text-2xs">
                     <span
-                      className="inline-flex items-center gap-1 tabular-nums"
+                      className="inline-flex items-baseline gap-1 tabular-nums"
                       aria-label={`${detail.changedFiles.toLocaleString()} changed ${
                         detail.changedFiles === 1 ? "file" : "files"
                       }`}
                     >
-                      <FileDiffIcon aria-hidden className="size-3" />
+                      <FileDiffIcon aria-hidden className="size-3 self-center" />
                       {detail.changedFiles.toLocaleString()}
                     </span>
                     <PullRequestChangeBreakdownStat

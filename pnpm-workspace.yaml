@@ -324,6 +324,9 @@ overrides:
   "expo-sharing>@expo/config-plugins": 58.0.9
   "expo-sharing>@expo/config-types": 58.0.3
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
+  # SCIENT-FORK:START — patched packages remain pinned for lockfile-free packaging.
+  "@muse-code/sdk": 1.4.6
+  # SCIENT-FORK:END
   # Resolve below remark-math so Vite, Metro and Node use the same tokenizer.
   "remark-math>micromark-extension-math": npm:micromark-extension-llm-math@3.1.0
   micromark-extension-gfm-table: 2.1.1
@@ -373,7 +376,7 @@ patchedDependencies:
   mathlive@0.108.2: patches/mathlive@0.108.2.patch
   react-native-enriched-markdown@1.2.0-t3.15: patches/react-native-enriched-markdown@1.2.0-t3.15.patch
   react-native-image-viewing@0.2.2: patches/react-native-image-viewing@0.2.2.patch
-  react-native-screens@5.0.0-t3.36: patches/react-native-screens@5.0.0-t3.36.patch
+  react-native-screens@5.0.0-t3.37: patches/react-native-screens@5.0.0-t3.37.patch
   mdast-util-math@3.0.0: patches/mdast-util-math@3.0.0.patch
   micromark-extension-llm-math@3.1.0: patches/micromark-extension-llm-math@3.1.0.patch
   micromark-extension-gfm-table@2.1.1: patches/micromark-extension-gfm-table@2.1.1.patch
@@ -412,6 +415,8 @@ patchedDependencies:
   # Android: Maven-resolved gradle plugins (expo-widgets) have no sourceDir; without this
   # skip, the fingerprint silently drops every Expo native module and OTAs reach stale binaries.
   "@expo/fingerprint@0.21.5": patches/@expo__fingerprint@0.21.5.patch
+  # Observe the owned host exit independently of descendants retaining its stdio.
+  "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
   # SCIENT-FORK: Idle deadlines retain cancellation identity without changing scheduling priority.
   vitest@5.0.5: patches/vitest@5.0.5.patch

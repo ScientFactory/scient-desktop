@@ -88,9 +88,22 @@ state. Clearing a migrated token does not leave an adopted legacy copy behind.
   see passing and approved reviews first, passing reviews awaiting approval next, and conflicting
   reviews last. Smaller changes come first within each readiness group, and finished reviews follow
   open work when all states are visible.
-- Filter the list by author or labels, rank authors by merges in the loaded results, see label and
-  change-size context on each row, and sort the results currently shown by readiness, update time,
-  creation time, or change size. Your filters, search, scope, and sort are restored when you return.
+- Forgejo warning checks stay distinct from passed checks. A watcher does not report an
+  all-required-checks-passed result while a required check has a warning. Older apps keep showing
+  these checks as pending rather than incorrectly treating them as passed.
+- Filter by author or labels. GitHub, GitLab, Forgejo, and GitCafe search option values on the host;
+  Azure DevOps and Bitbucket use only facets from pull requests already loaded. Searches return at
+  most 100 matches; refine the query when Scient says more are available. A supported repository
+  search failure keeps options from successful repositories visible and marks the results
+  incomplete; if failures leave no options, Scient reports an error rather than a complete empty
+  result.
+  Up to ten label filters can be combined. Existing groups keep their OR alternatives when edited;
+  remove every alternative from a group to free its filter slot.
+- The list sends each filter to a host when that host supports it; filters without host support
+  narrow the pull requests already loaded. Author ranking by merges still uses loaded results. See
+  label and change-size context on each row, and sort the displayed results by readiness, update
+  time, creation time, or change size. Your filters, search, scope, and sort are restored when you
+  return.
 - Merge now, or on GitHub, GitLab, and Azure DevOps, leave an auto-merge instruction with a chosen
   strategy while checks are outstanding; see the completed state in the same control after the
   pull request merges
@@ -418,9 +431,10 @@ the thread is active, the server checks the pull request every two minutes and w
 check fails, the required checks pass, someone else comments or reviews, or the branch starts to
 conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
-watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
-when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
-failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
+watching inside GitHub's rate limit. A terminal Forgejo warning does not satisfy a required-check
+pass. Comments from your own account do not wake it. Watching ends when the pull request merges or
+closes, after 10 wakes in a row that bring only comments, after 8 failed reads in a row, or when you
+press Stop on the thread. A rate limit only pauses watching.
 Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new
 watch. Watching a pull request again does not repeat check or conflict news its last
 watch already reported; unlinking the pull request clears that. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop

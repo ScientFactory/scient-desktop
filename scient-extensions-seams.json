@@ -34,7 +34,7 @@
   "diffSignalRefinements": [
     {
       "signal": "[Cc]onnectors?\\b",
-      "changed": "\\b[Cc]onnectors\\b"
+      "changed": "(?:^|\\n)(?:[+-](?![ \\t]*(?://|/?\\*|#))|[^+\\-\\n])[^\\n]*\\b[Cc]onnectors\\b"
     },
     {
       "signal": "[Cc]onnectors?\\b",

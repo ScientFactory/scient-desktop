@@ -128,7 +128,7 @@ node scripts/check-native-removal-guard.mjs
 The check compiles the installed screens dependency's resolver and pop decision
 against Foundation containment doubles. It covers collapsed detail-column removal
 as well as ordinary screen removal. It does not replace UIKit Back/swipe, layout,
-or keyboard testing. The screens patch preserves the pinned t3.36 archive and
+or keyboard testing. The screens patch preserves the pinned t3.37 archive and
 its MIT license; it only extends guard traversal through a navigation controller
 that UIKit removes as a whole. Reinstall dependencies and rebuild the native
 client, including CocoaPods, after changing this patch.

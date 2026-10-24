@@ -47,6 +47,45 @@ describe("RPC authorization scopes", () => {
     ])
       expect(requiredScopeForRpcMethod(method)).toBe(AuthSettingsWriteScope);
   });
+
+  it.effect("authorizes filter option reads without granting source-control writes", () =>
+    Effect.gen(function* () {
+      const tag = WS_METHODS.pullRequestsFilterOptions;
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (method): method is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof tag> =>
+            method !== tag,
+        ),
+      );
+      const accesses: string[] = [];
+      const handler = group.toLayerHandler(tag, ({ kind }) =>
+        Effect.sync(() => {
+          accesses.push(kind);
+          return { labels: [{ name: "bug", color: null }], authors: [], truncated: false };
+        }),
+      );
+      const clientWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+        RpcTest.makeClient(group).pipe(
+          Effect.provide(Layer.merge(handler, RpcAuthorization.layer(scopes))),
+        );
+      const input = {
+        projectIds: [ProjectId.make("filter-options-project")],
+        kind: "labels" as const,
+        query: "bug",
+      };
+      const writer = yield* clientWith([AuthSourceControlWriteScope]);
+      expect(yield* writer[tag](input).pipe(Effect.flip)).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthOrchestrationReadScope,
+      });
+      expect(accesses).toEqual([]);
+
+      const reader = yield* clientWith([AuthOrchestrationReadScope]);
+      yield* reader[tag](input);
+      expect(accesses).toEqual(["labels"]);
+    }).pipe(Effect.scoped),
+  );
+
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });

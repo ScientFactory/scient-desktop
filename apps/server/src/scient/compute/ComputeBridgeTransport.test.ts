@@ -70,6 +70,7 @@ interface FakeBridge {
   readonly failCancellation: () => void;
   readonly stallCancellation: () => void;
   readonly cancellationStarted: Effect.Effect<void>;
+  readonly restartReceived: Effect.Effect<void>;
   readonly allowCancellation: Effect.Effect<void>;
   readonly respond: (responder: Responder) => void;
 }
@@ -161,6 +162,7 @@ const makeFakeBridge = Effect.fn("makeFakeBridge")(function* () {
   const stderr = yield* Queue.unbounded<Uint8Array, DuplexProcessError | Cause.Done>();
   const exited = yield* Deferred.make<number, DuplexProcessError>();
   const cancellationStarted = yield* Deferred.make<void>();
+  const restartReceived = yield* Deferred.make<void>();
   const cancellationAllowed = yield* Deferred.make<void>();
   const received: ComputeProtocolMessage[] = [];
   const inboundDecoder = makeComputeFrameDecoder();
@@ -201,6 +203,7 @@ const makeFakeBridge = Effect.fn("makeFakeBridge")(function* () {
         for (const frame of frames) {
           const command = yield* decodeComputeProtocolMessage(frame).pipe(Effect.orDie);
           received.push(command);
+          if (command.type === "restart") yield* Deferred.succeed(restartReceived, undefined);
           for (const reply of responder(command)) {
             yield* say({ generation: command.generation, ...reply });
           }
@@ -236,6 +239,7 @@ const makeFakeBridge = Effect.fn("makeFakeBridge")(function* () {
       cancellationStalled = true;
     },
     cancellationStarted: Deferred.await(cancellationStarted),
+    restartReceived: Deferred.await(restartReceived),
     allowCancellation: Deferred.succeed(cancellationAllowed, undefined).pipe(Effect.asVoid),
     respond: (next) => {
       responder = next;
@@ -1084,9 +1088,7 @@ describe("jupyter bridge commands", () => {
             nextGeneration: next,
           })
           .pipe(Effect.forkChild);
-        while (!bridge.sent().some((message) => message.type === "restart")) {
-          yield* Effect.yieldNow;
-        }
+        yield* bridge.restartReceived;
 
         const failure = yield* Effect.flip(
           channel.execute({
@@ -1140,7 +1142,7 @@ describe("jupyter bridge commands", () => {
             nextGeneration: nextComputeSessionGeneration(INITIAL_COMPUTE_SESSION_GENERATION),
           })
           .pipe(Effect.exit, Effect.forkChild);
-        while (!bridge.sent().some((command) => command.type === "restart")) yield* Effect.yieldNow;
+        yield* bridge.restartReceived;
         yield* Effect.all(
           [
             channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION }),

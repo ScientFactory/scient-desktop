@@ -78,7 +78,7 @@ export type ProviderEnvironmentAccess =
 /**
  * The patch for one instance's project override, following the envelope
  * replacement rule for `projectSettingsOverrides`: the returned entry
- * replaces the project's whole override set, and `null` removes it.
+ * replaces the project's whole override set.
  * `value: undefined` resets that single instance back to inheriting the
  * environment's enablement, leaving any other overridden keys untouched.
  *
@@ -93,8 +93,8 @@ export function buildProviderInstanceOverridePatch(
   projectIds: readonly ProjectId[],
   instanceId: ProviderInstanceId,
   value: boolean | undefined,
-): Record<ProjectId, ProjectSettingsOverrides | null> {
-  const patch: Record<ProjectId, ProjectSettingsOverrides | null> = {};
+): Record<ProjectId, ProjectSettingsOverrides> {
+  const patch: Record<ProjectId, ProjectSettingsOverrides> = {};
   for (const projectId of projectIds) {
     const current = settings.projectSettingsOverrides[projectId];
     const instances = { ...current?.providerInstances };
@@ -106,8 +106,10 @@ export function buildProviderInstanceOverridePatch(
 
     const { providerInstances: _omit, ...rest } = current ?? {};
     const nextEntry: ProjectSettingsOverrides = { ...rest, providerInstances: instances };
-    patch[projectId] =
-      Object.keys(rest).length === 0 && Object.keys(instances).length === 0 ? null : nextEntry;
+    // SCIENT-FORK:START — clearing the last instance override sends `{}` rather than depending on
+    // how a server reads a `null` entry; the server drops an entry left without overrides.
+    patch[projectId] = nextEntry;
+    // SCIENT-FORK:END
   }
   return patch;
 }

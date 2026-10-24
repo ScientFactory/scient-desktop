@@ -176,7 +176,13 @@ async function locate(path: string, skipMissing: boolean): Promise<Located | nul
   return { root: roots[0]!, keys };
 }
 
-export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
+const lookupCheckout = (path: string, skipMissing: boolean) =>
+  Effect.tryPromise({
+    try: () => locate(path, skipMissing),
+    catch: (cause) => new CheckoutLookupError({ path, cause }),
+  });
+
+export const makeCheckoutBarrier = (lookup = lookupCheckout): CheckoutBarrierShape => {
   const entries = new Map<string, Entry>();
   const settlers = new Set<CheckoutSettler>();
   const entry = (key: string) => {
@@ -194,11 +200,6 @@ export const makeCheckoutBarrier = (): CheckoutBarrierShape => {
     }
     return found;
   };
-  const lookup = (path: string, skipMissing: boolean) =>
-    Effect.tryPromise({
-      try: () => locate(path, skipMissing),
-      catch: (cause) => new CheckoutLookupError({ path, cause }),
-    });
   const located = (path: string) =>
     Effect.map(
       lookup(path, false),

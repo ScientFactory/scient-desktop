@@ -2826,6 +2826,8 @@ describe("PreviewManager", () => {
           getURL: () => "https://example.com/report.csv",
           getTitle: () => "Report",
           getUserAgent: () => "Electron",
+          on: vi.fn(),
+          off: vi.fn(),
         } as unknown as Electron.WebContents;
         let debuggerMessage:
           | ((event: Electron.Event, method: string, params: unknown, sessionId: string) => void)
