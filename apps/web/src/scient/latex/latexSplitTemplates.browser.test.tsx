@@ -404,6 +404,66 @@ it.for([
           .dblClick({ position: hit.position });
       }
       const afterGesture = scroll.scrollTop;
+      // DIAGNOSTIC (not for merge): who moves the reader during the publish on Linux CI.
+      const t0 = performance.now();
+      const trace: string[] = [];
+      const stack = () =>
+        (new Error().stack ?? "")
+          .split("\n")
+          .slice(2, 14)
+          .map((l) =>
+            l
+              .trim()
+              .replace(/\?v=[0-9a-f]+/g, "")
+              .replace(/https?:\/\/[^/]+\//, ""),
+          )
+          .join(" | ");
+      const at = () => (performance.now() - t0).toFixed(1);
+      const proto = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!;
+      Object.defineProperty(scroll, "scrollTop", {
+        configurable: true,
+        get() {
+          return proto.get!.call(this);
+        },
+        set(v) {
+          trace.push(`${at()} JS set scrollTop ${v} from ${proto.get!.call(this)} :: ${stack()}`);
+          proto.set!.call(this, v);
+        },
+      });
+      const patched: Array<[object, string, unknown]> = [];
+      const patch = (target: object, key: string, label: string) => {
+        const original = (target as Record<string, unknown>)[key] as (...a: unknown[]) => unknown;
+        patched.push([target, key, original]);
+        (target as Record<string, unknown>)[key] = function (this: unknown, ...a: unknown[]) {
+          trace.push(
+            `${at()} ${label} ${this instanceof Element ? `${this.tagName}.${String(this.className).slice(0, 60)}` : ""} ${JSON.stringify(a).slice(0, 80)} :: ${stack()}`,
+          );
+          return original.apply(this, a);
+        };
+      };
+      patch(Element.prototype, "scrollIntoView", "scrollIntoView");
+      patch(Element.prototype, "scrollBy", "scrollBy");
+      patch(Element.prototype, "scrollTo", "scrollTo");
+      patch(HTMLElement.prototype, "focus", "focus");
+      patch(HTMLTextAreaElement.prototype, "setSelectionRange", "setSelectionRange");
+      patch(HTMLTextAreaElement.prototype, "select", "select");
+      const onScroll = () => trace.push(`${at()} scroll event top=${proto.get!.call(scroll)}`);
+      scroll.addEventListener("scroll", onScroll);
+      const fieldState = () => {
+        const el = document.activeElement;
+        return el instanceof HTMLTextAreaElement
+          ? {
+              rect: el.getBoundingClientRect().toJSON(),
+              sel: [el.selectionStart, el.selectionEnd],
+              scrollTop: el.scrollTop,
+              scrollHeight: el.scrollHeight,
+              clientHeight: el.clientHeight,
+              rows: el.rows,
+              style: el.getAttribute("style"),
+            }
+          : (el?.tagName ?? null);
+      };
+      const fieldBefore = fieldState();
       expect(Math.abs(wordTop() - beforeTop), "native selection scroll").toBeLessThanOrEqual(2);
       // Publish the gesture's queued source reveal without advancing recurring editor services.
       await act(() => vi.runOnlyPendingTimersAsync());
@@ -417,6 +477,24 @@ it.for([
           : document.getSelection()?.toString().trim(),
       ).toBe(word);
       const afterPublish = scroll.scrollTop;
+      scroll.removeEventListener("scroll", onScroll);
+      for (const [target, key, original] of patched)
+        (target as Record<string, unknown>)[key] = original;
+      delete (scroll as { scrollTop?: number }).scrollTop;
+      if (name === "26-code" && afterPublish !== before)
+        throw new Error(
+          "DIAGNOSTIC " +
+            JSON.stringify({
+              before,
+              afterGesture,
+              afterPublish,
+              beforeTop,
+              afterTop: wordTop(),
+              fieldBefore,
+              fieldAfter: fieldState(),
+              trace,
+            }),
+        );
       const wordDelta = Math.abs(wordTop() - beforeTop);
       expect(
         wordDelta,
