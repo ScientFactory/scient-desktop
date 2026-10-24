@@ -714,13 +714,18 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   };
   /**
    * The lease for work on kept records. It holds a record's folder exclusively
-   * when the work may write into it: every record not finished (settlement may
-   * finish it), and each finished one that `writesFinished` names (a view, a
-   * discard or a review). A finished record the work only reads is not held:
-   * its journal is replaced in one rename, so a read sees it whole, and whoever
-   * writes into it holds it. Holding every one instead made the lease grow
-   * with every record ever kept in a folder or for a path, past the 256 folders
-   * a native lease can bind.
+   * when the work may change what is in it: every record not finished
+   * (settlement may finish it), and each finished one that `writesFinished`
+   * names (a discard rewrites its journal and removes a copy; a review adds its
+   * acceptance). A finished record the work only reads is not held: its journal
+   * is replaced in one rename, so a read sees it whole, and whoever changes it
+   * holds it. Nor is one the work only adds a view to (`retainedViewPath`): a
+   * view is a hard link of a copy already there, made only while that copy is
+   * there, and a second making finds the same file there. A discard removes the
+   * copy before its view, so a view made meanwhile is removed too or not made.
+   * Holding every record instead made the lease grow with every record ever
+   * kept in a folder or for a path, past the 256 folders a native lease can
+   * bind.
    */
   const bindingsFor = async (
     base: ReadonlyArray<NativeFileLeaseBinding>,
@@ -994,6 +999,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       parentBinding: NativeFileLeaseBinding | null,
     ) => Promise<A>,
     signal: AbortSignal,
+    /** The finished records the body changes (see `bindingsFor`). */
+    writesFinished: (entry: Stored) => boolean,
   ) => {
     const binding = await observedDirectoryBinding(helperFor(), resolved.root),
       parent = await nearestParent(resolved.root, resolved.requestedPath).catch(() => null);
@@ -1016,8 +1023,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         return body(settled ? await discover() : records, lease, binding, parent);
       },
       signal,
-      // Listing makes a view in each of the path's records; a discard or a review writes into one.
-      () => true,
+      writesFinished,
     );
   };
   const ensureParents = async (
@@ -2322,9 +2328,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               }
             },
             signal,
-            // Besides its own record, a publication writes only a view into each of
-            // its path's records still asking for attention.
-            (entry) => isForTarget(entry, resolved) && requiresAttention(entry),
+            // Besides its own record, a publication only adds views to its path's
+            // records still asking for attention.
+            () => false,
           );
         } catch (cause) {
           if (
@@ -2892,10 +2898,11 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     });
   /**
    * Counts, for each folder written, the folders the leases of a retained write
-   * there can bind (`publish`, `withRoot`, `ensureParents`): every folder from
-   * the written folder up to `/`, from the step's record, from the identity and
-   * index records in the shared store, and from each record a lease holds,
-   * unfinished or asking for attention (its folder and its target's). Paths are
+   * there can bind (`publish`, `withRoot`, `ensureParents`, and the removal of
+   * each folder standing in a written file's place): every folder from the
+   * written folder up to `/`, from the step's record, from the identity and
+   * index records in the shared store, and from each unfinished record a lease
+   * holds (its folder and its target's). Paths are
    * spelled canonically, as the leases spell them; a folder not made yet counts
    * as it will be. Leases stop at the volume's edge and bind each folder once,
    * so this is never less than what they bind.
@@ -2931,18 +2938,34 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         chain(NodePath.join(storage, "mutation-identities", "identity"), shared);
         chain(NodePath.join(storage, "folder", "index"), shared);
         for (const entry of await recordsUnderRoot(canonicalRoot)) {
-          if (finished(entry) && !requiresAttention(entry)) continue;
+          if (finished(entry)) continue;
           chain(entry.directory, shared);
           chain(NodePath.dirname(entry.target ?? canonicalRoot), shared);
           if (entry.record?.version === 2 && entry.record.destination !== null)
             chain(NodePath.dirname(entry.record.destination), shared);
         }
+        // Each written path's folder; and where a folder (not a link) stands in a
+        // file's place, every folder below it, each removed by a write of its own
+        // (`pruneRetainedDirectory`).
+        const written = new Set<string>();
+        for (const path of input.relativePaths) {
+          const absolute = NodePath.join(canonicalRoot, path);
+          const parent = await canonical(NodePath.dirname(absolute));
+          written.add(parent);
+          const target = NodePath.join(parent, NodePath.basename(absolute));
+          const stat = await NodeFSP.lstat(target).catch(() => null);
+          if (!stat?.isDirectory()) continue;
+          const below = [target];
+          for (let folder = below.pop(); folder !== undefined; folder = below.pop()) {
+            written.add(folder);
+            for (const entry of await NodeFSP.readdir(folder, { withFileTypes: true }))
+              if (entry.isDirectory()) below.push(NodePath.join(folder, entry.name));
+          }
+        }
         let largest = 0;
-        for (const folder of new Set(
-          input.relativePaths.map((path) => NodePath.dirname(NodePath.join(canonicalRoot, path))),
-        )) {
+        for (const folder of written) {
           const folders = new Set(shared);
-          chain(await canonical(folder), folders);
+          chain(folder, folders);
           largest = Math.max(largest, folders.size);
         }
         return largest;
@@ -3058,6 +3081,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           };
         },
         signal,
+        // Listing only adds views.
+        () => false,
       ),
     );
   });
@@ -3119,6 +3144,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           return { versionId: input.versionId };
         },
         signal,
+        // Only the record whose copy goes.
+        (entry) => input.versionId.startsWith(`${keyFor(entry.mutationId)}:`),
       ),
     );
   });
@@ -3203,6 +3230,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           return { recoveryId: input.recoveryId, revision };
         },
         signal,
+        // Only the record being accepted.
+        (entry) => entry.mutationId === input.recoveryId,
       ),
     );
   });
@@ -3257,9 +3286,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         return body(root, settled ? await recordsUnderRoot(root) : records, binding, parent);
       },
       signal,
-      // Settlement and the epoch only read finished records; a read's attention makes
-      // views in the records still asking for it.
-      requiresAttention,
+      // Settlement and the epoch only read finished records; a read's attention only
+      // adds views to the records still asking for it.
+      () => false,
     );
   };
   const epochFor = async (root: string, records: ReadonlyArray<Stored>) => {
