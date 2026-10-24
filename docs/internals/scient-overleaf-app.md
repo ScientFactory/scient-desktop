@@ -119,7 +119,10 @@ and their choices survive a retry that didn't run. "Last synced" comes from `syn
 when a sync applied. Reads of the changes (`preview`) are ordered with syncs: each change to the
 shown review is numbered, and a read's answer is used only if no sync replaced the review after
 the read started, so a late read never brings obsolete conflicts back over a sync that applied.
-A read replaces the shown review only when it succeeds. With no review the tab offers **Read
+A read replaces the shown review only when it succeeds. A read may first finish an interrupted
+sync, which writes the folder (`settled`); the tab always says so, "It first finished an
+interrupted sync, which wrote the folder.", above the review it read (`previewNotes`, cleared by
+the next read or sync) or before the reason a refused read gives. With no review the tab offers **Read
 changes**; with one it offers **Check again**, so after a sync the next sync's new files can be
 decided before they are sent. The chip's **See changes** reads again unless the shown review is
 still to run (a read, or a conflict waiting); the toast's **See changes** shows what that sync did.

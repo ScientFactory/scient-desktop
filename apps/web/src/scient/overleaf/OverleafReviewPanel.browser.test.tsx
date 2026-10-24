@@ -258,6 +258,20 @@ describe("OverleafReviewPanel", () => {
     });
   });
 
+  it("says when reading the changes first finished an interrupted sync", async () => {
+    reset();
+    client.previewOverleaf.mockResolvedValue({
+      _tag: "review",
+      review: review({ needsDecision: false, conflicts: [] }),
+      settled: { outcome: "complete", interrupted: 0, markerPaths: [] },
+    });
+    await using _screen = await render(panel());
+    await page.getByRole("button", { name: "Read changes" }).click();
+    await expect
+      .element(page.getByText("It first finished an interrupted sync, which wrote the folder."))
+      .toBeVisible();
+  });
+
   it("sends a file waiting for its conflicts anyway, at the next sync", async () => {
     reset();
     client.previewOverleaf.mockResolvedValue({
