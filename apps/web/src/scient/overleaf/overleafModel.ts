@@ -1,0 +1,541 @@
+// SCIENT-OWNED: what the Overleaf screens say, decided from the server's fixed
+// categories. Pure functions, so every line a person sees is tested here.
+import type {
+  ScientOverleafConnectionSummary,
+  ScientOverleafRefusal,
+  ScientOverleafReview,
+  ScientOverleafStatus,
+  ScientOverleafSyncResult,
+} from "@t3tools/contracts";
+
+/** Overleaf's own page for a project. */
+export function overleafProjectUrl(projectId: string): string {
+  return `https://www.overleaf.com/project/${projectId}`;
+}
+
+/** Where Overleaf issues Git tokens (Account settings ▸ Git integration). */
+export const OVERLEAF_TOKEN_PAGE_URL = "https://www.overleaf.com/user/settings#git-integration";
+
+const PROJECT_ID = /^[0-9a-f]{24}$/u;
+
+/**
+ * The project ID in a pasted link or ID, or null. Mirrors the server's rule:
+ * an ID of 24 hexadecimal digits, or an `https://(www.)overleaf.com/project/<id>`
+ * link. A Git URL (`git.overleaf.com/<id>`) is accepted too, since that is what
+ * Overleaf's Git panel shows.
+ */
+export function parseOverleafProjectInput(input: string): string | null {
+  const trimmed = input.trim();
+  if (PROJECT_ID.test(trimmed)) return trimmed;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "") return null;
+  if (/^(?:www\.)?overleaf\.com$/u.test(url.hostname)) {
+    return /^\/project\/([0-9a-f]{24})\/?$/u.exec(url.pathname)?.[1] ?? null;
+  }
+  if (url.hostname === "git.overleaf.com") {
+    return /^\/([0-9a-f]{24})\/?$/u.exec(url.pathname)?.[1] ?? null;
+  }
+  return null;
+}
+
+/** The connection whose folder holds `relativePath`, if any. Folders never nest. */
+export function connectionForPath<C extends Pick<ScientOverleafConnectionSummary, "folder">>(
+  connections: ReadonlyArray<C>,
+  relativePath: string,
+): C | null {
+  const path = relativePath.replace(/^\/+|\/+$/gu, "");
+  for (const connection of connections) {
+    const folder = connection.folder.replace(/^\/+|\/+$/gu, "");
+    if (folder === "" || path === folder || path.startsWith(`${folder}/`)) return connection;
+  }
+  return null;
+}
+
+/** A path inside the folder, as the file tree and editors name it from the workspace. */
+export function workspacePathOf(folder: string, manuscriptPath: string): string {
+  const base = folder.replace(/^\/+|\/+$/gu, "");
+  return base === "" ? manuscriptPath : `${base}/${manuscriptPath}`;
+}
+
+/** The folder a new Overleaf project is brought into: `<parent>/<name>`. */
+export function newFolderPath(parent: string, name: string): string {
+  const base = parent.replace(/^\/+|\/+$/gu, "");
+  const leaf = name.trim().replace(/^\/+|\/+$/gu, "");
+  return base === "" ? leaf : `${base}/${leaf}`;
+}
+
+/** A folder name a person typed: one plain name, no separators or dot names. */
+export function folderNameProblem(name: string): string | null {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) return "Name the folder.";
+  if (/[/\\]/u.test(trimmed)) return "Use a name without slashes.";
+  if (trimmed === "." || trimmed === ".." || trimmed.startsWith(".")) {
+    return "Use a name that doesn't start with a dot.";
+  }
+  return null;
+}
+
+export type OverleafChipState = "syncing" | "up-to-date" | "edits" | "decision" | "problem";
+
+export interface OverleafChipView {
+  readonly state: OverleafChipState;
+  /** The chip's text. */
+  readonly label: string;
+  /** One line under the menu's title. */
+  readonly detail: string;
+}
+
+const plural = (count: number, one: string, many: string = `${one}s`) =>
+  `${count} ${count === 1 ? one : many}`;
+
+/** The chip next to "Saved", from the offline status. */
+export function overleafChipView(
+  status: ScientOverleafStatus | null,
+  syncing: boolean,
+): OverleafChipView {
+  if (syncing || status?.busy) {
+    return { state: "syncing", label: "Syncing…", detail: "A sync is running." };
+  }
+  if (status === null) return { state: "up-to-date", label: "Overleaf", detail: "" };
+  if (status.availability === "unavailable" || status.availability === "disconnected") {
+    return {
+      state: "problem",
+      label: "Overleaf problem",
+      detail:
+        status.availability === "disconnected"
+          ? "This folder is no longer linked."
+          : "Scient can't reach this folder's sync state.",
+    };
+  }
+  if (status.reasons.includes("conflict-marks") || status.reasons.includes("interrupted-files")) {
+    const marked = status.markerPaths.length;
+    return {
+      state: "decision",
+      label: "Needs a decision",
+      detail:
+        marked > 0
+          ? `${plural(marked, "file")} still ${marked === 1 ? "has" : "have"} Overleaf conflicts to settle.`
+          : "A file an earlier sync left half done needs a decision.",
+    };
+  }
+  if (status.reasons.includes("folder-changed") || status.reasons.includes("staging")) {
+    return {
+      state: "problem",
+      label: "Overleaf problem",
+      detail: status.reasons.includes("folder-changed")
+        ? "The folder moved, or its disk isn't connected."
+        : "An earlier change left folders to tidy. Sync to finish it.",
+    };
+  }
+  if (status.local?._tag === "unread") {
+    return {
+      state: "problem",
+      label: "Overleaf problem",
+      detail: `Scient couldn't read the folder (${refusalText({ reason: status.local.reason })})`,
+    };
+  }
+  const local = status.local?._tag === "read" ? status.local : null;
+  const edits = local === null ? 0 : local.changed + local.deleted + local.added;
+  if (edits > 0 || status.availability === "recovery-required") {
+    return {
+      state: "edits",
+      label: "Edits to send",
+      detail:
+        edits > 0
+          ? `${plural(edits, "change")} to send.`
+          : "An earlier sync didn't finish. The next sync finishes it.",
+    };
+  }
+  return { state: "up-to-date", label: "Up to date", detail: "Nothing to send." };
+}
+
+/** Plain words for a refusal or failure reason, from the engine's fixed categories. */
+export function refusalText(refusal: ScientOverleafRefusal): string {
+  const at = refusal.path ? ` (${refusal.path})` : "";
+  switch (refusal.reason) {
+    case "token-missing":
+      return "No Overleaf token is saved. Add one in Settings ▸ Source Control ▸ Overleaf.";
+    case "access-denied":
+      return "Overleaf refused the token, or this account has no Git access to the project.";
+    case "project-not-found":
+      return "Overleaf has no such project.";
+    case "project-invalid":
+      return "That isn't an Overleaf project link or ID.";
+    case "unreachable":
+      return "Overleaf couldn't be reached. Check the connection and sync again.";
+    case "git-unavailable":
+      return "Overleaf sync needs Git 2.39 or newer on this computer.";
+    case "git-failed":
+      return "Git failed while talking to Overleaf. Sync again.";
+    case "no-branch":
+      return "The Overleaf project has no single main branch.";
+    case "relink-needed":
+      return "This project's folder changed since it was linked. Relink it.";
+    case "workspace-not-authorized":
+      return "This Overleaf link belongs to another project.";
+    case "folder-invalid":
+      return "That folder name can't be used.";
+    case "folder-missing":
+    case "folder-unavailable":
+      return "The folder isn't there, or its disk isn't connected.";
+    case "folder-not-empty":
+      return "A folder with that name already has files. Pick another name, or link it instead.";
+    case "folder-outside-checkout":
+      return "The folder is a link, or outside the project.";
+    case "folder-overlaps":
+      return "This folder, or one inside or around it, is linked already.";
+    case "project-already-linked":
+      return "This Overleaf project is linked to another folder of this project already.";
+    case "local-work-pending":
+    case "operation-active":
+      return "Another Overleaf operation is running on this folder. Try again when it finishes.";
+    case "authority-changed":
+    case "connection-stale":
+      return "The project changed while this ran. Try again.";
+    case "checkout-suspended":
+      return "A pull, branch switch or checkpoint restore is changing the project. Sync again after it.";
+    case "checkout-recovery-required":
+    case "recovery-required":
+      return "An earlier sync didn't finish. Sync again to finish it.";
+    case "state-locked":
+      return "Another Scient process holds the Overleaf state. Close it and sync again.";
+    case "walk-limit":
+      return "The folder has more than 5,000 entries. Choose a narrower folder.";
+    case "managed-limit":
+    case "candidate-file-limit":
+    case "remote-file-limit":
+      return "More than 2,000 files to sync. Keep some only on this computer, or choose a narrower folder.";
+    case "total-too-large":
+    case "candidate-too-large":
+    case "remote-too-large":
+      return "More than 250 MiB to sync. Keep some files only on this computer, or choose a narrower folder.";
+    case "file-too-large":
+    case "candidate-file-too-large":
+    case "remote-file-too-large":
+      return `A file is over Overleaf's 50 MB limit${at}.`;
+    case "local-only-limit":
+      return "Too many files are kept only on this computer. Choose a narrower folder.";
+    case "unstable":
+      return `A file changed while Scient read it${at}. Sync again.`;
+    case "unreadable":
+      return `Scient couldn't read a file${at}.`;
+    case "not-a-file":
+      return `A synced file is now a link or a folder${at}.`;
+    case "lfs-pointer":
+      return `A Git LFS pointer can't be synced${at}.`;
+    case "managed-excluded":
+      return `A synced file is now inside a nested repository${at}.`;
+    case "alias":
+    case "path-alias":
+    case "alias-rename":
+      return `Two names differ only by letter case or accents${at}. Rename one and sync again.`;
+    case "remote-forbidden":
+      return `Overleaf sent something Scient won't write: a link, a repository or a Git LFS pointer${at}.`;
+    case "unreviewed-path":
+    case "remote-collides-with-excluded":
+      return `Overleaf has a file where this folder keeps something unsynced${at}. Move or rename it.`;
+    case "git-folder":
+      return "The folder is inside Git's own folders.";
+    case "retained-limit":
+    case "retention-unavailable":
+      return "Scient can't keep copies of replaced files on this disk right now.";
+    case "connection-unavailable":
+    case "connection-not-ready":
+      return "This folder's link isn't ready. Sync again.";
+    case "request-reused":
+      return "This request was already used. Try again.";
+    case "folder-kept-changing":
+      return "The folder kept changing during the sync. Sync again when edits pause.";
+    case "recovery-repeated":
+      return "An interrupted sync couldn't be finished. Sync again.";
+    default:
+      return `Sync stopped (${refusal.reason}).`;
+  }
+}
+
+/** What an operation's thrown error says: the server's fixed reason when it gave one. */
+export function operationErrorText(error: unknown): string {
+  if (typeof error === "object" && error !== null && "reason" in error) {
+    const reason = (error as { readonly reason: unknown }).reason;
+    if (typeof reason === "string") return refusalText({ reason });
+  }
+  if (error instanceof Error && error.message.length > 0) return error.message;
+  return "The Overleaf request failed.";
+}
+
+export interface OverleafResultView {
+  /** The headline: "3 files came in, 2 were sent". */
+  readonly title: string;
+  /** The further lines of section 4.1, in order. */
+  readonly lines: ReadonlyArray<string>;
+  readonly tone: "success" | "info" | "warning" | "error";
+  /** Whether "See changes" has something to show. */
+  readonly hasChanges: boolean;
+  /** A conflict waits: the review tab opens. */
+  readonly needsDecision: boolean;
+}
+
+const fileCount = (count: number) => plural(count, "file");
+
+/** The headline counts for a review that was applied, and whether its send reached Overleaf. */
+function countsTitle(review: ScientOverleafReview, sent: boolean): string {
+  const incoming = review.incoming.length;
+  const outgoing = sent ? review.outgoing.length : 0;
+  if (incoming === 0 && outgoing === 0) return "Up to date with Overleaf";
+  const parts: string[] = [];
+  if (incoming > 0) parts.push(`${fileCount(incoming)} came in`);
+  if (outgoing > 0)
+    parts.push(
+      incoming > 0
+        ? `${outgoing} ${outgoing === 1 ? "was" : "were"} sent`
+        : `${fileCount(outgoing)} ${outgoing === 1 ? "was" : "were"} sent`,
+    );
+  return parts.join(", ");
+}
+
+/** The lines every review adds: renames, older versions, earlier sends, sizes. */
+function warningLines(review: ScientOverleafReview): string[] {
+  const lines: string[] = [];
+  const renames = review.warnings.filter((warning) => warning.kind === "rename");
+  if (renames.length > 0) {
+    lines.push(
+      renames.length === 1 && renames[0]?.from && renames[0].to
+        ? `Renamed ${renames[0].from} to ${renames[0].to}. Overleaf drops comments and tracked changes on renamed files.`
+        : `Renamed ${fileCount(renames.length)}. Overleaf drops comments and tracked changes on renamed files.`,
+    );
+  }
+  const older = review.warnings.filter((warning) => warning.kind === "restores-older-version");
+  if (older.length > 0) lines.push(`Sent older versions of ${fileCount(older.length)}.`);
+  for (const warning of review.warnings) {
+    if (warning.kind === "unresolved-publication") {
+      lines.push(
+        "An earlier send never got an answer. Scient never retries it, and Overleaf still doesn't show whether it arrived; this sync may carry some of the same changes again.",
+      );
+    }
+  }
+  if (
+    review.warnings.some(
+      (warning) =>
+        warning.kind === "over-recommended-size" || warning.kind === "editable-total-exceeded",
+    )
+  ) {
+    lines.push("The project is bigger than Overleaf recommends.");
+  }
+  for (const warning of review.warnings) {
+    if (warning.kind === "too-large-to-edit" && warning.path) {
+      lines.push(`${warning.path} is too big to edit on Overleaf.`);
+    }
+  }
+  return lines;
+}
+
+/** What the sync's send did, when it didn't simply arrive. */
+function publicationLine(
+  publication: Extract<ScientOverleafSyncResult, { _tag: "synced" }>["publication"],
+  markerPaths: ReadonlyArray<string>,
+): { readonly line: string | null; readonly tone: OverleafResultView["tone"] } {
+  switch (publication._tag) {
+    case "none":
+    case "accepted":
+      return { line: null, tone: "success" };
+    case "blocked":
+      switch (publication.reason) {
+        case "markers":
+          return {
+            line: `Nothing was sent: ${fileCount(markerPaths.length || 1)} still ${markerPaths.length === 1 ? "has" : "have"} conflict marks. Settle them and sync again.`,
+            tone: "warning",
+          };
+        case "kept-copy-changed":
+          return {
+            line: "Nothing was sent: a kept copy changed during this sync. The next sync checks again.",
+            tone: "warning",
+          };
+        case "staging":
+          return {
+            line: "Nothing was sent: an earlier change left folders to tidy. Sync again.",
+            tone: "warning",
+          };
+        default:
+          return {
+            line: "Nothing was sent: a file needs a decision first.",
+            tone: "warning",
+          };
+      }
+    case "not-verified":
+      return {
+        line: "Nothing was sent: the folder changed during the sync. That edit goes with the next sync.",
+        tone: "warning",
+      };
+    case "not-sent":
+      return {
+        line: "Nothing was sent: the Overleaf token changed during the sync. Sync again.",
+        tone: "warning",
+      };
+    case "out-of-date":
+      return {
+        line: "Overleaf changed again while this sync was sending. Sync again.",
+        tone: "warning",
+      };
+    case "unknown":
+      return {
+        line: "Scient couldn't tell whether Overleaf received this send. It never sends it twice; the next sync checks.",
+        tone: "warning",
+      };
+  }
+}
+
+/** The lines every finished or waiting sync adds about other agents and worktrees. */
+function contextLines(
+  activity: ReadonlyArray<{ readonly title: string }> | null,
+  linkedElsewhere: boolean,
+): string[] {
+  const lines: string[] = [];
+  if (linkedElsewhere) {
+    lines.push(
+      "Synced the main copy. Your edits in this worktree aren't in it until they're merged there.",
+    );
+  }
+  if (activity === null) {
+    lines.push("Scient couldn't check whether other agents are working in this copy.");
+  } else if (activity.length === 1) {
+    lines.push(`Another agent is working in this copy: ${activity[0]!.title}.`);
+  } else if (activity.length > 1) {
+    lines.push(`${activity.length} other agents are working in this copy.`);
+  }
+  return lines;
+}
+
+/** The short message after a sync (design section 4.1). */
+export function overleafResultView(result: ScientOverleafSyncResult): OverleafResultView {
+  switch (result._tag) {
+    case "synced": {
+      const sent = result.publication._tag === "accepted";
+      const publication = publicationLine(result.publication, result.markerPaths);
+      const lines = [
+        ...(publication.line ? [publication.line] : []),
+        ...warningLines(result.review),
+        ...(result.markerPaths.length > 0 && result.publication._tag !== "blocked"
+          ? [
+              `${fileCount(result.markerPaths.length)} still ${result.markerPaths.length === 1 ? "has" : "have"} conflict marks.`,
+            ]
+          : []),
+        ...(result.interrupted > 0
+          ? [`An interrupted sync left ${fileCount(result.interrupted)} to settle.`]
+          : []),
+        ...contextLines(result.activity, result.linkedElsewhere),
+      ];
+      return {
+        title: countsTitle(result.review, sent),
+        lines,
+        tone: publication.tone,
+        hasChanges: result.review.incoming.length > 0 || result.review.outgoing.length > 0,
+        needsDecision: false,
+      };
+    }
+    case "needs-decision": {
+      const count = result.review.conflicts.length;
+      return {
+        title: `${plural(count, "conflict")} with Overleaf`,
+        lines: [
+          "Nothing was changed yet. Choose how to settle each one, then sync again.",
+          ...contextLines(result.activity, result.linkedElsewhere),
+        ],
+        tone: "warning",
+        hasChanges: true,
+        needsDecision: true,
+      };
+    }
+    case "refused":
+      return {
+        title: "Couldn't sync with Overleaf",
+        lines: [refusalText(result.refusal)],
+        tone: "error",
+        hasChanges: false,
+        needsDecision: false,
+      };
+    case "unsettled":
+      return {
+        title: "Couldn't sync with Overleaf",
+        lines: [refusalText({ reason: result.reason })],
+        tone: "error",
+        hasChanges: false,
+        needsDecision: false,
+      };
+    case "duplicate":
+      return {
+        title: "That sync already ran",
+        lines: [],
+        tone: "info",
+        hasChanges: false,
+        needsDecision: false,
+      };
+    case "cancelled":
+      return {
+        title: "Sync cancelled",
+        lines: ["Nothing was changed."],
+        tone: "info",
+        hasChanges: false,
+        needsDecision: false,
+      };
+  }
+}
+
+/** A review's choices that the next sync sends: one per conflict a person chose. */
+export function choicesFor(
+  review: ScientOverleafReview,
+  chosen: ReadonlyMap<string, "mine" | "theirs" | "markers">,
+): ReadonlyArray<{ readonly key: string; readonly choice: "mine" | "theirs" | "markers" }> {
+  return review.conflicts.flatMap((conflict) => {
+    const choice = chosen.get(conflict.key) ?? conflict.chosen;
+    return choice !== null && choice !== undefined && conflict.allowed.includes(choice)
+      ? [{ key: conflict.key, choice }]
+      : [];
+  });
+}
+
+/**
+ * The message "Ask the agent" puts in the chat. The marks are already in the
+ * files; the agent merges them and explains.
+ */
+export function askAgentMessage(paths: ReadonlyArray<string>): string {
+  const list = paths.map((path) => `- ${path}`).join("\n");
+  return [
+    "Overleaf sync found conflicts. Scient wrote both versions into these files between conflict marks (<<<<<<< Scient, =======, >>>>>>> Overleaf):",
+    list,
+    "Please merge each block, keeping what both sides meant, remove the marks, and explain your choices. Then sync with Overleaf again.",
+  ].join("\n\n");
+}
+
+/** The labels Scient's Overleaf merge writes on its conflict marks. */
+const OURS_MARK = "<<<<<<< Scient";
+const THEIRS_MARK = ">>>>>>> Overleaf";
+
+/**
+ * Scient's Overleaf conflict blocks in a file: a `<<<<<<< Scient` line closed by
+ * a `>>>>>>> Overleaf` line. A Markdown `=======` alone, or another tool's
+ * marks, is not one.
+ */
+export function countOverleafConflictBlocks(contents: string): number {
+  if (!contents.includes(OURS_MARK)) return 0;
+  let count = 0;
+  let open = false;
+  // Git adds ":<path>" to a label when the file was renamed on one side.
+  const marks = (line: string, label: string) => {
+    const trimmed = line.trimEnd();
+    return trimmed === label || trimmed.startsWith(`${label}:`);
+  };
+  for (const line of contents.split(/\r?\n/u)) {
+    if (marks(line, OURS_MARK)) {
+      open = true;
+    } else if (open && marks(line, THEIRS_MARK)) {
+      open = false;
+      count++;
+    }
+  }
+  return count;
+}

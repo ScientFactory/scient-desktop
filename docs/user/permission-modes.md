@@ -50,6 +50,9 @@ question the official agent sends in **Full access**. A remembered approval is a
 when the agent offers it for that action. Fixed-choice questions require one of the offered
 answers and do not accept custom text.
 
+Overleaf sync adds no permission of its own: an agent links, syncs and settles Overleaf conflicts
+under the mode chosen here, like any other tool. See [Overleaf](overleaf.md#agents).
+
 ## Choosing a Mode
 
 Use **Full access** for work in an isolated worktree, reproducible analysis

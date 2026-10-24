@@ -172,6 +172,9 @@ import {
   ScientFileReloadButton,
 } from "~/scient/fileSurfaces/ScientFileFreshnessControls";
 import { ScientFileVersionHistory } from "~/scient/fileSurfaces/ScientFileVersionHistory";
+// SCIENT-FORK:START — Overleaf sync state beside "Saved"
+import { OverleafFileChip } from "~/scient/overleaf/OverleafFileChip";
+// SCIENT-FORK:END
 import {
   type FileSaveResolution,
   useSessionFileWatch,
@@ -2314,6 +2317,16 @@ export default function FilePreviewPanel({
                 : {})}
             />
           ) : null}
+          {/* SCIENT-FORK:START — the Overleaf chip of a file in a linked folder, beside "Saved" */}
+          {relativePath && !isHostFile && !isFolder ? (
+            <OverleafFileChip
+              environmentId={environmentId}
+              cwd={cwd}
+              relativePath={relativePath}
+              threadRef={threadRef}
+            />
+          ) : null}
+          {/* SCIENT-FORK:END */}
           {relativePath && isLatexPreviewFile(relativePath) ? (
             <ScientFileFreshnessStatus
               {...freshnessNoticeProps}

@@ -18,6 +18,7 @@ import {
   useScientBrowseHighlight,
   useScientProjectFolderActions,
 } from "~/scient/commandPalette/scientCommandPalette";
+import { useOverleafPaletteItems } from "~/scient/overleaf/overleafPaletteItems";
 // SCIENT-FORK:END
 import {
   canCreateProjectInEnvironment,
@@ -598,6 +599,9 @@ function OpenCommandPaletteDialog(props: {
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
   const projects = useProjects();
+  // SCIENT-FORK:START
+  const overleafPaletteItems = useOverleafPaletteItems({ thread: activeThread ?? null, projects });
+  // SCIENT-FORK:END
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -1605,6 +1609,9 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  // SCIENT-FORK:START — Sync with Overleaf, for each linked folder of this thread's project
+  actionItems.push(...overleafPaletteItems);
+  // SCIENT-FORK:END
   actionItems.push(changeThemeItem);
   actionItems.push(changeAppearanceItem);
 

@@ -997,6 +997,13 @@ in Scient. Edit the `.tex` file directly there. Its contents are shared with
 Visual; selecting another view does not create another document. In Split with
 PDF selected, double-click a source line to locate it in the compiled PDF.
 
+## Overleaf
+
+A LaTeX document in a folder linked to Overleaf shows an **Overleaf** chip next to **Saved**:
+**Sync now** brings collaborators' changes in and sends yours. While the file has Overleaf
+conflict marks, the build status reads **This file has N Overleaf conflicts to settle** instead of
+a failed build. See [Overleaf](overleaf.md).
+
 ## Build and review
 
 Choose **Rebuild PDF** to build after the current source has been saved.

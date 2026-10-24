@@ -1,8 +1,9 @@
 # Overleaf manuscript engine
 
 The server mounts it behind authenticated routes (`/api/scient/overleaf/v1/*`)
-through `OverleafSync`; no screen or agent tool calls them yet, and nothing
-synchronizes automatically. Its plan, contract, owner decisions
+through `OverleafSync`; the app's screens call them
+([scient-overleaf-app.md](scient-overleaf-app.md)), no agent tool does yet, and
+nothing synchronizes automatically. Its plan, contract, owner decisions
 and status live on the working-documents PR
 [#535](https://github.com/ScientFactory/scient-desktop/pull/535), which is
 closed rather than merged; this file records what is implemented.
