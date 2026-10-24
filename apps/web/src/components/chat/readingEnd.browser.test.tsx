@@ -266,6 +266,33 @@ it("opens a thread without a saved position at the end, even when rows grow afte
   });
 });
 
+it("keeps a fresh open at the end when the last answer grows in the frame the open settles", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const key = "reading-end:fresh-open-settled";
+  const positioned: Array<string | null> = [];
+  const onPositionedThreadKeyChange = (threadKey: string | null) => {
+    positioned.push(threadKey);
+  };
+  const entries = [...history(11), message(11, "assistant", "Short answer.")];
+  await render(_fixture, key, entries, { onPositionedThreadKeyChange });
+  for (let frame = 0; frame < 120 && positioned.at(-1) !== key; frame++)
+    await advanceClock(_fixture, 16);
+  expect(positioned.at(-1)).toBe(key);
+  // Late layout right as the open settles, before another frame: the open no
+  // longer holds the end, so idle end keeping must already know it rests there.
+  await render(
+    _fixture,
+    key,
+    [...entries.slice(0, -1), message(11, "assistant", paragraph(11).repeat(4))],
+    { onPositionedThreadKeyChange },
+  );
+  for (let frame = 0; frame < 60 && gapToListEnd(_fixture) > 1; frame++)
+    await advanceClock(_fixture, 16);
+  expect(gapToListEnd(_fixture)).toBeLessThanOrEqual(1);
+});
+
 it("keeps the end in view while idle, and never moves the reader while the thread works", async (context) => {
   await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
