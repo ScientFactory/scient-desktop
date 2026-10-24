@@ -168,7 +168,7 @@ export async function runOverleafUndo(
       attemptNumber,
       ...files,
     });
-    if (result._tag === "undone" && result.sync !== null) {
+    if (result._tag === "undone") {
       recordOverleafSync(environmentId, connection.connectionId, result.sync, carried);
       if (result.sync._tag === "needs-decision") context.openReview?.();
     }

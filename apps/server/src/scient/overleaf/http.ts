@@ -101,7 +101,7 @@ export const undoView = (result: OverleafUndoOutcome): ScientOverleafUndoResult 
         recreated: result.recreated,
         skipped: result.skipped,
         outcome: result.adopted?.outcome ?? null,
-        sync: result.sync === null ? null : syncView(result.sync),
+        sync: syncView(result.sync),
       };
     case "not-eligible":
       return { _tag: "not-eligible", reason: result.reason };
