@@ -238,13 +238,16 @@ attachments and original page references. Removed-page destinations are rebound
 to a surviving page. Copied pages rebind explicit and named internal links to
 inserted targets; external links and non-link annotations retain their objects.
 Inherited resources and page boxes are materialized before reparenting original
-page nodes. Before serializing, each page whose resources list XObjects its
-content never draws (`/Name Do`, scanned across all content parts; undecodable
-content and Type 3 fonts drawing with page resources are left alone) gets its own
-resource dictionary listing only the drawn ones, so a dictionary shared with a
-deleted page no longer keeps that page's images and forms. Then objects the
-trailer (Root, Info, Encrypt, ID) no longer reaches are removed; pdf-lib
-otherwise writes every object it loaded. Fonts shared with kept pages remain.
+page nodes. Before serializing, `keepOnlyDrawnXObjects` narrows each page's and
+each drawn form's XObject list to the names its content could draw, and the page
+tree stops passing a shared resource dictionary down. A name counts as drawn if
+it appears anywhere in the content, read as one joined stream and part by part,
+including in strings, comments and inline image data, plus everything forms
+without their own resources draw with the caller's. Over-counting only keeps
+more; scopes with undecodable content or Type 3 fonts drawing with caller
+resources are left whole. Then objects the trailer (Root, Info, Encrypt, ID) no
+longer reaches are removed; pdf-lib otherwise writes every object it loaded.
+Fonts, patterns and annotation appearances are not narrowed.
 A tagged base PDF (one with a `StructTreeRoot`) must keep each original page
 exactly once, because its structure tree points at those pages; the session and
 worker both refuse delete and duplicate. Every copied page, and everything it

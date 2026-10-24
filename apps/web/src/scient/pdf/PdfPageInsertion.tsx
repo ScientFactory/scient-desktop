@@ -122,10 +122,17 @@ export function PdfPageInsertion(props: {
                   const pages = all
                     ? file.pages
                     : parsePdfPageRange(range, file.pages.length).map((n) => file.pages[n - 1]!);
+                  const sourceId = picked.current;
                   picked.current = null;
                   setFile(null);
                   // Enqueue the change after the source-loading/validation transaction.
-                  void props.session.insert(pages, props.boundary);
+                  // A failed insertion leaves the import unused, so release it then.
+                  void props.session.insert(pages, props.boundary).then(() => {
+                    const inserted = props.session
+                      .getSnapshot()
+                      .frame.pages.some((page) => page.sourceId === sourceId);
+                    if (sourceId && !inserted) props.session.releaseFile(sourceId);
+                  });
                 });
               }}
             >

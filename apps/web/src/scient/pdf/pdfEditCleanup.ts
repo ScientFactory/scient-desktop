@@ -13,33 +13,55 @@ import {
 } from "pdf-lib";
 
 const name = (value: string) => PDFName.of(value);
-// A name operand followed by the Do operator. Matches inside strings too, which only keeps more.
-const INVOKED_XOBJECT = /\/([^\s()<>[\]{}/%]+)\s*Do(?=[\s()<>[\]{}/%]|$)/gu;
+// Every name token, wherever it appears: in operands, strings, comments or inline image
+// data. Over-counting only keeps more; missing a drawn XObject would break the page.
+const NAME_TOKEN = /\/([^\0\t\n\f\r ()<>[\]{}/%]*)/gu;
 
-/** The page's content streams as text, or null when any part cannot be decoded. */
-function pageContent(document: PDFDocument, page: PDFPage) {
-  const contents = document.context.lookup(page.node.get(name("Contents")));
-  const parts = contents instanceof PDFArray ? contents.asArray() : contents ? [contents] : [];
-  const decoder = new TextDecoder("latin1");
-  const texts: string[] = [];
-  for (const part of parts) {
-    const stream = document.context.lookup(part);
-    try {
-      if (stream instanceof PDFRawStream)
-        texts.push(decoder.decode(decodePDFRawStream(stream).decode()));
-      else if (stream instanceof PDFContentStream)
-        texts.push(decoder.decode(stream.getUnencodedContents()));
-      else return null;
-    } catch {
-      return null;
-    }
+/** A content stream's text, or null when it cannot be decoded. */
+function streamText(stream: PDFObject | undefined) {
+  try {
+    if (stream instanceof PDFRawStream)
+      return new TextDecoder("latin1").decode(decodePDFRawStream(stream).decode());
+    if (stream instanceof PDFContentStream)
+      return new TextDecoder("latin1").decode(stream.getUnencodedContents());
+  } catch {
+    // Undecodable content leaves its resources untouched.
   }
-  // A content array may split an operand from its operator between parts.
-  return texts.join("\n");
+  return null;
 }
 
-/** Old Type 3 fonts without their own resources draw with the page's, so keep those intact. */
-function hasType3FontUsingPageResources(document: PDFDocument, resources: PDFDict) {
+/** The text of every part of a page's content, or null when any part cannot be read. */
+function contentParts(document: PDFDocument, contents: PDFObject | undefined) {
+  const value = document.context.lookup(contents);
+  const parts = value instanceof PDFArray ? value.asArray() : value ? [value] : [];
+  const texts: string[] = [];
+  for (const part of parts) {
+    const text = streamText(document.context.lookup(part));
+    if (text === null) return null;
+    texts.push(text);
+  }
+  return texts;
+}
+
+/** Names in content split into parts, read both as one joined stream and part by part. */
+function namesIn(texts: readonly string[]) {
+  const names = new Set<PDFName>();
+  for (const text of [texts.join(""), ...texts])
+    for (const [, token] of text.matchAll(NAME_TOKEN)) {
+      names.add(name(token!));
+      // pdf-lib decodes only uppercase #xx escapes; match either spelling.
+      names.add(
+        name(token!.replace(/#([\da-f]{2})/giu, (_, hex: string) => `#${hex.toUpperCase()}`)),
+      );
+    }
+  return names;
+}
+
+const isForm = (object: PDFObject | undefined): object is PDFStream =>
+  object instanceof PDFStream && object.dict.get(name("Subtype")) === name("Form");
+
+/** Old Type 3 fonts without their own resources draw with the caller's, so keep those intact. */
+function hasType3FontUsingCallerResources(document: PDFDocument, resources: PDFDict) {
   const fonts = resources.lookup(name("Font"));
   if (!(fonts instanceof PDFDict)) return false;
   return fonts.entries().some(([, entry]) => {
@@ -53,34 +75,95 @@ function hasType3FontUsingPageResources(document: PDFDocument, resources: PDFDic
 }
 
 /**
- * Pages often share one resource dictionary listing every image and form in
- * the document. Give each page its own list of only the XObjects its content
- * draws, so a deleted page's images and forms become unreachable.
+ * Names drawn in a resource scope, including by forms without resources of
+ * their own, which draw with this scope's. Null when some content is unreadable.
+ */
+function namesDrawnIn(document: PDFDocument, xobjects: PDFDict, texts: readonly string[]) {
+  const names = namesIn(texts);
+  const pending = [...names];
+  const seen = new Set<PDFName>();
+  while (pending.length) {
+    const key = pending.pop()!;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const xobject = document.context.lookup(xobjects.get(key));
+    if (!isForm(xobject) || xobject.dict.has(name("Resources"))) continue;
+    const text = streamText(xobject);
+    if (text === null) return null;
+    for (const found of namesIn([text]))
+      if (!names.has(found)) {
+        names.add(found);
+        pending.push(found);
+      }
+  }
+  return names;
+}
+
+/**
+ * The scope's resources listing only the XObjects its content draws: the same
+ * dictionary when nothing is unused, otherwise a copy. Drawn forms with their
+ * own resources are narrowed in place, which holds wherever they are drawn
+ * because a form's content is the same everywhere.
+ */
+function narrowResources(
+  document: PDFDocument,
+  resources: PDFDict,
+  texts: readonly string[],
+  narrowedForms: Set<PDFStream>,
+): PDFDict {
+  const xobjects = resources.lookup(name("XObject"));
+  if (!(xobjects instanceof PDFDict) || hasType3FontUsingCallerResources(document, resources))
+    return resources;
+  const drawn = namesDrawnIn(document, xobjects, texts);
+  if (drawn === null) return resources;
+  const entries = xobjects.entries();
+  for (const [key, value] of entries) {
+    const form = document.context.lookup(value);
+    if (!drawn.has(key) || !isForm(form) || narrowedForms.has(form)) continue;
+    narrowedForms.add(form);
+    const own = form.dict.lookup(name("Resources"));
+    const text = streamText(form);
+    if (!(own instanceof PDFDict) || text === null) continue;
+    const narrowed = narrowResources(document, own, [text], narrowedForms);
+    if (narrowed !== own) form.dict.set(name("Resources"), narrowed);
+  }
+  const kept = entries.filter(([key]) => drawn.has(key));
+  if (kept.length === entries.length) return resources;
+  const ownXObjects = document.context.obj({});
+  for (const [key, value] of kept) ownXObjects.set(key, value);
+  const narrowed = resources.clone(document.context);
+  narrowed.set(name("XObject"), ownXObjects);
+  return narrowed;
+}
+
+/**
+ * Pages and forms often share one resource dictionary listing every image and
+ * form in the document. Narrow each to what its content draws, and stop the
+ * page tree passing a shared dictionary down, so a deleted page's images and
+ * forms become unreachable. Fonts are left as they are.
  */
 export function keepOnlyDrawnXObjects(document: PDFDocument) {
+  const narrowedForms = new Set<PDFStream>();
   for (const page of document.getPages()) {
     const resources = page.node.Resources();
-    const xobjects = resources?.lookup(name("XObject"));
-    if (!resources || !(xobjects instanceof PDFDict)) continue;
-    if (hasType3FontUsingPageResources(document, resources)) continue;
-    const content = pageContent(document, page);
-    if (content === null) continue;
-    const drawn = new Set<PDFName>();
-    for (const [, operand] of content.matchAll(INVOKED_XOBJECT)) {
-      drawn.add(name(operand!));
-      // pdf-lib decodes only uppercase #xx escapes; match either spelling.
-      drawn.add(
-        name(operand!.replace(/#([\da-f]{2})/giu, (_, hex: string) => `#${hex.toUpperCase()}`)),
-      );
-    }
-    const entries = xobjects.entries();
-    const kept = entries.filter(([key]) => drawn.has(key));
-    if (kept.length === entries.length) continue;
-    const ownXObjects = document.context.obj({});
-    for (const [key, value] of kept) ownXObjects.set(key, value);
-    const ownResources = resources.clone(document.context);
-    ownResources.set(name("XObject"), ownXObjects);
-    page.node.set(name("Resources"), ownResources);
+    if (!resources) continue;
+    // Each page holds its own reference before the tree's shared copy is dropped below.
+    page.node.set(name("Resources"), page.node.getInheritableAttribute(name("Resources"))!);
+    const texts = contentParts(document, page.node.get(name("Contents")));
+    if (texts === null) continue;
+    const narrowed = narrowResources(document, resources, texts, narrowedForms);
+    if (narrowed !== resources) page.node.set(name("Resources"), narrowed);
+  }
+  const pending: PDFObject[] = [document.catalog.get(name("Pages"))!];
+  const visited = new Set<PDFObject>();
+  while (pending.length) {
+    const node = document.context.lookup(pending.pop());
+    if (!(node instanceof PDFDict) || visited.has(node)) continue;
+    visited.add(node);
+    if (node.get(name("Type")) !== name("Pages")) continue;
+    node.delete(name("Resources"));
+    const kids = node.lookup(name("Kids"));
+    if (kids instanceof PDFArray) pending.push(...kids.asArray());
   }
 }
 

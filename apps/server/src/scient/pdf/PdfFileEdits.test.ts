@@ -18,6 +18,7 @@ import {
   minimalPdf,
   writeFixtureFile,
 } from "../documentExport/DocumentExportTestUtils.ts";
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
 import { revisionForBytes } from "../workspace/WorkspaceFileMutations.ts";
 import { savePdfFileEdit } from "./PdfFileEdits.ts";
@@ -30,6 +31,8 @@ afterEach(async () => {
 });
 
 const BLOB = ".scient/sources/files/sha256/ab/abcdef.pdf";
+// The shared writer remembers each operation's intent, so every save needs its own ID.
+let operations = 0;
 const original = minimalPdf("original");
 const edited = minimalPdf("edited");
 
@@ -91,16 +94,33 @@ const save = (input: {
   readonly root: string;
   readonly source: PdfSourceDescriptor;
   readonly expectedRevision?: string;
+  /** Runs just before the shared writer publishes. */
+  readonly beforeWrite?: () => Promise<void>;
 }) =>
   Effect.gen(function* () {
     const upload = yield* Effect.promise(() => writeFixtureFile(input.root, "upload.tmp", edited));
     const { store, publishPdf } = makeStore(NodePath.join(input.root, "copy.pdf"));
+    const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+    const beforeWrite = input.beforeWrite;
     const result = yield* savePdfFileEdit({
       source: input.source,
       expectedRevision: input.expectedRevision ?? revisionForBytes(original),
-      operationId: "operation-1",
+      operationId: `operation-${++operations}`,
       temporaryPath: upload,
-    }).pipe(Effect.provideService(GeneratedDocumentStore, store), Effect.result);
+    }).pipe(
+      Effect.provideService(GeneratedDocumentStore, store),
+      Effect.provideService(
+        WorkspaceFileSystem.WorkspaceFileSystem,
+        beforeWrite === undefined
+          ? files
+          : {
+              ...files,
+              writeBinaryFile: (write) =>
+                Effect.promise(beforeWrite).pipe(Effect.andThen(files.writeBinaryFile(write))),
+            },
+      ),
+      Effect.result,
+    );
     return { result, publishPdf };
   });
 
@@ -133,7 +153,7 @@ describe("PdfFileEdits", () => {
         const root = yield* Effect.promise(() => makeFixtureDirectory(fixtures, "pdf-edit-"));
         yield* Effect.promise(() => writeFixtureFile(root, BLOB, original));
         const { result } = yield* save({ root, source: workspaceSource(root, BLOB, false) });
-        expect(result._tag === "Success" && result.success.createdCopy).toBe(true);
+        expect(result).toMatchObject({ _tag: "Success", success: { createdCopy: true } });
         expect(yield* readFixture(root, BLOB)).toEqual(Buffer.from(original));
       }),
     );
@@ -176,6 +196,27 @@ describe("PdfFileEdits", () => {
         }),
     );
 
+    it.effect("writes through the real folder even if a linked root is retargeted mid-save", () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.promise(() => makeFixtureDirectory(fixtures, "pdf-edit-"));
+        yield* Effect.promise(() => writeFixtureFile(root, BLOB, original));
+        yield* Effect.promise(() => writeFixtureFile(root, "plain/abcdef.pdf", original));
+        const alias = NodePath.join(root, "alias");
+        yield* Effect.promise(() => NodeFSP.symlink(NodePath.join(root, "plain"), alias));
+        const { result } = yield* save({
+          root,
+          source: workspaceSource(alias, "abcdef.pdf", false),
+          beforeWrite: async () => {
+            await NodeFSP.unlink(alias);
+            await NodeFSP.symlink(NodePath.join(root, NodePath.dirname(BLOB)), alias);
+          },
+        });
+        expect(result).toMatchObject({ _tag: "Success", success: { createdCopy: false } });
+        expect(yield* readFixture(root, BLOB)).toEqual(Buffer.from(original));
+        expect(yield* readFixture(root, "plain/abcdef.pdf")).toEqual(Buffer.from(edited));
+      }),
+    );
+
     it.effect("refuses to copy a Sources PDF that differs from the edited revision", () =>
       Effect.gen(function* () {
         const root = yield* Effect.promise(() => makeFixtureDirectory(fixtures, "pdf-edit-"));
@@ -199,7 +240,7 @@ describe("PdfFileEdits", () => {
           root,
           source: workspaceSource(root, "papers/paper.pdf", false),
         });
-        expect(result._tag === "Success" && result.success.createdCopy).toBe(false);
+        expect(result).toMatchObject({ _tag: "Success", success: { createdCopy: false } });
         expect(publishPdf).not.toHaveBeenCalled();
         expect(yield* readFixture(root, "papers/paper.pdf")).toEqual(Buffer.from(edited));
       }),

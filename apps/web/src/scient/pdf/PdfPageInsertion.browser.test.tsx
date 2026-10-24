@@ -15,16 +15,21 @@ const importedPage: PdfEditPage = {
   rotation: 0,
 };
 
-function fakeSession() {
+function fakeSession(insertSucceeds = true) {
   let finishLoading!: (pages: readonly PdfEditPage[]) => void;
   const loading = new Promise<readonly PdfEditPage[]>((resolve) => {
     finishLoading = resolve;
   });
+  let pages: readonly PdfEditPage[] = [];
   const fake = {
     run: (operation: () => Promise<void>) => operation(),
+    getSnapshot: () => ({ frame: { pages, selection: [] } }),
     loadFile: vi.fn(() => loading),
     releaseFile: vi.fn(),
-    insert: vi.fn(() => Promise.resolve()),
+    insert: vi.fn((inserted: readonly PdfEditPage[]) => {
+      if (insertSucceeds) pages = inserted;
+      return Promise.resolve();
+    }),
     blank: vi.fn(() => Promise.resolve()),
   };
   return { session: fake as unknown as PdfEditSession, fake, finishLoading };
@@ -76,4 +81,13 @@ it("releases a picked PDF when its insert form is cancelled, and keeps an insert
   await vi.waitFor(() => expect(inserted.fake.insert).toHaveBeenCalledWith([importedPage], 1));
   await screen.unmount();
   expect(inserted.fake.releaseFile).not.toHaveBeenCalled();
+});
+
+it("releases a picked PDF whose insertion fails", async () => {
+  const failing = fakeSession(false);
+  await using screen = await renderInsertion(failing.session);
+  await pickPdf(screen.container);
+  await act(() => failing.finishLoading([importedPage]));
+  await page.getByRole("button", { name: "Insert" }).click();
+  await vi.waitFor(() => expect(failing.fake.releaseFile).toHaveBeenCalledWith("imported"));
 });

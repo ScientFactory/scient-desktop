@@ -89,8 +89,10 @@ export const savePdfFileEdit = Effect.fn("PdfFileEdits.save")(
       if (!(yield* known.contains(yield* fs.realPath(source.path))))
         return yield* publishCopyOf(source.path);
     }
-    const cwd =
-      source._tag === "workspace-pdf" ? source.workspaceRoot : NodePath.dirname(source.path);
+    // Write through the real root: a linked root could be retargeted after the checks below.
+    const cwd = yield* fs.realPath(
+      source._tag === "workspace-pdf" ? source.workspaceRoot : NodePath.dirname(source.path),
+    );
     const relativePath =
       source._tag === "workspace-pdf" ? source.relativePath : NodePath.basename(source.path);
     const target = yield* files.inspectWriteTarget({ cwd, relativePath });
@@ -100,7 +102,7 @@ export const savePdfFileEdit = Effect.fn("PdfFileEdits.save")(
       });
     }
     const path = NodePath.resolve(cwd, target.canonicalRelativePath);
-    // Classify the fully resolved file: the caller's root may itself be a link into Sources.
+    // Classify the fully resolved file, in case the file itself was reached through a link.
     if (
       (source._tag === "workspace-pdf" && source.origin !== undefined) ||
       isInsideSourcesStore(yield* fs.realPath(path))

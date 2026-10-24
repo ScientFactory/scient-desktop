@@ -486,3 +486,133 @@ it("keeps a document ID stored as an indirect object", async () => {
   const id = saved.context.lookup(saved.context.trailerInfo.ID);
   expect(id).toBeInstanceOf(PDFArray);
 });
+
+function markForm(document: PDFDocument, marker: string, extra: Record<string, unknown> = {}) {
+  return document.context.register(
+    document.context.stream(`0 0 10 10 re f % ${marker}`, {
+      Type: "XObject",
+      Subtype: "Form",
+      BBox: [0, 0, 10, 10],
+      ...extra,
+    }),
+  );
+}
+
+it("keeps every XObject a page draws, however its content spells the call", async () => {
+  using editor = editingWorker();
+  const document = await PDFDocument.create();
+  const contents = [
+    // A name split across two parts of a content array.
+    [document.context.stream("q /Ma"), document.context.stream("rk Do Q")],
+    // A comment, and a NUL byte, between operand and operator.
+    [document.context.stream("/Mark % comment\nDo")],
+    [document.context.stream("/Mark\0Do")],
+    // A form without resources of its own, drawing through the page's.
+    [document.context.stream("/Outer Do")],
+  ];
+  for (const parts of contents) {
+    const page = document.addPage([300, 300]);
+    const outer = document.context.register(
+      document.context.stream("/Mark Do", {
+        Type: "XObject",
+        Subtype: "Form",
+        BBox: [0, 0, 10, 10],
+      }),
+    );
+    page.node.set(
+      PDFName.of("Resources"),
+      document.context.obj({ XObject: { Mark: markForm(document, "MARK"), Outer: outer } }),
+    );
+    page.node.set(
+      PDFName.of("Contents"),
+      document.context.obj(parts.map((part) => document.context.register(part))),
+    );
+  }
+  const loaded = await request(editor.worker, {
+    kind: "load",
+    id: 1,
+    sourceId: "spellings",
+    bytes: await document.save(),
+  });
+  if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
+  const built = await request(editor.worker, {
+    kind: "build",
+    id: 2,
+    pages: loaded.pages.map((entry) => ({ ...entry, rotation: 90 })),
+  });
+  if (built.kind !== "built") throw new Error("Expected the edited PDF.");
+  const saved = await PDFDocument.load(built.bytes);
+  for (const page of saved.getPages()) {
+    const xobjects = page.node.Resources()!.lookup(PDFName.of("XObject"), PDFDict);
+    expect(xobjects.has(PDFName.of("Mark"))).toBe(true);
+  }
+});
+
+it("drops a deleted page's forms from resources inherited through the page tree or shared by forms", async () => {
+  using editor = editingWorker();
+  const document = await PDFDocument.create();
+  const first = document.addPage([300, 300]);
+  const second = document.addPage([300, 300]);
+  // Both pages inherit one dictionary from the page tree root.
+  document.catalog.Pages().set(
+    PDFName.of("Resources"),
+    document.context.obj({
+      XObject: {
+        Kept: markForm(document, "KEPT_INHERITED"),
+        Gone: markForm(document, "GONE_INHERITED"),
+      },
+    }),
+  );
+  // Two forms share one dictionary; only the deleted page's form draws GONE_NESTED.
+  const nested = document.context.register(
+    document.context.obj({
+      XObject: {
+        Inner1: markForm(document, "KEPT_NESTED"),
+        Inner2: markForm(document, "GONE_NESTED"),
+      },
+    }),
+  );
+  const keptForm = document.context.register(
+    document.context.stream("/Inner1 Do", {
+      Type: "XObject",
+      Subtype: "Form",
+      BBox: [0, 0, 10, 10],
+      Resources: nested,
+    }),
+  );
+  const goneForm = document.context.register(
+    document.context.stream("/Inner2 Do", {
+      Type: "XObject",
+      Subtype: "Form",
+      BBox: [0, 0, 10, 10],
+      Resources: nested,
+    }),
+  );
+  const rootResources = document.catalog.Pages().lookup(PDFName.of("Resources"), PDFDict);
+  rootResources.lookup(PDFName.of("XObject"), PDFDict).set(PDFName.of("KeptForm"), keptForm);
+  rootResources.lookup(PDFName.of("XObject"), PDFDict).set(PDFName.of("GoneForm"), goneForm);
+  for (const [page, drawn] of [
+    [first, "/Kept Do /KeptForm Do"],
+    [second, "/Gone Do /GoneForm Do"],
+  ] as const) {
+    page.node.delete(PDFName.of("Resources"));
+    page.node.set(
+      PDFName.of("Contents"),
+      document.context.register(document.context.stream(drawn)),
+    );
+  }
+  const loaded = await request(editor.worker, {
+    kind: "load",
+    id: 1,
+    sourceId: "inherited",
+    bytes: await document.save(),
+  });
+  if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
+  const built = await request(editor.worker, { kind: "build", id: 2, pages: [loaded.pages[0]!] });
+  if (built.kind !== "built") throw new Error("Expected the edited PDF.");
+  const text = latin1(built.bytes);
+  expect(text).toContain("KEPT_INHERITED");
+  expect(text).toContain("KEPT_NESTED");
+  expect(text).not.toContain("GONE_INHERITED");
+  expect(text).not.toContain("GONE_NESTED");
+});
