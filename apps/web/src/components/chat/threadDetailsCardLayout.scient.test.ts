@@ -22,12 +22,7 @@ const resolve = (width: number, height: number, previewY: number | null = null) 
           },
   });
 describe("workspace card", () => {
-  it("hides when a readable chat lane cannot fit beside it", () => {
-    expect(resolve(984, 900)).toMatchObject({
-      x: 692,
-    });
-    expect(resolve(983, 900)).toBeNull();
-  });
+  // regression: 511bc318c4 fix(alignment): preserve Scient presentation and guarded reload
   it("keeps the workspace controls available across the compact desktop boundary", () => {
     for (let width = 984; width <= 1011; width++) {
       expect(resolve(width, 900)).toMatchObject({
@@ -35,5 +30,7 @@ describe("workspace card", () => {
         width: 280,
       });
     }
+    // Below the boundary no readable chat lane fits beside the card.
+    expect(resolve(983, 900)).toBeNull();
   });
 });

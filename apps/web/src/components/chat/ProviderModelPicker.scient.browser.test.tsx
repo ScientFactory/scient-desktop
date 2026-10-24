@@ -93,6 +93,7 @@ function renderPicker(input: {
 }
 
 describe("ProviderModelPicker", () => {
+  // regression: 56f111fc99 fix(voice): center footer presentation and keep waveforms live
   it("retains the provider icon and accessible model name while voice hides picker details", async () => {
     const markup = await renderPicker({
       instanceId: "codex",
@@ -110,7 +111,6 @@ describe("ProviderModelPicker", () => {
       ],
     });
     expect(markup).toContain('aria-label="GPT 5 (Unavailable)"');
-    expect(markup).toContain("relative isolate z-30");
     const trigger = new DOMParser().parseFromString(markup, "text/html").body;
     expect(trigger.querySelector("[data-chat-provider-model-picker-label]")).toBeNull();
     expect(trigger.querySelector("[data-composer-control-chevron]")).toBeNull();

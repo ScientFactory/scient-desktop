@@ -1,9 +1,11 @@
-import { adjacentModelPickerProvider } from "./modelPickerProviderOrder";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 
-import { prioritizeActiveProviderInstance } from "./modelPickerProviderOrder";
+import {
+  adjacentModelPickerProvider,
+  prioritizeActiveProviderInstance,
+} from "./modelPickerProviderOrder";
 const entries = ["codex", "claudeAgent", "antigravity", "opencode"].map((instanceId) => ({
   instanceId: ProviderInstanceId.make(instanceId),
 }));
@@ -52,6 +54,7 @@ describe("adjacentModelPickerProvider", () => {
     disabledInstanceIds: undefined,
     selectableUnavailableInstanceIds: undefined,
   };
+  // regression: 4e07b49b73 fix(providers): restore composer installation and account setup
   it("includes setup providers in the same navigation order as the rail", () => {
     expect(
       adjacentModelPickerProvider({
