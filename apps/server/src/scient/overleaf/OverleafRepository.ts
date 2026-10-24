@@ -242,6 +242,15 @@ export class OverleafRepository extends Context.Service<
       { readonly commit: string; readonly tree: string },
       OverleafRepositoryError | OverleafGitError
     >;
+    /**
+     * Overleaf's branch head without fetching it: one ref advertisement, nothing
+     * downloaded. Null when the branch is not there.
+     */
+    readonly remoteHead: (input: {
+      readonly repo: string;
+      readonly branch: "main" | "master";
+      readonly token: Uint8Array;
+    }) => Effect.Effect<string | null, OverleafRepositoryError | OverleafGitError>;
     /** Publishes one commit to Overleaf's branch, never forced. Network trouble is an outcome, not a failure. */
     readonly push: (input: {
       readonly repo: string;
@@ -566,6 +575,25 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const remoteHead: OverleafRepository["Service"]["remoteHead"] = Effect.fn(
+    "OverleafRepository.remoteHead",
+  )(function* (input) {
+    const ref = `refs/heads/${input.branch}`;
+    const result = yield* run(input.repo, ["ls-remote", "origin", ref], {
+      token: input.token,
+      timeout: NETWORK_TIMEOUT,
+    });
+    let head: string | null = null;
+    for (const line of text(result.stdout).split("\n")) {
+      if (line === "") continue;
+      const [oid, name] = line.split("\t");
+      if (oid === undefined || !OID.test(oid) || name === undefined)
+        return yield* unreadable("git ls-remote returned an unreadable line");
+      if (name === ref) head = oid;
+    }
+    return head;
+  });
+
   const push: OverleafRepository["Service"]["push"] = Effect.fn("OverleafRepository.push")(
     function* (input) {
       yield* git.availability;
@@ -661,6 +689,7 @@ export const make = Effect.gen(function* () {
     diff,
     discoverBranch,
     fetch,
+    remoteHead,
     push,
     isAncestor,
     treesSince,
