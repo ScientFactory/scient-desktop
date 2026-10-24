@@ -19,12 +19,13 @@ import {
 import { cn } from "~/lib/utils";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import { subscribeWorkspaceFileSaves } from "~/scient/fileSurfaces/workspaceFileSaves";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { cancelOverleafRun, openOverleafProject, runOverleafSync } from "./overleafActions";
 import { connectionForPath, overleafChipView } from "./overleafModel";
 import { openOverleafReview, seeOverleafChanges } from "./openOverleafReview";
-import { refreshOverleafStatus, useOverleafWorkspace } from "./overleafStore";
+import { scheduleOverleafStatusRefresh, useOverleafWorkspace } from "./overleafStore";
 
 /** When the link last synced: this window's last sync, or the link's own record. */
 export function lastSyncLabel(input: {
@@ -51,33 +52,47 @@ export function OverleafFileChip(props: {
   const connection = connectionForPath(workspace.connections, relativePath);
   const connectionId = connection?.connectionId ?? null;
 
-  // A save of this file changes what there is to send: read the status again.
+  // A save in the linked folder changes what there is to send: read the status again
+  // shortly, from either kind of editor (document sessions, plain text editors).
+  const folder = connection?.folder ?? null;
   useEffect(() => {
-    if (connectionId === null) return;
+    if (connectionId === null || folder === null) return;
+    const inFolder = (target: {
+      readonly environmentId: EnvironmentId;
+      readonly cwd: string;
+      readonly relativePath: string;
+    }) =>
+      target.environmentId === environmentId &&
+      target.cwd === cwd &&
+      connectionForPath([{ folder }], target.relativePath) !== null;
+    const refresh = () => scheduleOverleafStatusRefresh(environmentId, cwd, connectionId);
     const pendingNow = () =>
-      markdownPersistenceRegistry
-        .getSnapshot()
-        .some(
-          (entry) =>
-            entry.environmentId === environmentId &&
-            entry.cwd === cwd &&
-            entry.relativePath === relativePath &&
-            entry.pending,
-        );
+      new Set(
+        markdownPersistenceRegistry
+          .getSnapshot()
+          .filter((entry) => entry.pending && inFolder(entry))
+          .map((entry) => entry.relativePath),
+      );
     let wasPending = pendingNow();
-    return markdownPersistenceRegistry.subscribe(() => {
+    const stopDocuments = markdownPersistenceRegistry.subscribe(() => {
       const pending = pendingNow();
-      if (wasPending && !pending) void refreshOverleafStatus(environmentId, cwd, connectionId);
+      if ([...wasPending].some((path) => !pending.has(path))) refresh();
       wasPending = pending;
     });
-  }, [environmentId, cwd, relativePath, connectionId]);
+    const stopPlain = subscribeWorkspaceFileSaves((target) => {
+      if (inFolder(target)) refresh();
+    });
+    return () => {
+      stopDocuments();
+      stopPlain();
+    };
+  }, [environmentId, cwd, folder, connectionId]);
 
   if (!connection) return null;
   const status = workspace.statuses.get(connection.connectionId) ?? null;
   const syncing = workspace.syncing.has(connection.connectionId);
   const view = overleafChipView(status, syncing);
   const linkedElsewhere = !connection.linkedHere;
-  const last = workspace.lastSync.get(connection.connectionId);
   const reviewInput = {
     environmentId,
     cwd,
@@ -151,7 +166,7 @@ export function OverleafFileChip(props: {
         <MenuItem disabled>
           <span className="ps-6 text-xs text-muted-foreground">
             {lastSyncLabel({
-              lastSyncAt: last?.at ?? null,
+              lastSyncAt: workspace.syncedAt.get(connection.connectionId) ?? null,
               completedSyncCount: connection.completedSyncCount,
               updatedAt: connection.updatedAt,
             })}

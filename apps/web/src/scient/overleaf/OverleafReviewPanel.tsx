@@ -135,7 +135,9 @@ export function OverleafReviewPanel(props: {
   const workspace = useOverleafWorkspace(environmentId, cwd);
   const connection = workspace.connections.find((entry) => entry.connectionId === connectionId);
   const last = workspace.lastSync.get(connectionId);
-  const preview = workspace.previews.get(connectionId) ?? null;
+  // The shown review is its own state: an operation that brings none (cancelled,
+  // refused) leaves it, its conflicts and their choices in place.
+  const shownState = workspace.reviews.get(connectionId) ?? null;
   const syncing = workspace.syncing.has(connectionId);
   const composer = useComposerHandleContext();
   const handleNewThread = useNewThreadHandler();
@@ -158,16 +160,11 @@ export function OverleafReviewPanel(props: {
       else next.set(path, decision);
       return next;
     });
-  const lastReview =
-    last && (last.result._tag === "synced" || last.result._tag === "needs-decision")
-      ? last.result.review
-      : null;
-  const review: ScientOverleafReview | null = lastReview ?? preview;
+  const review: ScientOverleafReview | null = shownState?.review ?? null;
   const resultView = last ? overleafResultView(last.result) : null;
-  // The review shown is what the last sync here applied, rather than one still to run.
-  const synced = lastReview !== null && last?.result._tag === "synced";
-  const sent =
-    synced && last?.result._tag === "synced" && last.result.publication._tag === "accepted";
+  // The review shown is what a sync here applied, rather than one still to run.
+  const synced = shownState?.applied ?? false;
+  const sent = shownState?.sent ?? false;
   const reading = workspace.previewing.has(connectionId);
   const readError = workspace.previewErrors.get(connectionId) ?? null;
   const readChanges = () => void readOverleafChanges(environmentId, cwd, connectionId);

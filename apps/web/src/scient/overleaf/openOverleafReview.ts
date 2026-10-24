@@ -24,11 +24,9 @@ export function seeOverleafChanges(
     readonly folder: string;
   },
 ): void {
-  const workspace = readOverleafWorkspace(input.environmentId, input.cwd);
-  const last = workspace.lastSync.get(input.connectionId)?.result;
-  const shown =
-    (last !== undefined && (last._tag === "synced" || last._tag === "needs-decision")) ||
-    workspace.previews.has(input.connectionId);
+  const shown = readOverleafWorkspace(input.environmentId, input.cwd).reviews.has(
+    input.connectionId,
+  );
   if (!shown) void readOverleafChanges(input.environmentId, input.cwd, input.connectionId);
   openOverleafReview(threadRef, input);
 }

@@ -316,6 +316,37 @@ describe("OverleafReviewPanel", () => {
     await expect.element(page.getByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
   });
 
+  it("keeps the conflicts and their choices when a retry is cancelled or refused", async () => {
+    reset();
+    recordOverleafSync(environmentId, "/work/project", "c1", decision);
+    await using _screen = await render(panel());
+    for (const path of ["main.tex", "intro.tex", "old.tex"])
+      await page
+        .getByRole("group", { name: `Settle ${path}` })
+        .getByRole("button", { name: "Keep mine" })
+        .click();
+    const keepMain = page
+      .getByRole("group", { name: "Settle main.tex" })
+      .getByRole("button", { name: "Keep mine" });
+    for (const [index, result] of [
+      { _tag: "cancelled", stage: "before-apply" },
+      { _tag: "refused", refusal: { reason: "unreachable" } },
+    ].entries()) {
+      client.syncOverleaf.mockResolvedValueOnce(result);
+      await page.getByRole("button", { name: "Sync again" }).click();
+      await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(index + 1);
+      await expect
+        .element(page.getByText(index === 0 ? "Sync cancelled" : "Couldn't sync with Overleaf"))
+        .toBeVisible();
+      // The review it was, with its conflict controls and choices, is still there.
+      await expect.element(keepMain).toHaveAttribute("aria-pressed", "true");
+      await expect.element(page.getByRole("button", { name: "Sync again" })).toBeEnabled();
+      await expect
+        .element(page.getByRole("button", { name: "Read changes" }))
+        .not.toBeInTheDocument();
+    }
+  });
+
   it("forgets choices when another review replaces the one they were made on", async () => {
     reset();
     recordOverleafSync(environmentId, "/work/project", "c1", decision);

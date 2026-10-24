@@ -20,6 +20,14 @@ export interface OverleafLastSync {
   readonly at: number;
 }
 
+export interface OverleafShownReview {
+  readonly review: ScientOverleafReview;
+  /** A sync applied it; otherwise it is still to run (a read, or a conflict waiting). */
+  readonly applied: boolean;
+  /** It applied, and Overleaf accepted the send. */
+  readonly sent: boolean;
+}
+
 export interface OverleafWorkspaceSnapshot {
   /** The first list has answered (or failed). */
   readonly loaded: boolean;
@@ -27,9 +35,16 @@ export interface OverleafWorkspaceSnapshot {
   readonly error: string | null;
   readonly statuses: ReadonlyMap<string, ScientOverleafStatus>;
   readonly syncing: ReadonlySet<string>;
+  /** The latest operation's result, whatever it was: what the result lines describe. */
   readonly lastSync: ReadonlyMap<string, OverleafLastSync>;
-  /** A review built by "See changes" without a sync, by connection. */
-  readonly previews: ReadonlyMap<string, ScientOverleafReview>;
+  /**
+   * The review the Overleaf tab shows, by connection: from a sync that applied
+   * or stopped at a conflict, or from a read of the changes. An operation that
+   * brings no review (cancelled, refused) leaves it as it is.
+   */
+  readonly reviews: ReadonlyMap<string, OverleafShownReview>;
+  /** When a sync last applied, by connection. */
+  readonly syncedAt: ReadonlyMap<string, number>;
   /** Links whose changes are being read for the review tab. */
   readonly previewing: ReadonlySet<string>;
   /** Why the last read of a link's changes failed. */
@@ -43,7 +58,8 @@ const EMPTY: OverleafWorkspaceSnapshot = {
   statuses: new Map(),
   syncing: new Set(),
   lastSync: new Map(),
-  previews: new Map(),
+  reviews: new Map(),
+  syncedAt: new Map(),
   previewing: new Set(),
   previewErrors: new Map(),
 };
@@ -101,6 +117,28 @@ export async function refreshOverleafStatus(
   } catch {
     // A status that can't be read keeps the last one; the chip still offers Sync.
   }
+}
+
+/** How long saves settle before the status is read again: a burst of saves reads once. */
+const SAVE_REFRESH_DELAY_MS = 400;
+const scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Reads one link's status again shortly, once for any number of calls meanwhile. */
+export function scheduleOverleafStatusRefresh(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+  connectionId: string,
+): void {
+  const key = `${keyOf(environmentId, workspaceRoot)}\u0000${connectionId}`;
+  const pending = scheduledRefreshes.get(key);
+  if (pending !== undefined) clearTimeout(pending);
+  scheduledRefreshes.set(
+    key,
+    setTimeout(() => {
+      scheduledRefreshes.delete(key);
+      void refreshOverleafStatus(environmentId, workspaceRoot, connectionId);
+    }, SAVE_REFRESH_DELAY_MS),
+  );
 }
 
 /** Lists the project's links and reads each one's status. */
@@ -169,14 +207,26 @@ export function recordOverleafSync(
   connectionId: string,
   result: ScientOverleafSyncResult,
 ): void {
+  const at = Date.now();
   update(keyOf(environmentId, workspaceRoot), (current) => {
-    const previews = new Map(current.previews);
-    // A result with its own review replaces the one read before; a cancel or refusal doesn't.
-    if (result._tag === "synced" || result._tag === "needs-decision") previews.delete(connectionId);
+    const reviews = new Map(current.reviews);
+    const syncedAt = new Map(current.syncedAt);
+    // A result with its own review replaces the shown one; a cancel or refusal doesn't.
+    if (result._tag === "synced") {
+      reviews.set(connectionId, {
+        review: result.review,
+        applied: true,
+        sent: result.publication._tag === "accepted",
+      });
+      syncedAt.set(connectionId, at);
+    } else if (result._tag === "needs-decision") {
+      reviews.set(connectionId, { review: result.review, applied: false, sent: false });
+    }
     return {
       ...current,
-      previews,
-      lastSync: new Map(current.lastSync).set(connectionId, { result, at: Date.now() }),
+      reviews,
+      syncedAt,
+      lastSync: new Map(current.lastSync).set(connectionId, { result, at }),
     };
   });
 }
@@ -194,13 +244,14 @@ export function recordOverleafPreview(
   update(keyOf(environmentId, workspaceRoot), (current) => {
     const previewing = new Set(current.previewing);
     const previewErrors = new Map(current.previewErrors);
-    const previews = new Map(current.previews);
+    const reviews = new Map(current.reviews);
     if (outcome._tag === "reading") previewing.add(connectionId);
     else previewing.delete(connectionId);
     if (outcome._tag === "failed") previewErrors.set(connectionId, outcome.message);
     else previewErrors.delete(connectionId);
-    if (outcome._tag === "review") previews.set(connectionId, outcome.review);
-    return { ...current, previewing, previewErrors, previews };
+    if (outcome._tag === "review")
+      reviews.set(connectionId, { review: outcome.review, applied: false, sent: false });
+    return { ...current, previewing, previewErrors, reviews };
   });
 }
 
@@ -274,6 +325,8 @@ export function resetOverleafStoreForTests(): void {
   snapshots.clear();
   loadedAt.clear();
   statusReads.clear();
+  for (const timer of scheduledRefreshes.values()) clearTimeout(timer);
+  scheduledRefreshes.clear();
   listReads.clear();
   inflight.clear();
   tokens.clear();

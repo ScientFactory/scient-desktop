@@ -36,11 +36,15 @@ const editors = vi.hoisted(() => ({
     attention: boolean;
   }>,
   flushTarget: vi.fn(),
+  listeners: new Set<() => void>(),
 }));
 vi.mock("~/scient/markdownEditor/persistence/markdownPersistenceRegistry", () => ({
   markdownPersistenceRegistry: {
     getSnapshot: () => editors.entries,
-    subscribe: () => () => {},
+    subscribe: (listener: () => void) => {
+      editors.listeners.add(listener);
+      return () => editors.listeners.delete(listener);
+    },
     flushTarget: editors.flushTarget,
   },
 }));
@@ -347,5 +351,60 @@ describe("OverleafFileChip", () => {
     // Nothing reached the server: no sync, and nothing there to cancel.
     expect(client.syncOverleaf).not.toHaveBeenCalled();
     expect(client.cancelOverleafSync).not.toHaveBeenCalled();
+  });
+
+  it("reads the status again when a document in the linked folder finishes saving", async () => {
+    reset();
+    const { notifyWorkspaceFileSaved } = await import("~/scient/fileSurfaces/workspaceFileSaves");
+    editors.entries = [
+      {
+        environmentId,
+        cwd: "/work/project",
+        relativePath: "paper/intro.tex",
+        pending: true,
+        attention: false,
+      },
+    ];
+    await using _screen = await render(chip());
+    await expect
+      .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
+      .toBeVisible();
+    const reads = () => client.readOverleafStatus.mock.calls.length;
+    const before = reads();
+
+    // A save outside the folder, or in another checkout, is not news for this link.
+    notifyWorkspaceFileSaved({ environmentId, cwd: "/work/project", relativePath: "notes/a.txt" });
+    notifyWorkspaceFileSaved({ environmentId, cwd: "/elsewhere", relativePath: "paper/a.txt" });
+    // A document session in the folder finishes its save.
+    editors.entries = [{ ...editors.entries[0]!, pending: false }];
+    for (const listener of editors.listeners) listener();
+
+    await expect.poll(reads).toBe(before + 1);
+    expect(client.readOverleafStatus).toHaveBeenLastCalledWith(environmentId, {
+      workspaceRoot: "/work/project",
+      connectionId: "c1",
+    });
+  });
+
+  it("reads the status again, once, after plain text saves in the linked folder", async () => {
+    reset();
+    const { notifyWorkspaceFileSaved } = await import("~/scient/fileSurfaces/workspaceFileSaves");
+    await using _screen = await render(chip());
+    await expect
+      .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
+      .toBeVisible();
+    const before = client.readOverleafStatus.mock.calls.length;
+    client.readOverleafStatus.mockResolvedValue(
+      status({ local: { _tag: "read", changed: 0, deleted: 0, added: 0 } }),
+    );
+    // Two saves in quick succession read the status once.
+    notifyWorkspaceFileSaved({
+      environmentId,
+      cwd: "/work/project",
+      relativePath: "paper/refs.bib",
+    });
+    notifyWorkspaceFileSaved({ environmentId, cwd: "/work/project", relativePath: "paper/a.sty" });
+    await expect.element(page.getByRole("button", { name: "Overleaf: Up to date" })).toBeVisible();
+    expect(client.readOverleafStatus.mock.calls.length).toBe(before + 1);
   });
 });

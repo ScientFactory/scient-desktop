@@ -181,7 +181,7 @@ function OverleafProjectLinks(props: {
                 <p className="truncate text-xs text-muted-foreground">
                   {view.label} ·{" "}
                   {lastSyncLabel({
-                    lastSyncAt: workspace.lastSync.get(connection.connectionId)?.at ?? null,
+                    lastSyncAt: workspace.syncedAt.get(connection.connectionId) ?? null,
                     completedSyncCount: connection.completedSyncCount,
                     updatedAt: connection.updatedAt,
                   })}

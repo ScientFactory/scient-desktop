@@ -41,8 +41,11 @@ surface list, content and icon, `ScientFileVersionHistory.tsx`, `ScientLatexSurf
 `useOverleafWorkspace(environmentId, root)` lists the project's links (`list`, which returns every
 link of the host project with `linkedHere`) and reads each one's offline status. The status reads
 the folder, so it is never read per file header: once per workspace, again after any sync,
-connect or unlink, on window focus when older than 10 s, and for one link when an open editor of
-one of its files finishes a save (the chip subscribes to the document registry). Every list and
+connect or unlink, on window focus when older than 10 s, and for one link 400 ms after a save in
+its folder settles (several saves read once). The chip hears saves from both kinds of editor:
+document sessions through the document registry, and plain text editors through
+`scient/fileSurfaces/workspaceFileSaves.ts`, which the generic save coordinator announces each
+confirmed save to (a marked line in `useFileSaveCoordinator.ts`). Every list and
 status read is numbered when it starts, and a response is used only if no read of the same thing
 started after it; a forced load (after an operation) starts afresh rather than joining one already
 running. So a read from during a sync can't answer after the sync's own refresh and leave the chip
@@ -106,7 +109,11 @@ when the publication is `accepted`.
 ## The review tab
 
 A side-panel surface, `scient:overleaf-review:<encoded cwd>:<connection>`, persisted with the
-other tabs. It shows the last sync's review from this window, else a review read by `preview`
+other tabs. The review it shows is the store's `reviews` entry, its own state apart from the
+latest result: set by a sync that applied or stopped at a conflict, or by a read of the changes,
+and left as it is by an operation that brings none (cancelled, refused, failed), so its conflicts
+and their choices survive a retry that didn't run. "Last synced" comes from `syncedAt`, set only
+when a sync applied. It shows the last sync's review from this window, else a review read by `preview`
 (**See changes** reads one when none is held; after a restart the tab offers **Read changes**).
 It lists what came in and what is or was sent; a file opens in its editor, and **Show in Diff**
 opens the thread's Diff tab. The engine exposes paths, not contents, so the tab doesn't draw a
