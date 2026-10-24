@@ -12,6 +12,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
 
 import FileBrowserPanel from "./FileBrowserPanel";
+// SCIENT-FORK:START
+import { resetOverleafStoreForTests } from "~/scient/overleaf/overleafStore";
+// SCIENT-FORK:END
 
 const files = vi.hoisted(() => ({
   directories: {} as Record<string, ProjectDirectoryEntry[]>,
@@ -42,6 +45,30 @@ vi.mock("~/fileContextMenu", () => ({ useFileContextMenu: () => ({}) }));
 vi.mock("~/localApi", () => ({ readLocalApi: () => undefined }));
 vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("~/components/MorphIcon", () => ({ MorphIcon: () => null }));
+// SCIENT-FORK:START — Overleaf links of the workspace, for the Connect dialog and the marks
+const overleaf = vi.hoisted(() => ({ folders: [] as string[] }));
+vi.mock("~/scient/overleaf/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/scient/overleaf/client")>()),
+  listOverleafConnections: async () => ({
+    connections: overleaf.folders.map((folder, index) => ({
+      connectionId: `c${index}`,
+      checkoutRoot: "/workspace",
+      folder,
+      projectId: "0123456789abcdef01234567",
+      branch: "master",
+      state: "active",
+      completedSyncCount: 1,
+      createdAt: "2026-10-24T10:00:00.000Z",
+      updatedAt: "2026-10-24T10:00:00.000Z",
+      linkedHere: true,
+    })),
+  }),
+  readOverleafStatus: async () => {
+    throw new Error("not needed");
+  },
+  readOverleafToken: async () => ({ saved: true }),
+}));
+// SCIENT-FORK:END
 vi.mock("~/components/ui/tooltip", () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => children,
   Tooltip: ({ children }: { children: ReactNode }) => children,
@@ -301,4 +328,39 @@ describe("Files panel search", () => {
     await chooseFromFilesMenu(screen.container, "Collapse all folders");
     await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
   });
+
+  // SCIENT-FORK:START — Overleaf in the Files panel
+  it("marks folders linked to Overleaf and opens Connect from the bar", async () => {
+    setup();
+    // Earlier tests already read this workspace's (empty) links.
+    resetOverleafStoreForTests();
+    overleaf.folders = ["src"];
+    await using screen = await renderPanel();
+    await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
+    const mark = () =>
+      screen.container
+        .querySelector("file-tree-container")
+        ?.shadowRoot!.querySelector(
+          '[data-item-path="src/"] [data-icon-name="scient-tree-icon-overleaf"]',
+        ) ?? null;
+    await expect.poll(mark).not.toBeNull();
+
+    await act(() =>
+      screen.container
+        .querySelector<HTMLButtonElement>('button[aria-label="Connect an external folder"]')!
+        .click(),
+    );
+    const overleafItem = () =>
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (item) => item.textContent?.trim() === "Overleaf…",
+      );
+    await expect.poll(overleafItem).toBeDefined();
+    await act(() => overleafItem()!.click());
+    // Nothing is selected, so the dialog offers the project's top folder.
+    await expect
+      .poll(() => document.querySelector('[role="dialog"]')?.textContent ?? "")
+      .toContain("Link the project's top folder");
+    overleaf.folders = [];
+  });
+  // SCIENT-FORK:END
 });

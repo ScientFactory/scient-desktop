@@ -20,6 +20,14 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+## Overleaf
+
+**Settings → Source Control → Overleaf** sits beside the hosting providers. It holds the Overleaf
+Git token (**Create a token on Overleaf ↗**, **Save**, **Remove**) and every folder on this
+computer linked to an Overleaf project, by project, each with its state, last sync, **Sync now**,
+**Open in Overleaf** and **Unlink**. See [Overleaf](overleaf.md) for linking a folder and what a
+sync does.
+
 ## Supported providers
 
 Install Git and configure authentication on the machine running your Scient server. For a remote
