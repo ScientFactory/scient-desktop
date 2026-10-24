@@ -732,11 +732,14 @@ coordinator's per-connection reservations.
   reason, the files held for their marks (`unresolvedMarkers`) and those sent as
   they are (`released`).
   **Undo** (`OverleafSync.undo`, attempt number and request ID) saves the
-  folder's editors, runs the coordinator's undo, and then always syncs under the
-  same hold (an undo that put nothing back included), with a receipt derived from
-  the request's (64 characters, so no client request ID equals it): the restored
+  folder's editors, runs the coordinator's undo, and when it put nothing back or
+  its apply completed, syncs under the same hold, with a receipt derived from the
+  request's (64 characters, so no client request ID equals it): the restored
   files go out as ordinary local changes, the request's per-file decisions are
-  recorded as any sync records them, and only a conflict stops. A repeated request is
+  recorded as any sync records them, and only a conflict stops. An apply that
+  stopped partway (`attention`) or replanned is never published: its `sync` is
+  `{ _tag: "not-synced", reason: "undo-incomplete" }`, and nothing goes out until
+  the files are checked and a sync is asked for. A repeated request is
   the undo's `duplicate` and syncs nothing. A refusal the sync meets after the
   undo wrote the folder is its `sync` result (`refused`), never an error that
   hides the undo. It claims the connection's running sync like a sync, so

@@ -559,9 +559,22 @@ describe("conflict marks", () => {
       needsDecision: false,
     });
     expect(overleafUndoView({ ...undone, outcome: "replan" }).title).toBe("Nothing was put back");
-    expect(overleafUndoView({ ...undone, outcome: "attention" }).title).toBe(
-      "Undo needs attention",
-    );
+    // Stopped partway: not synced, and it says nothing was sent.
+    expect(
+      overleafUndoView({
+        ...undone,
+        outcome: "attention",
+        sync: { _tag: "not-synced", reason: "undo-incomplete" },
+      }),
+    ).toEqual({
+      title: "Undo needs attention",
+      lines: [
+        "Left as it is: notes.tex (edited since).",
+        "Undo stopped partway; nothing was sent. Check the files, then sync.",
+      ],
+      tone: "warning",
+      needsDecision: false,
+    });
     // A file kept only on this computer is never written by Undo, and is named.
     expect(
       overleafUndoView({
