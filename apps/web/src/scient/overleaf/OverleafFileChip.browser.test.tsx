@@ -22,6 +22,7 @@ const client = vi.hoisted(() => ({
   listOverleafKeptCopies: vi.fn(),
   restoreOverleafKeptCopy: vi.fn(),
   disconnectOverleaf: vi.fn(),
+  cancelOverleafSync: vi.fn(),
 }));
 vi.mock("./client", () => ({ ...client, overleafRequestId: () => "request-1" }));
 
@@ -87,6 +88,7 @@ const sent: ScientOverleafSyncResult = {
   review: {
     reviewId: "r1",
     digest: "d1",
+    remoteTree: "a".repeat(40),
     upToDate: false,
     needsDecision: false,
     incoming: [{ kind: "modified", path: "refs.bib" }],
@@ -241,5 +243,32 @@ describe("OverleafFileChip", () => {
       environmentId,
       expect.objectContaining({ workspaceRoot: "/work/project", connectionId: "c1" }),
     );
+  });
+
+  it("offers Cancel sync while a sync runs, and reports where it stopped", async () => {
+    reset();
+    let finish!: (result: ScientOverleafSyncResult) => void;
+    client.syncOverleaf.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    client.cancelOverleafSync.mockResolvedValue({ _tag: "requested", operationId: "op-1" });
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Sync now" }).click();
+    await page.getByRole("button", { name: "Overleaf: Syncing…" }).click();
+    await expect.element(page.getByRole("menuitem", { name: "Sync now" })).not.toBeInTheDocument();
+    await page.getByRole("menuitem", { name: "Cancel sync" }).click();
+    expect(client.cancelOverleafSync).toHaveBeenCalledExactlyOnceWith(environmentId, {
+      workspaceRoot: "/work/project",
+      connectionId: "c1",
+    });
+
+    finish({ _tag: "cancelled", stage: "before-prepare" });
+    await expect.poll(() => toasts.add.mock.calls.length).toBe(1);
+    expect(toasts.add.mock.calls[0]).toEqual([
+      expect.objectContaining({ type: "info", title: "Sync cancelled" }),
+    ]);
   });
 });

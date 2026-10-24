@@ -201,3 +201,17 @@ export const disconnectEnvironmentOverleaf = Effect.fn(
     run: ({ client, headers }) => client.disconnect({ headers, payload: input.request }),
   });
 });
+
+export const cancelEnvironmentOverleafSync = Effect.fn(
+  "clientRuntime.state.cancelEnvironmentOverleafSync",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientOverleafConnectionRequest;
+}) {
+  return yield* request({
+    prepared: input.prepared,
+    timeoutMs: READ_TIMEOUT_MS,
+    url: (urls) => urls.cancel(),
+    run: ({ client, headers }) => client.cancel({ headers, payload: input.request }),
+  });
+});

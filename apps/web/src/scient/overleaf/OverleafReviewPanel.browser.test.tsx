@@ -25,6 +25,7 @@ const client = vi.hoisted(() => ({
   listOverleafKeptCopies: vi.fn(),
   restoreOverleafKeptCopy: vi.fn(),
   disconnectOverleaf: vi.fn(),
+  cancelOverleafSync: vi.fn(),
 }));
 vi.mock("./client", () => ({ ...client, overleafRequestId: () => "request-1" }));
 const toasts = vi.hoisted(() => ({ add: vi.fn(() => "toast"), close: vi.fn() }));
@@ -72,6 +73,7 @@ function review(overrides: Partial<ScientOverleafReview> = {}): ScientOverleafRe
   return {
     reviewId: "r1",
     digest: "d1",
+    remoteTree: "a".repeat(40),
     upToDate: false,
     needsDecision: true,
     incoming: [{ kind: "modified", path: "refs.bib" }],
@@ -186,6 +188,8 @@ describe("OverleafReviewPanel", () => {
         { key: "k-intro", choice: "markers" },
         { key: "k-group", choice: "theirs" },
       ],
+      // The choices answer these conflicts as they stood against this Overleaf tree.
+      reviewedRemote: "a".repeat(40),
     });
     // Then the chat gets a message asking the agent to merge main.tex only.
     await expect.poll(() => composer.insertTextAtEnd.mock.calls.length).toBe(1);
@@ -207,7 +211,11 @@ describe("OverleafReviewPanel", () => {
     reset();
     client.previewOverleaf.mockResolvedValue({
       _tag: "review",
-      review: review({ needsDecision: false, conflicts: [] }),
+      review: review({
+        needsDecision: false,
+        conflicts: [],
+        selectedAdditions: ["figures/plot.pdf"],
+      }),
     });
     const onOpenFile = vi.fn();
     await using _screen = await render(panel(onOpenFile));
@@ -218,12 +226,81 @@ describe("OverleafReviewPanel", () => {
     await expect
       .element(page.getByRole("region", { name: "To send" }).getByText("figures/plot.pdf"))
       .toBeVisible();
+    // New files go by default; the review says how many.
+    await expect.element(page.getByText("1 new file will be sent.")).toBeVisible();
     await incoming.getByText("refs.bib").click();
     expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("paper/refs.bib");
     expect(client.previewOverleaf).toHaveBeenCalledExactlyOnceWith(environmentId, {
       workspaceRoot: "/work/project",
       connectionId: "c1",
     });
+  });
+
+  it("shows the conflicts again when Overleaf moved after the choices were made", async () => {
+    reset();
+    recordOverleafSync(environmentId, "/work/project", "c1", decision);
+    // Overleaf moved: the server answers with a fresh review instead of applying.
+    const fresh = review({
+      remoteTree: "b".repeat(40),
+      conflicts: [
+        { key: "k-new", paths: ["main.tex"], allowed: ["mine", "theirs", "markers"], chosen: null },
+      ],
+    });
+    client.syncOverleaf.mockResolvedValue({ ...decision, review: fresh });
+    const composer = composerStub();
+    await using _screen = await render(
+      <ComposerHandleContext value={composer.ref}>{panel()}</ComposerHandleContext>,
+    );
+    for (const path of ["main.tex", "intro.tex", "old.tex"]) {
+      await page
+        .getByRole("group", { name: `Settle ${path}` })
+        .getByRole("button", { name: "Keep mine" })
+        .click();
+    }
+    await page.getByRole("button", { name: "Sync again" }).click();
+    await expect
+      .element(page.getByText("Overleaf changed since you chose. Choose again."))
+      .toBeVisible();
+    // Only the fresh conflict is offered, with nothing chosen yet.
+    await expect
+      .element(page.getByRole("group", { name: "Settle intro.tex" }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Sync again" })).toBeDisabled();
+    expect(composer.insertTextAtEnd).not.toHaveBeenCalled();
+
+    await page
+      .getByRole("group", { name: "Settle main.tex" })
+      .getByRole("button", { name: "Use Overleaf's" })
+      .click();
+    client.syncOverleaf.mockResolvedValue(applied);
+    await page.getByRole("button", { name: "Sync again" }).click();
+    await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(2);
+    expect(client.syncOverleaf.mock.calls[1]![1]).toMatchObject({
+      choices: [{ key: "k-new", choice: "theirs" }],
+      reviewedRemote: "b".repeat(40),
+    });
+  });
+
+  it("cancels a running sync from the tab", async () => {
+    reset();
+    let finish!: (result: ScientOverleafSyncResult) => void;
+    client.syncOverleaf.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    client.cancelOverleafSync.mockResolvedValue({ _tag: "requested", operationId: "op-1" });
+    recordOverleafSync(environmentId, "/work/project", "c1", applied);
+    await using _screen = await render(panel());
+    await page.getByRole("button", { name: "Sync", exact: true }).click();
+    await page.getByRole("button", { name: "Cancel" }).click();
+    expect(client.cancelOverleafSync).toHaveBeenCalledExactlyOnceWith(environmentId, {
+      workspaceRoot: "/work/project",
+      connectionId: "c1",
+    });
+    finish({ _tag: "cancelled", stage: "before-apply" });
+    await expect.element(page.getByText("Sync cancelled")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
   });
 
   describe("Ask the agent from another worktree", () => {

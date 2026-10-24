@@ -1,4 +1,5 @@
 import {
+  cancelEnvironmentOverleafSync,
   connectEnvironmentOverleaf,
   disconnectEnvironmentOverleaf,
   getEnvironmentOverleafStatus,
@@ -128,5 +129,15 @@ export async function disconnectOverleaf(
 ) {
   return runtime.runPromise(
     disconnectEnvironmentOverleaf({ prepared: prepared(environmentId), request }),
+  );
+}
+
+/** Asks a running sync to stop at its next stage boundary; never inside an apply or a send. */
+export async function cancelOverleafSync(
+  environmentId: EnvironmentId,
+  request: ScientOverleafConnectionRequest,
+) {
+  return runtime.runPromise(
+    cancelEnvironmentOverleafSync({ prepared: prepared(environmentId), request }),
   );
 }

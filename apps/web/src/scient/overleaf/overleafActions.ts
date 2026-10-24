@@ -11,7 +11,7 @@ import { toastManager } from "~/components/ui/toast";
 import { readLocalApi } from "~/localApi";
 import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 
-import { overleafRequestId, previewOverleaf, syncOverleaf } from "./client";
+import { cancelOverleafSync, overleafRequestId, previewOverleaf, syncOverleaf } from "./client";
 import {
   operationErrorText,
   overleafProjectUrl,
@@ -98,7 +98,17 @@ export function openOverleafProject(projectId: string): void {
  */
 export async function runOverleafSync(
   context: OverleafSyncContext,
-  choices?: ReadonlyArray<{ readonly key: string; readonly choice: ScientOverleafConflictChoice }>,
+  decision?: {
+    readonly choices: ReadonlyArray<{
+      readonly key: string;
+      readonly choice: ScientOverleafConflictChoice;
+    }>;
+    /**
+     * The `remoteTree` of the review whose conflicts the choices answer. If
+     * Overleaf has moved since, the server shows the conflicts again instead.
+     */
+    readonly reviewedRemote: string;
+  },
 ): Promise<ScientOverleafSyncResult | null> {
   const { environmentId, workspaceRoot, connection } = context;
   if (readOverleafWorkspace(environmentId, workspaceRoot).syncing.has(connection.connectionId)) {
@@ -124,7 +134,9 @@ export async function runOverleafSync(
       workspaceRoot,
       connectionId: connection.connectionId,
       requestId: overleafRequestId(),
-      ...(choices && choices.length > 0 ? { choices: [...choices] } : {}),
+      ...(decision && decision.choices.length > 0
+        ? { choices: [...decision.choices], reviewedRemote: decision.reviewedRemote }
+        : {}),
     });
     recordOverleafSync(environmentId, workspaceRoot, connection.connectionId, result);
     if (!context.quiet) reportOverleafSync(context, result);
@@ -211,6 +223,28 @@ export async function readOverleafChanges(
     recordOverleafPreview(environmentId, workspaceRoot, connectionId, {
       _tag: "failed",
       message: operationErrorText(error),
+    });
+  }
+}
+
+/**
+ * Asks the link's running sync to stop. It stops at the next stage boundary,
+ * never inside an apply or a send; the sync's own result then says it stopped.
+ */
+export async function cancelOverleafRun(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+  connectionId: string,
+): Promise<void> {
+  try {
+    const result = await cancelOverleafSync(environmentId, { workspaceRoot, connectionId });
+    if (result._tag === "nothing-running")
+      toastManager.add({ type: "info", title: "No sync is running" });
+  } catch (error) {
+    toastManager.add({
+      type: "error",
+      title: "Couldn't cancel the sync",
+      description: operationErrorText(error),
     });
   }
 }

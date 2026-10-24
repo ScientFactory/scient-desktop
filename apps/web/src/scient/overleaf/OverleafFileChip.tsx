@@ -3,7 +3,7 @@
 // Sync now, the last sync, Open in Overleaf and Overleaf settings.
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, ExternalLink, FileDiff, RefreshCw, Settings } from "lucide-react";
+import { AlertTriangle, ExternalLink, FileDiff, RefreshCw, Settings, X } from "lucide-react";
 import { useEffect } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -21,7 +21,7 @@ import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
-import { openOverleafProject, runOverleafSync } from "./overleafActions";
+import { cancelOverleafRun, openOverleafProject, runOverleafSync } from "./overleafActions";
 import { connectionForPath, overleafChipView } from "./overleafModel";
 import { openOverleafReview, seeOverleafChanges } from "./openOverleafReview";
 import { refreshOverleafStatus, useOverleafWorkspace } from "./overleafStore";
@@ -124,15 +124,24 @@ export function OverleafFileChip(props: {
             ) : null}
           </MenuGroupLabel>
         </MenuGroup>
-        <MenuItem
-          disabled={syncing}
-          onClick={() =>
-            void runOverleafSync({ environmentId, workspaceRoot: cwd, connection, openReview })
-          }
-        >
-          <RefreshCw aria-hidden className="size-4 text-muted-foreground" />
-          {linkedElsewhere ? "Sync the main copy" : "Sync now"}
-        </MenuItem>
+        {view.state === "syncing" ? (
+          // A running sync stops at its next stage boundary, never inside an apply or a send.
+          <MenuItem
+            onClick={() => void cancelOverleafRun(environmentId, cwd, connection.connectionId)}
+          >
+            <X aria-hidden className="size-4 text-muted-foreground" />
+            Cancel sync
+          </MenuItem>
+        ) : (
+          <MenuItem
+            onClick={() =>
+              void runOverleafSync({ environmentId, workspaceRoot: cwd, connection, openReview })
+            }
+          >
+            <RefreshCw aria-hidden className="size-4 text-muted-foreground" />
+            {linkedElsewhere ? "Sync the main copy" : "Sync now"}
+          </MenuItem>
+        )}
         {seeChanges ? (
           <MenuItem onClick={seeChanges}>
             <FileDiff aria-hidden className="size-4 text-muted-foreground" />

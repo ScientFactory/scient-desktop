@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 
 import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/model.ts";
 import { layerRemoteHttpClient } from "../rpc/http.ts";
-import { getEnvironmentOverleafStatus, syncEnvironmentOverleaf } from "./scientOverleafHttp.ts";
+import {
+  cancelEnvironmentOverleafSync,
+  getEnvironmentOverleafStatus,
+  syncEnvironmentOverleaf,
+} from "./scientOverleafHttp.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -34,31 +38,35 @@ function recordingFetch(body: unknown) {
 }
 
 describe("scientOverleafHttp", () => {
-  it.effect("posts a sync with its workspace, link, request ID and choices", () =>
-    Effect.gen(function* () {
-      const server = recordingFetch({ _tag: "unsettled", reason: "folder-kept-changing" });
-      const result = yield* syncEnvironmentOverleaf({
-        prepared: PREPARED,
-        request: {
-          workspaceRoot: "/work/project",
-          connectionId: "c1",
-          requestId: "request-1",
-          choices: [{ key: "k", choice: "markers" }],
-        },
-      }).pipe(Effect.provide(layerRemoteHttpClient(server.fetchFn)));
-      expect(result).toEqual({ _tag: "unsettled", reason: "folder-kept-changing" });
-      expect(server.requests).toEqual([
-        {
-          url: "https://environment.example.test/api/scient/overleaf/v1/sync",
-          body: {
+  it.effect(
+    "posts a sync with its workspace, link, request ID, choices and the reviewed tree",
+    () =>
+      Effect.gen(function* () {
+        const server = recordingFetch({ _tag: "unsettled", reason: "folder-kept-changing" });
+        const result = yield* syncEnvironmentOverleaf({
+          prepared: PREPARED,
+          request: {
             workspaceRoot: "/work/project",
             connectionId: "c1",
             requestId: "request-1",
             choices: [{ key: "k", choice: "markers" }],
+            reviewedRemote: "a".repeat(40),
           },
-        },
-      ]);
-    }),
+        }).pipe(Effect.provide(layerRemoteHttpClient(server.fetchFn)));
+        expect(result).toEqual({ _tag: "unsettled", reason: "folder-kept-changing" });
+        expect(server.requests).toEqual([
+          {
+            url: "https://environment.example.test/api/scient/overleaf/v1/sync",
+            body: {
+              workspaceRoot: "/work/project",
+              connectionId: "c1",
+              requestId: "request-1",
+              choices: [{ key: "k", choice: "markers" }],
+              reviewedRemote: "a".repeat(40),
+            },
+          },
+        ]);
+      }),
   );
 
   it.effect("reads a link's status from the status route", () =>
@@ -91,6 +99,23 @@ describe("scientOverleafHttp", () => {
       expect(status.availability).toBe("ready");
       expect(server.requests.map((request) => request.url)).toEqual([
         "https://environment.example.test/api/scient/overleaf/v1/status",
+      ]);
+    }),
+  );
+
+  it.effect("asks a running sync to stop through the cancel route", () =>
+    Effect.gen(function* () {
+      const server = recordingFetch({ _tag: "requested", operationId: "op-1" });
+      const result = yield* cancelEnvironmentOverleafSync({
+        prepared: PREPARED,
+        request: { workspaceRoot: "/work/project", connectionId: "c1" },
+      }).pipe(Effect.provide(layerRemoteHttpClient(server.fetchFn)));
+      expect(result).toEqual({ _tag: "requested", operationId: "op-1" });
+      expect(server.requests).toEqual([
+        {
+          url: "https://environment.example.test/api/scient/overleaf/v1/cancel",
+          body: { workspaceRoot: "/work/project", connectionId: "c1" },
+        },
       ]);
     }),
   );

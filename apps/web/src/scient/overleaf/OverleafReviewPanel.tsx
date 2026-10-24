@@ -21,6 +21,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 
 import {
+  cancelOverleafRun,
   conflictWorkspacePaths,
   openOverleafProject,
   readOverleafChanges,
@@ -105,6 +106,12 @@ function ChangeList(props: {
   );
 }
 
+/** New files go to Overleaf by default; the review lists the ones it sends. */
+function newFilesLine(count: number, sent: boolean): string {
+  const files = count === 1 ? "1 new file" : `${count} new files`;
+  return sent ? `${files} ${count === 1 ? "was" : "were"} sent.` : `${files} will be sent.`;
+}
+
 export function OverleafReviewPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
@@ -121,12 +128,18 @@ export function OverleafReviewPanel(props: {
   const composer = useComposerHandleContext();
   const handleNewThread = useNewThreadHandler();
   const [chosen, setChosen] = useState<ReadonlyMap<string, OverleafReviewChoice>>(new Map());
+  // Overleaf moved after the choices were made: the conflicts are shown again.
+  const [chooseAgain, setChooseAgain] = useState(false);
   const lastReview =
     last && (last.result._tag === "synced" || last.result._tag === "needs-decision")
       ? last.result.review
       : null;
   const review: ScientOverleafReview | null = lastReview ?? preview;
   const resultView = last ? overleafResultView(last.result) : null;
+  // The review shown is what the last sync here applied, rather than one still to run.
+  const synced = lastReview !== null && last?.result._tag === "synced";
+  const sent =
+    synced && last?.result._tag === "synced" && last.result.publication._tag === "accepted";
   const reading = workspace.previewing.has(connectionId);
   const readError = workspace.previewErrors.get(connectionId) ?? null;
   const readChanges = () => void readOverleafChanges(environmentId, cwd, connectionId);
@@ -155,10 +168,16 @@ export function OverleafReviewPanel(props: {
     const askAgent = conflicts.filter((conflict) => chosen.get(conflict.key) === "agent");
     const result = await runOverleafSync(
       { environmentId, workspaceRoot: cwd, connection, openReview },
-      choicesFor(review, engineChoices),
+      { choices: choicesFor(review, engineChoices), reviewedRemote: review.remoteTree },
     );
+    if (result?._tag === "needs-decision") {
+      setChosen(new Map());
+      setChooseAgain(true);
+      return;
+    }
     if (result?._tag !== "synced") return;
     setChosen(new Map());
+    setChooseAgain(false);
     if (askAgent.length === 0) return;
     const paths = conflictWorkspacePaths(
       connection,
@@ -248,6 +267,15 @@ export function OverleafReviewPanel(props: {
             <RefreshCw aria-hidden className={syncing ? "size-3.5 animate-spin" : "size-3.5"} />
             {syncing ? "Syncing…" : "Sync"}
           </Button>
+          {syncing ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => void cancelOverleafRun(environmentId, cwd, connectionId)}
+            >
+              Cancel
+            </Button>
+          ) : null}
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 pt-2.5 pb-4">
           {resultView ? (
@@ -283,6 +311,11 @@ export function OverleafReviewPanel(props: {
               <h3 className="px-1 text-xs font-medium text-muted-foreground">
                 {conflicts.length === 1 ? "1 conflict" : `${conflicts.length} conflicts`}
               </h3>
+              {chooseAgain ? (
+                <p className="px-1 text-xs text-warning-foreground" role="status">
+                  Overleaf changed since you chose. Choose again.
+                </p>
+              ) : null}
               {conflicts.map((conflict) => {
                 const current = chosen.get(conflict.key) ?? conflict.chosen;
                 return (
@@ -339,25 +372,24 @@ export function OverleafReviewPanel(props: {
           {review ? (
             <>
               <ChangeList
-                title={lastReview ? "Came in" : "To bring in"}
+                title={synced ? "Came in" : "To bring in"}
                 icon={ArrowDownToLine}
                 changes={review.incoming}
                 folder={connection.folder}
                 onOpenFile={props.onOpenFile}
               />
               <ChangeList
-                title={
-                  lastReview &&
-                  last?.result._tag === "synced" &&
-                  last.result.publication._tag === "accepted"
-                    ? "Sent"
-                    : "To send"
-                }
+                title={sent ? "Sent" : "To send"}
                 icon={ArrowUpFromLine}
                 changes={review.outgoing}
                 folder={connection.folder}
                 onOpenFile={props.onOpenFile}
               />
+              {review.selectedAdditions.length > 0 ? (
+                <p className="px-1 text-xs text-muted-foreground" data-overleaf-new-files>
+                  {newFilesLine(review.selectedAdditions.length, sent)}
+                </p>
+              ) : null}
             </>
           ) : null}
         </div>

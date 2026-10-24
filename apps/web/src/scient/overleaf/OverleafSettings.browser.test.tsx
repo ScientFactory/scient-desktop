@@ -18,6 +18,7 @@ const client = vi.hoisted(() => ({
   listOverleafKeptCopies: vi.fn(),
   restoreOverleafKeptCopy: vi.fn(),
   disconnectOverleaf: vi.fn(),
+  cancelOverleafSync: vi.fn(),
 }));
 vi.mock("./client", () => ({ ...client, overleafRequestId: () => "request-1" }));
 const toasts = vi.hoisted(() => ({ add: vi.fn(() => "toast"), close: vi.fn() }));

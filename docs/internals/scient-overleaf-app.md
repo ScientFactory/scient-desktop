@@ -77,7 +77,12 @@ lands first.
 
 `runOverleafSync` is the only sync path: it refuses a second sync of the same link from this
 window, saves editors, posts `sync` with a fresh request ID and any conflict choices, records the
-result, refreshes the file tree and the statuses, and reports. The server already retries once
+result, refreshes the file tree and the statuses, and reports. Choices always travel with
+`reviewedRemote`, the `remoteTree` of the review they answer; when Overleaf has moved since, the
+server answers `needs-decision` with a fresh review, and the tab clears the choices and says
+"Overleaf changed since you chose. Choose again." **Cancel sync** (chip) and **Cancel** (tab)
+post `cancel`; the sync stops at a stage boundary and returns `cancelled`, reported as "Sync
+cancelled. Nothing was changed." The server already retries once
 when Overleaf moved during the send. `overleafResultView` turns the result into a title ("3 files
 came in, 2 were sent"), the lines of design section 4.1 and a tone; the toast carries **See
 changes** when there were changes, and a conflict opens the review tab instead. The Connect
@@ -91,7 +96,8 @@ when the publication is `accepted`.
 A side-panel surface, `scient:overleaf-review:<encoded cwd>:<connection>`, persisted with the
 other tabs. It shows the last sync's review from this window, else a review read by `preview`
 (**See changes** reads one when none is held; after a restart the tab offers **Read changes**).
-It lists what came in and what is or was sent; a file opens in its editor, and **Show in Diff**
+It lists what came in and what is or was sent, with "N new files will be sent" from the review's
+`selectedAdditions` (new files go by default); a file opens in its editor, and **Show in Diff**
 opens the thread's Diff tab. The engine exposes paths, not contents, so the tab doesn't draw a
 per-file Overleaf diff itself.
 
@@ -140,6 +146,10 @@ are disabled while editing is.
 
 ## Not built here
 
-- Undo of a send, "Keep only on this computer" and "Send this file": engine additions first.
+- Undo of a send: engine addition first.
+- "Keep only on this computer" and "Send this file" per new file: the engine has them
+  (`sendLocalOnly` and the addition list in the prepare selections), but the HTTP sync request
+  carries only `choices` and `reviewedRemote`, and the review view lists only the selected
+  additions, not the skipped ones with their reasons.
 - Settings ▸ Overleaf "Test" of the token: no route.
 - Add project ▸ Overleaf project (a new Scient project with the paper in a subfolder).

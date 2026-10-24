@@ -55,6 +55,7 @@ function review(overrides: Partial<ScientOverleafReview> = {}): ScientOverleafRe
   return {
     reviewId: "r1",
     digest: "d1",
+    remoteTree: "a".repeat(40),
     upToDate: false,
     needsDecision: false,
     incoming: [],
@@ -270,6 +271,25 @@ describe("refusalText", () => {
       "A file is over Overleaf's 50 MB limit (data.bin).",
     );
     expect(refusalText({ reason: "something-new" })).toBe("Sync stopped (something-new).");
+    // Step 5's newer reasons each have their own words.
+    for (const reason of [
+      "request-incomplete",
+      "records-unreadable",
+      "overleaf-moved",
+      "project-invalid",
+      "authority-changed",
+      "access-denied",
+      "project-not-found",
+      "unreachable",
+      "git-unavailable",
+      "git-failed",
+      "token-missing",
+    ])
+      expect(refusalText({ reason })).not.toContain("Sync stopped (");
+    expect(overleafResultView({ _tag: "cancelled", stage: "before-apply" })).toMatchObject({
+      title: "Sync cancelled",
+      lines: ["Nothing was changed."],
+    });
     expect(operationErrorText({ reason: "token-missing", message: "x" })).toContain(
       "No Overleaf token is saved",
     );

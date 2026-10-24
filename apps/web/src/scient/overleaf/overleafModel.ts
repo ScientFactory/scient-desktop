@@ -249,6 +249,12 @@ export function refusalText(refusal: ScientOverleafRefusal): string {
       return "This folder's link isn't ready. Sync again.";
     case "request-reused":
       return "This request was already used. Try again.";
+    case "request-incomplete":
+      return "An earlier attempt stopped before it finished, so it isn't run again. Try again.";
+    case "records-unreadable":
+      return "Scient can't read its Overleaf link records, so nothing was linked or changed.";
+    case "overleaf-moved":
+      return "Overleaf kept changing while the conflicts were shown. Sync again.";
     case "folder-kept-changing":
       return "The folder kept changing during the sync. Sync again when edits pause.";
     case "recovery-repeated":

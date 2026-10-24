@@ -91,6 +91,11 @@ Clicking Sync is the confirmation. Overleaf's changes come into the folder, then
 the folder's changes go to Overleaf. New files, deletions, renames and older
 versions are all synced, then reported. **Only a conflict stops a sync.**
 
+While a sync runs, **Cancel sync** in the chip's menu, or **Cancel** in the
+Overleaf tab, stops it at its next step. A sync never stops halfway through
+writing your files or sending to Overleaf; a cancelled sync says nothing was
+changed.
+
 The result is a short message, such as "3 files came in, 2 were sent · See
 changes". **See changes** opens the Overleaf tab in the side panel with the files
 that came in and the files that were sent; click a file to open it, or **Show in
@@ -108,12 +113,13 @@ The chip next to **Saved** shows the link's state without going online:
 | **Overleaf problem** | The folder moved, its disk isn't connected, or it couldn't be read.           |
 | **Syncing…**         | A sync is running.                                                            |
 
-Its menu has **Sync now**, **See changes**, when the folder last synced, **Open in
-Overleaf** and **Overleaf settings…**.
+Its menu has **Sync now** (**Cancel sync** while one runs), **See changes**, when
+the folder last synced, **Open in Overleaf** and **Overleaf settings…**.
 
 ## What is sent
 
-- **New files in the folder are sent**, except, every sync:
+- **New files in the folder are sent**, and the Overleaf tab says how many ("2
+  new files will be sent"). Skipped, every sync:
   - LaTeX build leftovers (`.aux`, `.log`, `.synctex.gz`, `.fls`,
     `.fdb_latexmk`, `.out`, `.toc`, `.bbl`);
   - hidden files and anything in a hidden folder, such as `.env`;
@@ -147,7 +153,10 @@ opens with each conflict and its choices:
 A conflict across several files (a rename on both sides, a file replaced by a
 folder) offers **Keep mine** or **Use Overleaf's** for the whole group.
 
-Choose for every conflict, then **Sync again**.
+Choose for every conflict, then **Sync again**. If Overleaf changed while you
+were choosing, Scient doesn't apply your choices to text you haven't seen: the
+tab says **Overleaf changed since you chose. Choose again.** and shows the
+conflicts as they are now.
 
 While a file has conflict marks, the LaTeX editor says **This file has N
 Overleaf conflicts to settle** instead of a failed build. In the Source view
@@ -231,6 +240,13 @@ Linking the same folder to the same project again picks up where it left off.
 | The folder isn't there, or its disk isn't connected.                 | Connect the disk, or relink the folder.                                   |
 | This project's folder changed since it was linked.                   | Relink it.                                                                |
 | Another Scient process holds the Overleaf state.                     | Quit the other Scient and sync again.                                     |
+| An earlier attempt stopped before it finished.                       | Try again; Scient never repeats an attempt that may have half run.        |
+| Scient can't read its Overleaf link records.                         | Nothing was linked or changed. Report it; the records need repair.        |
+| Overleaf kept changing while the conflicts were shown.               | Sync again.                                                               |
+| The project changed while this ran.                                  | Try again.                                                                |
+| Overleaf changed since you chose. Choose again.                      | Choose for each conflict as it is now, then Sync again.                   |
+| Sync cancelled. Nothing was changed.                                 | Sync again when you're ready.                                             |
+| No sync is running.                                                  | Nothing to cancel; the sync had already finished.                         |
 | Nothing was sent: N files still have conflict marks.                 | Settle the marks, then sync again.                                        |
 | Nothing was sent: the folder changed during the sync.                | Nothing to do; the edit goes with the next sync.                          |
 | Nothing was sent: a kept copy changed during this sync.              | Sync again; the next sync checks again.                                   |
