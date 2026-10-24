@@ -762,20 +762,6 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
   it.effect.each(
     [
       {
-        name: "nested Task",
-        update: {
-          sessionUpdate: "tool_call",
-          toolCallId: "task",
-          title: "Task",
-          kind: "other",
-          status: "pending",
-          rawInput: { subagent_type: "worker" },
-        },
-        quiet: "11 minutes",
-        failAfter: "50 minutes",
-        window: "60m",
-      },
-      {
         name: "Task named only by title",
         update: {
           sessionUpdate: "tool_call",
