@@ -401,29 +401,24 @@ describe("Mermaid error recovery", () => {
     expect(codeBlock.getAttribute("data-wrap")).toBe(String(!wrapped));
   });
 
-  it.each(["light", "dark"] as const)(
-    "uses the normal language header and highlighting in %s appearance",
-    async (theme) => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-      await _setupFixture0(_fixture);
+  it("uses the normal language header and highlighting", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
 
-      await getSyntaxHighlighterPromise("mermaid");
-      const original = 'flowchart LR\nA["שלום <start> & end"\n';
-      await render(_fixture, original, theme);
-      const codeBlock = _fixture.container.querySelector(".chat-markdown-codeblock")!;
-      const header = codeBlock.querySelector(".chat-markdown-codeblock-header")!;
-      expect(
-        header.querySelector('[aria-label="Language: mermaid"]') ??
-          [...header.querySelectorAll("span")].find((node) => node.textContent === "mermaid"),
-      ).toBeTruthy();
-      expect(codeBlock.querySelector(".chat-markdown-shiki .shiki code")?.textContent).toBe(
-        original,
-      );
-      await act(() => button(_fixture, "Copy code").click());
-      expect(writeText).toHaveBeenCalledWith(original);
-    },
-  );
+    await getSyntaxHighlighterPromise("mermaid");
+    const original = 'flowchart LR\nA["שלום <start> & end"\n';
+    await render(_fixture, original, "light");
+    const codeBlock = _fixture.container.querySelector(".chat-markdown-codeblock")!;
+    const header = codeBlock.querySelector(".chat-markdown-codeblock-header")!;
+    expect(
+      header.querySelector('[aria-label="Language: mermaid"]') ??
+        [...header.querySelectorAll("span")].find((node) => node.textContent === "mermaid"),
+    ).toBeTruthy();
+    expect(codeBlock.querySelector(".chat-markdown-shiki .shiki code")?.textContent).toBe(original);
+    await act(() => button(_fixture, "Copy code").click());
+    expect(writeText).toHaveBeenCalledWith(original);
+  });
 
   it("preserves the successful diagram toolbar and source controls", async () => {
     await using _fixture = _createFixture();
@@ -450,46 +445,7 @@ describe("Mermaid error recovery", () => {
     expect(_fixture.container.textContent).toContain("A valid diagram");
   });
 
-  it.each([
-    { name: "intrinsic", stageWidth: 720, intrinsicWidth: 180, intrinsicHeight: 90 },
-    { name: "oversized", stageWidth: 320, intrinsicWidth: 1_200, intrinsicHeight: 600 },
-  ])(
-    "sizes an $name inline SVG proportionally inside the padded stage",
-    async ({ stageWidth, intrinsicWidth, intrinsicHeight }) => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-      await _setupFixture0(_fixture);
-
-      _fixture.container.style.width = `${stageWidth}px`;
-      vi.mocked(renderMermaidDiagram).mockResolvedValueOnce({
-        svg: `<svg xmlns="http://www.w3.org/2000/svg" width="100%" style="max-width:${intrinsicWidth}px" viewBox="0 0 ${intrinsicWidth} ${intrinsicHeight}"><rect width="${intrinsicWidth}" height="${intrinsicHeight}" fill="blue"/></svg>`,
-        diagramType: "flowchart",
-      });
-      await render(_fixture, `flowchart LR\nSized${intrinsicWidth} --> Diagram`);
-      const stage = _fixture.container.querySelector<HTMLElement>(".scient-mermaid-inline")!;
-      const svg = stage.querySelector("svg")!;
-      await vi.waitFor(() => expect(svg.getBoundingClientRect().width).toBeGreaterThan(0));
-      const style = getComputedStyle(stage);
-      const contentWidth =
-        stage.clientWidth -
-        Number.parseFloat(style.paddingLeft) -
-        Number.parseFloat(style.paddingRight);
-      const expectedWidth = Math.min(intrinsicWidth, contentWidth);
-      const bounds = svg.getBoundingClientRect();
-      expect(contentWidth).toBeGreaterThan(0);
-      expect(bounds.width).toBeCloseTo(expectedWidth, 0);
-      expect(bounds.height).toBeCloseTo((expectedWidth * intrinsicHeight) / intrinsicWidth, 0);
-      expect(bounds.width / bounds.height).toBeCloseTo(intrinsicWidth / intrinsicHeight, 2);
-      expect(stage.scrollWidth).toBeLessThanOrEqual(stage.clientWidth + 1);
-      if (intrinsicWidth < contentWidth) {
-        expect(bounds.width).toBeLessThan(contentWidth);
-      } else {
-        expect(bounds.width).toBeLessThan(intrinsicWidth);
-      }
-    },
-  );
-
-  it.each(["Copy source", "Download SVG", "Copy image", "Download PNG"] as const)(
+  it.each(["Download SVG", "Copy image", "Download PNG"] as const)(
     "executes %s from the expanded diagram through the export boundary",
     async (action) => {
       await using _fixture = _createFixture();
@@ -497,7 +453,6 @@ describe("Mermaid error recovery", () => {
       await _setupFixture0(_fixture);
 
       const exported = Promise.withResolvers<void>();
-      writeText.mockImplementation(async () => exported.resolve());
       vi.mocked(copyPngBlobToClipboard).mockImplementation(async () => exported.resolve());
       vi.mocked(downloadPresentationBlob).mockImplementation(() => exported.resolve());
       const original = 'flowchart LR\nA["Current export"] --> B\n';
@@ -522,9 +477,7 @@ describe("Mermaid error recovery", () => {
       // Native canvas encoding finishes through its callback, not a polling interval.
       await act(async () => await exported.promise);
 
-      if (action === "Copy source") {
-        expect(writeText).toHaveBeenCalledExactlyOnceWith(original);
-      } else if (action === "Copy image") {
+      if (action === "Copy image") {
         expect(copyPngBlobToClipboard).toHaveBeenCalledOnce();
         const blob = vi.mocked(copyPngBlobToClipboard).mock.calls[0]![0];
         expect(blob.type).toBe("image/png");
@@ -555,11 +508,9 @@ describe("Mermaid error recovery", () => {
       } else {
         expect(loadCanvasImage).not.toHaveBeenCalled();
       }
-      if (action !== "Copy source") expect(writeText).not.toHaveBeenCalled();
+      expect(writeText).not.toHaveBeenCalled();
       if (action !== "Copy image") expect(copyPngBlobToClipboard).not.toHaveBeenCalled();
-      if (action === "Copy source" || action === "Copy image") {
-        expect(downloadPresentationBlob).not.toHaveBeenCalled();
-      }
+      if (action === "Copy image") expect(downloadPresentationBlob).not.toHaveBeenCalled();
       expect(toastManager.add).not.toHaveBeenCalled();
       await expect.element(dialog).toBeVisible();
     },

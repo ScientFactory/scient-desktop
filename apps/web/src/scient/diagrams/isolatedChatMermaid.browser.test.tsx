@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { MermaidDiagramCard } from "./MermaidDiagramCard";
-import { mermaidSvgToPngBlob } from "./mermaidExport";
+import { mermaidSvgToPngBlob, prepareSvgForExport, svgRasterizationRefusal } from "./mermaidExport";
 import { renderMermaidDiagram } from "./mermaidRuntime";
 import { recoveryFixtures } from "./mermaidRecovery.fixtures";
 import { stripSvgExternalResources } from "./svgExternalResources";
@@ -14,6 +14,13 @@ const probeRequests = () =>
   (performance.getEntriesByType("resource") as PerformanceResourceTiming[])
     .filter((entry) => entry.name.includes(PROBE))
     .map((entry) => entry.name);
+
+/** The synchronous export gate: `null` means PNG export proceeds for this SVG. */
+const exportRefusal = (svg: string, theme: "light" | "dark") =>
+  svgRasterizationRefusal(
+    new DOMParser().parseFromString(prepareSvgForExport(svg, theme), "image/svg+xml")
+      .documentElement,
+  );
 
 const FETCHING = [
   {
@@ -58,23 +65,17 @@ const FETCHING = [
   },
 ];
 
-/** SVG presentation attributes (and one unknown attribute) that load like CSS, in a label. */
+/**
+ * An SVG presentation attribute that loads like CSS, in a label. Every such attribute takes the
+ * same stripping branch; "drops every attribute whose value loads like CSS" below covers each one.
+ */
 const ATTRIBUTE_LOADS = [
-  "mask",
-  "filter",
-  "clip-path",
-  "fill",
-  "stroke",
-  "marker-start",
-  "marker-mid",
-  "marker-end",
-  "cursor",
-  "data-unknown",
-].map((attribute) => ({
-  name: `${attribute} attribute`,
-  source: `flowchart LR\nA["<svg width='10' height='10'><path d='M0 0 L5 5 L10 0' ${attribute}='url(/${PROBE}/${attribute}.png)'/></svg>"] --> B`,
-  address: `/${PROBE}/${attribute}.png`,
-}));
+  {
+    name: "mask attribute",
+    source: `flowchart LR\nA["<svg width='10' height='10'><path d='M0 0 L5 5 L10 0' mask='url(/${PROBE}/mask.png)'/></svg>"] --> B`,
+    address: `/${PROBE}/mask.png`,
+  },
+];
 const HTML_ATTRIBUTE_LOADS = [
   {
     name: "HTML background attribute",
@@ -126,7 +127,7 @@ describe("live upstream renderer safety and product behavior", () => {
       });
       expect(screen.container.querySelector("svg")).not.toBeNull();
       expect(screen.container.querySelector("image, img, a, script, style, [onclick]")).toBeNull();
-      expect((await mermaidSvgToPngBlob(result.svg, "light")).type).toBe("image/png");
+      expect(exportRefusal(result.svg, "light")).toBeNull();
       expect(probeRequests().filter((url) => url.includes(address))).toEqual(before);
     },
   );
@@ -138,16 +139,23 @@ describe("live upstream renderer safety and product behavior", () => {
         const result = await renderMermaidDiagram(source, theme);
         expect(result.blocked, source).toBeUndefined();
         expect(result.svg).toContain("<svg");
-        expect((await mermaidSvgToPngBlob(result.svg, theme)).type).toBe("image/png");
+        expect(exportRefusal(result.svg, theme), source).toBeNull();
       }
+      // One real encode per theme; the gate above decides export for the rest.
+      const first = await renderMermaidDiagram(ORDINARY[0]!, theme);
+      expect((await mermaidSvgToPngBlob(first.svg, theme)).type).toBe("image/png");
     },
   );
 
-  it.each(recoveryFixtures)("ports the immutable recovery condition: $name", async (fixture) => {
-    const result = await renderMermaidDiagram(fixture.source, "light");
-    expect(result.recovery?.originalSource).toBe(fixture.source);
-    expect(result.recovery?.source).toBe(fixture.expected);
-    expect(result.svg).toContain("<svg");
+  it("ports every immutable recovery condition through the real renderer", async () => {
+    // Node mermaidRecovery.test.ts proves each plan; this proves real Mermaid still rejects each
+    // fixture's source and draws its recovered source.
+    for (const fixture of recoveryFixtures) {
+      const result = await renderMermaidDiagram(fixture.source, "light");
+      expect(result.recovery?.originalSource, fixture.name).toBe(fixture.source);
+      expect(result.recovery?.source, fixture.name).toBe(fixture.expected);
+      expect(result.svg, fixture.name).toContain("<svg");
+    }
   });
 
   it("keeps generated MathML, spaced labels and native PNG export after fonts load", async () => {

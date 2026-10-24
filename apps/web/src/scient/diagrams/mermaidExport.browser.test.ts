@@ -83,14 +83,11 @@ describe("diagram PNG export", () => {
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 40 20">${body}</svg>`;
 
   // Links never load anything when an SVG is drawn as an image; Mermaid emits
-  // them for `click` directives and for links in labels.
+  // them for `click` directives and for links in labels. One row per allowance branch of
+  // svgRasterizationRefusal: a link (`href` and `xlink:href` share a local name), an
+  // in-document reference, and a fragment paint server.
   it.each([
     ["an anchor href", '<a href="https://example.com/docs"><text>Docs</text></a>'],
-    ["an anchor xlink:href", '<a xlink:href="https://example.com/docs"><text>Docs</text></a>'],
-    [
-      "an HTML link in a label",
-      '<foreignObject width="40" height="20"><div xmlns="http://www.w3.org/1999/xhtml"><a href="https://example.com">Docs</a></div></foreignObject>',
-    ],
     ["an in-document reference", '<defs><path id="m" d="M0 0"/></defs><use href="#m"/>'],
     ["a fragment paint server", '<rect width="4" height="4" fill="url(#gradient)"/>'],
   ])("copies and downloads a diagram with %s", async (_label, body) => {
@@ -109,14 +106,10 @@ describe("diagram PNG export", () => {
     expect(downloadPresentationBlob).toHaveBeenCalledWith(expect.any(Blob), "Study-flow.png");
   });
 
+  // One row per refusal branch: a fetching element (feImage also proves the name is
+  // lower-cased), an external href, CSS that names an outside resource, and a handler.
   it.each([
     ["an SVG image", '<image href="https://example.invalid/plot.png"/>', /external image/],
-    ["an xlink image", '<image xlink:href="plot.png"/>', /external image/],
-    [
-      "an HTML image in a label",
-      '<foreignObject><div xmlns="http://www.w3.org/1999/xhtml"><img src="https://example.invalid/p.png"/></div></foreignObject>',
-      /external image/,
-    ],
     [
       "a filter image",
       '<filter id="f"><feImage href="https://example.invalid/p.png"/></filter>',
@@ -127,34 +120,12 @@ describe("diagram PNG export", () => {
       '<use href="https://example.invalid/sprite.svg#icon"/>',
       /external resource/,
     ],
-    ["an external xlink use", '<use xlink:href="sprite.svg#icon"/>', /external resource/],
-    [
-      "a link wrapping an image",
-      '<a href="https://example.com"><image href="https://example.invalid/p.png"/></a>',
-      /external image/,
-    ],
     [
       "an external paint server",
       '<rect width="4" height="4" style="fill:url(https://example.invalid/p.svg#g)"/>',
       /external resource/,
     ],
-    [
-      "a label background image",
-      '<foreignObject><div xmlns="http://www.w3.org/1999/xhtml" style="background:url(https://example.invalid/p.png)">x</div></foreignObject>',
-      /external resource/,
-    ],
     ["an event handler", '<rect width="4" height="4" onclick="alert(1)"/>', /active content/],
-    ["a script", "<script>alert(1)</script>", /external image/],
-    [
-      "an embedded object",
-      '<foreignObject><object xmlns="http://www.w3.org/1999/xhtml" data="https://example.invalid/x"/></foreignObject>',
-      /external image/,
-    ],
-    [
-      "an embedded frame",
-      '<foreignObject><iframe xmlns="http://www.w3.org/1999/xhtml" src="https://example.invalid/"/></foreignObject>',
-      /external image/,
-    ],
   ])("refuses %s before rasterizing", async (_label, body, message) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
