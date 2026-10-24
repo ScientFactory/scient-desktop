@@ -2,36 +2,9 @@ import "../../../index.css";
 
 import { EnvironmentId, PdfCitation } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
-import { act, render } from "../../../../test/render";
-
-const mocks = vi.hoisted(() => ({ navigate: vi.fn() }));
-vi.mock(import("@tanstack/react-router"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  useNavigate: () => mocks.navigate,
-  Link: (({
-    children,
-    to: _to,
-    params,
-    hash,
-    resetScroll: _resetScroll,
-    ...props
-  }: ComponentProps<"a"> & {
-    to?: string;
-    params?: { environmentId: string; threadId: string };
-    hash?: string;
-    resetScroll?: boolean;
-  }) => (
-    <a
-      {...props}
-      href={params ? "/" + params.environmentId + "/" + params.threadId + "#" + (hash ?? "") : "#"}
-    >
-      {children}
-    </a>
-  )) as never,
-}));
+import { render } from "../../../../test/render";
 
 import { AssistantCitationChip } from "~/components/chat/AssistantCitationChip";
 
@@ -77,13 +50,8 @@ const quote = Schema.decodeUnknownSync(PdfCitation)({
   },
 });
 
-function setup() {
-  mocks.navigate.mockClear();
-}
-
 describe("PDF quote chips", () => {
   it.each([false, true])("names the PDF and page and opens it (composer: %s)", async (composer) => {
-    setup();
     await using screen = await render(
       <AssistantCitationChip citation={quote} composer={composer} />,
     );
@@ -106,11 +74,7 @@ describe("PDF quote chips", () => {
     expect(popup.textContent).toContain("PDF, p. 2");
     expect(popup.textContent).toContain("the coupling constant rises");
 
-    const click = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
-    await act(async () => link.dispatchEvent(click));
-    expect(click.defaultPrevented).toBe(true);
-    expect(mocks.navigate).toHaveBeenCalledWith(
-      expect.objectContaining({ hash: pdfCitationHash(quote) }),
-    );
+    await userEvent.click(link);
+    await vi.waitFor(() => expect(screen.router?.state.location.hash).toBe(pdfCitationHash(quote)));
   });
 });

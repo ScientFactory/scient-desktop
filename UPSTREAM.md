@@ -190,8 +190,10 @@ are retained unmounted (knip entries) so their changes still merge; the pass's r
 the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
 where a server is left for later while its machine still updates a provider or runtime, and is
 admitted again when its restart is due. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.
-In the desktop app a marked seam in `ProviderUpdateLaunchNotification.tsx` leaves "update
-available" toasts to the circle; the browser client keeps them.
+A marked root mount delegates browser "update available" toasts to Scient's
+`scient/providerConnection/BrowserProviderUpdateNotification.tsx`, reusing the shared CLI and
+managed-runtime update owners. Desktop availability stays in the circle. Browser dismissal
+storage and published-version identities remain compatible.
 Because a server waits while a provider update is queued, a marked seam in
 `apps/server/src/provider/providerMaintenanceRunner.ts` records an interrupted update, including
 one still waiting for the installer lock, as failed instead of leaving it queued. Upstream main has
@@ -590,18 +592,30 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current alignment through
-`21da3061aa006fc852ea4bd84c31ec084a3afa26` is recorded in
-[the 2026-10-20 receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md)
-([Scient PR #614](https://github.com/ScientFactory/scient-desktop/pull/614)).
-Literal extension merge `a495ed55e0d5f5e2740b750121772dcf1327108c` has exact owned
-base `80436ae5bead92d3cde82b90a6aa5b137aefde6b` and the frozen official target as
-parents, retaining all 133 additional donor commits after `81dea7821d`.
-Its committed provenance and staged seam checks pass; final qualification of the
-composed owned-main catch-up remains pending. Native V2, scientific capabilities,
-immutable migrations and database durability remain; cloud, telemetry, relay,
-updater, mobile publication and release holds are unchanged. The receipt separates
-older qualification from extension evidence and outstanding native/visual checks.
-Release remains separate.
+`2c8bdf6177159d8fcd12a897d7c9311f6eb93237` is recorded in
+[the 2026-10-23 receipt](docs/internals/t3-upstream-sync-20261023-2c8bdf6177.md).
+Literal merge `29f4ebb106d541307e8b2eb9251e41b9dd5cf703` has exact owned-main
+base `3ca9472f3cf5dd0e7b8d885a2e9bc876db31d5bc` and the frozen official target as
+parents, retaining all 151 additional donor commits after `21da3061aa`.
+Ordinary owned-main catch-ups preserve that merge: `2551263540432343ac6d9b3acb4551b7742015d0`
+includes `be0eaf41518376062d8945709e91b4ab0792a70b`;
+`94fde5e77561a699a30f7c6425d8a0848539b1c8` includes
+`d5c9445fc1ce5326355e80e45f073e91d4169119`; and
+`d7823dce9238cba7f958f3b04ad1ddd4a20072c5` includes
+`87e2e1f4d485c1a957566c27b6ffee621a3f95b4`.
+Local automated qualification covers all 46 workspace test tasks through fresh
+affected checks and exact unchanged-input reuse, including 488 current Overleaf
+cases and the complete 13,022-case web suite. Current-owned-main provenance and all
+six staged seam checks pass. The catch-ups retain the unmounted Overleaf foundation,
+short send admission and network-outside-checkout behavior; the web CI change is
+a job cap, not a test timeout. The owner approved the isolated localhost visual
+review and authorized push and merge in Scient PR #638. Hosted CI remains a required
+PR and merge-queue gate; native-device, authenticated live-provider, signing and
+release acceptance remain separate. The
+[previous receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md)
+retains its own boundaries and evidence, including Scient PR #614.
+Native V2, scientific capabilities, immutable migrations, database durability and
+all cloud, telemetry, relay, updater, mobile publication and release holds remain.
 
 ## Receiving T3 updates
 
@@ -1055,7 +1069,12 @@ presentation cutover to Codex, Claude or external Oh My Pi during upstream merge
 
 `scient-omp-seams.json` inventories owned code and the anchored `upstreamMounts`
 and shared `scientMounts`; shared integration points are not wholly OMP-owned.
-Analytics sends OMP as the gateway's existing `other` provider and is not a mount.
+The revision-7 analytics contract preserves `omp` and `scient` as separate bounded
+categories instead of folding them into `other`. Its shared allowlist, conformance
+generator and generated fixture are anchored `scientMounts`, not OMP-owned code.
+Deploy the revision-7 gateway before releasing this producer; old `other` records
+cannot be re-attributed. Analytics meanings and consent/content boundaries remain
+in `docs/internals/product-analytics.md`.
 `scripts/scient-seam-check.mjs --base --head` checks this inventory with the
 onboarding, skills, analysis and LaTeX seams in the upstream-provenance workflow.
 Keep this RPC client separate from Pi's RPC client.

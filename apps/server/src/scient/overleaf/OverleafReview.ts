@@ -55,7 +55,16 @@ export type OverleafReviewWarning =
   | { readonly kind: "restores-older-version"; readonly path: string }
   | { readonly kind: "over-recommended-size"; readonly bytes: number }
   | { readonly kind: "too-large-to-edit"; readonly path: string; readonly bytes: number }
-  | { readonly kind: "editable-total-exceeded"; readonly bytes: number };
+  | { readonly kind: "editable-total-exceeded"; readonly bytes: number }
+  /**
+   * An earlier send's outcome is unknown: Overleaf may hold it, so this sync could
+   * repeat or overwrite its changes.
+   */
+  | {
+      readonly kind: "unresolved-publication";
+      readonly attemptNumber: number;
+      readonly candidateCommit: string;
+    };
 
 /** Warnings the user must acknowledge by confirming this exact review. */
 const ACKNOWLEDGED: ReadonlySet<OverleafReviewWarning["kind"]> = new Set([
@@ -63,6 +72,7 @@ const ACKNOWLEDGED: ReadonlySet<OverleafReviewWarning["kind"]> = new Set([
   "no-sync-history",
   "rename",
   "restores-older-version",
+  "unresolved-publication",
 ]);
 
 export interface OverleafReviewConflict extends ConflictGroup {
@@ -371,6 +381,49 @@ function findAlias(paths: Iterable<string>) {
   return null;
 }
 
+/**
+ * Writes captured files as blobs and their tree. The bytes are staged first, so Git
+ * stores exactly what was hashed, not a later read of the folder.
+ */
+export const writeCapturedTree = Effect.fn("OverleafReview.writeCapturedTree")(function* (input: {
+  readonly repo: string;
+  readonly captured: OverleafInventory["captured"];
+  /** Private folder for the staged bytes; cleared afterwards. */
+  readonly scratch: string;
+}) {
+  const repos = yield* OverleafRepository;
+  const stage = NodePath.join(input.scratch, `capture-${newOverleafId()}`);
+  const paths = sorted(input.captured.keys());
+  const oids = yield* Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: async () => {
+        await NodeFSP.mkdir(stage, { recursive: true, mode: 0o700 });
+        const files: string[] = [];
+        for (const [index, path] of paths.entries()) {
+          const file = NodePath.join(stage, String(index));
+          await NodeFSP.writeFile(file, input.captured.get(path)!.bytes, { mode: 0o600 });
+          files.push(file);
+        }
+        return files;
+      },
+      catch: (cause) =>
+        new OverleafRepositoryError({
+          reason: "git-failed",
+          detail: "Could not stage captured files.",
+          cause,
+        }),
+    }),
+    (files) => repos.writeBlobsFromFiles({ repo: input.repo, files }),
+    () => Effect.promise(() => NodeFSP.rm(stage, { recursive: true, force: true })),
+  );
+  const blobs = new Map(paths.map((path, index) => [path, oids[index]!] as const));
+  const tree = yield* repos.writeTree({
+    repo: input.repo,
+    entries: paths.map((path) => ({ path, oid: blobs.get(path)! })),
+  });
+  return { blobs, tree };
+});
+
 export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
   input: OverleafReviewInput,
 ) {
@@ -451,35 +504,10 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
   if (new Set([...keptLocalOnly, ...newLocalOnly]).size > limits.localOnlyPaths)
     return refused({ reason: "local-only-limit" });
 
-  // Stage the captured bytes, so Git stores exactly what was hashed, not a later read.
-  const stage = NodePath.join(input.scratch, `review-${newOverleafId()}`);
-  const capturedPaths = sorted(inventory.captured.keys());
-  const oids = yield* Effect.acquireUseRelease(
-    Effect.tryPromise({
-      try: async () => {
-        await NodeFSP.mkdir(stage, { recursive: true, mode: 0o700 });
-        const files: string[] = [];
-        for (const [index, path] of capturedPaths.entries()) {
-          const file = NodePath.join(stage, String(index));
-          await NodeFSP.writeFile(file, inventory.captured.get(path)!.bytes, { mode: 0o600 });
-          files.push(file);
-        }
-        return files;
-      },
-      catch: (cause) =>
-        new OverleafRepositoryError({
-          reason: "git-failed",
-          detail: "Could not stage captured files.",
-          cause,
-        }),
-    }),
-    (files) => repos.writeBlobsFromFiles({ repo, files }),
-    () => Effect.promise(() => NodeFSP.rm(stage, { recursive: true, force: true })),
-  );
-  const local = new Map(capturedPaths.map((path, index) => [path, oids[index]!] as const));
-  const localTree = yield* repos.writeTree({
+  const { blobs: local, tree: localTree } = yield* writeCapturedTree({
     repo,
-    entries: capturedPaths.map((path) => ({ path, oid: local.get(path)! })),
+    captured: inventory.captured,
+    scratch: input.scratch,
   });
 
   const merge = yield* repos.merge({
@@ -610,6 +638,14 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     if (local.size > 0) warnings.push({ kind: "no-sync-history" });
   }
   for (const rename of renamesOf(outgoing)) warnings.push({ kind: "rename", ...rename });
+  // Contract section 6: every earlier send still unresolved is named and acknowledged.
+  for (const attempt of connection.attempts)
+    if (attempt.outcome === "unknown" || attempt.outcome === "superseded-unresolved")
+      warnings.push({
+        kind: "unresolved-publication",
+        attemptNumber: attempt.attemptNumber,
+        candidateCommit: attempt.candidateCommit,
+      });
   const priorTrees: FileTree[] = [];
   for (const prior of connection.priorBases) {
     if (prior.tree !== baseTree)
@@ -693,7 +729,10 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
       base,
       remote,
       captured: new Map(
-        capturedPaths.map((path) => [path, inventory.captured.get(path)!.revision]),
+        sorted(inventory.captured.keys()).map((path) => [
+          path,
+          inventory.captured.get(path)!.revision,
+        ]),
       ),
       target,
       renames,

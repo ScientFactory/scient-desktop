@@ -172,14 +172,32 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
   const targetId = yield* resolveThreadId(context, threadId);
   const shell = yield* context.threads.getThreadShell(targetId).pipe(Effect.mapError(unavailable));
   if (
-    shell === null ||
-    shell.deletedAt !== null ||
-    (context.caller !== undefined && shell.projectId !== context.caller.projectId)
+    shell !== null &&
+    context.caller !== undefined &&
+    shell.projectId !== context.caller.projectId
   ) {
     return yield* new OrchestratorMcpFailure({
       code: "thread_not_found",
       message: "The thread was not found.",
     });
+  }
+  if (shell === null || shell.deletedAt !== null) {
+    return yield* OrchestrationMcp.threadNotFound(
+      {
+        getThreadShell: (id) =>
+          context.threads
+            .getThreadShell(id)
+            .pipe(
+              Effect.map((candidate) =>
+                context.caller === undefined || candidate?.projectId === context.caller.projectId
+                  ? candidate
+                  : null,
+              ),
+            ),
+      },
+      targetId,
+      "The thread was not found.",
+    );
   }
   const projection = yield* context.threads
     .getProjectThreadRecords({ projectId: shell.projectId, threadId: targetId }, fields, {

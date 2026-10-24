@@ -2,7 +2,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
-  PositiveInt,
+  OrchestratorMcpThreadReadInput,
   ProjectId,
   ProviderInstanceId,
   ProviderInteractionMode,
@@ -64,23 +64,19 @@ export const ScientThreadReadInput = Schema.Struct({
       description: "Return items after this position. Omit to start at the beginning.",
     }),
   ),
-  limit: Schema.optional(
-    PositiveInt.check(Schema.isLessThanOrEqualTo(100)).annotate({
-      description: `Maximum items to return (default ${THREAD_READ_DEFAULT_LIMIT}).`,
-    }),
-  ),
+  // SCIENT-FORK:START shared-reader-page-bounds
+  limit: OrchestratorMcpThreadReadInput.fields.limit.annotate({
+    description: `Maximum items to return (default ${THREAD_READ_DEFAULT_LIMIT}).`,
+  }),
   // Accepted for the shipped reader's input compatibility. Run metadata is
   // available through orchestration inspection rather than this narrow reader.
-  runLimit: Schema.optional(
-    PositiveInt.check(Schema.isLessThanOrEqualTo(50)).annotate({
-      description: "Accepted for compatibility and ignored; no run history is returned.",
-    }),
-  ),
-  maxCharsPerItem: Schema.optional(
-    PositiveInt.check(Schema.isLessThanOrEqualTo(50_000)).annotate({
-      description: `Maximum text characters per item (default ${THREAD_READ_DEFAULT_MAX_CHARS_PER_ITEM}).`,
-    }),
-  ),
+  runLimit: OrchestratorMcpThreadReadInput.fields.runLimit.annotate({
+    description: "Accepted for compatibility and ignored; no run history is returned.",
+  }),
+  maxCharsPerItem: OrchestratorMcpThreadReadInput.fields.maxCharsPerItem.annotate({
+    description: `Maximum text characters per item (default ${THREAD_READ_DEFAULT_MAX_CHARS_PER_ITEM}).`,
+  }),
+  // SCIENT-FORK:END shared-reader-page-bounds
 });
 export type ScientThreadReadInput = typeof ScientThreadReadInput.Type;
 

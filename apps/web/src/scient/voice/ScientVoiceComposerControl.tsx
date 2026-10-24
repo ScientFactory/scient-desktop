@@ -136,7 +136,7 @@ interface VoiceModelSetupPickerProps {
   readonly onSelect: (modelId: VoiceModelId) => void;
 }
 
-export function VoiceModelSetupPicker({
+function VoiceModelSetupPicker({
   disabled,
   snapshot,
   onSelect,

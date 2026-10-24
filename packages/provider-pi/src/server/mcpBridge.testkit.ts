@@ -69,6 +69,7 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly toolNameMap?: Readonly<Record<string, string>>;
     readonly runtimeMode?: string;
+    readonly inputSchema?: Record<string, unknown>;
     // SCIENT-FORK:START — Scient Extensions connectors: fixture servers and response encoding.
     readonly connectors?: ReadonlyArray<FixtureConnector>;
     /** Encodes a JSON-RPC response; undefined keeps the plain `application/json` reply. */
@@ -106,7 +107,7 @@ export async function loadMcpBridge(
     { name: "preview_snapshot", description: "Inspect the collaborative browser." },
   ].map((tool) => ({
     ...tool,
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: options.inputSchema ?? { type: "object", properties: {} },
     outputSchema: { type: "object", properties: { count: { type: "number" } } },
   }));
   const source = NodeModule.stripTypeScriptTypes(

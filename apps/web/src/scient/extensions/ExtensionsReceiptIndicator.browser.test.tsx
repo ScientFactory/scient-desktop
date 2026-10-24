@@ -6,8 +6,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { render } from "../../../test/render";
 import { userEvent } from "vite-plus/test/browser";
+import { render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   receipt: undefined as ExtensionDeliveryReceipt | undefined,
@@ -18,23 +18,6 @@ vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: { receipt: state.receipt }, error: null }),
 }));
 vi.mock("./extensionsState", () => ({ extensionsDeliveryReceipt: state.receiptAtom }));
-vi.mock(import("@tanstack/react-router"), async (original) => ({
-  ...(await original()),
-  Link: (({
-    to,
-    search,
-    children,
-    ...props
-  }: {
-    to: string;
-    search?: { machine?: string };
-    children: React.ReactNode;
-  }) => (
-    <a href={to} data-machine={search?.machine} {...props}>
-      {children}
-    </a>
-  )) as never,
-}));
 
 import { ExtensionsReceiptIndicator } from "./ExtensionsReceiptIndicator";
 
@@ -72,27 +55,29 @@ function setup() {
   state.receiptAtom.mockClear();
 }
 
-const indicator = () => (
-  <ExtensionsReceiptIndicator environmentId={environmentId} threadId={threadId} />
-);
-
 describe("ExtensionsReceiptIndicator", () => {
   it("renders nothing until the thread has a receipt", async () => {
     setup();
-    await using screen = await render(indicator());
+    await using screen = await render(
+      <ExtensionsReceiptIndicator environmentId={environmentId} threadId={threadId} />,
+    );
     const { container } = screen;
     expect(container.innerHTML).toBe("");
     expect(state.receiptAtom).toHaveBeenCalledWith({ environmentId, input: { threadId } });
 
     state.receipt = receipt({ delivered: [], skipped: [] });
-    await screen.rerender(indicator());
+    await screen.rerender(
+      <ExtensionsReceiptIndicator environmentId={environmentId} threadId={threadId} />,
+    );
     expect(container.innerHTML).toBe("");
   });
 
   it("summarizes delivery and lists every skip with its reason", async () => {
     setup();
     state.receipt = receipt();
-    await using screen = await render(indicator());
+    await using screen = await render(
+      <ExtensionsReceiptIndicator environmentId={environmentId} threadId={threadId} />,
+    );
     const { container } = screen;
     const trigger = container.querySelector<HTMLButtonElement>("[data-extensions-receipt]")!;
     expect(trigger.getAttribute("aria-label")).toBe("Connected services: 1 delivered, 4 skipped");
@@ -111,15 +96,25 @@ describe("ExtensionsReceiptIndicator", () => {
       ["transport-unsupported", "Hugging FaceNot supported by this agent"],
       ["project-deselected", "SentryOff for this project"],
     ]);
-    const manage = document.querySelector('a[href="/settings/extensions/installed"]');
+    const manage = document.querySelector<HTMLAnchorElement>(
+      'a[href="/settings/extensions/installed?machine=local"]',
+    );
     expect(manage?.textContent).toBe("Manage connected services");
-    expect(manage?.getAttribute("data-machine")).toBe("local");
+    expect(new URL(manage!.href).searchParams.get("machine")).toBe("local");
+    await userEvent.click(manage!);
+    await vi.waitFor(() =>
+      expect(screen.router?.state.location.href).toBe(
+        "/settings/extensions/installed?machine=local",
+      ),
+    );
   });
 
   it("omits the skipped list when everything was delivered", async () => {
     setup();
     state.receipt = receipt({ skipped: [] });
-    await using screen = await render(indicator());
+    await using screen = await render(
+      <ExtensionsReceiptIndicator environmentId={environmentId} threadId={threadId} />,
+    );
     const { container } = screen;
     const trigger = container.querySelector<HTMLButtonElement>("[data-extensions-receipt]")!;
     expect(trigger.textContent).toBe("1");

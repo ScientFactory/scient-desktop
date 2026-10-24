@@ -586,6 +586,7 @@ function closingBrace(source: string, opening: number): number | null {
   return null;
 }
 
+const LATEX_EM_DASH = String.fromCodePoint(0x2014);
 const TEXT_SYMBOLS: Readonly<Record<string, string>> = {
   quad: "\u2003",
   qquad: "\u2003\u2003",
@@ -609,7 +610,7 @@ const TEXT_SYMBOLS: Readonly<Record<string, string>> = {
   textasciitilde: "~",
   textasciicircum: "^",
   textendash: "\u2013",
-  textemdash: "\u2014",
+  textemdash: LATEX_EM_DASH,
   textellipsis: "\u2026",
   dots: "\u2026",
   ldots: "\u2026",
@@ -701,7 +702,7 @@ function inlineTextToken(
   const whitespace = /^[\t\r\n ]+/u.exec(source);
   if (whitespace) return { source: whitespace[0], text: " " };
   for (const [token, text] of [
-    ["---", "\u2014"],
+    ["---", LATEX_EM_DASH],
     ["--", "\u2013"],
     ["``", "\u201c"],
     ["''", "\u201d"],
@@ -6009,7 +6010,7 @@ function roundTripSignature(node: JSONContent): string {
   if (cached !== undefined) return cached;
   const prose = (text: string) =>
     text
-      .replace(/---/gu, "\u2014")
+      .replace(/---/gu, LATEX_EM_DASH)
       .replace(/--/gu, "\u2013")
       .replace(/[\t\r\n ]+/gu, " ");
   const normalize = (value: JSONContent): JSONContent => {

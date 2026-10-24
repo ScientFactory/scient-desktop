@@ -16,6 +16,7 @@ import type {
 import { PROJECT_MISSING_FILE_REVISION } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isNetworkPath } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -300,7 +301,9 @@ export const make = Effect.gen(function* () {
 
   const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
     const expandedPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
-    if (!path.isAbsolute(expandedPath)) return null;
+    // Chips ask as soon as an agent's message renders, and touching a network
+    // path makes Windows sign in to its host with the user's NTLM credentials.
+    if (!path.isAbsolute(expandedPath) || isNetworkPath(expandedPath)) return null;
     const stat = yield* fileSystem.stat(expandedPath).pipe(Effect.option);
     if (stat._tag === "None") return null;
     if (stat.value.type === "Directory") return { kind: "directory" } as const;
@@ -405,6 +408,20 @@ export const make = Effect.gen(function* () {
   };
   // SCIENT-FORK:END
 
+  const assertNetworkPathWithinRoot = Effect.fn("WorkspaceFileSystem.assertNetworkPathWithinRoot")(
+    function* (input: ProjectReadFileInput, targetPath = input.relativePath) {
+      if (
+        isNetworkPath(targetPath) &&
+        !KnownWorkspaces.isWithinRoot(path, path.resolve(targetPath), path.resolve(input.cwd))
+      ) {
+        return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+        });
+      }
+    },
+  );
+
   /**
    * Resolves the file a read targets, for one of two purposes.
    *
@@ -429,10 +446,14 @@ export const make = Effect.gen(function* () {
     // A host path is always read-only here. It is reported as outside the
     // workspace only when it is: an absolute spelling of a workspace file is
     // read-only for being addressed that way, not for where it lives.
-    const readHostFile = (hostPath: string) =>
-      Effect.tryPromise({
+    const readHostFile = Effect.fn("WorkspaceFileSystem.readHostFile")(function* (
+      hostPath: string,
+    ) {
+      const absolutePath = isNetworkPath(hostPath) ? path.resolve(hostPath) : hostPath;
+      yield* assertNetworkPathWithinRoot({ ...input, relativePath: hostPath });
+      return yield* Effect.tryPromise({
         try: async () => {
-          const resolved = await canonicalReadTarget(hostPath, input.allowMissing);
+          const resolved = await canonicalReadTarget(absolutePath, input.allowMissing);
           const realRoot = await NodeFSP.realpath(input.cwd).catch(() => null);
           return {
             relativePath: requestedPath,
@@ -445,17 +466,26 @@ export const make = Effect.gen(function* () {
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
             relativePath: input.relativePath,
-            resolvedPath: hostPath,
-            operationPath: hostPath,
+            resolvedPath: absolutePath,
+            operationPath: absolutePath,
             operation: "realpath-target",
             cause,
           }),
       });
+    });
     const hostPath = requestedPath.startsWith("~/")
       ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
       : requestedPath;
+    const resolvedHostPath = path.isAbsolute(hostPath)
+      ? isNetworkPath(hostPath)
+        ? path.resolve(hostPath)
+        : hostPath
+      : path.resolve(input.cwd, hostPath);
+    if (isNetworkPath(resolvedHostPath)) {
+      yield* assertNetworkPathWithinRoot(input, resolvedHostPath);
+    }
     if (path.isAbsolute(hostPath)) {
-      return yield* readHostFile(hostPath);
+      return yield* readHostFile(resolvedHostPath);
     }
 
     const resolveWithinRoot = workspacePaths.resolveRelativePathWithinRoot({
@@ -677,6 +707,7 @@ export const make = Effect.gen(function* () {
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
     "WorkspaceFileSystem.readFile",
   )(function* (input) {
+    yield* assertNetworkPathWithinRoot(input);
     if (!path.isAbsolute(input.relativePath)) {
       yield* workspacePaths.resolveRelativePathWithinRoot({
         workspaceRoot: input.cwd,
@@ -697,6 +728,7 @@ export const make = Effect.gen(function* () {
   const viewFile: WorkspaceFileSystem["Service"]["viewFile"] = Effect.fn(
     "WorkspaceFileSystem.viewFile",
   )(function* (input) {
+    yield* assertNetworkPathWithinRoot(input);
     const rootExists = yield* fileSystem.exists(input.cwd).pipe(
       Effect.mapError(
         (cause) =>

@@ -165,6 +165,25 @@ describe("Cloud probe boundaries", () => {
         ).toBe("unknown");
       }),
   );
+  it.effect("accepts a historical tree only from a commit after the recorded parent", () =>
+    Effect.gen(function* () {
+      const check = (afterParent: boolean) =>
+        probeAcceptance({
+          repository: {
+            // History was rewritten: the candidate's tree appears in an unrelated commit.
+            treesSince: () => Effect.succeed([{ commit: "unrelated", tree: "candidate" }]),
+            isAncestor: (input: { ancestor: string; descendant: string }) =>
+              Effect.succeed(afterParent && input.ancestor === "base"),
+          } as unknown as OverleafRepository["Service"],
+          repo: "/unused",
+          before: "base",
+          head: { commit: "new", tree: "different" },
+          candidate: { commit: "lost", tree: "candidate" },
+        });
+      expect(yield* check(false)).toBe("unknown");
+      expect(yield* check(true)).toBe("bounded-history-tree");
+    }),
+  );
   it("rehearses publishing, rejection, renames and lost-ack verification with real Git", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-probe-cli-"));
     const report = NodePath.join(root, "report.json");

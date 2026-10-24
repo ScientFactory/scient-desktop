@@ -96,7 +96,7 @@ export const make = Effect.gen(function* () {
           AND messages.streaming = 0
           AND messages.role IN ('user', 'assistant')
           AND json_extract(messages.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
-        -- SCIENT-FORK:START — a fork's history shows other conversations' messages.
+        -- SCIENT-FORK:START: a fork's history shows other conversations' messages.
         UNION ALL
         SELECT
           threads.thread_id,

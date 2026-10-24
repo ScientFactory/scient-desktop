@@ -124,8 +124,17 @@ export const probeAcceptance = Effect.fnUntraced(function* (input: {
   const history = yield* input.repository
     .treesSince({ repo: input.repo, after: input.before, head: input.head.commit, limit: 64 })
     .pipe(Effect.option);
-  if (Option.isSome(history) && history.value.some((entry) => entry.tree === input.candidate.tree))
-    return "bounded-history-tree" as const;
+  // A match counts only after the recorded parent: when history was rewritten,
+  // `before..head` also lists unrelated commits, which prove nothing.
+  if (Option.isSome(history))
+    for (const entry of history.value)
+      if (
+        entry.tree === input.candidate.tree &&
+        (yield* input.repository
+          .isAncestor({ repo: input.repo, ancestor: input.before, descendant: entry.commit })
+          .pipe(Effect.orElseSucceed(() => false)))
+      )
+        return "bounded-history-tree" as const;
   const reachable = yield* input.repository
     .isAncestor({
       repo: input.repo,

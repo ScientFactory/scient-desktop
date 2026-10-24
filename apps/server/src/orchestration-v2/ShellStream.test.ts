@@ -1,10 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
 import type {
+  ApplicationStoredEvent,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ShellStreamItem,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -16,11 +23,18 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
+  isMeasuredTransferShellUpdate,
+  TRANSFER_HISTORY_TURN_COUNT,
+  TRANSFER_THREAD_ID,
+} from "../../integration/TransferBudgetScenario.integration.ts";
+
+import {
   bufferShellLiveStream,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
   shellStreamItemFromEnrichmentRefresh,
   shellStreamItemsFromInitialSnapshot,
+  shouldPublishShellApplicationEvent,
   skipUnchangedThreadShells,
 } from "./ShellStream.ts";
 
@@ -31,6 +45,49 @@ const emptyShellSnapshot = {
   threads: [],
   archivedThreads: [],
 } as OrchestrationV2ShellSnapshot;
+
+describe("subagent shell events", () => {
+  const stored = (threadId: string, type: string) =>
+    ({ event: { threadId, type } }) as ApplicationStoredEvent;
+
+  it("keeps regular threads and subagent state changes while omitting subagent transcript updates", () => {
+    const subagents = new Set(["child"]);
+    expect(
+      shouldPublishShellApplicationEvent(stored("parent", "turn-item.updated"), subagents),
+    ).toBe(true);
+    expect(
+      shouldPublishShellApplicationEvent(stored("child", "turn-item.updated"), subagents),
+    ).toBe(false);
+    expect(shouldPublishShellApplicationEvent(stored("child", "node.updated"), subagents)).toBe(
+      false,
+    );
+    expect(
+      shouldPublishShellApplicationEvent(stored("child", "runtime-request.updated"), subagents),
+    ).toBe(true);
+    expect(shouldPublishShellApplicationEvent(stored("child", "run.updated"), subagents)).toBe(
+      true,
+    );
+  });
+
+  it("tracks subagents created after the subscription starts", () => {
+    const subagents = new Set<string>();
+    const created = {
+      event: {
+        threadId: "new-child",
+        type: "thread.created",
+        payload: { lineage: { relationshipToParent: "subagent" } },
+      },
+    } as ApplicationStoredEvent;
+    expect(shouldPublishShellApplicationEvent(created, subagents)).toBe(true);
+    expect(
+      shouldPublishShellApplicationEvent(stored("new-child", "message.updated"), subagents),
+    ).toBe(false);
+    expect(
+      shouldPublishShellApplicationEvent(stored("new-child", "thread.deleted"), subagents),
+    ).toBe(true);
+    expect(subagents.has("new-child")).toBe(true);
+  });
+});
 
 it.effect("coalesces a slow shell subscriber by identity and location in sequence order", () =>
   Effect.scoped(
@@ -434,7 +491,10 @@ describe("skipUnchangedThreadShells", () => {
   type Step =
     | { readonly advanceMs: number }
     | Exclude<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" | "synchronized" }>;
-  const updated = (sequence: number, thread: OrchestrationV2ThreadShell): Step => ({
+  const updated = (
+    sequence: number,
+    thread: OrchestrationV2ThreadShell,
+  ): Extract<OrchestrationV2ShellStreamItem, { readonly kind: "thread.updated" }> => ({
     kind: "thread.updated",
     sequence,
     location: "active",
@@ -452,6 +512,31 @@ describe("skipUnchangedThreadShells", () => {
       Stream.runCollect,
       Effect.map((items) => Array.from(items, (item) => ("sequence" in item ? item.sequence : -1))),
     );
+
+  it.effect("recognizes a completed transfer shell before its suppressed duplicate cursor", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("codex");
+      const runId = RunId.make(`run-${TRANSFER_HISTORY_TURN_COUNT}`);
+      const completed = shell(TRANSFER_THREAD_ID, {
+        status: "completed",
+        latestRunId: runId,
+        latestRunCompletedAt: at(10),
+      });
+      const earlier = updated(147, completed);
+      expect(yield* run([earlier, updated(148, completed)])).toEqual([147]);
+      expect(isMeasuredTransferShellUpdate(earlier, provider, 140)).toBe(true);
+      expect(isMeasuredTransferShellUpdate(earlier, provider, 147)).toBe(false);
+      for (const stale of [
+        shell(TRANSFER_THREAD_ID, { ...completed, activeRunId: runId }),
+        shell(TRANSFER_THREAD_ID, { ...completed, latestRunCompletedAt: null }),
+        shell(TRANSFER_THREAD_ID, { ...completed, latestRunId: RunId.make("previous") }),
+        { ...completed, id: ThreadId.make("different-thread") },
+        { ...completed, providerInstanceId: ProviderInstanceId.make("claudeAgent") },
+      ]) {
+        expect(isMeasuredTransferShellUpdate(updated(148, stale), provider, 140)).toBe(false);
+      }
+    }),
+  );
 
   it.effect("sends the next update after a removal", () =>
     Effect.gen(function* () {

@@ -217,7 +217,7 @@ export interface SecurityReport {
 function placeholderSpan(label: string, reason: string): PandocNode {
   return customStyleSpan(
     PLACEHOLDER_STYLE,
-    textInlines(`[Image unavailable: ${label} — ${reason}]`),
+    textInlines(`[Image unavailable: ${label}, ${reason}]`),
   );
 }
 

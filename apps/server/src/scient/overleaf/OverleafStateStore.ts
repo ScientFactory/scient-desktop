@@ -204,6 +204,12 @@ export class OverleafStateStore extends Context.Service<
       connectionId: string,
     ) => Effect.Effect<OverleafConnectionRead, OverleafStateIoError>;
     readonly listConnections: Effect.Effect<ReadonlyArray<string>, OverleafStateIoError>;
+    /**
+     * Writable admission (contract section 3): acquires this process's lease on the
+     * state folder, or confirms it is still held. Work that changes the private
+     * repository or the folder starts with it, even before any document write.
+     */
+    readonly admitWritable: Effect.Effect<void, WriteError>;
     readonly createConnection: (
       document: OverleafConnectionDocument,
     ) => Effect.Effect<
@@ -444,6 +450,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   });
   const withLease = <A, E>(effect: Effect.Effect<A, E>) =>
     writes.withPermits(1)(Effect.uninterruptible(ensureLease.pipe(Effect.andThen(effect))));
+  const admitWritable: OverleafStateStore["Service"]["admitWritable"] = withLease(Effect.void);
 
   /** Writes a complete, synced temporary next to `file`. */
   const writeTemporary = async (file: string, contents: string) => {
@@ -700,6 +707,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   return OverleafStateStore.of({
     readConnection,
     listConnections,
+    admitWritable,
     createConnection,
     replaceConnection,
     quarantineConnection,

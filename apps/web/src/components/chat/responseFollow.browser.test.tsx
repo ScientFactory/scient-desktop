@@ -4,6 +4,7 @@ import {
   render as _fixtureRender,
   type Screen,
 } from "../../../test/render";
+import { waitForTestReceipt } from "../../../test/receipt";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import "../../index.css";
 import {
@@ -49,14 +50,14 @@ async function _cleanupFixture1(_fixture: _Fixture) {
   motionClock.now = realNow;
   _fixture.chat.sending.clear();
 }
-async function play(_fixture: _Fixture, ms: number, eachFrame?: () => void) {
+async function play(_fixture: _Fixture, ms: number, eachFrame?: () => void | Promise<void>) {
   if (!eachFrame) {
     await _fixtureAct(() => vi.advanceTimersByTimeAsync(ms));
     return;
   }
   for (let elapsed = 0; elapsed < ms; elapsed += 16) {
     await _fixtureAct(() => vi.advanceTimersByTimeAsync(Math.min(16, ms - elapsed)));
-    eachFrame();
+    await eachFrame();
   }
 }
 async function playUntil(_fixture: _Fixture, done: () => boolean, ms = 6000) {
@@ -79,6 +80,30 @@ async function scroll(operation: () => Promise<void>) {
     receipt = operation();
   });
   await vi.waitFor(() => receipt);
+}
+
+async function waitForMeasuredRow(_fixture: _Fixture, rowId: string, signal: AbortSignal) {
+  const list = _fixture.listRef.current!;
+  const measured = Promise.withResolvers<void>();
+  const check = () => {
+    const state = list.getState();
+    const index = state.indexByKey(rowId);
+    if (index === undefined) return;
+    const element = state.elementAtIndex(index);
+    if (element instanceof HTMLElement && state.sizeAtIndex(index) === element.offsetHeight)
+      measured.resolve();
+  };
+  const stopSize = list.getState().listen("totalSize", check);
+  const stopPosition = list.getState().listen("lastPositionUpdate", check);
+  using _measurement = {
+    [Symbol.dispose]() {
+      stopSize();
+      stopPosition();
+    },
+  };
+  // The reveal changes native layout; fake RAF must not outrun Legend's size delivery.
+  check();
+  await waitForTestReceipt(signal, measured.promise);
 }
 
 type Entry = React.ComponentProps<typeof MessagesTimeline>["timelineEntries"][number];
@@ -625,7 +650,7 @@ it("returns a reader who scrolled well up before leaving a working thread to tha
   expect(toEnd(_fixture)).toBeGreaterThan(200);
 });
 
-it("scrolls smoothly with an answer appearing line by line, never ahead of it", async () => {
+it("scrolls smoothly with an answer appearing line by line, never ahead of it", async (context) => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
@@ -653,7 +678,7 @@ it("scrolls smoothly with an answer appearing line by line, never ahead of it", 
   const revealed = () => Number.parseFloat(text()?.style.getPropertyValue("--reveal-front") || "0");
   const positions: number[] = [];
   let aheadOfReveal = 0;
-  await play(_fixture, 2600, () => {
+  await play(_fixture, 2600, async () => {
     positions.push(viewport(_fixture).scrollTop);
     const element = text();
     if (!element) return;
@@ -665,6 +690,7 @@ it("scrolls smoothly with an answer appearing line by line, never ahead of it", 
       viewport(_fixture).clientHeight -
       _fixture.base.contentInsetEndAdjustment;
     aheadOfReveal = Math.max(aheadOfReveal, readingBottom - shownBottom - 64);
+    await waitForMeasuredRow(_fixture, "entry-11", context.signal);
   });
   const moves = positions.slice(1).map((value, index) => value - positions[index]!);
   expect(positions.at(-1)! - positions[0]!).toBeGreaterThan(40);

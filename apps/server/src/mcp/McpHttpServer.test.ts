@@ -1,6 +1,7 @@
 import * as Path from "effect/Path";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import { LegacyV1ThreadImporter } from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -34,6 +35,7 @@ import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindin
 import { workspaceResolverForTest } from "../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import { ScientThreadReadTool, ScientThreadReadToolError } from "./toolkits/threads/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -144,6 +146,7 @@ const layerRecordingTools = (calls: Array<unknown>) => {
     OrchestratorToolkit.tools.scient_thread_inspect,
     OrchestratorToolkit.tools.scient_thread_wait,
     ProjectToolkit.tools.scient_project_update,
+    ScientThreadReadTool,
   );
   const record = McpToolAccess.reads((params: unknown) =>
     Effect.sync(() => calls.push(params)).pipe(
@@ -159,6 +162,15 @@ const layerRecordingTools = (calls: Array<unknown>) => {
       scient_thread_inspect: record,
       scient_thread_wait: record,
       scient_project_update: record,
+      scient_thread_read: McpToolAccess.reads((params) =>
+        Effect.sync(() => calls.push(params)).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ScientThreadReadToolError({ code: "thread_not_found", message: "Recorded." }),
+            ),
+          ),
+        ),
+      ),
     }),
   ).pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
@@ -167,6 +179,8 @@ const layerRecordingTools = (calls: Array<unknown>) => {
         McpToolAccessTestkit.liveThreadsLayer,
         Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+        Layer.mock(LegacyV1ThreadImporter)({}),
         NodeServices.layer,
       ),
     ),
@@ -549,6 +563,58 @@ it.effect("reports a tagged error when the screenshot cannot be saved", () =>
       });
     }),
   ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "clamps scient_thread_read page sizes above their maximum instead of rejecting the call",
+  () => {
+    const calls: Array<unknown> = [];
+    return Effect.gen(function* () {
+      const thread = { threadId: "thread-clamped-arguments" };
+      // Codex never shows the model these bounds, so an over-large page must still read.
+      yield* callTool("scient_thread_read", {
+        ...thread,
+        limit: 150,
+        runLimit: 80,
+        maxCharsPerItem: 60_000,
+      });
+      yield* callTool("scient_thread_read", {
+        ...thread,
+        limit: 100,
+        runLimit: 50,
+        maxCharsPerItem: 50_000,
+      });
+      yield* callTool("scient_thread_read", {
+        ...thread,
+        limit: 7,
+        runLimit: 1,
+        maxCharsPerItem: 1,
+      });
+
+      expect(calls).toEqual([
+        { ...thread, limit: 100, runLimit: 50, maxCharsPerItem: 50_000 },
+        { ...thread, limit: 100, runLimit: 50, maxCharsPerItem: 50_000 },
+        { ...thread, limit: 7, runLimit: 1, maxCharsPerItem: 1 },
+      ]);
+    }).pipe(Effect.provide(layerRecordingTools(calls)));
+  },
+);
+
+it.effect.each(["limit", "runLimit", "maxCharsPerItem"])(
+  "still rejects a scient_thread_read %s below its minimum",
+  (field) => {
+    const calls: Array<unknown> = [];
+    return Effect.gen(function* () {
+      // Zero is a different request than one item, so it fails rather than answering another question.
+      const rejected = yield* callTool("scient_thread_read", {
+        threadId: "thread-below-minimum",
+        [field]: 0,
+      }).pipe(Effect.flip);
+
+      expect(String(rejected)).toContain("greater than or equal to 1");
+      expect(calls).toEqual([]);
+    }).pipe(Effect.provide(layerRecordingTools(calls)));
+  },
 );
 
 it.effect(

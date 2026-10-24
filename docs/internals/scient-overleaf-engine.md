@@ -244,13 +244,196 @@ is one instance per server process, shared however each layer was built.
 Arbitrary shell writers, external Git commands and other server profiles are
 outside it.
 
+## Coordinator
+
+`OverleafCoordinator` (unmounted until step 5) prepares reviews, applies a
+confirmed one and sends its result to Overleaf, recovers an interrupted apply,
+settles earlier sends, and lists and restores kept copies.
+
+- **Lock order.** The connection's operation reservation comes first: in
+  memory, refused (`OverleafOperationActiveError`) rather than queued. Then the
+  checkout barrier's application section, then the store's compare-and-set,
+  then the file layer's locks. Overleaf is fetched before the section.
+- **Confirm.** Inside the section, it checks the folder and retention
+  identities, captures the folder again and rebuilds the review with the same
+  selections and choices. Capture reads the base's paths, the managed paths and
+  every path in a forced conflict. A different digest is a stale review: the
+  fresh one is offered and nothing is applied. Before anything is written it
+  checks room:
+  for every kept copy the apply could add, and for every group an interruption
+  could leave as a forced conflict (at most 2,000 paths each). Then, before the
+  applier runs, it records the receipt, a local snapshot, the intent pin and
+  `activeApply`, in that order.
+- **Adoption** is one document replacement:
+  - the base: a tree written from the applier's per-path base on the fetched
+    remote commit, with the previous base moved into `priorBases`;
+  - managed and local-only paths;
+  - `forcedConflicts` (interrupted groups) and `markerPaths`;
+  - kept copies, each with its place in the retention folder and a stamp (size
+    and change time) taken around a fresh read of its bytes, from the file its
+    path still names. A copy that no longer holds what the applier kept is
+    recorded `changed`, never released;
+  - `completedSyncCount`, which advances only on `complete`;
+  - unknown publication attempts, which become `superseded-unresolved`;
+  - the link, cleared.
+
+  Recovery resumes the applier by the linked ID and adopts once. A link whose
+  apply never recorded its plan is cleared as a replan.
+
+- **Bulk changes.** The coordinator registers the barrier's settler: a bulk
+  change of a checkout with a pending apply recovers it inline when the
+  reservation is free, and is refused otherwise. Structural copies in the
+  folder always refuse it, including any the inline recovery finds.
+- **Listing kept copies** compares each copy by its stamp and reads again only
+  a changed or extra version. One listing reads at most one inventory's total;
+  a file past that budget, or larger than a restore reads (a kept copy or the
+  folder's file), is listed `unread`, which is not the same as gone.
+- **Restore.** It puts a kept copy back as a one-file `retained-restore` apply,
+  only if both the copy and the folder's file still have the revisions the
+  request saw. It reads the copy and the folder's file once each, never past
+  50 MiB; a folder file too large to read is never taken for an absent one.
+  Before writing, it checks room for the copy it keeps, a file it brings back
+  into the sync, the group it may leave and conflict material it tracks again.
+  The file it replaces is kept (state `kept`), the base never moves, and the
+  restored bytes are a local change for the next review. A restore the applier
+  cannot finish leaves its file as a forced conflict, beside those already
+  recorded.
+
+### Publication
+
+After a complete adoption, confirm sends the result. Steps 1 to 4 run inside its
+application section, which is released before the network is used (contract
+section 9):
+
+1. **Gate.** Nothing is sent after a partial apply, while conflict material or
+   structural copies remain, or when a copy this apply kept is `changed` or
+   `ambiguous`. The result is `blocked` with the reason.
+2. **Nothing to send** when the candidate equals Overleaf's fetched tree
+   (`none`).
+3. **Verify.** The folder is captured again, the way a review captures it and
+   over every path the plan read or wrote (so an explicit deletion must still be
+   absent), and its tree must equal the candidate. A difference is
+   `not-verified`, and the edit is the next review's to send. Each copy this
+   apply kept is checked again by its stamp: one a late writer changed is
+   recorded `changed` and the send is `blocked`. From here on, the content comes
+   from the private repository's objects, never from the folder.
+4. **Record.** The candidate is committed on the plan's fetched head. The
+   attempt is recorded `unknown` with its pins, before anything is sent.
+   Resolved history makes room; a confirm that would need a seventeenth
+   unresolved attempt is refused before the apply.
+5. **Send admission**, a short application section of its own, decides from
+   what it finds there: the same checkout (every key of its chain, so a
+   replaced or removed checkout fails) at the same epoch as at verification,
+   the same physical folders, and the credential the review used. Anything else
+   (a pull, switch or restore that ran or is running, a replaced checkout or
+   folder, a renewed credential) records `not-sent` (`send-refused`). Changes
+   after admission are later local changes and never alter what is sent.
+6. **Send** once, never forced, holding no section, so a pull or branch switch
+   of the checkout does not wait for the network. `accepted` makes the
+   candidate the base in the same replacement. `out-of-date` keeps the adopted
+   base. Anything else stays `unknown`, as does an attempt whose finalizing
+   write fails.
+
+**Settling earlier sends.** Prepare (on the head it fetches) and recover (one
+fetch) check every unresolved attempt against Overleaf by positive evidence
+only:
+
+- the head's tree equals the candidate's;
+- the candidate's tree is in a first-parent commit (of the last 64) that
+  descends from the attempt's parent, so a rewritten history proves nothing;
+- the candidate commit is reachable from the head.
+
+An unknown attempt on the current base becomes the base when accepted. A
+superseded one is only marked accepted, and the later base stays. Absent
+evidence changes nothing, including when Overleaf still holds the parent. The
+review warns about each unresolved attempt (`unresolved-publication`), and the
+confirmation must acknowledge it. Nothing is ever resent.
+
+A crash after the send leaves the confirm receipt `running` and the attempt
+`unknown`. A repeated request returns that receipt, and recovery settles the
+attempt.
+
+## Saving open editors
+
+Text a person typed is on disk only once the window holding it has saved it.
+`scient/editorFlush/EditorFlush.ts` lets a server operation ask every window
+of this environment to save its editors for one folder, and wait:
+`flushFolder({ checkoutRoot, folder, timeout, overallTimeout })`. Nothing
+calls it yet; the Overleaf agent tools will, before prepare and again before
+confirm.
+
+- Each window subscribes once (`editors.flushConnect`), asks where its
+  editors' files are (`editors.flushResolve`), answers (`editors.flushRespond`)
+  with the files it saved and every file it could not save, named relative to
+  the checkout, with the reason: `unconverted-input` (visual input not yet
+  source), `composing` (an input method is composing), `save-failed`, or
+  `conflict` (the file changed outside an editor holding unsaved text), and
+  says goodbye when it closes (`editors.flushLeave`, sent on `pagehide`, which
+  a closing desktop window also fires). All four need the filesystem write
+  scope.
+- A window is known by the authenticated session of its connection and the
+  id it chose. Another session can neither replace it nor answer, resolve or
+  say goodbye for it. A window that reconnects replaces its own earlier
+  connection, and every call names its connection: an answer or resolve
+  counts only from the connection the request last reached, and a goodbye
+  only from the window's latest connection, so a late call from a replaced
+  connection can neither satisfy a request nor remove the window. The window
+  itself drops a flush that finishes after its connection was replaced.
+- A page kept in the back-forward cache keeps its drafts, so its `pagehide`
+  sends no goodbye; restored (`pageshow`), it registers again at once. A
+  window says goodbye at most once per connection, so after registering again
+  a later close says goodbye again.
+- Membership is not the set of open streams. A window that says goodbye is
+  forgotten at once, and a request still awaiting it stops waiting. A window
+  whose connection drops without a goodbye stays known for five minutes: every
+  flush asks it, sends the request again when it is back, and otherwise counts
+  it `Unanswered` (`disconnected`), so the sync stops and names it. After five
+  minutes it is retired. A window that registers while a request is open is
+  asked too.
+- The boundary: a window lost for longer than five minutes, or one that
+  connects only after a new server's ten-second wait for its first window
+  (that wait cannot prove no window exists), is not asked. Its unsaved drafts
+  stay protected by the outside-change and revision conflict (contract
+  section 10): a later save from it cannot silently overwrite what the sync
+  wrote. The remaining risk is only that the sync ran without that window's
+  latest typing.
+- A window's answer time (`timeout`) starts when the request reaches it, so
+  one that reconnects late still gets the whole time. The request as a whole
+  ends at `overallTimeout`, however many windows join meanwhile.
+- The result is `NoWindowOpen` (no window known: nothing is unsaved),
+  `FolderUnavailable` (the folder could not be examined), or `Answered` with
+  one outcome per window and `allSaved`. An unanswered window is never a
+  success.
+- Files are placed by physical identity (`folderIdentity.ts`): the folder is
+  known by device and inode, and a file is inside when a folder physically
+  holding it is that folder, so a symlinked spelling or another letter case
+  finds it. A file not yet on disk is placed by its nearest existing folder. A
+  file the server cannot place (`unknown`) fails when its editor holds unsaved
+  text.
+- The window side (`apps/web/src/scient/editorFlush/`) uses the existing save
+  pipelines only. LaTeX Visual input of editors whose own file is inside is
+  committed in the background, as the editor's idle save does: focus,
+  selection and open fields stay as they are, and input that cannot become
+  source this way (an open title field, a raw block) is reported
+  `unconverted-input`. An editor of a file outside the folder whose document's
+  root is inside is only inspected. Then open documents are flushed through
+  the document registry, and ordinary file editors through
+  `WorkspaceFileSessionRegistry.flushWhere`. Source editors and the Markdown
+  Visual editor register their composition state (`editorComposition.ts`).
+- Right before answering, every editor in the folder, every one the server
+  could not place, and every one not yet placed (opened while the server was
+  being asked) is checked again at once. If any has unsaved text the whole
+  save runs once more; a file still unsaved then fails, as edited again or as
+  not placed.
+
 ## Remaining integration gates
 
 The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
 defines the remaining work and tracks each step's status.
-Before exposing operations, implement connection ownership/binding checks,
-prepare/apply/publish recovery, bounded inventory and repository retention,
-the barrier's settler for pending applies, and the editor-flush bridge. The coordinator must implement cancellation between
+Before exposing operations, implement connection ownership/binding checks and
+bounded repository retention, call the editor flush before prepare and confirm,
+and derive status (a
+`running` receipt whose operation is no longer live was interrupted). The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
 release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
 in the development app. The exercised Cloud protocol behavior is recorded on #535;

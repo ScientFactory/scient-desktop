@@ -12,14 +12,21 @@ import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 
 export const OVERLEAF_CONNECTION_SCHEMA_VERSION = 1;
 /** Prior bases kept reachable for recovery classification. */
-const PRIOR_BASE_LIMIT = 20;
-const LOCAL_SNAPSHOT_LIMIT = 10;
+export const PRIOR_BASE_LIMIT = 20;
+export const LOCAL_SNAPSHOT_LIMIT = 10;
 /** Unresolved publication attempts kept before new work is refused. */
-const UNRESOLVED_ATTEMPT_LIMIT = 16;
+export const UNRESOLVED_ATTEMPT_LIMIT = 16;
 /** All attempts kept, resolved history included; resolved ones may be pruned. */
-const ATTEMPT_LIMIT = 64;
-const RETAINED_COPY_LIMIT = 4_096;
-const MANAGED_PATH_LIMIT = 2_000;
+export const ATTEMPT_LIMIT = 64;
+export const RETAINED_COPY_LIMIT = 4_096;
+/** Paths a connection can manage: Overleaf's file limit per project. */
+export const MANAGED_PATH_LIMIT = 2_000;
+/**
+ * Forced conflicts one record holds. Each change of a sync may be interrupted on
+ * its own, and a sync changes at most the files it captured and the files of its
+ * result, each within the managed-path limit.
+ */
+export const FORCED_CONFLICT_LIMIT = 2 * MANAGED_PATH_LIMIT;
 const RETENTION_PERIOD_MILLIS = 7 * 24 * 60 * 60 * 1_000;
 
 const Oid = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u));
@@ -90,6 +97,11 @@ const ApplyLink = Schema.Struct({
   baseGeneration: Count,
   /** Pinned private ref holding the immutable target tree. */
   intentTree: Oid,
+  /** What adoption needs that the applier does not keep, so recovery can adopt without the review. */
+  remoteCommit: Oid,
+  /** The reviewed local-only set after this apply: kept entries less promoted collisions, plus new ones. */
+  localOnly: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  priorMarkers: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
 });
 
 export const OverleafAttemptOutcome = Schema.Literals([
@@ -147,6 +159,14 @@ const PublicationAttempt = Schema.Struct({
 );
 export type OverleafPublicationAttempt = typeof PublicationAttempt.Type;
 
+/** A kept version's place in the retention folder: `<apply>/files/<step>/<leaf>`. */
+export const KeptPath = Schema.String.check(
+  Schema.isPattern(
+    /^[a-z0-9][a-z0-9-]{0,63}\/files\/step-\d{1,5}(?:-\d{1,5})?\/(?:retained|slot|provisional)$/u,
+  ),
+);
+/** Further versions recorded for one kept path; beyond this the record is ambiguous. */
+export const KEPT_VERSION_LIMIT = 16;
 const RetainedCopy = Schema.Struct({
   applyId: OverleafServerId,
   relativePath: ManuscriptPath,
@@ -156,12 +176,30 @@ const RetainedCopy = Schema.Struct({
   retainedAt: IsoTime,
   /** The connection's completed-sync count when retained; release needs a later one. */
   retainedAtSyncCount: Count,
+  /**
+   * The file's main kept version, relative to the retention folder
+   * (`<apply>/files/<step>/<leaf>`). A step may keep further versions of the
+   * same path beside it; they are found on disk, under the same apply.
+   */
+  kept: KeptPath,
+  /** The kept bytes were Scient conflict material still unresolved when kept. */
+  markers: Schema.Boolean,
+  /**
+   * Further versions the apply reported for the same path (a staged, provisional
+   * or retried step's copy), in the same form as `kept`. They appear only when
+   * something went wrong, so a record with any is never released automatically.
+   */
+  versions: Schema.Array(KeptPath).check(Schema.isMaxLength(KEPT_VERSION_LIMIT)),
+  /** Size and change time of the main version when kept; a later difference means a late writer. */
+  stamp: Schema.String.check(Schema.isPattern(/^\d{1,20}:\d{1,30}$/u)),
 });
 type RetainedCopy = typeof RetainedCopy.Type;
 
-const isUnresolved = (outcome: OverleafAttemptOutcome) =>
+/** An attempt whose acceptance is still unestablished; never pruned. */
+export const isOverleafAttemptUnresolved = (outcome: OverleafAttemptOutcome) =>
   outcome === "unknown" || outcome === "superseded-unresolved";
 
+/** One record per file an apply kept; further versions of it are found on disk. */
 const retainedKey = (copy: RetainedCopy) => `${copy.applyId}\0${copy.relativePath}`;
 
 /** Structural equality of decoded JSON values, independent of key order. */
@@ -208,7 +246,16 @@ export const OverleafConnectionDocument = Schema.Struct({
   localSnapshots: Schema.Array(LocalSnapshot).check(Schema.isMaxLength(LOCAL_SNAPSHOT_LIMIT)),
   managedPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
   localOnlyPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
-  attentionPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  /** Groups an earlier apply left half done: forced conflicts until a reviewed resolution. */
+  forcedConflicts: Schema.Array(
+    Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  ).check(Schema.isMaxLength(FORCED_CONFLICT_LIMIT)),
+  /** Files where Scient wrote conflict material that may still be unresolved. */
+  markerPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  /** The applier's structural source copies in the folder; never captured, never deleted automatically. */
+  stagingPaths: Schema.Array(Schema.String.check(Schema.isMaxLength(4_096))).check(
+    Schema.isMaxLength(MANAGED_PATH_LIMIT),
+  ),
   retention: Schema.Struct({
     vaultIdentity: VolumeFileIdentity,
     copies: Schema.Array(RetainedCopy).check(Schema.isMaxLength(RETAINED_COPY_LIMIT)),
@@ -228,7 +275,7 @@ export const OverleafConnectionDocument = Schema.Struct({
     return (
       numbers.size === document.attempts.length &&
       document.attempts.every((attempt) => attempt.attemptNumber <= document.lastAttemptNumber) &&
-      document.attempts.filter((attempt) => isUnresolved(attempt.outcome)).length <=
+      document.attempts.filter((attempt) => isOverleafAttemptUnresolved(attempt.outcome)).length <=
         UNRESOLVED_ATTEMPT_LIMIT &&
       sequences.size === document.localSnapshots.length &&
       copies.size === document.retention.copies.length &&
@@ -344,7 +391,7 @@ export function overleafTransitionViolation(
     const kept = nextAttempts.get(attempt.attemptNumber);
     if (kept === undefined) {
       // Resolved history may be pruned; unresolved evidence never is.
-      if (isUnresolved(attempt.outcome)) return "unresolved-attempt-dropped";
+      if (isOverleafAttemptUnresolved(attempt.outcome)) return "unresolved-attempt-dropped";
       continue;
     }
     // Only the classification may change; who sent what, from where, is fixed.
@@ -411,6 +458,10 @@ export function overleafTransitionViolation(
       kept.revision !== copy.revision ||
       kept.retainedAt !== copy.retainedAt ||
       kept.retainedAtSyncCount !== copy.retainedAtSyncCount ||
+      kept.kept !== copy.kept ||
+      kept.markers !== copy.markers ||
+      kept.stamp !== copy.stamp ||
+      kept.versions.join("\0") !== copy.versions.join("\0") ||
       // A changed, ambiguous, interrupted or kept copy never becomes releasable again.
       (kept.state === "releasable" && copy.state !== "releasable")
     )
@@ -453,7 +504,7 @@ export function overleafRequiredPins(
       oid: document.activeApply.intentTree,
     });
   for (const attempt of document.attempts) {
-    if (!isUnresolved(attempt.outcome)) continue;
+    if (!isOverleafAttemptUnresolved(attempt.outcome)) continue;
     pins.push(
       { name: `attempt/${attempt.attemptNumber}/candidate`, oid: attempt.candidateCommit },
       { name: `attempt/${attempt.attemptNumber}/parent`, oid: attempt.parentCommit },
