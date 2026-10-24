@@ -99,7 +99,8 @@ changed.
 The result is a short message, such as "3 files came in, 2 were sent · See
 changes". **See changes** opens the Overleaf tab in the side panel with the files
 that came in and the files that were sent; click a file to open it, or **Show in
-Diff** for the project's Diff tab.
+Diff** for the project's Diff tab. **Check again** there (or **See changes** in the
+chip's menu) reads what the next sync would bring in and send.
 
 ### The chip
 

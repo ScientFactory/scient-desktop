@@ -361,7 +361,19 @@ export function OverleafReviewPanel(props: {
                 Read changes
               </Button>
             )
-          ) : null}
+          ) : (
+            // A shown review can be from an earlier sync: reading again shows what the next
+            // sync would do, so new files can be decided before it sends them.
+            <Button
+              size="xs"
+              variant="ghost"
+              className="self-start"
+              disabled={reading || syncing}
+              onClick={readChanges}
+            >
+              {reading ? "Checking…" : "Check again"}
+            </Button>
+          )}
           {conflicts.length > 0 ? (
             <section className="flex flex-col gap-2" aria-label="Conflicts">
               <h3 className="px-1 text-xs font-medium text-muted-foreground">

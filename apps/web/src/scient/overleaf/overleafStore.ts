@@ -11,7 +11,7 @@ import type {
 import { useEffect, useSyncExternalStore } from "react";
 
 import { listOverleafConnections, readOverleafStatus, readOverleafToken } from "./client";
-import { operationErrorText } from "./overleafModel";
+import { connectionForPath, operationErrorText } from "./overleafModel";
 
 export type OverleafConnection = ScientOverleafConnectionList["connections"][number];
 
@@ -94,6 +94,11 @@ export function readOverleafWorkspace(
  * sync's own refresh (and leave the chip on "Syncing…").
  */
 const statusReads = new Map<string, number>();
+/** When each link's status was last read, and links a save has made stale since. */
+const statusReadAt = new Map<string, number>();
+const staleStatuses = new Set<string>();
+/** Status reads still waiting for their answer, by link. */
+const statusInflight = new Map<string, number>();
 const listReads = new Map<string, number>();
 let readCounter = 0;
 
@@ -107,15 +112,22 @@ export async function refreshOverleafStatus(
   const read = ++readCounter;
   const readKey = `${key}\u0000${connectionId}`;
   statusReads.set(readKey, read);
+  statusInflight.set(readKey, (statusInflight.get(readKey) ?? 0) + 1);
   try {
     const status = await readOverleafStatus(environmentId, { workspaceRoot, connectionId });
     if (statusReads.get(readKey) !== read) return;
+    statusReadAt.set(readKey, Date.now());
+    staleStatuses.delete(readKey);
     update(key, (current) => ({
       ...current,
       statuses: new Map(current.statuses).set(connectionId, status),
     }));
   } catch {
     // A status that can't be read keeps the last one; the chip still offers Sync.
+  } finally {
+    const left = (statusInflight.get(readKey) ?? 1) - 1;
+    if (left > 0) statusInflight.set(readKey, left);
+    else statusInflight.delete(readKey);
   }
 }
 
@@ -124,7 +136,7 @@ const SAVE_REFRESH_DELAY_MS = 400;
 const scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** Reads one link's status again shortly, once for any number of calls meanwhile. */
-export function scheduleOverleafStatusRefresh(
+function scheduleOverleafStatusRefresh(
   environmentId: EnvironmentId,
   workspaceRoot: string,
   connectionId: string,
@@ -139,6 +151,40 @@ export function scheduleOverleafStatusRefresh(
       void refreshOverleafStatus(environmentId, workspaceRoot, connectionId);
     }, SAVE_REFRESH_DELAY_MS),
   );
+}
+
+/**
+ * A file was saved: every known link whose folder holds it reads its status
+ * again shortly, and until then counts as stale. Called for the app's
+ * lifetime by `overleafSaveWatch`, whether or not a chip is on screen.
+ */
+export function noteOverleafFileSaved(target: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly relativePath: string;
+}): void {
+  const snapshot = snapshots.get(keyOf(target.environmentId, target.cwd));
+  if (!snapshot) return;
+  for (const connection of snapshot.connections) {
+    if (connectionForPath([connection], target.relativePath) === null) continue;
+    staleStatuses.add(`${keyOf(target.environmentId, target.cwd)}\u0000${connection.connectionId}`);
+    scheduleOverleafStatusRefresh(target.environmentId, target.cwd, connection.connectionId);
+  }
+}
+
+/** Reads a link's status again if a save made it stale or it is older than `maxAgeMs`. */
+export function revalidateOverleafStatus(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+  connectionId: string,
+  maxAgeMs: number,
+): void {
+  const readKey = `${keyOf(environmentId, workspaceRoot)}\u0000${connectionId}`;
+  const readAt = statusReadAt.get(readKey);
+  // A read already on its way answers for this one, unless a save came after it started.
+  if (statusInflight.has(readKey) && !staleStatuses.has(readKey)) return;
+  if (staleStatuses.has(readKey) || readAt === undefined || Date.now() - readAt > maxAgeMs)
+    void refreshOverleafStatus(environmentId, workspaceRoot, connectionId);
 }
 
 /** Lists the project's links and reads each one's status. */
@@ -212,6 +258,10 @@ export function recordOverleafSync(
     const reviews = new Map(current.reviews);
     const syncedAt = new Map(current.syncedAt);
     // A result with its own review replaces the shown one; a cancel or refusal doesn't.
+    if (result._tag === "synced" || result._tag === "needs-decision") {
+      const versionKey = reviewKeyOf(environmentId, workspaceRoot, connectionId);
+      reviewVersions.set(versionKey, (reviewVersions.get(versionKey) ?? 0) + 1);
+    }
     if (result._tag === "synced") {
       reviews.set(connectionId, {
         review: result.review,
@@ -231,27 +281,56 @@ export function recordOverleafSync(
   });
 }
 
-/** A read of a link's changes started, finished with a review, or failed. */
-export function recordOverleafPreview(
+/**
+ * Each change to a link's shown review is numbered. A read of the changes
+ * remembers the number it started at, and its answer is used only if no sync
+ * replaced the review meanwhile: a late read never brings back obsolete
+ * conflicts over a sync that applied.
+ */
+const reviewVersions = new Map<string, number>();
+const reviewKeyOf = (environmentId: EnvironmentId, workspaceRoot: string, connectionId: string) =>
+  `${keyOf(environmentId, workspaceRoot)}\u0000${connectionId}`;
+
+/** A read of a link's changes starts; returns what its answer must still match. */
+export function beginOverleafPreview(
   environmentId: EnvironmentId,
   workspaceRoot: string,
   connectionId: string,
+): number {
+  update(keyOf(environmentId, workspaceRoot), (current) => ({
+    ...current,
+    previewing: new Set(current.previewing).add(connectionId),
+  }));
+  return reviewVersions.get(reviewKeyOf(environmentId, workspaceRoot, connectionId)) ?? 0;
+}
+
+/** A read of a link's changes answered with a review, or failed. A superseded answer is dropped. */
+export function finishOverleafPreview(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+  connectionId: string,
+  startedAt: number,
   outcome:
-    | { readonly _tag: "reading" }
     | { readonly _tag: "review"; readonly review: ScientOverleafReview }
     | { readonly _tag: "failed"; readonly message: string },
 ): void {
-  update(keyOf(environmentId, workspaceRoot), (current) => {
-    const previewing = new Set(current.previewing);
-    const previewErrors = new Map(current.previewErrors);
-    const reviews = new Map(current.reviews);
-    if (outcome._tag === "reading") previewing.add(connectionId);
-    else previewing.delete(connectionId);
+  const versionKey = reviewKeyOf(environmentId, workspaceRoot, connectionId);
+  const current = reviewVersions.get(versionKey) ?? 0;
+  const superseded = current !== startedAt;
+  if (!superseded && outcome._tag === "review") reviewVersions.set(versionKey, current + 1);
+  update(keyOf(environmentId, workspaceRoot), (snapshot) => {
+    const previewing = new Set(snapshot.previewing);
+    previewing.delete(connectionId);
+    if (superseded) return { ...snapshot, previewing };
+    const previewErrors = new Map(snapshot.previewErrors);
+    const reviews = new Map(snapshot.reviews);
     if (outcome._tag === "failed") previewErrors.set(connectionId, outcome.message);
-    else previewErrors.delete(connectionId);
-    if (outcome._tag === "review")
+    else {
+      previewErrors.delete(connectionId);
+      // Replaced only by a successful read: a failed one leaves the shown review.
       reviews.set(connectionId, { review: outcome.review, applied: false, sent: false });
-    return { ...current, previewing, previewErrors, reviews };
+    }
+    return { ...snapshot, previewing, previewErrors, reviews };
   });
 }
 
@@ -325,6 +404,10 @@ export function resetOverleafStoreForTests(): void {
   snapshots.clear();
   loadedAt.clear();
   statusReads.clear();
+  statusReadAt.clear();
+  staleStatuses.clear();
+  statusInflight.clear();
+  reviewVersions.clear();
   for (const timer of scheduledRefreshes.values()) clearTimeout(timer);
   scheduledRefreshes.clear();
   listReads.clear();

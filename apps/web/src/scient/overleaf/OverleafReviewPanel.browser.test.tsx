@@ -402,6 +402,42 @@ describe("OverleafReviewPanel", () => {
     expect(composer.insertTextAtEnd).not.toHaveBeenCalled();
   });
 
+  it("checks again after an earlier sync, so new files can be decided before they are sent", async () => {
+    reset();
+    recordOverleafSync(environmentId, "/work/project", "c1", {
+      ...applied,
+      publication: { _tag: "accepted", attemptNumber: 1 },
+      review: review({ needsDecision: false, conflicts: [] }),
+    });
+    await using _screen = await render(panel());
+    await expect.element(page.getByRole("region", { name: "Came in" })).toBeVisible();
+
+    // A failed read leaves the review that was shown.
+    client.previewOverleaf.mockResolvedValueOnce({
+      _tag: "refused",
+      refusal: { reason: "unreachable" },
+    });
+    await page.getByRole("button", { name: "Check again" }).click();
+    await expect
+      .element(page.getByText("Overleaf couldn't be reached. Check the connection and sync again."))
+      .toBeVisible();
+    await expect.element(page.getByRole("region", { name: "Came in" })).toBeVisible();
+
+    client.previewOverleaf.mockResolvedValueOnce({
+      _tag: "review",
+      review: review({
+        needsDecision: false,
+        conflicts: [],
+        additions: [{ path: "draft.tex", size: 10, selected: true, skippedBecause: null }],
+      }),
+    });
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect
+      .element(page.getByRole("button", { name: "Keep only on this computer: draft.tex" }))
+      .toBeVisible();
+    await expect.element(page.getByRole("region", { name: "To bring in" })).toBeVisible();
+  });
+
   describe("per-file decisions", () => {
     const newFiles = review({
       needsDecision: false,

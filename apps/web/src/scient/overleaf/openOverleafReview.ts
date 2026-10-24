@@ -14,7 +14,7 @@ export function openOverleafReview(
   useRightPanelStore.getState().openScient(threadRef, scientOverleafReviewSurface(input));
 }
 
-/** "See changes": the review tab, reading the changes first when no sync here has shown them. */
+/** "See changes": the review tab, reading the changes unless a review still to run is shown. */
 export function seeOverleafChanges(
   threadRef: ScopedThreadRef,
   input: {
@@ -24,9 +24,12 @@ export function seeOverleafChanges(
     readonly folder: string;
   },
 ): void {
-  const shown = readOverleafWorkspace(input.environmentId, input.cwd).reviews.has(
+  // A review still to run (a read, or a conflict waiting) is current; one a sync applied is
+  // history, so the changes are read again for what the next sync would do.
+  const shown = readOverleafWorkspace(input.environmentId, input.cwd).reviews.get(
     input.connectionId,
   );
-  if (!shown) void readOverleafChanges(input.environmentId, input.cwd, input.connectionId);
+  if (!shown || shown.applied)
+    void readOverleafChanges(input.environmentId, input.cwd, input.connectionId);
   openOverleafReview(threadRef, input);
 }

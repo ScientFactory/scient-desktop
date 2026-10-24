@@ -23,7 +23,8 @@ import {
 import {
   loadOverleafWorkspace,
   readOverleafWorkspace,
-  recordOverleafPreview,
+  beginOverleafPreview,
+  finishOverleafPreview,
   recordOverleafSync,
   setOverleafSyncing,
   type OverleafConnection,
@@ -262,13 +263,14 @@ export async function readOverleafChanges(
 ): Promise<void> {
   const current = readOverleafWorkspace(environmentId, workspaceRoot);
   if (current.previewing.has(connectionId)) return;
-  recordOverleafPreview(environmentId, workspaceRoot, connectionId, { _tag: "reading" });
+  const startedAt = beginOverleafPreview(environmentId, workspaceRoot, connectionId);
   try {
     const result = await previewOverleaf(environmentId, { workspaceRoot, connectionId });
-    recordOverleafPreview(
+    finishOverleafPreview(
       environmentId,
       workspaceRoot,
       connectionId,
+      startedAt,
       result._tag === "review"
         ? { _tag: "review", review: result.review }
         : {
@@ -280,7 +282,7 @@ export async function readOverleafChanges(
           },
     );
   } catch (error) {
-    recordOverleafPreview(environmentId, workspaceRoot, connectionId, {
+    finishOverleafPreview(environmentId, workspaceRoot, connectionId, startedAt, {
       _tag: "failed",
       message: operationErrorText(error),
     });

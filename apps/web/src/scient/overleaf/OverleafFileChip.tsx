@@ -18,14 +18,16 @@ import {
 } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
-import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
-import { subscribeWorkspaceFileSaves } from "~/scient/fileSurfaces/workspaceFileSaves";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { cancelOverleafRun, openOverleafProject, runOverleafSync } from "./overleafActions";
 import { connectionForPath, overleafChipView } from "./overleafModel";
 import { openOverleafReview, seeOverleafChanges } from "./openOverleafReview";
-import { scheduleOverleafStatusRefresh, useOverleafWorkspace } from "./overleafStore";
+import { ensureOverleafSaveWatch } from "./overleafSaveWatch";
+import { revalidateOverleafStatus, useOverleafWorkspace } from "./overleafStore";
+
+/** A status read this recently is used as it is when a chip appears. */
+const STATUS_FRESH_MS = 5_000;
 
 /** When the link last synced: this window's last sync, or the link's own record. */
 export function lastSyncLabel(input: {
@@ -52,41 +54,13 @@ export function OverleafFileChip(props: {
   const connection = connectionForPath(workspace.connections, relativePath);
   const connectionId = connection?.connectionId ?? null;
 
-  // A save in the linked folder changes what there is to send: read the status again
-  // shortly, from either kind of editor (document sessions, plain text editors).
-  const folder = connection?.folder ?? null;
+  // Saves are watched for the app's lifetime (overleafSaveWatch); a chip that mounts reads a
+  // status a save made stale, or one older than a few seconds, again.
   useEffect(() => {
-    if (connectionId === null || folder === null) return;
-    const inFolder = (target: {
-      readonly environmentId: EnvironmentId;
-      readonly cwd: string;
-      readonly relativePath: string;
-    }) =>
-      target.environmentId === environmentId &&
-      target.cwd === cwd &&
-      connectionForPath([{ folder }], target.relativePath) !== null;
-    const refresh = () => scheduleOverleafStatusRefresh(environmentId, cwd, connectionId);
-    const pendingNow = () =>
-      new Set(
-        markdownPersistenceRegistry
-          .getSnapshot()
-          .filter((entry) => entry.pending && inFolder(entry))
-          .map((entry) => entry.relativePath),
-      );
-    let wasPending = pendingNow();
-    const stopDocuments = markdownPersistenceRegistry.subscribe(() => {
-      const pending = pendingNow();
-      if ([...wasPending].some((path) => !pending.has(path))) refresh();
-      wasPending = pending;
-    });
-    const stopPlain = subscribeWorkspaceFileSaves((target) => {
-      if (inFolder(target)) refresh();
-    });
-    return () => {
-      stopDocuments();
-      stopPlain();
-    };
-  }, [environmentId, cwd, folder, connectionId]);
+    ensureOverleafSaveWatch();
+    if (connectionId !== null)
+      revalidateOverleafStatus(environmentId, cwd, connectionId, STATUS_FRESH_MS);
+  }, [environmentId, cwd, connectionId]);
 
   if (!connection) return null;
   const status = workspace.statuses.get(connection.connectionId) ?? null;

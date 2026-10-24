@@ -369,13 +369,15 @@ describe("OverleafFileChip", () => {
     await expect
       .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
       .toBeVisible();
+    // A document session in the folder starts saving.
+    for (const listener of editors.listeners) listener();
     const reads = () => client.readOverleafStatus.mock.calls.length;
     const before = reads();
 
     // A save outside the folder, or in another checkout, is not news for this link.
     notifyWorkspaceFileSaved({ environmentId, cwd: "/work/project", relativePath: "notes/a.txt" });
     notifyWorkspaceFileSaved({ environmentId, cwd: "/elsewhere", relativePath: "paper/a.txt" });
-    // A document session in the folder finishes its save.
+    // It finishes.
     editors.entries = [{ ...editors.entries[0]!, pending: false }];
     for (const listener of editors.listeners) listener();
 
@@ -406,5 +408,79 @@ describe("OverleafFileChip", () => {
     notifyWorkspaceFileSaved({ environmentId, cwd: "/work/project", relativePath: "paper/a.sty" });
     await expect.element(page.getByRole("button", { name: "Overleaf: Up to date" })).toBeVisible();
     expect(client.readOverleafStatus.mock.calls.length).toBe(before + 1);
+  });
+
+  it("a save that finishes after the last chip closed still refreshes the status", async () => {
+    reset();
+    editors.entries = [];
+    {
+      await using _screen = await render(chip());
+      await expect
+        .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
+        .toBeVisible();
+      // The editor starts its closing flush...
+      editors.entries = [
+        {
+          environmentId,
+          cwd: "/work/project",
+          relativePath: "paper/main.tex",
+          pending: true,
+          attention: false,
+        },
+      ];
+      for (const listener of editors.listeners) listener();
+    }
+    // ...and the session closes once it is saved, after the chip is gone.
+    const before = client.readOverleafStatus.mock.calls.length;
+    client.readOverleafStatus.mockResolvedValue(
+      status({ local: { _tag: "read", changed: 0, deleted: 0, added: 0 } }),
+    );
+    editors.entries = [];
+    for (const listener of editors.listeners) listener();
+    await expect.poll(() => client.readOverleafStatus.mock.calls.length).toBe(before + 1);
+
+    // Reopening the file shows the status read after that save.
+    await using _again = await render(chip());
+    await expect.element(page.getByRole("button", { name: "Overleaf: Up to date" })).toBeVisible();
+  });
+
+  it("a chip that appears reads a stale status again, but not a fresh one", async () => {
+    reset();
+    const { notifyWorkspaceFileSaved } = await import("~/scient/fileSurfaces/workspaceFileSaves");
+    {
+      await using _screen = await render(chip());
+      await expect
+        .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
+        .toBeVisible();
+    }
+    const before = client.readOverleafStatus.mock.calls.length;
+    {
+      // Just read: a new chip uses it as it is.
+      await using _screen = await render(chip("paper/intro.tex"));
+      await expect
+        .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
+        .toBeVisible();
+      expect(client.readOverleafStatus.mock.calls.length).toBe(before);
+    }
+    // A save makes it stale: the next chip reads at once, without waiting for the settle delay.
+    notifyWorkspaceFileSaved({
+      environmentId,
+      cwd: "/work/project",
+      relativePath: "paper/refs.bib",
+    });
+    await using _third = await render(chip("paper/refs.bib"));
+    expect(client.readOverleafStatus.mock.calls.length).toBe(before + 1);
+  });
+
+  it("See changes after an earlier sync reads what the next sync would do", async () => {
+    reset();
+    client.previewOverleaf.mockResolvedValue({ _tag: "review", review: sent.review });
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Sync now" }).click();
+    await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+    await page.getByRole("button", { name: /^Overleaf: / }).click();
+    await page.getByRole("menuitem", { name: "See changes" }).click();
+    await expect.poll(() => client.previewOverleaf.mock.calls.length).toBe(1);
   });
 });

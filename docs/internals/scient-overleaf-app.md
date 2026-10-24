@@ -42,10 +42,13 @@ surface list, content and icon, `ScientFileVersionHistory.tsx`, `ScientLatexSurf
 link of the host project with `linkedHere`) and reads each one's offline status. The status reads
 the folder, so it is never read per file header: once per workspace, again after any sync,
 connect or unlink, on window focus when older than 10 s, and for one link 400 ms after a save in
-its folder settles (several saves read once). The chip hears saves from both kinds of editor:
-document sessions through the document registry, and plain text editors through
-`scient/fileSurfaces/workspaceFileSaves.ts`, which the generic save coordinator announces each
-confirmed save to (a marked line in `useFileSaveCoordinator.ts`). Every list and
+its folder settles (several saves read once). Saves are watched once for the app's lifetime
+(`overleafSaveWatch`, started by the first chip), not by each chip, so a save that finishes after
+the last linked file's editor closed still counts. It hears both kinds of editor: a document
+session's save is done when it stops being pending or its session closes, and plain text editors
+announce each confirmed save through `scient/fileSurfaces/workspaceFileSaves.ts` (a marked line in
+`useFileSaveCoordinator.ts`). A save also marks the link's status stale; a chip that appears reads
+a stale status, or one older than 5 s, again. Every list and
 status read is numbered when it starts, and a response is used only if no read of the same thing
 started after it; a forced load (after an operation) starts afresh rather than joining one already
 running. So a read from during a sync can't answer after the sync's own refresh and leave the chip
@@ -113,8 +116,13 @@ other tabs. The review it shows is the store's `reviews` entry, its own state ap
 latest result: set by a sync that applied or stopped at a conflict, or by a read of the changes,
 and left as it is by an operation that brings none (cancelled, refused, failed), so its conflicts
 and their choices survive a retry that didn't run. "Last synced" comes from `syncedAt`, set only
-when a sync applied. It shows the last sync's review from this window, else a review read by `preview`
-(**See changes** reads one when none is held; after a restart the tab offers **Read changes**).
+when a sync applied. Reads of the changes (`preview`) are ordered with syncs: each change to the
+shown review is numbered, and a read's answer is used only if no sync replaced the review after
+the read started, so a late read never brings obsolete conflicts back over a sync that applied.
+A read replaces the shown review only when it succeeds. With no review the tab offers **Read
+changes**; with one it offers **Check again**, so after a sync the next sync's new files can be
+decided before they are sent. The chip's **See changes** reads again unless the shown review is
+still to run (a read, or a conflict waiting); the toast's **See changes** shows what that sync did.
 It lists what came in and what is or was sent; a file opens in its editor, and **Show in Diff**
 opens the thread's Diff tab. The engine exposes paths, not contents, so the tab doesn't draw a
 per-file Overleaf diff itself.

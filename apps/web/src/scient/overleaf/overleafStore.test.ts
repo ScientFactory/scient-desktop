@@ -9,6 +9,9 @@ const client = vi.hoisted(() => ({
 vi.mock("./client", () => client);
 
 const {
+  beginOverleafPreview,
+  finishOverleafPreview,
+  recordOverleafSync,
   loadOverleafWorkspace,
   readOverleafWorkspace,
   refreshOverleafStatus,
@@ -86,5 +89,65 @@ describe("overleafStore", () => {
     expect(
       readOverleafWorkspace(environmentId, ROOT).connections.map((entry) => entry.connectionId),
     ).toEqual(["c1"]);
+  });
+
+  it("a read of the changes that answers after a sync never replaces the sync's review", async () => {
+    resetOverleafStoreForTests();
+    const review = (reviewId: string) => ({
+      reviewId,
+      digest: "d",
+      remoteTree: "a".repeat(40),
+      upToDate: false,
+      needsDecision: reviewId === "old",
+      incoming: [],
+      outgoing: [],
+      conflicts: [],
+      warnings: [],
+      unresolvedMarkers: [],
+      collisions: [],
+      selectedAdditions: [],
+      additions: [],
+      localOnly: [],
+    });
+    // "Read changes" starts, a sync applies meanwhile, then the read answers.
+    const started = beginOverleafPreview(environmentId, ROOT, "c1");
+    recordOverleafSync(environmentId, ROOT, "c1", {
+      _tag: "synced",
+      review: review("applied"),
+      outcome: "complete",
+      interrupted: 0,
+      markerPaths: [],
+      publication: { _tag: "accepted", attemptNumber: 1 },
+      retried: false,
+      activity: [],
+      linkedElsewhere: false,
+    });
+    finishOverleafPreview(environmentId, ROOT, "c1", started, {
+      _tag: "review",
+      review: review("old"),
+    });
+    const shown = readOverleafWorkspace(environmentId, ROOT);
+    expect(shown.reviews.get("c1")).toMatchObject({
+      review: { reviewId: "applied" },
+      applied: true,
+      sent: true,
+    });
+    expect(shown.previewing.has("c1")).toBe(false);
+
+    // A read that started after it is current, but a failed one leaves the shown review.
+    const failing = beginOverleafPreview(environmentId, ROOT, "c1");
+    finishOverleafPreview(environmentId, ROOT, "c1", failing, { _tag: "failed", message: "x" });
+    expect(readOverleafWorkspace(environmentId, ROOT).reviews.get("c1")?.review.reviewId).toBe(
+      "applied",
+    );
+    const fresh = beginOverleafPreview(environmentId, ROOT, "c1");
+    finishOverleafPreview(environmentId, ROOT, "c1", fresh, {
+      _tag: "review",
+      review: review("new"),
+    });
+    expect(readOverleafWorkspace(environmentId, ROOT).reviews.get("c1")).toMatchObject({
+      review: { reviewId: "new" },
+      applied: false,
+    });
   });
 });
