@@ -18,6 +18,7 @@
  * file, or a folder above it, that changes while it is read fails the capture;
  * the caller captures again rather than waiting a fixed time.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -196,6 +197,46 @@ export interface OverleafInventory {
     readonly reason: OverleafExclusionReason;
   }>;
   readonly capturedBytes: number;
+}
+
+/**
+ * One digest of everything a capture found, every field in its order, a read
+ * file by its revision (the SHA-256 of its bytes): two captures with the same
+ * digest found the same folder. Generic over the fields, so one added to the
+ * inventory later counts too.
+ */
+export function overleafInventoryDigest(inventory: OverleafInventory): string {
+  const hash = NodeCrypto.createHash("sha256");
+  const write = (value: unknown): void => {
+    if (value instanceof Uint8Array) {
+      // A captured file's bytes are named by its revision beside them.
+      hash.update(`b${value.byteLength};`);
+    } else if (value instanceof Map) {
+      hash.update(`m${value.size}{`);
+      for (const [key, entry] of value) {
+        write(key);
+        write(entry);
+      }
+      hash.update("}");
+    } else if (Array.isArray(value)) {
+      hash.update(`a${value.length}[`);
+      for (const entry of value) write(entry);
+      hash.update("]");
+    } else if (value !== null && typeof value === "object") {
+      const keys = Object.keys(value).sort();
+      hash.update(`o${keys.length}{`);
+      for (const key of keys) {
+        write(key);
+        write((value as Record<string, unknown>)[key]);
+      }
+      hash.update("}");
+    } else {
+      const text = String(value);
+      hash.update(`${typeof value}${text.length}:${text};`);
+    }
+  };
+  write(inventory);
+  return hash.digest("hex");
 }
 
 export type OverleafInventoryRefusal =
