@@ -303,6 +303,56 @@ describe("Overleaf tool handlers", () => {
     }),
   );
 
+  it.effect("names files held for their conflict marks, even when nothing else would move", () =>
+    Effect.gen(function* () {
+      const review = {
+        reviewId: "r",
+        digest: "d",
+        remoteTree: "b".repeat(40),
+        upToDate: true,
+        needsDecision: false,
+        incoming: [],
+        outgoing: [],
+        conflicts: [],
+        warnings: [],
+        unresolvedMarkers: ["guide.md"],
+        released: [],
+        collisions: [],
+        selectedAdditions: [],
+        additions: [],
+        localOnly: [],
+      };
+      const previewed = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
+        provide(
+          fakeOverleaf({ preview: () => Effect.succeed({ _tag: "review", review }) as never }),
+        ),
+      );
+      expect(previewed.lines[0]).toBe("Up to date: nothing would come in or be sent.");
+      expect(previewed.lines[1]).toMatch(/^1 file still has conflict marks: guide\.md\./u);
+      const stopped = yield* overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+        provide(
+          fakeOverleaf({
+            sync: () =>
+              Effect.succeed({
+                _tag: "needs-decision",
+                review: {
+                  ...review,
+                  upToDate: false,
+                  needsDecision: true,
+                  conflicts: [{ key: "k", paths: ["main.tex"], allowed: ["mine"], chosen: null }],
+                },
+                activity: [],
+                linkedElsewhere: false,
+              }) as never,
+          }),
+        ),
+      );
+      expect(
+        stopped.lines.some((line) => line.startsWith("1 file still has conflict marks: guide.md.")),
+      ).toBe(true);
+    }),
+  );
+
   it.effect("passes files.release to the service, and says when a release can't be honoured", () =>
     Effect.gen(function* () {
       const asked: unknown[] = [];

@@ -204,10 +204,12 @@ describe("overleafResultView", () => {
         markerPaths: ["main.tex"],
       }),
     );
-    expect(blocked.title).toBe("Up to date with Overleaf");
-    expect(blocked.lines[0]).toBe(
+    // Nothing moved but a file waits: the headline says so, and the file is named.
+    expect(blocked.title).toBe("1 file waits for conflicts");
+    expect(blocked.lines).toEqual([
       "Nothing was sent: 1 file still has conflict marks. Settle them and sync again.",
-    );
+      "Waiting for conflict marks to be settled: main.tex.",
+    ]);
     expect(blocked.tone).toBe("warning");
     expect(
       overleafResultView(synced({ publication: { _tag: "unknown", attemptNumber: 3 } })).lines[0],
@@ -455,6 +457,56 @@ describe("conflict marks", () => {
     const message = askAgentMessage(["paper/main.tex"]);
     expect(message).toContain("- paper/main.tex");
     expect(message).toContain("explain your choices");
+  });
+
+  it("names files waiting for their conflicts, even when nothing else moved", () => {
+    const review = {
+      reviewId: "r",
+      digest: "d",
+      remoteTree: "a".repeat(40),
+      upToDate: true,
+      needsDecision: false,
+      incoming: [],
+      outgoing: [],
+      conflicts: [],
+      warnings: [],
+      unresolvedMarkers: ["main.tex"],
+      released: [],
+      collisions: [],
+      selectedAdditions: [],
+      additions: [],
+      localOnly: [],
+    };
+    const view = overleafResultView({
+      _tag: "synced",
+      review,
+      outcome: "complete",
+      interrupted: 0,
+      markerPaths: [],
+      publication: { _tag: "none" },
+      retried: false,
+      settled: null,
+      activity: [],
+      linkedElsewhere: false,
+    });
+    expect(view.title).toBe("1 file waits for conflicts");
+    expect(view.lines).toContain("Waiting for conflict marks to be settled: main.tex.");
+    // At a conflict too: held files are named beside it.
+    expect(
+      overleafResultView({
+        _tag: "needs-decision",
+        review: {
+          ...review,
+          upToDate: false,
+          needsDecision: true,
+          conflicts: [{ key: "k", paths: ["intro.tex"], allowed: ["mine"], chosen: null }],
+        },
+        retried: false,
+        settled: null,
+        activity: [],
+        linkedElsewhere: false,
+      }).lines,
+    ).toContain("Waiting for conflict marks to be settled: main.tex.");
   });
 
   it("says when a file can't be sent anyway, and why", () => {
