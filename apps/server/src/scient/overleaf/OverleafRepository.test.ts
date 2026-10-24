@@ -450,6 +450,8 @@ describe("OverleafRepository transport", () => {
         const commit = yield* h.repos.commit({ repo, tree, parents: [], message: "x" });
         expect(yield* h.repos.findTree({ repo, commit })).toBe(tree);
         expect(yield* h.repos.findTree({ repo, commit: "1".repeat(40) })).toBeNull();
+        expect(yield* h.repos.hasObject({ repo, oid: commit })).toBe(true);
+        expect(yield* h.repos.hasObject({ repo, oid: "1".repeat(40) })).toBe(false);
       }),
     ),
   );

@@ -278,6 +278,11 @@ export class OverleafRepository extends Context.Service<
       readonly repo: string;
       readonly name: string;
     }) => Effect.Effect<void, OverleafRepositoryError | OverleafGitError>;
+    /** Whether the repository holds the object; false only when Git says it is absent. */
+    readonly hasObject: (input: {
+      readonly repo: string;
+      readonly oid: string;
+    }) => Effect.Effect<boolean, OverleafRepositoryError | OverleafGitError>;
     /** Every one of Scient's own references, by name (without `refs/scient/`). */
     readonly listRefs: (input: {
       readonly repo: string;
@@ -618,6 +623,10 @@ export const make = Effect.gen(function* () {
   const deleteRef: OverleafRepository["Service"]["deleteRef"] = (input) =>
     run(input.repo, ["update-ref", "-d", refName(input.name)]).pipe(Effect.asVoid);
 
+  const hasObject: OverleafRepository["Service"]["hasObject"] = (input) =>
+    run(input.repo, ["cat-file", "-e", input.oid], { acceptExitCodes: [1] }).pipe(
+      Effect.map((result) => result.exitCode === 0),
+    );
   const listRefs: OverleafRepository["Service"]["listRefs"] = Effect.fn(
     "OverleafRepository.listRefs",
   )(function* (input) {
@@ -658,6 +667,7 @@ export const make = Effect.gen(function* () {
     setRef,
     readRef,
     deleteRef,
+    hasObject,
     listRefs,
   });
 });

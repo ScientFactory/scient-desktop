@@ -707,8 +707,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
    * Writes the refs `next` needs, then replaces the document; refs it no longer needs
    * go after. What the repository holds decides, not the previous document's list: a
    * required ref found missing (one a record from before it was required never got)
-   * is written again. Only while its object is still there, so an object already gone
-   * never blocks the replacement; new refs name objects just written and must succeed.
+   * is written again, and a failure to write it fails the replacement. The one
+   * exception is an accepted attempt's ref, kept only so Undo stays possible, whose
+   * object Git confirms is gone: nothing can pin it again, so it never blocks.
    */
   const replaceWithPins = Effect.fn("OverleafCoordinator.replaceWithPins")(function* (
     repo: string,
@@ -718,11 +719,23 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     const before = new Map(overleafRequiredPins(previous).map((pin) => [pin.name, pin.oid]));
     const after = overleafRequiredPins(next);
     const held = yield* repos.listRefs({ repo });
+    const forUndo = new Set(
+      next.attempts
+        .filter((attempt) => attempt.outcome === "accepted")
+        .flatMap((attempt) => [
+          `attempt/${attempt.attemptNumber}/parent`,
+          `attempt/${attempt.attemptNumber}/candidate`,
+        ]),
+    );
     for (const pin of after) {
       if (held.get(pin.name) === pin.oid) continue;
-      if (before.get(pin.name) === pin.oid)
-        yield* repos.setRef({ repo, ...pin }).pipe(Effect.ignore);
-      else yield* repos.setRef({ repo, ...pin });
+      if (
+        before.get(pin.name) === pin.oid &&
+        forUndo.has(pin.name) &&
+        !(yield* repos.hasObject({ repo, oid: pin.oid }))
+      )
+        continue;
+      yield* repos.setRef({ repo, ...pin });
     }
     yield* store.replaceConnection({ expectedRevision: previous.revision, next });
     const kept = new Set(after.map((pin) => pin.name));
@@ -823,7 +836,23 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         (entry) => entry.path,
       );
       const synced = restored.filter((path) => !link.localOnly.includes(path));
-      const retired = new Set(link.retired ?? []);
+      // An undo's removal leaves the managed set once done (its path is gone from the
+      // applier's base), or where every capture reads it anyway: the base or a forced
+      // conflict. A removal skipped elsewhere stays managed, so its file is not lost
+      // from the sync.
+      const baseOf = new Set(
+        link.retired === undefined || connection.base.tree === null
+          ? []
+          : (yield* repos.readTree({ repo, tree: connection.base.tree })).map(
+              (entry) => entry.path,
+            ),
+      );
+      const conflicted = new Set([...connection.forcedConflicts, ...result.interrupted].flat());
+      const retired = new Set(
+        (link.retired ?? []).filter(
+          (path) => !result.base.has(path) || baseOf.has(path) || conflicted.has(path),
+        ),
+      );
       return {
         ...connection,
         revision: connection.revision + 1,
@@ -1826,17 +1855,35 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       connection.base.tree === null
         ? []
         : yield* repos.readTree({ repo, tree: connection.base.tree });
-    const captured = yield* Effect.promise(() =>
-      captureOverleafInventory({
-        folder: folderOf(connection),
-        managedPaths: captureScope(connection, baseTree),
-        localOnlyPaths: connection.localOnlyPaths,
-        selectedAdditions: [],
-        requestedPaths: [],
-        stagingPaths: connection.stagingPaths,
-      }),
-    );
-    if (captured._tag === "refused") return captured;
+    const capture = (requestedPaths: ReadonlyArray<string>) =>
+      Effect.promise(() =>
+        captureOverleafInventory({
+          folder: folderOf(connection),
+          managedPaths: captureScope(connection, baseTree),
+          localOnlyPaths: connection.localOnlyPaths,
+          selectedAdditions: [],
+          requestedPaths,
+          stagingPaths: connection.stagingPaths,
+        }),
+      );
+    const first = yield* capture([]);
+    if (first._tag === "refused") return first;
+    // A path the send changed may lie outside what the sync reads now (a later sync
+    // deleted it, say) while a file stands there again: it is read in full too, so
+    // its bytes decide. A second request means the folder changed meanwhile.
+    const unread = new Set([
+      ...first.inventory.additions.map((addition) => addition.path),
+      ...first.inventory.localOnly,
+    ]);
+    const requested = changed.filter((path) => unread.has(path));
+    const captured = requested.length === 0 ? first : yield* capture(requested);
+    if (captured._tag === "refused")
+      return captured.refusal.reason === "not-selectable"
+        ? {
+            _tag: "refused" as const,
+            refusal: { reason: "unstable" as const, path: captured.refusal.path },
+          }
+        : captured;
     const { inventory } = captured;
     // Everything the walk saw: files read or not, folders, and entries it skipped.
     const files = new Set([
@@ -1959,6 +2006,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       current,
       targets: new Map(writing().map((path) => [path, before.get(path)!])),
       renames,
+      /** Paths every capture reads whether managed or not: the base's and forced conflicts'. */
+      covered: new Set([
+        ...baseTree.map((entry) => entry.path),
+        ...connection.forcedConflicts.flat(),
+      ]),
     };
   });
 
@@ -2065,12 +2117,16 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   connectionId: input.connectionId,
                   limit: "kept-copies",
                 });
-              // Files it removes leave the managed set and files it writes join it, so
-              // undoing a rename at the limit fits. A removed path still in the base or a
-              // forced conflict is read by every capture anyway.
+              // Files it writes join the managed set and files it removes leave it, so
+              // undoing a rename at the limit fits. A removal leaves for certain only
+              // where every capture reads the path anyway (the base, a forced
+              // conflict); elsewhere only once the applier has done it, so the worst
+              // case keeps it.
               const retired = plan.removed.filter((path) => connection.managedPaths.includes(path));
               const managedAfter = unique([
-                ...connection.managedPaths.filter((path) => !retired.includes(path)),
+                ...connection.managedPaths.filter(
+                  (path) => !(retired.includes(path) && plan.covered.has(path)),
+                ),
                 ...written,
               ]);
               if (managedAfter.length > MANAGED_PATH_LIMIT)

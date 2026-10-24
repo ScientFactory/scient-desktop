@@ -17,7 +17,15 @@ import type {
   OverleafConnectionDocument,
   OverleafPublicationAttempt,
 } from "./OverleafConnectionState.ts";
-import { CONNECTION, canApply, read, run, world, write } from "./OverleafCoordinator.testkit.ts";
+import {
+  CONNECTION,
+  canApply,
+  read,
+  revision,
+  run,
+  world,
+  write,
+} from "./OverleafCoordinator.testkit.ts";
 
 type World = Effect.Success<ReturnType<typeof world>>;
 
@@ -484,6 +492,20 @@ describe.skipIf(!canApply)("OverleafCoordinator, undo", () => {
           reason: "history-unavailable",
         });
         expect(yield* read(w.folder, "main.tex")).toBe("A2");
+        // A ref kept only for Undo whose object is gone never blocks a later change of
+        // the record (here a kept-copy restore).
+        const [copy] = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
+        expect(
+          yield* w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: copy!.applyId,
+            kept: copy!.kept,
+            keptRevision: copy!.keptRevision!,
+            currentRevision: copy!.currentRevision,
+          }),
+        ).toMatchObject({ _tag: "restored" });
+        expect(yield* pinned(w, 1)).toEqual([null, null]);
       }),
     ),
   );
@@ -553,6 +575,106 @@ describe.skipIf(!canApply)("OverleafCoordinator, undo", () => {
           _tag: "review",
         });
         expect(yield* read(w.folder, "main.tex")).toBe("B");
+      }),
+    ),
+  );
+
+  it.live("keeps a file managed when the undo could not remove it", () => {
+    let interfere = false;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "M" },
+          remote: { "main.tex": "M" },
+          // Edited just before the undo's step removes it.
+          beforeStep: async (path, folder) => {
+            if (!interfere || path !== "added.tex") return;
+            interfere = false;
+            await NodeFSP.writeFile(NodePath.join(folder, "added.tex"), "N, edited during Undo");
+          },
+        });
+        yield* write(w.folder, { "added.tex": "N" });
+        expect(yield* syncSelecting(w, "send-1", ["added.tex"])).toMatchObject({
+          publication: { _tag: "accepted" },
+        });
+        // Overleaf deletes it, and its kept copy is put back: managed, outside the base.
+        w.setRemote({ "main.tex": "M" });
+        expect(yield* w.sync("remote-deletion")).toMatchObject({ publication: { _tag: "none" } });
+        const copy = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).find(
+          (entry) => entry.relativePath === "added.tex" && entry.keptRevision === revision("N"),
+        )!;
+        expect(
+          yield* w.coordinator.restoreKept({
+            connectionId: CONNECTION,
+            requestId: "restore-1",
+            applyId: copy.applyId,
+            kept: copy.kept,
+            keptRevision: copy.keptRevision!,
+            currentRevision: null,
+          }),
+        ).toMatchObject({ _tag: "restored", adopted: { outcome: "complete" } });
+        interfere = true;
+        expect(yield* undo(w, 1)).toMatchObject({
+          removed: ["added.tex"],
+          adopted: { outcome: "attention" },
+        });
+        expect(yield* read(w.folder, "added.tex")).toBe("N, edited during Undo");
+        expect((yield* w.connection).managedPaths).toContain("added.tex");
+        // The edit still goes out with the next sync.
+        const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        if (next._tag !== "review") return yield* Effect.die(next);
+        expect(next.review.outgoing).toContainEqual({ kind: "added", path: "added.tex" });
+      }),
+    );
+  });
+
+  it.live("reads a path the send changed that a later sync stopped reading", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A", "keep.tex": "K" },
+          remote: { "main.tex": "A", "keep.tex": "K" },
+        });
+        yield* write(w.folder, { "main.tex": "B" });
+        expect(yield* w.sync("send-1")).toMatchObject({ publication: { _tag: "accepted" } });
+        yield* remove(w.folder, "main.tex");
+        expect(yield* w.sync("send-2")).toMatchObject({ publication: { _tag: "accepted" } });
+        expect((yield* w.connection).managedPaths).not.toContain("main.tex");
+        // The same bytes the first send left, written again: that send's to undo.
+        yield* write(w.folder, { "main.tex": "B" });
+        expect(yield* undo(w, 1)).toMatchObject({ restored: ["main.tex"], skipped: [] });
+        expect(yield* read(w.folder, "main.tex")).toBe("A");
+        expect((yield* w.connection).managedPaths).toContain("main.tex");
+      }),
+    ),
+  );
+
+  it.live("fails a sync whose pin repair fails while the objects exist, then repairs it", () =>
+    run(
+      Effect.gen(function* () {
+        // No earlier base kept, so only the attempt's pins hold the send's commits.
+        const w = yield* sentTwoFiles({ limits: { priorBases: 0 } });
+        const lock = (side: string) => NodePath.join(w.repo, `refs/scient/attempt/1/${side}.lock`);
+        // The refs are missing and Git cannot write them (stale locks).
+        for (const side of ["parent", "candidate"]) {
+          yield* w.repos.deleteRef({ repo: w.repo, name: `attempt/1/${side}` });
+          yield* Effect.promise(() => NodeFSP.writeFile(lock(side), "stale lock"));
+        }
+        w.setRemote({ "main.tex": "A2", "other.tex": "O2", "third.tex": "T3" });
+        const before = yield* w.connection;
+        expect(yield* Effect.flip(w.sync("later-1"))).toMatchObject({ _tag: "OverleafGitError" });
+        expect((yield* w.connection).revision).toBe(before.revision);
+        for (const side of ["parent", "candidate"])
+          yield* Effect.promise(() => NodeFSP.rm(lock(side)));
+        expect(yield* w.sync("later-2")).toMatchObject({ publication: { _tag: "none" } });
+        expect((yield* pinned(w, 1)).every((oid) => oid !== null)).toBe(true);
+        // The base moved off the send's commits; the repaired pins alone keep them.
+        yield* w.collectGarbage;
+        expect(yield* undo(w, 1)).toMatchObject({
+          _tag: "undone",
+          restored: ["main.tex", "other.tex"],
+        });
+        expect(yield* read(w.folder, "main.tex")).toBe("A");
       }),
     ),
   );

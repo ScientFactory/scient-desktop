@@ -183,8 +183,10 @@ bases rotate out or Overleaf's history is rewritten. A pending undo
 (`sync-undo` apply link) names its attempt, and a document is valid only while
 that attempt is recorded as accepted, so it cannot be pruned meanwhile. The
 coordinator writes required refs by what the repository holds, not by the
-previous document's list: a required ref found missing is written again while
-its object exists, and never blocks the replacement when the object is gone.
+previous document's list: a required ref found missing is written again, and a
+failure to write it fails the replacement. Only an accepted attempt's ref (kept
+for Undo alone) whose object Git confirms is gone is left out, so it never
+blocks.
 
 Request receipts are created once per request ID. A repeat with the same
 payload returns the original receipt instead of running again; reuse with a
@@ -312,8 +314,9 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
   reservation, receipt (`undo`) and application section as a restore, it
   compares the attempt's parent tree with the tree it sent: every changed path,
   both sides of a rename included, goes back to the parent's entry (its bytes,
-  or absence). The folder is captured as a review captures it, and a path is
-  put back only while it holds exactly what the send left there; otherwise it
+  or absence). The folder is captured as a review captures it, plus any file at
+  a changed path that the sync no longer reads, and a path is put back only
+  while it holds exactly what the send left there; otherwise it
   is skipped and reported (`changed`, or `already-undone` when it already holds
   the earlier version). A file it would recreate is skipped (`name-clash`) when
   another spelling of it or of a folder above it is on disk, a file stands
@@ -322,13 +325,15 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
   private repository no longer holds is `not-eligible` (`history-unavailable`).
   Before anything is written it checks room for one kept copy per path it
   touches (recreated files included: interference can leave a version there),
-  for the managed set afterwards (files it removes leave it, files it writes
-  join it, so a rename at the 2,000-file limit fits) and for interruptible
+  for the managed set afterwards (files it writes join it; files it removes
+  leave it where every capture reads them anyway, the base or a forced
+  conflict, so a rename at the 2,000-file limit fits) and for interruptible
   groups. It then runs as a `sync-undo` apply, adopted like a restore:
   displaced files are kept (`kept`), the base never moves, nothing is sent,
-  and the managed set becomes the one checked (the link records the removed
-  paths, `retired`); written files are taken off the local-only list. Removed
-  paths still in the base or a forced conflict stay in every capture.
+  and written files join the managed set and leave the local-only list. A
+  removed path (the link records them, `retired`) leaves the managed set once
+  the applier has removed it, or where the base or a forced conflict covers
+  it; a removal skipped elsewhere stays managed, so its file stays in the sync.
   Recovery resumes the same intent, and a repeated request returns the
   receipt. Saving open editors first is the caller's job.
 

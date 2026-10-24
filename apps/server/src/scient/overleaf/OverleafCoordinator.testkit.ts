@@ -79,6 +79,8 @@ export const world = (input: {
   readonly at?: (point: Point) => Effect.Effect<void>;
   /** Runs at the native publication hooks of every step the applier takes. */
   readonly native?: (point: MutationPoint, folder: string, stateRoot: string) => Promise<void>;
+  /** Runs just before the applier takes each step, with the step's path. */
+  readonly beforeStep?: (path: string, folder: string) => Promise<void>;
   /** Wraps the real applier, to shape what it reports. */
   readonly applier?: (real: WorkspaceApplier["Service"]) => WorkspaceApplier["Service"];
   readonly limits?: OverleafCoordinator.OverleafCoordinatorOptions["limits"];
@@ -134,7 +136,11 @@ export const world = (input: {
       helper,
       retainedHooks: { at: async (point) => input.native?.(point, folder, stateRoot) },
     });
-    const applier = yield* makeApplier().pipe(Effect.provideService(WorkspaceFileSystem, files));
+    const applier = yield* makeApplier({
+      at: async (point, path) => {
+        if (point === "before-step" && path !== undefined) await input.beforeStep?.(path, folder);
+      },
+    }).pipe(Effect.provideService(WorkspaceFileSystem, files));
     const barrier = makeCheckoutBarrier();
     const registry = makeOverleafReviewRegistry();
 
