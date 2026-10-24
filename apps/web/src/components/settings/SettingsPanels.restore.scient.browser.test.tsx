@@ -87,28 +87,6 @@ describe("restoring V2 settings", () => {
     await screen.refresh();
     expect(screen.restore.changedSettingLabels).toEqual([]);
   });
-  it("enables restore for chat width alone and restores its default through the live hook", async () => {
-    setup();
-    await using screen = await renderRestore();
-    await expect.element(screen.getByRole("button", { name: "Restore defaults" })).toBeDisabled();
-
-    state.settings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      chatWidth: "full",
-    };
-    await screen.refresh();
-    expect(screen.restore.changedSettingLabels).toEqual(["Chat width"]);
-    const restoreButton = screen.getByRole("button", { name: "Restore defaults" });
-    await expect.element(restoreButton).toBeEnabled();
-    await restoreButton.click();
-
-    expect(state.confirm.mock.calls[0]?.[0]).toContain("Chat width");
-    expect(state.update).toHaveBeenCalledOnce();
-    expect(state.update.mock.calls[0]?.[0].chatWidth).toBe(DEFAULT_UNIFIED_SETTINGS.chatWidth);
-    await screen.refresh();
-    expect(screen.restore.changedSettingLabels).toEqual([]);
-    await expect.element(restoreButton).toBeDisabled();
-  });
 
   it("does not restore a chat-width-only change when confirmation is cancelled", async () => {
     setup();

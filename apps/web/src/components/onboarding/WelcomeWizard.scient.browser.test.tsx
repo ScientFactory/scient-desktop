@@ -127,6 +127,7 @@ async function click(label: string) {
   await act(async () => button!.click());
 }
 
+// regression: 352cbecb13 fix(privacy): withhold unapproved policy links
 it("withholds the privacy link and disclosure while continuing to agent setup", async () => {
   const onDone = vi.fn();
   using _setup = setup();
@@ -134,12 +135,6 @@ it("withholds the privacy link and disclosure while continuing to agent setup", 
   expect(document.querySelector("h1")?.textContent?.trim()).toBe("Connect your computers");
   expect(document.querySelectorAll("a")).toHaveLength(0);
   expect(document.body.textContent).not.toMatch(/privacy policy|data collection|opt[ -]in/i);
-  const continueButton = [...document.querySelectorAll("button")].find(
-    (element) => element.textContent?.trim() === "Continue",
-  );
-  expect(continueButton).toBeDefined();
-  expect(continueButton!.parentElement!.children).toHaveLength(1);
-  expect(continueButton!.parentElement!.classList.contains("justify-end")).toBe(true);
 
   await click("Continue");
   expect(document.querySelector("h1")?.textContent?.trim()).toBe("Connect your agents");

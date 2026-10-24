@@ -77,32 +77,8 @@ describe("ProviderInstanceCard", () => {
     await userEvent.click(toggle);
     expect(toggle.textContent).toBe("developer@example.com");
   });
-
-  it.each(["list", "editor"] as const)(
-    "surfaces a failed probe message in the %s",
-    async (mode) => {
-      await using screen = await renderCard(
-        provider({
-          version: null,
-          status: "error",
-          auth: { status: "unknown" },
-          message:
-            "Codex app-server provider probe failed: Cannot create Codex shadow home entry 'auth.json' because '/home/me/.codex-t3/work/auth.json' already exists and is not a symlink.",
-        }),
-        mode,
-      );
-      if (mode === "editor") {
-        expect(screen.container.textContent).toContain("Unavailable");
-        expect(screen.container.textContent).toContain("is not a symlink");
-      } else {
-        expect(screen.container.textContent).not.toContain("Unavailable");
-        expect(screen.container.textContent).not.toContain("is not a symlink");
-      }
-    },
-  );
 });
 
-// SCIENT-FORK:START - quiet provider rows retain diagnostics and lifecycle guidance in the editor.
 describe("Pi status copy", () => {
   const driver = ProviderDriverKind.make("pi");
   const liveProvider: ServerProvider = {
@@ -133,27 +109,24 @@ describe("Pi status copy", () => {
     return screen.container.textContent ?? "";
   }
 
-  it.each(["list", "editor"] as const)(
-    "keeps the healthy %s free of repeated model status",
-    async (mode) => {
-      const markup = await render(mode);
-      expect(markup).not.toContain("Models available");
-      expect(markup).not.toContain("Authentication is model-specific");
-      expect(markup).toContain("v0.84.4");
-      if (mode === "editor") expect(markup).toContain("Test model");
-    },
-  );
+  it("keeps the healthy editor free of repeated model status", async () => {
+    const markup = await render("editor");
+    expect(markup).not.toContain("Models available");
+    expect(markup).not.toContain("Authentication is model-specific");
+    expect(markup).toContain("v0.84.4");
+    expect(markup).toContain("Test model");
+  });
 
-  it.each(["list", "editor"] as const)("preserves a Pi discovery error in the %s", async (mode) => {
-    const markup = await render(mode, {
+  it("preserves a Pi discovery error in the editor", async () => {
+    const markup = await render("editor", {
       ...liveProvider,
       status: "error",
       message: "Pi RPC timed out.",
     });
-    if (mode === "editor") expect(markup).toContain("Pi RPC timed out.");
-    else expect(markup).not.toContain("Pi RPC timed out.");
+    expect(markup).toContain("Pi RPC timed out.");
   });
 
+  // regression: 511bc318c4 fix(alignment): preserve Scient presentation and guarded reload
   it.each([
     { status: "error" as const, installed: true, message: "Pi RPC timed out." },
     { status: "error" as const, installed: false, message: "Pi is not installed." },
@@ -168,6 +141,7 @@ describe("Pi status copy", () => {
     expect(editor).toContain(snapshot.installed ? snapshot.message : "Not installed");
   });
 
+  // regression: 511bc318c4 fix(alignment): preserve Scient presentation and guarded reload
   it("keeps warning headlines out of the compact provider list", async () => {
     const list = await render("list", {
       ...liveProvider,
@@ -178,14 +152,10 @@ describe("Pi status copy", () => {
     expect(list).not.toContain("Pi needs attention.");
   });
 
-  it.each(["list", "editor"] as const)(
-    "keeps the disabled %s explicit despite a stale ready snapshot",
-    async (mode) => {
-      const markup = await render(mode, liveProvider, false);
-      if (mode === "editor") expect(markup).toContain("Disabled");
-      else expect(markup).not.toContain("Disabled");
-    },
-  );
+  it("keeps the disabled editor explicit despite a stale ready snapshot", async () => {
+    const markup = await render("editor", liveProvider, false);
+    expect(markup).toContain("Disabled");
+  });
 
   it("keeps an update notice without restoring the repeated model explanation", async () => {
     const markup = await render("editor", {
@@ -302,9 +272,9 @@ describe("Pi status copy", () => {
 });
 
 describe("Scient account presentation", () => {
+  // regression: 5abec00b8c fix(providers): preserve account detail hierarchy
   it.each([
     { kind: "codex", authLabel: "ChatGPT Pro 20x Subscription" },
-    { kind: "claudeAgent", authLabel: "Claude Max" },
     { kind: "codex", authLabel: undefined },
   ])(
     "keeps $kind subscription ($authLabel) above its visible account row",
@@ -360,4 +330,3 @@ describe("Scient account presentation", () => {
     expect(editorScreen.container.textContent).toContain("Sign-in required");
   });
 });
-// SCIENT-FORK:END

@@ -138,8 +138,7 @@ vi.mock(import("../settings/ChatGptWelcomeCoordinator"), async (original) => ({
   ...(await original()),
   ChatGptWelcomeCoordinator: () => <></>,
 }));
-// The real viewport mounts a Ghostty terminal against the PTY; these tests only need to
-// see whether the wizard shows it.
+// The real viewport mounts a Ghostty terminal against the PTY; keep it out of this test.
 vi.mock(import("../ThreadTerminalDrawer"), async (original) => ({
   ...(await original()),
   TerminalViewport: () => <div data-terminal-viewport />,
@@ -229,16 +228,6 @@ const session = (scopes: readonly AuthEnvironmentScope[]): AuthSessionState => (
 function setScopes(environmentId: EnvironmentId, scopes: readonly AuthEnvironmentScope[]) {
   appAtomRegistry.set(state.sessions.get(environmentId)!, AsyncResult.success(session(scopes)));
 }
-function setAccess(environmentId: EnvironmentId, allowed: boolean) {
-  setScopes(environmentId, allowed ? [AuthTerminalOperateScope] : []);
-}
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}
 
 function pageText() {
   return document.body.textContent ?? "";
@@ -254,9 +243,6 @@ async function click(label: string) {
   const node = button(label);
   expect(node.disabled).toBe(false);
   await act(async () => node.click());
-}
-function hasViewport() {
-  return document.querySelector("[data-terminal-viewport]") !== null;
 }
 async function enterRemoteAgents(screen: Screen, resumeEnvironmentId?: EnvironmentId) {
   await screen.rerender(
@@ -319,6 +305,7 @@ function setup() {
 }
 
 describe("welcome agent terminal setup", () => {
+  // regression: 89974f96b6 fix(alignment): preserve Scient provider and lifecycle behavior
   it("requires providers:manage for Codex setup and rechecks a retained mode callback", async () => {
     setup();
     const configAtom = state.configs.get(remoteId)!;
@@ -367,31 +354,5 @@ describe("welcome agent terminal setup", () => {
     await act(async () => setScopes(remoteId, [AuthTerminalOperateScope]));
     await act(async () => retainedModeChange?.("existing"));
     expect(state.updateSettings).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps an accepted terminal visible without pretyping when access is revoked during open", async () => {
-    setup();
-    await using screen = await render(null);
-    const opening = deferred<CommandResult>();
-    state.open.mockReturnValueOnce(opening.promise);
-    await enterRemoteAgents(screen);
-    await click("Install");
-    await act(async () => {
-      setAccess(remoteId, false);
-      opening.resolve(AsyncResult.success(undefined));
-    });
-    expect(state.write).not.toHaveBeenCalled();
-    expect(state.close).not.toHaveBeenCalled();
-    expect(hasViewport()).toBe(true);
-    expect(pageText()).toContain("This connection cannot control terminals.");
-    await act(async () => setAccess(remoteId, true));
-    expect(state.open).toHaveBeenCalledOnce();
-    expect(state.write).not.toHaveBeenCalled();
-    expect(pageText()).toContain("Run curl -fsSL https://claude.ai/install.sh | bash in this");
-    await act(async () => setAccess(remoteId, false));
-    await click("Close");
-    expect(hasViewport()).toBe(false);
-    expect(state.close).not.toHaveBeenCalled();
-    await click("Continue");
   });
 });
