@@ -1,5 +1,7 @@
 import {
   ORCHESTRATION_V2_WS_METHODS,
+  ProviderInstanceId,
+  RunId,
   type OrchestrationV2ShellStreamItem,
   type OrchestrationV2ThreadStreamItem,
   type ProviderDriverKind,
@@ -41,6 +43,23 @@ export function expectedMeasuredAssistantText(provider: ProviderDriverKind): str
   return (
     `Completed ${provider} inspection ${TRANSFER_MEASURED_TURN_INDEX}. ` +
     "The projection preserves transcript text and bounds tool output. ".repeat(60)
+  );
+}
+
+/** A projected shell may already contain the final state at an earlier event cursor. */
+export function isMeasuredTransferShellUpdate(
+  item: OrchestrationV2ShellStreamItem,
+  provider: ProviderDriverKind,
+  afterSequence: number,
+): item is Extract<OrchestrationV2ShellStreamItem, { readonly kind: "thread.updated" }> {
+  return (
+    item.kind === "thread.updated" &&
+    item.sequence > afterSequence &&
+    item.thread.id === TRANSFER_THREAD_ID &&
+    item.thread.providerInstanceId === ProviderInstanceId.make(provider) &&
+    item.thread.latestRunId === RunId.make(`run-${TRANSFER_MEASURED_TURN_INDEX}`) &&
+    item.thread.activeRunId === null &&
+    item.thread.latestRunCompletedAt != null
   );
 }
 
