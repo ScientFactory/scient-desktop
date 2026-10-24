@@ -366,6 +366,37 @@ it("ends once the prompt's own run has ended and its answer is shown", async (co
   expect(readTimelinePosition(key)?.followingPromptId).toBeUndefined();
 });
 
+it("drops the follow from the saved position when it ends, with nothing else to save it", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const key = "follow:settle-save";
+  const { history, runs } = await answeredThread(_fixture, key);
+  const prompt = message(10, "user", { text: "Short follow-up", runId: "run-10" });
+  await _fixtureAct(() => _fixture.chat.sendAtEnd("message-10"));
+  const answer = message(11, "assistant", { text: "Done.", runId: "run-10" });
+  const entries = [...history, prompt, ...steps(1, "run-10"), answer];
+  await render(_fixture, key, entries, [...runs, run("run-10", "message-10", "running")]);
+  await playUntil(_fixture, () => toEnd(_fixture) <= 1);
+  expect(readTimelinePosition(key)?.followingPromptId).toBe("message-10");
+  // Nothing but the follow's end may save the position again. Scrolls and
+  // resizes save it too, and arrive in real rendering steps, at no fixed point
+  // among the fake frames: the answer is measured first, later scroll events
+  // are held back, and the finished turn's working header (which closes on
+  // real time) stays open.
+  await waitForMeasuredRow(_fixture.listRef.current!, "entry-11", context.signal);
+  const host = _fixture.host!;
+  const holdScroll = (event: Event) => event.stopPropagation();
+  host.addEventListener("scroll", holdScroll, true);
+  _fixture.cleanup.defer(() => host.removeEventListener("scroll", holdScroll, true));
+  await render(_fixture, key, entries, [...runs, run("run-10", "message-10", "completed")]);
+  for (const animation of host.getAnimations({ subtree: true })) animation.pause();
+  await playUntil(_fixture, () => _fixture.chat.followPromptId === null);
+  await play(_fixture, 16);
+  expect(readTimelinePosition(key)?.followingPromptId).toBeUndefined();
+});
+
 it("follows a queued prompt the server delivers in one update while the reader is at the end", async (context) => {
   await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
