@@ -40,6 +40,8 @@ export interface AnalyticsRuntimeOptions extends NormalizationContext {
   readonly randomUUID?: () => string;
   /** A user-requested deletion may authenticate while collection stays off. */
   readonly purpose?: "collection" | "deletion";
+  /** How long a control request waits for the worker; tests shorten it. */
+  readonly controlTimeoutMs?: number;
 }
 
 export interface AnalyticsRuntime {
@@ -85,6 +87,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   }
 
   const now = options.now ?? (() => new Date());
+  const controlTimeoutMs = options.controlTimeoutMs ?? CONTROL_TIMEOUT_MS;
   const randomUUID = options.randomUUID ?? NodeCrypto.randomUUID;
   const sessionId = `session:${randomUUID()}`;
   const worker = new NodeWorkerThreads.Worker(
@@ -179,7 +182,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
 
   const request = (
     command: (requestId: number) => AnalyticsWorkerCommand,
-    timeoutMs = CONTROL_TIMEOUT_MS,
+    timeoutMs = controlTimeoutMs,
   ): Promise<number | null> => {
     if (!available) return Promise.resolve(null);
     const requestId = nextRequestId++;
@@ -280,7 +283,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
     record,
     flush: async () => {
       if (closed || deleting || !available || consent === "off" || purpose === "deletion") return 0;
-      await waitForCondition(() => ready || !available, Date.now() + CONTROL_TIMEOUT_MS);
+      await waitForCondition(() => ready || !available, Date.now() + controlTimeoutMs);
       if (!ready || !available) return 0;
       drain();
       return (await request((requestId) => ({ type: "flush", requestId }))) ?? 0;
@@ -312,7 +315,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
     },
     pendingCount: async () => {
       if (closed || !available) return bufferedCount();
-      await waitForCondition(() => ready || !available, Date.now() + CONTROL_TIMEOUT_MS);
+      await waitForCondition(() => ready || !available, Date.now() + controlTimeoutMs);
       if (!ready || !available) return bufferedCount();
       drain();
       return (
@@ -323,7 +326,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       if (closed || deleting || !available) return false;
       deleting = true;
       try {
-        await waitForCondition(() => ready || !available, Date.now() + CONTROL_TIMEOUT_MS);
+        await waitForCondition(() => ready || !available, Date.now() + controlTimeoutMs);
         if (!ready || !available) return false;
         // Already-posted enqueues precede deletion on the worker's message port.
         // Hold all remaining batches until its result, including persisted ACKs.
