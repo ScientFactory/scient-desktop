@@ -1,4 +1,7 @@
 import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
+// SCIENT-FORK:START public-origin-credentials
+import { redactRemoteUrl } from "@t3tools/shared/cloneUrl";
+// SCIENT-FORK:END public-origin-credentials
 import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
@@ -103,10 +106,13 @@ function buildRepositoryOrigin(
   canonicalKey: string,
 ): RepositoryIdentity["origin"] {
   if (!originUrl) return undefined;
-  const originKey = normalizeGitRemoteUrl(originUrl);
+  // SCIENT-FORK:START public-origin-credentials
+  const remoteUrl = redactRemoteUrl(originUrl);
+  // SCIENT-FORK:END public-origin-credentials
+  const originKey = normalizeGitRemoteUrl(remoteUrl);
   if (originKey === canonicalKey) return undefined;
-  const displayName = repositoryPathOf(originKey, originUrl);
-  return { canonicalKey: originKey, ...(displayName ? { displayName } : {}) };
+  const displayName = repositoryPathOf(originKey, remoteUrl);
+  return { canonicalKey: originKey, remoteUrl, ...(displayName ? { displayName } : {}) };
 }
 
 export function buildRepositoryIdentity(input: {

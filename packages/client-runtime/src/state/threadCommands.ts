@@ -21,7 +21,6 @@ import {
 import {
   type ArchiveThreadInput,
   type CancelQueuedRunInput,
-  type ResumeThreadQueueInput,
   type RetryWorkspacePreparationInput,
   type CreateThreadInput,
   type DeleteThreadInput,
@@ -32,6 +31,7 @@ import {
   type MergeThreadBackInput,
   type PromoteQueuedRunInput,
   type ReorderQueuedRunInput,
+  type ResumeThreadQueueInput,
   type LinkThreadPullRequestInput,
   type RespondToThreadApprovalInput,
   type RespondToThreadUserInputInput,

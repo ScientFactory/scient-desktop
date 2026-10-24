@@ -451,7 +451,7 @@ export function ConversationExportForm(props: {
             }
             onCheckedChange={(checked) => changeInclude("includeWorkLog", checked)}
           />
-          Work log — tools, commands, results
+          Work log: tools, commands, results
         </Label>
         <Label ref={reasoningRef}>
           <Switch
@@ -462,7 +462,7 @@ export function ConversationExportForm(props: {
             }
             onCheckedChange={(checked) => changeInclude("includeReasoning", checked)}
           />
-          Reasoning — the thinking shown in chat
+          Reasoning: the thinking shown in chat
         </Label>
       </div>
 

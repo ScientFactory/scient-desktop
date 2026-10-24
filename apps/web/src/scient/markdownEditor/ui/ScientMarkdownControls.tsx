@@ -568,7 +568,7 @@ function DirectionMenuItems({
           value={item.command}
           aria-label={
             snapshot.inTable && item.command === "direction-auto"
-              ? "Auto — detect from table"
+              ? "Auto (detect from table)"
               : item.accessibleLabel
           }
           onClick={() => controller.execute(item.command)}
@@ -577,7 +577,7 @@ function DirectionMenuItems({
             icon={commandIcon(item.command)}
             label={
               snapshot.inTable && item.command === "direction-auto"
-                ? "Auto — detect from table"
+                ? "Auto (detect from table)"
                 : item.label
             }
           />

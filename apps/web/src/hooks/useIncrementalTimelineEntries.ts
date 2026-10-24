@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { shallow } from "zustand/vanilla/shallow";
 import {
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   type TimelineEntriesInput,
@@ -7,14 +8,25 @@ import {
 
 function sameInput(left: TimelineEntriesInput, right: TimelineEntriesInput): boolean {
   return (
-    left.visibleTurnItems === right.visibleTurnItems &&
-    left.optimisticMessages === right.optimisticMessages &&
-    left.anchoredMessages === right.anchoredMessages &&
-    left.attachmentUrlById === right.attachmentUrlById &&
-    left.attempts === right.attempts &&
-    left.nodes === right.nodes &&
-    left.plans === right.plans
+    shallow(left.visibleTurnItems, right.visibleTurnItems) &&
+    shallow(left.optimisticMessages, right.optimisticMessages) &&
+    sameAnchoredMessages(left.anchoredMessages, right.anchoredMessages) &&
+    shallow(left.attachmentUrlById, right.attachmentUrlById) &&
+    shallow(left.attempts, right.attempts) &&
+    shallow(left.nodes, right.nodes) &&
+    shallow(left.plans, right.plans)
   );
+}
+
+function sameAnchoredMessages(
+  left: TimelineEntriesInput["anchoredMessages"],
+  right: TimelineEntriesInput["anchoredMessages"],
+): boolean {
+  if (shallow(left, right)) return true;
+  if (left === undefined || right === undefined || left.length !== right.length) return false;
+  // Local feedback messages are reconstructed from immutable submissions. Compare
+  // their fields, not allocation identity; nested attachments still use identity.
+  return left.every((message, index) => shallow(message, right[index]));
 }
 
 /**

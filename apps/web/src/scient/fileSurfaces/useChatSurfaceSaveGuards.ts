@@ -15,6 +15,14 @@ import {
   useMarkdownPersistenceNavigationGuards,
 } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
 
+export interface ChatSurfaceDepartureGuards {
+  readonly runAfterPendingSurfaceSave: (
+    surfaceIds: ReadonlyArray<string>,
+    run: () => void,
+  ) => boolean;
+  readonly runAfterPendingFileSave: (targetSurfaceId: string | null, run: () => void) => boolean;
+}
+
 /**
  * Markdown save state for the chat's right-panel surfaces: which surfaces
  * still have a pending save and which need attention. A surface that needs
@@ -52,7 +60,7 @@ export function useChatSurfaceDepartureGuards(input: {
   readonly cwd: string | undefined;
   readonly pendingFileSurfaceIdsByProject: ReadonlyMap<string, ReadonlySet<string>>;
   readonly handleMarkdownAttention: (surfaceId: string) => void;
-}) {
+}): ChatSurfaceDepartureGuards {
   const {
     pendingFileSurfaceIds,
     markdownDepartureOptions,

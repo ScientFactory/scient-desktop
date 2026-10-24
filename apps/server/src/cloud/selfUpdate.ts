@@ -26,6 +26,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
   PinnedRuntimeInstallError,
+  pinnedRuntimePaths,
   PinnedRuntimePreflightBlockedError,
   prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
@@ -166,6 +167,42 @@ export const withRunningThreadContinuation = Effect.fn(
   });
 });
 
+/**
+ * A server starting from the runtime its launcher settled on means runtimes left by earlier
+ * updates can go. The boot service says so through its IPC context. The SSH launcher and the
+ * install script's `t3` start this home's pinned runtime directly, without one.
+ */
+export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on_start")(
+  function* (input: { readonly baseDir: string; readonly managed: boolean }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const executablePath = yield* HostProcess.ExecutablePath;
+    const args = yield* HostProcess.Arguments;
+    const isExecutable = yield* HostProcess.IsExecutable;
+    const runningEntry = isExecutable ? executablePath : args[1];
+    const { entryPath } = pinnedRuntimePaths(path, input.baseDir, packageJson.version);
+    // Scient's runtime is a Node script; its shared Node executable does not identify the release.
+    // Ambiguous invocations must not enable pruning for an unmanaged development process.
+    const realEntryPath = yield* fs.realPath(entryPath).pipe(Effect.orElseSucceed(() => entryPath));
+    if (
+      !input.managed &&
+      (runningEntry === undefined ||
+        !path.isAbsolute(runningEntry) ||
+        (runningEntry !== entryPath && runningEntry !== realEntryPath))
+    ) {
+      return [];
+    }
+    const removed = yield* prunePinnedRuntimes({
+      baseDir: input.baseDir,
+      keep: [packageJson.version],
+    });
+    if (removed.length > 0) {
+      yield* Effect.logInfo("Removed unused Scient runtimes.", { versions: removed });
+    }
+    return removed;
+  },
+);
+
 export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const desktopAppUpdate = yield* DesktopAppUpdate.DesktopAppUpdate;
@@ -176,18 +213,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const execPath = yield* HostProcess.ExecutablePath;
   const inFlight = yield* Ref.make(false);
 
-  // A managed server starting means its launcher has settled on a version, so runtimes left by
-  // earlier updates can go.
-  if (launcher.managed) {
-    yield* prunePinnedRuntimes({ baseDir: serverConfig.baseDir, keep: [packageJson.version] }).pipe(
-      Effect.tap((removed) =>
-        removed.length === 0
-          ? Effect.void
-          : Effect.logInfo("Removed unused t3 runtimes.", { versions: removed }),
-      ),
-      Effect.forkScoped,
-    );
-  }
+  yield* pruneRuntimesOnStart({ baseDir: serverConfig.baseDir, managed: launcher.managed }).pipe(
+    Effect.forkScoped,
+  );
 
   const capability: ServerSelfUpdateCapability | null =
     serverConfig.mode === "desktop" ? "desktop-managed" : launcher.managed ? "boot-service" : null;

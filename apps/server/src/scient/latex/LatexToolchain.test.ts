@@ -1181,19 +1181,23 @@ describe("latexmk discovery lifecycle", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.live("releases a waiting caller when the service shuts down mid-discovery", () =>
+  it.effect("releases a waiting caller when the service shuts down mid-discovery", () =>
     Effect.gen(function* () {
       const never = yield* Deferred.make<void>();
       const started = yield* Deferred.make<void>();
+      const stopped = yield* Deferred.make<void>();
       const { layer } = yield* harness((command) =>
         command === "latexmk"
           ? Deferred.succeed(started, undefined).pipe(
               Effect.andThen(Deferred.await(never)),
               Effect.as(output(LATEXMK_BANNER)),
+              Effect.ensuring(Deferred.succeed(stopped, undefined)),
             )
           : spawnFailure(command),
       );
-      const serviceScope = yield* Scope.make();
+      const serviceScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
       const context = yield* Layer.buildWithScope(layer, serviceScope);
       const waiting = yield* Effect.forkChild(
         LatexToolchain.use((toolchain) => toolchain.probe(false)).pipe(
@@ -1202,11 +1206,10 @@ describe("latexmk discovery lifecycle", () => {
       );
       yield* Deferred.await(started);
       yield* Scope.close(serviceScope, Exit.void);
-      const exit = yield* Fiber.await(waiting).pipe(
-        Effect.timeoutOrElse({ duration: "5 seconds", orElse: () => Effect.die("still waiting") }),
-      );
+      const exit = yield* Fiber.await(waiting);
       // Ended, one way or another, instead of hanging on a worker that is gone.
       expect(Exit.isSuccess(exit)).toBe(false);
+      expect(yield* Deferred.isDone(stopped)).toBe(true);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

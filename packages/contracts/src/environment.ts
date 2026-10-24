@@ -94,6 +94,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadQueueMessageContext: Schema.optionalKey(Schema.Boolean),
   /** Server can explicitly send one waiting queue item after a failed or stopped turn. */
   threadQueueExplicitSend: Schema.optionalKey(Schema.Boolean),
+  // SCIENT-FORK:START
+  /** Overrides legacy Scient's threadQueueExplicitSend queue.resume(runId) form.
+  Unmodified upstream v2 hosts already use queued-run.start without either flag. */
+  queuedRunStart: Schema.optionalKey(Schema.Boolean),
+  // SCIENT-FORK:END
   requiredWorktreeBootstrap: Schema.optionalKey(Schema.Boolean),
   threadSettlement: Schema.optionalKey(Schema.Boolean),
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
@@ -201,6 +206,7 @@ export type RepositoryIdentityLocator = typeof RepositoryIdentityLocator.Type;
 
 export const RepositoryOrigin = Schema.Struct({
   canonicalKey: TrimmedNonEmptyString,
+  remoteUrl: Schema.optionalKey(TrimmedNonEmptyString),
   displayName: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type RepositoryOrigin = typeof RepositoryOrigin.Type;

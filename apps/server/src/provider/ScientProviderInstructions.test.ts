@@ -13,6 +13,11 @@ describe("Scient provider instruction composition", () => {
     assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "ordinary top-level Scient conversations");
     assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "Never use them merely");
     assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "cross-provider");
+    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "pass `search` to find others");
+    assert.include(
+      SCIENT_ORCHESTRATION_INSTRUCTIONS,
+      "no model options are requested or inherited",
+    );
     assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "call `delegate_task` again");
     assert.include(
       SCIENT_ORCHESTRATION_INSTRUCTIONS,

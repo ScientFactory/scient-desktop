@@ -12,13 +12,13 @@ import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 
 export const OVERLEAF_CONNECTION_SCHEMA_VERSION = 1;
 /** Prior bases kept reachable for recovery classification. */
-const PRIOR_BASE_LIMIT = 20;
-const LOCAL_SNAPSHOT_LIMIT = 10;
+export const PRIOR_BASE_LIMIT = 20;
+export const LOCAL_SNAPSHOT_LIMIT = 10;
 /** Unresolved publication attempts kept before new work is refused. */
 export const UNRESOLVED_ATTEMPT_LIMIT = 16;
 /** All attempts kept, resolved history included; resolved ones may be pruned. */
 export const ATTEMPT_LIMIT = 64;
-const RETAINED_COPY_LIMIT = 4_096;
+export const RETAINED_COPY_LIMIT = 4_096;
 /** Paths a connection can manage: Overleaf's file limit per project. */
 export const MANAGED_PATH_LIMIT = 2_000;
 /**
@@ -177,7 +177,7 @@ const PublicationAttempt = Schema.Struct({
 export type OverleafPublicationAttempt = typeof PublicationAttempt.Type;
 
 /** A kept version's place in the retention folder: `<apply>/files/<step>/<leaf>`. */
-const KeptPath = Schema.String.check(
+export const KeptPath = Schema.String.check(
   Schema.isPattern(
     /^[a-z0-9][a-z0-9-]{0,63}\/files\/step-\d{1,5}(?:-\d{1,5})?\/(?:retained|slot|provisional)$/u,
   ),

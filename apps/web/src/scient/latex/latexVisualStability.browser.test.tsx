@@ -20,7 +20,11 @@ import { latexPageAt, latexPageMarkersKey, setLatexPageMarkers } from "./latexPa
 import { latexPagedKey, pagedLayoutSettled } from "./latexPagedGeometry";
 import { rememberedLatexReadingBlock } from "./latexReadingPosition";
 import { latexEquationReferencesKey, navigateToFootnote } from "./latexEquationReferences";
-import { readMountedLatexVisualTestEditor, useLatexVisualTestOwner } from "./latexVisualTestOwner";
+import {
+  readMountedLatexVisualTestEditor,
+  scrollLatexVisualTestEditor as scrollDelivered,
+  useLatexVisualTestOwner,
+} from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 import { latexBenchmarkDocument } from "./visualBenchmark/latexBenchmarkDocument";
 import "./scient-latex.css";
@@ -252,24 +256,6 @@ async function settleLayout(editor: Editor) {
 async function scrollAndLayout(editor: Editor, change: () => void) {
   await scrollDelivered(editor, change);
   await settleLayout(editor);
-}
-
-async function scrollDelivered(editor: Editor, change: () => void) {
-  const scroll = scroller(editor);
-  let receive!: () => void;
-  const delivered = new Promise<void>((resolve) => {
-    receive = resolve;
-  });
-  scroll.addEventListener("scroll", receive, { once: true });
-  try {
-    const beforeTop = scroll.scrollTop;
-    const beforeLeft = scroll.scrollLeft;
-    change();
-    // A clamped request that leaves both offsets unchanged emits no native event.
-    if (scroll.scrollTop !== beforeTop || scroll.scrollLeft !== beforeLeft) await delivered;
-  } finally {
-    scroll.removeEventListener("scroll", receive);
-  }
 }
 
 it("acknowledges native scroll movement without waiting on an unchanged clamp", async () => {

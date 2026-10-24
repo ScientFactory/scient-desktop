@@ -178,6 +178,14 @@ int platform_lock_parent(Context *context, int exclusive) {
 #ifdef SCIENT_PUBLICATION_PROBE
   if (getenv("SCIENT_LEASE_PROBE")) { printf("LEASE_WAIT\n"); fflush(stdout); }
   if (getenv("SCIENT_LEASE_TRY")) flags |= LOCK_NB;
+  if (getenv("SCIENT_LEASE_CONTENTION_PROBE")) {
+    do { result = flock(context->parent, flags | LOCK_NB); } while (result && errno == EINTR);
+    if (result) {
+      if (errno != EWOULDBLOCK && errno != EAGAIN) return errno;
+      fputs("LEASE_BLOCKED\n", stderr);
+      fflush(stderr);
+    }
+  }
 #endif
   do { result = flock(context->parent, flags); } while (result && errno == EINTR);
   if (!result) {

@@ -7305,7 +7305,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               const error = yield* client[WS_METHODS.assetsCreateUrl]({
                 resource: { _tag: "media-file", threadId, path: name },
               }).pipe(Effect.flip);
-              assert.equal(error._tag, "AssetWorkspaceContextNotFoundError");
+              assert.equal(error._tag, "AssetWorkspaceContextResolutionError");
+              assert.deepInclude(error, {
+                resource: { _tag: "media-file", threadId, path: name },
+              });
             }
           }),
         ),

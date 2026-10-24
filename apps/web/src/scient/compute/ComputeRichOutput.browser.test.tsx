@@ -50,7 +50,7 @@ describe("bounded result tables", () => {
       const cells = container.querySelectorAll("td");
       expect(cells[1]!.textContent).toBe("1.25");
       expect(cells[1]!.className).toContain("text-end");
-      expect(cells[2]!.textContent).toBe("—");
+      expect(cells[2]!.textContent).toBe("Not available");
       expect(container.textContent?.includes("Limited preview")).toBe(truncated);
       expect(container.textContent).toContain("1 rows · 3 columns");
     },

@@ -637,7 +637,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, publication", () => {
         yield* write(w.folder, { "main.tex": "A, edited here" });
         const prepared = yield* w.coordinator.prepare({ connectionId: CONNECTION });
         if (prepared._tag !== "review") return yield* Effect.die(prepared);
-        const refused = yield* Effect.exit(
+        const refused = yield* Effect.flip(
           w.coordinator.confirm({
             connectionId: CONNECTION,
             requestId: "request-1",
@@ -646,11 +646,10 @@ describe.skipIf(!canApply)("OverleafCoordinator, publication", () => {
             acknowledgements: prepared.review.binding.acknowledgements,
           }),
         );
-        expect(refused).toMatchObject(
-          Exit.fail(
-            expect.objectContaining({ _tag: "OverleafRetainedLimitError", limit: "attempts" }),
-          ),
-        );
+        expect(refused).toMatchObject({
+          _tag: "OverleafRetainedLimitError",
+          limit: "attempts",
+        });
         expect((yield* w.connection).activeApply).toBeNull();
         expect(w.pushes).toHaveLength(0);
       }),

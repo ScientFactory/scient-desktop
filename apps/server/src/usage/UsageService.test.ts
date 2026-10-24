@@ -1962,7 +1962,7 @@ describe("UsageService", () => {
             const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
               version: number;
             };
-            assert.strictEqual(document.version, 8);
+            assert.strictEqual(document.version, 9);
             assert.strictEqual(await NodeFSP.readFile(priorPath, "utf8"), priorText);
             assert.strictEqual(await NodeFSP.readFile(v4Path, "utf8"), v4Text);
           });
@@ -2082,7 +2082,7 @@ describe("UsageService", () => {
           await NodeFSP.writeFile(v4Path, v4Text);
           await NodeFSP.rm(transcript);
         });
-        for (const version of [9, "unknown", undefined]) {
+        for (const version of [10, "unknown", undefined]) {
           yield* Effect.promise(() =>
             NodeFSP.writeFile(cachePath, encodeUnknownJsonString({ ...document, version })),
           );
@@ -2104,7 +2104,7 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  it.live.each([4, 5, 6, 7])(
+  it.live.each([4, 5, 6, 7, 8])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
     (version) =>
       Effect.gen(function* () {
@@ -2126,7 +2126,10 @@ describe("UsageService", () => {
               timestamp: "2026-08-01T10:00:00Z",
               payload: {
                 type: "token_count",
-                info: { last_token_usage: { input_tokens: 0, output_tokens: outputTokens } },
+                info: {
+                  last_token_usage: { input_tokens: 0, output_tokens: outputTokens },
+                  total_token_usage: { input_tokens: 100, output_tokens: outputTokens + 30 },
+                },
               },
             },
           ]
@@ -2152,13 +2155,14 @@ describe("UsageService", () => {
           yield* first.awaitPersisted;
 
           const legacy = yield* Effect.promise(async () => {
+            const livePath = await NodeFSP.realpath(live);
             const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
-              files: Record<string, { r: unknown[][]; cs: Record<string, unknown> }>;
+              files: Record<string, { r: unknown[][]; mr: number; cs: Record<string, unknown> }>;
             };
             for (const [path, file] of Object.entries(document.files)) {
               file.r = file.r.map((row) => [
                 ...row.slice(0, 6),
-                path === live ? 99 : row[6],
+                path === livePath ? 99 : row[6],
                 ...row.slice(7, 10),
                 version === 4 ? 0 : 1,
               ]);
@@ -2166,6 +2170,11 @@ describe("UsageService", () => {
               if (version < 6) {
                 delete file.cs.lastCumulativeUsage;
                 delete file.cs.malformedRecords;
+              }
+              if (version === 8 && path === livePath) {
+                file.r = [];
+                file.mr = 1;
+                file.cs.malformedRecords = 1;
               }
             }
             const text = encodeUnknownJsonString({ ...document, version });
@@ -2194,7 +2203,7 @@ describe("UsageService", () => {
               const persisted = decodeUnknownJsonString(
                 await NodeFSP.readFile(cachePath, "utf8"),
               ) as { version: number };
-              assert.strictEqual(persisted.version, 8);
+              assert.strictEqual(persisted.version, 9);
               assert.strictEqual(await NodeFSP.readFile(legacyPath, "utf8"), legacy);
             }),
           );
@@ -2207,7 +2216,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v8.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v9.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,

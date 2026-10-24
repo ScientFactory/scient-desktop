@@ -125,41 +125,41 @@ describe("fileTabTitles", () => {
 
   it("adds the shortest folders that tell same-name files apart", () => {
     const titles = fileTabTitles(["drafts/a/plan.md", "drafts/b/plan.md", "notes.md"]);
-    expect(titles.get("drafts/a/plan.md")).toBe("plan.md — a");
-    expect(titles.get("drafts/b/plan.md")).toBe("plan.md — b");
+    expect(titles.get("drafts/a/plan.md")).toBe("plan.md (a)");
+    expect(titles.get("drafts/b/plan.md")).toBe("plan.md (b)");
     expect(titles.get("notes.md")).toBe("notes.md");
   });
 
   it("goes further up only as far as needed", () => {
     const titles = fileTabTitles(["x/shared/plan.md", "y/shared/plan.md", "z/other/plan.md"]);
-    expect(titles.get("x/shared/plan.md")).toBe("plan.md — x/shared");
-    expect(titles.get("y/shared/plan.md")).toBe("plan.md — y/shared");
-    expect(titles.get("z/other/plan.md")).toBe("plan.md — other");
+    expect(titles.get("x/shared/plan.md")).toBe("plan.md (x/shared)");
+    expect(titles.get("y/shared/plan.md")).toBe("plan.md (y/shared)");
+    expect(titles.get("z/other/plan.md")).toBe("plan.md (other)");
   });
 
   it("keeps a root-level file bare and still distinguishes the others", () => {
     const titles = fileTabTitles(["plan.md", "drafts/plan.md", "/Users/me/out/plan.md"]);
     expect(titles.get("plan.md")).toBe("plan.md");
-    expect(titles.get("drafts/plan.md")).toBe("plan.md — drafts");
-    expect(titles.get("/Users/me/out/plan.md")).toBe("plan.md — out");
+    expect(titles.get("drafts/plan.md")).toBe("plan.md (drafts)");
+    expect(titles.get("/Users/me/out/plan.md")).toBe("plan.md (out)");
   });
 
   it("tells a host file from a workspace file whose folders are spelled alike", () => {
     const titles = fileTabTitles(["tmp/report.md", "/tmp/report.md", "\\\\nas\\tmp\\report.md"]);
-    expect(titles.get("tmp/report.md")).toBe("report.md — tmp");
-    expect(titles.get("/tmp/report.md")).toBe("report.md — /tmp");
-    expect(titles.get("\\\\nas\\tmp\\report.md")).toBe("report.md — \\\\nas/tmp");
+    expect(titles.get("tmp/report.md")).toBe("report.md (tmp)");
+    expect(titles.get("/tmp/report.md")).toBe("report.md (/tmp)");
+    expect(titles.get("\\\\nas\\tmp\\report.md")).toBe("report.md (\\\\nas/tmp)");
   });
 
   it("keeps a POSIX backslash as part of a folder's name", () => {
     const titles = fileTabTitles(["/tmp/a\\b/report.md", "/tmp/a/b/report.md"]);
-    expect(titles.get("/tmp/a\\b/report.md")).toBe("report.md — a\\b");
-    expect(titles.get("/tmp/a/b/report.md")).toBe("report.md — b");
+    expect(titles.get("/tmp/a\\b/report.md")).toBe("report.md (a\\b)");
+    expect(titles.get("/tmp/a/b/report.md")).toBe("report.md (b)");
   });
 
   it("handles Windows separators and a path opened twice", () => {
     const titles = fileTabTitles(["C:\\work\\a\\plan.md", "b/plan.md", "b/plan.md"]);
-    expect(titles.get("C:\\work\\a\\plan.md")).toBe("plan.md — a");
-    expect(titles.get("b/plan.md")).toBe("plan.md — b");
+    expect(titles.get("C:\\work\\a\\plan.md")).toBe("plan.md (a)");
+    expect(titles.get("b/plan.md")).toBe("plan.md (b)");
   });
 });

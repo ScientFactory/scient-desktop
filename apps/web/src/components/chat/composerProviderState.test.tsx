@@ -12,6 +12,7 @@ import {
   getComposerReasoningStep,
   withImplicitFastModeDefault,
 } from "./composerProviderState";
+
 const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
 const MODEL = "test-model";
 it.each(["medium", "off", "default", "invalid", "low", "high", "max"])(
@@ -523,6 +524,7 @@ describe("withImplicitFastModeDefault", () => {
     ).toEqual(selections(["fastMode", true]));
   });
 });
+
 describe("getComposerReasoningStep", () => {
   const LEVELS = [
     {

@@ -1,9 +1,9 @@
+import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import type {
   EnvironmentId,
   ForkOptions,
   MessageId,
-  OrchestrationV2ProjectedTurnItem,
   RunId,
   ScopedThreadRef,
   ThreadId,
@@ -163,6 +163,7 @@ export function useClearForkCommandOnThreadChange(
 /** The composer's fork command: the running turn while it works, else the latest answer. */
 export function createForkConversationCommand(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
+  readonly readTimelineEntries?: () => ReadonlyArray<TimelineEntry>;
   readonly activeLatestRun: TimelineLatestRun | null;
   readonly activeRunningTurnId: RunId | null;
   readonly activeThreadId: ThreadId | null;
@@ -177,13 +178,14 @@ export function createForkConversationCommand(input: {
     activeThreadEnvironmentId,
     setForkCommandTarget,
   } = input;
-  const latestCompletedAssistantMessageId = findLatestCompletedAssistantMessageId({
-    timelineEntries,
-    latestRun: activeLatestRun,
-    runningRunId: activeRunningTurnId,
-  });
   return (options?: { readonly preserveComposerDraft?: boolean }) => {
     if (!activeThreadId || !activeThreadEnvironmentId) return;
+    const latestCompletedAssistantMessageId = findLatestCompletedAssistantMessageId({
+      timelineEntries: input.readTimelineEntries?.() ?? timelineEntries,
+      latestRun: activeLatestRun,
+      runningRunId: activeRunningTurnId,
+    });
+
     // While the agent works, a fork carries its work in progress.
     if (activeRunningTurnId !== null && !options?.preserveComposerDraft) {
       setForkCommandTarget({
@@ -209,11 +211,12 @@ export function createForkConversationCommand(input: {
 export function deriveForkTimelineBaseline(input: {
   readonly turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   readonly activeThread: Thread | null | undefined;
-  readonly serverVisibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+  readonly serverVisibleTurnItems: ReadonlyArray<ThreadStructureVisibleTurnItem>;
   readonly isGitRepo: boolean;
   readonly forkDialogOpen: boolean;
   readonly forkCommandTarget: ForkCommandTarget | null;
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
+  readonly readTimelineEntries?: () => ReadonlyArray<TimelineEntry>;
 }) {
   const {
     turnDiffSummaries,
@@ -252,7 +255,7 @@ export function deriveForkTimelineBaseline(input: {
         ? target.messageId
         : target?.kind === "user-message"
           ? findPrecedingCompletedAssistantMessageId({
-              timelineEntries,
+              timelineEntries: input.readTimelineEntries?.() ?? timelineEntries,
               sourceUserMessageId: target.messageId,
             })
           : null;
@@ -294,6 +297,8 @@ export function forkWorktreeAvailabilityFromOptions(
 export function createForkMessageCommands(input: {
   readonly activeThreadId: ThreadId | null;
   readonly activeThreadEnvironmentId: EnvironmentId | null;
+  readonly activeRunningTurnId: RunId | null;
+  readonly readTimelineEntries: () => ReadonlyArray<TimelineEntry>;
   readonly setForkCommandTarget: SetForkCommandTarget;
 }) {
   const { activeThreadId, activeThreadEnvironmentId, setForkCommandTarget } = input;
@@ -318,7 +323,31 @@ export function createForkMessageCommands(input: {
       source: "this-message",
     });
   };
-  return { onForkAssistantMessage, onForkUserMessage };
+  const onForkFromRun = async (source: { sourceThreadId: ThreadId; runId: RunId }) => {
+    if (!activeThreadId || !activeThreadEnvironmentId || source.sourceThreadId !== activeThreadId)
+      return;
+    if (source.runId === input.activeRunningTurnId) {
+      setForkCommandTarget({
+        threadId: activeThreadId,
+        environmentId: activeThreadEnvironmentId,
+        kind: "running-turn",
+        runId: source.runId,
+        source: "running-turn",
+      });
+      return;
+    }
+    const answer = input
+      .readTimelineEntries()
+      .findLast(
+        (entry) =>
+          entry.kind === "message" &&
+          entry.message.role === "assistant" &&
+          entry.message.runId === source.runId &&
+          !entry.message.streaming,
+      );
+    if (answer?.kind === "message") onForkAssistantMessage(answer.message.id);
+  };
+  return { onForkAssistantMessage, onForkUserMessage, onForkFromRun };
 }
 
 /** The chat's fork dialog for the target the fork command opened. */
@@ -441,13 +470,9 @@ export function useForkPdfContinuityPending(
   return forkPdfContinuityPending;
 }
 
-/** Another thread's held rows: never shown under a landing fork. */
-const NO_HELD_TIMELINE = { threadKey: null, entries: [] as never[] };
-
 /**
- * A fork opened from the fork dialog lands hidden (forkLanding.ts). While it
- * stays the open thread, another thread's held timeline never stands in for
- * its own, even once the landing has timed out. Other threads are untouched.
+ * Remembers a fork landing through its timeout so it reveals once, until the
+ * user leaves that route.
  */
 export function useForkLanding(routeThreadKey: string) {
   const pending = useSyncExternalStore(
@@ -465,8 +490,6 @@ export function useForkLanding(routeThreadKey: string) {
   return {
     pending,
     landed,
-    /** Passed as the switch timeline's `lastReady` so nothing is held. */
-    heldTimeline: landed ? NO_HELD_TIMELINE : undefined,
   };
 }
 

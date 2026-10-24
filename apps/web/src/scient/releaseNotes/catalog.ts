@@ -134,7 +134,7 @@ export const SCIENT_RELEASE_NOTES = [
         id: "same-conversation-switching-0622",
         title: "Switch agents in the same conversation",
         description:
-          "Start with Codex, continue with Claude, then move to Gemini—all in the same conversation. Choose another agent or model from the model picker. Scient hands relevant saved context to the new agent, with earlier history available to retrieve when needed. You can still fork into a separate conversation.",
+          "Start with Codex, continue with Claude, then move to Gemini, all in the same conversation. Choose another agent or model from the model picker. Scient hands relevant saved context to the new agent, with earlier history available to retrieve when needed. You can still fork into a separate conversation.",
       },
       {
         id: "scheduled-tasks-0622",
@@ -198,7 +198,7 @@ export const SCIENT_RELEASE_NOTES = [
         id: "same-conversation-switching-0622",
         title: "Switch agents in the same conversation",
         description:
-          "Start with Codex, continue with Claude, then move to Gemini—all in the same conversation. Choose another agent or model from the model picker. Scient hands relevant saved context to the new agent, with earlier history available to retrieve when needed. You can still fork into a separate conversation.",
+          "Start with Codex, continue with Claude, then move to Gemini, all in the same conversation. Choose another agent or model from the model picker. Scient hands relevant saved context to the new agent, with earlier history available to retrieve when needed. You can still fork into a separate conversation.",
       },
       {
         id: "scheduled-tasks-0622",
@@ -596,7 +596,7 @@ export const SCIENT_RELEASE_NOTES = [
         id: "ask-in-chat-from-more-places",
         title: "Ask in chat from more places",
         description:
-          "Select text in an answer or rendered Markdown—including code and editable Mermaid source—and add it to chat with an optional typed or voice note. Saved quotes can reopen the source.",
+          "Select text in an answer or rendered Markdown, including code and editable Mermaid source, and add it to chat with an optional typed or voice note. Saved quotes can reopen the source.",
       },
       {
         id: "compose-with-richer-context",
@@ -924,7 +924,7 @@ export const SCIENT_RELEASE_NOTES = [
         id: "assisted-provider-connections",
         title: "Connect Antigravity, Cursor, and Grok",
         description:
-          "Install and manage Scient-reviewed app-private runtimes for Antigravity and Cursor—or keep using existing CLIs—and sign in through their supported browser flows. Early Access Grok also gains assisted installation, repair, and browser or device-code sign-in from Settings or the composer.",
+          "Install and manage Scient-reviewed app-private runtimes for Antigravity and Cursor, or keep using existing CLIs, and sign in through their supported browser flows. Early Access Grok also gains assisted installation, repair, and browser or device-code sign-in from Settings or the composer.",
       },
       {
         id: "browser-pdf-export",

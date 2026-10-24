@@ -11,6 +11,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
+import rootPackageJson from "../../../package.json" with { type: "json" };
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   ServerCliBuildAssetMissingError,
@@ -104,7 +105,7 @@ const buildCmd = Command.make(
         yield* applyDevelopmentIconOverrides(repoRoot, serverDir);
         yield* Effect.log("[cli] Bundled web app into dist/client");
       } else {
-        yield* Effect.logWarning("[cli] Web dist not found — skipping client bundle.");
+        yield* Effect.logWarning("[cli] Web dist not found. Skipping client bundle.");
       }
 
       // SCIENT-FORK:START — compute bridges and managed Python specifications are runtime data
@@ -174,6 +175,26 @@ const buildExeCmd = Command.make(
       if (specifiers.length > 0) {
         return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
       }
+      // SCIENT-FORK:START - Node worker threads can load sibling modules without a host Node binary.
+      const workerCommand = yield* resolveSpawnCommand("vp", [
+        "pack",
+        "src/analytics-worker.ts",
+        "src/pdf-validation-worker.ts",
+        "src/pdf.worker.ts",
+        "--out-dir",
+        "dist-exe",
+        "--no-clean",
+      ]);
+      yield* runCommand(
+        ChildProcess.make(workerCommand.command, workerCommand.args, {
+          cwd: serverDir,
+          env: { ...process.env, T3CODE_PACK_EXE: "0" },
+          stdout: config.verbose ? "inherit" : "ignore",
+          stderr: "inherit",
+          shell: workerCommand.shell,
+        }),
+      );
+      // SCIENT-FORK:END
       const nativeTarget = Option.match(config.target, {
         onNone: () => [],
         onSome: (target) => {
@@ -205,7 +226,7 @@ const buildExeCmd = Command.make(
     }),
 ).pipe(
   Command.withDescription(
-    "Build the server as a Node single-executable (the archive builder supplies runtime externals).",
+    `Build the server as a Node single-executable. Native builds require Node ${rootPackageJson.engines.node}; explicit cross-target builds need a Node 25.7+ host for --build-sea. The archive builder supplies the runtime externals beside the binary.`,
   ),
 );
 

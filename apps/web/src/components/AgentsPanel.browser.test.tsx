@@ -78,7 +78,7 @@ it.each([
       });
       const collapsedText = container.textContent ?? "";
       expect(model.totalTokens).toBe(tokens ? 20 : null);
-      expect(collapsedText.includes("—")).toBe(!tokens);
+      expect(collapsedText.includes("Unknown")).toBe(!tokens);
       const expand = container.querySelector("button")!;
       await act(() => expand.click());
       const script = [...container.querySelectorAll("button")].filter((button) =>
@@ -90,7 +90,7 @@ it.each([
       expect(text).toContain("Review");
       expect(text).toContain("Reader");
       expect(text).toContain("researcher");
-      expect(text.includes("— tok")).toBe(!tokens);
+      expect(text.includes("Unknown tok")).toBe(!tokens);
       expect(text.includes("Historical")).toBe(historical);
       expect(model.liveCount).toBe(0);
       expect(model.workflows[0]?.phases[0]?.activeCount).toBe(historical ? 0 : 1);
