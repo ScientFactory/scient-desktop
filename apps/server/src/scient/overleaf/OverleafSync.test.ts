@@ -1950,4 +1950,55 @@ describe.skipIf(!canApply)("OverleafSync", () => {
         }),
       ),
   );
+
+  it.live("an undo that stops partway sends nothing until a sync is asked for", () => {
+    let race = false;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O" } },
+          // Another writer changes main.tex just before the undo's step writes it.
+          beforeStep: async (path, folder) => {
+            if (!race || path !== "main.tex") return;
+            race = false;
+            await NodeFSP.writeFile(NodePath.join(folder, path), "C");
+          },
+        });
+        const caller = w.at(w.main);
+        const connected = yield* w.service.connect({
+          caller,
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const paper = NodePath.join(w.main, "paper");
+        yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+        yield* write(paper, { "main.tex": "B" });
+        yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
+        yield* write(paper, { "main.tex": "B2", "other.tex": "O2" });
+        const sent = yield* w.service.sync({ caller, connectionId: id, requestId: "s3" });
+        if (sent._tag !== "synced" || sent.publication._tag !== "accepted")
+          return yield* Effect.die(sent);
+        race = true;
+        const undone = yield* w.service.undo({
+          caller,
+          connectionId: id,
+          requestId: "u1",
+          attemptNumber: sent.publication.attemptNumber,
+        });
+        expect(undone).toMatchObject({
+          _tag: "undone",
+          adopted: { outcome: "attention" },
+          sync: { _tag: "not-synced", reason: "undo-incomplete" },
+        });
+        expect(yield* read(paper, "main.tex")).toBe("C");
+        expect(yield* read(paper, "other.tex")).toBe("O");
+        // Nothing of the partial undo, or of the other writer's edit, was sent.
+        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "B2", "other.tex": "O2" });
+      }),
+    );
+  });
 });

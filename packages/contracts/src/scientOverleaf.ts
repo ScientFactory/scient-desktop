@@ -388,7 +388,8 @@ export type ScientOverleafUndoableSends = typeof ScientOverleafUndoableSends.Typ
  * every path it left alone, with why; `outcome` is how its apply ended (null when
  * every path was skipped and nothing was written), and `sync` the sync that
  * followed it, which sends what was put back and records the request's per-file
- * decisions.
+ * decisions. An apply that stopped partway or replanned is not synced
+ * (`not-synced`, `undo-incomplete`): nothing was sent.
  */
 export const ScientOverleafUndoResult = Schema.Union([
   Schema.Struct({
@@ -412,7 +413,13 @@ export const ScientOverleafUndoResult = Schema.Union([
       }),
     ),
     outcome: Schema.NullOr(ScientOverleafApplyOutcome),
-    sync: ScientOverleafSyncResult,
+    sync: Schema.Union([
+      ScientOverleafSyncResult,
+      Schema.Struct({
+        _tag: Schema.Literal("not-synced"),
+        reason: Schema.Literal("undo-incomplete"),
+      }),
+    ]),
   }),
   Schema.Struct({
     _tag: Schema.Literal("not-eligible"),

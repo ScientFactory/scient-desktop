@@ -228,7 +228,8 @@ version**, **Removed**, **Back**, **Old name back**. **Undo** posts `undo` throu
 `runOverleafUndo`, with the link's pending per-file decisions like any sync (the same
 `pendingFilesRequest`), and records its sync with them; the server saves the folder's editors,
 puts the earlier versions back and syncs. A cancel while it saves editors ends it as "Undo
-cancelled. Nothing was changed."
+cancelled. Nothing was changed." An undo that stopped partway is not synced: the dialog
+says "Undo stopped partway; nothing was sent. Check the files, then sync."
 The dialog then shows `overleafUndoView`: "Put back N files", the files left as they are with why
 (edited since, already back, name in use, too large), and the sync's own title and lines. The
 sync is recorded like any other; one that stops at a conflict opens the review tab. A replanned
