@@ -211,7 +211,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 : isUnavailable
                   ? describeUnavailableInstance(entry, hasSetupSurface)
                   : showNewBadge
-                    ? `${entry.displayName} — New`
+                    ? `${entry.displayName} (New)`
                     : entry.displayName;
 
             const button = (

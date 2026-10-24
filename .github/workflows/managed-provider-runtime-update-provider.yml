@@ -458,6 +458,7 @@ jobs:
             apps/server/src/serverSettings.ts \
             apps/server/src/settingsDirectoryWatch.ts \
             apps/server/src/settingsSecrets.ts \
+            apps/server/src/statFingerprint.ts \
             apps/server/src/auth/ServerSecretStore.ts \
             apps/server/src/provider/omp \
             apps/server/src/scient/providerLifecycle/ManagedProviderRuntimeActions.ts \

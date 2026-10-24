@@ -170,6 +170,21 @@
       "purpose": "Present active Scient skills in messages without replacing provider-native inventory."
     },
     {
+      "path": "apps/web/src/components/chat/useComposerSend.ts",
+      "anchor": "collectSelectedScientSkillNames",
+      "purpose": "Capture explicit composer skill tokens and carry their selection through native turn admission and queue submission."
+    },
+    {
+      "path": "apps/web/src/components/chat/useMultipleModelSend.ts",
+      "anchor": "selectedScientSkillNames,",
+      "purpose": "Carry the captured explicit skill selection into each native multiple-model turn."
+    },
+    {
+      "path": "apps/web/src/components/chat/useProposedPlanSend.ts",
+      "anchor": "selectedScientSkillNames,",
+      "purpose": "Carry explicit plan-feedback skill selections into native turn admission; implementing an assistant plan in a new thread selects no skills."
+    },
+    {
       "path": "apps/web/src/components/chat/ChatComposer.tsx",
       "anchor": "mergeEffectiveProviderSkills",
       "purpose": "Append active Scient skills to the maintained provider-native composer menus."

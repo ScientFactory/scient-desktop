@@ -229,6 +229,9 @@ export const make = Effect.gen(function* () {
       inlineMessageContext: true,
       threadQueueMessageContext: true,
       threadQueueExplicitSend: true,
+      // SCIENT-FORK:START
+      queuedRunStart: true,
+      // SCIENT-FORK:END
       requiredWorktreeBootstrap: true,
       threadSettlement: true,
       threadAutoSettlement: true,

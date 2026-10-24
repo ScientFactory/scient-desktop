@@ -514,7 +514,7 @@ if ! t3_runtime_ready; then
   T3_LOCK_WAITED=0
   T3_LOCK_UNOWNED=0
   while ! (set -C; printf '%s\\n' "$$" > "$T3_LOCK") 2>/dev/null; do
-    # SCIENT-FORK:START — an older Scient runner may still own a directory lock.
+    # SCIENT-FORK:START: an older Scient runner may still own a directory lock.
     if [ -d "$T3_LOCK" ]; then
       T3_LOCK_OWNER="$(cat "$T3_LOCK/pid" 2>/dev/null || true)"
     else
@@ -656,7 +656,7 @@ exit 1
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
-# SCIENT-FORK:START — Scient's own remote home, never ~/.t3, so only a
+# SCIENT-FORK:START: Scient's own remote home, never ~/.t3, so only a
 # Scient server is ever adopted. An earlier Scient home in ~/.t3 is copied once,
 # by a separate step, before anything creates the new home.
 DEFAULT_SERVER_HOME="$HOME/.scient-next"

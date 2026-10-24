@@ -1,6 +1,6 @@
 import "../../index.css";
 
-import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { render as _fixtureRender, type Screen, act, stubGlobal } from "../../../test/render";
 
 import { useState } from "react";
 
@@ -112,6 +112,57 @@ describe("DockOverflowRow", () => {
     expect(leadingCluster.querySelector("[aria-label='Hide formatting tools']")).not.toBeNull();
     expect(leadingCluster.querySelector(".scient-markdown-command-divider")).not.toBeNull();
     expect(toolbar.children[1]?.textContent).toBe("Bold");
+  });
+
+  it("does not remeasure layout when only command state rerenders", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const host = document.createElement("div");
+    nativeDockLayout(_fixture, host, 500, 60, 60, 30);
+    document.body.append(_ownDOM(_fixture, host));
+    const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
+    _fixture.root0.push(root);
+
+    // Native resize delivery is independent of command state; width changes are tested above.
+    using _resize = stubGlobal("ResizeObserver", undefined);
+    using offsetWidth = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get");
+    const renderRow = async (pressed: boolean, groupId = "format") => {
+      await act(
+        async () =>
+          await root.rerender(
+            <DockOverflowRow
+              label="Document actions"
+              expanded
+              onExpandedChange={vi.fn()}
+              groups={[
+                {
+                  id: groupId,
+                  priority: 100,
+                  estimatedWidth: 60,
+                  pinned: true,
+                  bar: (
+                    <button type="button" aria-pressed={pressed}>
+                      Bold
+                    </button>
+                  ),
+                },
+              ]}
+            />,
+          ),
+      );
+    };
+
+    await renderRow(false);
+    await vi.waitFor(() => expect(offsetWidth.mock.calls.length).toBeGreaterThan(0));
+    const initialMeasurements = offsetWidth.mock.calls.length;
+    expect(initialMeasurements).toBeGreaterThan(0);
+
+    await renderRow(true);
+    expect(offsetWidth).toHaveBeenCalledTimes(initialMeasurements);
+
+    await renderRow(true, "style");
+    expect(offsetWidth.mock.calls.length).toBeGreaterThan(initialMeasurements);
   });
 
   it("opens grouped actions after narrow-width overflow without losing menu context", async () => {

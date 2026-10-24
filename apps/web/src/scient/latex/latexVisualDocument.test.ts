@@ -36,6 +36,17 @@ const edit = (source: string, content: JSONContent[]) =>
   });
 
 describe("source-derived writing projection", () => {
+  it("decodes both TeX em-dash spellings without changing their round trip", () => {
+    const source = document("Left---right and left\\textemdash{}right.");
+    const projection = projectLatexVisualDocument(source);
+    const dash = String.fromCodePoint(0x2014);
+    expect(projection.blocks[0]?.node.content).toEqual([
+      text(`Left${dash}right and left${dash}right.`),
+    ]);
+    expect(applyLatexVisualDocumentChange(source, projection, projection.content)?.source).toBe(
+      source,
+    );
+  });
   it("renders every block of the imported Hebrew template and preserves its complete source", () => {
     const projection = projectLatexVisualDocument(hebrewTemplate);
     expect(projection.blocks).toHaveLength(32);

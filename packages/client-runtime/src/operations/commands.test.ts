@@ -24,7 +24,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type ProjectMutation,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
@@ -45,13 +45,17 @@ import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFix
 import {
   archiveThread,
   cancelQueuedRun,
-  resumeThreadQueue,
   editQueuedRun,
   forkThreadFromRun,
   interruptThreadTurn,
   revertThreadCheckpoint,
+  resumeThreadQueue,
   startThreadTurn,
 } from "./commands.ts";
+
+const dispatchCommandRpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+if (dispatchCommandRpc === undefined) throw new Error("Missing registered dispatch RPC");
+const decodeDispatchCommand = Schema.decodeUnknownEffect(dispatchCommandRpc.payloadSchema);
 
 const layerTestCrypto = Layer.succeed(
   Crypto.Crypto,
@@ -76,6 +80,8 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projectionRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
   readonly advertiseThreadStop?: boolean;
+  readonly advertiseQueuedRunStart?: boolean;
+  readonly advertiseThreadQueueExplicitSend?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -123,6 +129,12 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
       environment: {
         capabilities: {
           repositoryIdentity: true,
+          ...(input.advertiseThreadQueueExplicitSend === undefined
+            ? {}
+            : { threadQueueExplicitSend: input.advertiseThreadQueueExplicitSend }),
+          ...(input.advertiseQueuedRunStart === undefined
+            ? {}
+            : { queuedRunStart: input.advertiseQueuedRunStart }),
           ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
           ...(input.advertiseServerResolvedCommandContext === false
             ? {}
@@ -175,9 +187,7 @@ describe("V2 environment commands", () => {
           dispatchMode,
         }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
         expect(commands).toHaveLength(1);
-        const rpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
-        if (rpc === undefined) return yield* Effect.die("Missing registered dispatch RPC");
-        const transported = yield* Schema.decodeUnknownEffect(rpc.payloadSchema)(commands[0]);
+        const transported = yield* decodeDispatchCommand(commands[0]);
         expect(transported).toMatchObject({
           type: "message.dispatch",
           runtimeMode: "approval-required",
@@ -186,6 +196,83 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provide(layerTestCrypto)),
     );
   }
+  it.effect("distinguishes sending a selected queued message from resuming queue order", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        advertiseQueuedRunStart: true,
+      });
+      const threadId = ThreadId.make("thread-1");
+      yield* resumeThreadQueue({
+        commandId: CommandId.make("send-selected"),
+        threadId,
+        runId: RunId.make("selected"),
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* resumeThreadQueue({
+        commandId: CommandId.make("resume-queue"),
+        threadId,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(commands).toEqual([
+        { type: "queued-run.start", commandId: "send-selected", threadId, runId: "selected" },
+        { type: "queue.resume", commandId: "resume-queue", threadId },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect.each([undefined, false, true])(
+    "negotiates selected queued starts when the host advertises %s",
+    (advertiseQueuedRunStart) =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({
+          commands,
+          projects: [],
+          ...(advertiseQueuedRunStart === undefined ? {} : { advertiseQueuedRunStart }),
+          advertiseThreadQueueExplicitSend: true,
+        });
+        const commandId = CommandId.make("selected-idempotent");
+        const runId = RunId.make("selected");
+        yield* resumeThreadQueue({
+          commandId,
+          threadId: v2ThreadId,
+          runId,
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+        assert.deepEqual(commands, [
+          {
+            type: advertiseQueuedRunStart === true ? "queued-run.start" : "queue.resume",
+            commandId,
+            threadId: v2ThreadId,
+            runId,
+          },
+        ]);
+      }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect.each([undefined, false])(
+    "uses the upstream selected-run command without the legacy Scient capability (%s)",
+    (advertiseThreadQueueExplicitSend) =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({
+          commands,
+          projects: [],
+          ...(advertiseThreadQueueExplicitSend === undefined
+            ? {}
+            : { advertiseThreadQueueExplicitSend }),
+        });
+        const commandId = CommandId.make("send-second-held-run");
+        const runId = RunId.make("second-held-run");
+        yield* resumeThreadQueue({ commandId, threadId: v2ThreadId, runId }).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        );
+        assert.deepEqual(commands, [
+          { type: "queued-run.start", commandId, threadId: v2ThreadId, runId },
+        ]);
+      }).pipe(Effect.provide(layerTestCrypto)),
+  );
 
   it.effect("preserves caller command ids for idempotent V2 commands", () =>
     Effect.gen(function* () {
@@ -532,11 +619,15 @@ describe("V2 environment commands", () => {
   );
 
   it.effect(
-    "forwards native extraction revision and held-head resume without changing command identity",
+    "forwards native extraction revision and selected queued-run start without changing command identity",
     () =>
       Effect.gen(function* () {
         const commands: OrchestrationV2Command[] = [];
-        const supervisor = yield* makeSupervisor({ commands, projects: [] });
+        const supervisor = yield* makeSupervisor({
+          commands,
+          projects: [],
+          advertiseQueuedRunStart: true,
+        });
         const provide = Effect.provideService(
           EnvironmentSupervisor.EnvironmentSupervisor,
           supervisor,
@@ -564,8 +655,17 @@ describe("V2 environment commands", () => {
           runId: "held-run",
           expectedUpdatedAt: DateTime.makeUnsafe(revision),
         });
-        expect(commands[1]).toMatchObject({ type: "queue.resume", runId: "held-run" });
-        expect(commands[2]).not.toHaveProperty("runId");
+        expect(commands[1]).toEqual({
+          type: "queued-run.start",
+          commandId: CommandId.make("head-send"),
+          threadId: v2ThreadId,
+          runId: RunId.make("held-run"),
+        });
+        expect(commands[2]).toEqual({
+          type: "queue.resume",
+          commandId: CommandId.make("whole-resume"),
+          threadId: v2ThreadId,
+        });
       }).pipe(Effect.provide(layerTestCrypto)),
   );
 

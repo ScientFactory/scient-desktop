@@ -111,6 +111,35 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   return matches;
 }
 
+/**
+ * Formulas in composer text, ignoring the `$` and `\[` that file names such as
+ * `posts.$postId.tsx` or `[id].tsx` put into a file link. File links are masked with letters,
+ * not spaces, so a link at the start of a line cannot become an indented code block.
+ * Bare `@path` mentions are not masked: one such as `@README.md$` can run into a formula's
+ * closing delimiter, and a mention written inside a real formula stays covered by it.
+ */
+export function composerMathRanges(
+  text: string,
+  mentions: ReadonlyArray<ComposerInlineToken> = collectMentionTokens(text),
+  // SCIENT-FORK:START — web shields source with the renderer's guarded scientific grammar.
+  parseMath: (source: string) => ReadonlyArray<{ start: number; end: number }> = markdownMathRanges,
+  // SCIENT-FORK:END
+) {
+  let masked = text;
+  for (const mention of mentions) {
+    if (mention.type !== "mention" || !mention.source.startsWith("[")) continue;
+    masked =
+      masked.slice(0, mention.start) +
+      "x".repeat(mention.end - mention.start) +
+      masked.slice(mention.end);
+  }
+  return parseMath(masked).map(({ start, end }) => ({
+    start,
+    end,
+    source: text.slice(start, end),
+  }));
+}
+
 export function collectComposerInlineTokens(
   text: string,
   options: CollectComposerInlineTokensOptions = {},
@@ -151,7 +180,10 @@ export function collectComposerInlineTokens(
   // Context chip labels are captured/display data, not composer Skill or file
   // selections. Preserve token offsets for the editor without parsing the labels.
   const references = collectComposerContextReferences(text);
-  const math = matches.length > 0 ? markdownMathRanges(text) : [];
+  // TeX can contain literal skill and file tokens, especially inside \text{}.
+  // They remain formula source rather than becoming composer context chips.
+  // Confirmed trailing file links are masked too, so a kept chip is not read as TeX.
+  const math = matches.length > 0 ? composerMathRanges(text, matches) : [];
   const excludedRanges = [...references, ...math];
   return matches
     .filter(

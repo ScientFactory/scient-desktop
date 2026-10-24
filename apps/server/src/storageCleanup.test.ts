@@ -325,8 +325,13 @@ const cleanupFixture = (
               }
               return result;
             }
-            if (editBeforeRemoval && input.args.includes("remove")) {
-              const target = input.args.at(-1)!;
+            // Before Git's own clean check: inside `git worktree remove`, or on
+            // Windows the same status check the removal makes before deleting.
+            if (
+              editBeforeRemoval &&
+              (input.args.includes("remove") || input.args.includes("--porcelain"))
+            ) {
+              const target = input.args.includes("remove") ? input.args.at(-1)! : input.cwd;
               yield* fs.writeFileString(`${target}/tracked.txt`, "late edit\n");
               yield* fs.writeFileString(`${target}/notes.txt`, "untracked\n");
             }
@@ -1435,6 +1440,36 @@ describe("storage cleanup reports and local file policies", () => {
           expect(report.entries[0]).toMatchObject({ outcome: "removed", bytes });
         }),
       ),
+  );
+  // An agent can write this manifest. Statting its store sent the Windows
+  // user's NTLM credentials to attacker.test during a background sweep.
+  it.live.each([
+    { storeDir: "\\\\attacker.test\\s" },
+    { storeDir: "/local/store", virtualStoreDir: "//attacker.test/s" },
+  ])("never stats a network pnpm store %o", (manifest) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const statted: Array<string> = [];
+        const { service, worktree, setPolicy } = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            stat: (target) => {
+              statted.push(target);
+              return fs.stat(target);
+            },
+          }),
+        );
+        setPolicy("tracked-changes");
+        yield* fs.makeDirectory(`${worktree}/node_modules`);
+        yield* fs.writeFileString(
+          `${worktree}/node_modules/.modules.yaml`,
+          JSON.stringify(manifest),
+        );
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+        expect(statted.filter((target) => target.includes("attacker.test"))).toEqual([]);
+      }),
+    ),
   );
   it.live("still removes a worktree when measuring its size fails", () =>
     runCleanupTest(

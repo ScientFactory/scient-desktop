@@ -1,8 +1,11 @@
 # Building the mobile Screens dependency
 
 The mobile v5 stack uses a committed tarball from the
-[T3 Screens fork](https://github.com/pingdotgg/react-native-screens/tree/t3-v5.0.0-t3.30).
-The fork owns the integration changes; the app does not patch this package.
+[T3 Screens fork](https://github.com/pingdotgg/react-native-screens/tree/t3-v5.0.0-t3.36).
+The fork owns the integration changes. Scient applies one narrow local patch,
+`patches/react-native-screens@5.0.0-t3.36.patch`, so removing a collapsed detail
+navigation controller checks its top screen's removal guard. Keep this exception
+registered in `pnpm-workspace.yaml` and regenerate the lockfile after patch changes.
 Each archive includes compiled JavaScript, declarations, native source and
 `t3-fork.json` recording its version, source commit and upstream base.
 
@@ -21,6 +24,8 @@ Publish the source commit and tag to the fork before submitting the app change.
 Replace the old archive, update `apps/mobile/package.json` and run `vp i` to
 regenerate the lockfile. Verify mobile types and affected navigation tests.
 Changes to native source also require rebuilding and testing the native client.
+The local [removal-guard check](../../apps/mobile/README.md) uses Foundation
+containment doubles; it does not replace UIKit Back/swipe or device testing.
 
 The same iOS binary supports iPhone, iPad, and Duo. UIKit hinge updates enable
 phone workspace columns at runtime; regular phones retain portrait rotation.

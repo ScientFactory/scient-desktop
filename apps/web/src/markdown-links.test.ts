@@ -165,10 +165,20 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
-  it("resolves file uri authorities as windows UNC paths", () => {
-    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBe(
-      "\\\\server\\share\\workspace-image.svg",
-    );
+  it("resolves file uri authorities only within the owning Windows workspace share", () => {
+    expect(
+      resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg", "\\\\server\\share"),
+    ).toBe("\\\\server\\share\\workspace-image.svg");
+    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBeNull();
+    expect(
+      resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg", "C:\\workspace"),
+    ).toBeNull();
+    expect(
+      resolveMarkdownFileLinkTarget(
+        "file://another-server/share/workspace-image.svg",
+        "\\\\server\\share",
+      ),
+    ).toBeNull();
   });
 
   it("resolves a localhost file uri as a local path", () => {

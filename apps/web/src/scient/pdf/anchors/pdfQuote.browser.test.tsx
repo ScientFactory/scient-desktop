@@ -9,12 +9,15 @@ import {
 import { StrictMode, type RefObject } from "react";
 import { describe, expect, it, vi, type TestContext } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
-import { act, render as renderScreen, type Screen } from "../../../../test/render";
+import { act, fakeTimers, render as renderScreen, type Screen } from "../../../../test/render";
 import { waitForTestReceipt } from "../../../../test/receipt";
+import { PDF_READER_SESSION_STORAGE_KEY, pdfReaderSessionStore } from "../pdfReaderSessionStore";
+import "~/index.css";
 
 import type { ChatComposerHandle } from "~/components/chat/ChatComposer";
 import { toastManager } from "~/components/ui/toast";
 import { ComposerHandleContext } from "~/composerHandleContext";
+import { randomUUID } from "~/lib/utils";
 
 import { workspacePdfSource } from "../pdfSource";
 import { ScientPdfReader } from "../ScientPdfReader";
@@ -124,6 +127,7 @@ function observeQuoteHighlight(text: string) {
 
 /** Drags a selection over `text` the way a pointer would: down, select, up. */
 async function selectText(node: Text, text: string, signal: AbortSignal) {
+  using _clock = fakeTimers();
   const viewport = node.parentElement!.closest<HTMLElement>(".scient-pdf-viewer-container")!;
   const before = { top: viewport.scrollTop, left: viewport.scrollLeft };
   const scrolled = Promise.withResolvers<void>();
@@ -136,21 +140,38 @@ async function selectText(node: Text, text: string, signal: AbortSignal) {
   if (viewport.scrollTop !== before.top || viewport.scrollLeft !== before.left) {
     await waitForTestReceipt(signal, scrolled.promise);
   }
-  const range = document.createRange();
-  range.setStart(node, node.data.indexOf(text));
-  range.setEnd(node, node.data.indexOf(text) + text.length);
-  const box = range.getBoundingClientRect();
-  const at = { clientX: box.right, clientY: box.bottom - 2, button: 0, isPrimary: true };
+  // Responsive layout chains animation callbacks; finish it before the one gesture.
+  const resized = Promise.withResolvers<void>();
+  const onResizeScroll = () => resized.resolve();
+  viewport.addEventListener("scrollend", onResizeScroll, { once: true });
+  try {
+    const beforeResize = { top: viewport.scrollTop, left: viewport.scrollLeft };
+    await act(() => vi.runAllTimersAsync());
+    if (viewport.scrollTop !== beforeResize.top || viewport.scrollLeft !== beforeResize.left) {
+      await waitForTestReceipt(signal, resized.promise);
+    }
+  } finally {
+    viewport.removeEventListener("scrollend", onResizeScroll);
+  }
   // Native input flushes the newly mounted reader's passive selection owners.
   await userEvent.click(node.parentElement!);
+  const target = textNode(viewport, text);
+  const range = document.createRange();
+  range.setStart(target, target.data.indexOf(text));
+  range.setEnd(target, target.data.indexOf(text) + text.length);
+  const box = range.getBoundingClientRect();
+  const at = { clientX: box.right, clientY: box.bottom - 2, button: 0, isPrimary: true };
   await act(async () => {
-    node.parentElement!.dispatchEvent(new PointerEvent("pointerdown", { ...at, bubbles: true }));
+    target.parentElement!.dispatchEvent(new PointerEvent("pointerdown", { ...at, bubbles: true }));
     const selection = document.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
     window.dispatchEvent(new PointerEvent("pointerup", at));
     window.dispatchEvent(new MouseEvent("mouseup", { ...at, detail: 1 }));
   });
+  // The selection timeout schedules its animation callback; finish both before restoring the clock.
+  await act(() => vi.runAllTimersAsync());
+  expect(document.getSelection()?.toString()).toBe(text);
 }
 
 async function askAbout(node: Text, text: string, context: TestContext) {
@@ -174,21 +195,22 @@ async function askAbout(node: Text, text: string, context: TestContext) {
 
 function setup() {
   const stack = new AsyncDisposableStack();
-  const savedStorage = Object.entries(localStorage);
+  const savedStorage = localStorage.getItem(PDF_READER_SESSION_STORAGE_KEY);
   stack.defer(() => {
-    localStorage.clear();
-    for (const [key, value] of savedStorage) localStorage.setItem(key, value);
+    pdfReaderSessionStore.flush();
+    if (savedStorage === null) localStorage.removeItem(PDF_READER_SESSION_STORAGE_KEY);
+    else localStorage.setItem(PDF_READER_SESSION_STORAGE_KEY, savedStorage);
     document.getSelection()?.removeAllRanges();
     resetPdfRevealRequests();
   });
   resetPdfRevealRequests();
-  localStorage.clear();
   const urls = new Set<string>();
   stack.defer(() => {
     for (const url of urls) URL.revokeObjectURL(url);
   });
   const citeText = vi.fn<(citation: ComposerCitation) => boolean>(() => true);
   const composerRef = { current: { citeText } as unknown as ChatComposerHandle };
+  const readerScope = `pdf-quote-test:${randomUUID()}`;
   const container = document.createElement("div");
   let screen: Screen | undefined;
   return {
@@ -199,11 +221,11 @@ function setup() {
         // The app's development replay must not drop a pending quote.
         <StrictMode>
           <ComposerHandleContext value={composerRef as RefObject<ChatComposerHandle | null>}>
-            <div style={{ width: 800, height: 900, display: "flex" }}>
+            <div style={{ width: "min(800px, 100vw)", height: "100dvh", display: "flex" }}>
               <ScientPdfReader
                 source={source}
                 resolver={blobResolver(bytes, urls)}
-                readerScope="thread-1"
+                readerScope={readerScope}
                 citeThread={threadRef}
               />
             </div>

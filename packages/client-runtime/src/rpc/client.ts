@@ -76,6 +76,9 @@ export type EnvironmentSubscriptionRpcTag =
   // SCIENT-FORK:START — Scient Extensions change stream.
   | typeof WS_METHODS.extensionsSubscribeChanges
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — the server's editor flush requests to each window.
+  | typeof WS_METHODS.editorsFlushConnect
+  // SCIENT-FORK:END
   | typeof WS_METHODS.filesystemSubscribeFileChanges
   | typeof WS_METHODS.projectsSubscribeFileChanges
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes

@@ -49,6 +49,7 @@ import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 // SCIENT-FORK:START worktree-lifetime-retention
 import { withoutComputeWorkspaceOwners } from "./scient/compute/ComputeWorkspaceLifetime.ts";
@@ -59,6 +60,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 // SCIENT-FORK:START overleaf-checkout-barrier
 import { CheckoutBarrier } from "./scient/workspace/CheckoutBarrier.ts";
 // SCIENT-FORK:END overleaf-checkout-barrier
+import { isNetworkPath } from "@t3tools/shared/path";
 
 const decodeCleanupThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
@@ -278,6 +280,11 @@ const make = Effect.gen(function* () {
       const nodeModules = path.join(root, "node_modules");
       const text = yield* fs.readFileString(path.join(nodeModules, ".modules.yaml"));
       const manifest = yield* decodePnpmModulesManifest(yield* Effect.try(() => parseYaml(text)));
+      // An agent can write this manifest, and statting a network path makes
+      // Windows sign in to its host with the user's NTLM credentials.
+      if (isNetworkPath(manifest.storeDir) || isNetworkPath(manifest.virtualStoreDir ?? "")) {
+        return null;
+      }
       const virtualStore = path.resolve(nodeModules, manifest.virtualStoreDir ?? ".pnpm");
       const [store, virtual] = yield* Effect.all([
         fs.stat(manifest.storeDir),
@@ -787,11 +794,14 @@ const make = Effect.gen(function* () {
       )
         return "commit changed during isolation";
       if (yield* fs.exists(worktreePath)) return "original path was recreated during isolation";
-      yield* cleanupGit(
-        repositoryRoot,
-        ["-c", "status.showUntrackedFiles=all", "worktree", "remove", "--", isolatedPath],
-        "git worktree remove",
-      );
+      yield* removeLinkedWorktree({
+        operation: "StorageCleanup.cleanupGit",
+        cwd: repositoryRoot,
+        worktreePath: isolatedPath,
+        force: false,
+        execute: git.execute,
+        run: (args) => cleanupGit(repositoryRoot, [...args], "git worktree remove"),
+      });
       return null;
     });
     return yield* removal.pipe(

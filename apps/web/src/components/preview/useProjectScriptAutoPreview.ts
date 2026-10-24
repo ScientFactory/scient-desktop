@@ -2,6 +2,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ProjectScript, PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -44,14 +45,17 @@ export function useProjectScriptAutoPreview<E>(input: {
   readonly activeTabId: string | null;
   readonly sessions: Readonly<Record<string, PreviewSessionSnapshot>>;
   readonly openPreview: OpenPreviewMutation<E>;
+  readonly canFocusPreview?: () => boolean;
 }): (script: ProjectScript, launchThreadRef: ScopedThreadRef) => Promise<void> {
   const [pending, setPending] = useState<PendingProjectScriptPreview | null>(null);
   const pendingRef = useRef<PendingProjectScriptPreview | null>(null);
   const nextRequestIdRef = useRef(0);
   const mountedRef = useRef(true);
   const activeThreadRefRef = useRef(input.activeThreadRef);
+  const canFocusPreviewRef = useRef(input.canFocusPreview);
   useLayoutEffect(() => {
     activeThreadRefRef.current = input.activeThreadRef;
+    canFocusPreviewRef.current = input.canFocusPreview;
   });
   const discovered = useDiscoveredPortsState(
     pending?.threadRef.environmentId ?? null,
@@ -80,13 +84,30 @@ export function useProjectScriptAutoPreview<E>(input: {
   const openRequest = async (
     threadRef: ScopedThreadRef,
     request: ProjectScriptPreviewRequest,
+    requestId: number,
   ): Promise<void> => {
-    const result = await openProjectScriptPreview({
-      threadRef,
-      request,
-      openPreview: input.openPreview,
-    });
-    if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+    const selectedSurface = () =>
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, threadRef)?.id ??
+      null;
+    const surfaceAtOpen = selectedSurface();
+    const isCurrent = () =>
+      mountedRef.current &&
+      nextRequestIdRef.current === requestId &&
+      isCurrentProjectScriptPreviewLaunch(activeThreadRefRef.current, threadRef) &&
+      selectedSurface() === surfaceAtOpen &&
+      canFocusPreviewRef.current?.() !== false;
+    const attempt = await settlePromise(() =>
+      openProjectScriptPreview({
+        threadRef,
+        request,
+        openPreview: input.openPreview,
+        assertCurrent: () => {
+          if (!isCurrent()) throw new Error("The preview launch was superseded.");
+        },
+      }),
+    );
+    const result = attempt._tag === "Failure" ? attempt : attempt.value;
+    if (!isCurrent() || result._tag === "Success" || isAtomCommandInterrupted(result)) return;
     const error = squashAtomCommandFailure(result);
     toastManager.add({
       type: "error",
@@ -131,7 +152,7 @@ export function useProjectScriptAutoPreview<E>(input: {
       return;
     }
     if (!clearPending(pending.id)) return;
-    void openRequest(pending.threadRef, pending.request);
+    void openRequest(pending.threadRef, pending.request, pending.id);
   }, [clearPending, discovered.servers, openRequest, pending]);
 
   useEffect(() => {
@@ -150,7 +171,8 @@ export function useProjectScriptAutoPreview<E>(input: {
   return async (script: ProjectScript, launchThreadRef: ScopedThreadRef): Promise<void> => {
     if (
       !mountedRef.current ||
-      !isCurrentProjectScriptPreviewLaunch(activeThreadRefRef.current, launchThreadRef)
+      !isCurrentProjectScriptPreviewLaunch(activeThreadRefRef.current, launchThreadRef) ||
+      canFocusPreviewRef.current?.() === false
     ) {
       return;
     }
@@ -173,6 +195,8 @@ export function useProjectScriptAutoPreview<E>(input: {
     }
 
     if (plan.kind === "ignore") return;
+    // All accepted launches supersede earlier acknowledgements, not only readiness waits.
+    const requestId = ++nextRequestIdRef.current;
     if (plan.kind === "focus") {
       clearPending();
       useRightPanelStore.getState().openBrowser(threadRef, plan.tabId);
@@ -180,14 +204,13 @@ export function useProjectScriptAutoPreview<E>(input: {
     }
     if (plan.kind === "open") {
       clearPending();
-      await openRequest(threadRef, plan.request);
+      await openRequest(threadRef, plan.request, requestId);
       return;
     }
 
-    nextRequestIdRef.current += 1;
     const baseline = captureProjectScriptPreviewWaitBaseline(input.sessions, input.activeTabId);
     const nextPending: PendingProjectScriptPreview = {
-      id: nextRequestIdRef.current,
+      id: requestId,
       threadRef,
       request: plan.request,
       baseline,

@@ -453,15 +453,11 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           limits: { conflictPaths: 1 },
         });
         const before = yield* w.connection;
-        const refused = yield* Effect.exit(w.sync());
-        expect(refused).toMatchObject(
-          Exit.fail(
-            expect.objectContaining({
-              _tag: "OverleafRetainedLimitError",
-              limit: "conflict-group",
-            }),
-          ),
-        );
+        const refused = yield* Effect.flip(w.sync());
+        expect(refused).toMatchObject({
+          _tag: "OverleafRetainedLimitError",
+          limit: "conflict-group",
+        });
         const after = yield* w.connection;
         expect(after.activeApply).toBeNull();
         expect(after.base).toEqual(before.base);
@@ -1084,7 +1080,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             updatedAt: "2026-10-22T12:00:00.000Z",
           },
         });
-        const refused = yield* Effect.exit(
+        const refused = yield* Effect.flip(
           w.coordinator.restoreKept({
             connectionId: CONNECTION,
             requestId: "restore-1",
@@ -1094,14 +1090,10 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             currentRevision: copy.currentRevision,
           }),
         );
-        expect(refused).toMatchObject(
-          Exit.fail(
-            expect.objectContaining({
-              _tag: "OverleafRetainedLimitError",
-              limit: "conflict-group",
-            }),
-          ),
-        );
+        expect(refused).toMatchObject({
+          _tag: "OverleafRetainedLimitError",
+          limit: "conflict-group",
+        });
         expect(yield* read(w.folder, "main.tex")).toBe("B");
         expect((yield* w.connection).activeApply).toBeNull();
       }),
@@ -1131,7 +1123,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             updatedAt: "2026-10-22T12:00:00.000Z",
           },
         });
-        const refused = yield* Effect.exit(
+        const refused = yield* Effect.flip(
           w.coordinator.restoreKept({
             connectionId: CONNECTION,
             requestId: "restore-1",
@@ -1141,11 +1133,10 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             currentRevision: copy.currentRevision,
           }),
         );
-        expect(refused).toMatchObject(
-          Exit.fail(
-            expect.objectContaining({ _tag: "OverleafRetainedLimitError", limit: "marker-paths" }),
-          ),
-        );
+        expect(refused).toMatchObject({
+          _tag: "OverleafRetainedLimitError",
+          limit: "marker-paths",
+        });
         expect(yield* read(w.folder, "main.tex")).toBe("resolved");
         const after = yield* w.connection;
         expect(after.activeApply).toBeNull();
@@ -1207,7 +1198,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             updatedAt: "2026-10-22T12:00:00.000Z",
           },
         });
-        const refused = yield* Effect.exit(
+        const refused = yield* Effect.flip(
           w.coordinator.restoreKept({
             connectionId: CONNECTION,
             requestId: "restore-1",
@@ -1217,11 +1208,10 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             currentRevision: null,
           }),
         );
-        expect(refused).toMatchObject(
-          Exit.fail(
-            expect.objectContaining({ _tag: "OverleafRetainedLimitError", limit: "managed-paths" }),
-          ),
-        );
+        expect(refused).toMatchObject({
+          _tag: "OverleafRetainedLimitError",
+          limit: "managed-paths",
+        });
         expect(yield* read(w.folder, "old.tex")).toBeNull();
         expect((yield* w.connection).activeApply).toBeNull();
       }),

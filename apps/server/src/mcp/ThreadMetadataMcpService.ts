@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
+import { threadNotFound } from "./OrchestratorMcpService.ts";
 
 export class ThreadMetadataMcpService extends Context.Service<
   ThreadMetadataMcpService,
@@ -168,9 +169,6 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
-    if (shell === null || shell.deletedAt !== null) {
-      return yield* failure("thread_not_found", `Thread ${threadId} was not found.`);
-    }
     // Thread credentials retain their calling project's metadata boundary.
     // External clients use their declared environment authority.
     const callerShell =
@@ -185,6 +183,14 @@ const make = Effect.gen(function* () {
             );
     if (scope.thread !== undefined && (callerShell == null || callerShell.deletedAt !== null)) {
       return yield* failure("thread_not_found", "The calling thread was not found.");
+    }
+    if (shell === null || shell.deletedAt !== null) {
+      return yield* threadNotFound(
+        threadManagement,
+        threadId,
+        `Thread ${threadId} was not found.`,
+        (candidate) => callerShell == null || candidate.projectId === callerShell.projectId,
+      );
     }
     const target = yield* threadManagement
       .getProjectThreadRecords(

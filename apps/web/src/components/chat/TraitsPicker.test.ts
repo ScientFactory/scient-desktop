@@ -129,7 +129,7 @@ describe("buildTraitsTriggerDisplay", () => {
           },
         ],
         modelOptions: undefined,
-        prompt: "",
+        promptUltrathink: "none",
         planModeEnabled: false,
       }),
     ).toBe(true);

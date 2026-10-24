@@ -1,5 +1,5 @@
 import { type MessageId, type RuntimeRequestId } from "@t3tools/contracts";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { type ComposerSubmissionIntent } from "../../composer-logic";
 import { type SessionPhase, type Thread } from "../../types";
 import {
@@ -8,7 +8,16 @@ import {
   type LocalDispatchSnapshot,
 } from "../ChatView.logic";
 
+export interface LocalDispatchActions {
+  readonly beginLocalDispatch: (options?: {
+    readonly preparingWorktree?: boolean;
+    readonly submissionIntent?: ComposerSubmissionIntent;
+  }) => void;
+  readonly resetLocalDispatch: () => void;
+}
+
 export function useLocalDispatchState(input: {
+  routeThreadKey: string;
   activeThread: Thread | undefined;
   activeLatestRun: Thread["latestRun"] | null;
   latestUserMessageId: MessageId | null;
@@ -17,10 +26,18 @@ export function useLocalDispatchState(input: {
   activePendingUserInput: RuntimeRequestId | null;
   threadError: string | null | undefined;
 }) {
-  const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
+  const [dispatch, setDispatch] = useState<{
+    threadKey: string;
+    snapshot: LocalDispatchSnapshot;
+  } | null>(null);
+  const currentThreadKeyRef = useRef(input.routeThreadKey);
+  useLayoutEffect(() => {
+    currentThreadKeyRef.current = input.routeThreadKey;
+  }, [input.routeThreadKey]);
+  const localDispatch = dispatch?.threadKey === input.routeThreadKey ? dispatch.snapshot : null;
 
-  const resetLocalDispatch = () => {
-    setLocalDispatch(null);
+  const resetLocalDispatch: LocalDispatchActions["resetLocalDispatch"] = () => {
+    setDispatch((current) => (current?.threadKey === input.routeThreadKey ? null : current));
   };
 
   const serverAcknowledgedLocalDispatch = hasServerAcknowledgedLocalDispatch({
@@ -34,24 +51,31 @@ export function useLocalDispatchState(input: {
     threadError: input.threadError,
   });
   const activeLocalDispatch = serverAcknowledgedLocalDispatch ? null : localDispatch;
-  const beginLocalDispatch = (options?: {
-    preparingWorktree?: boolean;
-    submissionIntent?: ComposerSubmissionIntent;
-  }) => {
+  const beginLocalDispatch: LocalDispatchActions["beginLocalDispatch"] = (options) => {
+    if (currentThreadKeyRef.current !== input.routeThreadKey) return;
     const preparingWorktree = Boolean(options?.preparingWorktree);
-    setLocalDispatch((current) => {
-      const active = serverAcknowledgedLocalDispatch ? null : current;
+    setDispatch((current) => {
+      const active =
+        !serverAcknowledgedLocalDispatch && current?.threadKey === input.routeThreadKey
+          ? current.snapshot
+          : null;
       if (active) {
         const submissionIntent = options?.submissionIntent ?? active.submissionIntent;
         return active.preparingWorktree === preparingWorktree &&
           active.submissionIntent === submissionIntent
-          ? active
-          : { ...active, preparingWorktree, submissionIntent };
+          ? current
+          : {
+              threadKey: input.routeThreadKey,
+              snapshot: { ...active, preparingWorktree, submissionIntent },
+            };
       }
-      return createLocalDispatchSnapshot(input.activeThread, {
-        ...options,
-        latestUserMessageId: input.latestUserMessageId,
-      });
+      return {
+        threadKey: input.routeThreadKey,
+        snapshot: createLocalDispatchSnapshot(input.activeThread, {
+          ...options,
+          latestUserMessageId: input.latestUserMessageId,
+        }),
+      };
     });
   };
 

@@ -123,6 +123,10 @@ iterating. Use `vp run typecheck` in the affected package so its Vite task runs,
 including packages without a `typecheck` npm script. Run snippets from the owning
 package, where its dependencies resolve. Check unused files, exports and
 dependencies with `pnpm run knip:check` when changing those surfaces.
+`vp run check:changed <ref>` runs the affected iteration checks, including
+uncommitted changes; it does not replace the final gate below.
+For a regression fix, verify that the focused test distinguishes the broken
+behavior from the fix, and retain a failing negative control when practical.
 Final qualification uses the applicable focused checks plus:
 
 ```sh

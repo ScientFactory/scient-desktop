@@ -251,7 +251,12 @@ export function openPdfCitation(
     };
   };
   try {
-    openPdfCitationNow(citation, currentCwd, runAfterPendingSave, stillWanted, act);
+    void Promise.resolve(
+      openPdfCitationNow(citation, currentCwd, runAfterPendingSave, stillWanted, act),
+    ).catch(() => {
+      stopWatching();
+      if (stillWanted()) unavailable();
+    });
   } catch {
     // A link that parsed but names something the panel can't open.
     stopWatching();
@@ -271,7 +276,7 @@ function openPdfCitationNow(
   runAfterPendingSave: (surfaceId: string, run: () => void) => void,
   isCurrent: () => boolean,
   act: (revealed: Revealed, open: () => void) => void,
-): void {
+): void | Promise<void> {
   const { target } = citation;
   const { document } = target;
   const ref: ScopedThreadRef = {
@@ -313,7 +318,7 @@ function openPdfCitationNow(
       return;
     }
     case "generated":
-      void generatedDescriptor(citation, locator).then(
+      return generatedDescriptor(citation, locator).then(
         (source) => {
           if (!isCurrent()) return;
           const surface = scientGeneratedPdfSurface(source);
@@ -327,7 +332,6 @@ function openPdfCitationNow(
           if (isCurrent()) unavailable();
         },
       );
-      return;
     case "attachment": {
       const attachment = {
         type: "file" as const,
