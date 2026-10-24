@@ -133,7 +133,11 @@ computer**; a skipped one shows its `skippedBecause` in a few words and offers *
 except `too-large` (Overleaf refuses it). `localOnly` is listed as **Kept only here**, each with
 **Send this file**. A decision is a pending toggle, not a sync of its own: the tab's next **Sync**
 or **Sync again** sends them as `files: { keepOnlyHere, send }`, and a sync that applies clears
-them. While a sync runs the buttons are disabled: a decision made then wouldn't be in it, yet
+them. Before they are shown or sent, the decisions are reconciled with the review shown
+(`actionableDecisions`): a "keep" only for a file it would send, a "send" only for one it skips
+(and Overleaf would take) or one kept only here. One for a file a fresh read no longer lists or
+allows is dropped, never sent; the rest survive a cancel or a refusal. While a sync runs the
+buttons are disabled: a decision made then wouldn't be in it, yet
 would be cleared by it. One sync then carries every decision together with any conflict choices, and a decision
 taken while a conflict waits isn't lost to a sync that stops at that conflict. After a sync the
 tab shows "N new files were sent" and only the kept-only list.

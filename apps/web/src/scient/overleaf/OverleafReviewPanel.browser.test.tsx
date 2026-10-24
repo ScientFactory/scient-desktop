@@ -460,6 +460,60 @@ describe("OverleafReviewPanel", () => {
       return screen;
     }
 
+    it("drops decisions a fresh read no longer allows, and keeps the rest through a refusal", async () => {
+      await using _screen = await readNewFiles();
+      await page.getByRole("button", { name: "Send this file: main.aux" }).click();
+      await page.getByRole("button", { name: "Send this file: notes.md" }).click();
+      await page
+        .getByRole("button", { name: "Keep only on this computer: figures/plot.pdf" })
+        .click();
+
+      // main.aux was deleted, and figures/plot.pdf is now over Overleaf's limit.
+      client.previewOverleaf.mockResolvedValue({
+        _tag: "review",
+        review: review({
+          needsDecision: false,
+          conflicts: [],
+          additions: [
+            {
+              path: "figures/plot.pdf",
+              size: 60_000_000,
+              selected: false,
+              skippedBecause: "too-large",
+            },
+            { path: "draft.tex", size: 10, selected: true, skippedBecause: null },
+          ],
+          localOnly: ["notes.md"],
+        }),
+      });
+      await page.getByRole("button", { name: "Check again" }).click();
+      await expect
+        .element(page.getByRole("button", { name: "Send this file: main.aux" }))
+        .not.toBeInTheDocument();
+      await expect
+        .element(page.getByRole("button", { name: "Send this file: notes.md" }))
+        .toHaveAttribute("aria-pressed", "true");
+
+      client.syncOverleaf.mockResolvedValue({
+        _tag: "refused",
+        refusal: { reason: "unreachable" },
+      });
+      await page.getByRole("button", { name: "Sync", exact: true }).click();
+      await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+      // Only what this review still lists and allows is sent.
+      expect(client.syncOverleaf.mock.calls[0]![1]).toMatchObject({
+        files: { send: ["notes.md"] },
+      });
+      expect(client.syncOverleaf.mock.calls[0]![1].files).not.toHaveProperty("keepOnlyHere");
+
+      // The refusal changes nothing about the decisions: the next Sync carries them again.
+      await page.getByRole("button", { name: "Sync", exact: true }).click();
+      await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(2);
+      expect(client.syncOverleaf.mock.calls[1]![1]).toMatchObject({
+        files: { send: ["notes.md"] },
+      });
+    });
+
     it("keeps a new file only on this computer at the next sync", async () => {
       await using _screen = await readNewFiles();
       const keep = page.getByRole("button", {

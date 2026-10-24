@@ -30,6 +30,7 @@ import {
 import { askAgentOnLinkedCopy } from "./askAgentOnLinkedCopy";
 import { appendToThreadDraft, sameThread, useReadShownThread } from "./overleafThreadTarget";
 import {
+  actionableDecisions,
   fileDecisionsRequest,
   OverleafNewFiles,
   type OverleafFileDecision,
@@ -165,6 +166,12 @@ export function OverleafReviewPanel(props: {
   // The review shown is what a sync here applied, rather than one still to run.
   const synced = shownState?.applied ?? false;
   const sent = shownState?.sent ?? false;
+  // The files decisions can be made on: after a sync its new files are decided, and files kept
+  // only here still can be sent. Decisions are reconciled with it before they are shown or sent,
+  // so one for a file a fresh read no longer lists, or no longer allows, is dropped.
+  const decidable =
+    review === null ? null : synced ? { additions: [], localOnly: review.localOnly } : review;
+  const pendingDecisions = actionableDecisions(decidable, fileDecisions);
   const reading = workspace.previewing.has(connectionId);
   const readError = workspace.previewErrors.get(connectionId) ?? null;
   const readChanges = () => void readOverleafChanges(environmentId, cwd, connectionId);
@@ -204,7 +211,7 @@ export function OverleafReviewPanel(props: {
   const syncNow = async () => {
     const result = await runOverleafSync(
       { environmentId, workspaceRoot: cwd, connection, openReview },
-      { files: fileDecisionsRequest(fileDecisions) },
+      { files: fileDecisionsRequest(pendingDecisions) },
     );
     if (result?._tag === "synced") setFileDecisions(new Map());
   };
@@ -217,7 +224,7 @@ export function OverleafReviewPanel(props: {
       {
         choices: choicesFor(review, engineChoices),
         reviewedRemote: review.remoteTree,
-        files: fileDecisionsRequest(fileDecisions),
+        files: fileDecisionsRequest(pendingDecisions),
       },
     );
     if (result?._tag === "needs-decision") {
@@ -460,9 +467,9 @@ export function OverleafReviewPanel(props: {
               ) : null}
               <OverleafNewFiles
                 // After a sync, its new files are decided; files kept only here still can be sent.
-                review={synced ? { additions: [], localOnly: review.localOnly } : review}
+                review={decidable ?? review}
                 folder={connection.folder}
-                decisions={fileDecisions}
+                decisions={pendingDecisions}
                 // A decision made while a sync runs wouldn't be in it, yet would be cleared by it.
                 disabled={syncing}
                 onDecide={decideFile}

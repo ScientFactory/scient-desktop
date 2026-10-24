@@ -42,6 +42,36 @@ function newFilesToSend(
   ).length;
 }
 
+/**
+ * The decisions that still apply to the review shown: a "keep" for a new file
+ * it would send, a "send" for one it skips (and Overleaf would take) or one
+ * kept only here. A decision for a file no longer listed, or no longer
+ * actionable, is left out, so it is neither shown nor sent.
+ */
+export function actionableDecisions(
+  review: Pick<ScientOverleafReview, "additions" | "localOnly"> | null,
+  decisions: ReadonlyMap<string, OverleafFileDecision>,
+): ReadonlyMap<string, OverleafFileDecision> {
+  if (review === null || decisions.size === 0) return NO_DECISIONS;
+  const additions = new Map(review.additions.map((addition) => [addition.path, addition]));
+  const localOnly = new Set(review.localOnly);
+  const kept = new Map<string, OverleafFileDecision>();
+  for (const [path, decision] of decisions) {
+    const addition = additions.get(path);
+    const applies =
+      decision === "keep"
+        ? addition?.selected === true
+        : localOnly.has(path) ||
+          (addition !== undefined &&
+            !addition.selected &&
+            !UNSENDABLE.has(addition.skippedBecause ?? ""));
+    if (applies) kept.set(path, decision);
+  }
+  return kept.size === decisions.size ? decisions : kept;
+}
+
+const NO_DECISIONS: ReadonlyMap<string, OverleafFileDecision> = new Map();
+
 /** The decisions as a sync request carries them. */
 export function fileDecisionsRequest(decisions: ReadonlyMap<string, OverleafFileDecision>) {
   const keepOnlyHere: string[] = [];
