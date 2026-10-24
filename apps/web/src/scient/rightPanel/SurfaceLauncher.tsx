@@ -20,7 +20,7 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { Button } from "~/components/ui/button";
 import { Kbd } from "~/components/ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
-import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "~/components/ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { shortcutLabelForCommand } from "~/keybindings";
 import { cn } from "~/lib/utils";
 import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
@@ -39,7 +39,6 @@ export interface ScientSurfaceLauncherProps {
   readonly onAddFiles: () => void;
   readonly onAddBrowser: () => void;
   readonly onAddBrowserInProfile: (profileId: string) => void;
-  readonly browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   readonly onAddDocuments?: ((format: NewDocumentFormat) => void) | undefined;
   readonly onAddSources: () => void;
   readonly onAddCompute: () => void;
@@ -190,12 +189,12 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
       onClick: pick(props.onAddBrowser),
       command: "preview.toggle",
       choice:
-        props.browserProfiles.length > 1 ? (
+        browserDefaults.profiles.length > 1 ? (
           <CardChoice
             label={defaultProfile?.name ?? "Default"}
             ariaLabel="Open browser in a profile"
           >
-            {props.browserProfiles.map((profile) => (
+            {browserDefaults.profiles.map((profile) => (
               <MenuItem
                 key={profile.id}
                 onClick={() => pick(props.onAddBrowserInProfile)(profile.id)}
@@ -370,40 +369,38 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
   };
 
   return (
-    <TooltipProvider delay={100} closeDelay={0} timeout={400}>
-      <div
-        ref={focusOnMount}
-        tabIndex={-1}
-        aria-label="Open in side panel"
-        data-scient-launcher
-        className="scient-reading-ui scrollbar-gutter-both @container/launcher flex min-h-0 flex-1 flex-col overflow-y-auto bg-sidebar px-4 pt-12 pb-6 outline-none"
-      >
-        <div className="mx-auto w-full max-w-3xl">
-          <h2 className="mb-3 px-1 font-medium text-foreground text-sm">Tools</h2>
-          <div className="grid gap-2 @[36rem]/launcher:grid-cols-2">
-            {main.map(card)}
-            <button
-              type="button"
-              aria-expanded={moreOpen}
-              onClick={() => setMoreOpen((open) => !open)}
-              className="group flex h-14 w-full cursor-pointer items-center gap-3 rounded-lg border border-border/60 bg-card px-3 text-left text-[15px] text-card-foreground transition-colors hover:border-border hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-            >
-              <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border/70 bg-muted/50 text-[color-mix(in_srgb,var(--sidebar-icon-color)_70%,var(--card-foreground))] transition-colors group-hover:text-foreground [&_svg]:[stroke-width:1.75]">
-                <Ellipsis className="size-4" />
-              </span>
-              <span className="min-w-0 flex-1 truncate">More</span>
-              <ChevronDown
-                className={cn(
-                  "size-4 text-muted-foreground transition-transform",
-                  moreOpen && "rotate-180",
-                )}
-              />
-            </button>
-            {moreOpen ? more.map(card) : null}
-          </div>
+    <div
+      ref={focusOnMount}
+      tabIndex={-1}
+      aria-label="Open in side panel"
+      data-scient-launcher
+      className="scient-reading-ui scrollbar-gutter-both @container/launcher flex min-h-0 flex-1 flex-col overflow-y-auto bg-sidebar px-4 pt-12 pb-6 outline-none"
+    >
+      <div className="mx-auto w-full max-w-3xl">
+        <h2 className="mb-3 px-1 font-medium text-foreground text-sm">Tools</h2>
+        <div className="grid gap-2 @[36rem]/launcher:grid-cols-2">
+          {main.map(card)}
+          <button
+            type="button"
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen((open) => !open)}
+            className="group flex h-14 w-full cursor-pointer items-center gap-3 rounded-lg border border-border/60 bg-card px-3 text-left text-[15px] text-card-foreground transition-colors hover:border-border hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          >
+            <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border/70 bg-muted/50 text-[color-mix(in_srgb,var(--sidebar-icon-color)_70%,var(--card-foreground))] transition-colors group-hover:text-foreground [&_svg]:[stroke-width:1.75]">
+              <Ellipsis className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1 truncate">More</span>
+            <ChevronDown
+              className={cn(
+                "size-4 text-muted-foreground transition-transform",
+                moreOpen && "rotate-180",
+              )}
+            />
+          </button>
+          {moreOpen ? more.map(card) : null}
         </div>
       </div>
-    </TooltipProvider>
+    </div>
   );
 }
 
@@ -414,26 +411,24 @@ export function ScientNewTabButton(props: {
 }) {
   const shortcut = shortcutLabelForCommand(props.keybindings, "rightPanel.new");
   return (
-    <TooltipProvider delay={100} closeDelay={0}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              aria-label="New tab"
-              className="shrink-0 self-center"
-              size="icon-sm"
-              variant="ghost-muted"
-              onClick={props.onClick}
-            />
-          }
-        >
-          <Plus className="size-3.75" />
-        </TooltipTrigger>
-        <TooltipPopup>
-          New tab
-          {shortcut ? <Kbd className="ms-2">{shortcut}</Kbd> : null}
-        </TooltipPopup>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label="New tab"
+            className="shrink-0 self-center"
+            size="icon-sm"
+            variant="ghost-muted"
+            onClick={props.onClick}
+          />
+        }
+      >
+        <Plus className="size-3.75" />
+      </TooltipTrigger>
+      <TooltipPopup>
+        New tab
+        {shortcut ? <Kbd className="ms-2">{shortcut}</Kbd> : null}
+      </TooltipPopup>
+    </Tooltip>
   );
 }

@@ -251,16 +251,8 @@ import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 // SCIENT-FORK:START
 import { useBrowserHistoryProjectLink } from "~/scient/browser/useBrowserHistoryProjectLink";
 import { renameInTabHistory, useRightPanelTabHistory } from "~/scient/rightPanel/tabHistory";
-import {
-  PanelFilesLayout,
-  panelFilesToggleApplies,
-  usePanelFilesOpen,
-} from "~/scient/rightPanel/PanelFilesColumn";
-import {
-  adjacentPanelSurface,
-  canDuplicatePanelSurface,
-} from "~/scient/rightPanel/panelTabCommands";
-import { duplicatePanelSurface } from "~/scient/rightPanel/panelTabDuplication";
+import { PanelFilesLayout } from "~/scient/rightPanel/PanelFilesColumn";
+import { usePanelTabShortcuts } from "~/scient/rightPanel/usePanelTabShortcuts";
 // SCIENT-FORK:END
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { usePreviewSession } from "./preview/usePreviewSession";
@@ -2418,25 +2410,6 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
   );
-  // SCIENT-FORK:START — the switch for the file list beside side-panel tabs
-  const [panelFilesOpen, setPanelFilesOpen] = usePanelFilesOpen();
-  // SCIENT-FORK:END
-  // SCIENT-FORK:START — a second copy of a browser or terminal tab; like opening
-  // a browser, it waits for a pending file save first
-  const duplicateRightPanelSurface = (surface: RightPanelSurface) => {
-    if (!activeThreadRef) return;
-    if (surface.kind === "preview" && !canOperatePreview) return;
-    runAfterPendingFileSave(null, () => {
-      duplicatePanelSurface({
-        surface,
-        threadRef: activeThreadRef,
-        openPreview,
-        previewSessions: activePreviewState.sessions,
-        addTerminal: addTerminalSurfaceStable,
-      });
-    });
-  };
-  // SCIENT-FORK:END
   // SCIENT-FORK:START — openers for the right-panel surfaces Scient adds.
   const {
     addNewTabSurface,
@@ -3394,6 +3367,22 @@ function ChatViewContent(props: ChatViewProps) {
   const openThreadFind = () => threadFindControlsRef.current?.open();
   const closeThreadFind = () => threadFindControlsRef.current?.close();
 
+  // SCIENT-FORK:START — side-panel tab shortcuts and duplicating a tab (scient/rightPanel)
+  const panelTabs = usePanelTabShortcuts({
+    threadRef: activeThreadRef,
+    panelOpen: rightPanelOpen,
+    surfaces: renderedRightPanelSurfaces,
+    activeSurface: renderedRightPanelSurface,
+    activate: activateRightPanelSurfaceStable,
+    addNewTab: addNewTabSurface,
+    canOperatePreview,
+    browserAvailable,
+    runAfterPendingFileSave,
+    openPreview,
+    previewSessions: activePreviewState.sessions,
+    addTerminal: addTerminalSurfaceStable,
+  });
+  // SCIENT-FORK:END
   useChatShortcuts({
     enabled: activeThreadId !== null,
     keybindings,
@@ -3417,47 +3406,8 @@ function ChatViewContent(props: ChatViewProps) {
         if (!isServerThread || serverConfig?.threadFind !== true) return false;
         openThreadFind();
       },
-      // SCIENT-FORK:START — side-panel tab commands: an open panel's tab bar
-      // handles a new tab itself, a closed panel opens with one
-      "rightPanel.new": ({ event }) => {
-        if (rightPanelOpen || !activeThreadRef) return false;
-        if (!event.repeat) addNewTabSurface();
-      },
-      "rightPanel.nextTab": () => {
-        if (!rightPanelOpen) return false;
-        const target = adjacentPanelSurface(
-          renderedRightPanelSurfaces,
-          renderedRightPanelSurface?.id ?? null,
-          1,
-        );
-        if (!target) return false;
-        activateRightPanelSurfaceStable(target);
-      },
-      "rightPanel.previousTab": () => {
-        if (!rightPanelOpen) return false;
-        const target = adjacentPanelSurface(
-          renderedRightPanelSurfaces,
-          renderedRightPanelSurface?.id ?? null,
-          -1,
-        );
-        if (!target) return false;
-        activateRightPanelSurfaceStable(target);
-      },
-      "rightPanel.duplicateTab": ({ event }) => {
-        if (!rightPanelOpen || !renderedRightPanelSurface) return false;
-        if (
-          !canDuplicatePanelSurface(renderedRightPanelSurface, {
-            browserAvailable: canOperatePreview && browserAvailable,
-          })
-        ) {
-          return false;
-        }
-        if (!event.repeat) duplicateRightPanelSurface(renderedRightPanelSurface);
-      },
-      "rightPanel.toggleFiles": ({ event }) => {
-        if (!rightPanelOpen || !panelFilesToggleApplies(renderedRightPanelSurface)) return false;
-        if (!event.repeat) setPanelFilesOpen(!panelFilesOpen);
-      },
+      // SCIENT-FORK:START
+      ...panelTabs.shortcuts,
       // SCIENT-FORK:END
       "composer.cycleHost": ({ event }) => {
         if (!canChangeEnvironment) return false;
@@ -4864,7 +4814,7 @@ function ChatViewContent(props: ChatViewProps) {
           onAddSources={addSourcesSurface}
           // SCIENT-FORK:START — "+" and its shortcut open the launcher as a tab
           onAddNewTab={addNewTabSurface}
-          onDuplicateSurface={duplicateRightPanelSurface}
+          onDuplicateSurface={panelTabs.duplicateSurface}
           // SCIENT-FORK:END
           onAddDocuments={addDocumentsSurface}
           documentsAvailable={activeWorkspaceRoot !== undefined}

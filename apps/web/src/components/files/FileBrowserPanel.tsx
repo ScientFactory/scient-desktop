@@ -44,15 +44,10 @@ import {
   useScientLazyWorkspaceTreeLoading,
 } from "~/scient/files/useScientLazyWorkspaceTree";
 // SCIENT-FORK:END
-// SCIENT-FORK:START — the Files bar's New and Connect menus
-import { useCreateNewDocument } from "~/scient/documents/useCreateNewDocument";
+// SCIENT-FORK:START — the Files bar's New and Connect, and a folder's New document
 import type { OpenFileOptions } from "~/rightPanelStore";
-import {
-  ConnectFolderButton,
-  NewDocumentButton,
-  type ScientToolbarSlot,
-} from "~/scient/files/FileBrowserToolbarActions";
-import { TooltipProvider } from "~/components/ui/tooltip";
+import type { ScientToolbarSlot } from "~/scient/files/FileBrowserToolbarActions";
+import { useScientFolderActions } from "~/scient/files/useScientFolderActions";
 // SCIENT-FORK:END
 import { useProjectPathSearch } from "~/state/queries";
 import { pierreTreeStyle } from "~/pierre-tree-theme";
@@ -138,26 +133,15 @@ export default function FileBrowserPanel({
   const fileContextMenu = useFileContextMenu(environmentId);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
-  // SCIENT-FORK:START — the folder New acts on: the last selected folder, or
-  // the folder of the last selected file.
-  const lastSelectionRef = useRef<string | null>(null);
-  const createNewDocument = useCreateNewDocument();
-  const selectionBase = () => {
-    const selection = lastSelectionRef.current ?? selectedPath;
-    if (!selection) return "";
-    if (entryKindsRef.current.get(selection) === "directory") return `${selection}/`;
-    const slash = selection.lastIndexOf("/");
-    return slash === -1 ? "" : selection.slice(0, slash + 1);
-  };
-  const startNewDocument = (format: "markdown" | "latex", base: string) =>
-    createNewDocument({
-      format,
-      environmentId,
-      cwd,
-      base,
-      open: (relativePath) =>
-        onOpenFileSource(relativePath, undefined, { latexPreviewMode: "visual" }),
-    });
+  // SCIENT-FORK:START — New document and Connect for a folder (scient/files)
+  const folderActions = useScientFolderActions({
+    environmentId,
+    cwd,
+    selectedPath,
+    entryKinds: entryKindsRef,
+    hostFolder,
+    onOpenFileSource,
+  });
   // SCIENT-FORK:END
   const searchSelectionPathRef = useRef<string | null>(null);
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
@@ -182,11 +166,6 @@ export default function FileBrowserPanel({
         return;
       }
       const relativePath = item.path.replace(/\/$/, "");
-      // SCIENT-FORK:START
-      const isFolder =
-        !hostFolder &&
-        (item.path.endsWith("/") || entryKindsRef.current.get(relativePath) === "directory");
-      // SCIENT-FORK:END
       const mention = serializeComposerFileLink(panelPath(relativePath));
       const pointer = contextMenuPointerRef.current;
       const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
@@ -208,32 +187,14 @@ export default function FileBrowserPanel({
             { id: "copy-mention", label: "Copy mention" },
             { id: "add-to-chat", label: "Add to chat" },
             // SCIENT-FORK:START — start a document in, or connect, this folder
-            ...(isFolder
-              ? ([
-                  {
-                    id: "new-document",
-                    label: "New document here",
-                    separatorBefore: true,
-                    children: [
-                      { id: "new-document:markdown", label: "Markdown" },
-                      { id: "new-document:latex", label: "LaTeX" },
-                    ],
-                  },
-                ] as const)
-              : []),
+            ...folderActions.menuItems(item.path),
             // SCIENT-FORK:END
           ],
           position,
         );
         if (clicked === null) return;
         // SCIENT-FORK:START
-        if (clicked === "new-document:markdown" || clicked === "new-document:latex") {
-          startNewDocument(
-            clicked === "new-document:latex" ? "latex" : "markdown",
-            `${relativePath}/`,
-          );
-          return;
-        }
+        if (folderActions.handleMenuChoice(clicked, relativePath)) return;
         // SCIENT-FORK:END
         // "Open with" submenu selections report the child id ("editor:<id>"),
         // which is not present in the top-level item list.
@@ -322,7 +283,7 @@ export default function FileBrowserPanel({
       }
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
       // SCIENT-FORK:START
-      if (selectedPath) lastSelectionRef.current = selectedPath;
+      if (selectedPath) folderActions.rememberSelection(selectedPath);
       // SCIENT-FORK:END
       if (selectedPath && entryKindsRef.current.get(selectedPath) !== "directory") {
         treeSelectionPathRef.current = selectedPath;
@@ -507,39 +468,30 @@ export default function FileBrowserPanel({
         className="@container/file-browser-header flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-2 in-data-[preview-panel-mode=inline]:h-8 in-data-[preview-panel-mode=inline]:min-h-8 in-data-[preview-panel-mode=inline]:border-b-transparent in-data-[preview-panel-mode=inline]:pt-1"
         data-surface-subheader
       >
-        {/* SCIENT-FORK:START — search first; New acts on the selected folder, Connect lists
-            the services on the way; refresh and expand-all live in the Files menu. Host
-            folders are read-only.
-            Tooltips here open quickly, and at once while moving between buttons. */}
-        <TooltipProvider delay={100} closeDelay={0} timeout={400}>
-          {scientToolbarLeading}
-          <FileSearchField
-            name="project-files-search"
-            ariaLabel={`Search ${projectName} files`}
-            value={searchValue}
-            onValueChange={handleSearchValueChange}
-            onClose={handleSearchClose}
-          />
-          {hostFolder ? null : (
-            <>
-              <NewDocumentButton onChoose={(format) => startNewDocument(format, selectionBase())} />
-              <ConnectFolderButton />
-            </>
-          )}
-          <WorkspaceFilesMenu
-            view={directoryView}
-            onViewChange={changeDirectoryView}
-            refresh={{
-              pending: treeSnapshot.isPending || isSearchPending,
-              onRefresh: handleRefresh,
-            }}
-            folders={
-              loadedDirectoryPaths.length > 0 && !hostFolder
-                ? { allExpanded: allLoadedDirectoriesExpanded, onToggle: toggleLoadedDirectories }
-                : undefined
-            }
-          />
-        </TooltipProvider>
+        {/* SCIENT-FORK:START — search first, then New and Connect (useScientFolderActions);
+            refresh and expand-all live in the Files menu. */}
+        {scientToolbarLeading}
+        <FileSearchField
+          name="project-files-search"
+          ariaLabel={`Search ${projectName} files`}
+          value={searchValue}
+          onValueChange={handleSearchValueChange}
+          onClose={handleSearchClose}
+        />
+        {folderActions.toolbarButtons}
+        <WorkspaceFilesMenu
+          view={directoryView}
+          onViewChange={changeDirectoryView}
+          refresh={{
+            pending: treeSnapshot.isPending || isSearchPending,
+            onRefresh: handleRefresh,
+          }}
+          folders={
+            loadedDirectoryPaths.length > 0 && !hostFolder
+              ? { allExpanded: allLoadedDirectoriesExpanded, onToggle: toggleLoadedDirectories }
+              : undefined
+          }
+        />
         {/* SCIENT-FORK:END */}
       </div>
       {/* SCIENT-FORK:START — lazy tree load and search status around the tree */}

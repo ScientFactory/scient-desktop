@@ -5,7 +5,7 @@ import { lazy, Suspense, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Kbd } from "~/components/ui/kbd";
-import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "~/components/ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { shortcutLabelForCommand } from "~/keybindings";
 import type { OpenFileOptions, RightPanelSurface } from "~/rightPanelStore";
@@ -56,28 +56,26 @@ export function PanelFilesToggle(props: {
   const shortcut = shortcutLabelForCommand(props.keybindings, "rightPanel.toggleFiles");
   const label = open ? "Hide files" : "Show files";
   return (
-    <TooltipProvider delay={100} closeDelay={0}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              aria-label={label}
-              aria-pressed={open}
-              className="shrink-0 self-center"
-              size="icon-sm"
-              variant="ghost-muted"
-              onClick={() => setOpen(!open)}
-            />
-          }
-        >
-          <ScientFilesIcon className="size-3.75" />
-        </TooltipTrigger>
-        <TooltipPopup>
-          {label}
-          {shortcut ? <Kbd className="ms-2">{shortcut}</Kbd> : null}
-        </TooltipPopup>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={label}
+            aria-pressed={open}
+            className="shrink-0 self-center"
+            size="icon-sm"
+            variant="ghost-muted"
+            onClick={() => setOpen(!open)}
+          />
+        }
+      >
+        <ScientFilesIcon className="size-3.75" />
+      </TooltipTrigger>
+      <TooltipPopup>
+        {label}
+        {shortcut ? <Kbd className="ms-2">{shortcut}</Kbd> : null}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 

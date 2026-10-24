@@ -5,7 +5,7 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, type ReactNode } fr
 import { create } from "zustand";
 
 import { Button } from "~/components/ui/button";
-import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "~/components/ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { cn } from "~/lib/utils";
 import {
@@ -439,23 +439,21 @@ export function TabHistoryButtons(props: {
     </Tooltip>
   );
   return (
-    <TooltipProvider delay={100} closeDelay={0}>
-      <div className={cn("flex shrink-0 items-center", props.className)}>
-        {button(
-          "Back",
-          backKey,
-          canGoBack,
-          () => goBackInTab(props.threadRef, surfaceId),
-          <ArrowLeft aria-hidden className="scient-quiet-icon size-4" />,
-        )}
-        {button(
-          "Forward",
-          forwardKey,
-          canGoForward,
-          () => goForwardInTab(props.threadRef, surfaceId),
-          <ArrowRight aria-hidden className="scient-quiet-icon size-4" />,
-        )}
-      </div>
-    </TooltipProvider>
+    <div className={cn("flex shrink-0 items-center", props.className)}>
+      {button(
+        "Back",
+        backKey,
+        canGoBack,
+        () => goBackInTab(props.threadRef, surfaceId),
+        <ArrowLeft aria-hidden className="scient-quiet-icon size-4" />,
+      )}
+      {button(
+        "Forward",
+        forwardKey,
+        canGoForward,
+        () => goForwardInTab(props.threadRef, surfaceId),
+        <ArrowRight aria-hidden className="scient-quiet-icon size-4" />,
+      )}
+    </div>
   );
 }

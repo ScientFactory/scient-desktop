@@ -342,7 +342,6 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
   // SCIENT-FORK:END
-
   it.effect("keeps a late default pending while the config is full", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
