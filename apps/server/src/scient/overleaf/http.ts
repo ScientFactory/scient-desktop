@@ -237,7 +237,11 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
             case "review":
               return { ...result, settled: settledView(result.settled) };
             case "refused":
-              return { _tag: "refused" as const, refusal: refusalView(result.refusal) };
+              return {
+                _tag: "refused" as const,
+                refusal: refusalView(result.refusal),
+                settled: settledView(result.settled ?? null),
+              };
             case "recovered":
               return { _tag: "recovered" as const };
           }

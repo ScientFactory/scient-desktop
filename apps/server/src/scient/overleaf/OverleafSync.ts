@@ -850,7 +850,8 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
         settled ??= prepared.recovery;
         prepared = yield* coordinator.prepare(prepareInput);
       }
-      if (prepared._tag === "review" && prepared.settled) settled ??= prepared.settled;
+      // A completed settlement is reported whether the review that follows is built or refused.
+      if (prepared._tag !== "recovered" && prepared.settled) settled ??= prepared.settled;
       if (prepared._tag === "refused")
         return {
           _tag: "refused",

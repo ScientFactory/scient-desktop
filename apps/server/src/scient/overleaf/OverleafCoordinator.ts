@@ -203,6 +203,8 @@ export type OverleafPrepareResult =
   | {
       readonly _tag: "refused";
       readonly refusal: OverleafReviewRefusal | OverleafInventoryRefusal;
+      /** An interrupted apply this prepare finished first, before the review was refused. */
+      readonly settled?: OverleafAdopted;
     }
   /** A pending apply was recovered but needs review before anything else. */
   | { readonly _tag: "recovered"; readonly recovery: OverleafAdopted };
@@ -1410,8 +1412,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           remote,
           checkoutEpoch: section.epoch,
         });
-        if (built._tag !== "review") return built;
-        registry.offer(built.review, yield* now);
+        if (built._tag === "review") registry.offer(built.review, yield* now);
         return settled === undefined ? built : { ...built, settled };
       }),
     );

@@ -1371,6 +1371,49 @@ describe.skipIf(!canApply)("OverleafSync", () => {
     ),
   );
 
+  it.live("reports the interrupted sync it finished even when the next review is refused", () =>
+    run(
+      Effect.gen(function* () {
+        let crash = false;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "before\n" } },
+          at: (point) => (point === "applied" && crash ? Effect.die("stopped") : Effect.void),
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+        yield* w.collaborate(PROJECT, { "main.tex": "after\n" });
+        crash = true;
+        expect(
+          (yield* Effect.exit(
+            w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+          ))._tag,
+        ).toBe("Failure");
+        crash = false;
+        // Overleaf now holds a file Scient refuses to bring in.
+        yield* w.collaborate(PROJECT, { "main.tex": "after\n", ".DS_Store": "finder" });
+        const refused = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s3",
+        });
+        expect(refused).toMatchObject({
+          _tag: "refused",
+          retried: false,
+          settled: { outcome: "complete" },
+        });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("after\n");
+      }),
+    ),
+  );
+
   it.live("asks again when Overleaf moved after the conflict was decided", () =>
     run(
       Effect.gen(function* () {
