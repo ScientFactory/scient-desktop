@@ -92,7 +92,7 @@ export function fileTabTitles(paths: ReadonlyArray<string>): Map<string, string>
         depth += 1;
       }
       const folders = depth === 0 ? [] : file.parents.slice(-depth);
-      titles.set(file.path, folders.length === 0 ? name : `${name} — ${folders.join("/")}`);
+      titles.set(file.path, folders.length === 0 ? name : `${name} (${folders.join("/")})`);
     }
   }
   return titles;

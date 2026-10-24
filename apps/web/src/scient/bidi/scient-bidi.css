@@ -1,8 +1,8 @@
 /* Scoped to conversational content; the application shell remains LTR. */
 .chat-markdown[data-scient-content-direction="rtl"],
 .chat-markdown[data-scient-content-direction="ltr"],
-.composer-editor-surface[data-scient-content-direction="rtl"],
-.composer-editor-surface[data-scient-content-direction="ltr"] {
+[data-scient-composer-surface][data-scient-content-direction="rtl"],
+[data-scient-composer-surface][data-scient-content-direction="ltr"] {
   text-align: start;
 }
 
@@ -86,12 +86,12 @@
   text-align: start;
 }
 
-.composer-editor-surface [dir="ltr"] {
+[data-scient-composer-surface] [dir="ltr"] {
   direction: ltr;
   unicode-bidi: isolate;
 }
 
-.composer-editor-surface [dir="rtl"] {
+[data-scient-composer-surface] [dir="rtl"] {
   direction: rtl;
   unicode-bidi: isolate;
 }

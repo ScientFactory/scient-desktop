@@ -29,16 +29,19 @@ interface OpenPreviewSessionInput<E> {
   viewport?: PreviewViewportSetting;
   profileId?: string;
   runtime?: PreviewRuntime;
+  assertCurrent?: () => void;
 }
 
 export async function openPreviewSession<E>(
   input: OpenPreviewSessionInput<E>,
 ): Promise<AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError>> {
+  input.assertCurrent?.();
   // Resolved once: a tab opened before client settings hydrate would otherwise
   // be born at the schema defaults and never corrected.
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
   );
+  input.assertCurrent?.();
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
@@ -53,6 +56,7 @@ export async function openPreviewSession<E>(
       ...(runtime === undefined || runtime === "desktop" ? {} : { runtime }),
     },
   });
+  input.assertCurrent?.();
   if (result._tag === "Failure") {
     return result;
   }

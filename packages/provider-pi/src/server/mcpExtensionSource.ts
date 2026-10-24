@@ -29,7 +29,7 @@ export const makePiMcpExtensionSource = (
 ): string => {
   return /* SCIENT-FORK:END */ `\
 import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-// SCIENT-FORK:START — Scient Extensions: hashed aliases for Scient connector tool names.
+// SCIENT-FORK:START: Scient Extensions: hashed aliases for Scient connector tool names.
 import * as NodeCrypto from "node:crypto";
 // SCIENT-FORK:END
 import * as NodeFSP from "node:fs/promises";
@@ -40,7 +40,7 @@ const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
-// SCIENT-FORK:START — Scient Extensions: connector list; authenticated with TOKEN_ENV.
+// SCIENT-FORK:START: Scient Extensions: connector list; authenticated with TOKEN_ENV.
 const CONNECTORS_ENV = ${JSON.stringify(T3_MCP_CONNECTORS_ENV)};
 // SCIENT-FORK:END
 const RUNTIME_GUIDANCE_ENV = "PI_RUNTIME_GUIDANCE";
@@ -95,7 +95,7 @@ function toolInputSummary(input: unknown): string {
   }
 }
 
-// SCIENT-FORK:START — Scient Extensions: incremental, request-correlated response reader. Remote Streamable
+// SCIENT-FORK:START: Scient Extensions: incremental, request-correlated response reader. Remote Streamable
 // HTTP servers (Scient connectors) split one JSON message across several data lines and
 // may keep the event stream open after answering, so read events as they complete and
 // stop at the message answering this request.
@@ -180,7 +180,13 @@ async function readJsonRpcResponse(
 function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   const unsafe = (Type as { Unsafe?: (value: unknown) => unknown }).Unsafe;
   if (typeof unsafe === "function" && schema !== undefined) {
-    return unsafe(schema);
+    // Zero-argument MCP tools may omit "properties", which some OpenAI-compatible
+    // servers reject. Declare it, as Pi does for its own MCP tools.
+    return unsafe({
+      ...schema,
+      type: schema.type ?? "object",
+      ...(schema.properties === undefined ? { properties: {} } : {}),
+    });
   }
   return Type.Object({}, { additionalProperties: true });
 }
@@ -282,7 +288,7 @@ function createMcpClient(endpoint: string, token: string) {
     });
     const nextSession = response.headers.get("mcp-session-id");
     if (nextSession) sessionId = nextSession;
-    // SCIENT-FORK:START — Scient Extensions: read only until this request's response; streams may stay open.
+    // SCIENT-FORK:START: Scient Extensions: read only until this request's response; streams may stay open.
     if (!response.ok) {
       const body = await response.text();
       throw new Error(\`MCP \${method} failed (\${response.status}): \${body.slice(0, 400)}\`);
@@ -338,7 +344,7 @@ function createMcpClient(endpoint: string, token: string) {
   };
 }
 
-// SCIENT-FORK:START — Scient Extensions: connectors: extra proxied MCP servers sharing the session credential.
+// SCIENT-FORK:START: Scient Extensions: connectors: extra proxied MCP servers sharing the session credential.
 type ConnectorClient = {
   readonly connect: (signal?: AbortSignal) => Promise<void>;
   readonly listTools: (signal?: AbortSignal) => Promise<McpTool[]>;
@@ -459,13 +465,13 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.sourceInfo?.path === "builtin:tool-search");
 
   const readOnlyMcpTools = new Set<string>();
-  // SCIENT-FORK:START — Scient Extensions: model tool name -> "server/tool" for Scient connector tools.
+  // SCIENT-FORK:START: Scient Extensions: model tool name -> "server/tool" for Scient connector tools.
   const connectorToolOwners = new Map<string, string>();
   // SCIENT-FORK:END
   const isReadOnlyMcpTool = (name: string) => {
     const extensionPath = env(EXTENSION_PATH_ENV);
     if (extensionPath === undefined || !readOnlyMcpTools.has(name) || typeof pi.getAllTools !== "function") return false;
-    // SCIENT-FORK:START — Scient Extensions: connector tools never inherit Scient's read-only approvals.
+    // SCIENT-FORK:START: Scient Extensions: connector tools never inherit Scient's read-only approvals.
     if (connectorToolOwners.has(name)) return false;
     // SCIENT-FORK:END
     // A user extension may own the same name. Only our registered HTTP bridge
@@ -539,7 +545,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
         "isError" in details && details.isError === true) return { isError: true };
   });
   let started: Promise<void> | undefined;
-  // SCIENT-FORK:START — Scient Extensions: each Scient connector is its own MCP client on the same credential.
+  // SCIENT-FORK:START: Scient Extensions: each Scient connector is its own MCP client on the same credential.
   // Its tools are "<server>__<tool>" (or a hashed alias), always deferrable, and
   // always confirmed like any non-Scient tool. A failing connector never blocks the others.
   const connectors = connectorSessionsFromEnv(token);
@@ -696,7 +702,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // of a tool name. Register now so the bridge owns canonical tool names even when
   // mcp.json configures it; retry a failed connection at session_start.
   await ensureStarted().catch(() => undefined);
-  // SCIENT-FORK:START — Scient Extensions: connectors register after Scient so its tool names always win,
+  // SCIENT-FORK:START: Scient Extensions: connectors register after Scient so its tool names always win,
   // and only once all have settled so their names never depend on response order.
   await Promise.all(connectors.map((connector) => ensureConnector(connector).catch(() => undefined)));
   registerConnectorTools();
@@ -709,7 +715,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const exposureChanged = deferOptionalTools !== hasToolSearch;
     deferOptionalTools = hasToolSearch;
     if (exposureChanged) registerTools();
-    // SCIENT-FORK:START — Scient Extensions: connector tools follow the same exposure.
+    // SCIENT-FORK:START: Scient Extensions: connector tools follow the same exposure.
     if (exposureChanged) registerConnectorTools();
     // SCIENT-FORK:END
     const active = pi.getActiveTools();
@@ -720,7 +726,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const required = [
       ...(hasToolSearch ? ["tool_search"] : []),
       ...(ctx.model?.api === "openai-completions" ? catalog.map((tool) => modelToolName(tool.name)) : []),
-      // SCIENT-FORK:START — Scient Extensions: declare connector tools to completion gateways too.
+      // SCIENT-FORK:START: Scient Extensions: declare connector tools to completion gateways too.
       // Only projected names, which every model API accepts.
       ...(ctx.model?.api === "openai-completions" ? connectorToolOwners.keys() : []),
       // SCIENT-FORK:END
@@ -744,7 +750,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       const message = error instanceof Error ? error.message : String(error);
       ctx.ui.notify(\`Scient MCP unavailable: \${message}\`, "warning");
     }
-    // SCIENT-FORK:START — Scient Extensions: retry failed connectors; report the server name only. Re-register
+    // SCIENT-FORK:START: Scient Extensions: retry failed connectors; report the server name only. Re-register
     // afterwards so newly loaded connectors and Scient tools resolve names in order.
     await Promise.all(
       connectors.map(async (connector) => {
@@ -765,7 +771,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const sections = event.systemPromptOptions?.sections;
     if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
       // A full prompt override bypasses Pi's later section rendering.
-      // SCIENT-FORK:START — section rendering retains the host's runtime awareness.
+      // SCIENT-FORK:START: section rendering retains the host's runtime awareness.
       sections.t3_code_orchestration = runtimeSystemPrompt("");
       // SCIENT-FORK:END
       return undefined;

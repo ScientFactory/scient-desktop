@@ -97,3 +97,22 @@ export function readMountedLatexVisualTestEditor(container: HTMLElement): Editor
   if (!element?.isConnected || !editor || editor.isDestroyed || !editor.isInitialized) return null;
   return editor.view.dom === element ? editor : null;
 }
+
+/** Native scroll delivery invalidates pagination before a fixture can await its new plan. */
+export async function scrollLatexVisualTestEditor(editor: Editor, change: () => void) {
+  const scroll = editor.view.dom.closest<HTMLElement>(".scient-latex-visual-scroll")!;
+  let receive!: () => void;
+  const delivered = new Promise<void>((resolve) => {
+    receive = resolve;
+  });
+  scroll.addEventListener("scroll", receive, { once: true });
+  try {
+    const beforeTop = scroll.scrollTop;
+    const beforeLeft = scroll.scrollLeft;
+    change();
+    // A clamped request that leaves both offsets unchanged emits no native event.
+    if (scroll.scrollTop !== beforeTop || scroll.scrollLeft !== beforeLeft) await delivered;
+  } finally {
+    scroll.removeEventListener("scroll", receive);
+  }
+}

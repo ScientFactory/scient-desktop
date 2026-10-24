@@ -2,6 +2,7 @@ import type {
   EnvironmentId,
   ScientThreadQueueItemId,
   ScientThreadQueueSnapshot,
+  ScientThreadQueueItem,
   ScientThreadQueueEnqueueRequest,
   ScientThreadQueueUpdateRequest,
   ThreadId,
@@ -20,6 +21,12 @@ import {
 
 const QUEUE_POLL_MS = 1_000;
 const QUEUE_POLL_MAX_MS = 30_000;
+
+export interface ThreadQueueSendState {
+  readonly items: ReadonlyArray<ScientThreadQueueItem>;
+  readonly awaitingCompletion: boolean;
+  readonly refresh: () => Promise<void>;
+}
 
 /** Healthy polls run every second; each consecutive failure doubles the wait, up to 30 s. */
 function threadQueuePollDelayMs(consecutiveFailures: number): number {

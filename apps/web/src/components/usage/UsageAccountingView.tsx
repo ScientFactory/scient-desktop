@@ -271,7 +271,9 @@ function AccountingMetrics({ accounting }: { readonly accounting: AccountingAggr
       <Metric
         label="Credits remaining"
         value={
-          accounting.creditsRemainingUsd === null ? "—" : formatUsd(accounting.creditsRemainingUsd)
+          accounting.creditsRemainingUsd === null
+            ? "Unknown"
+            : formatUsd(accounting.creditsRemainingUsd)
         }
         detail={
           accounting.creditsRemainingUsd === null ? "Not reported" : "Current account balance"
@@ -453,7 +455,7 @@ function ApiKeyRow({ entry }: { readonly entry: KeySummary }) {
           {formatCount(entry.metrics.requests)}
         </span>
         <span className="hidden min-w-0 truncate text-xs text-muted-foreground md:block">
-          {entry.models[0]?.modelName ?? "—"}
+          {entry.models[0]?.modelName ?? "Unknown"}
         </span>
         <ChevronDownIcon
           className="size-3.5 justify-self-end text-muted-foreground transition-transform group-data-panel-open:rotate-180"

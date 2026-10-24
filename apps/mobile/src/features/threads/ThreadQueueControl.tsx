@@ -150,13 +150,27 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       return;
     }
     if (action !== "steer" && action !== "remove" && action !== "send") return;
+    // SCIENT-FORK:START queued-run-send - idle alone does not authorize a held usage-limited queue.
+    if (action === "steer" && workflow?.isHeld) return;
+    if (
+      action === "send" &&
+      !canSendScientQueuedRow({
+        ...sendEvidence,
+        isHeld: workflow?.isHeld === true,
+        runId,
+        busy: false,
+        isEditing: editing?.runId === runId,
+      })
+    )
+      return;
+    // SCIENT-FORK:END queued-run-send
     busyRef.current = true;
     setBusyRunId(runId);
     void Haptics.selectionAsync();
     if (action === "remove") {
       await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
       // SCIENT-FORK:START queued-run-send
-    } else if (action === "send") {
+    } else if (action === "send" || workflow?.canSendNow) {
       await resume({ ...target, input: { threadId: target.threadId, runId } });
       // SCIENT-FORK:END queued-run-send
     } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
@@ -215,6 +229,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null || draggedRunId !== null,
           canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
+          canSendNow: workflow?.canSendNow ?? false,
           canReorder: workflow?.canReorder ?? false,
           index,
           isEditing: editing?.runId === run.id,
@@ -340,16 +355,18 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         ]
                       : []),
                     // SCIENT-FORK:END queued-run-send
-                    ...(workflow?.canPromoteToSteer
+                    // SCIENT-FORK:START queued-run-send - ordinary controls must not bypass held-row eligibility.
+                    ...(!workflow?.isHeld && (workflow?.canPromoteToSteer || workflow?.canSendNow)
                       ? [
                           {
                             id: "steer",
-                            title: "Steer now",
-                            attributes: { disabled: !controls.canSteer },
+                            title: workflow?.canSendNow ? "Send now" : "Steer now",
+                            attributes: { disabled: !controls.canSend },
                             image: Platform.OS === "ios" ? "arrow.turn.left.up" : "arrow_upward",
                           },
                         ]
                       : []),
+                    // SCIENT-FORK:END queued-run-send
                     {
                       id: "edit",
                       title: "Edit",
@@ -399,19 +416,25 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         Editing
                       </Text>
                     ) : null}
-                    {workflow?.canPromoteToSteer ? (
+                    {/* SCIENT-FORK:START queued-run-send - held rows use only the eligibility-checked Send below. */}
+                    {!workflow?.isHeld && (workflow?.canPromoteToSteer || workflow?.canSendNow) ? (
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel={`Steer with message ${index + 1} now`}
-                        disabled={!controls.canSteer}
+                        accessibilityLabel={
+                          workflow?.canSendNow
+                            ? `Send message ${index + 1} now`
+                            : `Steer with message ${index + 1} now`
+                        }
+                        disabled={!controls.canSend}
                         onPress={() => void act(run.id, "steer")}
                         className="h-8 shrink-0 justify-center rounded-full bg-primary px-3 active:opacity-70 disabled:opacity-40"
                       >
                         <Text className="font-t3-medium text-xs text-primary-foreground">
-                          Steer
+                          {workflow?.canSendNow ? "Send now" : "Steer"}
                         </Text>
                       </Pressable>
                     ) : null}
+                    {/* SCIENT-FORK:END queued-run-send */}
                     {/* SCIENT-FORK:START queued-run-send */}
                     {canSend ? (
                       <Pressable

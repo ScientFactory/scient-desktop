@@ -2,8 +2,8 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp). The checkout requires Node 24;
-Bun is optional. From the repository root:
+Install `vp` using the [root README](../../README.md#install-vp). It provides the Node version
+pinned in `package.json` (Node 26), so no separate Node install is needed. From the repository root:
 
 ```sh
 vp i
@@ -14,6 +14,17 @@ Open the pairing URL printed by the dev runner. The bare origin does not authent
 a new browser.
 
 Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Code and Codespaces setup.
+
+## Official upstream mirror (optional)
+
+Scient's `origin` remains `ScientFactory/scient-desktop` on GitHub.
+The official T3 repository is the fetch-only `upstream` remote, with push URL
+`DISABLED`. Do not replace either remote with an upstream mirror.
+
+The official project's [GitCafe mirror](https://git.cafe/pingdotgg/t3code)
+can help with read-only upstream research. It does not mirror Scient's issues,
+reviews, CI, or release authority. Use Scient's GitHub repository for those
+operations and follow [AGENTS.md](../../AGENTS.md#git-upstream-and-delivery).
 
 ## Choosing a dev process
 
@@ -100,6 +111,17 @@ administrative session. See the [remote-access guide](../user/remote-access.md)
 for creating scoped links from an existing authorized session. For remote testing,
 the URL's origin must also be reachable from the tester's device.
 
+### Built remote preview
+
+`vp run dev --share --built` serves a production-size web build from the backend instead of
+running the Vite dev server. It rebuilds on changes but has no HMR; reload after a `built in`
+message. Use it when a tester needs to use the app over a slower connection rather than inspect
+the development bundle.
+
+Until the first build exists, the URL shows a page that reloads by itself.
+The license manifest is not generated in this mode. `--built` requires `--share`
+and the `dev` mode; the tailnet URL and pairing flow stay the same.
+
 ### Reusable dev credential
 
 Use this only on a hostname where you trust every service. Browsers send cookies to all ports
@@ -142,7 +164,14 @@ for the security model.
 
 ## Checks
 
-Run checks for the files and packages you changed:
+`vp run check:changed` runs CI's fast checks for your branch's changes: format and lint of the
+changed files, `knip:check` when code or a manifest changes, the generated GraphQL checks, typecheck
+of the affected packages and their dependents, and the test files beside the changed files. It maps
+files to packages with [ci-changes.cjs](../../.github/scripts/ci-changes.cjs), as CI does. It
+compares against the merge base with `origin/main`, or with a ref you pass. CI still runs the full
+test suites and the jobs the summary lists, so a local pass does not promise a green CI run.
+
+While you iterate, run single checks:
 
 ```sh
 vp test run <files>
@@ -154,12 +183,9 @@ In `apps/web`, a test that renders React or touches the DOM is named `*.browser.
 and runs in headless Chromium with the React Compiler on, like the app. There is no jsdom; other
 `*.test.ts` files run in Node.
 
-TypeScript workspaces typecheck with tsc-rs, which has Effect diagnostics built in.
-Keep `typescript`, `@effect/tsgo`, and the `effect-tsgo patch` prepare step: editors
-still use them for Effect quick fixes and refactors. Keep `@effect/tsgo` on the
-effect-tsgo version that tsc-rs ports (see the tsc-rs README), or the two disagree
-on rule names.
-Marketing keeps `astro check` for Astro files.
+TypeScript workspaces typecheck with `tsc`. The `typescript` catalog entry is
+`@tsc-rs/typescript`, the tsc-rs drop-in, with Effect diagnostics, quick fixes, and
+refactors built in. VS Code uses it through `js/ts.tsdk.path` in `.vscode/settings.json`.
 
 Shared replay-test support uses `*.testkit.ts` modules, keeping it outside product-surface
 brand checks. Preserve recorded inbound protocol frames; synthetic initialization

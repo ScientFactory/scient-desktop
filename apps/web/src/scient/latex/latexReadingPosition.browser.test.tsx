@@ -117,22 +117,29 @@ it("keeps the visible Hebrew two-column source heading across a file-tab remount
     "Hebrew tab initial opening",
   );
   expect(latexPagedKey.getState(before.state)!.plan!.pages).toBeGreaterThanOrEqual(5);
-  let delivered = false;
-  scroller(before).addEventListener(
-    "scroll",
-    () => {
-      delivered = true;
-    },
-    { once: true },
-  );
-  const pageNumber = screen.getByRole("textbox", { name: "Page number", exact: true });
-  await pageNumber.fill("5");
-  await userEvent.keyboard("{Enter}");
-  await vi.waitFor(() => {
-    expect(delivered).toBe(true);
+  {
+    using _clock = fakeTimers();
+    const background = vi.fn();
+    const interval = setInterval(background, 1000);
+    using _background = { [Symbol.dispose]: () => clearInterval(interval) };
+    const delivered = Promise.withResolvers<void>();
+    const onScroll = () => delivered.resolve();
+    const scroll = scroller(before);
+    scroll.addEventListener("scroll", onScroll, { once: true });
+    try {
+      const pageNumber = screen.getByRole("textbox", { name: "Page number", exact: true });
+      await pageNumber.fill("5");
+      await userEvent.keyboard("{Enter}");
+      await waitForTestReceipt(context.signal, delivered.promise);
+      // Capture this scroll without draining recurring services that share the clock.
+      await act(() => vi.runOnlyPendingTimersAsync());
+    } finally {
+      scroll.removeEventListener("scroll", onScroll);
+    }
     expect(rememberedLatexReadingBlock(readingKey)).toBeGreaterThan(0);
     expect(pagedLayoutSettled(before.view)).toBe(true);
-  });
+    expect(background).toHaveBeenCalled();
+  }
   const box = scroller(before).getBoundingClientRect();
   const headings = Array.from(before.view.dom.querySelectorAll("h1,h2,h3,h4,h5,h6"));
   const heading = headings.find((element) => {

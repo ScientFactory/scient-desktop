@@ -1,7 +1,9 @@
+import { composerSubmissionMatchesDraft } from "../../scient/threadQueue/submission";
 import {
   CommandId,
   type EnvironmentId,
   type ModelSelection,
+  type ProviderInteractionMode,
   type ScopedThreadRef,
   type ThreadId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -16,6 +18,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { readLocalApi } from "../../localApi";
+import { getUploadedAttachments } from "../../lib/attachmentUploadQueue";
 import { findRevertCheckpoint } from "../../session-logic";
 import { type ChatMessage } from "../../types";
 import { randomUUID } from "~/lib/utils";
@@ -30,6 +33,7 @@ import {
 import {
   cloneComposerImageForRetry,
   type ComposerSendSnapshot,
+  readFileAsDataUrl,
   prepareRevertedMessageAttachments,
   waitForRevertedMessage,
 } from "../ChatView.logic";
@@ -153,6 +157,7 @@ export async function rewindToMessage(input: {
   readonly checkpoint: ReturnType<typeof findRevertCheckpoint>;
   readonly draftTarget: ScopedThreadRef | DraftId;
   readonly composerHasPendingAttachments: boolean;
+  readonly isCurrentRoute: () => boolean;
   readonly createAssetUrl: Parameters<
     typeof prepareRevertedMessageAttachments
   >[0]["createAssetUrl"];
@@ -172,7 +177,24 @@ export async function rewindToMessage(input: {
   | { readonly error: null; readonly prompt: string }
 > {
   const { message, environmentId, draftTarget } = input;
+  const draftAtStart = useComposerDraftStore.getState().getComposerDraft(draftTarget);
+  const assertCurrent = (rewound = false) => {
+    if (
+      !input.isCurrentRoute() ||
+      !composerSubmissionMatchesDraft(
+        draftAtStart,
+        useComposerDraftStore.getState().getComposerDraft(draftTarget),
+      )
+    ) {
+      throw new Error(
+        rewound
+          ? "The thread was rewound, but your draft changed or you left. Your current draft was kept."
+          : "Your draft changed or you left this thread. Nothing was rewound.",
+      );
+    }
+  };
   try {
+    assertCurrent();
     if (input.composerHasPendingAttachments) {
       throw new Error("Wait for attachments to finish preparing before rewinding.");
     }
@@ -184,6 +206,7 @@ export async function rewindToMessage(input: {
       httpBaseUrl: connection.httpBaseUrl,
       createAssetUrl: input.createAssetUrl,
     });
+    assertCurrent();
     const store = useComposerDraftStore.getState();
     const draft = store.getComposerDraft(draftTarget);
     if (
@@ -194,6 +217,7 @@ export async function rewindToMessage(input: {
     }
     const commandId = CommandId.make(randomUUID());
     await waitForRevertedMessage(input.routeThreadRef, input.turnCount, commandId, async () => {
+      assertCurrent();
       const result = await input.revertThreadCheckpoint({
         environmentId,
         input: {
@@ -208,6 +232,7 @@ export async function rewindToMessage(input: {
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     });
+    assertCurrent(true);
     const currentPrompt = store.getComposerDraft(draftTarget)?.prompt ?? "";
     const restoredPrompt = recallableComposerPrompt(message.text);
     const nextPrompt =
@@ -260,4 +285,45 @@ export function restoreComposerDraft(
   store.setReviewComments(draftTarget, snapshot.reviewComments);
   store.setThreadContexts(draftTarget, snapshot.threadContexts);
   return images;
+}
+
+export interface MultipleModelTarget {
+  readonly selection: ModelSelection;
+  readonly text: string;
+  readonly interactionMode: ProviderInteractionMode;
+}
+
+/**
+ * The attachments a turn sends: the server's upload records when it takes uploads, otherwise
+ * images inlined as data URLs. Rejects when an attachment cannot go out.
+ */
+export function prepareTurnAttachments(input: {
+  readonly environmentId: EnvironmentId;
+  readonly attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
+  readonly usesAttachmentUploads: boolean;
+}) {
+  const { environmentId, usesAttachmentUploads } = input;
+  return Promise.all(
+    input.attachments.map(async (attachment) => {
+      if (usesAttachmentUploads) {
+        const uploaded = getUploadedAttachments({ environmentId, images: [attachment] })?.[0];
+        if (!uploaded) {
+          throw new Error(`Attachment '${attachment.name}' did not finish uploading.`);
+        }
+        return uploaded;
+      }
+      if (attachment.type !== "image") {
+        throw new Error("This server does not support file attachments.");
+      }
+      return {
+        type: "image" as const,
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        dataUrl: await readFileAsDataUrl(attachment.file),
+        ...(attachment.source ? { source: attachment.source } : {}),
+      };
+    }),
+  );
 }

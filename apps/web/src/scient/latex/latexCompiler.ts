@@ -8,7 +8,7 @@ export const LATEX_COMPILER_CHOICES: readonly { id: LatexCompilerChoice; name: s
   { id: "automatic", name: "Automatic" },
   { id: "tectonic", name: "Tectonic" },
   { id: "pdflatex", name: "pdfLaTeX" },
-  { id: "xelatex", name: "XeLaTeX — recommended for Hebrew" },
+  { id: "xelatex", name: "XeLaTeX (recommended for Hebrew)" },
   { id: "lualatex", name: "LuaLaTeX" },
 ];
 

@@ -2329,13 +2329,25 @@ export const layerWithOptions = (
                   .pipe(turnMetrics("steer")),
               ),
             ),
-          interruptTurn: (input) =>
-            observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
+          interruptTurn: Effect.fn("ProviderSessionManager.interruptTurn")(function* (
+            input: ProviderAdapter.ProviderAdapterV2InterruptInput,
+          ) {
+            const { onlyIfActive, ...request } = input;
+            if (onlyIfActive) {
+              const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
+              if (
+                entry?.runtime !== runtime ||
+                entry.scope !== sessionScope ||
+                releasingRuntimes.has(runtime)
+              )
+                return;
+            }
+            yield* observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(
                 // SCIENT-FORK: preserve the pump/physical-close join outside native permits.
                 interruptAndJoinRetirement({
                   runtime,
-                  request: input,
+                  request,
                   readEntry: Ref.get(sessions).pipe(
                     Effect.map((entries) => entries.get(sessionKey(providerSessionId))),
                   ),
@@ -2349,7 +2361,8 @@ export const layerWithOptions = (
                     }),
                 }).pipe(turnMetrics("interrupt")),
               ),
-            ),
+            );
+          }),
           respondToRuntimeRequest: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(

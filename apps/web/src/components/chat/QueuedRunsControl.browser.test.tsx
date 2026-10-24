@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import type { ReactNode, ComponentProps } from "react";
+import { createRef } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { page } from "vite-plus/test/browser";
@@ -17,6 +18,7 @@ const state = vi.hoisted(() => ({
   projection: null as unknown,
   workflow: null as unknown,
   shell: null as unknown,
+  command: vi.fn<(input: unknown) => Promise<{ _tag: "Success"; value: undefined }>>(),
 }));
 vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -36,7 +38,7 @@ vi.mock(import("../../state/entities"), async (importOriginal) => ({
 }));
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAtomCommand: (() => async () => undefined) as never,
+  useAtomCommand: (() => state.command) as never,
 }));
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -47,12 +49,17 @@ vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
     }>,
   ) => resources.map((resource) => `https://assets.test/${resource.attachmentId}`)) as never,
 }));
-import { render as renderUi } from "../../../test/render";
-import { QueuedRunsControl, resolveNativeQueuedReorder } from "./QueuedRunsControl";
+import { act, render as renderUi } from "../../../test/render";
+import {
+  QueuedRunsControl,
+  resolveNativeQueuedReorder,
+  type QueuedRunsControlHandle,
+} from "./QueuedRunsControl";
 function setup() {
   state.projection = null;
   state.workflow = null;
   state.shell = null;
+  state.command.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
 }
 const baseProps = {
   environmentId: "environment:test" as never,
@@ -541,6 +548,24 @@ describe("held queue Send follows the server's queue.resume rule", () => {
     expect(html).not.toContain("Resume queue");
   });
 
+  it("sends the selected head from the shortcut after stopping, without dispatching repeats", async () => {
+    setup();
+    await heldProjection({});
+    const ref = createRef<QueuedRunsControlHandle>();
+    await using _screen = await renderQueue({ ref });
+    expect(ref.current?.steerNext(true)).toBe(true);
+    expect(state.command).not.toHaveBeenCalled();
+    await act(async () => {
+      expect(ref.current?.steerNext(false)).toBe(true);
+      expect(ref.current?.steerNext(false)).toBe(true);
+    });
+    expect(state.command).toHaveBeenCalledOnce();
+    expect(state.command).toHaveBeenCalledWith({
+      environmentId: baseProps.environmentId,
+      input: { threadId: baseProps.threadId, runId: RunId.make("rule-2") },
+    });
+  });
+
   // The client's snapshot of a thread whose last root run hit the usage limit.
   // A newer session error that lifts the limit may be missing from a windowed
   // snapshot, so only the server-computed shell can confirm the limit.
@@ -602,6 +627,15 @@ describe("held queue Send follows the server's queue.resume rule", () => {
     const html = await limitedSnapshot();
     expect(html.match(/data-testid="thread-queue-row-/g)).toHaveLength(2);
     expect(html).not.toContain(">Send</button>");
+  });
+  it("does not bypass a confirmed usage limit through the stopped-thread shortcut", async () => {
+    setup();
+    state.shell = { runtime: { lastErrorClass: "usage_limit" } };
+    await limitedSnapshot();
+    const ref = createRef<QueuedRunsControlHandle>();
+    await using _screen = await renderQueue({ ref });
+    expect(ref.current?.steerNext(false)).toBe(false);
+    expect(state.command).not.toHaveBeenCalled();
   });
   it.each([
     [

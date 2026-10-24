@@ -272,7 +272,7 @@ export function renderAnalysisRunCapsuleReadme(manifest: AnalysisRunCapsuleManif
     "## Output",
     "",
     `[Open the captured output](${markdownPath(run.output.relativePath)})${
-      run.output.truncated ? " — **the captured output was truncated by the run limit**" : ""
+      run.output.truncated ? ", **the captured output was truncated by the run limit**" : ""
     }.`,
   ];
 
@@ -293,7 +293,7 @@ export function renderAnalysisRunCapsuleReadme(manifest: AnalysisRunCapsuleManif
       }
       for (const representation of artifact.representations) {
         lines.push(
-          `- [${escapeMarkdownText(representation.fileName)}](${markdownPath(representation.relativePath)}) — ${representation.presentation}, ${representation.mediaType}`,
+          `- [${escapeMarkdownText(representation.fileName)}](${markdownPath(representation.relativePath)}), ${representation.presentation}, ${representation.mediaType}`,
         );
       }
       lines.push("");

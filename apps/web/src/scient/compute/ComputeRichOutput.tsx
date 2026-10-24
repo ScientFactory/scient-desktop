@@ -42,7 +42,7 @@ export function ComputeTable(props: { readonly table: ComputeTablePreview }) {
                     }
                     dir="auto"
                   >
-                    {cell === null ? "—" : String(cell)}
+                    {cell === null ? "Not available" : String(cell)}
                   </td>
                 ))}
               </tr>

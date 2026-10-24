@@ -5,6 +5,9 @@ import {
   planComposerTurn,
   snapshotComposerSend,
   withMessageContext,
+  deriveAvailableRevertTurnCounts,
+  deriveWorkspaceMutationId,
+  presentThreadShellFromProjection,
 } from "./ChatView.logic";
 import { mergeDirectPreviewAnnotation } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
@@ -23,6 +26,8 @@ import {
   EnvironmentId,
   ComposerContextId,
   MessageId,
+  NodeId,
+  OrchestrationV2ProviderThread,
   ProjectId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInstanceId,
@@ -967,13 +972,14 @@ describe("resolveThreadSwitchTimeline", () => {
     });
   });
   it("does not hold another environment's timeline across a jump", () => {
+    rememberReadyThreadTimeline(held);
+    expect(peekRememberedThreadTimeline<string[]>(held.threadKey)).toEqual(["a1", "a2"]);
     expect(threadKeysShareEnvironment("env-1:thread-a", "env-2:thread-b")).toBe(false);
     expect(
       resolveThreadSwitchTimeline({
         loading: true,
         activeThreadKey: "env-2:thread-b",
         nextEntries: [],
-        lastReady: held,
       }),
     ).toEqual({
       entries: [],
@@ -1976,5 +1982,153 @@ describe("boundAttachmentIds", () => {
         ],
       ),
     ).toEqual(["upload-1", "local-2"]);
+  });
+});
+
+describe("presentThreadShellFromProjection", () => {
+  it("keeps canonical chronological provider history and the active goal for direct links", () => {
+    const base = makeThreadProjectionFixture();
+    const root = (id: string, instanceId: string, createdAt: string) =>
+      OrchestrationV2ProviderThread.make({
+        id: ProviderThreadId.make(id),
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make(instanceId),
+        providerSessionId: null,
+        appThreadId: base.thread.id,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        pendingBackgroundTasks: [],
+        contextUsage: null,
+        nativeMetadata: null,
+        goal: null,
+        createdAt: DateTime.makeUnsafe(createdAt),
+        updatedAt: base.updatedAt,
+      });
+    const latest = {
+      ...root("latest", "latest-instance", "2026-01-03T00:00:00Z"),
+      goal: { objective: "Finish the report", status: "active" as const },
+    };
+    const providerThreads = [
+      latest,
+      root("b", "same-time-instance", "2026-01-01T00:00:00Z"),
+      root("a", "first-instance", "2026-01-01T00:00:00Z"),
+      root("repeat", "first-instance", "2026-01-02T00:00:00Z"),
+      {
+        ...root("child", "child-instance", "2025-12-31T00:00:00Z"),
+        ownerNodeId: NodeId.make("child-node"),
+      },
+      {
+        ...root("foreign", "foreign-instance", "2025-12-31T00:00:00Z"),
+        appThreadId: ThreadId.make("another-thread"),
+      },
+    ];
+    const originalOrder = providerThreads.map((thread) => thread.id);
+    const projection = {
+      ...base,
+      thread: { ...base.thread, activeProviderThreadId: latest.id },
+      providerThreads,
+    };
+    const live = { updatedAt: base.updatedAt, lastVisitedAt: null };
+    const shell = presentThreadShellFromProjection(environmentId, base.thread.id, projection, live);
+    expect(shell.providerInstanceHistory).toEqual([
+      "first-instance",
+      "same-time-instance",
+      "latest-instance",
+    ]);
+    expect(shell.goal).toBe(latest.goal);
+    expect(providerThreads.map((thread) => thread.id)).toEqual(originalOrder);
+    expect(
+      presentThreadShellFromProjection(
+        environmentId,
+        base.thread.id,
+        { ...projection, thread: { ...projection.thread, activeProviderThreadId: null } },
+        live,
+      ).goal,
+    ).toBeNull();
+  });
+});
+
+describe("deriveAvailableRevertTurnCounts", () => {
+  const providerThreadId = ProviderThreadId.make("provider-thread");
+  const otherProviderThreadId = ProviderThreadId.make("other-provider-thread");
+
+  function projection(input: { readonly providerSessionId: ProviderSessionId | null }) {
+    const base = makeThreadProjectionFixture();
+    const run = (ordinal: number) => ({
+      id: RunId.make(`run-${ordinal}`),
+      ordinal,
+      activeAttemptId: `attempt-${ordinal}`,
+    });
+    const turn = (ordinal: number, attempt: number, threadId: ProviderThreadId) => ({
+      id: `turn-${attempt}-${ordinal}`,
+      runAttemptId: `attempt-${attempt}`,
+      ordinal,
+      providerThreadId: threadId,
+    });
+    return {
+      ...base,
+      thread: { ...base.thread, activeProviderThreadId: providerThreadId },
+      providerThreads: [
+        {
+          id: providerThreadId,
+          providerInstanceId: base.thread.modelSelection.instanceId,
+          providerSessionId: input.providerSessionId,
+        },
+      ],
+      runs: [run(1), run(2), run(3)],
+      attempts: [1, 2, 3].map((ordinal) => ({ id: `attempt-${ordinal}`, providerTurnId: null })),
+      // Run 2's latest turn moved to another provider thread, so its checkpoint cannot restore
+      // this conversation.
+      providerTurns: [
+        turn(1, 1, providerThreadId),
+        turn(1, 2, providerThreadId),
+        turn(2, 2, otherProviderThreadId),
+        turn(1, 3, providerThreadId),
+      ],
+    } as unknown as ReturnType<typeof makeThreadProjectionFixture>;
+  }
+
+  it("offers the thread start and runs whose latest turn is on the active provider thread", () => {
+    const available = deriveAvailableRevertTurnCounts(
+      projection({ providerSessionId: ProviderSessionId.make("session") }),
+    );
+    expect([...available].toSorted()).toEqual([0, 1, 3]);
+  });
+
+  it("offers nothing without a provider session to rewind", () => {
+    expect(deriveAvailableRevertTurnCounts(projection({ providerSessionId: null })).size).toBe(0);
+    expect(deriveAvailableRevertTurnCounts(null).size).toBe(0);
+  });
+});
+
+describe("deriveWorkspaceMutationId", () => {
+  const item = (id: string, type: string, status: string) =>
+    ({
+      item: { id: TurnItemId.make(id), type, status },
+    }) as unknown as OrchestrationV2ProjectedTurnItem;
+
+  it("keys on the latest finished command or file change and the latest checkpoint", () => {
+    expect(
+      deriveWorkspaceMutationId(
+        [
+          item("edit", "file_change", "completed"),
+          item("reply", "assistant_message", "completed"),
+          item("command", "command_execution", "running"),
+        ],
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ).toBe(JSON.stringify(["edit", "2026-01-01T00:00:00.000Z"]));
+  });
+
+  it("is null before anything could have touched the workspace", () => {
+    expect(deriveWorkspaceMutationId([item("reply", "assistant_message", "completed")], null)).toBe(
+      null,
+    );
   });
 });

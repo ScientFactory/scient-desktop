@@ -21,7 +21,7 @@ function updateActionPresentation(relation: HtmlPdfSourceRelation) {
     case "updating":
       return { label: "Updating PDF from HTML…", tone: null } as const;
     case "update-available":
-      return { label: "Source changed — update PDF from HTML", tone: "warning" } as const;
+      return { label: "Source changed. Update PDF from HTML", tone: "warning" } as const;
     case "failed":
       return { label: "Retry PDF update from HTML", tone: "destructive" } as const;
     case "idle":

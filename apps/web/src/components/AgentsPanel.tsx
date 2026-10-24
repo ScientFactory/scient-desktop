@@ -153,7 +153,7 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
     modelLabel,
     agent.usage?.totalTokens !== undefined
       ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok`
-      : "— tok",
+      : "Unknown tokens",
     agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
@@ -502,7 +502,7 @@ function CollapsedWorkflowSection({
           {failed > 0 ? <span className="text-destructive-foreground">{failed} failed</span> : null}
           <span>{members.length} agents</span>
           <span className="tabular-nums">
-            · {totalTokens === null ? "—" : formatSubagentTokenCount(totalTokens)} tok
+            · {totalTokens === null ? "Unknown" : formatSubagentTokenCount(totalTokens)} tok
           </span>
           {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
           <ChevronRight aria-hidden className="size-3" />
@@ -592,7 +592,8 @@ export function AgentsPanel({
           {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
         </span>
         <span className="tabular-nums">
-          Σ {model.totalTokens === null ? "—" : formatSubagentTokenCount(model.totalTokens)} tok
+          Σ {model.totalTokens === null ? "Unknown" : formatSubagentTokenCount(model.totalTokens)}{" "}
+          tok
         </span>
       </footer>
     </div>
