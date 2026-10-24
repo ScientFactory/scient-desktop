@@ -19,6 +19,7 @@ const {
   readOverleafWorkspace,
   refreshOverleafStatus,
   reloadOverleafWorkspaces,
+  subscribeOverleafWorkspace,
   resetOverleafStoreForTests,
 } = await import("./overleafStore");
 
@@ -79,6 +80,7 @@ describe("overleafStore", () => {
   it("after an operation, every workspace view lists its links and reads their status again", async () => {
     resetOverleafStoreForTests();
     const WORKTREE = "/work/project-worktree";
+    const HIDDEN = "/work/project-hidden";
     const OTHER = EnvironmentId.make("remote");
     client.listOverleafConnections
       .mockReset()
@@ -88,6 +90,9 @@ describe("overleafStore", () => {
     await loadOverleafWorkspace(environmentId, ROOT);
     await loadOverleafWorkspace(environmentId, WORKTREE);
     await loadOverleafWorkspace(OTHER, ROOT);
+    await loadOverleafWorkspace(environmentId, HIDDEN);
+    // The worktree's view is on screen; HIDDEN was visited before and isn't.
+    const unsubscribe = subscribeOverleafWorkspace(environmentId, WORKTREE, () => {});
     expect(readOverleafWorkspace(environmentId, WORKTREE).statuses.get("c1")?.busy).toBe(true);
 
     // The operation ends: the link is free, and a second link was connected.
@@ -110,6 +115,11 @@ describe("overleafStore", () => {
     expect(readOverleafWorkspace(environmentId, ROOT).statuses.get("c1")?.busy).toBe(false);
     // Another environment's views are left alone.
     expect(client.listOverleafConnections).not.toHaveBeenCalledWith(OTHER, ROOT);
+    // A view not on screen reads nothing now, and reads again when next shown.
+    expect(client.listOverleafConnections).not.toHaveBeenCalledWith(environmentId, HIDDEN);
+    await loadOverleafWorkspace(environmentId, HIDDEN);
+    expect(client.listOverleafConnections).toHaveBeenCalledWith(environmentId, HIDDEN);
+    expect(readOverleafWorkspace(environmentId, HIDDEN).statuses.get("c1")?.busy).toBe(false);
     expect(readOverleafWorkspace(OTHER, ROOT).statuses.get("c1")?.busy).toBe(true);
 
     // An unlink: the link leaves every view.
@@ -122,6 +132,7 @@ describe("overleafStore", () => {
         ),
       ).toEqual(["c2"]),
     );
+    unsubscribe();
   });
 
   it("a forced load starts afresh instead of joining a load already running", async () => {

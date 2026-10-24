@@ -176,6 +176,8 @@ const staleStatuses = new Set<string>();
 /** Status reads still waiting for their answer, by link. */
 const statusInflight = new Map<string, number>();
 const listReads = new Map<string, number>();
+/** Views not on screen when another view's operation ended: they read again when next shown. */
+const staleWorkspaces = new Set<string>();
 let readCounter = 0;
 
 /** Reads one link's offline status again. */
@@ -274,9 +276,15 @@ export function loadOverleafWorkspace(
   // A forced load (after an operation) starts afresh; the earlier one's answers are stale.
   if (running && !options.force) return running;
   const age = Date.now() - (loadedAt.get(key) ?? 0);
-  if (!options.force && snapshots.get(key)?.loaded && age < (options.maxAgeMs ?? Infinity)) {
+  if (
+    !options.force &&
+    !staleWorkspaces.has(key) &&
+    snapshots.get(key)?.loaded &&
+    age < (options.maxAgeMs ?? Infinity)
+  ) {
     return Promise.resolve();
   }
+  staleWorkspaces.delete(key);
   const read = ++readCounter;
   listReads.set(key, read);
   const load = (async () => {
@@ -324,6 +332,11 @@ export function reloadOverleafWorkspaces(
   const reloaded = loadOverleafWorkspace(environmentId, workspaceRoot, { force: true });
   for (const key of new Set([...snapshots.keys(), ...listeners.keys()])) {
     if (key === own || environmentOf(key) !== environmentId) continue;
+    // A view on screen reads now; one not shown reads when it is next shown.
+    if ((listeners.get(key)?.size ?? 0) === 0) {
+      staleWorkspaces.add(key);
+      continue;
+    }
     void loadOverleafWorkspace(environmentId, key.slice(key.indexOf("\u0000") + 1), {
       force: true,
     });
@@ -530,6 +543,19 @@ export function finishOverleafPreview(
   });
 }
 
+/** Listens to one workspace view; a view with a listener counts as on screen. */
+export function subscribeOverleafWorkspace(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+  listener: () => void,
+): () => void {
+  const key = keyOf(environmentId, workspaceRoot);
+  const set = listeners.get(key) ?? new Set();
+  set.add(listener);
+  listeners.set(key, set);
+  return () => set.delete(listener);
+}
+
 /** The workspace's links and their status; loads them the first time it is used. */
 export function useOverleafWorkspace(
   environmentId: EnvironmentId | null,
@@ -537,13 +563,10 @@ export function useOverleafWorkspace(
 ): OverleafWorkspaceSnapshot {
   const key = environmentId && workspaceRoot ? keyOf(environmentId, workspaceRoot) : null;
   const snapshot = useSyncExternalStore(
-    (listener) => {
-      if (key === null) return () => {};
-      const set = listeners.get(key) ?? new Set();
-      set.add(listener);
-      listeners.set(key, set);
-      return () => set.delete(listener);
-    },
+    (listener) =>
+      environmentId && workspaceRoot
+        ? subscribeOverleafWorkspace(environmentId, workspaceRoot, listener)
+        : () => {},
     () => (key === null ? EMPTY : viewOf(key)),
   );
   useEffect(() => {
@@ -609,6 +632,7 @@ export function resetOverleafStoreForTests(): void {
   for (const timer of scheduledRefreshes.values()) clearTimeout(timer);
   scheduledRefreshes.clear();
   listReads.clear();
+  staleWorkspaces.clear();
   inflight.clear();
   tokens.clear();
 }
