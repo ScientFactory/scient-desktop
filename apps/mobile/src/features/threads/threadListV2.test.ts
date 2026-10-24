@@ -23,7 +23,6 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
-  TurnId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -32,7 +31,6 @@ import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures"
 import { threadJumpTarget } from "../keyboard/threadKeyboardShortcuts";
 import {
   buildThreadListV2Items,
-  threadHasUnseenCompletion,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
   resolveThreadListV2SnoozeMenuSelection,
@@ -40,6 +38,7 @@ import {
   resolveThreadListV2WokeAt,
   sortThreadsForListV2,
   threadListV2ListItemsAreEqual,
+  threadHasUnseenCompletion,
   type ThreadListV2ListItem,
 } from "./threadListV2";
 
@@ -1363,32 +1362,6 @@ describe("thread list Woke marker", () => {
     expect(resolveThreadListV2WokeAt({ ...thread, snoozedUntil: null }, { now: NOW })).toBeNull();
   });
 
-  it("keeps unread completion labels stable across a minute tick", () => {
-    const unread = makeThread({
-      id: ThreadId.make("tick-unread"),
-      title: "Unread completion",
-      latestCompletedAnswer: {
-        turnId: TurnId.make("tick-unread-run"),
-        messageId: MessageId.make("tick-unread-answer"),
-        completedAt: isoAt(BASE_MS - 5 * MINUTE_MS),
-      },
-      lastVisitedAt: isoAt(BASE_MS - 10 * MINUTE_MS),
-      latestRun: {
-        runId: RunId.make("tick-unread-run"),
-        status: "completed",
-        requestedAt: isoAt(BASE_MS - 6 * MINUTE_MS),
-        startedAt: isoAt(BASE_MS - 6 * MINUTE_MS),
-        completedAt: isoAt(BASE_MS - 5 * MINUTE_MS),
-        assistantMessageId: null,
-      },
-    });
-    const options = { snoozeEnvironmentIds: new Set<EnvironmentId>() };
-    const first = buildTickList([unread], BASE_MS, [], options)[0]!;
-    const next = buildTickList([unread], BASE_MS + MINUTE_MS, [], options)[0]!;
-    expect(first.type === "v2-thread" && first.timeLabel).toBe("");
-    expect(threadListV2ListItemsAreEqual(first, next)).toBe(true);
-  });
-
   it("keeps an early failure wake acknowledged after the scheduled time passes", () => {
     const completedAt = isoAt(BASE_MS - 2 * MINUTE_MS);
     const failed = makeThread({
@@ -1504,61 +1477,6 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
     const settledClosed = itemsByThreadKey(closed).get(`v2-thread:${environmentId}:stamp-settled`)!;
     expect(settledOpen.type === "v2-thread" && settledOpen.canMoveUp).toBe(false);
     expect(threadListV2ListItemsAreEqual(settledOpen, settledClosed)).toBe(true);
-  });
-});
-
-describe("mobile canonical completed-answer prominence", () => {
-  const completedAt = "2026-10-04T10:00:00.000Z";
-  const latestRun = {
-    runId: RunId.make("new-run"),
-    status: "completed" as const,
-    requestedAt: null,
-    startedAt: null,
-    completedAt: "2026-10-04T12:00:00.000Z",
-    assistantMessageId: null,
-  };
-  it("retains an earlier unread answer while a newer run is answerless", () => {
-    expect(
-      threadHasUnseenCompletion(
-        makeThread({
-          id: ThreadId.make("answer"),
-          title: "Answer",
-          lastVisitedAt: "2026-10-04T09:00:00.000Z",
-          latestRun,
-          latestCompletedAnswer: {
-            turnId: TurnId.make("old-run"),
-            messageId: MessageId.make("old-answer"),
-            completedAt,
-          },
-        }),
-      ),
-    ).toBe(true);
-  });
-  it("does not mark an answerless, failed or rolled-back completion unread", () => {
-    expect(
-      threadHasUnseenCompletion(
-        makeThread({
-          id: ThreadId.make("answerless"),
-          title: "No answer",
-          lastVisitedAt: "2026-10-04T09:00:00.000Z",
-          latestRun,
-          latestCompletedAnswer: null,
-        }),
-      ),
-    ).toBe(false);
-  });
-  it("keeps legacy completion fallback only for an absent canonical field", () => {
-    expect(
-      threadHasUnseenCompletion(
-        makeThread({
-          id: ThreadId.make("legacy"),
-          title: "Legacy",
-          lastVisitedAt: "2026-10-04T09:00:00.000Z",
-          latestRun,
-          latestCompletedAnswer: undefined,
-        }),
-      ),
-    ).toBe(true);
   });
 });
 

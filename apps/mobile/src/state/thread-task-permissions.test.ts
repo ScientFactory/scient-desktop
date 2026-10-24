@@ -11,7 +11,9 @@ import {
   type ModelSelection,
   type OrchestrationV2ThreadProjection,
   type ServerConfig,
+  // SCIENT-FORK:START — full provider snapshot for Scient's model availability check.
   type ServerProvider,
+  // SCIENT-FORK:END
 } from "@t3tools/contracts";
 import {
   v2Now,
@@ -183,6 +185,7 @@ beforeEach(() => {
   state.draft = { text: "Keep my draft", attachments: [], modelSelection: undefined };
   state.projection = null;
   state.serverConfig = {
+    // SCIENT-FORK:START — a sendable selection needs a ready provider that lists the model.
     providers: [
       {
         instanceId: ProviderInstanceId.make("codex"),
@@ -206,6 +209,7 @@ beforeEach(() => {
         skills: [],
       } satisfies ServerProvider,
     ],
+    // SCIENT-FORK:END
     environment: { capabilities: {} },
   } as unknown as ServerConfig;
   state.pendingRequests = {

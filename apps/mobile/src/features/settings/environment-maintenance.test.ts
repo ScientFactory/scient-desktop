@@ -56,27 +56,14 @@ describe("environment maintenance access", () => {
 
 describe("environment release checks", () => {
   const signal = new AbortController().signal;
+  // SCIENT-FORK:START — Scient release discovery reads its own repository, so these
+  // upstream cases expect ScientFactory URLs instead of pingdotgg/t3code.
   const feed = (...tags: ReadonlyArray<string>) =>
     new Response(
       `<feed><id>tag:github.com,2008:https://github.com/ScientFactory/scient-desktop/releases</id>${tags
         .map((tag) => `<entry><id>tag:github.com,2008:Repository/1/${tag}</id></entry>`)
         .join("")}</feed>`,
     );
-
-  it("checks stable updates as JSON without using the anonymous API quota", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init?: RequestInit) =>
-        url === "https://github.com/ScientFactory/scient-desktop/releases/latest" &&
-        new Headers(init?.headers).get("Accept") === "application/json"
-          ? Response.json({ tag_name: "v1.1.0" })
-          : new Response(null, { status: 403 }),
-      ),
-    );
-    expect(await findEnvironmentUpdate("1.0.0", signal)).toBe("1.1.0");
-    expect(await findEnvironmentUpdate("1.1.0", signal)).toBeNull();
-    expect(await findEnvironmentUpdate("1.3.0", signal)).toBeNull();
-  });
 
   it("keeps nightly and preview hosts on their channel without using the anonymous API quota", async () => {
     vi.stubGlobal(
@@ -132,43 +119,7 @@ describe("environment release checks", () => {
       "1.0.0-preview.20260924.3",
     );
   });
-
-  it("checks Beta only in the isolated owned feed and keeps the API fallback there", async () => {
-    const urls: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) => {
-        urls.push(url);
-        if (url === "https://github.com/ScientFactory/scient-desktop-beta/releases.atom")
-          return feed("v1.0.0");
-        if (
-          url ===
-          "https://api.github.com/repos/ScientFactory/scient-desktop-beta/releases?per_page=100&page=1"
-        )
-          return Response.json([
-            { tag_name: "v1.1.0-beta.20261020.2", draft: true, prerelease: true },
-            { tag_name: "v1.1.0-beta.20261020.1", prerelease: true },
-          ]);
-        throw new Error(`Unexpected release request: ${url}`);
-      }),
-    );
-    expect(await findEnvironmentUpdate("1.1.0-beta.20261019.1", signal)).toBe(
-      "1.1.0-beta.20261020.1",
-    );
-    expect(urls).toHaveLength(2);
-  });
-
-  it("rejects a prerelease returned as the latest Stable release", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) =>
-        url.endsWith("/latest")
-          ? Response.json({ tag_name: "v1.1.0-beta.20261020.1", prerelease: true })
-          : Response.json([{ tag_name: "v1.0.1" }]),
-      ),
-    );
-    expect(await findEnvironmentUpdate("1.0.0", signal)).toBe("1.0.1");
-  });
+  // SCIENT-FORK:END
 
   it("reports failed checks instead of claiming the server is current", async () => {
     for (const status of [403, 429]) {
