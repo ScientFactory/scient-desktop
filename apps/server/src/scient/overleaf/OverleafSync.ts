@@ -347,12 +347,12 @@ export type OverleafSyncOutcome =
 
 /**
  * What an undo did (pr-c-design.md section 4.3): the coordinator's result, and
- * when it wrote the folder completely, the sync that sent the restored files.
+ * the sync that followed it, which sends what was put back and records the
+ * request's per-file decisions.
  */
 export type OverleafUndoOutcome =
   | (Extract<OverleafCoordinator.OverleafUndoResult, { _tag: "undone" }> & {
-      /** Null when the undo's apply did not complete, so nothing was synced. */
-      readonly sync: OverleafSyncOutcome | null;
+      readonly sync: OverleafSyncOutcome;
     })
   | Exclude<OverleafCoordinator.OverleafUndoResult, { _tag: "undone" }>
   /** Stopped on request after saving editors, before the undo applied anything. */
@@ -1143,9 +1143,11 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
    * Puts back what Overleaf had before one accepted send (pr-c-design.md section
    * 4.3), then syncs, so the restored files go out as ordinary local changes and
    * only a conflict stops. Editors are saved first and the connection is held from
-   * there to the end of the sync. The sync runs only when the undo's apply
-   * completed; it has its own receipt, derived from the request's, so a repeated
-   * request never applies or syncs twice. A refusal the sync meets after the undo
+   * there to the end of the sync. The sync follows every undo that ran, one that
+   * put nothing back included, so the request's per-file decisions are recorded
+   * as any sync records them (a file kept only here stays here). It has its own
+   * receipt, derived from the request's, so a repeated request never applies or
+   * syncs twice. A refusal the sync meets after the undo
    * wrote the folder comes back as its result, never hiding the undo.
    */
   const undo = Effect.fn("OverleafSync.undo")(function* (input: {
@@ -1175,8 +1177,6 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
           }),
         );
         if (undone._tag !== "undone") return undone satisfies OverleafUndoOutcome;
-        if (undone.adopted?.outcome !== "complete")
-          return { ...undone, sync: null } satisfies OverleafUndoOutcome;
         const synced = yield* syncClaimed(
           {
             caller: input.caller,

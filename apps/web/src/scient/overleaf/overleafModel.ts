@@ -613,37 +613,42 @@ export function overleafUndoView(
               `Left as it is: ${result.skipped.map((skip) => `${skip.path} (${UNDO_SKIPPED[skip.reason]})`).join(", ")}.`,
             ];
       const put = result.restored.length + result.removed.length + result.recreated.length;
+      // The sync that follows every undo: what it sent, and any conflict it stopped at.
+      const synced = overleafResultView(result.sync);
+      const syncLines = [`${synced.title}.`, ...synced.lines];
       switch (result.outcome) {
         case null:
           return {
             title: "Nothing was put back",
-            lines: skipped,
+            lines: [...skipped, ...syncLines],
             tone: "info",
-            needsDecision: false,
+            needsDecision: synced.needsDecision,
           };
         case "replan":
           return {
             title: "Nothing was put back",
-            lines: ["The folder changed during the undo. Try again."],
+            lines: ["The folder changed during the undo. Try again.", ...syncLines],
             tone: "warning",
-            needsDecision: false,
+            needsDecision: synced.needsDecision,
           };
         case "attention":
           return {
             title: "Undo needs attention",
-            lines: ["It may have stopped partway. Check the files before syncing.", ...skipped],
+            lines: [
+              "It may have stopped partway. Check the files before syncing.",
+              ...skipped,
+              ...syncLines,
+            ],
             tone: "warning",
-            needsDecision: false,
+            needsDecision: synced.needsDecision,
           };
-        default: {
-          const synced = result.sync === null ? null : overleafResultView(result.sync);
+        default:
           return {
             title: `Put back ${fileCount(put)}`,
-            lines: [...skipped, ...(synced === null ? [] : [`${synced.title}.`, ...synced.lines])],
-            tone: synced?.tone ?? "success",
-            needsDecision: synced?.needsDecision ?? false,
+            lines: [...skipped, ...syncLines],
+            tone: synced.tone,
+            needsDecision: synced.needsDecision,
           };
-        }
       }
     }
     case "not-eligible":

@@ -140,7 +140,7 @@ describe("scientOverleafHttp", () => {
         recreated: [],
         skipped: [{ path: "notes.tex", reason: "changed" }],
         outcome: "replan",
-        sync: null,
+        sync: { _tag: "cancelled", stage: "before-prepare", retried: false, settled: null },
       });
       const result = yield* undoEnvironmentOverleafSend({
         prepared: PREPARED,
@@ -151,7 +151,11 @@ describe("scientOverleafHttp", () => {
           attemptNumber: 4,
         },
       }).pipe(Effect.provide(layerRemoteHttpClient(server.fetchFn)));
-      expect(result).toMatchObject({ _tag: "undone", outcome: "replan", sync: null });
+      expect(result).toMatchObject({
+        _tag: "undone",
+        outcome: "replan",
+        sync: { _tag: "cancelled" },
+      });
       expect(server.requests).toEqual([
         {
           url: "https://environment.example.test/api/scient/overleaf/v1/undo",
