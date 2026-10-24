@@ -104,7 +104,7 @@ export interface OverleafReviewBinding {
   /**
    * The requests to keep files only here and to send files. `keepOnlyHere`
    * also holds every deliberate deselection, including one an explicit list
-   * implied. A replacement review applies them again to its own capture, so a
+   * implied; `send` also holds every `sendLocalOnly` request. A replacement review applies them again to its own capture, so a
    * file that comes and goes, or changes size, keeps the decision made for it.
    */
   readonly keepOnlyHere: ReadonlyArray<string>;

@@ -619,7 +619,13 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         ? { keepOnlyHere: replacing.keepOnlyHere, send: replacing.send }
         : {
             keepOnlyHere: input.selections.keepOnlyHere ?? [],
-            send: input.selections.send ?? [],
+            // A request to send local-only files is recorded as a send request too,
+            // so a replacement review sends them even when a collision that
+            // decided them in this review is gone by then.
+            send: unique([
+              ...(input.selections.send ?? []),
+              ...(input.selections.sendLocalOnly ?? []),
+            ]),
           };
     const selection =
       replacing !== undefined

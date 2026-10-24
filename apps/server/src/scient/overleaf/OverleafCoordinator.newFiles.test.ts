@@ -418,6 +418,43 @@ describe.skipIf(!canApply)("OverleafCoordinator, new files", () => {
     ),
   );
 
+  it.live("still sends a local-only file when the collision it met is gone by confirm", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "M" },
+          remote: { "main.tex": "M", "notes.tex": "remote" },
+          localOnly: { "notes.tex": "mine" },
+        });
+        const first = yield* prepared(w, {
+          sendLocalOnly: ["notes.tex"],
+          collisionPaths: [],
+          choices: new Map(),
+        });
+        const chosen = yield* prepared(w, {
+          sendLocalOnly: ["notes.tex"],
+          collisionPaths: first.binding.collisionPaths,
+          choices: new Map(first.conflicts.map((conflict) => [conflict.key, "mine" as const])),
+        });
+        expect(chosen.binding.send).toEqual(["notes.tex"]);
+        // A collaborator deletes Overleaf's file before the confirmation.
+        yield* w.collaborate({ "main.tex": "M" });
+        const stale = yield* confirmed(w, chosen);
+        if (stale._tag !== "stale") return yield* Effect.die(stale);
+        expect(stale.review.collisions).toEqual([]);
+        expect(stale.review.binding.sentLocalOnly).toEqual(["notes.tex"]);
+        expect(yield* confirmed(w, stale.review, "request-2")).toMatchObject({
+          publication: { _tag: "accepted" },
+        });
+        expect((yield* w.overleafNow).contents).toEqual({ "main.tex": "M", "notes.tex": "mine" });
+        const after = yield* w.connection;
+        expect(after.localOnlyPaths).toEqual([]);
+        expect([...after.managedPaths].sort()).toEqual(["main.tex", "notes.tex"]);
+      }),
+    ),
+  );
+
   it.live("never reads or sends a new file over Overleaf's limit, and refuses selecting it", () =>
     run(
       Effect.gen(function* () {
