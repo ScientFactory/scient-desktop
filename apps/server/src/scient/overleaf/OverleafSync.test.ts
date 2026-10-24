@@ -1764,4 +1764,68 @@ describe.skipIf(!canApply)("OverleafSync", () => {
       }),
     ),
   );
+
+  it.live(
+    "undo carries the pending file decisions to its sync, and stops on a cancel asked while saving",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "B" } } });
+          const connected = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          const caller = w.at(w.main);
+          const paper = NodePath.join(w.main, "paper");
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+          yield* write(paper, { "main.tex": "A" });
+          const sent = yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
+          if (sent._tag !== "synced" || sent.publication._tag !== "accepted")
+            return yield* Effect.die(sent);
+          const attemptNumber = sent.publication.attemptNumber;
+
+          // A cancel asked while the editors save: nothing is put back on either side.
+          let cancelled: unknown = null;
+          w.setEditorSave(
+            { _tag: "saved" },
+            w.service.cancel({ caller, connectionId: id }).pipe(
+              Effect.tap((answer) => Effect.sync(() => (cancelled = answer))),
+              Effect.ignore,
+            ),
+          );
+          expect(
+            yield* w.service.undo({ caller, connectionId: id, requestId: "u1", attemptNumber }),
+          ).toEqual({ _tag: "cancelled" });
+          expect(cancelled).toMatchObject({ _tag: "requested" });
+          expect(yield* read(paper, "main.tex")).toBe("A");
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "A" });
+
+          // A new file kept only on this computer stays here through Undo's sync.
+          w.setEditorSave({ _tag: "saved" });
+          yield* write(paper, { "private.tex": "notes to self" });
+          const undone = yield* w.service.undo({
+            caller,
+            connectionId: id,
+            requestId: "u2",
+            attemptNumber,
+            files: { keepOnlyHere: ["private.tex"] },
+          });
+          expect(undone).toMatchObject({
+            _tag: "undone",
+            restored: ["main.tex"],
+            sync: { _tag: "synced", publication: { _tag: "accepted" } },
+          });
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "B" });
+          // Remembered: the next sync keeps it here too.
+          const next = yield* w.service.sync({ caller, connectionId: id, requestId: "s3" });
+          expect(next).toMatchObject({ _tag: "synced", review: { localOnly: ["private.tex"] } });
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "B" });
+        }),
+      ),
+  );
 });

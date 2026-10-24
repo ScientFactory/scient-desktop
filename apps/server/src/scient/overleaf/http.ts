@@ -109,6 +109,8 @@ export const undoView = (result: OverleafUndoOutcome): ScientOverleafUndoResult 
       return { _tag: "refused", refusal: refusalView(result.refusal) };
     case "duplicate":
       return { _tag: "duplicate" };
+    case "cancelled":
+      return { _tag: "cancelled" };
   }
 };
 
@@ -369,6 +371,7 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
               connectionId: payload.connectionId,
               requestId: payload.requestId,
               attemptNumber: payload.attemptNumber,
+              ...(payload.files ? { files: payload.files } : {}),
             }),
           );
           return undoView(result);

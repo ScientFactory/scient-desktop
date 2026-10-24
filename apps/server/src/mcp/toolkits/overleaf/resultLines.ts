@@ -572,6 +572,10 @@ export const undoLines = (attemptNumber: number, result: ScientOverleafUndoResul
       return [`Nothing was undone: ${refusalReason(result.refusal)}`];
     case "duplicate":
       return ["This undo already ran; nothing ran again."];
+    case "cancelled":
+      return [
+        `The undo of send #${attemptNumber} stopped on request before putting anything back.`,
+      ];
   }
 };
 
