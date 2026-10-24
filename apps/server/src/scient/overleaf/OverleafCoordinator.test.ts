@@ -147,6 +147,31 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
     );
   });
 
+  it.live("settles an interrupted apply as its own prepare step, then reviews its result", () => {
+    let crash = true;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          at: (point) =>
+            crash && point === "applied" ? Effect.die(new Error("process died")) : Effect.void,
+        });
+        expect(Exit.isFailure(yield* Effect.exit(w.sync()))).toBe(true);
+        crash = false;
+        // A complete recovery is reported, never folded into a review of the same call.
+        expect(yield* w.coordinator.prepare({ connectionId: CONNECTION })).toMatchObject({
+          _tag: "recovered",
+          recovery: { outcome: "complete" },
+        });
+        expect((yield* w.connection).activeApply).toBeNull();
+        expect(yield* read(w.folder, "main.tex")).toBe("B");
+        const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        expect(next).toMatchObject({ _tag: "review", review: { upToDate: true } });
+      }),
+    );
+  });
+
   it.live("clears an apply linked just before a crash, with nothing written", () => {
     let crash = true;
     return run(

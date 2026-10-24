@@ -9,6 +9,7 @@ import {
   type ScientOverleafSyncResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import {
@@ -17,7 +18,12 @@ import {
   requireEnvironmentScope,
 } from "../../auth/http.ts";
 import type { OverleafAdopted, OverleafPublication } from "./OverleafCoordinator.ts";
-import { OverleafSync, type OverleafCaller, type OverleafSyncOutcome } from "./OverleafSync.ts";
+import {
+  OverleafSync,
+  type OverleafCaller,
+  OverleafSyncRefusedError,
+  type OverleafSyncOutcome,
+} from "./OverleafSync.ts";
 import type { ConflictChoice } from "./syncRules.ts";
 
 /**
@@ -26,6 +32,17 @@ import type { ConflictChoice } from "./syncRules.ts";
  * the server; Git's own text and the token never reach the client.
  */
 type TaggedFailure = { readonly _tag: string; readonly message: string };
+
+const isOverleafSyncRefused = Schema.is(OverleafSyncRefusedError);
+
+/** An interrupted earlier sync that was settled first, as clients see it. */
+const settledApplyView = (
+  settled: Pick<OverleafAdopted, "outcome" | "interrupted" | "markerPaths">,
+) => ({
+  outcome: settled.outcome,
+  interrupted: settled.interrupted.length,
+  markerPaths: settled.markerPaths,
+});
 
 /** `OverleafOperationActiveError` → `operation-active`; a `reason` field wins when present. */
 const operationError = (error: TaggedFailure) => {
@@ -38,7 +55,14 @@ const operationError = (error: TaggedFailure) => {
           .replace(/[A-Z]/gu, (letter, index: number) =>
             index === 0 ? letter.toLowerCase() : `-${letter.toLowerCase()}`,
           );
-  return new ScientOverleafOperationError({ reason, message: error.message });
+  // A sync or preview refused after progress says what it already did.
+  const progress = isOverleafSyncRefused(error) ? error : null;
+  return new ScientOverleafOperationError({
+    reason,
+    message: error.message,
+    ...(progress?.retried === undefined ? {} : { retried: progress.retried }),
+    ...(progress?.settled === undefined ? {} : { settled: settledApplyView(progress.settled) }),
+  });
 };
 
 const ACTIONABLE = new Set([
@@ -77,13 +101,7 @@ const publicationView = (publication: OverleafPublication): ScientOverleafPublic
 });
 
 const settledView = (settled: OverleafAdopted | null) =>
-  settled === null
-    ? null
-    : {
-        outcome: settled.outcome,
-        interrupted: settled.interrupted.length,
-        markerPaths: settled.markerPaths,
-      };
+  settled === null ? null : settledApplyView(settled);
 
 const syncView = (outcome: OverleafSyncOutcome): ScientOverleafSyncResult => {
   switch (outcome._tag) {
@@ -240,7 +258,7 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
               return {
                 _tag: "refused" as const,
                 refusal: refusalView(result.refusal),
-                settled: settledView(result.settled ?? null),
+                settled: settledView(result.settled),
               };
             case "recovered":
               return { _tag: "recovered" as const };

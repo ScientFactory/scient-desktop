@@ -1414,6 +1414,163 @@ describe.skipIf(!canApply)("OverleafSync", () => {
     ),
   );
 
+  it.live.each(["sync", "preview"] as const)(
+    "a %s refused after it settled an interrupted sync still says so",
+    (operation) =>
+      run(
+        Effect.gen(function* () {
+          let crash = false;
+          const w = yield* world({
+            overleaf: { [PROJECT]: { "main.tex": "after\n" } },
+            at: (point) => (point === "applied" && crash ? Effect.die("stopped") : Effect.void),
+          });
+          const connected = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          crash = true;
+          expect(
+            (yield* Effect.exit(
+              w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+            ))._tag,
+          ).toBe("Failure");
+          crash = false;
+          // Overleaf cannot be reached: settling needs no fetch, the review that follows does.
+          yield* Effect.promise(() =>
+            NodeFSP.rename(w.overleafFor(PROJECT), `${w.overleafFor(PROJECT)}.offline`),
+          );
+          const refused =
+            operation === "sync"
+              ? yield* Effect.flip(
+                  w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
+                )
+              : yield* Effect.flip(w.service.preview({ caller: w.at(w.main), connectionId: id }));
+          expect(refused).toMatchObject({
+            _tag: "OverleafSyncRefusedError",
+            settled: { outcome: "complete" },
+          });
+          expect(refused).not.toHaveProperty("retried");
+          // The settled sync wrote the folder, and the record took it in.
+          expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("after\n");
+          expect(yield* w.store.readConnection(id)).toMatchObject({
+            _tag: "ready",
+            document: { activeApply: null, completedSyncCount: 1 },
+          });
+        }),
+      ),
+  );
+
+  it.live("a sync refused while running again after Overleaf moved says it retried", () =>
+    run(
+      Effect.gen(function* () {
+        let armed = false;
+        let moveOverleaf: Effect.Effect<void> = Effect.void;
+        let goOffline: Effect.Effect<void> = Effect.void;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O" } },
+          at: (point) =>
+            !armed
+              ? Effect.void
+              : point === "admitting"
+                ? moveOverleaf
+                : point === "sent"
+                  ? goOffline
+                  : Effect.void,
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const folder = NodePath.join(w.main, "paper");
+        yield* write(folder, { "notes.tex": "N" });
+        // Overleaf moves while the first attempt sends, then cannot be reached for the next.
+        moveOverleaf = Effect.orDie(w.collaborate(PROJECT, { "main.tex": "A", "other.tex": "O2" }));
+        goOffline = Effect.promise(() =>
+          NodeFSP.rename(w.overleafFor(PROJECT), `${w.overleafFor(PROJECT)}.offline`),
+        );
+        armed = true;
+        const refused = yield* Effect.flip(
+          w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+        );
+        expect(refused).toMatchObject({ _tag: "OverleafSyncRefusedError", retried: true });
+        expect(refused).not.toHaveProperty("settled");
+        expect(yield* w.store.readConnection(id)).toMatchObject({
+          _tag: "ready",
+          document: { activeApply: null, attempts: [{ outcome: "out-of-date" }] },
+        });
+      }),
+    ),
+  );
+
+  it.live("stops on a cancel asked while settling, before preparing again", () =>
+    run(
+      Effect.gen(function* () {
+        let crash = false;
+        let cancelWhileSettling: Effect.Effect<void> = Effect.void;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "B" } },
+          at: (point) =>
+            point === "linked" && crash
+              ? Effect.die("stopped")
+              : point === "adopted"
+                ? cancelWhileSettling
+                : Effect.void,
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        crash = true;
+        expect(
+          (yield* Effect.exit(
+            w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+          ))._tag,
+        ).toBe("Failure");
+        crash = false;
+        // Cancel while the interrupted sync is settled. Overleaf now holds a file Scient
+        // refuses, so a prepare after the cancel would end in a refusal instead.
+        cancelWhileSettling = Effect.gen(function* () {
+          cancelWhileSettling = Effect.void;
+          expect(yield* w.service.cancel({ caller: w.at(w.main), connectionId: id })).toMatchObject(
+            { _tag: "requested" },
+          );
+          yield* w.collaborate(PROJECT, { "main.tex": "B", ".DS_Store": "finder" });
+        }).pipe(Effect.orDie);
+        const cancelled = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s3",
+        });
+        expect(cancelled).toMatchObject({
+          _tag: "cancelled",
+          stage: "before-prepare",
+          retried: false,
+          settled: { outcome: "replan" },
+        });
+        expect(yield* w.store.readConnection(id)).toMatchObject({
+          _tag: "ready",
+          document: { activeApply: null },
+        });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBeNull();
+      }),
+    ),
+  );
+
   it.live("asks again when Overleaf moved after the conflict was decided", () =>
     run(
       Effect.gen(function* () {
