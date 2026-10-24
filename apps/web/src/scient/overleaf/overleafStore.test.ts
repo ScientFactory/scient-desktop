@@ -18,7 +18,7 @@ const {
   loadOverleafWorkspace,
   readOverleafWorkspace,
   refreshOverleafStatus,
-  refreshOverleafStatusElsewhere,
+  reloadOverleafWorkspaces,
   resetOverleafStoreForTests,
 } = await import("./overleafStore");
 
@@ -76,27 +76,52 @@ describe("overleafStore", () => {
     expect(readOverleafWorkspace(environmentId, ROOT).statuses.get("c1")?.busy).toBe(false);
   });
 
-  it("after a sync, another workspace view that read busy reads its status again", async () => {
+  it("after an operation, every workspace view lists its links and reads their status again", async () => {
     resetOverleafStoreForTests();
     const WORKTREE = "/work/project-worktree";
+    const OTHER = EnvironmentId.make("remote");
     client.listOverleafConnections
       .mockReset()
       .mockResolvedValue({ connections: [{ ...link, linkedHere: false }] });
-    // The worktree view loads while a sync started in the main checkout runs.
+    // Both views load while an operation in the main checkout holds the link.
     client.readOverleafStatus.mockReset().mockResolvedValue(status(true));
+    await loadOverleafWorkspace(environmentId, ROOT);
     await loadOverleafWorkspace(environmentId, WORKTREE);
+    await loadOverleafWorkspace(OTHER, ROOT);
     expect(readOverleafWorkspace(environmentId, WORKTREE).statuses.get("c1")?.busy).toBe(true);
+
+    // The operation ends: the link is free, and a second link was connected.
+    const second = { ...link, connectionId: "c2", folder: "thesis", linkedHere: false };
+    client.listOverleafConnections
+      .mockReset()
+      .mockResolvedValue({ connections: [{ ...link, linkedHere: false }, second] });
     client.readOverleafStatus.mockReset().mockResolvedValue(status(false));
-    refreshOverleafStatusElsewhere(environmentId, ROOT, "c1");
+    await reloadOverleafWorkspaces(environmentId, ROOT);
+    await vi.waitFor(() =>
+      expect(
+        readOverleafWorkspace(environmentId, WORKTREE).connections.map(
+          (entry) => entry.connectionId,
+        ),
+      ).toEqual(["c1", "c2"]),
+    );
     await vi.waitFor(() =>
       expect(readOverleafWorkspace(environmentId, WORKTREE).statuses.get("c1")?.busy).toBe(false),
     );
-    // Only the other view reads again; the caller's view reloads itself.
-    expect(client.readOverleafStatus).toHaveBeenCalledTimes(1);
-    expect(client.readOverleafStatus).toHaveBeenCalledWith(environmentId, {
-      workspaceRoot: WORKTREE,
-      connectionId: "c1",
-    });
+    expect(readOverleafWorkspace(environmentId, ROOT).statuses.get("c1")?.busy).toBe(false);
+    // Another environment's views are left alone.
+    expect(client.listOverleafConnections).not.toHaveBeenCalledWith(OTHER, ROOT);
+    expect(readOverleafWorkspace(OTHER, ROOT).statuses.get("c1")?.busy).toBe(true);
+
+    // An unlink: the link leaves every view.
+    client.listOverleafConnections.mockReset().mockResolvedValue({ connections: [second] });
+    await reloadOverleafWorkspaces(environmentId, ROOT);
+    await vi.waitFor(() =>
+      expect(
+        readOverleafWorkspace(environmentId, WORKTREE).connections.map(
+          (entry) => entry.connectionId,
+        ),
+      ).toEqual(["c2"]),
+    );
   });
 
   it("a forced load starts afresh instead of joining a load already running", async () => {

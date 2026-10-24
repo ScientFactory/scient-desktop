@@ -33,7 +33,7 @@ import {
 } from "./overleafModel";
 import {
   forgetOverleafConnection,
-  loadOverleafWorkspace,
+  reloadOverleafWorkspaces,
   setOverleafTokenSaved,
   useOverleafTokenSaved,
   useOverleafWorkspace,
@@ -156,7 +156,7 @@ function OverleafProjectLinks(props: {
       });
     } finally {
       setUnlinking(null);
-      void loadOverleafWorkspace(environmentId, workspaceRoot, { force: true });
+      void reloadOverleafWorkspaces(environmentId, workspaceRoot);
     }
   };
   return (

@@ -23,12 +23,11 @@ import {
 } from "./overleafModel";
 import {
   pendingOverleafDecisions,
-  loadOverleafWorkspace,
+  reloadOverleafWorkspaces,
   readOverleafWorkspace,
   beginOverleafPreview,
   finishOverleafPreview,
   recordOverleafSync,
-  refreshOverleafStatusElsewhere,
   setOverleafSyncing,
   type OverleafConnection,
 } from "./overleafStore";
@@ -216,8 +215,7 @@ export async function runOverleafSync(
     setOverleafSyncing(environmentId, connection.connectionId, false);
     // Files came in: the tree and the chip read again.
     refreshProjectFiles(environmentId, workspaceRoot);
-    void loadOverleafWorkspace(environmentId, workspaceRoot, { force: true });
-    refreshOverleafStatusElsewhere(environmentId, workspaceRoot, connection.connectionId);
+    void reloadOverleafWorkspaces(environmentId, workspaceRoot);
   }
 }
 
@@ -288,6 +286,9 @@ export async function readOverleafChanges(
       _tag: "failed",
       message: operationErrorText(error),
     });
+  } finally {
+    // The read held the link: a status read meanwhile said it was busy.
+    void reloadOverleafWorkspaces(environmentId, workspaceRoot);
   }
 }
 
@@ -308,8 +309,11 @@ export async function cancelOverleafRun(
   }
   try {
     const result = await cancelOverleafSync(environmentId, { workspaceRoot, connectionId });
-    if (result._tag === "nothing-running")
+    if (result._tag === "nothing-running") {
       toastManager.add({ type: "info", title: "No sync is running" });
+      // A chip still on "Syncing…" read a busy status that has since ended.
+      void reloadOverleafWorkspaces(environmentId, workspaceRoot);
+    }
   } catch (error) {
     toastManager.add({
       type: "error",

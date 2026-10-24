@@ -12,7 +12,7 @@ import { openFileOnLinkedCopy } from "./askAgentOnLinkedCopy";
 import { listOverleafKeptCopies, overleafRequestId, restoreOverleafKeptCopy } from "./client";
 import { connectionForPath, operationErrorText, workspacePathOf } from "./overleafModel";
 import {
-  loadOverleafWorkspace,
+  reloadOverleafWorkspaces,
   useOverleafWorkspace,
   type OverleafConnection,
 } from "./overleafStore";
@@ -135,11 +135,11 @@ export function OverleafKeptCopies(props: {
       });
       setMessage(RESTORE_TEXT[result._tag]);
       await load(connection.connectionId);
-      void loadOverleafWorkspace(environmentId, cwd, { force: true });
     } catch (error) {
       setMessage(operationErrorText(error));
     } finally {
       setBusy(false);
+      void reloadOverleafWorkspaces(environmentId, cwd);
     }
   };
 

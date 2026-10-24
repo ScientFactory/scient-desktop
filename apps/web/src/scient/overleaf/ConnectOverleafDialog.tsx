@@ -34,7 +34,7 @@ import {
 } from "./overleafModel";
 import {
   forgetOverleafConnection,
-  loadOverleafWorkspace,
+  reloadOverleafWorkspaces,
   setOverleafTokenSaved,
   useOverleafTokenSaved,
   type OverleafConnection,
@@ -125,7 +125,7 @@ export function ConnectOverleafDialog(props: {
       const connection: OverleafConnection = { ...connected.connection, linkedHere: true };
       // A reconnected archive keeps its ID: nothing remembered from before applies to it.
       forgetOverleafConnection(environmentId, connection.connectionId);
-      void loadOverleafWorkspace(environmentId, cwd, { force: true });
+      void reloadOverleafWorkspaces(environmentId, cwd);
       setPhase({ _tag: "working", step: "sync" });
       // The first sync runs straight away; its result is shown here.
       try {

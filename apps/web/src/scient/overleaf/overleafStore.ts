@@ -207,25 +207,6 @@ export async function refreshOverleafStatus(
   }
 }
 
-/**
- * After an operation on a link, every other workspace view that lists it reads
- * its status again, so a view that read "busy" during a sync started elsewhere
- * doesn't stay on "Syncing…". The caller's own view reloads itself.
- */
-export function refreshOverleafStatusElsewhere(
-  environmentId: EnvironmentId,
-  exceptWorkspaceRoot: string,
-  connectionId: string,
-): void {
-  const except = keyOf(environmentId, exceptWorkspaceRoot);
-  for (const [key, snapshot] of snapshots) {
-    if (key === except || environmentOf(key) !== environmentId) continue;
-    if (!snapshot.connections.some((connection) => connection.connectionId === connectionId))
-      continue;
-    void refreshOverleafStatus(environmentId, key.slice(key.indexOf("\u0000") + 1), connectionId);
-  }
-}
-
 /** How long saves settle before the status is read again: a burst of saves reads once. */
 const SAVE_REFRESH_DELAY_MS = 400;
 const scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
@@ -326,6 +307,28 @@ export function loadOverleafWorkspace(
   })();
   inflight.set(key, load);
   return load;
+}
+
+/**
+ * After an operation on a link, every workspace view of its environment lists
+ * its links and reads their status again, not only the caller's: a link
+ * connected or unlinked in one view, or a status read as busy while the
+ * operation held the link, would otherwise stay stale in the others. Returns
+ * the caller's own reload.
+ */
+export function reloadOverleafWorkspaces(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+): Promise<void> {
+  const own = keyOf(environmentId, workspaceRoot);
+  const reloaded = loadOverleafWorkspace(environmentId, workspaceRoot, { force: true });
+  for (const key of new Set([...snapshots.keys(), ...listeners.keys()])) {
+    if (key === own || environmentOf(key) !== environmentId) continue;
+    void loadOverleafWorkspace(environmentId, key.slice(key.indexOf("\u0000") + 1), {
+      force: true,
+    });
+  }
+  return reloaded;
 }
 
 export function setOverleafSyncing(
