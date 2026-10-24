@@ -665,9 +665,16 @@ coordinator's per-connection reservations.
   Per-file decisions (`files.keepOnlyHere`, `files.send`) go to the engine's
   selections, applied to the review's own capture and carried through rebuilt
   reviews; reviews list every new file with its selection and skip reason.
-  A caller that saved a folder's editors first passes `savedFolder`; sync,
-  preview, recovery and kept-copy restore then hold the connection and refuse
-  (`folder-changed`) if the link no longer names that folder. The coordinator's confirmations inside a sync use
+  **Editors first.** Every service operation that may write the folder (sync,
+  preview, recovery, kept-copy restore, undo) takes the connection, reads the
+  folder the link names inside that hold, asks every window to save that
+  folder's open editors (`OverleafEditorSave`), and only then runs; the hold
+  lasts to the end, so a relink can't move the folder between the save and the
+  operation's reads. A failed save refuses with `OverleafEditorUnsavedError`
+  (reason `editor-unsaved`, the files that could not be saved and the windows
+  that did not answer) before anything is read or written; HTTP carries the
+  files as the operation error's `paths`. Callers never save editors
+  themselves. The coordinator's confirmations inside a sync use
   server-made 64-character request IDs, which no client request ID can equal.
   **Cancel** asks the running sync to stop at its next stage boundary (before
   any prepare, including the one after settling an interrupted sync, or before
@@ -684,8 +691,9 @@ Text a person typed is on disk only once the window holding it has saved it.
 `scient/editorFlush/EditorFlush.ts` lets a server operation ask every window
 of this environment to save its editors for one folder, and wait:
 `flushFolder({ checkoutRoot, folder, timeout, overallTimeout })`. The
-Overleaf agent tools call it through `OverleafEditorSave.layerFromEditorFlush`
-before any call that may write the folder.
+Overleaf service calls it through `OverleafEditorSave.layerFromEditorFlush`
+before any operation that may write the folder, for the agent tools and the
+screens alike (the screens' own window answers like any other).
 
 - Each window subscribes once (`editors.flushConnect`), asks where its
   editors' files are (`editors.flushResolve`), answers (`editors.flushRespond`)
@@ -754,9 +762,7 @@ before any call that may write the folder.
 ## Remaining integration gates
 
 The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
-defines the remaining work and tracks each step's status. The agent tools save
-open editors through `OverleafEditorSave` (connected to the editor-save request)
-before any call that may write the folder; the screens come next. Derive
+defines the remaining work and tracks each step's status. Derive
 interrupted operations in status (a `running` receipt whose operation is no
 longer live was interrupted). The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can

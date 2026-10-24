@@ -1,5 +1,6 @@
 // SCIENT-OWNED: Sync with Overleaf, as the chip, the command palette and the
-// review tab run it: save the folder's open editors, sync, then report.
+// review tab run it: sync, then report. The server saves the folder's open
+// editors in every window first, this one included (EditorFlushHosts answers).
 import type {
   EnvironmentId,
   ScientOverleafConflictChoice,
@@ -7,10 +8,8 @@ import type {
 } from "@t3tools/contracts";
 
 import { refreshProjectFiles } from "~/components/files/projectFilesQueryState";
-import { workspaceFileSessionFlush } from "~/components/files/useFileSaveCoordinator";
 import { toastManager } from "~/components/ui/toast";
 import { readLocalApi } from "~/localApi";
-import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 
 import { cancelOverleafSync, overleafRequestId, previewOverleaf, syncOverleaf } from "./client";
 import {
@@ -31,79 +30,6 @@ import {
   setOverleafSyncing,
   type OverleafConnection,
 } from "./overleafStore";
-
-/** Whether an open editor's file is in the linked folder of the linked checkout. */
-function inLinkedFolder(
-  environmentId: EnvironmentId,
-  roots: ReadonlyArray<string>,
-  folder: string,
-): (target: {
-  readonly environmentId: EnvironmentId;
-  readonly cwd: string;
-  readonly relativePath: string;
-}) => boolean {
-  const base = folder.replace(/^\/+|\/+$/gu, "");
-  return (target) =>
-    target.environmentId === environmentId &&
-    roots.includes(target.cwd) &&
-    (base === "" || target.relativePath === base || target.relativePath.startsWith(`${base}/`));
-}
-
-/**
- * Saves every open editor of the folder in this window (design section 6):
- * document sessions (Markdown, LaTeX, BibTeX) and plain text editors. Returns
- * the files that couldn't be saved, such as unconverted Visual input or a
- * save that failed.
- *
- * Plain editors are flushed through `workspaceFileSessionFlush.flushWhere`,
- * the scoped flush PR #643 adds to `WorkspaceFileSessionRegistry` (copied here
- * as #643 has it, so the two merge as one). Once #643's server request saves
- * a folder's editors in every window, this should call that instead.
- */
-async function saveOverleafFolderEditors(
-  environmentId: EnvironmentId,
-  roots: ReadonlyArray<string>,
-  folder: string,
-): Promise<ReadonlyArray<string>> {
-  const select = inLinkedFolder(environmentId, roots, folder);
-  const documents = markdownPersistenceRegistry.getSnapshot().filter(select);
-  const [saved, plain] = await Promise.all([
-    Promise.all(
-      documents.map((entry) =>
-        markdownPersistenceRegistry.flushTarget(entry).then(
-          (done) => done,
-          () => false,
-        ),
-      ),
-    ),
-    workspaceFileSessionFlush.flushWhere(select).then(
-      (outcomes) => outcomes,
-      () => null,
-    ),
-  ]);
-  return [
-    ...documents.flatMap((entry, index) => (saved[index] ? [] : [entry.relativePath])),
-    ...(plain === null
-      ? [folder || "An open file"]
-      : plain.flatMap((outcome) => (outcome.saved ? [] : [outcome.target.relativePath]))),
-  ];
-}
-
-/** An open editor of the folder couldn't save, so nothing was synced. */
-class OverleafEditorsUnsavedError extends Error {
-  readonly reason = "editor-unsaved";
-  constructor(readonly path: string) {
-    super(refusalText({ reason: "editor-unsaved", path }));
-  }
-}
-
-/**
- * Syncs started from this window that haven't sent their request yet, by
- * link. Cancel before the request marks one here, and it never sends.
- */
-const localRuns = new Map<string, { cancelled: boolean; sent: boolean }>();
-const runKey = (environmentId: EnvironmentId, connectionId: string) =>
-  `${environmentId}\u0000${connectionId}`;
 
 export interface OverleafSyncContext {
   readonly environmentId: EnvironmentId;
@@ -147,37 +73,7 @@ export async function runOverleafSync(
     return null;
   }
   setOverleafSyncing(environmentId, connection.connectionId, true);
-  const run = { cancelled: false, sent: false };
-  const key = runKey(environmentId, connection.connectionId);
-  localRuns.set(key, run);
   try {
-    const unsaved = await saveOverleafFolderEditors(
-      environmentId,
-      [workspaceRoot, connection.checkoutRoot],
-      connection.folder,
-    );
-    if (unsaved.length > 0) {
-      if (context.quiet) throw new OverleafEditorsUnsavedError(unsaved[0]!);
-      toastManager.add({
-        type: "error",
-        title: "Couldn't sync with Overleaf",
-        description: new OverleafEditorsUnsavedError(unsaved[0]!).message,
-      });
-      return null;
-    }
-    // Cancelled while editors were saving: the request is never sent.
-    if (run.cancelled) {
-      const cancelled: ScientOverleafSyncResult = {
-        _tag: "cancelled",
-        stage: "before-prepare",
-        retried: false,
-        settled: null,
-      };
-      recordOverleafSync(environmentId, connection.connectionId, cancelled);
-      if (!context.quiet) reportOverleafSync(context, cancelled);
-      return cancelled;
-    }
-    run.sent = true;
     // Every sync, from any entry point, carries the link's pending per-file decisions,
     // reconciled with the review shown; they are cleared only when a sync applies.
     const carried = pendingOverleafDecisions(
@@ -216,7 +112,6 @@ export async function runOverleafSync(
     });
     return null;
   } finally {
-    if (localRuns.get(key) === run) localRuns.delete(key);
     setOverleafSyncing(environmentId, connection.connectionId, false);
     // Files came in: the tree and the chip read again.
     refreshProjectFiles(environmentId, workspaceRoot);
@@ -306,12 +201,6 @@ export async function cancelOverleafRun(
   workspaceRoot: string,
   connectionId: string,
 ): Promise<void> {
-  // Still saving editors here: stop before the request leaves this window.
-  const local = localRuns.get(runKey(environmentId, connectionId));
-  if (local && !local.sent) {
-    local.cancelled = true;
-    return;
-  }
   try {
     const result = await cancelOverleafSync(environmentId, { workspaceRoot, connectionId });
     if (result._tag === "nothing-running") {

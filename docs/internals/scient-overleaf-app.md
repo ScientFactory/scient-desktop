@@ -20,7 +20,7 @@ is deleted on either side).
 | `overleaf/client.ts`                         | Promises over those functions for the web (`runtime.runPromise`). Tests mock this module.                                                                                                                                                                                   |
 | `overleaf/overleafModel.ts`                  | Pure: project links, folder paths, chip states, the result lines of design section 4.1, reason texts, choices.                                                                                                                                                              |
 | `overleaf/overleafStore.ts`                  | Per workspace view (`environmentId` + root): links and offline statuses. Per link (`environmentId` + connection ID), shared by every view: running syncs, last results, the shown review, reads of the changes, pending and carried decisions. Token state per environment. |
-| `overleaf/overleafActions.ts`                | Save editors, sync, report; read changes for the review tab; open the project on Overleaf.                                                                                                                                                                                  |
+| `overleaf/overleafActions.ts`                | Sync and report; read changes for the review tab; open the project on Overleaf.                                                                                                                                                                                             |
 | `overleaf/ConnectOverleafDialog.tsx`         | The one Connect dialog.                                                                                                                                                                                                                                                     |
 | `overleaf/OverleafFileChip.tsx`              | The chip next to "Saved".                                                                                                                                                                                                                                                   |
 | `overleaf/OverleafReviewPanel.tsx`           | The side-panel tab (`scient:overleaf-review:<cwd>:<connection>`).                                                                                                                                                                                                           |
@@ -77,28 +77,25 @@ records any change to the link, so it can read later than the real last sync.
 
 ## Saving editors before a sync
 
-`saveOverleafFolderEditors` flushes every document session (Markdown, LaTeX, BibTeX) in the
-document registry whose workspace is the caller's root or the link's checkout and whose path is
-inside the folder, and every plain text editor's file session in the same folder through
-`workspaceFileSessionFlush.flushWhere`. That scoped flush (a `target` on each session,
-`flushWhere`, `sessionTargets`, `unsavedWhere`) is copied verbatim from PR #643, so the two merge
-as one. A session holding unconverted input, or one whose flush fails, names its file and the
-sync doesn't run. This is this window only; #643's server request saves a folder's editors in
-every window, and the sync should switch to it once both are in.
+The screens don't save editors themselves. Every server operation that may write the folder
+(sync, reading the changes, restoring a kept copy, undo) first asks every open window to save the
+folder's editors, this window included: `scient/editorFlush/EditorFlushHosts.tsx` answers for each
+window, with every kind of editor (documents, plain text editors, LaTeX Visual input,
+composition). One that can't save, or a window that doesn't answer, refuses the operation with
+reason `editor-unsaved` and the files in `paths`; the screens say "_file_ couldn't be saved, so
+nothing was changed."
 
 ## Sync and its result
 
 `runOverleafSync` is the only sync path: it refuses a second sync of the same link from this
-window, saves editors, posts `sync` with a fresh request ID and any conflict choices, records the
+window, posts `sync` with a fresh request ID and any conflict choices, records the
 result, refreshes the file tree and the statuses, and reports. Choices always travel with
 `reviewedRemote`, the `remoteTree` of the review they answer; when Overleaf has moved since, the
 server answers `needs-decision` with a fresh review, and the tab says "Overleaf changed since you
 chose. Choose again." Choices are kept with the identity of the review they were made on (its
 `reviewId` and `remoteTree`) and shown only while that review is: any sync or read that brings
 another review leaves it with no choices, so an old choice is never sent against a newer review.
-**Cancel sync** (chip) and **Cancel** (tab) stop a sync. While this window is still saving
-editors, the cancel is local: the request is never sent, and the result is `cancelled` here.
-Once the request has left, they post `cancel`; the sync stops at a stage boundary and returns
+**Cancel sync** (chip) and **Cancel** (tab) post `cancel`; the sync stops at a stage boundary and returns
 `cancelled`, reported as "Sync cancelled. Nothing was changed." A failure shows only fixed
 words: the server's `ScientOverleafOperationError` reaches the app as itself (the HTTP adapter
 passes it through) and its reason is mapped; anything else is "The Overleaf request didn't go
