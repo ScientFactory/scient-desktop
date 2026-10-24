@@ -6,7 +6,6 @@ import {
   EnvironmentId,
   type ModelSelection,
   type OrchestrationV2AppThread,
-  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
@@ -729,133 +728,6 @@ function runBrowserAccessScenario(input: {
     return (yield* Ref.get(mcpConfigs))[0];
   });
 }
-
-function makePendingRuntimeRequestEvents(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-  readonly threadId: ThreadId;
-  readonly providerSessionId: ProviderSessionId;
-  readonly providerThread: OrchestrationV2ProviderThread;
-  readonly now: DateTime.Utc;
-}) {
-  return Effect.gen(function* () {
-    const requestId = yield* input.idAllocator.allocate.runtimeRequest({
-      driver: CODEX_DRIVER,
-      nativeRequestId: "pending-approval",
-    });
-    const nodeId = input.idAllocator.derive.approvalNode({ requestId });
-    const node = {
-      id: nodeId,
-      threadId: input.threadId,
-      runId: null,
-      parentNodeId: null,
-      rootNodeId: nodeId,
-      kind: "approval_request" as const,
-      status: "waiting" as const,
-      countsForRun: false,
-      providerThreadId: input.providerThread.id,
-      providerTurnId: null,
-      nativeItemRef: null,
-      runtimeRequestId: requestId,
-      checkpointScopeId: null,
-      startedAt: input.now,
-      completedAt: null,
-    };
-    const request = {
-      id: requestId,
-      nodeId,
-      providerTurnId: null,
-      nativeRequestRef: {
-        driver: CODEX_DRIVER,
-        nativeId: "pending-approval",
-        strength: "strong" as const,
-      },
-      kind: "command" as const,
-      status: "pending" as const,
-      responseCapability: {
-        type: "live" as const,
-        providerSessionId: input.providerSessionId,
-      },
-      createdAt: input.now,
-      resolvedAt: null,
-    };
-    const turnItem = {
-      id: input.idAllocator.derive.approvalTurnItem({ requestId }),
-      threadId: input.threadId,
-      runId: null,
-      nodeId,
-      providerThreadId: input.providerThread.id,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 1,
-      status: "waiting" as const,
-      title: null,
-      startedAt: input.now,
-      completedAt: null,
-      updatedAt: input.now,
-      type: "approval_request" as const,
-      requestId,
-      requestKind: "command" as const,
-    };
-    const events = [
-      {
-        id: yield* input.idAllocator.allocate.event({
-          threadId: input.threadId,
-          providerSessionId: input.providerSessionId,
-        }),
-        type: "node.updated" as const,
-        threadId: input.threadId,
-        nodeId,
-        driver: CODEX_DRIVER,
-        occurredAt: input.now,
-        payload: node,
-      },
-      {
-        id: yield* input.idAllocator.allocate.event({
-          threadId: input.threadId,
-          providerSessionId: input.providerSessionId,
-        }),
-        type: "runtime-request.updated" as const,
-        threadId: input.threadId,
-        nodeId,
-        driver: CODEX_DRIVER,
-        occurredAt: input.now,
-        payload: request,
-      },
-      {
-        id: yield* input.idAllocator.allocate.event({
-          threadId: input.threadId,
-          providerSessionId: input.providerSessionId,
-        }),
-        type: "turn-item.updated" as const,
-        threadId: input.threadId,
-        nodeId,
-        driver: CODEX_DRIVER,
-        occurredAt: input.now,
-        payload: turnItem,
-      },
-    ] satisfies ReadonlyArray<OrchestrationV2DomainEvent>;
-    const providerEvents = [
-      {
-        type: "runtime_request.updated" as const,
-        driver: CODEX_DRIVER,
-        threadId: input.threadId,
-        runtimeRequest: request,
-      },
-      {
-        type: "node.updated" as const,
-        driver: CODEX_DRIVER,
-        node,
-      },
-      {
-        type: "turn_item.updated" as const,
-        driver: CODEX_DRIVER,
-        turnItem,
-      },
-    ] satisfies ReadonlyArray<ProviderAdapterV2Event>;
-    return { events, providerEvents, requestId, nodeId };
-  });
-}
 export {
   CodexCapabilities,
   ExclusiveCapabilities,
@@ -866,11 +738,9 @@ export {
   makeProviderSession,
   makeThreadCreatedEvent,
   makeProviderThread,
-  makeBrowserAccessProject,
   makeProviderAdapter,
   makeTestLayer,
   TestLegacyImporterLayer,
   runBrowserAccessScenario,
-  makePendingRuntimeRequestEvents,
 };
 export type { TestProviderRuntimeState };
