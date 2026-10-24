@@ -73,7 +73,9 @@ earlier receipt instead of running again; a retried tool call is a new request.
   file whose marks are its content (results say `released`; one another held
   file blocks is refused as `release-held`, with a line saying so). Paths are relative
   to the linked folder. Results name the skipped files with their reason, the
-  files kept only here, and new files over 50 MB, which stay here.
+  files kept only here, and new files over 50 MB, which stay here. Files held
+  for their conflict marks are named in every preview and sync result, an
+  up-to-date preview and a stop at a conflict included.
 - **Choices and `reviewedRemote`.** A result that lists conflicts gives the
   review's `remoteTree`; the agent passes it back as `reviewedRemote` with its
   choices. If Overleaf moved since, the result is a fresh review that needs a

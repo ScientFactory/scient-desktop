@@ -167,8 +167,13 @@ const releasedLine = (paths: ReadonlyArray<string>, tense: Exclude<SendTense, "u
 
 /** What a review would do: the preview's lines. */
 const reviewLines = (review: ScientOverleafReview): string[] => {
+  // Held files wait whatever else moves: they are always named (design section 4.2).
   if (review.upToDate && review.conflicts.length === 0)
-    return ["Up to date: nothing would come in or be sent.", ...fileLines(review)];
+    return [
+      "Up to date: nothing would come in or be sent.",
+      ...fileLines(review),
+      ...(review.unresolvedMarkers.length > 0 ? [markerLine(review.unresolvedMarkers)] : []),
+    ];
   const lines: string[] = [];
   lines.push(
     review.incoming.length === 0
@@ -435,6 +440,9 @@ export const syncLines = (result: ScientOverleafSyncResult): string[] => {
         ...progressLines(result),
         "Stopped at a conflict before applying this review: none of its changes were applied or sent.",
         ...conflictLines(result.review),
+        ...(result.review.unresolvedMarkers.length > 0
+          ? [markerLine(result.review.unresolvedMarkers)]
+          : []),
         ...activityLines(result.activity),
       ];
     case "refused":
