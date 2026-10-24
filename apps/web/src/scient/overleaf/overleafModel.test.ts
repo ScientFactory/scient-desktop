@@ -65,6 +65,7 @@ function review(overrides: Partial<ScientOverleafReview> = {}): ScientOverleafRe
     conflicts: [],
     warnings: [],
     unresolvedMarkers: [],
+    released: [],
     collisions: [],
     selectedAdditions: [],
     additions: [],
@@ -454,6 +455,12 @@ describe("conflict marks", () => {
     const message = askAgentMessage(["paper/main.tex"]);
     expect(message).toContain("- paper/main.tex");
     expect(message).toContain("explain your choices");
+  });
+
+  it("says when a file can't be sent anyway, and why", () => {
+    expect(refusalText({ reason: "release-held", path: "guide.md" })).toBe(
+      "guide.md can't be sent anyway: another file waiting for its conflicts keeps its place on Overleaf. Settle that file first.",
+    );
   });
 
   it("says what an undo put back and left, and never calls a replan put back", () => {

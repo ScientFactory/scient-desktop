@@ -1,7 +1,8 @@
 // SCIENT-OWNED: the Overleaf tab's per-file decisions. New files go to Overleaf
 // by default; one can be kept only on this computer, and a file the rule
-// skips, or one kept only here, can be sent anyway. A decision waits for the
-// tab's next Sync, which carries it.
+// skips, or one kept only here, can be sent anyway. A file waiting for its
+// conflict marks can be sent as it is ("Send it anyway"), for a file whose marks
+// are its content. A decision waits for the tab's next Sync, which carries it.
 import type { ScientOverleafReview } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 
@@ -94,7 +95,7 @@ function FileRow(props: {
 }
 
 export function OverleafNewFiles(props: {
-  readonly review: Pick<ScientOverleafReview, "additions" | "localOnly">;
+  readonly review: Pick<ScientOverleafReview, "additions" | "localOnly" | "unresolvedMarkers">;
   readonly folder: string;
   readonly decisions: ReadonlyMap<string, OverleafFileDecision>;
   readonly onDecide: (path: string, decision: OverleafFileDecision | null) => void;
@@ -158,6 +159,30 @@ export function OverleafNewFiles(props: {
                 </FileRow>
               ),
             )}
+          </ul>
+        </section>
+      ) : null}
+      {review.unresolvedMarkers.length > 0 ? (
+        <section className="flex flex-col gap-1" aria-label="Waiting for conflicts">
+          <h3 className="px-1 text-xs font-medium text-muted-foreground">Waiting for conflicts</h3>
+          <ul className="flex flex-col">
+            {review.unresolvedMarkers.map((path) => (
+              <FileRow
+                key={path}
+                path={path}
+                folder={folder}
+                note={null}
+                onOpenFile={props.onOpenFile}
+              >
+                <DecisionButton
+                  label="Send it anyway"
+                  path={path}
+                  pressed={decisions.get(path) === "release"}
+                  disabled={props.disabled ?? false}
+                  onPress={() => toggle(path, "release")}
+                />
+              </FileRow>
+            ))}
           </ul>
         </section>
       ) : null}

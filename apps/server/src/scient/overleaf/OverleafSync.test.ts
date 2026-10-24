@@ -1712,4 +1712,56 @@ describe.skipIf(!canApply)("OverleafSync", () => {
         }),
       ),
   );
+
+  it.live("holds a file with conflict marks, and sends it as it is once released", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const caller = w.at(w.main);
+        yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+        // A guide whose conflict marks are its content.
+        const guide = "# Conflict guide\n<<<<<<< Scient\nmine\n=======\ntheirs\n>>>>>>> Overleaf\n";
+        yield* write(NodePath.join(w.main, "paper"), { "guide.md": guide });
+        const held = yield* w.service.sync({
+          caller,
+          connectionId: id,
+          requestId: "s2",
+          files: { send: ["guide.md"] },
+        });
+        expect(held).toMatchObject({
+          _tag: "synced",
+          review: { unresolvedMarkers: ["guide.md"], released: [] },
+        });
+        expect((yield* w.overleafNow(PROJECT))["guide.md"]).toBeUndefined();
+        // A preview with the release shows it sent as it is.
+        expect(
+          yield* w.service.preview({ caller, connectionId: id, files: { release: ["guide.md"] } }),
+        ).toMatchObject({
+          _tag: "review",
+          review: { unresolvedMarkers: [], released: ["guide.md"] },
+        });
+        const released = yield* w.service.sync({
+          caller,
+          connectionId: id,
+          requestId: "s3",
+          files: { release: ["guide.md"] },
+        });
+        expect(released).toMatchObject({
+          _tag: "synced",
+          publication: { _tag: "accepted" },
+          review: { released: ["guide.md"] },
+        });
+        expect((yield* w.overleafNow(PROJECT))["guide.md"]).toBe(guide);
+      }),
+    ),
+  );
 });

@@ -47,10 +47,14 @@ export const ScientOverleafConnectRequest = Schema.Struct({
 });
 export type ScientOverleafConnectRequest = typeof ScientOverleafConnectRequest.Type;
 
-/** Per-file decisions: keep new files only here, or send skipped or kept-only files. */
+/**
+ * Per-file decisions: keep new files only here, send skipped or kept-only files,
+ * or send files held back for their conflict marks as they are (`release`).
+ */
 const FileDecisions = Schema.Struct({
   keepOnlyHere: Schema.optional(Schema.Array(ManuscriptPath).check(Schema.isMaxLength(2_000))),
   send: Schema.optional(Schema.Array(ManuscriptPath).check(Schema.isMaxLength(2_000))),
+  release: Schema.optional(Schema.Array(ManuscriptPath).check(Schema.isMaxLength(2_000))),
 });
 
 const Choice = Schema.Struct({
@@ -203,7 +207,10 @@ export const ScientOverleafReview = Schema.Struct({
     }),
   ),
   warnings: Schema.Array(ScientOverleafWarning),
+  /** Files held back for their conflict marks: they wait, everything else is sent. */
   unresolvedMarkers: Schema.Array(ManuscriptPath),
+  /** Files with marks this review sends as they are, as `files.release` asked. */
+  released: Schema.Array(ManuscriptPath),
   collisions: Schema.Array(ManuscriptPath),
   selectedAdditions: Schema.Array(ManuscriptPath),
   additions: Schema.Array(

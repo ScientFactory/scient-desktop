@@ -665,9 +665,12 @@ coordinator's per-connection reservations.
   preview record it and prepare again. Conflict choices answer one Overleaf tree
   (`reviewedRemote`); when Overleaf has moved, a review that still has conflicts
   is shown again without them, and one that has none is confirmed as usual.
-  Per-file decisions (`files.keepOnlyHere`, `files.send`) go to the engine's
-  selections, applied to the review's own capture and carried through rebuilt
-  reviews; reviews list every new file with its selection and skip reason.
+  Per-file decisions (`files.keepOnlyHere`, `files.send`, `files.release`) go
+  to the engine's selections (`release` is `releaseMarked`), applied to the
+  review's own capture and carried through rebuilt reviews, and are part of the
+  sync receipt's digest; reviews list every new file with its selection and skip
+  reason, the files held for their marks (`unresolvedMarkers`) and those sent as
+  they are (`released`).
   **Undo** (`OverleafSync.undo`, attempt number and request ID) saves the
   folder's editors, runs the coordinator's undo, and when its apply completed
   syncs at once under the same hold, with a receipt derived from the request's
