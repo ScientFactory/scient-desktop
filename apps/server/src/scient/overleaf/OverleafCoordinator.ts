@@ -131,6 +131,7 @@ export class OverleafRetainedLimitError extends Schema.TaggedError<OverleafRetai
       "conflict-group",
       "marker-paths",
       "attempts",
+      "folder-depth",
     ]),
   },
 ) {
@@ -146,6 +147,8 @@ export class OverleafRetainedLimitError extends Schema.TaggedError<OverleafRetai
         return "This would track more files with conflict material than Scient can. Resolve some first.";
       case "attempts":
         return "Earlier sends to Overleaf are still unresolved, and Scient can't record another until some are.";
+      case "folder-depth":
+        return "This would write a file in more nested folders than Scient can write safely. Nothing was changed.";
     }
   }
 }
@@ -1258,6 +1261,30 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   });
 
   /**
+   * Whether the applier can make every write of `plan` in the connection's folder:
+   * each takes one native lease, which binds a bounded number of folders. Asked
+   * before the apply is recorded, so a plan with a write that could not be leased
+   * is refused with nothing written instead of stopping part way.
+   */
+  const leaseRoom = Effect.fn("OverleafCoordinator.leaseRoom")(function* (
+    connection: OverleafConnectionDocument,
+    plan: WorkspaceApplier.WorkspaceApplyPlan,
+  ) {
+    const retention = yield* store.prepareRetention({
+      environmentId: connection.environmentId,
+      connectionId: connection.connectionId,
+      checkoutRoot: connection.checkout.canonicalRoot,
+      exchangeHelper: options.exchangeHelper,
+      expected: connection.retention.vaultIdentity,
+    });
+    return yield* applier.fits({
+      cwd: folderOf(connection),
+      applicationDirectory: retention.directory,
+      plan,
+    });
+  });
+
+  /**
    * Runs or resumes the linked apply inside an application section and adopts
    * its result. Without `plan` the applier resumes from its own durable intent.
    */
@@ -1868,6 +1895,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 return yield* new OverleafRetainedLimitError({
                   connectionId: input.connectionId,
                   limit: "conflict-group",
+                });
+              if (!(yield* leaseRoom(connection, plan)))
+                return yield* new OverleafRetainedLimitError({
+                  connectionId: input.connectionId,
+                  limit: "folder-depth",
                 });
               // A sync with changes to send records one more attempt, which must fit beside
               // every send still unresolved.
@@ -2598,6 +2630,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 return yield* new OverleafRetainedLimitError({
                   connectionId: input.connectionId,
                   limit: "conflict-group",
+                });
+              if (!(yield* leaseRoom(connection, applyPlan)))
+                return yield* new OverleafRetainedLimitError({
+                  connectionId: input.connectionId,
+                  limit: "folder-depth",
                 });
               const intentTree = yield* repos.writeTree({
                 repo,
