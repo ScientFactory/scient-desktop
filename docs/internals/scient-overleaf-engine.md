@@ -896,3 +896,23 @@ packaged, signed macOS helper behavior is a separate gate. A local bare Git
 remote does not establish the Cloud bridge's commit/history or
 publication-acknowledgement semantics. Server Pro, Windows and Linux remain
 unverified product environments.
+
+## Known limits
+
+- **Retention removals follow path names.** Discarding a kept copy, and the
+  other places the file layer removes retained objects, name the target by
+  its full path. After a record's lease is taken, another process running as
+  the same user could rename the record folder (or a folder above it) and put
+  a link to a workspace folder in its place; the removal would then follow the
+  link and delete a same-named workspace file or empty folder. The lease holds
+  the record's folder, not its name. This predates the Overleaf work (main's
+  discard removes by path the same way) and needs a deliberate same-user
+  process racing Scient's private retention folders. The fix is to perform
+  these removals in the native helper, relative to the held folder
+  (`unlinkat`-style, single-component names, with the folder sync anchored
+  there too), for discard, settlement and the file layer's other path-named
+  removals; it is a follow-up of its own.
+- **A refused discard's reason travels in the message only.** A discard of a
+  kept folder that still has contents is refused with
+  `reason: "kept-folder-not-empty"` on the server error; over the WebSocket it
+  reports as `mutation_unavailable` with the reason in the message.
