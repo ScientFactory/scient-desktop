@@ -32,6 +32,7 @@ import {
   type OverleafVolumeIdentityResolver,
 } from "./OverleafRetentionVault.ts";
 import {
+  decodeOverleafConnectionDocument,
   OverleafConnectionDocument,
   OverleafOperationReceipt,
   OverleafServerId,
@@ -263,9 +264,6 @@ export interface OverleafStateStoreHooks {
   ) => Promise<void>;
 }
 
-const decodeConnection = Schema.decodeUnknownExit(
-  Schema.fromJsonString(OverleafConnectionDocument),
-);
 const decodeReceipt = Schema.decodeUnknownExit(Schema.fromJsonString(OverleafOperationReceipt));
 /** Documents are validated before they are written, not only when read back. */
 const validateConnection = Schema.decodeUnknownExit(OverleafConnectionDocument);
@@ -500,11 +498,12 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
         if (errorCode(error) === "ENOENT") return { _tag: "missing" };
         throw error;
       }
-      const decoded = decodeConnection(text);
-      if (Exit.isSuccess(decoded)) {
+      // The current version, or an older one upgraded in memory.
+      const decoded = decodeOverleafConnectionDocument(text);
+      if (decoded !== null) {
         // A document filed under another name is not this connection's state.
-        if (decoded.value.connectionId !== connectionId) return { _tag: "corrupt" };
-        return { _tag: "ready", document: decoded.value };
+        if (decoded.connectionId !== connectionId) return { _tag: "corrupt" };
+        return { _tag: "ready", document: decoded };
       }
       let version: unknown;
       try {
@@ -512,7 +511,8 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
       } catch {
         return { _tag: "corrupt" };
       }
-      return typeof version === "number" && version !== OVERLEAF_CONNECTION_SCHEMA_VERSION
+      // A newer version is another release's; an older one that does not upgrade is damaged.
+      return typeof version === "number" && version > OVERLEAF_CONNECTION_SCHEMA_VERSION
         ? { _tag: "unsupported" }
         : { _tag: "corrupt" };
     });

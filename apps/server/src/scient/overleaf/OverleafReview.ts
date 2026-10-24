@@ -9,7 +9,10 @@ import * as NodePath from "node:path";
 
 import * as Effect from "effect/Effect";
 
-import type { OverleafConnectionDocument } from "./OverleafConnectionState.ts";
+import type {
+  OverleafConnectionDocument,
+  OverleafMarkerRecord,
+} from "./OverleafConnectionState.ts";
 import { newOverleafId } from "./OverleafGitExecutor.ts";
 import {
   isOverleafLfsPointer,
@@ -33,9 +36,15 @@ import {
   conflictGroups,
   type FileTree,
   guardedPaths,
+  hasConflictBlock,
   hasConflictMarkers,
+  hasScientConflictMarkers,
+  type HeldFile,
+  heldFiles,
+  publicationTree,
   type Rename,
 } from "./syncRules.ts";
+import { manuscriptTreeProblem } from "./manuscriptPaths.ts";
 import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
 import type { WorkspaceApplyPlan } from "./WorkspaceApplier.ts";
 
@@ -107,10 +116,29 @@ export interface OverleafReviewBinding {
   readonly collisionPaths: ReadonlyArray<string>;
   readonly choices: ReadonlyArray<readonly [string, ConflictChoice]>;
   readonly interrupted: ReadonlyArray<ReadonlyArray<string>>;
-  /** Conflict material recorded before this review, and which of it is still unresolved. */
-  readonly recordedMarkerPaths: ReadonlyArray<string>;
+  /**
+   * Conflict material recorded before this review, and the folder paths of the files
+   * still holding it.
+   */
+  readonly recordedMarkers: ReadonlyArray<OverleafMarkerRecord>;
   readonly unresolvedMarkers: ReadonlyArray<string>;
+  /** The same files with every other path each is linked to, for the copies an apply keeps. */
+  readonly heldMarkers: ReadonlyArray<HeldFile>;
+  /** The local target: what the folder will hold, conflict material included. */
   readonly candidateTree: string;
+  /**
+   * What is sent: the local target with every held path set to Overleaf's fetched
+   * entry, or absent where Overleaf has none.
+   */
+  readonly publicationTree: string;
+  /** Every path of every file held back for its conflict marks (`heldFiles`). */
+  readonly heldPaths: ReadonlyArray<string>;
+  /** Files with conflict marks the request asked to send as they are. */
+  readonly releaseMarked: ReadonlyArray<string>;
+  /** Those of them that are sent as they are: each would otherwise be held. */
+  readonly released: ReadonlyArray<string>;
+  /** The records of recorded files still held, at their paths after this apply. */
+  readonly carriedMarkers: ReadonlyArray<OverleafMarkerRecord>;
   readonly conflictKeys: ReadonlyArray<string>;
   /** Files where this review's plan writes new conflict material. */
   readonly markerPaths: ReadonlyArray<string>;
@@ -125,12 +153,19 @@ export interface OverleafReview {
   readonly binding: OverleafReviewBinding;
   /** Changes to the folder: from the captured state to the candidate. */
   readonly incoming: ReadonlyArray<TreeChange>;
-  /** Changes to Overleaf: from its fetched state to the candidate. */
+  /** Changes to Overleaf: from its fetched state to the publication tree. No held path is among them. */
   readonly outgoing: ReadonlyArray<TreeChange>;
   readonly conflicts: ReadonlyArray<OverleafReviewConflict>;
   readonly warnings: ReadonlyArray<OverleafReviewWarning>;
-  /** Recorded Scient conflict material still present; outgoing publication waits for it. */
+  /**
+   * Files held back for marks already in the folder: recorded conflict material
+   * still present, and any other file with a conflict. Those files wait, the rest
+   * is sent. Each can be sent as it is instead, by listing it in `releaseMarked`;
+   * marks this review writes are never among them.
+   */
   readonly unresolvedMarkers: ReadonlyArray<string>;
+  /** Files with marks sent as they are in this review, as `releaseMarked` asked. */
+  readonly released: ReadonlyArray<string>;
   /** Every conflict has an allowed choice. */
   readonly confirmable: boolean;
   /** Nothing to change on either side. */
@@ -189,6 +224,17 @@ export type OverleafReviewRefusal =
   | { readonly reason: "candidate-file-too-large"; readonly path: string }
   /** More local-only paths than a connection can remember; choose a narrower folder. */
   | { readonly reason: "local-only-limit" }
+  /**
+   * A file held back for its conflict marks keeps Overleaf's `path`, which the result
+   * makes a folder (or the other way round) at `other`. Settle the marks, or move `other`.
+   */
+  | { readonly reason: "held-file-clash"; readonly path: string; readonly other: string }
+  /**
+   * `releaseMarked` asked to send `path` as it is, but another file held for its
+   * conflict marks keeps that path on Overleaf (it may be that file's former name).
+   * Settle that file's marks, or stop asking.
+   */
+  | { readonly reason: "release-held"; readonly path: string }
   /** Overleaf has content where the folder has something never synchronized (a link, repository, dropping). */
   | { readonly reason: "remote-collides-with-excluded"; readonly path: string };
 
@@ -209,7 +255,9 @@ export interface OverleafReviewInput {
   /** File identities an earlier apply left interrupted: forced conflicts. */
   readonly interrupted: ReadonlyArray<ReadonlyArray<string>>;
   /** Files where Scient wrote conflict material that has not been resolved yet. */
-  readonly markerPaths: ReadonlyArray<string>;
+  readonly markers: ReadonlyArray<OverleafMarkerRecord>;
+  /** Folder paths of files with conflict marks to send as they are, by choice. */
+  readonly releaseMarked: ReadonlyArray<string>;
   readonly epochs: { readonly checkout: number; readonly credential: number };
   /** Private folder for staging captured bytes as blobs; cleared afterwards. */
   readonly scratch: string;
@@ -246,6 +294,9 @@ export const overleafConflictKey = (paths: ReadonlyArray<string>) =>
   sha256(sorted(paths).join("\0"));
 /** Editable on Overleaf means text; a NUL byte early on means it is stored as an upload. */
 const looksLikeText = (bytes: Uint8Array) => !bytes.subarray(0, 8_000).includes(0);
+/** A conflict's opening and closing marks, as bytes, to rule most files out quickly. */
+const OPENING_MARK = Buffer.from("<<<<<<<");
+const CLOSING_MARK = Buffer.from(">>>>>>>");
 /** LFS pointers are small by specification; larger blobs need no prefix check. */
 const LFS_POINTER_MAX_BYTES = 1024;
 
@@ -544,10 +595,11 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
   for (const [path, oid] of merged) blobSizes.set(oid, mergedSizes.get(path) ?? 0);
   for (const [path, oid] of local) blobSizes.set(oid, inventory.captured.get(path)!.bytes.length);
 
-  const renames = [
-    ...renamesOf(yield* repos.diff({ repo, from: baseTree, to: localTree })),
-    ...renamesOf(yield* repos.diff({ repo, from: baseTree, to: input.remote.tree })),
-  ];
+  const localRenames = renamesOf(yield* repos.diff({ repo, from: baseTree, to: localTree }));
+  const remoteRenames = renamesOf(
+    yield* repos.diff({ repo, from: baseTree, to: input.remote.tree }),
+  );
+  const renames = [...localRenames, ...remoteRenames];
   const guarded = guardedPaths({
     base,
     local,
@@ -646,8 +698,81 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     });
   }
 
+  // A file with conflict marks waits whole; everything else is sent (design 4.2). A
+  // group the user merges in the editor is one path that no rename touches (one path,
+  // closed over renames), so its file's only path is that one.
+  const markerPaths = sorted(
+    conflicts
+      .filter((conflict) => conflict.chosen === "markers")
+      .flatMap((conflict) => conflict.paths),
+  );
+  const recordedMarkers = input.markers
+    .map((record) => ({
+      path: record.path,
+      folderPaths: sorted(new Set(record.folderPaths)),
+      overleafPaths: sorted(new Set(record.overleafPaths)),
+    }))
+    .sort((left, right) => byPath(left.path, right.path));
+  const textOf = (path: string) => {
+    const file = inventory.captured.get(path);
+    return file === undefined ? null : new TextDecoder().decode(file.bytes);
+  };
+  const held = heldFiles({
+    recorded: recordedMarkers,
+    fresh: markerPaths,
+    local,
+    remote,
+    target: candidate,
+    localRenames,
+    remoteRenames,
+    marked: (path) => {
+      const text = textOf(path);
+      return text !== null && hasConflictMarkers(text);
+    },
+    conflicted: (path) => {
+      // Every captured file is checked; most are ruled out by their bytes alone: a
+      // labelled line or a whole block needs an opening or a closing line.
+      const bytes = inventory.captured.get(path)?.bytes;
+      if (bytes === undefined) return false;
+      const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const opening = buffer.includes(OPENING_MARK);
+      const closing = buffer.includes(CLOSING_MARK);
+      if (!opening && !closing) return false;
+      const text = textOf(path)!;
+      return hasScientConflictMarkers(text) || (opening && closing && hasConflictBlock(text));
+    },
+    released: input.releaseMarked,
+  });
+  // A release is a request to send a file as it is; one that cannot be honoured is
+  // refused, never reported as sent.
+  const unreleasable = held.unreleasable[0];
+  if (unreleasable !== undefined) return refused({ reason: "release-held", path: unreleasable });
+  let publishedTree = candidateTree;
+  if (held.paths.length > 0) {
+    const publication = publicationTree({ target: candidate, remote, held: held.paths });
+    // Validated like any other tree: Overleaf's entries beside the result must make one,
+    // within the same limits. Its paths are drawn from those already checked for aliases.
+    const clash = manuscriptTreeProblem(sorted(publication.keys()));
+    if (clash !== null)
+      return refused(
+        clash.kind === "file-and-folder"
+          ? { reason: "held-file-clash", path: clash.file, other: clash.inside }
+          : clash.kind === "case-collision" || clash.kind === "normalization-collision"
+            ? { reason: "path-alias", first: clash.first, second: clash.second }
+            : { reason: "held-file-clash", path: clash.path, other: clash.path },
+      );
+    if (publication.size > limits.managedFiles) return refused({ reason: "candidate-file-limit" });
+    let publicationBytes = 0;
+    for (const oid of publication.values()) publicationBytes += blobSizes.get(oid) ?? Infinity;
+    if (publicationBytes > limits.totalBytes) return refused({ reason: "candidate-too-large" });
+    publishedTree = yield* repos.writeTree({
+      repo,
+      entries: sorted(publication.keys()).map((path) => ({ path, oid: publication.get(path)! })),
+    });
+  }
+
   const incoming = yield* repos.diff({ repo, from: localTree, to: candidateTree });
-  const outgoing = yield* repos.diff({ repo, from: input.remote.tree, to: candidateTree });
+  const outgoing = yield* repos.diff({ repo, from: input.remote.tree, to: publishedTree });
 
   const warnings: OverleafReviewWarning[] = [];
   if (connection.base.tree === null) {
@@ -688,16 +813,7 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
   if (editableBytes > limits.editableTotalBytes)
     warnings.push({ kind: "editable-total-exceeded", bytes: editableBytes });
 
-  const markerPaths = sorted(
-    conflicts
-      .filter((conflict) => conflict.chosen === "markers")
-      .flatMap((conflict) => conflict.paths),
-  );
-  const recordedMarkerPaths = sorted(new Set(input.markerPaths));
-  const unresolvedMarkers = recordedMarkerPaths.filter((path) => {
-    const file = inventory.captured.get(path);
-    return file !== undefined && hasConflictMarkers(new TextDecoder().decode(file.bytes));
-  });
+  const unresolvedMarkers = held.unresolved.map((file) => file.path);
 
   const binding: OverleafReviewBinding = {
     connectionId: connection.connectionId,
@@ -724,9 +840,15 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
       conflict.chosen === null ? [] : [[conflict.key, conflict.chosen] as const],
     ),
     interrupted,
-    recordedMarkerPaths,
+    recordedMarkers,
     unresolvedMarkers,
+    heldMarkers: held.unresolved,
     candidateTree,
+    publicationTree: publishedTree,
+    heldPaths: held.paths,
+    releaseMarked: sorted(new Set(input.releaseMarked)),
+    released: held.released,
+    carriedMarkers: held.carried,
     conflictKeys: conflicts.map((conflict) => conflict.key),
     markerPaths,
     warnings,
@@ -743,6 +865,7 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     conflicts,
     warnings,
     unresolvedMarkers,
+    released: held.released,
     confirmable: conflicts.every((conflict) => conflict.chosen !== null),
     upToDate: incoming.length === 0 && outgoing.length === 0 && conflicts.length === 0,
     collisions: sorted(requested),

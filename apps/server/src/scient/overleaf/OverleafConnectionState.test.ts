@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import {
+  decodeOverleafConnectionDocument,
   OverleafConnectionDocument,
   type OverleafPublicationAttempt,
   overleafRequiredPins,
@@ -226,6 +227,7 @@ describe("overleafTransitionViolation", () => {
       remoteCommit: oid("7"),
       localOnly: [],
       priorMarkers: [],
+      markers: [],
     };
     const applying = next(first, { activeApply: link });
     // The apply's result advances the base and clears its link in one replacement.
@@ -282,6 +284,7 @@ describe("overleafTransitionViolation", () => {
       remoteCommit: oid("7"),
       localOnly: [],
       priorMarkers: [],
+      markers: [],
     };
     const applying = next(synced, { activeApply: link });
     expect(overleafTransitionViolation(synced, applying, NOW)).toBeNull();
@@ -318,6 +321,7 @@ describe("overleafTransitionViolation", () => {
       remoteCommit: oid("3"),
       localOnly: [],
       priorMarkers: [],
+      markers: [],
       undoneAttempt: 1,
     };
     expect(isValid({ ...sent, activeApply: link })).toBe(true);
@@ -341,6 +345,46 @@ describe("overleafTransitionViolation", () => {
     ).toBe(false);
   });
 
+  it("upgrades a version 1 document with a pending undo, keeping what it undoes", () => {
+    const accepted = attempt(1, {
+      parentCommit: oid("1"),
+      candidateCommit: oid("3"),
+      candidateTree: oid("4"),
+      outcome: "accepted",
+      evidence: "push-accepted",
+    });
+    const { markers: _markers, ...rest } = next(synced, {
+      base: { commit: oid("3"), tree: oid("4"), generation: 2 },
+      lastAttemptNumber: 1,
+      attempts: [accepted],
+    });
+    const link = {
+      applyId: "apply-1",
+      kind: "sync-undo" as const,
+      operationId: "operation-1",
+      planDigest: "a".repeat(64),
+      baseGeneration: 2,
+      intentTree: oid("5"),
+      remoteCommit: oid("3"),
+      localOnly: [],
+      undoneAttempt: 1,
+      retired: ["added.tex"],
+    };
+    const upgraded = decodeOverleafConnectionDocument(
+      JSON.stringify({
+        ...rest,
+        schemaVersion: 1,
+        markerPaths: ["main.tex"],
+        activeApply: { ...link, priorMarkers: ["main.tex"] },
+      }),
+    );
+    expect(upgraded?.activeApply).toEqual({
+      ...link,
+      priorMarkers: [{ path: "main.tex", links: null }],
+      markers: [{ path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] }],
+    });
+  });
+
   it("refuses a fresh vault while the connection still references the recorded one", () => {
     const freshVault = {
       ...synced.retention,
@@ -355,6 +399,7 @@ describe("overleafTransitionViolation", () => {
       retainedAtSyncCount: 1,
       kept: "apply-1/files/step-0/retained",
       markers: false,
+      markerLinks: [],
       versions: [],
       stamp: "1:1",
     };
@@ -374,6 +419,7 @@ describe("overleafTransitionViolation", () => {
         remoteCommit: oid("7"),
         localOnly: [],
         priorMarkers: [],
+        markers: [],
       },
     });
     expect(violation(applying, { retention: freshVault })).toBe("vault-replaced-while-referenced");
@@ -395,6 +441,7 @@ describe("overleafTransitionViolation", () => {
       retainedAtSyncCount: 1,
       kept: "apply-1/files/step-0/retained",
       markers: false,
+      markerLinks: [],
       versions: [],
       stamp: "1:1",
     };
@@ -426,6 +473,25 @@ describe("overleafTransitionViolation", () => {
     expect(
       violation(changed, {
         retention: { ...changed.retention, copies: [{ ...copy, state: "changed" }] },
+      }),
+    ).toBe("retained-copy-rewritten"); // The other paths a kept copy of conflict material remembers never change.
+    const kept = holding({ state: "kept", markers: true, markerLinks: ["old.tex"] }, 2);
+    expect(
+      violation(kept, {
+        retention: {
+          ...kept.retention,
+          copies: [{ ...kept.retention.copies[0]!, markerLinks: [] }],
+        },
+      }),
+    ).toBe("retained-copy-rewritten");
+    // Unknown other paths (version 1) never become known, not even as none.
+    const unknown = holding({ state: "kept", markers: true, markerLinks: null }, 2);
+    expect(
+      violation(unknown, {
+        retention: {
+          ...unknown.retention,
+          copies: [{ ...unknown.retention.copies[0]!, markerLinks: [] }],
+        },
       }),
     ).toBe("retained-copy-rewritten");
   });

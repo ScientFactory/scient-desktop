@@ -438,6 +438,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, undo", () => {
           retainedAtSyncCount: sent.completedSyncCount,
           kept: `earlier/files/step-${index}/retained`,
           markers: false,
+          markerLinks: [],
           versions: [],
           stamp: "0:0",
         });

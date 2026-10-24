@@ -111,6 +111,8 @@ export interface WorkspaceApplyResult {
   readonly base: ReadonlyMap<string, string>;
   readonly interrupted: ReadonlyArray<ReadonlyArray<string>>;
   readonly markerPaths: ReadonlyArray<string>;
+  /** Every unit was applied; none was skipped or interrupted. */
+  readonly unitsDone: boolean;
   /** Kept copies; `relativePath` is the plan path whose step kept it. */
   readonly retained: ReadonlyArray<
     RetainedMutationResult & { readonly changed: boolean; readonly relativePath: string }
@@ -546,6 +548,7 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
             base: new Map(),
             interrupted: [],
             markerPaths: [],
+            unitsDone: false,
             retained: [],
             matchesTarget: false,
             stagingPaths: [],
@@ -847,6 +850,7 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
                   base: new Map(Object.entries(state.nextBase)),
                   interrupted,
                   markerPaths,
+                  unitsDone: state.phase !== "replan" && state.outcomes.every((o) => o === "done"),
                   retained,
                   matchesTarget,
                   stagingPaths: (await NodeFSP.readdir(state.cwd)).filter((name) =>
