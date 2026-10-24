@@ -1,3 +1,4 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { readThreadProjection } from "../state/entities";
 import { deriveTimelineEntriesFromVisibleTurnItemsWithState } from "../session-logic";
 import { Button } from "./ui/button";
@@ -73,6 +74,7 @@ import {
 } from "../scient/chat/ScientRevertDialogDiagnostics";
 import { scientFilePanelProps } from "../scient/fileSurfaces/scientFilePanelProps";
 import { deriveAgentPanelModel } from "../scient/chat/useAgentPanelModel";
+import { ThreadOpenRecorder } from "../scient/chat/ThreadOpenRecorder";
 import { tokenLimitBannerItems, deriveTokenLimitNotice } from "../scient/chat/tokenLimitNotice";
 import { resolveStaleDraftDefaultModelSelection } from "../lib/chatThreadActions";
 
@@ -194,8 +196,7 @@ import {
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
-import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
+import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
 import { type SetStateAction, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -2438,7 +2439,7 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:END
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
-  const activeProjectRepository = sourceControlRepositorySelector(
+  const activeProjectRepository = sourceControlClients.repositorySelector(
     activeProject?.repositoryIdentity,
   );
   const {
@@ -4871,7 +4872,9 @@ function ChatViewContent(props: ChatViewProps) {
       {/* SCIENT-FORK:END */}
       <LinkPullRequestDialogHost />
       {/* SCIENT-FORK:START — useAcknowledgeAnswer is the automatic visit writer; upstream's
-          ThreadVisitWatermark would mark a background window or an unloaded answer read. */}
+          ThreadVisitWatermark would mark a background window or an unloaded answer read.
+          Opens still rank threads in search, recorded without moving the watermark. */}
+      <ThreadOpenRecorder threadRef={routeThreadRef} />
       {/* SCIENT-FORK:END */}
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
       {/* SCIENT-FORK:START — the fork dialog. */}

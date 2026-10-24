@@ -35,6 +35,7 @@ import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
+import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -552,7 +553,10 @@ it.effect.each([
         (yield* store.getThreadProjection(threadId)).thread.activeProviderThreadId,
         providerThreadId,
       );
-      assert.deepEqual(threadShellFromProjection(rolledBack).pendingBackgroundTasks, []);
+      assert.deepEqual(
+        threadShellFromProjection(rolledBack, threadPullRequestsOf).pendingBackgroundTasks,
+        [],
+      );
     }).pipe(Effect.provide(layer)),
 );
 
@@ -1027,7 +1031,8 @@ const completedAnswerSurvivesNewRuns = Effect.gen(function* () {
       expected,
     );
     assert.deepEqual(
-      threadShellFromProjection(yield* store.getThreadProjection(threadId)).latestCompletedAnswer,
+      threadShellFromProjection(yield* store.getThreadProjection(threadId), threadPullRequestsOf)
+        .latestCompletedAnswer,
       expected,
     );
   });
@@ -1123,7 +1128,8 @@ const completedAnswerWhitespaceAndOrder = Effect.gen(function* () {
       : null;
     assert.deepEqual((yield* store.getThreadShell(threadId))?.latestCompletedAnswer, expected);
     assert.deepEqual(
-      threadShellFromProjection(yield* store.getThreadProjection(threadId)).latestCompletedAnswer,
+      threadShellFromProjection(yield* store.getThreadProjection(threadId), threadPullRequestsOf)
+        .latestCompletedAnswer,
       expected,
     );
   }
@@ -1163,7 +1169,8 @@ const completedAnswerWhitespaceAndOrder = Effect.gen(function* () {
       expected,
     );
     assert.deepEqual(
-      threadShellFromProjection(yield* store.getThreadProjection(threadId)).latestCompletedAnswer,
+      threadShellFromProjection(yield* store.getThreadProjection(threadId), threadPullRequestsOf)
+        .latestCompletedAnswer,
       expected,
     );
   }
@@ -3364,7 +3371,10 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       const stoppedSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
         (row) => row.id === threadId,
       )!;
-      for (const stoppedShell of [stoppedSqlShell, threadShellFromProjection(stoppedProjection)]) {
+      for (const stoppedShell of [
+        stoppedSqlShell,
+        threadShellFromProjection(stoppedProjection, threadPullRequestsOf),
+      ]) {
         assert.equal(stoppedShell.latestRunId, runId);
         assert.isTrue(stoppedShell.latestRunStopRequested);
       }
@@ -3461,7 +3471,7 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
           const sqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
             (row) => row.id === threadId,
           )!;
-          const memoryShell = threadShellFromProjection(projection);
+          const memoryShell = threadShellFromProjection(projection, threadPullRequestsOf);
           const expected = activityStatus === "completed" ? null : DateTime.toEpochMillis(now);
           const timestamp = (value: DateTime.Utc | null | undefined) =>
             value == null ? null : DateTime.toEpochMillis(value);
@@ -3493,7 +3503,10 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       const heldSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
         (row) => row.id === threadId,
       )!;
-      for (const heldShell of [heldSqlShell, threadShellFromProjection(heldProjection)]) {
+      for (const heldShell of [
+        heldSqlShell,
+        threadShellFromProjection(heldProjection, threadPullRequestsOf),
+      ]) {
         assert.equal(heldShell.latestRunId, runId);
         assert.equal(heldShell.status, "completed");
         assert.isTrue(heldShell.latestRunStopRequested);
@@ -3515,7 +3528,7 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       )!;
       for (const onlyHeldShell of [
         onlyHeldSqlShell,
-        threadShellFromProjection(onlyHeldProjection),
+        threadShellFromProjection(onlyHeldProjection, threadPullRequestsOf),
       ]) {
         assert.isNull(onlyHeldShell.latestRunId);
         assert.equal(onlyHeldShell.status, "idle");
@@ -3762,7 +3775,7 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         lastErrorClass: string | null,
       ) {
         const projection = yield* store.getThreadProjection(threadId);
-        const memoryShell = threadShellFromProjection(projection);
+        const memoryShell = threadShellFromProjection(projection, threadPullRequestsOf);
         const shells = yield* store.getShellSnapshot();
         const sqlShell = shells.threads.find((row) => row.id === threadId)!;
         for (const shell of [memoryShell, sqlShell]) {
@@ -3830,7 +3843,7 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       });
       yield* assertSummary("Plan limit reached.", "usage_limit");
       const queuedProjection = yield* store.getThreadProjection(threadId);
-      const queuedMemoryShell = threadShellFromProjection(queuedProjection);
+      const queuedMemoryShell = threadShellFromProjection(queuedProjection, threadPullRequestsOf);
       const queuedSqlShell = (yield* store.getShellSnapshot()).threads.find(
         (row) => row.id === threadId,
       )!;

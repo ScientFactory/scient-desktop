@@ -123,13 +123,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const projectId = caller?.projectId ?? requested;
       // SCIENT-FORK:END
       const threadSearch = yield* ThreadSearch.ThreadSearch;
-      const result = yield* threadSearch.search(query).pipe(Effect.mapError(unavailable));
-      return {
-        matches:
-          projectId === undefined
-            ? result.matches
-            : result.matches.filter((match) => match.projectId === projectId),
-      };
+      return yield* threadSearch
+        .searchThreads({ ...query, projectId })
+        .pipe(Effect.mapError(unavailable));
     }),
   ),
   scient_thread_fork: writesThread((input) =>

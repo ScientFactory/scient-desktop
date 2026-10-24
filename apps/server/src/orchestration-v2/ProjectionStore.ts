@@ -22,7 +22,7 @@ import {
   type NativeHistoryEstimate,
 } from "./scient-fork/NativeHistoryEstimate.ts";
 // SCIENT-FORK:END
-import { applyThreadPullRequestLinkUpdate } from "@t3tools/shared/threadPullRequests";
+import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -33,16 +33,15 @@ import type {
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import { latestUnheldRun, threadErrorSummary } from "@t3tools/shared/orchestrationV2ThreadError";
-import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
   secretRequestAsPendingInput,
   activeProviderGoalForShell,
   isActivityRunForShell,
   providerInstanceHistoryForShell,
-  threadShellFromProjection,
+  threadShellFromProjection as threadShellWithPullRequests,
   COMPLETED_ANSWER_TRIM_CHARACTERS,
 } from "@t3tools/shared/orchestrationV2ThreadShell";
-export { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
 import type {
   OrchestrationV2AppThread,
   OrchestrationV2Checkpoint,
@@ -165,6 +164,11 @@ import {
   readForkCopyIds,
   hasForkHistory,
 } from "./scient-fork/ForkHistory.ts";
+
+/** The shell from a projection, reading legacy pull request links by this server's forges. */
+export const threadShellFromProjection = (projection: OrchestrationV2ThreadProjection) =>
+  threadShellWithPullRequests(projection, threadPullRequestsOf);
+
 // SCIENT-FORK:END
 
 // SCIENT-FORK:START
@@ -1890,6 +1894,7 @@ function shellFromState(input: {
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
+    opens: input.state.thread.opens ?? null,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
     limitRecovery: input.state.thread.limitRecovery ?? null,
     deletedAt: input.state.thread.deletedAt,

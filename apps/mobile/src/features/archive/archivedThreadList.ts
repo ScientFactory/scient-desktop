@@ -4,7 +4,9 @@ import {
   scopeThreadShell,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { threadSearchSubject } from "@t3tools/client-runtime/state/thread-search";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
@@ -36,6 +38,7 @@ export function buildArchivedThreadGroups(input: {
   readonly sortOrder: ArchivedThreadSortOrder;
 }): ReadonlyArray<ArchivedThreadGroup> {
   const query = input.searchQuery.trim().toLocaleLowerCase();
+  const foldedQuery = foldSearchQuery(input.searchQuery);
   const groups: ArchivedThreadGroup[] = [];
 
   for (const entry of input.snapshots) {
@@ -63,11 +66,15 @@ export function buildArchivedThreadGroups(input: {
         matchesQuery(project.title, query) ||
         matchesQuery(project.workspaceRoot, query) ||
         matchesQuery(environmentLabel, query);
+      // Threads match as in every other thread search; the list keeps its own order.
       const matchingThreads = groupMatches
         ? projectThreads
-        : projectThreads.filter(
-            (thread) => matchesQuery(thread.title, query) || matchesQuery(thread.branch, query),
-          );
+        : rankSearchItems(projectThreads, (thread, options) =>
+            scoreThreadSearch(foldedQuery, threadSearchSubject(thread, null), 0, {
+              ...options,
+              picks: false,
+            }),
+          ).map(({ item }) => item);
 
       if (matchingThreads.length === 0) {
         continue;

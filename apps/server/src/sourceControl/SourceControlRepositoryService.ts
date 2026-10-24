@@ -30,7 +30,7 @@ import {
   type GitCloneProgressLine,
 } from "../project/gitCloneProgress.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 // SCIENT-FORK:START shared-public-remote-redaction
@@ -39,7 +39,6 @@ import { cloneUrlForProtocol, cloneUrlProtocol, redactRemoteUrl } from "@t3tools
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 const isGitCommandError = Schema.is(GitCommandError);
-const isBitbucketRepositoryLocatorError = Schema.is(BitbucketApi.BitbucketRepositoryLocatorError);
 
 export class SourceControlRepositoryService extends Context.Service<
   SourceControlRepositoryService,
@@ -97,11 +96,9 @@ function mapRepositoryError(operation: string, provider: SourceControlProviderKi
           operation,
           provider,
           detail:
-            isSourceControlProviderError(cause) &&
-            cause.provider === "bitbucket" &&
-            isBitbucketRepositoryLocatorError(cause.cause)
-              ? BitbucketApi.BitbucketRepositoryLocatorError.detail
-              : "The source control operation could not be completed.",
+            (isSourceControlProviderError(cause)
+              ? SourceControlProvider.userFacingSourceControlDetail(cause.cause)
+              : undefined) ?? "The source control operation could not be completed.",
           cause,
         }),
   );

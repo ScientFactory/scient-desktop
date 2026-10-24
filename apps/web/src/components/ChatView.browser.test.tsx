@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
+import { threadPullRequestsOf } from "@t3tools/client-runtime/thread-pull-requests";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { EMPTY_THREAD_HISTORY_META } from "@t3tools/client-runtime/state/threads";
@@ -130,7 +131,10 @@ it("keeps streamed answers live through the real ChatView, composer and voice fo
       history: EMPTY_THREAD_HISTORY_META,
     }),
   );
-  const shell = presentThreadShell(environmentId, threadShellFromProjection(projection));
+  const shell = presentThreadShell(
+    environmentId,
+    threadShellFromProjection(projection, threadPullRequestsOf),
+  );
   using _shell = vi.spyOn(entities, "useQuietThreadShell").mockReturnValue(shell);
   using _permission = vi.spyOn(session, "useEnvironmentScope").mockReturnValue(true);
   using _scope = vi.spyOn(session, "readEnvironmentScope").mockReturnValue(true);
@@ -322,7 +326,10 @@ it("does not replay a pending question the shell already showed once the thread 
     } satisfies OrchestrationV2ThreadProjection;
   };
   const projection = questionProjection(RuntimeRequestId.make("question-request"));
-  const shell = presentThreadShell(environmentId, threadShellFromProjection(projection));
+  const shell = presentThreadShell(
+    environmentId,
+    threadShellFromProjection(projection, threadPullRequestsOf),
+  );
   // The uncached thread's shell already shows the question and its run.
   expect(shell).toMatchObject({
     hasPendingUserInput: true,

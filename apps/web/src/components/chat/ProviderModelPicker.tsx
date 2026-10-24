@@ -379,9 +379,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               {...(props.onOpenProviderSetup
                 ? { onOpenProviderSetup: props.onOpenProviderSetup }
                 : {})}
-              {...(props.getModelDisabledReason
-                ? { getModelDisabledReason: props.getModelDisabledReason }
-                : {})}
+              getModelDisabledReason={(instanceId, model) =>
+                props.disabled
+                  ? "Model picker is disabled"
+                  : (props.getModelDisabledReason?.(instanceId, model) ?? null)
+              }
               {...(props.isProviderSetupAvailable
                 ? { isProviderSetupAvailable: props.isProviderSetupAvailable }
                 : {})}

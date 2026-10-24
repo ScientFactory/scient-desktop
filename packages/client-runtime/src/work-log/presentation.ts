@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/t3McpToolPresentation";
 import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { scientMcpToolTarget } from "@t3tools/shared/scientMcpToolPresentation";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
@@ -185,8 +185,11 @@ function resolveT3McpToolPresentation(
   const payload = asRecord(data);
   const input =
     asRecord(payload?.arguments) ?? asRecord(payload?.input) ?? asRecord(payload?.rawInput);
-  const urlTarget = typeof input?.url === "string" ? parseChangeRequestUrl(input.url) : null;
-  const number = urlTarget?.number ?? input?.number;
+  const urlTarget =
+    typeof input?.url === "string" ? sourceControlClients.parseChangeRequestUrl(input.url) : null;
+  const number = urlTarget?.link.number ?? input?.number;
+  const { shortLabel } = (urlTarget?.definition ?? sourceControlClients.get(undefined))
+    .changeRequest;
   const target =
     scientMcpToolTarget(definition, input) ??
     (actionKind !== undefined &&
@@ -194,7 +197,7 @@ function resolveT3McpToolPresentation(
     typeof number === "number" &&
     Number.isSafeInteger(number) &&
     number > 0
-      ? `PR #${number}`
+      ? `${shortLabel} #${number}`
       : detail);
   return {
     displayName: `${verb} ${target}`,

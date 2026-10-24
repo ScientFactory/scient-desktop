@@ -37,7 +37,7 @@ import {
   resolveAsset,
   type ResolvedAsset,
 } from "./assets/AssetAccess.ts";
-import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
+import { sourceControlMediaResponse } from "./assets/sourceControlMediaResponse.ts";
 import { statMediaFile, streamMediaFile } from "./assets/MediaFile.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
@@ -466,10 +466,15 @@ export const assetRouteHandler = Effect.gen(function* () {
   if (!asset) {
     return HttpServerResponse.text("Not Found", { status: 404 });
   }
-  if (asset.kind === "github-media") {
-    return yield* githubMediaResponse(asset, request.headers).pipe(
+  if (asset.kind === "source-control-media") {
+    return yield* sourceControlMediaResponse(asset, request.headers).pipe(
       Effect.tapError((cause) =>
-        Effect.logWarning("Failed to fetch GitHub media.", { url: asset.url, cause }),
+        // The URL can carry a token in its query string, and the error keeps the request it
+        // failed on; the host and the failure kind are enough to diagnose.
+        Effect.logWarning("Failed to fetch source control media.", {
+          host: URL.canParse(asset.url) ? new URL(asset.url).host : undefined,
+          reason: cause.reason._tag,
+        }),
       ),
       Effect.orElseSucceed(() =>
         HttpServerResponse.empty({
