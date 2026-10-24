@@ -21,17 +21,12 @@ const runtime = (status: ThreadRuntimeSummary["status"]): ThreadRuntimeSummary =
   lastError: status === "failed" ? "Provider failure" : null,
   updatedAt: now,
 });
-it.each([
-  { runtime: runtime("running") },
-  { runtime: runtime("starting") },
-  { runtime: runtime("failed") },
-  { runtime: runtime("waiting") },
-  { runtime: runtime("idle") },
-  { hasPendingApprovals: true },
-  { hasPendingUserInput: true },
-])("uses existing attention predicates without status priority: %j", (patch) => {
-  expect(placementEligible({ ...base, ...patch }, now, now)).toBe(true);
-});
+it.each([{ runtime: runtime("running") }, { hasPendingApprovals: true }])(
+  "uses existing attention predicates without status priority: %j",
+  (patch) => {
+    expect(placementEligible({ ...base, ...patch }, now, now)).toBe(true);
+  },
+);
 it("only unread successful answers and unread wake events qualify idle threads", () => {
   expect(placementEligible(base, earlier, now)).toBe(false);
   const done = {

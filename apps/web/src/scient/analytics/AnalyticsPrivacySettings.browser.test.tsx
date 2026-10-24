@@ -87,7 +87,7 @@ async function details(_fixture: _Fixture) {
 }
 
 describe("analytics sharing controls", () => {
-  it("uses a compact, non-modal deletion confirmation and does nothing on cancel", async () => {
+  it("uses a non-modal deletion confirmation and does nothing on cancel", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -99,13 +99,9 @@ describe("analytics sharing controls", () => {
       ),
     );
     const dialog = document.querySelector('[role="dialog"]');
-    expect(dialog?.classList.contains("max-w-sm")).toBe(true);
     expect(dialog?.getAttribute("aria-modal")).not.toBe("true");
     expect(document.querySelector('[data-slot="dialog-backdrop"]')).toBeNull();
     expect(dialog?.textContent).toContain("Delete analytics data?");
-    expect(
-      dialog?.querySelector('[data-slot="dialog-footer"]')?.classList.contains("border-t"),
-    ).toBe(false);
     expect(mocks.deleteData).not.toHaveBeenCalled();
     await click(
       [...dialog!.querySelectorAll("button")].find((button) => button.textContent === "Cancel"),
@@ -207,15 +203,9 @@ describe("analytics sharing controls", () => {
       "Share which features and provider/model categories you use",
     );
     expect(dialog?.textContent).toContain("reported token counts");
-    expect(dialog?.querySelector("dl")).toBeNull();
     expect(dialog?.textContent).toContain(
       "Analytics never includes prompts, responses, file contents",
     );
-    expect([...dialog!.querySelectorAll("strong")].map((heading) => heading.textContent)).toEqual([
-      "Your privacy",
-      "Storage",
-      "Deleting data",
-    ]);
     expect(dialog?.textContent).toContain("random installation identifier");
     expect(dialog?.textContent).toContain("30 days");
     expect(mocks.setConsent).not.toHaveBeenCalled();

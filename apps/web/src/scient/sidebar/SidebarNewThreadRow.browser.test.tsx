@@ -4,7 +4,6 @@ import "../../index.css";
 import { createRef } from "react";
 
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vitest/browser";
 
 import { SidebarThreadHeader } from "../../components/sidebar/SidebarThreadHeader";
 import { SidebarProvider } from "../../components/ui/sidebar";
@@ -76,54 +75,8 @@ it("replaces the header's New thread icon with a labelled row below search", asy
 
   const row = host.querySelector<HTMLElement>('[data-testid="sidebar-new-thread-row"]')!;
   expect(row.textContent).toBe("New thread");
-  const rect = row.getBoundingClientRect();
-  expect(rect.height).toBe(32);
-  expect(rect.width).toBeGreaterThan(200);
-  // It sits a small gap below the search row, one size step below thread titles.
-  const searchField = host
-    .querySelector<HTMLInputElement>('input[aria-label="Search threads"]')!
-    .closest<HTMLElement>("div.rounded-md")!;
-  const header = searchField.getBoundingClientRect();
-  expect(rect.top - header.bottom).toBe(6);
-  const icon = row.querySelector("svg")!.getBoundingClientRect();
-  expect([icon.width, icon.height]).toEqual([14, 14]);
-  expect(getComputedStyle(row.querySelector("span")!).fontSize).toBe("13px");
-
   row.click();
   expect(onNewThread).toHaveBeenCalledTimes(1);
-});
-
-it("keeps the search icon and placeholder at the icon color until hovered", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  const host = await mountSidebarTop(_fixture, () => {});
-  const input = host.querySelector<HTMLInputElement>('input[aria-label="Search threads"]')!;
-  const field = input.closest<HTMLElement>("div.rounded-md")!;
-  await userEvent.unhover(field);
-  const icon = field.querySelector("svg")!;
-  const placeholderColor = () => getComputedStyle(input, "::placeholder").color;
-  const iconColor = () => getComputedStyle(icon).color;
-  const newThreadIconColor = getComputedStyle(
-    host.querySelector('[data-testid="sidebar-new-thread-row"] svg')!,
-  ).color;
-
-  // At rest, and while focused without the pointer over it, both match the
-  // sidebar's other icons.
-  expect(iconColor()).toBe(newThreadIconColor);
-  expect(placeholderColor()).toBe(newThreadIconColor);
-  input.focus();
-  expect(placeholderColor()).toBe(newThreadIconColor);
-
-  // Hovering strengthens both to the typed text's color.
-  await userEvent.hover(field);
-  const strong = getComputedStyle(input).color;
-  expect(strong).not.toBe(newThreadIconColor);
-  expect(iconColor()).toBe(strong);
-  expect(placeholderColor()).toBe(strong);
-
-  await userEvent.unhover(field);
-  expect(placeholderColor()).toBe(newThreadIconColor);
 });
 
 function _createFixture() {

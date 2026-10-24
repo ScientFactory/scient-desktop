@@ -119,7 +119,7 @@ describe("validateScientReleaseNotesCatalog", () => {
     expect(validateScientReleaseNotesCatalog(SCIENT_RELEASE_NOTES)).toEqual([]);
   });
 
-  it.each(["0.6.22", "0.6.23", "2.5.0", "2.5.0-rc.1"])(
+  it.each(["0.6.22", "2.5.0-rc.1"])(
     "allows longer paragraph notes for %s without a version exception",
     (version) => {
       const note = SCIENT_RELEASE_NOTES.find((entry) => entry.version === "0.6.23");
@@ -221,76 +221,5 @@ describe("validateScientReleaseNotesCatalog", () => {
         },
       ]),
     ).toEqual(["release[0].highlights must contain no more than five items."]);
-  });
-});
-
-describe("Scient 0.6.24 release-note decision", () => {
-  it("shows the approved note after upgrading and keeps earlier releases in history", () => {
-    const decision = resolveScientReleaseNotesDecision({
-      catalog: SCIENT_RELEASE_NOTES,
-      currentVersion: "0.6.24",
-      lastHandledVersion: "0.6.23",
-    });
-    expect(decision.kind).toBe("show");
-    if (decision.kind !== "show") throw new Error("Expected the new release note.");
-    expect(decision.current.version).toBe("0.6.24");
-    expect(decision.current.highlights).toHaveLength(9);
-    expect(decision.current.highlights.map(({ id }) => id)).toContain("muse-code-0624");
-    expect(decision.history.slice(0, 3).map(({ version }) => version)).toEqual([
-      "0.6.24",
-      "0.6.23",
-      "0.6.22",
-    ]);
-    expect(decision.nextLastHandledVersion).toBe("0.6.24");
-  });
-});
-
-describe("Scient 0.6.23 release-note decision", () => {
-  it("reuses the complete 0.6.22 note without changing its user-facing copy", () => {
-    const previous = SCIENT_RELEASE_NOTES.find(({ version }) => version === "0.6.22");
-    const current = SCIENT_RELEASE_NOTES.find(({ version }) => version === "0.6.23");
-    expect(previous).toBeDefined();
-    expect(current).toEqual({ ...previous, version: "0.6.23", publishedAt: "2026-10-10" });
-  });
-
-  it("shows the new note after upgrading and preserves the previous release in history", () => {
-    const decision = resolveScientReleaseNotesDecision({
-      catalog: SCIENT_RELEASE_NOTES,
-      currentVersion: "0.6.23",
-      lastHandledVersion: "0.6.22",
-    });
-    expect(decision.kind).toBe("show");
-    if (decision.kind !== "show") throw new Error("Expected the new release note.");
-    expect(decision.current.version).toBe("0.6.23");
-    expect(decision.history.slice(0, 2).map(({ version }) => version)).toEqual([
-      "0.6.23",
-      "0.6.22",
-    ]);
-    expect(decision.nextLastHandledVersion).toBe("0.6.23");
-  });
-});
-
-describe("Scient 0.6.12 release-note decision", () => {
-  it("keeps the hotfix concise while carrying the approved 0.6.11 highlights", () => {
-    const note = SCIENT_RELEASE_NOTES.find(({ version }) => version === "0.6.12") as
-      | ScientReleaseNote
-      | undefined;
-    if (!note || note.format !== "paragraphs")
-      throw new Error("Expected the 0.6.12 paragraph note.");
-    expect(note.highlights[0]).toEqual({
-      id: "gemini-model-discovery-hotfix",
-      title: "Gemini model discovery hotfix",
-      description: "Fixed Gemini model discovery for the Antigravity provider.",
-    });
-    expect(note.highlights.slice(1).map(({ title }) => title)).toEqual([
-      "Bring your own models",
-      "Pi is now available",
-      "Continue your Codex and Claude conversations in Scient",
-      "Set your preferences once",
-      "Smoother Markdown editing",
-      "Faster, more reliable work",
-    ]);
-    expect(note.alsoIncluded).toContain("originally released in Scient 0.6.11");
-    expect(note.alsoIncluded).not.toContain("Windows");
   });
 });

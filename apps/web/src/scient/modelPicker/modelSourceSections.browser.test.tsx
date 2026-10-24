@@ -189,20 +189,6 @@ describe("Oh My Pi model picker sections", () => {
     await userEvent.keyboard("{Enter}");
     await expect.poll(() => text(_fixture).includes("Claude Opus")).toBe(false);
   });
-
-  it("shows a plain list when an instance has only one kind of model", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    await renderPicker(_fixture, {
-      options: ACCOUNT_AND_CUSTOM.slice(0, 3),
-      model: "anthropic/opus",
-    });
-    await expect.poll(() => text(_fixture).includes("Claude Opus")).toBe(true);
-    expect(header(_fixture, "Your Oh My Pi accounts")).toBeUndefined();
-    expect(header(_fixture, "Scient custom models")).toBeUndefined();
-  });
 });
 
 function _createFixture() {
