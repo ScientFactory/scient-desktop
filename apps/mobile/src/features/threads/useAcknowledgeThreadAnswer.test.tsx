@@ -274,7 +274,8 @@ it("acknowledges an early failure wake at its event time, not newer metadata", a
   });
 });
 
-it.each([{ rows: [] }, { rows: feed("") }, { rows: feed("Still streaming", true) }])(
+// Unloaded, blank and streaming answers share one "not loaded" branch, tabled above.
+it.each([{ rows: feed("Still streaming", true) }])(
   "does not use a wake to acknowledge an unloaded or unsettled answer",
   async ({ rows }) => {
     vi.useFakeTimers();
