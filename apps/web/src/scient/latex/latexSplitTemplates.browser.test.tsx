@@ -336,6 +336,8 @@ it.for([
           .nth(0)
           .dblClick({ position: hit.position });
       }
+      const afterGesture = scroll.scrollTop;
+      expect(Math.abs(afterGesture - before), "native selection scroll").toBeLessThanOrEqual(2);
       // Publish the gesture's queued source reveal without advancing recurring editor services.
       await act(() => vi.runOnlyPendingTimersAsync());
       await vi.waitFor(() => expect(state.reveals).toHaveLength(1));
@@ -347,7 +349,27 @@ it.for([
           ? field.value.slice(field.selectionStart, field.selectionEnd).trim()
           : document.getSelection()?.toString().trim(),
       ).toBe(word);
-      expect(Math.abs(scroll.scrollTop - before)).toBeLessThanOrEqual(2);
+      const afterPublish = scroll.scrollTop;
+      const scrollDelta = Math.abs(afterPublish - before);
+      expect(
+        scrollDelta,
+        scrollDelta > 2
+          ? JSON.stringify({
+              before,
+              afterGesture,
+              afterPublish,
+              fonts: document.fonts.status,
+              pagedSettled: pagedLayoutSettled(state.visual.view),
+              root: state.visual.view.dom.getBoundingClientRect().toJSON(),
+              viewport: scroll.getBoundingClientRect().toJSON(),
+              field: field instanceof HTMLElement ? field.getBoundingClientRect().toJSON() : null,
+              fieldScrollTop: field instanceof HTMLTextAreaElement ? field.scrollTop : null,
+              fieldScrollHeight: field instanceof HTMLTextAreaElement ? field.scrollHeight : null,
+              fieldClientHeight: field instanceof HTMLTextAreaElement ? field.clientHeight : null,
+              fieldFont: field instanceof HTMLElement ? getComputedStyle(field).fontFamily : null,
+            })
+          : undefined,
+      ).toBeLessThanOrEqual(2);
       await vi.waitFor(() =>
         expect(state.source().getViewState().selections?.[0]?.start).toEqual(
           sourcePosition(source, mapped.from),
