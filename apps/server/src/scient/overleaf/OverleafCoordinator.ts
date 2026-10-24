@@ -86,6 +86,7 @@ export class OverleafConnectionNotReadyError extends Schema.TaggedError<Overleaf
       "archived",
       "folder-changed",
       "recovery-required",
+      "authority-changed",
     ]),
   },
 ) {
@@ -102,6 +103,8 @@ export class OverleafConnectionNotReadyError extends Schema.TaggedError<Overleaf
         return "The project folder is not the one this connection recorded.";
       case "recovery-required":
         return "An earlier Overleaf sync in this project did not finish. Recover it first.";
+      case "authority-changed":
+        return "This project's workspace changed during the Overleaf operation. Try again.";
     }
   }
 }
@@ -166,10 +169,17 @@ export interface OverleafSelections {
 }
 
 export type OverleafPrepareResult =
-  | { readonly _tag: "review"; readonly review: OverleafReview }
+  | {
+      readonly _tag: "review";
+      readonly review: OverleafReview;
+      /** An interrupted apply this prepare finished first, completely, writing the folder. */
+      readonly settled?: OverleafAdopted;
+    }
   | {
       readonly _tag: "refused";
       readonly refusal: OverleafReviewRefusal | OverleafInventoryRefusal;
+      /** An interrupted apply this prepare finished first, before the review was refused. */
+      readonly settled?: OverleafAdopted;
     }
   /** A pending apply was recovered but needs review before anything else. */
   | { readonly _tag: "recovered"; readonly recovery: OverleafAdopted };
@@ -296,11 +306,16 @@ export interface OverleafCoordinatorOptions {
     readonly repo: string;
     readonly connection: OverleafConnectionDocument;
   }) => Effect.Effect<{ readonly commit: string; readonly tree: string }, FetchError>;
-  /** Sends one commit to Overleaf's branch, never forced. Step 5 supplies the authenticated push. */
+  /**
+   * Sends one commit to Overleaf's branch, never forced. Step 5 supplies the
+   * authenticated push, which must not send under another credential than the
+   * review was built with (`credentialEpoch`).
+   */
   readonly pushRemote: (input: {
     readonly repo: string;
     readonly connection: OverleafConnectionDocument;
     readonly commit: string;
+    readonly credentialEpoch: number;
   }) => Effect.Effect<OverleafRepository.PushOutcome, FetchError>;
   /** Test seam: the Git address of the connection's project. Defaults to Overleaf's. */
   readonly gitUrl?: (connection: OverleafConnectionDocument) => string;
@@ -309,6 +324,11 @@ export interface OverleafCoordinatorOptions {
   /** Test seam: the disk's volume UUID for a path. Defaults to `diskutil`. */
   readonly volumeUuid?: OverleafVolumeIdentityResolver;
   readonly registry?: OverleafReviewRegistry;
+  /**
+   * Which operation holds each connection. Connection management (connect,
+   * disconnect, relink) shares it, so no two operations ever hold one connection.
+   */
+  readonly reservations?: OverleafReservations;
   /**
    * Test seam: the largest file read (`RESTORE_MAX_BYTES`), one listing's read budget
    * (`LISTING_MAX_BYTES`) and the paths one forced conflict holds (`MANAGED_PATH_LIMIT`).
@@ -324,6 +344,69 @@ export interface OverleafCoordinatorOptions {
   };
 }
 
+/**
+ * The requesting workspace's authority, checked with the folders before every
+ * change to them and inside send admission (contract rule 2). The service
+ * provides it for each request; without one (tests, a checkout settler's
+ * recovery, which never sends) the folders alone are checked.
+ */
+export class OverleafAuthorityGuard extends Context.Reference<
+  (connection: OverleafConnectionDocument) => Effect.Effect<boolean>
+>("t3/scient/overleaf/OverleafAuthorityGuard", {
+  defaultValue: () => () => Effect.succeed(true),
+}) {}
+
+/** Connection ID → the operation holding it. Admission never queues. */
+export type OverleafReservations = Map<string, string>;
+export const makeOverleafReservations = (): OverleafReservations => new Map();
+
+/**
+ * The operation this fiber already holds, if any: a service operation that holds a
+ * connection for its whole run (a sync) lets its own coordinator calls go through.
+ */
+export class OverleafReservationOwner extends Context.Reference<string | null>(
+  "t3/scient/overleaf/OverleafReservationOwner",
+  { defaultValue: () => null },
+) {}
+
+/**
+ * Runs `body` holding `connectionId`, or fails at once when another operation holds it.
+ * Status reads and refused requests never take or release it. A fiber that already
+ * holds the connection (`OverleafReservationOwner`) runs `body` under that hold.
+ */
+// Untraced: it wraps every coordinator operation, whose own span already covers it,
+// and an extra span would change the failures operations report.
+export const reserveOverleafConnection = Effect.fnUntraced(function* <A, E, R>(
+  reservations: OverleafReservations,
+  connectionId: string,
+  body: (operationId: string) => Effect.Effect<A, E, R>,
+) {
+  const owner = yield* OverleafReservationOwner;
+  return yield* owner !== null && reservations.get(connectionId) === owner
+    ? body(owner)
+    : holdOverleafConnection(reservations, connectionId, body);
+});
+
+const holdOverleafConnection = <A, E, R>(
+  reservations: OverleafReservations,
+  connectionId: string,
+  body: (operationId: string) => Effect.Effect<A, E, R>,
+) =>
+  Effect.acquireUseRelease(
+    Effect.suspend(() => {
+      if (reservations.has(connectionId))
+        return Effect.fail(new OverleafOperationActiveError({ connectionId }));
+      const operationId = newOverleafId();
+      reservations.set(connectionId, operationId);
+      return Effect.succeed(operationId);
+    }),
+    body,
+    () => Effect.sync(() => reservations.delete(connectionId)),
+  );
+
+/** A kept copy's place in the retention folder, as `OverleafConnectionState` records it. */
+const KEPT_PATH =
+  /^[a-z0-9][a-z0-9-]{0,63}\/files\/step-\d{1,5}(?:-\d{1,5})?\/(?:retained|slot|provisional)$/u;
 /** The largest file a restore or listing reads: a kept copy or the folder's file. */
 const RESTORE_MAX_BYTES = 50 * 1024 * 1024;
 /** What one listing of kept copies reads at most: as much as one inventory may hold. */
@@ -475,8 +558,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   const fileBytes = options.limits?.fileBytes ?? RESTORE_MAX_BYTES;
   const listingBytes = options.limits?.listingBytes ?? LISTING_MAX_BYTES;
   const conflictPaths = options.limits?.conflictPaths ?? MANAGED_PATH_LIMIT;
-  /** Connection → the operation holding it. */
-  const reservations = new Map<string, string>();
+  const reservations = options.reservations ?? makeOverleafReservations();
 
   const now = Clock.currentTimeMillis;
   /** Size and change time of a kept file, or null when it is gone or not a file. */
@@ -491,18 +573,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   const reserve = <A, E, R>(
     connectionId: string,
     body: (operationId: string) => Effect.Effect<A, E, R>,
-  ) =>
-    Effect.acquireUseRelease(
-      Effect.suspend(() => {
-        if (reservations.has(connectionId))
-          return Effect.fail(new OverleafOperationActiveError({ connectionId }));
-        const operationId = newOverleafId();
-        reservations.set(connectionId, operationId);
-        return Effect.succeed(operationId);
-      }),
-      body,
-      () => Effect.sync(() => reservations.delete(connectionId)),
-    );
+  ) => reserveOverleafConnection(reservations, connectionId, body);
 
   const readActive = Effect.fn("OverleafCoordinator.readActive")(function* (connectionId: string) {
     const read = yield* store.readConnection(connectionId);
@@ -538,6 +609,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       return yield* new OverleafConnectionNotReadyError({
         connectionId: connection.connectionId,
         reason: "folder-changed",
+      });
+    const authorityCurrent = yield* OverleafAuthorityGuard;
+    if (!(yield* authorityCurrent(connection)))
+      return yield* new OverleafConnectionNotReadyError({
+        connectionId: connection.connectionId,
+        reason: "authority-changed",
       });
   });
 
@@ -1248,7 +1325,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       return { _tag: "not-sent", attemptNumber } satisfies OverleafPublication;
     }
     const pushed = yield* options
-      .pushRemote({ repo, connection: recorded, commit: input.candidateCommit })
+      .pushRemote({
+        repo,
+        connection: recorded,
+        commit: input.candidateCommit,
+        credentialEpoch: input.review.binding.credentialEpoch,
+      })
       // A push that failed partway may still have reached Overleaf.
       .pipe(
         Effect.orElseSucceed((): OverleafRepository.PushOutcome => ({
@@ -1283,10 +1365,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         // Writable admission before anything touches the private repository.
         yield* store.admitWritable;
         let connection = yield* readActive(input.connectionId);
+        let settled: OverleafAdopted | undefined;
         if (connection.activeApply !== null) {
           const recovered = yield* recoverHeld(input.connectionId);
           if (recovered._tag === "recovered" && recovered.adopted.outcome !== "complete")
             return { _tag: "recovered" as const, recovery: recovered.adopted };
+          if (recovered._tag === "recovered") settled = recovered.adopted;
           connection = yield* readActive(input.connectionId);
         }
         const repo = yield* repositoryFor(connection);
@@ -1307,7 +1391,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           checkoutEpoch: section.epoch,
         });
         if (built._tag === "review") registry.offer(built.review, yield* now);
-        return built;
+        return settled === undefined ? built : { ...built, settled };
       }),
     ),
   );
