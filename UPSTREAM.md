@@ -592,21 +592,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current alignment through
-`52628d863e977e1a8b16644141fd00ba96640b16` is recorded in
-[the 2026-10-24 receipt](docs/internals/t3-upstream-sync-20261024-52628d863e.md)
-([Scient PR #640](https://github.com/ScientFactory/scient-desktop/pull/640)).
-Literal merges `f6e88b251e5b0353a75907bf9321ffe86779ef2b` (through `9a391eb3f5`) and
-`ff0613ccdbcec8d2a5daadafe1a86de76777cdf9` (through the frozen target, owned base
-`ff6d9ef643066d0487ef588586c181712f97fd22`) retain all 74 official commits after
-`2c8bdf6177`. Ordinary owned-main catch-up `ef95f9275e8df06b12a6dd34d68f083be3d726fe`
-includes `fde0d9e373efc3fc8fdf1470148fde94c35077be` as Git's automatic merge.
-Typecheck, lint, provenance, all six seam checks, the maintained alignment checks
-(after correcting their drifted map), build and desktop and release smoke pass on the
-caught-up tree. Hosted CI on the exact head is the full-suite gate; three CI failures
-seen on the earlier head are owned-main flakes recorded in the receipt. Merge,
-release and native, live-provider and visual acceptance remain separate. The
-[previous receipt](docs/internals/t3-upstream-sync-20261023-2c8bdf6177.md)
-retains its own boundaries and evidence, including Scient PR #638.
+`fef851bee09102641061aeb78a3092c2ba2c72ab` is recorded in
+[the 2026-10-24 fef851bee0 receipt](docs/internals/t3-upstream-sync-20261024-fef851bee0.md).
+Literal merge `4eea0c3f2b630ad16cfff2e5152eea5713466f46` has owned base `c7b630d5d4e839646654f13f610e6bf551771968` (the
+head of Scient PR #640) and the frozen official target as parents, retaining all
+26 official commits after `52628d863e`. Typecheck, lint, all six seam checks, the
+affected suites, the maintained alignment checks, build and desktop and release
+smoke pass. Hosted CI on the exact head is the full-suite gate, after #640 merges
+and owned main is caught up. Merge, release and native, live-provider and visual
+acceptance remain separate. The
+[previous receipt](docs/internals/t3-upstream-sync-20261024-52628d863e.md)
+retains its own boundaries and evidence, including Scient PR #640.
 Native V2, scientific capabilities, immutable migrations, database durability and
 all cloud, telemetry, relay, updater, mobile publication and release holds remain.
 
