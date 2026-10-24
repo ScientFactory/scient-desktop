@@ -93,6 +93,11 @@ import {
   WSL_RUNTIME_ARCHIVE_NAME,
   WSL_RUNTIME_EXTRA_RESOURCES,
   wslRuntimeArchiveTarTarget,
+  LinuxDesktopBuildPrerequisitesMissingError,
+  MacDesktopBuildPrerequisitesMissingError,
+  preflightLinuxDesktopBuild,
+  preflightMacDesktopBuild,
+  resolvePackageManagerUserAgent,
 } from "./build-desktop-artifact.ts";
 import {
   WINDOWS_VOICE_FILES,
@@ -1700,6 +1705,83 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  // regression: 082358f9ef fix(desktop): check artifact build prerequisites (#8975)
+  it.effect("reports every missing Linux desktop build prerequisite with an install command", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
+          [];
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as {
+              readonly command: string;
+              readonly args: ReadonlyArray<string>;
+            };
+            commands.push(childProcess);
+            const fails =
+              childProcess.command === "cargo" ||
+              childProcess.command === "rustc" ||
+              childProcess.command === "pkg-config";
+            return Effect.succeed(mockProcess(fails ? 1 : 0));
+          }),
+        );
+
+        const error = yield* preflightLinuxDesktopBuild("arm64").pipe(
+          Effect.provide(spawner),
+          Effect.flip,
+        );
+
+        assert.instanceOf(error, LinuxDesktopBuildPrerequisitesMissingError);
+        assert.deepStrictEqual(error.missing, ["cargo", "rust-target", "libsecret"]);
+        assert.include(error.message, "Rust compiler and Cargo (cargo, rustc)");
+        assert.include(error.message, "Requested Rust standard library");
+        assert.include(
+          error.message,
+          "sudo apt-get install cargo rustc libsecret-1-dev pkg-config",
+        );
+        assert.include(error.message, "rustup target add aarch64-unknown-linux-gnu");
+        assert.isTrue(
+          commands.some(
+            (command) =>
+              command.command === "rustc" && command.args.includes("aarch64-unknown-linux-gnu"),
+          ),
+        );
+      }),
+    ),
+  );
+
+  // regression: 082358f9ef fix(desktop): check artifact build prerequisites (#8975)
+  it.effect("reports missing macOS tools and Rust targets before building", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as {
+              readonly command: string;
+              readonly args: ReadonlyArray<string>;
+            };
+            const fails =
+              childProcess.command === "rustc" ||
+              (childProcess.command === "xcrun" && childProcess.args.includes("iconutil"));
+            return Effect.succeed(mockProcess(fails ? 1 : 0));
+          }),
+        );
+        const error = yield* preflightMacDesktopBuild("universal").pipe(
+          Effect.provide(spawner),
+          Effect.flip,
+        );
+
+        assert.instanceOf(error, MacDesktopBuildPrerequisitesMissingError);
+        assert.deepStrictEqual(error.missing, ["rust", "iconutil"]);
+        assert.deepStrictEqual(error.rustTargets, ["aarch64-apple-darwin", "x86_64-apple-darwin"]);
+        assert.include(error.message, "xcode-select --install");
+        assert.include(error.message, "rustup target add aarch64-apple-darwin x86_64-apple-darwin");
+      }),
+    ),
+  );
+
   it.effect(
     "keeps target and WSL native files while excluding the other Windows architecture",
     () =>
@@ -2148,6 +2230,47 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         Layer.mergeAll(
           spawnerLayer,
           Layer.succeed(HostProcess.Platform, "win32"),
+          Layer.succeed(HostProcess.Architecture, "x64"),
+        ),
+      ),
+    );
+  });
+
+  // regression: 3653cb22ff fix(desktop): address the browser import review left over from the stack (#9516)
+  it.effect("builds the Linux browser secret helper for a concrete architecture", () => {
+    const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
+    const spawnerLayer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        commands.push(command as unknown as (typeof commands)[number]);
+        return Effect.succeed(mockProcess(0));
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* stageBrowserSecret({
+        repoRoot: "/repo",
+        stageResourcesDir: "/stage/resources",
+        platform: "linux",
+        arch: "universal",
+        verbose: false,
+      });
+      const helper = commands.find((command) =>
+        command.args.some((arg) => arg.endsWith("build-browser-secret.mjs")),
+      );
+      assert.isDefined(helper);
+      const path = yield* Path.Path;
+      assert.deepStrictEqual(helper.args.slice(-4), [
+        "--arch",
+        "x64",
+        "--output",
+        path.join("/stage/resources", "browser-secret", "scient-browser-secret"),
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          spawnerLayer,
+          Layer.succeed(HostProcess.Platform, "linux"),
           Layer.succeed(HostProcess.Architecture, "x64"),
         ),
       ),
@@ -2746,6 +2869,27 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  // regression: fa9f936ef5 fix(desktop): sign Windows native addons (#8206)
+  it.effect("configures Windows executable metadata and native signing extensions", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      const win = config.win as Record<string, unknown>;
+      assert.equal(win.icon, "icon.ico");
+      assert.deepStrictEqual(win.signExts, [".node", ".dll"]);
+      assert.equal(win.signAndEditExecutable, true);
+      assert.notProperty(win, "azureSignOptions");
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
   it.effect.each(["valid", "digest", "arch", "source", "missing", "inventory", "PE"] as const)(
     "stages exact-source Windows publication and voice prerequisites: %s",
     (condition) =>
@@ -3152,6 +3296,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }),
     ),
   );
+
+  // regression: 18a41388eb Fix desktop native optional dependency packaging (#3816)
+  it("derives the electron-builder package manager user agent from packageManager", () => {
+    assert.equal(resolvePackageManagerUserAgent("pnpm@11.10.0"), "pnpm/11.10.0");
+    assert.equal(resolvePackageManagerUserAgent(" yarn@4.9.2 "), "yarn/4.9.2");
+    assert.equal(resolvePackageManagerUserAgent("pnpm"), "pnpm");
+  });
 
   it.effect("rejects universal builds on Linux and Windows before staging binaries", () =>
     Effect.gen(function* () {

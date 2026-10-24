@@ -30,6 +30,8 @@
         "setup-worktree.ts",
         "sign-macos.ts",
         "verify-windows-desktop-artifact.ts",
+        // release-smoke.ts runs it by path to check the branded nightly release name.
+        "resolve-nightly-release.ts",
         // Documented advisory inventory CLI and its independent Node regressions.
         "scient-divergence-inventory.mjs",
         "scient-divergence-inventory.node-test.mjs",
