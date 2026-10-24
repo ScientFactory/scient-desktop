@@ -286,6 +286,10 @@ const ScientOverleafUndoTool = Tool.make("scient_overleaf_undo", {
         description: "The send to undo, as `send #N` names it. Omit to list the sends.",
       }),
     ),
+    files: Schema.optional(Files).annotate({
+      description:
+        "Per-file decisions for the sync after the undo, as scient_overleaf_sync takes them (a new file to keep only here, say).",
+    }),
   }),
   success: Schema.Struct({
     lines: Lines,

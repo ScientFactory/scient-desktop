@@ -655,6 +655,7 @@ export const overleafKeptCopiesForInvocation = Effect.fn("ScientOverleafToolkit.
 export const overleafUndoForInvocation = Effect.fn("ScientOverleafToolkit.undo")(function* (input: {
   readonly connectionId: string;
   readonly attemptNumber?: number | undefined;
+  readonly files?: FileDecisions | undefined;
 }) {
   const overleaf = yield* OverleafSync;
   const caller = yield* callerOf;
@@ -678,6 +679,7 @@ export const overleafUndoForInvocation = Effect.fn("ScientOverleafToolkit.undo")
         connectionId: input.connectionId,
         requestId: requestId(),
         attemptNumber: input.attemptNumber,
+        ...filesOf(input.files),
       }),
     ),
   );

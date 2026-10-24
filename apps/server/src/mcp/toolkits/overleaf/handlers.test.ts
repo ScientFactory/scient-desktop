@@ -264,8 +264,16 @@ describe("Overleaf tool handlers", () => {
       const undone = yield* overleafUndoForInvocation({
         connectionId: "c-1",
         attemptNumber: 4,
+        files: { keepOnlyHere: ["private.tex"] },
       }).pipe(provide(overleaf));
-      expect(asked).toEqual([expect.objectContaining({ connectionId: "c-1", attemptNumber: 4 })]);
+      // The sync after the undo carries the per-file decisions, as any sync does.
+      expect(asked).toEqual([
+        expect.objectContaining({
+          connectionId: "c-1",
+          attemptNumber: 4,
+          files: { keepOnlyHere: ["private.tex"] },
+        }),
+      ]);
       expect(undone.sends).toBeNull();
       expect(undone.result).toMatchObject({
         _tag: "undone",
@@ -284,6 +292,9 @@ describe("Overleaf tool handlers", () => {
           provide(fakeOverleaf({ undo: () => Effect.succeed(result) as never })),
           Effect.map((done) => done.lines),
         );
+      expect(yield* refusedWith({ _tag: "cancelled" })).toEqual([
+        "The undo of send #4 stopped on request before putting anything back.",
+      ]);
       expect(yield* refusedWith({ _tag: "not-eligible", reason: "unresolved" })).toEqual([
         "Overleaf never answered send #4, so what it changed is not known. Nothing changed.",
       ]);
