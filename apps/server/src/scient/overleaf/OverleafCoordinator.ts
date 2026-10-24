@@ -185,19 +185,15 @@ export interface OverleafSelections {
 }
 
 export type OverleafPrepareResult =
-  | {
-      readonly _tag: "review";
-      readonly review: OverleafReview;
-      /** An interrupted apply this prepare finished first, completely, writing the folder. */
-      readonly settled?: OverleafAdopted;
-    }
+  | { readonly _tag: "review"; readonly review: OverleafReview }
   | {
       readonly _tag: "refused";
       readonly refusal: OverleafReviewRefusal | OverleafInventoryRefusal;
-      /** An interrupted apply this prepare finished first, before the review was refused. */
-      readonly settled?: OverleafAdopted;
     }
-  /** A pending apply was recovered but needs review before anything else. */
+  /**
+   * An interrupted apply was settled first, which may have written the folder. Its
+   * own step: nothing was fetched or built, so the caller prepares again for a review.
+   */
   | { readonly _tag: "recovered"; readonly recovery: OverleafAdopted };
 
 /** What one apply did to the folder and the connection. */
@@ -1624,12 +1620,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         // Writable admission before anything touches the private repository.
         yield* store.admitWritable;
         let connection = yield* readActive(input.connectionId);
-        let settled: OverleafAdopted | undefined;
         if (connection.activeApply !== null) {
           const recovered = yield* recoverHeld(input.connectionId);
-          if (recovered._tag === "recovered" && recovered.adopted.outcome !== "complete")
+          if (recovered._tag === "recovered")
             return { _tag: "recovered" as const, recovery: recovered.adopted };
-          if (recovered._tag === "recovered") settled = recovered.adopted;
           connection = yield* readActive(input.connectionId);
         }
         const repo = yield* repositoryFor(connection);
@@ -1650,7 +1644,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           checkoutEpoch: section.epoch,
         });
         if (built._tag === "review") registry.offer(built.review, yield* now);
-        return settled === undefined ? built : { ...built, settled };
+        return built;
       }),
     ),
   );

@@ -248,13 +248,12 @@ const OtherAgents = Schema.NullOr(
  * An interrupted earlier sync this operation finished first, which wrote the
  * folder, and how its apply ended (`complete`, `replan` or `attention`).
  */
-const ScientOverleafSettled = Schema.NullOr(
-  Schema.Struct({
-    outcome: Schema.String,
-    interrupted: Schema.Number,
-    markerPaths: Schema.Array(ManuscriptPath),
-  }),
-);
+const ScientOverleafSettledApply = Schema.Struct({
+  outcome: Schema.String,
+  interrupted: Schema.Number,
+  markerPaths: Schema.Array(ManuscriptPath),
+});
+const ScientOverleafSettled = Schema.NullOr(ScientOverleafSettledApply);
 
 export const ScientOverleafPreviewResult = Schema.Union([
   Schema.Struct({
@@ -351,7 +350,10 @@ export type ScientOverleafRestoreResult = typeof ScientOverleafRestoreResult.Typ
  */
 export class ScientOverleafOperationError extends Schema.TaggedError<ScientOverleafOperationError>()(
   "ScientOverleafOperationError",
-  { reason: Schema.String, message: Schema.String },
+  {
+    reason: Schema.String,
+    message: Schema.String,
+  },
   { httpApiStatus: 409 },
 ) {
   [HttpServerRespondable.symbol]() {
