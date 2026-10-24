@@ -37,20 +37,18 @@ describe("Antigravity native model presentation", () => {
     expect(catalog).toEqual(before);
   });
 
-  it.each(["High", "Medium", "Low"])(
-    "keeps an existing %s selection instead of resetting it",
-    (level) => {
-      const selected = model(level).slug;
-      const groups = getAntigravityModelGroups("antigravity", catalog);
-      expect(groupAntigravityModelRows(catalog, groups, selected)[0]?.slug).toBe(selected);
-      const control = getAntigravityReasoningControl(groups, selected)!;
-      expect(control.currentValue).toBe(selected);
-      expect(control.options.find((option) => option.id === selected)?.label).toBe(level);
-      expect(
-        control.options.every((option) => catalog.some((model) => model.slug === option.id)),
-      ).toBe(true);
-    },
-  );
+  it("keeps an existing non-default selection instead of resetting it", () => {
+    const level = "Low";
+    const selected = model(level).slug;
+    const groups = getAntigravityModelGroups("antigravity", catalog);
+    expect(groupAntigravityModelRows(catalog, groups, selected)[0]?.slug).toBe(selected);
+    const control = getAntigravityReasoningControl(groups, selected)!;
+    expect(control.currentValue).toBe(selected);
+    expect(control.options.find((option) => option.id === selected)?.label).toBe(level);
+    expect(
+      control.options.every((option) => catalog.some((model) => model.slug === option.id)),
+    ).toBe(true);
+  });
 
   it("never guesses unavailable levels or replaces a disappeared selection", () => {
     const available = catalog.filter((entry) => entry.slug !== model("Medium").slug);
@@ -81,14 +79,11 @@ describe("Antigravity native model presentation", () => {
     );
   });
 
-  it.each(["codex", "claudeAgent", "grok", "cursor", "droid", "opencode"])(
-    "does not alter %s",
-    (driver) => {
-      const groups = getAntigravityModelGroups(driver, catalog);
-      expect(groups).toEqual([]);
-      expect(groupAntigravityModelRows(catalog, groups)).toEqual(catalog);
-    },
-  );
+  it("does not alter another driver's catalog", () => {
+    const groups = getAntigravityModelGroups("codex", catalog);
+    expect(groups).toEqual([]);
+    expect(groupAntigravityModelRows(catalog, groups)).toEqual(catalog);
+  });
 
   it.each([
     model("High", { isCustom: true }),

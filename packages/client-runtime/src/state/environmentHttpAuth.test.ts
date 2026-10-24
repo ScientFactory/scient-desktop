@@ -1,8 +1,10 @@
+// SCIENT-FORK:START
 import { TestClock } from "effect/testing";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import { listEnvironmentScientThreadQueue } from "./scientThreadQueueHttp.ts";
 import { uploadEnvironmentMarkdownImage } from "./scientMarkdownHttp.ts";
+// SCIENT-FORK:END
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -12,7 +14,9 @@ import {
   ThreadId,
   type AuthSessionState,
   type OrchestrationV2ShellSnapshot,
+  // SCIENT-FORK:START
   OrchestrationV2ShellSnapshotJson,
+  // SCIENT-FORK:END
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadTranscript,
@@ -24,7 +28,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { HttpClient } from "effect/http";
 
+// SCIENT-FORK:START
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+// SCIENT-FORK:END
 import {
   ConnectionTransientError,
   RelayConnectionTarget,
@@ -32,7 +38,9 @@ import {
   type PreparedHttpAuthorization,
 } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
+// SCIENT-FORK:START
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+// SCIENT-FORK:END
 import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
@@ -43,7 +51,9 @@ import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 import { fetchEnvironmentBoundedThreadSnapshot } from "./boundedThreadSnapshotHttp.ts";
 import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
+// SCIENT-FORK:START
 import { v2Projection, v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
+// SCIENT-FORK:END
 
 const encodeThreadSnapshot = Schema.encodeSync(OrchestrationV2ThreadDetailSnapshot);
 const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
@@ -112,6 +122,7 @@ const THREAD_HISTORY = {
   hasMoreHistory: false,
 } satisfies OrchestrationV2ThreadHistoryPage;
 
+// SCIENT-FORK:START
 const THREAD_QUEUE = {
   threadId: THREAD.projection.thread.id,
   revision: 1,
@@ -125,6 +136,7 @@ const MARKDOWN_IMAGE = {
   revision: "image-revision",
 };
 
+// SCIENT-FORK:END
 function credentialRejectedResponse(reason = "invalid_credential") {
   return Response.json(
     {
@@ -140,10 +152,12 @@ function credentialRejectedResponse(reason = "invalid_credential") {
 function makeHarness(reply: (requestNumber: number) => Response | Promise<Response>) {
   const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
   const authorizations: Array<
+    // SCIENT-FORK:START
     Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDpopHttp"]>[0]
   > = [];
   const proofs: Array<ManagedRelay.ManagedRelayDpopProofInput> = [];
   const remoteAuthorization = RemoteEnvironmentAuthorization.of({
+    // SCIENT-FORK:END
     authorizeBearer: () => Effect.die("Unexpected bearer connection preparation."),
     authorizeDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
     authorizeDpopHttp: (input) =>
@@ -203,6 +217,7 @@ const LOADERS: ReadonlyArray<{
     HttpClient.HttpClient
   >;
 }> = [
+  // SCIENT-FORK:START
   {
     name: "Scient thread queue",
     method: "POST",
@@ -242,6 +257,7 @@ const LOADERS: ReadonlyArray<{
         ),
       ),
   },
+  // SCIENT-FORK:END
   {
     name: "PR diff",
     method: "POST",
@@ -316,6 +332,7 @@ const LOADERS: ReadonlyArray<{
 ];
 
 describe("authenticated environment HTTP requests", () => {
+  // SCIENT-FORK:START
   it.effect(
     "recovers shell authorization before deferring unreadable PR badges independently of rows",
     () =>
@@ -408,6 +425,7 @@ describe("authenticated environment HTTP requests", () => {
       }),
   );
 
+  // SCIENT-FORK:END
   it.effect.each(LOADERS)("rejects an invalid $name response", (loader) =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json({}));
@@ -564,7 +582,9 @@ describe("authenticated environment HTTP requests", () => {
               ManagedRelay.ManagedRelayDpopSigner,
               Option.getOrThrow(harness.input.signer),
             ),
+            // SCIENT-FORK:START
             Layer.succeed(RemoteEnvironmentAuthorization, harness.remoteAuthorization),
+            // SCIENT-FORK:END
           ),
         ),
       );
@@ -588,6 +608,7 @@ describe("authenticated environment HTTP requests", () => {
     }),
   );
 
+  // SCIENT-FORK:START
   it.effect("uses the authorization service captured by the diff loader layer", () =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(DIFF_RESULT));
@@ -615,6 +636,7 @@ describe("authenticated environment HTTP requests", () => {
     }),
   );
 
+  // SCIENT-FORK:END
   it.effect("preserves the credential rejection after the one recovery attempt fails", () =>
     Effect.gen(function* () {
       const harness = makeHarness(() => credentialRejectedResponse());
@@ -735,6 +757,7 @@ describe("authenticated environment HTTP requests", () => {
       }),
   );
 
+  // SCIENT-FORK:START
   it.effect("keeps the caller's timeout while waiting for renewal", () =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(SESSION));
@@ -801,6 +824,7 @@ describe("authenticated environment HTTP requests", () => {
     }),
   );
 
+  // SCIENT-FORK:END
   it.effect("reports renewal failure without sending the expired prepared token", () =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(SESSION));
@@ -808,7 +832,9 @@ describe("authenticated environment HTTP requests", () => {
         reason: "transport",
         detail: "Relay unavailable",
       });
+      // SCIENT-FORK:START
       const remoteAuthorization = RemoteEnvironmentAuthorization.of({
+        // SCIENT-FORK:END
         ...harness.remoteAuthorization,
         authorizeDpopHttp: () => Effect.fail(failure),
       });

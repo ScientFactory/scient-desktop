@@ -19,7 +19,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
+  // SCIENT-FORK:START
   notificationChildThreadId,
+  // SCIENT-FORK:END
   deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
@@ -349,6 +351,7 @@ describe("deriveProviderSubagentStatus", () => {
   });
 });
 
+// SCIENT-FORK:START
 it("keeps a provider-initiated notification on its own thread", () => {
   expect(
     notificationChildThreadId({
@@ -362,6 +365,7 @@ it("keeps a provider-initiated notification on its own thread", () => {
   ).toBeUndefined();
 });
 
+// SCIENT-FORK:END
 describe("provider-reported model selection", () => {
   const selected = v2Projection.thread.modelSelection;
   const reported = { ...selected, options: [{ id: "reasoningEffort", value: "default" }] };

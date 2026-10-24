@@ -1,8 +1,10 @@
+// SCIENT-FORK:START
 import {
   ThreadId,
   COMPACT_THREAD_SNAPSHOT_FORMAT,
   THREAD_SNAPSHOT_FORMAT_HEADER,
 } from "@t3tools/contracts";
+// SCIENT-FORK:END
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -124,6 +126,7 @@ const boundedBody = (compact: boolean) => ({
 });
 
 describe("boundedThreadSnapshotLoader", () => {
+  // SCIENT-FORK:START
   it.effect(
     "negotiates compact snapshots and reconstructs the exact visible item before caching",
     () => {
@@ -198,6 +201,7 @@ describe("boundedThreadSnapshotLoader", () => {
       );
     },
   );
+  // SCIENT-FORK:END
   it.effect.each([
     ["an older server that ignores the opt-in", false],
     ["a server that sends compact turnItems", true],
@@ -232,6 +236,7 @@ describe("boundedThreadSnapshotLoader", () => {
     );
   });
 
+  // SCIENT-FORK:START
   it.effect(
     "composes Scient item references with local omission without losing or duplicating rows",
     () => {
@@ -276,6 +281,7 @@ describe("boundedThreadSnapshotLoader", () => {
     },
   );
 
+  // SCIENT-FORK:END
   it.effect("falls back to full HTTP snapshot when bounded returns a plain route 404", () => {
     const fetchFn = ((input: RequestInfo | URL) => {
       const url = String(input);

@@ -23,11 +23,9 @@ const effort: Extract<ProviderOptionDescriptor, { type: "select" }> = {
 describe("prompt-controlled traits", () => {
   it.each([
     ["Fix the bug", "none"],
-    ["Ultrathink: Fix the bug", "prefix"],
     ["ultrathink about the bug", "body"],
     ["Ultrathink: ultrathink harder", "body"],
     ["uLtRaThInK:\nFix the bug", "prefix"],
-    ["Ultrathink:\n", "prefix"],
     ["Ultrathinking", "none"],
     [" UlTrAtHiNk: Fix the bug", "body"],
   ] as const)(

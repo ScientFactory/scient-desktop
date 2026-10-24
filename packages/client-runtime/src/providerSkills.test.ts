@@ -6,8 +6,10 @@ import {
   hasCompleteProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
+  // SCIENT-FORK:START
   resolveProviderSkillSourceKind,
   scientManagedSkillReleaseKey,
+  // SCIENT-FORK:END
 } from "./providerSkills.ts";
 
 const provider = {
@@ -44,6 +46,7 @@ describe("getProviderSkillsForSlashMenu", () => {
     ]);
   });
 
+  // SCIENT-FORK:START
   it("omits project skills from the global composer menu", () => {
     expect(
       getProviderSkillsForSlashMenu(
@@ -92,6 +95,7 @@ describe("getProviderSkillsForSlashMenu", () => {
     ).toEqual([]);
   });
 
+  // SCIENT-FORK:END
   it("shows one row when enabled skills share a name", () => {
     const skills = [
       {
@@ -136,6 +140,7 @@ describe("getProviderSkillsForSlashMenu", () => {
   });
 });
 
+// SCIENT-FORK:START
 describe("resolveProviderSkillSourceKind", () => {
   it("recognizes built-in Scient skill releases as app-owned", () => {
     expect(
@@ -204,6 +209,7 @@ describe("scientManagedSkillReleaseKey", () => {
   });
 });
 
+// SCIENT-FORK:END
 describe("workspace provider snapshots", () => {
   it("uses the cwd snapshot after a provider session has populated it", () => {
     expect(resolveProviderSkillsForCwd(provider, "/workspace/project-a")).toEqual([
