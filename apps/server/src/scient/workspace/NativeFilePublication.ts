@@ -416,25 +416,36 @@ export async function observedDirectoryBinding(
 }
 
 /**
- * A POSIX directory that already stands at its canonical path, not a link,
- * owned by this user and closed to everyone else: what provisioning would leave
- * there, so there is nothing to provision. Anything else (missing, open to
- * others, another spelling, Windows) goes through the helper as always.
+ * Private retention folders the helper found private in this process, each by
+ * its change time, device and inode as they stood before the helper looked.
+ * Only the helper can read an access list (macOS ACLs, Linux POSIX ACLs); mode
+ * bits alone accept a folder 0700 that an ACL opens to everyone. Any change to
+ * a folder's owner, mode or ACL moves its change time, so a folder that still
+ * stands exactly as it did then is still what the helper found.
+ */
+const validatedPrivate = new Map<string, string>();
+const privateKey = async (directory: string) => {
+  try {
+    if ((await NodeFSP.realpath(directory)) !== directory) return null;
+    const stat = await NodeFSP.lstat(directory, { bigint: true });
+    return stat.isDirectory() && !stat.isSymbolicLink()
+      ? `${stat.dev}:${stat.ino}:${stat.ctimeNs}`
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * A POSIX directory the helper already found private in this process, still
+ * unchanged at its canonical path: there is nothing to provision. Anything else
+ * (first seen, changed since, missing, another spelling, Windows) goes through
+ * the helper as always.
  */
 async function alreadyPrivate(directory: string) {
   if (HostProcess.Platform.defaultValue() === "win32") return false;
-  try {
-    if ((await NodeFSP.realpath(directory)) !== directory) return false;
-    const stat = await NodeFSP.lstat(directory);
-    return (
-      stat.isDirectory() &&
-      !stat.isSymbolicLink() &&
-      (process.getuid === undefined || stat.uid === process.getuid()) &&
-      (stat.mode & 0o077) === 0
-    );
-  } catch {
-    return false;
-  }
+  const known = validatedPrivate.get(directory);
+  return known !== undefined && known === (await privateKey(directory));
 }
 
 /** Existing directory permissions are never repaired. Only newly missing host directories are made private. */
@@ -455,6 +466,8 @@ export async function ensureNativePrivateRetentionDirectory(
       null,
     );
   if (await alreadyPrivate(destination)) return destination;
+  // Taken before the helper looks: a change after it moves the change time past this.
+  const before = await privateKey(destination);
   let canonicalParent: string;
   try {
     canonicalParent = await NodeFSP.realpath(parent);
@@ -495,6 +508,13 @@ export async function ensureNativePrivateRetentionDirectory(
       `Native private retention provisioning refused (${result.codeDomain}:${result.code}).`,
       result,
     );
+  // Kept only for the very folder the helper looked at, found already standing.
+  if (
+    before !== null &&
+    canonicalParent === parent &&
+    before.startsWith(`${result.destinationAfter.dev}:${result.destinationAfter.ino}:`)
+  )
+    validatedPrivate.set(destination, before);
   return NodePath.join(canonicalParent, NodePath.basename(destination));
 }
 function nativeFilePublicationArguments(
