@@ -32,6 +32,11 @@ rewriting it on every command (it grew to 84 MB, with 22 GB of leftover partial
 copies) and costing about 0.1 s per command. A Git found earlier on `PATH`
 (Homebrew, `/usr/local`) is used as before.
 
+A review reads the blobs it needs in one `cat-file --batch` run each (small new
+blobs from Overleaf checked for LFS pointers, and the bytes of every file it
+would write), not one Git run per file; each blob and their total are held to
+the same limits as before.
+
 ### Timing
 
 `OverleafSync.bench.test.ts` syncs 1, 10 and 50 files each way against a local
