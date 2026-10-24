@@ -2204,6 +2204,24 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               )
                 return { _tag: "stale" as const };
               const bytes = keptNow.bytes!;
+              const captured = new Map(
+                input.currentRevision === null ? [] : [[copy.relativePath, input.currentRevision]],
+              );
+              const plan = {
+                base: captured,
+                remote: new Map([[copy.relativePath, input.keptRevision]]),
+                captured,
+                target: new Map([[copy.relativePath, { bytes }]]),
+                renames: [],
+                conflicts: [],
+                markerPaths: [],
+              } satisfies WorkspaceApplier.WorkspaceApplyPlan;
+              // Its one write must fit a native lease too, checked before anything is recorded.
+              if (!(yield* leaseRoom(connection, plan)))
+                return yield* new OverleafRetainedLimitError({
+                  connectionId: input.connectionId,
+                  limit: "folder-depth",
+                });
               const oid = yield* repos.writeBlob({ repo, bytes });
               const intentTree = yield* repos.writeTree({
                 repo,
@@ -2231,20 +2249,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               yield* hook(options, "linked");
               // Outstanding reviews were built against the file this replaces.
               registry.invalidate(input.connectionId);
-              const captured = new Map(
-                input.currentRevision === null ? [] : [[copy.relativePath, input.currentRevision]],
-              );
               return {
                 _tag: "restored" as const,
-                adopted: (yield* runLinked(repo, withLink, {
-                  base: captured,
-                  remote: new Map([[copy.relativePath, input.keptRevision]]),
-                  captured,
-                  target: new Map([[copy.relativePath, { bytes }]]),
-                  renames: [],
-                  conflicts: [],
-                  markerPaths: [],
-                })).adopted,
+                adopted: (yield* runLinked(repo, withLink, plan)).adopted,
               };
             }),
           );
