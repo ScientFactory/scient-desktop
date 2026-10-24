@@ -12,7 +12,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
-  type OverleafGitError,
+  OverleafGitError,
   OverleafGitExecutor,
   type OverleafGitExecuteInput,
   newOverleafId,
@@ -201,6 +201,17 @@ export class OverleafRepository extends Context.Service<
       readonly oid: string;
       readonly maxBytes: number;
     }) => Effect.Effect<Uint8Array, OverleafRepositoryError | OverleafGitError>;
+    /**
+     * Several blobs in one Git run (`cat-file --batch`), in the order asked. Each
+     * must be a blob of at most `maxBytes`, and all of them at most `maxTotalBytes`;
+     * anything larger fails as an output limit, as `readBlob` does.
+     */
+    readonly readBlobs: (input: {
+      readonly repo: string;
+      readonly oids: ReadonlyArray<string>;
+      readonly maxBytes: number;
+      readonly maxTotalBytes: number;
+    }) => Effect.Effect<ReadonlyArray<Uint8Array>, OverleafRepositoryError | OverleafGitError>;
     readonly commit: (input: {
       readonly repo: string;
       readonly tree: string;
@@ -471,6 +482,47 @@ export const make = Effect.gen(function* () {
       Effect.map((result) => result.stdout),
     );
 
+  const readBlobs: OverleafRepository["Service"]["readBlobs"] = Effect.fn(
+    "OverleafRepository.readBlobs",
+  )(function* (input) {
+    if (input.oids.length === 0) return [];
+    if (input.oids.some((oid) => !OID.test(oid)))
+      return yield* new OverleafRepositoryError({
+        reason: "invalid-tree",
+        detail: "A blob to read is not an object id.",
+      });
+    const tooLarge = (detail: string) =>
+      new OverleafGitError({ reason: "output-limit", exitCode: null, detail });
+    // Each record is a header line, the bytes and a newline.
+    const headerBytes = 128;
+    const result = yield* run(input.repo, ["cat-file", "--batch"], {
+      stdin: encode(`${input.oids.join("\n")}\n`),
+      maxOutputBytes: input.maxTotalBytes + input.oids.length * headerBytes,
+    });
+    const out = result.stdout;
+    const blobs: Uint8Array[] = [];
+    let offset = 0;
+    let total = 0;
+    for (const oid of input.oids) {
+      const end = out.indexOf(0x0a, offset);
+      if (end === -1) return yield* unreadable("git cat-file --batch ended early");
+      const header = /^([0-9a-f]+) blob (\d+)$/u.exec(text(out.subarray(offset, end)));
+      if (header === null || header[1] !== oid)
+        return yield* unreadable(`git cat-file --batch did not return the blob ${oid}`);
+      const size = Number(header[2]);
+      total += size;
+      if (size > input.maxBytes || total > input.maxTotalBytes)
+        return yield* tooLarge(`Blob ${oid} is larger than allowed.`);
+      const start = end + 1;
+      if (start + size >= out.length || out[start + size] !== 0x0a)
+        return yield* unreadable("git cat-file --batch returned a short blob");
+      blobs.push(out.slice(start, start + size));
+      offset = start + size + 1;
+    }
+    if (offset !== out.length) return yield* unreadable("git cat-file --batch returned more");
+    return blobs;
+  });
+
   const findTree: OverleafRepository["Service"]["findTree"] = (input) =>
     run(input.repo, ["rev-parse", "--verify", "-q", "--end-of-options", `${input.commit}^{tree}`], {
       acceptExitCodes: [1],
@@ -682,6 +734,7 @@ export const make = Effect.gen(function* () {
     readTree,
     treeSizes,
     readBlob,
+    readBlobs,
     commit,
     treeOf,
     findTree,
