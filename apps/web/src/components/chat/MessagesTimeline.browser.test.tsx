@@ -570,6 +570,20 @@ describe("MessagesTimeline messages", () => {
     await act(() => {
       void props.listRef.current!.scrollToIndex({ index: 0, animated: false });
     });
+    // SCIENT-FORK:START — measuring this ~100,000 px timeline takes up to 0.65 s on a fast Mac and
+    // longer on CI runners, past vi.waitFor's default 1 s. Wait for the first reply with room to
+    // spare; the upstream wait below then holds at once, and the render-loop bound stays the check.
+    await vi.waitFor(
+      async () => {
+        await act(() => {
+          viewport.scrollTop = 0;
+          viewport.dispatchEvent(new Event("scroll"));
+        });
+        expect(screen.text().includes("Reply 0")).toBe(true);
+      },
+      { timeout: 10_000 },
+    );
+    // SCIENT-FORK:END
     await vi.waitFor(async () => {
       await act(() => {
         viewport.scrollTop = 0;
