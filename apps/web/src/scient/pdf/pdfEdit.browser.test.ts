@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vite-plus/test";
 import {
+  PDFArray,
   PDFDict,
   PDFDocument,
   PDFHexString,
@@ -377,4 +378,111 @@ it("forgets an imported PDF once it is released", async () => {
   await request(editor.worker, { kind: "release", id: 5, sourceId: "base" });
   const built = await request(editor.worker, { kind: "build", id: 6, pages: base.pages });
   expect(built.kind).toBe("built");
+});
+
+it("strips structure claims from forms and images drawn by pages copied out of a tagged PDF", async () => {
+  using editor = editingWorker();
+  const tagged = await PDFDocument.load(await taggedPdf());
+  const form = tagged.context.register(
+    tagged.context.stream("0 0 m 10 10 l S", {
+      Type: "XObject",
+      Subtype: "Form",
+      BBox: [0, 0, 10, 10],
+      StructParents: 7,
+    }),
+  );
+  tagged
+    .getPage(0)
+    .node.set(PDFName.of("Resources"), tagged.context.obj({ XObject: { Fm1: form } }));
+  tagged
+    .getPage(0)
+    .node.set(PDFName.of("Contents"), tagged.context.register(tagged.context.stream("/Fm1 Do")));
+  const base = await request(editor.worker, {
+    kind: "load",
+    id: 1,
+    sourceId: "base",
+    bytes: await markedPdf(["BASE_PAGE"]),
+  });
+  const imported = await request(editor.worker, {
+    kind: "load",
+    id: 2,
+    sourceId: "tagged-import",
+    bytes: await tagged.save(),
+  });
+  if (base.kind !== "loaded" || imported.kind !== "loaded") throw new Error("Expected pages.");
+  const built = await request(editor.worker, {
+    kind: "build",
+    id: 3,
+    pages: [base.pages[0]!, imported.pages[0]!],
+  });
+  if (built.kind !== "built") throw new Error("Expected the edited PDF.");
+  const saved = await PDFDocument.load(built.bytes);
+  const copiedForm = saved
+    .getPage(1)
+    .node.Resources()!
+    .lookup(PDFName.of("XObject"), PDFDict)
+    .lookup(PDFName.of("Fm1"));
+  expect(copiedForm).toBeDefined();
+  expect(latin1(built.bytes)).not.toMatch(/StructParents?\b/u);
+});
+
+it("drops forms only a deleted page drew from a resource dictionary shared with kept pages", async () => {
+  using editor = editingWorker();
+  const document = await PDFDocument.create();
+  const form = (marker: string) =>
+    document.context.register(
+      document.context.stream(`BT /F1 12 Tf (${marker}) Tj ET`, {
+        Type: "XObject",
+        Subtype: "Form",
+        BBox: [0, 0, 300, 300],
+      }),
+    );
+  const shared = document.context.register(
+    document.context.obj({
+      XObject: { Kept: form("KEPT_FORM_TEXT"), Gone: form("GONE_FORM_SECRET") },
+    }),
+  );
+  for (const drawn of ["Kept", "Gone"]) {
+    const page = document.addPage([300, 300]);
+    page.node.set(PDFName.of("Resources"), shared);
+    page.node.set(
+      PDFName.of("Contents"),
+      document.context.register(document.context.stream(`q /${drawn} Do Q`)),
+    );
+  }
+  const loaded = await request(editor.worker, {
+    kind: "load",
+    id: 1,
+    sourceId: "shared-resources",
+    bytes: await document.save(),
+  });
+  if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
+  const built = await request(editor.worker, { kind: "build", id: 2, pages: [loaded.pages[0]!] });
+  if (built.kind !== "built") throw new Error("Expected the edited PDF.");
+  expect(latin1(built.bytes)).toContain("KEPT_FORM_TEXT");
+  expect(latin1(built.bytes)).not.toContain("GONE_FORM_SECRET");
+});
+
+it("keeps a document ID stored as an indirect object", async () => {
+  using editor = editingWorker();
+  const document = await PDFDocument.load(await markedPdf(["ONLY_PAGE"]));
+  document.context.trailerInfo.ID = document.context.register(
+    document.context.obj([PDFHexString.of("ABCD"), PDFHexString.of("ABCD")]),
+  );
+  const loaded = await request(editor.worker, {
+    kind: "load",
+    id: 1,
+    sourceId: "indirect-id",
+    bytes: await document.save({ useObjectStreams: false }),
+  });
+  if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
+  const built = await request(editor.worker, {
+    kind: "build",
+    id: 2,
+    pages: [{ ...loaded.pages[0]!, rotation: 90 }],
+  });
+  if (built.kind !== "built") throw new Error("Expected the edited PDF.");
+  const saved = await PDFDocument.load(built.bytes);
+  const id = saved.context.lookup(saved.context.trailerInfo.ID);
+  expect(id).toBeInstanceOf(PDFArray);
 });

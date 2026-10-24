@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CirclePlus, FilePlus2, Files } from "lucide-react";
 import {
   DropdownMenu,
@@ -23,9 +23,22 @@ export function PdfPageInsertion(props: {
   const [file, setFile] = useState<{ name: string; pages: readonly PdfEditPage[] } | null>(null);
   const [range, setRange] = useState(""),
     [all, setAll] = useState(true);
+  // A picked PDF not yet inserted. It is released when the picker is cancelled or
+  // this gap control disappears (a virtualized thumbnail, the Outline tab).
+  const picked = useRef<string | null>(null),
+    mounted = useRef(false);
+  const session = props.session;
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (picked.current) session.releaseFile(picked.current);
+      picked.current = null;
+    };
+  }, [session]);
   const cancel = () => {
-    const sourceId = file?.pages[0]?.sourceId;
-    if (sourceId) props.session.releaseFile(sourceId);
+    if (picked.current) props.session.releaseFile(picked.current);
+    picked.current = null;
     setFile(null);
   };
   return (
@@ -79,6 +92,13 @@ export function PdfPageInsertion(props: {
             if (ready)
               return props.session.run(async () => {
                 const pages = await props.session.loadFile(chosen);
+                const sourceId = pages[0]?.sourceId ?? null;
+                if (!mounted.current) {
+                  if (sourceId) props.session.releaseFile(sourceId);
+                  return;
+                }
+                if (picked.current) props.session.releaseFile(picked.current);
+                picked.current = sourceId;
                 setAll(true);
                 setRange("");
                 setFile({ name: chosen.name, pages });
@@ -102,6 +122,7 @@ export function PdfPageInsertion(props: {
                   const pages = all
                     ? file.pages
                     : parsePdfPageRange(range, file.pages.length).map((n) => file.pages[n - 1]!);
+                  picked.current = null;
                   setFile(null);
                   // Enqueue the change after the source-loading/validation transaction.
                   void props.session.insert(pages, props.boundary);

@@ -100,9 +100,10 @@ export const savePdfFileEdit = Effect.fn("PdfFileEdits.save")(
       });
     }
     const path = NodePath.resolve(cwd, target.canonicalRelativePath);
+    // Classify the fully resolved file: the caller's root may itself be a link into Sources.
     if (
       (source._tag === "workspace-pdf" && source.origin !== undefined) ||
-      isInsideSourcesStore(path)
+      isInsideSourcesStore(yield* fs.realPath(path))
     )
       return yield* publishCopyOf(path);
     const header = (yield* Stream.runCollect(fs.stream(path, { bytesToRead: 1024 })))

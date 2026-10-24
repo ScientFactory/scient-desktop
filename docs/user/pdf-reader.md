@@ -115,8 +115,9 @@ Use Reload PDF in the error notice to read the latest file and reset page histor
 Page edits support up to 5,000 pages and 50 MB of combined source PDFs.
 Encrypted PDFs and PDFs with form fields or certificate permissions stay
 read-only. In PDFs with accessibility tags, pages can be rotated, moved and
-inserted, but not deleted or duplicated yet. A deleted page's content is removed
-from the saved file, not just hidden. Existing base-document outlines, internal destinations, metadata,
+inserted, but not deleted or duplicated yet. Deleting a page removes its text,
+drawings, images and forms from the saved file, not just from view. Fonts it
+shared with remaining pages stay, as those pages need them. Existing base-document outlines, internal destinations, metadata,
 and attachments are retained; destinations to removed pages follow a surviving
 page. Imported internal links are retained when their target is also inserted.
 

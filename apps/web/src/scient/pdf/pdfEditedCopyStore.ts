@@ -6,8 +6,6 @@ const SavedCopy = Schema.Struct({
   source: PdfSourceDescriptor,
   sessionKey: Schema.String,
   showOriginal: Schema.Boolean,
-  /** The generated revision the copy was edited from; null for files that are not rebuilt. */
-  originalRevisionId: Schema.NullOr(Schema.String),
   savedAt: Schema.Number,
 });
 export type SavedPdfEditedCopy = typeof SavedCopy.Type;
@@ -17,7 +15,7 @@ const MAX_REMEMBERED_COPIES = 100;
 const cache = new Map<string, SavedPdfEditedCopy | null>();
 const listeners = new Set<() => void>();
 
-function readCopy(key: string) {
+export function readPdfEditedCopy(key: string) {
   if (cache.has(key)) return cache.get(key)!;
   let value: SavedPdfEditedCopy | null = null;
   try {
@@ -40,25 +38,21 @@ function subscribe(listener: () => void) {
   };
 }
 
-/** The generated revision a copy must have been edited from to still apply. */
-export function pdfEditedCopyOriginalRevision(source: PdfSourceDescriptor) {
-  return source._tag === "generated-pdf" ? source.revisionId : null;
-}
-
-/** A remembered copy applies only while the original is the revision it was edited from. */
-export function currentPdfEditedCopy(
-  remembered: SavedPdfEditedCopy | null,
-  original: PdfSourceDescriptor,
-) {
-  return remembered?.originalRevisionId === pdfEditedCopyOriginalRevision(original)
-    ? remembered
-    : null;
+/**
+ * Copies of a generated PDF are remembered per revision: a rebuild shows the
+ * new build, and a save still finishing for an older build cannot replace the
+ * newer build's copy.
+ */
+export function pdfEditedCopyKey(documentKey: string, original: PdfSourceDescriptor) {
+  return original._tag === "generated-pdf"
+    ? JSON.stringify([documentKey, original.revisionId])
+    : documentKey;
 }
 
 export function usePdfEditedCopy(key: string) {
   return useSyncExternalStore(
     subscribe,
-    () => readCopy(key),
+    () => readPdfEditedCopy(key),
     () => null,
   );
 }

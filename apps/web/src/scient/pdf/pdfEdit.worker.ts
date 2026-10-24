@@ -23,7 +23,11 @@ import {
   type PdfEditWorkerResponse,
 } from "./pdfPageEdits";
 import { readPdfPageLabels, writePdfPageLabels } from "./pdfPageLabels";
-import { removeUnreachableObjects } from "./pdfUnreachableObjects";
+import {
+  detachCopiedStructure,
+  keepOnlyDrawnXObjects,
+  removeUnreachableObjects,
+} from "./pdfEditCleanup";
 
 const sources = new Map<
   string,
@@ -129,18 +133,6 @@ function repairCopiedLinks(
   }
 }
 
-/** A copied page joins no structure tree, so it must not claim entries in one. */
-function detachCopiedStructure(output: PDFDocument, page: PDFPage) {
-  page.node.delete(name("StructParents"));
-  if (page.node.get(name("Tabs")) === name("S")) page.node.delete(name("Tabs"));
-  const annotations = lookup(output, page.node.get(name("Annots")));
-  if (!(annotations instanceof PDFArray)) return;
-  for (const entry of annotations.asArray()) {
-    const annotation = lookup(output, entry);
-    if (annotation instanceof PDFDict) annotation.delete(name("StructParent"));
-  }
-}
-
 async function build(entries: readonly PdfEditPage[]) {
   const base = baseSourceId ? sources.get(baseSourceId) : null;
   if (!base) throw new Error("Reopen the PDF before editing.");
@@ -178,7 +170,7 @@ async function build(entries: readonly PdfEditPage[]) {
       );
       round.forEach((index, i) => {
         prepared[index] = copies[i]!;
-        if (sources.get(sourceId)!.tagged) detachCopiedStructure(output, copies[i]!);
+        detachCopiedStructure(output, copies[i]!);
       });
       const done = new Set(round);
       pending = pending.filter((index) => !done.has(index));
@@ -265,6 +257,7 @@ async function build(entries: readonly PdfEditPage[]) {
     ),
   );
   await output.flush();
+  keepOnlyDrawnXObjects(output);
   removeUnreachableObjects(output);
   const bytes = await output.save({ addDefaultPage: false, updateFieldAppearances: false });
   if (bytes.byteLength > PDF_EDIT_MAX_BYTES)

@@ -1,7 +1,7 @@
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
 import { expect, it } from "vite-plus/test";
 
-import { currentPdfEditedCopy, rememberPdfEditedCopy } from "./pdfEditedCopyStore";
+import { pdfEditedCopyKey, readPdfEditedCopy, rememberPdfEditedCopy } from "./pdfEditedCopyStore";
 
 const prefix = "scient.pdf-edited-copy.v1:";
 
@@ -32,28 +32,34 @@ const workspace = {
   relativePath: "paper.pdf",
 } as PdfSourceDescriptor;
 
-const copy = (originalRevisionId: string | null) => ({
-  source: generated("edited"),
-  sessionKey: "session",
-  showOriginal: false,
-  originalRevisionId,
-  savedAt: 1,
-});
-
 /** Starts from, and leaves behind, empty storage. */
 function emptyStorage() {
   localStorage.clear();
   return { [Symbol.dispose]: () => localStorage.clear() };
 }
 
-it("drops an edited copy once the generated original is rebuilt", () => {
-  expect(currentPdfEditedCopy(copy("revision-1"), generated("revision-1"))).not.toBeNull();
-  expect(currentPdfEditedCopy(copy("revision-1"), generated("revision-2"))).toBeNull();
+const remember = (key: string) =>
+  rememberPdfEditedCopy(key, {
+    source: generated("edited"),
+    sessionKey: key,
+    showOriginal: false,
+  });
+
+it("remembers a generated PDF's copy per revision, so a rebuild shows the new build", () => {
+  using _storage = emptyStorage();
+  const before = pdfEditedCopyKey("document", generated("revision-1"));
+  const after = pdfEditedCopyKey("document", generated("revision-2"));
+  expect(before).not.toBe(after);
+  remember(before);
+  expect(readPdfEditedCopy(after)).toBeNull();
+  // A save still finishing for the old build cannot replace the new build's copy.
+  remember(after);
+  remember(before);
+  expect(readPdfEditedCopy(after)?.sessionKey).toBe(after);
 });
 
-it("keeps an edited copy of a file that is never rebuilt", () => {
-  expect(currentPdfEditedCopy(copy(null), workspace)).not.toBeNull();
-  expect(currentPdfEditedCopy(copy("revision-1"), workspace)).toBeNull();
+it("remembers a copy of a file that is never rebuilt by its document alone", () => {
+  expect(pdfEditedCopyKey("document", workspace)).toBe("document");
 });
 
 it("remembers at most 100 edited copies, forgetting the oldest", () => {
@@ -63,7 +69,6 @@ it("remembers at most 100 edited copies, forgetting the oldest", () => {
       source: generated("edited"),
       sessionKey: `session-${index}`,
       showOriginal: false,
-      originalRevisionId: null,
     });
     localStorage.setItem(
       prefix + `document-${index}`,
@@ -77,7 +82,6 @@ it("remembers at most 100 edited copies, forgetting the oldest", () => {
     source: generated("edited"),
     sessionKey: "session-latest",
     showOriginal: false,
-    originalRevisionId: null,
   });
   const remembered = Object.keys(localStorage).filter((key) => key.startsWith(prefix));
   expect(remembered).toHaveLength(100);
@@ -93,7 +97,6 @@ it("keeps every edited copy while fewer than the limit are remembered", () => {
       source: generated("edited"),
       sessionKey: name,
       showOriginal: false,
-      originalRevisionId: null,
     });
   expect(Object.keys(localStorage).filter((key) => key.startsWith(prefix))).toHaveLength(3);
 });

@@ -52,12 +52,7 @@ import { PdfPageInsertion } from "./PdfPageInsertion";
 import { PdfMovePagesPopover } from "./PdfMovePagesPopover";
 import { savePdfEdits } from "./savePdfEdits";
 import { saveEditedPdfCopy } from "./saveEditedPdfCopy";
-import {
-  currentPdfEditedCopy,
-  pdfEditedCopyOriginalRevision,
-  rememberPdfEditedCopy,
-  usePdfEditedCopy,
-} from "./pdfEditedCopyStore";
+import { pdfEditedCopyKey, rememberPdfEditedCopy, usePdfEditedCopy } from "./pdfEditedCopyStore";
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
@@ -133,8 +128,9 @@ export function ScientPdfReader(props: {
   const resolver = props.resolver ?? webPdfSourceResolver;
   const legacyDocumentKey = pdfReaderSessionDocumentKey(props.source);
   const documentKey = pdfReaderSessionDocumentKey(props.source, props.readerScope);
-  // A rebuilt generated PDF replaces the revision the edited copy was made from.
-  const savedCopy = currentPdfEditedCopy(usePdfEditedCopy(documentKey), props.source);
+  // Remembered per original revision, so a rebuild shows the new build.
+  const copyKey = pdfEditedCopyKey(documentKey, props.source);
+  const savedCopy = usePdfEditedCopy(copyKey);
   const originalReveal = usePdfRevealRequest(legacyDocumentKey);
   const forceOriginal = savedCopy !== null && originalReveal !== null;
   const showingCopy = savedCopy !== null && !savedCopy.showOriginal && !forceOriginal;
@@ -143,8 +139,8 @@ export function ScientPdfReader(props: {
   const revealOwner = usePdfRevealClaim(revealDocumentKey);
   useEffect(() => {
     if (forceOriginal && savedCopy && !savedCopy.showOriginal)
-      rememberPdfEditedCopy(documentKey, { ...savedCopy, showOriginal: true });
-  }, [documentKey, forceOriginal, savedCopy]);
+      rememberPdfEditedCopy(copyKey, { ...savedCopy, showOriginal: true });
+  }, [copyKey, forceOriginal, savedCopy]);
   const asset = resolver.useResolve(source);
   const displayed = useRetainedPdfSource(documentKey, source, asset);
   const editSessionKey = showingCopy
@@ -222,18 +218,17 @@ export function ScientPdfReader(props: {
       onSwitchCopy={() => {
         if (!savedCopy) return;
         void editSession.reset().then(() => {
-          rememberPdfEditedCopy(documentKey, {
+          rememberPdfEditedCopy(copyKey, {
             ...savedCopy,
             showOriginal: !savedCopy.showOriginal,
           });
         });
       }}
       onSavedCopy={(savedSource) => {
-        const durable = rememberPdfEditedCopy(documentKey, {
+        const durable = rememberPdfEditedCopy(copyKey, {
           source: savedSource,
           sessionKey: editSessionKey,
           showOriginal: false,
-          originalRevisionId: pdfEditedCopyOriginalRevision(props.source),
         });
         if (!durable)
           toastManager.add({

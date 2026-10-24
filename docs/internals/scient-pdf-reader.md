@@ -227,9 +227,10 @@ that binding's expected revision under a per-binding lease. The original PDF
 remains immutable; only registered workspace files use the workspace writer.
 The client remembers the edited-copy descriptor and view choice by reader scope
 in local storage, so the copy remains openable after closing or restarting the
-reader. Each record keeps the generated revision it was edited from; once a
-rebuild replaces that revision the record no longer applies. Only the 100 most
-recently saved records are kept. Quote metadata follows the saved copy's identity.
+reader. Records for generated PDFs are keyed by the original revision, so a
+rebuild shows the new build and a save still finishing for an older build cannot
+replace the newer build's record. Only the 100 most recently saved records are
+kept. Quote metadata follows the saved copy's identity.
 Attachments retain the existing read-only experience.
 
 The worker rebuilds from the base PDF context, retaining the catalog, metadata,
@@ -237,13 +238,19 @@ attachments and original page references. Removed-page destinations are rebound
 to a surviving page. Copied pages rebind explicit and named internal links to
 inserted targets; external links and non-link annotations retain their objects.
 Inherited resources and page boxes are materialized before reparenting original
-page nodes. Before serializing, objects the trailer no longer reaches are removed
-(pdf-lib otherwise writes every object it loaded), so deleted pages' content does
-not survive in the bytes. A tagged base PDF (one with a `StructTreeRoot`) must
-keep each original page exactly once, because its structure tree points at those
-pages; the session and worker both refuse delete and duplicate. Pages copied
-from a tagged PDF drop their `StructParents`/`StructParent` claims. A picked
-import that is cancelled is released from the worker's 50 MB source budget. Page-label number trees are read before editing and rebuilt in output
+page nodes. Before serializing, each page whose resources list XObjects its
+content never draws (`/Name Do`, scanned across all content parts; undecodable
+content and Type 3 fonts drawing with page resources are left alone) gets its own
+resource dictionary listing only the drawn ones, so a dictionary shared with a
+deleted page no longer keeps that page's images and forms. Then objects the
+trailer (Root, Info, Encrypt, ID) no longer reaches are removed; pdf-lib
+otherwise writes every object it loaded. Fonts shared with kept pages remain.
+A tagged base PDF (one with a `StructTreeRoot`) must keep each original page
+exactly once, because its structure tree points at those pages; the session and
+worker both refuse delete and duplicate. Every copied page, and everything it
+draws, drops `StructParents`/`StructParent` claims, since it joins no structure
+tree. A picked import is released from the worker's 50 MB source budget when its
+form is cancelled or its gap control unmounts, including while it still loads. Page-label number trees are read before editing and rebuilt in output
 order so Roman, alphabetic, prefixed and custom labels follow their source pages,
 including duplicates and imports. Unlabeled and blank pages use their physical
 position when mixed with custom labels; wholly unlabeled PDFs retain automatic

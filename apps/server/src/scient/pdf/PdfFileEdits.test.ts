@@ -138,6 +138,44 @@ describe("PdfFileEdits", () => {
       }),
     );
 
+    it.effect(
+      "classifies a Sources file reached through a linked folder by its real location",
+      () =>
+        Effect.gen(function* () {
+          const root = yield* Effect.promise(() => makeFixtureDirectory(fixtures, "pdf-edit-"));
+          yield* Effect.promise(() => writeFixtureFile(root, BLOB, original));
+          yield* Effect.promise(() =>
+            NodeFSP.symlink(
+              NodePath.join(root, NodePath.dirname(BLOB)),
+              NodePath.join(root, "alias"),
+            ),
+          );
+          const rootedAtAlias = yield* save({
+            root,
+            source: workspaceSource(NodePath.join(root, "alias"), "abcdef.pdf", false),
+          });
+          expect(
+            rootedAtAlias.result._tag === "Success" && rootedAtAlias.result.success.createdCopy,
+          ).toBe(true);
+          const environment = yield* save({
+            root,
+            source: {
+              _tag: "environment-pdf",
+              authority: "environment-pdf-edit-test",
+              logicalDocumentKey: "environment:alias",
+              title: "Paper",
+              fileName: "Paper.pdf",
+              capabilities: { canSaveCopy: true, canRevealSource: true },
+              path: NodePath.join(root, "alias", "abcdef.pdf"),
+            } as PdfSourceDescriptor,
+          });
+          expect(
+            environment.result._tag === "Success" && environment.result.success.createdCopy,
+          ).toBe(true);
+          expect(yield* readFixture(root, BLOB)).toEqual(Buffer.from(original));
+        }),
+    );
+
     it.effect("refuses to copy a Sources PDF that differs from the edited revision", () =>
       Effect.gen(function* () {
         const root = yield* Effect.promise(() => makeFixtureDirectory(fixtures, "pdf-edit-"));
