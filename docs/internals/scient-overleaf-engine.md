@@ -369,7 +369,13 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
   selected file that is gone is left out instead of refused, so the rebuilt
   review differs and replaces the stale one. Capture reads the base's paths, the managed paths and
   every path in a forced conflict. A different digest is a stale review: the
-  fresh one is offered and nothing is applied. Before anything is written it
+  fresh one is offered and nothing is applied. The review is a function of the
+  connection record, the checkout and credential epochs, Overleaf's head and
+  the capture, so when the record's revision, both epochs and the head are the
+  review's and the folder, captured exactly as the review captured it, gives
+  the same inventory digest (every field, each read file by its SHA-256), the
+  review stands as it is and is not built again (no Git work); any difference
+  builds it again as above. Before anything is written it
   checks room:
   for every kept copy the apply could add, and for every group an interruption
   could leave as a forced conflict (at most 2,000 paths each). Then, before the
