@@ -287,6 +287,17 @@ describe("Overleaf tool handlers", () => {
         "Sent 2 files to Overleaf (send #5): main.tex, gone.tex (new).",
       ]);
 
+      // The sync that follows every undo; here it was asked to stop.
+      const stopped = {
+        _tag: "cancelled",
+        stage: "before-prepare",
+        retried: false,
+        settled: null,
+      };
+      const followUp = [
+        "Then it synced:",
+        "The sync stopped on request before reading the folder again.",
+      ];
       const refusedWith = (result: unknown) =>
         overleafUndoForInvocation({ connectionId: "c-1", attemptNumber: 4 }).pipe(
           provide(fakeOverleaf({ undo: () => Effect.succeed(result) as never })),
@@ -300,11 +311,12 @@ describe("Overleaf tool handlers", () => {
           recreated: [],
           skipped: [{ path: "private.tex", reason: "kept-only-here" }],
           adopted: null,
-          sync: null,
+          sync: stopped,
         }),
       ).toEqual([
         "Nothing of send #4 was put back.",
         "Left as it is: private.tex (kept only on this computer).",
+        ...followUp,
       ]);
       expect(yield* refusedWith({ _tag: "cancelled" })).toEqual([
         "The undo of send #4 stopped on request before putting anything back.",
@@ -320,10 +332,11 @@ describe("Overleaf tool handlers", () => {
         recreated: [],
         skipped: [],
         adopted: { outcome: "replan" },
-        sync: null,
+        sync: stopped,
       });
       expect(replanned).toEqual([
         "The undo of send #4 wrote nothing: the folder changed while it ran. Call again.",
+        ...followUp,
       ]);
     }),
   );

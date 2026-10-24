@@ -386,8 +386,9 @@ export type ScientOverleafUndoableSends = typeof ScientOverleafUndoableSends.Typ
 /**
  * An undo (design section 4.3). `undone` lists what it set out to put back and
  * every path it left alone, with why; `outcome` is how its apply ended (null when
- * every path was skipped and nothing was written), and `sync` the sync that sent
- * the restored files, run only when the apply completed.
+ * every path was skipped and nothing was written), and `sync` the sync that
+ * followed it, which sends what was put back and records the request's per-file
+ * decisions.
  */
 export const ScientOverleafUndoResult = Schema.Union([
   Schema.Struct({
@@ -411,7 +412,7 @@ export const ScientOverleafUndoResult = Schema.Union([
       }),
     ),
     outcome: Schema.NullOr(ScientOverleafApplyOutcome),
-    sync: Schema.NullOr(ScientOverleafSyncResult),
+    sync: ScientOverleafSyncResult,
   }),
   Schema.Struct({
     _tag: Schema.Literal("not-eligible"),

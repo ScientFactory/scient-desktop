@@ -522,11 +522,39 @@ describe("conflict marks", () => {
       removed: ["new.tex"],
       recreated: [],
       skipped: [{ path: "notes.tex", reason: "changed" as const }],
-      sync: null,
+      // The sync that follows every undo; here it had nothing more to do.
+      sync: {
+        _tag: "synced" as const,
+        review: {
+          reviewId: "r",
+          digest: "d",
+          remoteTree: "a".repeat(40),
+          upToDate: true,
+          needsDecision: false,
+          incoming: [],
+          outgoing: [],
+          conflicts: [],
+          warnings: [],
+          unresolvedMarkers: [],
+          released: [],
+          collisions: [],
+          selectedAdditions: [],
+          additions: [],
+          localOnly: [],
+        },
+        outcome: "complete",
+        interrupted: 0,
+        markerPaths: [],
+        publication: { _tag: "none" as const },
+        retried: false,
+        settled: null,
+        activity: [],
+        linkedElsewhere: false,
+      },
     };
     expect(overleafUndoView({ ...undone, outcome: "complete" })).toEqual({
       title: "Put back 2 files",
-      lines: ["Left as it is: notes.tex (edited since)."],
+      lines: ["Left as it is: notes.tex (edited since).", "Up to date with Overleaf."],
       tone: "success",
       needsDecision: false,
     });
@@ -541,7 +569,7 @@ describe("conflict marks", () => {
         skipped: [{ path: "private.tex", reason: "kept-only-here" }],
         outcome: null,
       }).lines,
-    ).toEqual(["Left as it is: private.tex (kept only here)."]);
+    ).toEqual(["Left as it is: private.tex (kept only here).", "Up to date with Overleaf."]);
     expect(overleafUndoView({ _tag: "cancelled" })).toMatchObject({
       title: "Undo cancelled",
       lines: ["Nothing was changed."],

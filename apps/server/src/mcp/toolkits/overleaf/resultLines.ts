@@ -544,7 +544,7 @@ export const undoLines = (attemptNumber: number, result: ScientOverleafUndoResul
         lines.push(
           `Left as it is: ${named(result.skipped.map((skip) => `${skip.path} (${UNDO_SKIP_TEXT[skip.reason]})`))}.`,
         );
-      if (result.sync !== null) lines.push("Then it synced:", ...syncLines(result.sync));
+      lines.push("Then it synced:", ...syncLines(result.sync));
       return lines;
     }
     case "not-eligible":
