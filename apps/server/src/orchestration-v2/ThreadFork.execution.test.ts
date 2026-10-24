@@ -21,12 +21,13 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
+import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const forkCases = (["codex", "claudeAgent"] as const).map((driverName) => {
   const driver = ProviderDriverKind.make(driverName);
@@ -685,4 +686,248 @@ it.effect.each(
       assert.notInclude(`${handoff.summaryText}\n${history}`, "EXCLUDED_LATER_MARKER");
       assert.isNull(target.providerThreads[0]?.forkedFrom);
     }).pipe(Effect.provide(layer)),
+);
+
+// SCIENT-FORK:START — Scient forks natively only with exact native boundary evidence
+// (scient-fork/ConversationForkNativeSource.ts), which this fixture's run lacks, so the
+// same-provider fork here is portable. A Scient fork carries the source's frozen history
+// (`scient_fork_history`) rather than live inheritance, and its handoff retains that
+// history by reference, so the oversized messages still reach the fork. The cross-provider
+// Codex fork does not reach session open on /compact, before this merge as well; it is a
+// separate Scient defect, so this case covers the same-provider fork only.
+it.effect.each([{ name: "same-provider", sameProvider: true }] as const)(
+  "a $name fork's first /compact compacts its inherited history",
+  ({ name, sameProvider }) => {
+    const messageLength = 17_000;
+    // SCIENT-FORK:END
+    const opened: Array<ProviderInstanceId> = [];
+    const adapter = (driverName: "claudeAgent" | "codex") => {
+      const driver = ProviderDriverKind.make(driverName);
+      const instanceId = ProviderInstanceId.make(driverName);
+      return {
+        instanceId,
+        driver,
+        getCapabilities: () =>
+          Effect.succeed(
+            driver === "codex" ? CodexProviderCapabilitiesV2 : ClaudeProviderCapabilitiesV2,
+          ),
+        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+        openSession: (input) =>
+          Effect.sync(() => opened.push(instanceId)).pipe(
+            Effect.andThen(
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
+                driver,
+                providerSessionId: input.providerSessionId,
+              }),
+            ),
+          ),
+      } satisfies ProviderAdapter.ProviderAdapterV2["Service"];
+    };
+    const claude = adapter("claudeAgent");
+    // SCIENT-FORK:START
+    const target = sameProvider ? claude : adapter("codex");
+    // SCIENT-FORK:END
+    return Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const now = yield* DateTime.now;
+      const sourceThreadId = ThreadId.make("fork-compact-source");
+      const targetThreadId = ThreadId.make("fork-compact-target");
+      const providerThreadId = ProviderThreadId.make("fork-compact-native-thread");
+      const sourceRunId = RunId.make("fork-compact-source-run");
+      const userMessageId = MessageId.make("fork-compact-source-message");
+      const sourceSelection = { instanceId: claude.instanceId, model: "test-model" };
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("fork-compact-create-source"),
+        threadId: sourceThreadId,
+        projectId: ProjectId.make("fork-compact-project"),
+        title: "Fork compact source",
+        modelSelection: sourceSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const item = {
+        threadId: sourceThreadId,
+        runId: sourceRunId,
+        nodeId: null,
+        providerThreadId,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      } as const;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("fork-compact-provider-thread"),
+            type: "provider-thread.updated",
+            threadId: sourceThreadId,
+            occurredAt: now,
+            payload: {
+              id: providerThreadId,
+              driver: claude.driver,
+              providerInstanceId: claude.instanceId,
+              providerSessionId: null,
+              appThreadId: sourceThreadId,
+              ownerNodeId: null,
+              nativeThreadRef: {
+                driver: claude.driver,
+                nativeId: "native-fork-compact-source",
+                strength: "strong",
+              },
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("fork-compact-source-run"),
+            type: "run.created",
+            threadId: sourceThreadId,
+            runId: sourceRunId,
+            occurredAt: now,
+            payload: {
+              id: sourceRunId,
+              threadId: sourceThreadId,
+              ordinal: 1,
+              providerInstanceId: claude.instanceId,
+              modelSelection: sourceSelection,
+              providerThreadId,
+              userMessageId,
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "completed",
+              queuePosition: null,
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+          // SCIENT-FORK:START — a sent user message has its conversation record.
+          {
+            id: EventId.make("fork-compact-user-message"),
+            type: "message.updated",
+            threadId: sourceThreadId,
+            runId: sourceRunId,
+            occurredAt: now,
+            payload: {
+              id: userMessageId,
+              threadId: sourceThreadId,
+              runId: sourceRunId,
+              nodeId: null,
+              role: "user",
+              text: "u".repeat(messageLength),
+              attachments: [],
+              streaming: false,
+              createdBy: "user",
+              creationSource: "web",
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          // SCIENT-FORK:END
+          // Each message alone exceeds the default 16k handoff budget, so a
+          // portable handoff omits both whole items.
+          {
+            id: EventId.make("fork-compact-user-item"),
+            type: "turn-item.updated",
+            threadId: sourceThreadId,
+            runId: sourceRunId,
+            occurredAt: now,
+            payload: {
+              ...item,
+              id: TurnItemId.make("fork-compact-user-item"),
+              ordinal: 1,
+              type: "user_message",
+              createdBy: "user",
+              creationSource: "web",
+              inputIntent: "turn_start",
+              messageId: userMessageId,
+              text: "u".repeat(messageLength),
+              attachments: [],
+            },
+          },
+          {
+            id: EventId.make("fork-compact-assistant-item"),
+            type: "turn-item.updated",
+            threadId: sourceThreadId,
+            runId: sourceRunId,
+            occurredAt: now,
+            payload: {
+              ...item,
+              id: TurnItemId.make("fork-compact-assistant-item"),
+              ordinal: 2,
+              type: "assistant_message",
+              messageId: MessageId.make("fork-compact-assistant-message"),
+              text: "a".repeat(messageLength),
+              streaming: false,
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("fork-compact-fork"),
+        sourceThreadId,
+        targetThreadId,
+        sourcePoint: { type: "run", runId: sourceRunId },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("fork-compact-compact"),
+        threadId: targetThreadId,
+        messageId: MessageId.make("fork-compact-compact"),
+        text: "/compact",
+        attachments: [],
+        modelSelection: { instanceId: target.instanceId, model: "test-model" },
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* worker.drain();
+
+      const projection = yield* orchestrator.getThreadProjection(targetThreadId);
+      // SCIENT-FORK:START
+      assert.equal(projection.contextTransfers[0]?.resolution?.strategy, "portable_context");
+      assert.equal(projection.contextHandoffs[0]?.historySource?.itemCount, 2);
+      const rejected = false;
+      // SCIENT-FORK:END
+      const emptyCompaction = projection.turnItems.some(
+        (turnItem) =>
+          turnItem.type === "error" &&
+          turnItem.failure.message === "Start a conversation before compacting this thread.",
+      );
+      assert.equal(emptyCompaction, rejected);
+      assert.deepEqual(opened, rejected ? [] : [target.instanceId]);
+    }).pipe(
+      Effect.provide(
+        ProviderReplayHarness.layerWithRegistry(
+          { name: `fork-compact-${name.replaceAll(" ", "-")}` },
+          ProviderAdapterRegistry.layerFromAdapters(
+            target === claude ? [claude] : [claude, target],
+          ),
+        ),
+      ),
+    );
+  },
 );

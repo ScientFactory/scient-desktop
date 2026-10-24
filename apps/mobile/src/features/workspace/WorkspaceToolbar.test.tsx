@@ -11,6 +11,7 @@ vi.mock("react-native", () => ({
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ navigate: vi.fn() }),
   useFocusEffect: () => {},
+  useIsFocused: () => true,
 }));
 vi.mock("../../state/active-new-task", () => ({ useActiveNewTask: () => null }));
 vi.mock("../../components/ui/Toolbar", () => ({
@@ -19,6 +20,7 @@ vi.mock("../../components/ui/Toolbar", () => ({
       <button aria-label={props.accessibilityLabel} onClick={props.onPress} />
     ),
     Spacer: () => null,
+    SearchBarSlot: () => null,
   }),
 }));
 vi.mock("react-native-keyboard-controller", () => ({
@@ -54,7 +56,13 @@ vi.mock("./WorkspaceTabsContext", () => ({
   }),
 }));
 vi.mock("./WorkspaceSearchField", () => ({ WorkspaceSearchField: () => null }));
-vi.mock("./useSystemWorkspaceTabBar", () => ({ useSidebarWorkspaceTabs: () => null }));
+vi.mock("./useSystemWorkspaceTabBar", () => ({
+  useSidebarWorkspaceTabs: () => null,
+  // As on iOS: the compact glass picker owns compose off iPad, Duo and split view.
+  useCompactWorkspaceTabs: () =>
+    layout.device !== "pad" && !layout.split && !layout.device.startsWith("duo"),
+}));
+vi.mock("./WorkspaceSectionToolbar", () => ({ WorkspaceTabToolbarButtons: () => null }));
 vi.mock("./useSelectWorkspaceTab", () => ({ useSelectWorkspaceTab: () => vi.fn() }));
 vi.mock("../../lib/useMobileNavigationTheme", () => ({
   useMobileNavigationTheme: () => ({ colors: { primary: "blue" } }),

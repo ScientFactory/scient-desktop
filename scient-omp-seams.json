@@ -173,6 +173,21 @@
   "ompDiffSignals": ["Oh My Pi", "effect-omp-rpc", "provider/omp", "Omp", "\"omp\""],
   "scientMounts": [
     {
+      "path": "packages/scient-analytics/src/wireContract.ts",
+      "anchor": "export const ANALYTICS_PROVIDER_KINDS",
+      "purpose": "Keep external Oh My Pi and Scient Agent as separate bounded provider categories in the shared revision-7 analytics contract; custom labels remain other."
+    },
+    {
+      "path": "packages/scient-analytics/src/conformance.ts",
+      "anchor": "[\"scient\", \"omp\", \"muse\", \"acpRegistry\"]",
+      "purpose": "Exercise named provider categories across existing content-free prompt, outcome, usage, installation and lifecycle events in the generated gateway corpus."
+    },
+    {
+      "path": "packages/scient-analytics/fixtures/contract-v7.json",
+      "anchor": "\"provider\": \"omp\"",
+      "purpose": "Retain external Oh My Pi attribution in the shared generated revision-7 analytics fixture without assigning the shared analytics package to this provider seam."
+    },
+    {
       "path": ".github/workflows/managed-provider-runtime-update-provider.yml",
       "anchor": "inputs.provider == 'omp'",
       "purpose": "Qualify Oh My Pi catalog candidates on every supported target with the server's RPC check."
