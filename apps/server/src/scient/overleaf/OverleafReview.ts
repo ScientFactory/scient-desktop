@@ -22,6 +22,7 @@ import {
   isOverleafRepositoryShape,
   OVERLEAF_LIMITS,
   overleafPathExclusion,
+  type OverleafAddition,
   type OverleafInventory,
   type OverleafLimits,
 } from "./OverleafInventory.ts";
@@ -96,7 +97,18 @@ export interface OverleafReviewBinding {
   readonly remoteCommit: string;
   readonly remoteTree: string;
   readonly selectedAdditions: ReadonlyArray<string>;
+  /** Additions sent by default that this review leaves out: kept only on this computer on purpose. */
   readonly newLocalOnly: ReadonlyArray<string>;
+  /** Local-only files this review sends; they leave the local-only list and become managed. */
+  readonly sentLocalOnly: ReadonlyArray<string>;
+  /**
+   * The requests to keep files only here and to send files. `keepOnlyHere`
+   * also holds every deliberate deselection, including one an explicit list
+   * implied; `send` also holds every `sendLocalOnly` request. A replacement review applies them again to its own capture, so a
+   * file that comes and goes, or changes size, keeps the decision made for it.
+   */
+  readonly keepOnlyHere: ReadonlyArray<string>;
+  readonly send: ReadonlyArray<string>;
   /** Never-synchronized local files captured because Overleaf has content at their place. */
   readonly collisionPaths: ReadonlyArray<string>;
   readonly choices: ReadonlyArray<readonly [string, ConflictChoice]>;
@@ -131,6 +143,14 @@ export interface OverleafReview {
   readonly upToDate: boolean;
   /** Local files kept because Overleaf has content at their place (contract A30). */
   readonly collisions: ReadonlyArray<string>;
+  /**
+   * Every new file in the folder, whether this review sends it, and why it is
+   * left out by default (pr-c-design section 5). The app and the agent tools
+   * confirm this selection as it is unless someone changes it.
+   */
+  readonly additions: ReadonlyArray<OverleafAddition & { readonly selected: boolean }>;
+  /** Files kept only on this computer that stay there; selections can send them. */
+  readonly localOnly: ReadonlyArray<string>;
   /** Bytes held by `applyPlan.target`, for bounding how many reviews are kept. */
   readonly targetBytes: number;
   readonly applyPlan: WorkspaceApplyPlan;
@@ -183,10 +203,13 @@ export interface OverleafReviewInput {
   readonly connection: OverleafConnectionDocument;
   readonly inventory: OverleafInventory;
   readonly remote: { readonly commit: string; readonly tree: string };
-  /** Additions captured into the inventory because the user checked them. */
-  readonly selectedAdditions: ReadonlyArray<string>;
   /** Paths the inventory read in full because of an earlier `needs-capture`. */
   readonly collisionPaths: ReadonlyArray<string>;
+  /** The `keepOnlyHere` and `send` requests the inventory applied, recorded in the binding. */
+  readonly requests?: {
+    readonly keepOnlyHere: ReadonlyArray<string>;
+    readonly send: ReadonlyArray<string>;
+  };
   /** Choices by conflict key. Keys of groups that no longer exist are ignored. */
   readonly choices: ReadonlyMap<string, ConflictChoice>;
   /** File identities an earlier apply left interrupted: forced conflicts. */
@@ -258,8 +281,12 @@ function findCollisions(input: {
   readonly collisionPaths: ReadonlySet<string>;
 }) {
   const { inventory } = input;
+  // A local-only file being sent is still never synchronized: Overleaf content at
+  // its place makes it a reviewed collision, never a merge that could replace it.
+  const sent = new Set(inventory.sentLocalOnly);
   const unsynced = new Set([
     ...inventory.localOnly,
+    ...inventory.sentLocalOnly,
     ...inventory.additions.map((entry) => entry.path),
     ...input.collisionPaths,
   ]);
@@ -277,7 +304,8 @@ function findCollisions(input: {
     meets.set(local, (meets.get(local) ?? new Set()).add(remote));
   };
   for (const path of input.remote.keys()) {
-    if (inventory.captured.has(path) && !input.collisionPaths.has(path)) continue;
+    if (inventory.captured.has(path) && !input.collisionPaths.has(path) && !sent.has(path))
+      continue;
     if (
       excluded.has(path) ||
       excludedBeneath.has(path) ||
@@ -497,10 +525,14 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
   )
     return { _tag: "needs-capture", paths: collisions.capture } satisfies OverleafReviewResult;
 
-  const newLocalOnly = inventory.additions
-    .map((addition) => addition.path)
-    .filter((path) => !input.selectedAdditions.includes(path));
-  const keptLocalOnly = connection.localOnlyPaths.filter((path) => !requested.has(path));
+  // Only a deliberate choice is remembered: an addition sent by default that the
+  // selection left out, or one an earlier review left out on purpose. Additions a
+  // rule skips are judged again at every sync.
+  const newLocalOnly = inventory.deselected;
+  const sent = new Set(inventory.sentLocalOnly);
+  const keptLocalOnly = connection.localOnlyPaths.filter(
+    (path) => !requested.has(path) && !sent.has(path),
+  );
   if (new Set([...keptLocalOnly, ...newLocalOnly]).size > limits.localOnlyPaths)
     return refused({ reason: "local-only-limit" });
 
@@ -694,9 +726,14 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     localTree,
     remoteCommit: input.remote.commit,
     remoteTree: input.remote.tree,
-    selectedAdditions: sorted(new Set(input.selectedAdditions)),
-    // Unchecked additions are remembered as local-only once the review is applied.
+    selectedAdditions: sorted(inventory.selectedAdditions.map((addition) => addition.path)),
+    // Deselected default additions are remembered as local-only once the review is applied.
     newLocalOnly: sorted(newLocalOnly),
+    sentLocalOnly: sorted(sent),
+    // A deliberate deselection is a request to keep the file here from now on,
+    // whether or not the file is there when a replacement review is built.
+    keepOnlyHere: sorted(new Set([...(input.requests?.keepOnlyHere ?? []), ...newLocalOnly])),
+    send: sorted(new Set(input.requests?.send ?? [])),
     collisionPaths: sorted(requested),
     choices: conflicts.flatMap((conflict) =>
       conflict.chosen === null ? [] : [[conflict.key, conflict.chosen] as const],
@@ -724,6 +761,11 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     confirmable: conflicts.every((conflict) => conflict.chosen !== null),
     upToDate: incoming.length === 0 && outgoing.length === 0 && conflicts.length === 0,
     collisions: sorted(requested),
+    additions: [
+      ...inventory.selectedAdditions.map((addition) => ({ ...addition, selected: true })),
+      ...inventory.additions.map((addition) => ({ ...addition, selected: false })),
+    ].toSorted((left, right) => byPath(left.path, right.path)),
+    localOnly: inventory.localOnly,
     targetBytes: candidateBytes,
     applyPlan: {
       base,

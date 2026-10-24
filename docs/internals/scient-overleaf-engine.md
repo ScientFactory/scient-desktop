@@ -254,9 +254,50 @@ settles earlier sends, and lists and restores kept copies.
   memory, refused (`OverleafOperationActiveError`) rather than queued. Then the
   checkout barrier's application section, then the store's compare-and-set,
   then the file layer's locks. Overleaf is fetched before the section.
+- **New files** (pr-c-design section 5). A review prepared without a list of
+  additions selects every new file no rule skips; an explicit list, even an
+  empty one, is used exactly as given. The rule is judged again at every
+  capture and never remembered: build leftovers, hidden files (any path
+  segment starting with `.`, the file's own name included), Scient's own
+  `AGENTS.md` and `PROJECT.md` (under any letter case or Unicode spelling,
+  compared by collision key) when the linked folder is the checkout's top,
+  and files over 50,000,000 bytes. A file too large is never read, not even a
+  prefix: the opened file's type and size are checked again before its first
+  bytes are read, so one that grew after the listing is marked too large.
+  Selecting one is refused (`file-too-large`); an LFS pointer is
+  left out of the default selection rather than refused. Each review lists
+  every addition with whether it is selected and why it is skipped. On
+  confirm, only an addition sent by default that the selection left out joins
+  `localOnlyPaths` (at most 2,000, `local-only-limit`). `sendLocalOnly` sends
+  paths from that list: they are read like selected additions, leave the list
+  when the review is applied and become managed. A path not on the list is
+  `not-local-only`, one not in the folder `not-selectable`. A file Overleaf
+  already has is managed and synced whatever its name.
+- **Per-file requests.** `keepOnlyHere` and `send` are judged on the review's
+  own capture, with the defaults applying to every other file. `keepOnlyHere`
+  keeps a new file only on this computer and remembers it, whatever the rule
+  says of it; it wins over every request to send, ignores a path that is not a
+  new file, and leaves a local-only one local-only. `send` selects a skipped
+  new file (refusing one too large), sends a local-only one, and is already
+  satisfied for a managed one, so a retry after the apply succeeds. Both are
+  recorded in the binding and applied again by every replacement review, so a
+  kept file that disappears and returns, or shrinks, stays kept. The binding's
+  `keepOnlyHere` also holds every deliberate deselection, including one an
+  explicit `selectedAdditions` list implied, so it survives replacements the
+  same way; its `send` also holds every `sendLocalOnly` request, so a file
+  first decided as a collision is still sent if that collision is gone when a
+  replacement review is built. A local-only file being sent stays a collision candidate: where
+  Overleaf has content at its place it is read in full and reviewed as a
+  collision (keep mine or use Overleaf's), never merged into Overleaf's file.
 - **Confirm.** Inside the section, it checks the folder and retention
   identities, captures the folder again and rebuilds the review with the same
-  selections and choices. Capture reads the base's paths, the managed paths and
+  choices, the same selected and sent files, the same deliberate deselections,
+  and the default rule for anything else. A deliberate deselection is kept
+  whatever the rule now says of the file (one that grew too large stays kept
+  only here). A file that appeared meanwhile is
+  therefore selected by default, never taken for a "keep only here", and a
+  selected file that is gone is left out instead of refused, so the rebuilt
+  review differs and replaces the stale one. Capture reads the base's paths, the managed paths and
   every path in a forced conflict. A different digest is a stale review: the
   fresh one is offered and nothing is applied. Before anything is written it
   checks room:
