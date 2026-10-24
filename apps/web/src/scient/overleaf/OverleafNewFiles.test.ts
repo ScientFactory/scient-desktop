@@ -37,4 +37,21 @@ describe("actionableDecisions", () => {
     expect(actionableDecisions(review, decisions).size).toBe(0);
     expect(actionableDecisions(null, decisions).size).toBe(0);
   });
+
+  it("keeps decisions a review from a sync that carried them already encodes", () => {
+    const encoded = {
+      additions: [
+        // Kept here: the rule would send it, the review leaves it out.
+        { path: "kept.tex", size: 1, selected: false, skippedBecause: null },
+        // Sent anyway: the rule skips it, the review selects it.
+        { path: "main.aux", size: 1, selected: true, skippedBecause: "build-output" },
+      ],
+      localOnly: [],
+    };
+    const decisions = new Map<string, OverleafFileDecision>([
+      ["kept.tex", "keep"],
+      ["main.aux", "send"],
+    ]);
+    expect(actionableDecisions(encoded, decisions)).toBe(decisions);
+  });
 });

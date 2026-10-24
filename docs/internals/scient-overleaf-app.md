@@ -123,7 +123,9 @@ A read replaces the shown review only when it succeeds. With no review the tab o
 changes**; with one it offers **Check again**, so after a sync the next sync's new files can be
 decided before they are sent. The chip's **See changes** reads again unless the shown review is
 still to run (a read, or a conflict waiting); the toast's **See changes** shows what that sync did.
-It lists what came in and what is or was sent; a file opens in its editor, and **Show in Diff**
+It lists what came in and what is or was sent; a file opens in its editor (for a link in another
+copy of the project, the linked copy's file, opened by its absolute path as a file tab, never
+this checkout's file of the same name), and **Show in Diff**
 opens the thread's Diff tab. The engine exposes paths, not contents, so the tab doesn't draw a
 per-file Overleaf diff itself.
 
@@ -134,8 +136,13 @@ except `too-large` (Overleaf refuses it). `localOnly` is listed as **Kept only h
 **Send this file**. A decision is a pending toggle, not a sync of its own: the tab's next **Sync**
 or **Sync again** sends them as `files: { keepOnlyHere, send }`, and a sync that applies clears
 them. Before they are shown or sent, the decisions are reconciled with the review shown
-(`actionableDecisions`): a "keep" only for a file it would send, a "send" only for one it skips
-(and Overleaf would take) or one kept only here. One for a file a fresh read no longer lists or
+(`actionableDecisions`): a "keep" only for a new file the rule would send, a "send" only for one
+the rule skips (and Overleaf would take) or one kept only here. Rows and rules follow the rule
+(`skippedBecause`), not the review's `selected`, because a review from a sync that carried
+decisions already encodes them: a kept file unselected, a sent one selected, and a sent local-only
+file read like a new one, in neither list. The tab remembers the decisions a sync carried with
+the review it returned at a conflict, shows such a local-only file under **Kept only here**, and
+keeps sending all of them until a sync applies, so the server never falls back to its defaults. One for a file a fresh read no longer lists or
 allows is dropped, never sent; the rest survive a cancel or a refusal. While a sync runs the
 buttons are disabled: a decision made then wouldn't be in it, yet
 would be cleared by it. One sync then carries every decision together with any conflict choices, and a decision

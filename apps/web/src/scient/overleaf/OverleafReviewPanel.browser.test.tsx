@@ -56,6 +56,8 @@ vi.mock("./overleafThreadTarget", async (importOriginal) => ({
 }));
 
 const { useComposerDraftStore } = await import("~/composerDraftStore");
+const { useRightPanelStore } = await import("~/rightPanelStore");
+const { scopedThreadKey } = await import("@t3tools/client-runtime/environment");
 const { OverleafReviewPanel } = await import("./OverleafReviewPanel");
 const { recordOverleafSync, resetOverleafStoreForTests } = await import("./overleafStore");
 
@@ -514,6 +516,59 @@ describe("OverleafReviewPanel", () => {
       });
     });
 
+    it("keeps sending the decisions when a sync stops at a conflict", async () => {
+      await using _screen = await readNewFiles();
+      await page
+        .getByRole("button", { name: "Keep only on this computer: figures/plot.pdf" })
+        .click();
+      await page.getByRole("button", { name: "Send this file: main.aux" }).click();
+      await page.getByRole("button", { name: "Send this file: notes.md" }).click();
+      // The sync stops at a conflict; its review already carries the decisions: the kept file
+      // is left out, the skipped one is selected, the kept-only one is read like a new file.
+      client.syncOverleaf.mockResolvedValueOnce({
+        ...decision,
+        review: review({
+          reviewId: "r-conflict",
+          conflicts: [
+            { key: "k-main", paths: ["main.tex"], allowed: ["mine", "theirs"], chosen: null },
+          ],
+          additions: [
+            { path: "figures/plot.pdf", size: 10, selected: false, skippedBecause: null },
+            { path: "main.aux", size: 10, selected: true, skippedBecause: "build-output" },
+            {
+              path: "data/raw.bin",
+              size: 60_000_000,
+              selected: false,
+              skippedBecause: "too-large",
+            },
+          ],
+          localOnly: [],
+        }),
+      });
+      await page.getByRole("button", { name: "Sync", exact: true }).click();
+      await expect.element(page.getByRole("group", { name: "Settle main.tex" })).toBeVisible();
+      // Still shown as decided.
+      for (const name of [
+        "Keep only on this computer: figures/plot.pdf",
+        "Send this file: main.aux",
+        "Send this file: notes.md",
+      ])
+        await expect
+          .element(page.getByRole("button", { name }))
+          .toHaveAttribute("aria-pressed", "true");
+
+      await page
+        .getByRole("group", { name: "Settle main.tex" })
+        .getByRole("button", { name: "Keep mine" })
+        .click();
+      await page.getByRole("button", { name: "Sync again" }).click();
+      await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(2);
+      // Sync again carries them, so the server doesn't fall back to the defaults.
+      expect(client.syncOverleaf.mock.calls[1]![1]).toMatchObject({
+        files: { keepOnlyHere: ["figures/plot.pdf"], send: ["main.aux", "notes.md"] },
+      });
+    });
+
     it("keeps a new file only on this computer at the next sync", async () => {
       await using _screen = await readNewFiles();
       const keep = page.getByRole("button", {
@@ -586,6 +641,36 @@ describe("OverleafReviewPanel", () => {
         .element(page.getByRole("button", { name: "Send this file: notes.md" }))
         .toHaveAttribute("aria-pressed", "false");
     });
+  });
+
+  it("opens a linked copy's files from that copy, not this worktree", async () => {
+    reset();
+    client.listOverleafConnections.mockResolvedValue({
+      connections: [{ ...connection, checkoutRoot: "/work/project", linkedHere: false }],
+    });
+    recordOverleafSync(environmentId, "/work/project-wt", "c1", decision);
+    const onOpenFile = vi.fn();
+    await using _screen = await render(
+      <OverleafReviewPanel
+        environmentId={environmentId}
+        cwd="/work/project-wt"
+        connectionId="c1"
+        threadRef={threadRef}
+        onOpenFile={onOpenFile}
+      />,
+    );
+    const openedPaths = () =>
+      (
+        useRightPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.surfaces ?? []
+      ).flatMap((surface) =>
+        surface.kind === "scient" && surface.module === "file" ? [surface.path] : [],
+      );
+    await page.getByRole("region", { name: "To bring in" }).getByText("refs.bib").click();
+    await page.getByRole("button", { name: "intro.tex" }).click();
+    expect(onOpenFile).not.toHaveBeenCalled();
+    expect(openedPaths()).toEqual(
+      expect.arrayContaining(["/work/project/paper/refs.bib", "/work/project/paper/intro.tex"]),
+    );
   });
 
   describe("Ask the agent from another worktree", () => {

@@ -17,7 +17,9 @@ import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { joinHostPath } from "~/components/files/filePath";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { scientEnvironmentFileSurface } from "~/scient/rightPanel/surfaces";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 
 import {
@@ -120,6 +122,7 @@ function newFilesLine(count: number, sent: boolean): string {
 }
 
 const NO_CHOICES: ReadonlyMap<string, OverleafReviewChoice> = new Map();
+const NO_DECISIONS: ReadonlyMap<string, OverleafFileDecision> = new Map();
 
 /** One review: the engine's ID and the Overleaf tree its conflicts were found against. */
 const reviewIdentity = (review: Pick<ScientOverleafReview, "reviewId" | "remoteTree">) =>
@@ -154,6 +157,11 @@ export function OverleafReviewPanel(props: {
   const [fileDecisions, setFileDecisions] = useState<ReadonlyMap<string, OverleafFileDecision>>(
     new Map(),
   );
+  // The decisions a sync carried when it stopped at a conflict, with the review it returned.
+  const [submittedFor, setSubmittedFor] = useState<{
+    readonly review: string;
+    readonly decisions: ReadonlyMap<string, OverleafFileDecision>;
+  } | null>(null);
   const decideFile = (path: string, decision: OverleafFileDecision | null) =>
     setFileDecisions((current) => {
       const next = new Map(current);
@@ -169,13 +177,33 @@ export function OverleafReviewPanel(props: {
   // The files decisions can be made on: after a sync its new files are decided, and files kept
   // only here still can be sent. Decisions are reconciled with it before they are shown or sent,
   // so one for a file a fresh read no longer lists, or no longer allows, is dropped.
+  const shownReview = review === null ? "" : reviewIdentity(review);
+  // A file kept only here that the sync producing this review was asked to send is read like a
+  // new file and leaves both lists; it is shown, and sent again, under "Kept only here".
+  const submitted = submittedFor?.review === shownReview ? submittedFor.decisions : NO_DECISIONS;
   const decidable =
-    review === null ? null : synced ? { additions: [], localOnly: review.localOnly } : review;
+    review === null
+      ? null
+      : synced
+        ? { additions: [], localOnly: review.localOnly }
+        : {
+            additions: review.additions,
+            localOnly: [
+              ...review.localOnly,
+              ...[...submitted]
+                .filter(
+                  ([path, decision]) =>
+                    decision === "send" &&
+                    !review.localOnly.includes(path) &&
+                    !review.additions.some((addition) => addition.path === path),
+                )
+                .map(([path]) => path),
+            ],
+          };
   const pendingDecisions = actionableDecisions(decidable, fileDecisions);
   const reading = workspace.previewing.has(connectionId);
   const readError = workspace.previewErrors.get(connectionId) ?? null;
   const readChanges = () => void readOverleafChanges(environmentId, cwd, connectionId);
-  const shownReview = review === null ? "" : reviewIdentity(review);
   const chosen = choiceState.review === shownReview ? choiceState.choices : NO_CHOICES;
   const chooseAgain = chooseAgainFor !== null && chooseAgainFor === shownReview;
   const setChosen = (
@@ -199,6 +227,21 @@ export function OverleafReviewPanel(props: {
   const openReview = () => {
     // Already showing: nothing to open.
   };
+  // A link in another copy of the project: its files open from that copy, never this
+  // checkout's file of the same name.
+  const openFile = (workspacePath: string) => {
+    if (connection.linkedHere) {
+      props.onOpenFile(workspacePath);
+      return;
+    }
+    if (!threadRef) return;
+    useRightPanelStore.getState().openScient(
+      threadRef,
+      scientEnvironmentFileSurface({
+        path: joinHostPath(connection.checkoutRoot, workspacePath),
+      }),
+    );
+  };
   const conflicts = review?.conflicts ?? [];
   const engineChoices = new Map<string, ScientOverleafConflictChoice>(
     [...chosen].map(([key, choice]) => [key, choice === "agent" ? "markers" : choice]),
@@ -214,6 +257,9 @@ export function OverleafReviewPanel(props: {
       { files: fileDecisionsRequest(pendingDecisions) },
     );
     if (result?._tag === "synced") setFileDecisions(new Map());
+    // Stopped at a conflict: the decisions stay pending, and the review now encodes them.
+    if (result?._tag === "needs-decision")
+      setSubmittedFor({ review: reviewIdentity(result.review), decisions: pendingDecisions });
   };
 
   const syncWithChoices = async () => {
@@ -230,6 +276,7 @@ export function OverleafReviewPanel(props: {
     if (result?._tag === "needs-decision") {
       // The fresh review has no choices yet; the old ones belonged to the review they answered.
       setChooseAgainFor(reviewIdentity(result.review));
+      setSubmittedFor({ review: reviewIdentity(result.review), decisions: pendingDecisions });
       return;
     }
     if (result?._tag !== "synced") return;
@@ -405,7 +452,7 @@ export function OverleafReviewPanel(props: {
                           key={path}
                           type="button"
                           className="truncate text-left text-sm hover:underline"
-                          onClick={() => props.onOpenFile(workspacePathOf(connection.folder, path))}
+                          onClick={() => openFile(workspacePathOf(connection.folder, path))}
                         >
                           {path}
                         </button>
@@ -451,14 +498,14 @@ export function OverleafReviewPanel(props: {
                 icon={ArrowDownToLine}
                 changes={review.incoming}
                 folder={connection.folder}
-                onOpenFile={props.onOpenFile}
+                onOpenFile={openFile}
               />
               <ChangeList
                 title={sent ? "Sent" : "To send"}
                 icon={ArrowUpFromLine}
                 changes={review.outgoing}
                 folder={connection.folder}
-                onOpenFile={props.onOpenFile}
+                onOpenFile={openFile}
               />
               {synced && review.selectedAdditions.length > 0 ? (
                 <p className="px-1 text-xs text-muted-foreground" data-overleaf-new-files>
@@ -473,7 +520,7 @@ export function OverleafReviewPanel(props: {
                 // A decision made while a sync runs wouldn't be in it, yet would be cleared by it.
                 disabled={syncing}
                 onDecide={decideFile}
-                onOpenFile={props.onOpenFile}
+                onOpenFile={openFile}
               />
             </>
           ) : null}

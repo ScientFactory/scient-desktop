@@ -43,10 +43,16 @@ function newFilesToSend(
 }
 
 /**
- * The decisions that still apply to the review shown: a "keep" for a new file
- * it would send, a "send" for one it skips (and Overleaf would take) or one
- * kept only here. A decision for a file no longer listed, or no longer
- * actionable, is left out, so it is neither shown nor sent.
+ * The decisions that still apply to the review shown. A review from a sync
+ * that carried decisions already encodes them (a kept file not selected, a
+ * sent one selected, a sent local-only file read like a new one), so a
+ * decision applies when its file is still where it can be decided:
+ * - "keep" for a new file the rule would send (whether or not this review
+ *   already leaves it out);
+ * - "send" for a new file the rule skips and Overleaf would take, or a file
+ *   kept only here.
+ * A decision for a file no longer listed, or now impossible (too large), is
+ * left out, so it is neither shown nor sent.
  */
 export function actionableDecisions(
   review: Pick<ScientOverleafReview, "additions" | "localOnly"> | null,
@@ -60,11 +66,11 @@ export function actionableDecisions(
     const addition = additions.get(path);
     const applies =
       decision === "keep"
-        ? addition?.selected === true
+        ? addition !== undefined && addition.skippedBecause === null
         : localOnly.has(path) ||
           (addition !== undefined &&
-            !addition.selected &&
-            !UNSENDABLE.has(addition.skippedBecause ?? ""));
+            addition.skippedBecause !== null &&
+            !UNSENDABLE.has(addition.skippedBecause));
     if (applies) kept.set(path, decision);
   }
   return kept.size === decisions.size ? decisions : kept;
@@ -159,7 +165,9 @@ export function OverleafNewFiles(props: {
           </h3>
           <ul className="flex flex-col">
             {review.additions.map((addition) =>
-              addition.selected ? (
+              // Rows follow the rule, not this review's selection, which may already carry a
+              // decision from the sync that produced it.
+              addition.skippedBecause === null ? (
                 <FileRow
                   key={addition.path}
                   path={addition.path}
