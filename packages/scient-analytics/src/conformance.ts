@@ -118,6 +118,29 @@ export function buildAnalyticsConformanceFixture() {
       properties: event.properties,
     });
   }
+  for (const provider of ["scient", "omp", "muse", "acpRegistry"]) {
+    for (const name of [
+      "provider.turn.sent",
+      "provider.turn.completed",
+      "provider.turn.usage",
+      "provider.installation.observed",
+      "provider.installation.changed",
+      "provider.lifecycle.completed",
+    ] as const) {
+      const event = normalizeInheritedEvent(
+        name,
+        { ...representativeProperties, provider },
+        context,
+      )!;
+      cases.push({
+        case: `${name}:${provider}`,
+        name: event.name,
+        privacyLevel: event.privacyLevel,
+        consentLevel: event.privacyLevel,
+        properties: event.properties,
+      });
+    }
+  }
   return {
     schemaVersion: ANALYTICS_SCHEMA_VERSION,
     contractRevision: ANALYTICS_CONTRACT_REVISION,

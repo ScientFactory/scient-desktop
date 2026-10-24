@@ -95,7 +95,7 @@ function latexFirstBuildInstallingLabel(packages: ReadonlyArray<string>): string
       : `${packages.slice(0, MAX_NAMED_FIRST_BUILD_PACKAGES).join(", ")} and ${String(
           packages.length - MAX_NAMED_FIRST_BUILD_PACKAGES,
         )} more`;
-  return `First build: installing LaTeX packages (this can take a few minutes) — ${named}`;
+  return `First build: installing LaTeX packages (this can take a few minutes): ${named}`;
 }
 
 export function normalizeLatexPreviewMode(

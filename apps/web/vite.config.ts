@@ -79,6 +79,10 @@ const configuredHostedAppUrl = (() => {
 })();
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 
+// `vp run dev --share --built` rebuilds on every change. The license manifest
+// is about 2 s of each build, and nothing in that mode reads it.
+const builtDev = process.env.T3CODE_BUILT_DEV === "1";
+
 const bundledDevEnv = process.env.T3CODE_BUNDLED_DEV?.trim().toLowerCase();
 const bundledDev = bundledDevEnv === "1" || bundledDevEnv === "true";
 
@@ -214,9 +218,9 @@ export default defineConfig(({ mode }) => {
   return {
     run: {
       tasks: {
-        // tsc-rs rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
+        // tsc (tsc-rs) rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
         typecheck: {
-          command: "tsc-rs --noEmit",
+          command: "tsc --noEmit",
           cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
         },
       },
@@ -225,15 +229,17 @@ export default defineConfig(({ mode }) => {
     plugins: [
       scientPdfAssets(),
       devCompressionPlugin(),
-      thirdPartyLicensesPlugin({
-        bundleName: "web",
-        configFile: new URL("../../third-party-licenses.config.json", import.meta.url),
-        packageManifests: [
-          { bundle: "web", path: new URL("./package.json", import.meta.url) },
-          { bundle: "server", path: new URL("../server/package.json", import.meta.url) },
-          { bundle: "desktop", path: new URL("../desktop/package.json", import.meta.url) },
-        ],
-      }),
+      builtDev
+        ? undefined
+        : thirdPartyLicensesPlugin({
+            bundleName: "web",
+            configFile: new URL("../../third-party-licenses.config.json", import.meta.url),
+            packageManifests: [
+              { bundle: "web", path: new URL("./package.json", import.meta.url) },
+              { bundle: "server", path: new URL("../server/package.json", import.meta.url) },
+              { bundle: "desktop", path: new URL("../desktop/package.json", import.meta.url) },
+            ],
+          }),
       tanstackRouter({ autoCodeSplitting: true }),
       react({ compiler: true }),
       tailwindPlugins(bundledDev),
@@ -261,6 +267,7 @@ export default defineConfig(({ mode }) => {
         "@pierre/diffs",
         "@pierre/diffs/edit",
         "@pierre/diffs/react",
+        "@pierre/diffs/worker",
         "@pierre/diffs/worker/worker.js",
         "effect/Array",
         "effect/Order",

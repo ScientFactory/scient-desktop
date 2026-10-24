@@ -729,6 +729,16 @@ describe("ChatMarkdown headings", () => {
     expect(flat.container.querySelector("h1")?.hasAttribute("aria-level")).toBe(false);
   });
 
+  it("isolates inline code left to right inside Arabic prose", async () => {
+    setup();
+    await using screen = await renderText("استخدم `useEffect useLayoutEffect React` هنا");
+    const paragraph = screen.container.querySelector("p");
+    const code = paragraph?.querySelector("code");
+    expect(paragraph?.getAttribute("dir")).toBe("rtl");
+    expect(code?.textContent).toBe("useEffect useLayoutEffect React");
+    expect(code?.getAttribute("dir")).toBe("ltr");
+  });
+
   it("never gives two headings the same id, even when a suffix matches another heading", async () => {
     setup();
     await using screen = await renderText(

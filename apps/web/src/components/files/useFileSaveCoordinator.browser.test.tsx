@@ -84,6 +84,9 @@ import {
   type FileSaveOptions,
   type FileSaveSessionActions,
 } from "./useFileSaveCoordinator";
+// SCIENT-FORK:START — the server's editor flush reaches a mounted editor by its file.
+import { workspaceFileSessionFlush } from "./useFileSaveCoordinator";
+// SCIENT-FORK:END
 const environmentId = EnvironmentId.make("generic-save-hook");
 const props: FileSaveOptions = {
   environmentId,
@@ -394,3 +397,38 @@ it("flushes on unmount and ignores the released editor callback", async () => {
   expect(writes).toHaveBeenCalledOnce();
   expect(writes.mock.calls[0]?.[0].input.contents).toBe("B");
 });
+
+// SCIENT-FORK:START — the server's editor flush reaches a mounted editor by its file.
+describe("folder flush of a mounted editor", () => {
+  it("saves the editor's text when its file is picked, and leaves it when not", async () => {
+    await using fixture = await setup();
+    const writes: string[] = [];
+    runtime.write = async ({ input }) => {
+      writes.push(input.contents);
+      return AsyncResult.success({ revision: `r${input.contents}` });
+    };
+    await fixture.mount();
+    await act(async () => {
+      runtime.projectedSource = "B";
+      fixture.actions().change("B");
+      expect(
+        await workspaceFileSessionFlush.flushWhere((target) => target.relativePath === "other.txt"),
+      ).toEqual([]);
+    });
+    expect(writes).toEqual([]);
+    await act(async () => {
+      expect(
+        await workspaceFileSessionFlush.flushWhere(
+          (target) =>
+            target.environmentId === environmentId &&
+            target.cwd === "/repo" &&
+            target.relativePath === "file.txt",
+        ),
+      ).toEqual([
+        { target: { environmentId, cwd: "/repo", relativePath: "file.txt" }, saved: true },
+      ]);
+    });
+    expect(writes).toEqual(["B"]);
+  });
+});
+// SCIENT-FORK:END

@@ -1,13 +1,9 @@
-import {
-  classifyTaskAgentKind,
-  OrchestrationThreadActivity,
-  type OrchestrationV2ProjectedTurnItem,
-  type OrchestrationV2TurnItem,
-} from "@t3tools/contracts";
+import { classifyTaskAgentKind, OrchestrationThreadActivity } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { foldSubagentActivities, type RuntimeSubagent } from "./subagentRuntime.ts";
+import type { ThreadStructureTurnItem, ThreadStructureVisibleTurnItem } from "./models.ts";
 
 const ImportedActivity = Schema.Struct({
   activityId: Schema.String,
@@ -23,12 +19,12 @@ const decodeActivity = Schema.decodeUnknownOption(OrchestrationThreadActivity);
 
 /** Recover display history from retained migration records, never provider execution state. */
 export function historicalSubagentsToRuntime(
-  items: ReadonlyArray<OrchestrationV2TurnItem>,
-  inherited: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = [],
+  items: ReadonlyArray<ThreadStructureTurnItem>,
+  inherited: ReadonlyArray<ThreadStructureVisibleTurnItem> = [],
 ): ReadonlyArray<RuntimeSubagent> {
   const activities: OrchestrationThreadActivity[] = [];
   const seen = new Set<string>();
-  const collect = (item: OrchestrationV2TurnItem, sourceThreadId: string) => {
+  const collect = (item: ThreadStructureTurnItem, sourceThreadId: string) => {
     if (
       item.type !== "dynamic_tool" ||
       item.runId !== null ||

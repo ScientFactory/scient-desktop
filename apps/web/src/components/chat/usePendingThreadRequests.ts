@@ -1,7 +1,7 @@
+import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
-  type OrchestrationV2ThreadProjection,
   type ProviderApprovalDecision,
   type RuntimeRequestId,
   type ScopedThreadRef,
@@ -11,6 +11,9 @@ import {
 import {
   derivePendingThreadRequests,
   seedUserInputDraftAnswers,
+  type ApprovalResponder,
+  type ThreadPendingApproval,
+  type ThreadPendingUserInput,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { create } from "zustand";
@@ -37,6 +40,7 @@ import {
   threadContextsReferencedByAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
+  type PendingUserInputProgress,
 } from "../../pendingUserInput";
 import {
   clearQuestionAttachmentDraft,
@@ -67,6 +71,16 @@ const usePendingUserInputQuestionIndex = create<Record<string, number>>(() => ({
 const NO_PENDING_REQUESTS = { approvals: [], userInputs: [] } as const;
 const NO_PENDING_APPROVALS: ReturnType<typeof derivePendingApprovals> = [];
 const NO_PENDING_USER_INPUTS: ReturnType<typeof derivePendingUserInputs> = [];
+
+export interface PendingThreadSendState {
+  readonly pendingApprovals: ReadonlyArray<ThreadPendingApproval>;
+  readonly activePendingApproval: ThreadPendingApproval | null;
+  readonly activePendingUserInput: ThreadPendingUserInput | null;
+  readonly respondingRequestIds: ReadonlyArray<RuntimeRequestId>;
+  readonly activePendingProgress: PendingUserInputProgress | null;
+  readonly onAdvanceActivePendingUserInput: () => void;
+  readonly onRespondToApproval: ApprovalResponder;
+}
 
 /** Writes the custom answer for a question of the pending user input the making render saw. */
 function makePendingCustomAnswerSetter(input: {
@@ -111,7 +125,7 @@ export function usePendingThreadRequests(input: {
   readonly environmentId: EnvironmentId;
   readonly activeThreadId: ThreadId | null;
   readonly activeThread: { readonly id: ThreadId } | undefined;
-  readonly serverProjection: OrchestrationV2ThreadProjection | null;
+  readonly serverProjection: ThreadStructure | null;
   readonly supportsQuestionAttachments: boolean;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
   readonly setComposerDraftPrompt: (target: ScopedThreadRef | DraftId, prompt: string) => void;

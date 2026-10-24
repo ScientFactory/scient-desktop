@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -526,8 +527,9 @@ describe("providerMaintenanceRunner", () => {
   });
   // SCIENT-FORK:END
 
-  it.effect("records command failure output in provider update state", () =>
-    Effect.gen(function* () {
+  it.effect("records command failure output in provider update state", () => {
+    const messages: unknown[] = [];
+    return Effect.gen(function* () {
       const { registry } = yield* makeRegistry();
       const updater = yield* makeTestRunner(registry);
 
@@ -535,14 +537,57 @@ describe("providerMaintenanceRunner", () => {
       const updateState = result.providers[0]?.updateState;
 
       assert.strictEqual(updateState?.status, "failed");
-      assert.strictEqual(updateState?.message, "Update command exited with code 1.");
-      assert.include(updateState?.output ?? "", "permission denied");
+      assert.strictEqual(
+        updateState?.message,
+        "Update command exited with code 1: Error: Could not detect the Codex installation method.",
+      );
+      assert.include(updateState?.output ?? "", "checking install");
+      assert.deepStrictEqual(messages, [
+        [
+          "Provider update command failed",
+          { provider: CODEX_DRIVER, exitCode: 1, timedOut: false },
+        ],
+      ]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
           layerLatestVersionHttpClient("0.0.0"),
-          layerMockSpawner(() => ({ stderr: "permission denied", code: 1 })),
+          Logger.layer(
+            [
+              Logger.make(({ message }) => {
+                messages.push(message);
+              }),
+            ],
+            { mergeWithExisting: false },
+          ),
+          layerMockSpawner(() => ({
+            stdout: "checking install\n",
+            stderr: "Error: Could not detect the Codex installation method.\n\n",
+            code: 1,
+          })),
+        ),
+      ),
+    );
+  });
+
+  it.effect("keeps the exit code message when a failed command prints nothing", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry();
+      const updater = yield* makeTestRunner(registry);
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+
+      assert.strictEqual(
+        result.providers[0]?.updateState?.message,
+        "Update command exited with code 1.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner(() => ({ code: 1 })),
         ),
       ),
     ),

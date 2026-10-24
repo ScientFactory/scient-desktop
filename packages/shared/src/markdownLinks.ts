@@ -1,4 +1,9 @@
-import { isWindowsAbsolutePath, stripSlashPrefixedWindowsDrive } from "./path.ts";
+import {
+  isNetworkPath,
+  isWindowsAbsolutePath,
+  stripSlashPrefixedWindowsDrive,
+  workspaceRelativeFilePath,
+} from "./path.ts";
 import {
   type FilePathPosition,
   formatFilePathPosition,
@@ -12,7 +17,7 @@ const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 // Keep separators, controls and position/scheme colons out of each segment;
 // inline-code auto-linking still requires its separate, stricter path evidence.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\/)+[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*(?::\d+){0,2}$/u;
+  /^(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\/)+(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*(?::\d+){0,2})?$/u;
 const RELATIVE_FILE_NAME_PATTERN =
   /^[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/u;
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
@@ -177,6 +182,9 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
   if (!hasExplicitPathShape) {
     if (!INLINE_CODE_RELATIVE_PATH_CHARACTER_PATTERN.test(candidate)) return null;
     const withoutPosition = candidate.replace(POSITION_SUFFIX_PATTERN, "");
+    // Markdown destinations accept `patches/`. Inline code still needs a
+    // file-shaped final segment, so a trailing slash stays plain code.
+    if (withoutPosition.endsWith("/")) return null;
     const firstSegment = withoutPosition.split("/")[0] ?? withoutPosition;
     if (looksLikeHostname(firstSegment, hasPosition)) return null;
     const basename =
@@ -387,7 +395,13 @@ export function resolveMarkdownFileLinkTarget(
   if (!target) return null;
 
   const pathWithPosition = formatFilePathPosition(target);
-  if (!isRelativeFilePath(pathWithPosition)) return pathWithPosition;
+  if (!isRelativeFilePath(pathWithPosition)) {
+    // Opening a network path makes Windows sign in to its host with the user's
+    // NTLM credentials, so only the project's own share becomes a file link.
+    return isNetworkPath(target.path) && workspaceRelativeFilePath(target.path, cwd) === null
+      ? null
+      : pathWithPosition;
+  }
   if (!baseDir) return null;
   return resolvePathLinkTarget(pathWithPosition, baseDir);
 }

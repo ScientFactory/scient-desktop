@@ -160,6 +160,16 @@
       "purpose": "Mount Scient artifacts and compute in the inherited right panel; useScientBrowserPresentation consumes fresh browser reveal intents and suppresses only the matching browser surface."
     },
     {
+      "path": "apps/web/src/components/chat/useChatTerminalActions.ts",
+      "anchor": "runAfterPendingFileSave(",
+      "purpose": "Use the existing Scient departure guard before a terminal tab or project-script preview takes over the active file surface."
+    },
+    {
+      "path": "apps/web/src/components/chat/useRightPanelActions.ts",
+      "anchor": "runAfterPendingFileSave(",
+      "purpose": "Settle pending file saves through the existing Scient departure guard before opening, activating or closing right-panel surfaces."
+    },
+    {
       "path": "apps/web/src/components/RightPanelTabs.tsx",
       "anchor": "onAddCompute",
       "purpose": "Present generic Scient artifact and compute tabs through the inherited right-panel chrome."

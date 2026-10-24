@@ -87,14 +87,17 @@ const decodeTurnInput = Schema.decodeUnknownEffect(
   }),
 );
 const decodeResumeInput = Schema.decodeUnknownEffect(Schema.Struct({ threadId: Schema.String }));
-const turn = (id: string, status: "inProgress" | "completed") => ({
+const decodeInterruptInput = Schema.decodeUnknownEffect(
+  Schema.Struct({ threadId: Schema.String, turnId: Schema.String }),
+);
+const turn = (id: string, status: "inProgress" | "completed" | "interrupted") => ({
   id,
   items: [],
   itemsView: "notLoaded",
   status,
   error: null,
   startedAt: 1782622440,
-  completedAt: status === "completed" ? 1782622450 : null,
+  completedAt: status === "inProgress" ? null : 1782622450,
   durationMs: null,
 });
 const nativeThread = (id: string, cwd: string) => ({
@@ -353,6 +356,7 @@ const makePeer = (autoComplete: boolean, startup: CapacityStartupObservation) =>
       readonly complete: Effect.Effect<boolean>;
       readonly offered: string[];
       readonly injections: unknown[];
+      readonly interrupts: Array<{ readonly threadId: string; readonly turnId: string }>;
     }> = [];
     return {
       opened,
@@ -389,6 +393,7 @@ const makePeer = (autoComplete: boolean, startup: CapacityStartupObservation) =>
             complete,
             offered: [] as string[],
             injections: [] as unknown[],
+            interrupts: [] as Array<{ readonly threadId: string; readonly turnId: string }>,
             usage: (
               maxTokens: number | null | undefined,
               threadId = nativeId,
@@ -449,6 +454,7 @@ const makePeer = (autoComplete: boolean, startup: CapacityStartupObservation) =>
                     "thread/resume",
                     "thread/inject_items",
                     "turn/start",
+                    "turn/interrupt",
                   ].includes(frame.method)
                     ? frame.method
                     : "unrecognized",
@@ -510,6 +516,17 @@ const makePeer = (autoComplete: boolean, startup: CapacityStartupObservation) =>
                     });
                     yield* Deferred.succeed(started, undefined);
                     if (autoComplete) yield* complete;
+                    continue;
+                  }
+                  case "turn/interrupt": {
+                    const params = yield* decodeInterruptInput(frame.params).pipe(Effect.orDie);
+                    assert.deepEqual(params, { threadId: nativeId, turnId });
+                    peer.interrupts.push(params);
+                    yield* emit({ id: frame.id, result: {} });
+                    yield* emit({
+                      method: "turn/completed",
+                      params: { threadId: nativeId, turn: turn(turnId, "interrupted") },
+                    });
                     continue;
                   }
                   default:
@@ -1236,7 +1253,9 @@ it.live(
               ),
             );
             yield* sql`DROP TRIGGER capacity_write_failure`;
-            yield* failed.peer.complete;
+            assert.deepEqual(failed.peer.interrupts, [
+              { threadId: failed.peer.nativeId, turnId: failed.peer.turnId },
+            ]);
             observation.at("sql.peer.closed", failed.id);
             yield* Deferred.await(failed.peer.closed).pipe(Effect.timeout("10 seconds"));
 

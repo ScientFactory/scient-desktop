@@ -67,6 +67,12 @@ vi.mock(import("./scient/documentExport/HtmlPdfLifecycleHost"), async () => {
   const Probe = await makeProbe("html-pdf");
   return { HtmlPdfLifecycleHost: () => <Probe /> };
 });
+// SCIENT-FORK:START — the editor flush hosts, like the other hosts, are probes here.
+vi.mock(import("./scient/editorFlush/EditorFlushHosts"), async () => {
+  const Probe = await makeProbe("editor-flush");
+  return { EditorFlushHosts: () => <Probe /> };
+});
+// SCIENT-FORK:END
 
 function setup() {
   state.atom = Atom.make("initial");
@@ -92,6 +98,9 @@ describe("AppRoot", () => {
       router: false,
     });
     const hosts = ["route", "html-pdf", "electron-browser", "browser-profile", "quit-hold"];
+    // SCIENT-FORK:START — the editor flush hosts share the app registry too.
+    hosts.push("editor-flush");
+    // SCIENT-FORK:END
     expect([...state.registries.keys()].sort()).toEqual([...hosts].sort());
     for (const registry of state.registries.values()) expect(registry).toBe(appAtomRegistry);
     expect([...state.values.values()]).toEqual(hosts.map(() => "initial"));

@@ -1179,7 +1179,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return <blockquote {...props}>{children}</blockquote>;
     }
     return (
-      <div role="note" className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}>
+      <div
+        role="note"
+        dir={props.dir}
+        className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}
+      >
         <p
           data-thread-find-ignore="true"
           className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}

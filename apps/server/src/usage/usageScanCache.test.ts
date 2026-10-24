@@ -223,13 +223,14 @@ describe("scan cache round trip", () => {
     }
   });
 
-  it.each([5, 6, 7])(
+  it.each([5, 6, 7, 8])(
     "retains v%s history and compatible positions but invalidates obsolete state",
     (version) => {
       const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
       original.set("/gone-codex.jsonl", {
         ...original.get("/gone.jsonl")!,
         provider: "codex",
+        malformedRecords: 1,
         records: [record({ provider: "codex", speed: "fast", dedupeKey: null })],
         position: position({
           state: {
@@ -252,6 +253,11 @@ describe("scan cache round trip", () => {
         malformedRecords: 3,
         position: position({ state: { sessionId: "session-a" } }),
       });
+      const cleanCodex = {
+        ...original.get("/gone-codex.jsonl")!,
+        malformedRecords: 0,
+      };
+      original.set("/clean-codex.jsonl", cleanCodex);
       const encoded = encodeScanCache(original);
       const entry = encoded.files["/gone.jsonl"]!;
       const legacy = {
@@ -280,6 +286,15 @@ describe("scan cache round trip", () => {
         size: -1,
         position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
       });
+      expect(restored.get("/clean-codex.jsonl")).toEqual(
+        version >= 8
+          ? cleanCodex
+          : {
+              ...cleanCodex,
+              size: -1,
+              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+            },
+      );
       expect(restored.get("/gone-pi.jsonl")).toEqual(
         version >= 6
           ? original.get("/gone-pi.jsonl")
@@ -317,7 +332,7 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache(null, TEST_FORMAT_MAP).size).toBe(0);
     expect(decodeScanCache("nonsense", TEST_FORMAT_MAP).size).toBe(0);
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
-    for (const version of [undefined, "6", 4.5, NaN, Infinity, 9, 999]) {
+    for (const version of [undefined, "6", 4.5, NaN, Infinity, encoded.version + 1, 999]) {
       expect(decodeScanCache({ ...encoded, version }, TEST_FORMAT_MAP).size).toBe(0);
     }
   });

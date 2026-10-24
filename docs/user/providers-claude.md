@@ -111,11 +111,6 @@ permission mode are kept.
 
 ## Compact long conversations
 
-If Claude reaches a subscription usage limit mid-turn, the conversation shows the limit and the
-remaining wait when Claude reports a reset time. Claude may keep the turn open until the window
-reopens. Wait for that reset, or stop the turn and continue later; the warning timestamp indicates
-when its displayed wait began.
-
 In Settings, open your Claude provider and set **Auto-compact after** to a token count between
 `100000` and `1000000`. For example, `300000` compacts the conversation into a summary once it
 reaches about 300,000 tokens, without changing the model's context window. Leave the field
@@ -130,10 +125,24 @@ history for that message. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
 
-On web and desktop, when you return to an older Claude thread with a large context, Scient
-offers to compact the conversation before you continue. You can also select **Compact context**
-from the context meter. On every client, you can enter `/compact` in the message composer, and
-Claude can show its own resume prompt when you continue an old session.
+Claude can also show its own resume prompt when you continue an old session.
+
+**Compact idle threads** in **Settings → General** controls this for threads
+over 200,000 tokens. Each Claude provider's settings can override it:
+
+- **When you return** shows the **Compact** chip described above. This is the default.
+- **Before the cache expires (beta)** compacts an idle thread shortly before its
+  prompt cache expires, so coming back does not reprocess the whole conversation.
+  The compaction appears in the thread as a `/compact` turn sent by Scient.
+- **Never** skips idle compaction and Claude's resume prompt. **Auto-compact after**
+  still applies, and you can still compact by hand.
+
+## Usage limits
+
+If Claude reaches a subscription usage limit mid-turn, the conversation shows the limit and the
+remaining wait when Claude reports a reset time. Claude may keep the turn open until the window
+reopens. Wait for that reset, or stop the turn and continue later; the warning timestamp indicates
+when its displayed wait began.
 
 ## Where Claude Skills Are Loaded
 

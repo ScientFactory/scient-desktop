@@ -1122,7 +1122,7 @@ function RightPanelTab(
                   if (surface.kind === "device" && props.canRename) onStartRename(surface.id);
                 }}
                 className="cursor-pointer flex min-w-0 flex-1 items-center"
-                aria-label={props.attention ? `${title} — changes need attention` : undefined}
+                aria-label={props.attention ? `${title}: changes need attention` : undefined}
                 onClick={() => onActivate(surface)}
               >
                 {/* SCIENT-FORK:START — preserve automatic direction and persistence attention */}

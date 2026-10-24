@@ -33,32 +33,62 @@ describe("Scient analytics contract", () => {
       normalizeInheritedEvent("provider.turn.completed", { provider: "pi" }, context)?.name,
     ).toBe("provider.turn.completed");
   });
-  it("sends OMP analytics as the gateway's existing other provider", () => {
+  it.each(["scient", "omp", "muse", "acpRegistry"])(
+    "preserves the bounded %s driver across submission, usage and installation events",
+    (provider) => {
+      for (const name of [
+        "provider.turn.sent",
+        "provider.turn.completed",
+        "provider.turn.usage",
+        "provider.installation.observed",
+        "provider.installation.changed",
+        "provider.lifecycle.completed",
+      ]) {
+        const event = normalizeInheritedEvent(
+          name,
+          {
+            provider,
+            model: "PRIVATE-MODEL",
+            installed: true,
+            fromInstalled: false,
+            toInstalled: true,
+            prompt: "PRIVATE-CONTENT",
+            instanceId: "PRIVATE-INSTANCE",
+            path: "/PRIVATE/PATH",
+          },
+          context,
+        );
+        expect(event?.properties.provider).toBe(provider);
+        expect(JSON.stringify(event)).not.toContain("PRIVATE");
+        if (!event) throw new Error("Missing normalizer");
+        expect(
+          eventContractViolation({
+            name: event.name,
+            privacyLevel: event.privacyLevel,
+            consentLevel: event.privacyLevel,
+            properties: event.properties,
+          }),
+        ).toBeNull();
+      }
+    },
+  );
+
+  it("keeps private/custom driver names other and absent input metadata unknown", () => {
     const event = normalizeInheritedEvent(
-      "provider.turn.completed",
-      { provider: "omp", terminalStatus: "completed" },
+      "provider.turn.sent",
+      { provider: "PRIVATE-DRIVER", model: "PRIVATE-MODEL" },
       context,
     );
-    expect(event?.properties.provider).toBe("other");
-    if (!event) throw new Error("Missing normalizer");
+    expect(event?.properties).toMatchObject({
+      provider: "other",
+      attachmentCountBucket: "unknown",
+    });
+    expect(event?.properties).not.toHaveProperty("hasInput");
+    expect(JSON.stringify(event)).not.toContain("PRIVATE");
     expect(
-      eventContractViolation({
-        name: event.name,
-        privacyLevel: event.privacyLevel,
-        consentLevel: event.privacyLevel,
-        properties: event.properties,
-      }),
-    ).toBeNull();
-    // The wire contract mirrors the hosted gateway. Adding "omp" needs a
-    // contract revision that ships to the gateway first.
-    expect(
-      eventContractViolation({
-        name: event.name,
-        privacyLevel: event.privacyLevel,
-        consentLevel: event.privacyLevel,
-        properties: { ...event.properties, provider: "omp" },
-      }),
-    ).not.toBeNull();
+      normalizeInheritedEvent("provider.turn.sent", { hasInput: false }, context)?.properties
+        .hasInput,
+    ).toBe(false);
   });
 
   it("attributes Pi without collecting custom endpoint or model names", () => {

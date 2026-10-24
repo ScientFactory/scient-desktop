@@ -1,6 +1,10 @@
 export const ANALYTICS_SCHEMA_VERSION = 1 as const;
 export const ANALYTICS_SOURCE = "desktop" as const;
-import { ANALYTICS_CONTRACT_REVISION, EVENT_DEFINITIONS } from "./wireContract.ts";
+import {
+  ANALYTICS_CONTRACT_REVISION,
+  ANALYTICS_PROVIDER_KINDS,
+  EVENT_DEFINITIONS,
+} from "./wireContract.ts";
 export { ANALYTICS_CONTRACT_REVISION } from "./wireContract.ts";
 
 export const ANALYTICS_EVENT_NAMES = [
@@ -96,16 +100,7 @@ export interface NormalizedEvent {
   readonly properties: Readonly<Record<string, boolean | string | number>>;
 }
 
-const PROVIDERS = new Set([
-  "codex",
-  "claudeAgent",
-  "antigravity",
-  "droid",
-  "cursor",
-  "grok",
-  "opencode",
-  "pi",
-]);
+const PROVIDERS: ReadonlySet<string> = new Set(ANALYTICS_PROVIDER_KINDS);
 const RUNTIME_SOURCES = new Set(["custom", "system", "scient_managed", "missing", "unknown"]);
 const LIFECYCLE_ACTIONS = new Set([
   "install",
@@ -680,7 +675,9 @@ function normalizeEvent(
           interactionMode: normalizedInteractionMode(property(input, "interactionMode")),
           runtimeMode: normalizedRuntimeMode(property(input, "runtimeMode")),
           attachmentCountBucket: countBucket(property(input, "attachmentCount")),
-          hasInput: normalizedBoolean(property(input, "hasInput")),
+          ...(typeof property(input, "hasInput") === "boolean"
+            ? { hasInput: property(input, "hasInput") as boolean }
+            : {}),
         },
       };
     case "usage.refresh.requested": {

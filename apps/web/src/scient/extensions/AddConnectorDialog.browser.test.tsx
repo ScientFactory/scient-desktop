@@ -8,7 +8,8 @@ import {
 import * as Cause from "effect/Cause";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { act, render as renderScreen, stubGlobal, type Screen } from "../../../test/render";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
+import "~/index.css";
 
 const state = vi.hoisted(() => ({
   add: vi.fn(),
@@ -77,13 +78,8 @@ function setup() {
 
 const field = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const errorText = (id: string) => document.getElementById(`${id}-error`)?.textContent || null;
-const button = (label: string) =>
-  [...document.querySelectorAll("button")].find((item) => item.textContent === label)!;
-
-// Base UI's focus guard covers the footer while the dialog animates in, so
-// buttons are pressed directly, as other dialog tests in this app do.
 async function press(label: string) {
-  await act(async () => button(label).click());
+  await page.getByRole("button", { name: label, exact: true }).click();
 }
 
 async function submit() {

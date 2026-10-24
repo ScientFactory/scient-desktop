@@ -364,6 +364,7 @@ import {
   awaitSubscriptionSynchronized,
   collectQueueUntil,
   expectedMeasuredAssistantText,
+  isMeasuredTransferShellUpdate,
   commitMeasuredTransferTurn,
   seedTransferBudgetHistory,
   subscribeShellItems,
@@ -7305,7 +7306,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               const error = yield* client[WS_METHODS.assetsCreateUrl]({
                 resource: { _tag: "media-file", threadId, path: name },
               }).pipe(Effect.flip);
-              assert.equal(error._tag, "AssetWorkspaceContextNotFoundError");
+              assert.equal(error._tag, "AssetWorkspaceContextResolutionError");
+              assert.deepInclude(error, {
+                resource: { _tag: "media-file", threadId, path: name },
+              });
             }
           }),
         ),
@@ -14903,19 +14907,14 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                 const turnStartSqlStatements = sqlCounter.count();
                 const committed = yield* commitMeasuredTransferTurn(app.v2.eventSink, provider);
                 const finalThreadSequence = committed.at(-1)!.sequence;
-                const finalSequences = {
-                  detail: finalThreadSequence,
-                  aggregate: finalThreadSequence,
-                };
                 assert.isAbove(finalThreadSequence, decodedThread.snapshotSequence);
 
                 const reachedFinalThreadEvent = (item: OrchestrationV2ThreadStreamItem) =>
                   item.kind === "event" && item.sequence === finalThreadSequence;
-                // Shell items carry the sequence of the latest coalesced
-                // event for the thread, so the last one lands at or past
-                // the final thread event.
+                // Shell projection can read the final state at an earlier cursor;
+                // skipUnchangedThreadShells then suppresses its later duplicate.
                 const reachedFinalShellEvent = (item: OrchestrationV2ShellStreamItem) =>
-                  item.kind === "thread.updated" && item.sequence >= finalSequences.aggregate;
+                  isMeasuredTransferShellUpdate(item, provider, decodedShell.snapshotSequence);
                 yield* collectQueueUntil(
                   threadItems,
                   reachedFinalThreadEvent,
@@ -14926,15 +14925,15 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   reachedFinalThreadEvent,
                   `${provider} second client thread stream to reach sequence ${finalThreadSequence}`,
                 );
-                yield* collectQueueUntil(
+                const shellUpdates = yield* collectQueueUntil(
                   shellItems,
                   reachedFinalShellEvent,
-                  `${provider} shell stream to reach sequence ${finalSequences.aggregate}`,
+                  `${provider} shell stream to show the completed measured turn`,
                 );
-                yield* collectQueueUntil(
+                const secondShellUpdates = yield* collectQueueUntil(
                   secondShellItems,
                   reachedFinalShellEvent,
-                  `${provider} second client shell stream to reach sequence ${finalSequences.aggregate}`,
+                  `${provider} second client shell stream to show the completed measured turn`,
                 );
                 const measuredTurnWebSocket = transferDelta(
                   turnStartTotals,
@@ -14949,6 +14948,22 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   secondClient.recorder.totals(),
                 );
                 const measuredTurnSqlStatements = sqlCounter.count() - turnStartSqlStatements;
+
+                // Read the oracle outside both measured SQL intervals. Both sockets
+                // must carry the complete canonical shell, not just a completion flag.
+                const expectedShell = yield* app.v2.threads.getThreadShell(TRANSFER_THREAD_ID);
+                assert.isNotNull(expectedShell);
+                for (const update of [shellUpdates.at(-1), secondShellUpdates.at(-1)]) {
+                  assertTrue(
+                    update !== undefined &&
+                      isMeasuredTransferShellUpdate(
+                        update,
+                        provider,
+                        decodedShell.snapshotSequence,
+                      ),
+                  );
+                  assert.deepEqual(update.thread, expectedShell);
+                }
 
                 // The second device drops and comes back with the cursors it
                 // held before the turn, one subscription at a time so the
