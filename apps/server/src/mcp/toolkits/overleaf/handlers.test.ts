@@ -332,11 +332,12 @@ describe("Overleaf tool handlers", () => {
         recreated: [],
         skipped: [],
         adopted: { outcome: "replan" },
-        sync: stopped,
+        sync: { _tag: "not-synced", reason: "undo-incomplete" },
       });
+      // Not synced: nothing of an incomplete undo goes out before the files are checked.
       expect(replanned).toEqual([
-        "The undo of send #4 wrote nothing: the folder changed while it ran. Call again.",
-        ...followUp,
+        "The undo of send #4 wrote nothing: the folder changed while it ran.",
+        "Undo stopped partway; nothing was sent. Check the files (scient_overleaf_status), then sync.",
       ]);
     }),
   );

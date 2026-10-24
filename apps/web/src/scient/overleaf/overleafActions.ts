@@ -168,7 +168,8 @@ export async function runOverleafUndo(
       attemptNumber,
       ...files,
     });
-    if (result._tag === "undone") {
+    // An undo that stopped partway was not synced: there is no sync to record.
+    if (result._tag === "undone" && result.sync._tag !== "not-synced") {
       recordOverleafSync(environmentId, connection.connectionId, result.sync, carried);
       if (result.sync._tag === "needs-decision") context.openReview?.();
     }

@@ -59,6 +59,8 @@ export type OverleafTestThread = {
 export const overleafSyncWorld = (input?: {
   readonly overleaf?: Record<string, Record<string, string>>;
   readonly at?: (point: string) => Effect.Effect<void>;
+  /** Runs just before the applier writes `path` into `folder` (the main copy's `paper`). */
+  readonly beforeStep?: (path: string, folder: string) => Promise<void>;
   readonly withToken?: boolean;
 }) =>
   Effect.gen(function* () {
@@ -92,7 +94,12 @@ export const overleafSyncWorld = (input?: {
     const helper = yield* Effect.promise(() => filePublicationTestHelper());
     const exchangeHelper = (yield* Effect.promise(() => fileExchangeTestHelper())) ?? null;
     const files = yield* makeApplierFiles({ root, helper, retainedHooks: {} });
-    const applier = yield* makeApplier().pipe(Effect.provideService(WorkspaceFileSystem, files));
+    const applier = yield* makeApplier({
+      at: async (point, path) => {
+        if (point === "before-step" && path !== undefined)
+          await input?.beforeStep?.(path, NodePath.join(main, "paper"));
+      },
+    }).pipe(Effect.provideService(WorkspaceFileSystem, files));
 
     // One bare repository per Overleaf project, with a collaborator clone to change it.
     const token = new TextEncoder().encode(TOKEN);

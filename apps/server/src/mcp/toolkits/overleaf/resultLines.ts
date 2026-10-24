@@ -532,19 +532,23 @@ export const undoLines = (attemptNumber: number, result: ScientOverleafUndoResul
           break;
         case "replan":
           lines.push(
-            `The undo of send #${attemptNumber} wrote nothing: the folder changed while it ran. Call again.`,
+            `The undo of send #${attemptNumber} wrote nothing: the folder changed while it ran.`,
           );
           break;
         default:
           lines.push(
-            `The undo of send #${attemptNumber} needs attention: it may have stopped partway, or a file changed while it was written. Check scient_overleaf_status before syncing.`,
+            `The undo of send #${attemptNumber} needs attention: it may have stopped partway, or a file changed while it was written.`,
           );
       }
       if (result.skipped.length > 0)
         lines.push(
           `Left as it is: ${named(result.skipped.map((skip) => `${skip.path} (${UNDO_SKIP_TEXT[skip.reason]})`))}.`,
         );
-      lines.push("Then it synced:", ...syncLines(result.sync));
+      if (result.sync._tag === "not-synced")
+        lines.push(
+          "Undo stopped partway; nothing was sent. Check the files (scient_overleaf_status), then sync.",
+        );
+      else lines.push("Then it synced:", ...syncLines(result.sync));
       return lines;
     }
     case "not-eligible":
