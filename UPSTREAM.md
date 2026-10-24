@@ -1581,7 +1581,7 @@ The Wayland layer namespace `t3-snap-shot` and the portal shortcut id
 `t3-snap-shot-<hash>` keep T3's names: renaming them would drop users'
 compositor rules and approved shortcuts.
 
-The unmounted Overleaf engine owns `apps/server/src/scient/overleaf` and its
+The Overleaf engine owns `apps/server/src/scient/overleaf` and its
 retained mutation implementation in `apps/server/src/scient/workspace`. Its
 `WorkspaceFileSystem` methods share physical-file publication ownership with
 editor saves. Desktop resources carry `scient-file-publication` for retained
@@ -1589,7 +1589,10 @@ publication; macOS also carries the protocol-1 `scient-file-exchange` helper for
 Overleaf volume probes. Staging either helper must preserve the other's files.
 Keep both outside ASAR and resolve them only from the server host. Preserve
 journaled recovery across app updates, including review of ambiguous publication
-boundaries. No Overleaf routes or UI are mounted yet. See
+boundaries. Its routes (`scientOverleaf`, `/api/scient/overleaf/v1/*`) are a
+Scient group in `packages/contracts/src/scient/environmentHttpGroups.ts`, with
+contracts in `scientOverleaf.ts`; the only edits to shared files are the marked
+group registration in `environmentHttp.ts` and the export in `index.ts`. See
 [Overleaf engine](docs/internals/scient-overleaf-engine.md).
 
 ## File-tree bidirectional labels
