@@ -6,18 +6,21 @@
  * waits for each answer.
  *
  * A window is known by the authenticated session that registered it and the
- * id it chose; another session can neither replace it nor answer for it. A
- * window stays a member of the environment for a grace period after its
- * connection drops, so a reconnecting window is asked (again, once back) and
- * counts as unanswered, never as absent. A window that registers while a
- * request is open is asked too, and the request waits for it.
+ * id it chose; another session can neither replace it nor answer for it.
+ * Membership is not the set of open connections. A window that closes says
+ * goodbye (`leave`) and is forgotten at once. A window whose connection drops
+ * without a goodbye stays known, and every flush counts it as unanswered,
+ * until it reconnects (it is then asked) or is retired after five minutes. A
+ * window that registers while a request is open is asked too.
+ *
+ * A window's answer time starts when the request reaches it; the whole
+ * request also ends at its overall deadline, however many windows join.
  *
  * Each window asks the server which of its editors' files are in the folder
  * (`resolve`); the server compares physical identity, so any spelling of a
  * path is found. A window answers with the files it saved and every file it
- * could not save, with the reason. A window that does not answer in time is a
- * failure that names it. With no window present, no editor holds unsaved
- * text: the result says so.
+ * could not save, with the reason. With no window known, no editor holds
+ * unsaved text: the result says so.
  *
  * @module EditorFlush
  */
@@ -48,8 +51,10 @@ export interface EditorFlushFolderInput {
   readonly checkoutRoot: string;
   /** Relative to `checkoutRoot` with "/" separators; "" is the whole checkout. */
   readonly folder: string;
-  /** How long each window has to answer from when it is asked. */
+  /** How long each window has to answer from when the request reaches it. */
   readonly timeout: Duration.Input;
+  /** When the whole request ends, whichever windows are still awaited. */
+  readonly overallTimeout: Duration.Input;
 }
 
 /** A window, by the id it chose. */
@@ -73,12 +78,12 @@ export type EditorFlushWindowOutcome =
   | {
       readonly _tag: "Unanswered";
       readonly window: EditorFlushWindowRef;
-      /** `disconnected`: its connection was down when time ran out, or it left for good. */
+      /** `disconnected`: the request never reached it, or its connection was down at the end. */
       readonly reason: "timeout" | "disconnected";
     };
 
 export type EditorFlushResult =
-  /** No window is present, so no editor holds unsaved text. */
+  /** No window is known, so no editor holds unsaved text. */
   | { readonly _tag: "NoWindowOpen" }
   /** The folder could not be examined, so no window could be asked about it. */
   | { readonly _tag: "FolderUnavailable"; readonly message: string }
@@ -90,17 +95,18 @@ export type EditorFlushResult =
     };
 
 export interface EditorFlushOptions {
+  /** How long a window whose connection dropped without a goodbye stays known. */
+  readonly retirement: Duration.Input;
   /**
-   * How long a window whose connection dropped is still counted as present
-   * (and, while the service is this young, how long a flush waits for the
-   * first window to connect).
+   * While the service is this young, how long a flush waits for a first
+   * window. It cannot prove that no window exists.
    */
-  readonly presenceGrace: Duration.Input;
+  readonly startupWait: Duration.Input;
 }
 
 type Answer =
   | { readonly _tag: "answered"; readonly response: EditorFlushResponse }
-  | { readonly _tag: "gone" };
+  | { readonly _tag: "retired" };
 
 interface Presence {
   readonly key: string;
@@ -109,13 +115,14 @@ interface Presence {
     readonly connectionId: string;
     readonly queue: Queue.Queue<EditorFlushStreamEvent, Cause.Done>;
   } | null;
-  /** Advances on every disconnect, so only the latest one's grace can remove it. */
+  /** Advances on every disconnect, so only the latest one's retirement can remove it. */
   generation: number;
 }
 
 interface Member {
   readonly presence: Presence;
-  readonly deadline: number;
+  /** When its answer is due: set when the request reaches it, null before. */
+  deadline: number | null;
   answer: Answer | null;
   /** Completed with the answer. */
   readonly answered: Deferred.Deferred<void>;
@@ -130,9 +137,11 @@ interface OpenRequest {
   readonly request: EditorFlushRequest;
   readonly identity: FolderIdentity;
   readonly timeoutMillis: number;
+  /** The request ends then, whichever members are still awaited. */
+  readonly endsAt: number;
   readonly members: Map<string, Member>;
-  /** Completed (and replaced) whenever a member joins. */
-  joined: Deferred.Deferred<void>;
+  /** Completed (and replaced) whenever a member joins, leaves or is reached. */
+  changed: Deferred.Deferred<void>;
 }
 
 export class EditorFlush extends Context.Service<
@@ -153,6 +162,11 @@ export class EditorFlush extends Context.Service<
       sessionId: string,
       response: EditorFlushResponse,
     ) => Effect.Effect<{ readonly accepted: boolean }>;
+    /** A window closing: forgotten at once, and no longer awaited. */
+    readonly leave: (
+      sessionId: string,
+      window: EditorFlushWindow,
+    ) => Effect.Effect<{ readonly accepted: boolean }>;
     readonly flushFolder: (input: EditorFlushFolderInput) => Effect.Effect<EditorFlushResult>;
   }
 >()("t3/scient/editorFlush/EditorFlush") {}
@@ -162,33 +176,43 @@ const windowKey = (sessionId: string, clientId: string) => `${sessionId}\0${clie
 const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOptions) {
   const crypto = yield* Crypto.Crypto;
   const scope = yield* Effect.scope;
-  const graceMillis = Duration.toMillis(options.presenceGrace);
+  const retirementMillis = Duration.toMillis(options.retirement);
   const startedAt = yield* Clock.currentTimeMillis;
+  const startupUntil = startedAt + Duration.toMillis(options.startupWait);
   const presences = new Map<string, Presence>();
   const open = new Map<string, OpenRequest>();
 
-  const send = (presence: Presence, request: EditorFlushRequest) => {
-    if (presence.connection === null) return;
-    Queue.offerUnsafe(presence.connection.queue, {
+  const signal = (request: OpenRequest) => {
+    const changed = request.changed;
+    request.changed = Deferred.makeUnsafe<void>();
+    Deferred.doneUnsafe(changed, Effect.void);
+  };
+
+  /** Delivers the request if the window is connected; its answer time starts now. */
+  const deliver = (request: OpenRequest, member: Member, now: number) => {
+    const connection = member.presence.connection;
+    if (connection === null || member.answer !== null) return;
+    Queue.offerUnsafe(connection.queue, {
       type: "request",
-      connectionId: presence.connection.connectionId,
-      request,
+      connectionId: connection.connectionId,
+      request: request.request,
     });
+    member.deadline = now + request.timeoutMillis;
+    signal(request);
   };
 
   /** Asks a window, unless it is already asked; the request then waits for it. */
   const join = (request: OpenRequest, presence: Presence, now: number) => {
     if (request.members.has(presence.key)) return;
-    request.members.set(presence.key, {
+    const member: Member = {
       presence,
-      deadline: now + request.timeoutMillis,
+      deadline: null,
       answer: null,
       answered: Deferred.makeUnsafe<void>(),
-    });
-    send(presence, request.request);
-    const joined = request.joined;
-    request.joined = Deferred.makeUnsafe<void>();
-    Deferred.doneUnsafe(joined, Effect.void);
+    };
+    request.members.set(presence.key, member);
+    signal(request);
+    deliver(request, member, now);
   };
 
   const settle = (member: Member, answer: Answer) => {
@@ -220,20 +244,20 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
       for (const request of open.values()) {
         const member = request.members.get(key);
         if (member === undefined) join(request, presence, now);
-        else if (member.answer === null) send(presence, request.request);
+        else deliver(request, member, now);
       }
       return { presence, connection };
     });
   });
 
-  /** Gone for good: every request still waiting on it stops waiting. */
-  const remove = (presence: Presence, generation: number) =>
+  /** Retired after a long silence: requests stop waiting for it. */
+  const retire = (presence: Presence, generation: number) =>
     Effect.sync(() => {
       if (presence.connection !== null || presence.generation !== generation) return;
       if (presences.get(presence.key) === presence) presences.delete(presence.key);
       for (const request of open.values()) {
         const member = request.members.get(presence.key);
-        if (member !== undefined) settle(member, { _tag: "gone" });
+        if (member !== undefined) settle(member, { _tag: "retired" });
       }
     });
 
@@ -243,8 +267,8 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
       if (presence.connection !== connection) return Effect.void;
       presence.connection = null;
       const generation = ++presence.generation;
-      return Effect.sleep(graceMillis).pipe(
-        Effect.andThen(remove(presence, generation)),
+      return Effect.sleep(retirementMillis).pipe(
+        Effect.andThen(retire(presence, generation)),
         Effect.forkIn(scope),
         Effect.asVoid,
       );
@@ -258,6 +282,25 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
         ),
       ),
     );
+
+  const leave: EditorFlush["Service"]["leave"] = (sessionId, input) =>
+    Effect.sync(() => {
+      const presence = presences.get(windowKey(sessionId, input.clientId));
+      if (presence === undefined) return { accepted: false };
+      presences.delete(presence.key);
+      presence.generation += 1;
+      if (presence.connection !== null) Queue.endUnsafe(presence.connection.queue);
+      presence.connection = null;
+      // A closed window holds no editors: it is no longer awaited, unless it answered.
+      for (const request of open.values()) {
+        const member = request.members.get(presence.key);
+        if (member === undefined || member.answer !== null) continue;
+        request.members.delete(presence.key);
+        Deferred.doneUnsafe(member.answered, Effect.void);
+        signal(request);
+      }
+      return { accepted: true };
+    });
 
   const memberOf = (sessionId: string, clientId: string, requestId: string) =>
     open.get(requestId)?.members.get(windowKey(sessionId, clientId));
@@ -294,9 +337,12 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
       return {
         _tag: "Unanswered",
         window,
-        reason: member.presence.connection === null ? "disconnected" : "timeout",
+        reason:
+          member.deadline === null || member.presence.connection === null
+            ? "disconnected"
+            : "timeout",
       };
-    if (answer._tag === "gone") return { _tag: "Unanswered", window, reason: "disconnected" };
+    if (answer._tag === "retired") return { _tag: "Unanswered", window, reason: "disconnected" };
     const { saved, failures } = answer.response;
     return failures.length === 0
       ? { _tag: "Saved", window, saved }
@@ -314,34 +360,38 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
           message: "The folder could not be found or examined.",
         } as const;
       const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const start = yield* Clock.currentTimeMillis;
       const request: OpenRequest = {
         request: { requestId, checkoutRoot: input.checkoutRoot, folder: input.folder },
         identity: identity.value,
         timeoutMillis: Duration.toMillis(input.timeout),
+        endsAt: start + Duration.toMillis(input.overallTimeout),
         members: new Map(),
-        joined: Deferred.makeUnsafe<void>(),
+        changed: Deferred.makeUnsafe<void>(),
       };
-      const start = yield* Clock.currentTimeMillis;
       yield* Effect.sync(() => {
         open.set(requestId, request);
         for (const presence of presences.values()) join(request, presence, start);
       });
-      // A server just started may not have heard from its windows yet.
-      const settleUntil = startedAt + graceMillis;
       return yield* Effect.gen(function* () {
         for (;;) {
           const now = yield* Clock.currentTimeMillis;
+          if (now >= request.endsAt) break;
+          // Awaited: unanswered and not yet past the answer time it was given.
           const waiting = [...request.members.values()].filter(
-            (member) => member.answer === null && member.deadline > now,
+            (member) =>
+              member.answer === null && (member.deadline === null || member.deadline > now),
           );
-          const settling = request.members.size === 0 && now < settleUntil;
-          if (waiting.length === 0 && !settling) break;
-          const wakeAt = settling
-            ? settleUntil
-            : Math.min(...waiting.map((member) => member.deadline));
+          // A server just started may not have heard from its windows yet.
+          const starting = request.members.size === 0 && now < startupUntil;
+          if (waiting.length === 0 && !starting) break;
+          const due = waiting.flatMap((member) =>
+            member.deadline === null ? [] : [member.deadline],
+          );
+          const wakeAt = Math.min(request.endsAt, ...(starting ? [startupUntil] : due));
           yield* Effect.raceAll([
             ...waiting.map((member) => Deferred.await(member.answered)),
-            Deferred.await(request.joined),
+            Deferred.await(request.changed),
             Effect.sleep(Math.max(0, wakeAt - now)),
           ]);
         }
@@ -356,12 +406,14 @@ const make = Effect.fn("EditorFlush.make")(function* (options: EditorFlushOption
     },
   );
 
-  return EditorFlush.of({ connect, resolve, respond, flushFolder });
+  return EditorFlush.of({ connect, resolve, respond, leave, flushFolder });
 });
-
-/** A window whose connection dropped counts as present for this long. */
-const DEFAULT_PRESENCE_GRACE: Duration.Input = "10 seconds";
 
 export const layerWith = (options: EditorFlushOptions) => Layer.effect(EditorFlush, make(options));
 
-export const layer = layerWith({ presenceGrace: DEFAULT_PRESENCE_GRACE });
+/**
+ * A window lost without a goodbye blocks flushes for up to five minutes; its
+ * drafts stay protected by the outside-change conflict after that. A new
+ * service waits ten seconds for its first window.
+ */
+export const layer = layerWith({ retirement: "5 minutes", startupWait: "10 seconds" });

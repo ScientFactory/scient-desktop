@@ -1,7 +1,8 @@
 /**
  * The window side of the editor flush: each window connects for requests,
- * asks where its editors' files are, and answers each request. Every call is
- * bound to the session that authenticated this connection.
+ * asks where its editors' files are, answers each request, and says goodbye
+ * when it closes. Every call is bound to the session that authenticated this
+ * connection.
  *
  * @module EditorFlushRpcHandlers
  */
@@ -38,9 +39,16 @@ export const makeEditorFlushRpcHandlers = ({
         EditorFlush.use((flush) => flush.respond(sessionId, input)),
         { "rpc.aggregate": "editors" },
       ),
+    [WS_METHODS.editorsFlushLeave]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.editorsFlushLeave,
+        EditorFlush.use((flush) => flush.leave(sessionId, input)),
+        { "rpc.aggregate": "editors" },
+      ),
   }) satisfies ScientRpcHandlerSubset<
     typeof WsWorkspaceRpcGroup,
     | typeof WS_METHODS.editorsFlushConnect
     | typeof WS_METHODS.editorsFlushResolve
     | typeof WS_METHODS.editorsFlushRespond
+    | typeof WS_METHODS.editorsFlushLeave
   >;

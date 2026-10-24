@@ -493,6 +493,7 @@ import {
 import {
   SCIENT_EDITOR_FLUSH_WS_METHODS,
   WsEditorsFlushConnectRpc,
+  WsEditorsFlushLeaveRpc,
   WsEditorsFlushResolveRpc,
   WsEditorsFlushRespondRpc,
 } from "./scient/editorFlushRpcs.ts";
@@ -2303,6 +2304,7 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsDocumentsReleaseDocumentPdfRpc,
   // SCIENT-FORK:START — Scient editor flush RPCs.
   WsEditorsFlushConnectRpc,
+  WsEditorsFlushLeaveRpc,
   WsEditorsFlushResolveRpc,
   WsEditorsFlushRespondRpc,
   // SCIENT-FORK:END

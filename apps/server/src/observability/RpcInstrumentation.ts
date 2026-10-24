@@ -291,6 +291,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.editorsFlushConnect]: "editors",
   [WS_METHODS.editorsFlushResolve]: "editors",
   [WS_METHODS.editorsFlushRespond]: "editors",
+  [WS_METHODS.editorsFlushLeave]: "editors",
   // SCIENT-FORK:END
   [WS_METHODS.serverStartProviderConnection]: "server",
   [WS_METHODS.serverCancelProviderConnection]: "server",

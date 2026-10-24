@@ -15,6 +15,7 @@ export const SCIENT_EDITOR_FLUSH_WS_METHODS = {
   editorsFlushConnect: "editors.flushConnect",
   editorsFlushResolve: "editors.flushResolve",
   editorsFlushRespond: "editors.flushRespond",
+  editorsFlushLeave: "editors.flushLeave",
 } as const;
 
 export const WsEditorsFlushConnectRpc = Rpc.make(
@@ -35,6 +36,13 @@ export const WsEditorsFlushResolveRpc = Rpc.make(
     error: EnvironmentAuthorizationError,
   },
 );
+
+/** A window closing says goodbye, so the server stops counting it. */
+export const WsEditorsFlushLeaveRpc = Rpc.make(SCIENT_EDITOR_FLUSH_WS_METHODS.editorsFlushLeave, {
+  payload: EditorFlushWindow,
+  success: Schema.Struct({ accepted: Schema.Boolean }),
+  error: EnvironmentAuthorizationError,
+});
 
 export const WsEditorsFlushRespondRpc = Rpc.make(
   SCIENT_EDITOR_FLUSH_WS_METHODS.editorsFlushRespond,

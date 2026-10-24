@@ -33,8 +33,11 @@ const at = (relativePath: string, cwd = "/work/thesis", environment = environmen
  * spelling of "/work/thesis", and files under "/unreadable" cannot be placed.
  */
 const locateCalls: Array<ReadonlyArray<string>> = [];
+/** Runs while the server is being asked: what a person does meanwhile. */
+let duringLocate: () => void = () => {};
 const locate: LocateFiles = async (files) => {
   locateCalls.push(files.map((file) => `${file.cwd}/${file.relativePath}`));
+  duringLocate();
   return files.map(({ cwd, relativePath }) => {
     if (cwd.startsWith("/unreadable")) return { status: "unknown" as const };
     const root = cwd.replace(/^\/alias\//u, "/work/");
@@ -101,6 +104,12 @@ function windowWith() {
     expect(lease.change(edit, lease.getSnapshot().editVersion)).toBe(true);
     return lease;
   };
+  /** An editor with nothing unsaved. */
+  const openCleanDocument = (target: MarkdownPersistenceTarget) => {
+    const lease = documents.acquire(target, initial(target.relativePath))!;
+    leases.push(lease);
+    return lease;
+  };
   const openFile = (target: MarkdownPersistenceTarget, persistFails?: "conflict") => {
     const lease = sessions.acquire({
       key: `${target.environmentId}:${target.cwd}/${target.relativePath}`,
@@ -150,6 +159,7 @@ function windowWith() {
     sessionWrites,
     compositions,
     openDocument,
+    openCleanDocument,
     openFile,
     openVisual,
     dispose: () => {
@@ -164,6 +174,7 @@ describe("flushFolderEditors", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     locateCalls.length = 0;
+    duringLocate = () => {};
     window = windowWith();
   });
   afterEach(() => {
@@ -308,6 +319,45 @@ describe("flushFolderEditors", () => {
     expect(answer).toEqual({ saved: ["paper/a.md", "paper/b.md", "paper/c.md"], failures: [] });
     expect(window.documentDisk.writes.filter((path) => path.endsWith("/a.md"))).toHaveLength(2);
     expect(window.documentDisk.writes).toContain("/work/thesis/paper/c.md");
+  });
+
+  it("rechecks an editor opened while the server was being asked, and saves it", async () => {
+    window.openDocument(at("paper/b.md"));
+    let opened = false;
+    window.documentDisk.beforeWrite("paper/b.md", async () => {
+      // A clean editor opened during the save: placing it is the final question to the server.
+      if (!opened) window.openCleanDocument(at("paper/c.md"));
+    });
+    duringLocate = () => {
+      if (locateCalls.length !== 2 || opened) return;
+      opened = true;
+      // ...and while that question is out, another editor opens with unsaved text.
+      window.openDocument(at("paper/dirty-d.md"));
+    };
+
+    const answer = await flushFolderEditors(environmentId, window.editors, locate);
+
+    expect(answer).toEqual({
+      saved: ["paper/b.md", "paper/c.md", "paper/dirty-d.md"],
+      failures: [],
+    });
+  });
+
+  it("fails an editor with unsaved text that still could not be placed", async () => {
+    window.openDocument(at("paper/a.md"));
+    let opened = 0;
+    // Each question to the server, a new editor opens with unsaved text.
+    duringLocate = () => void window.openDocument(at(`paper/new-${opened++}.md`));
+
+    const answer = await flushFolderEditors(environmentId, window.editors, locate);
+
+    expect(answer.failures).toContainEqual({
+      path: `/work/thesis/paper/new-${opened - 1}.md`,
+      reason: "save-failed",
+      message:
+        "This file has unsaved text, and the server could not tell whether it is in the folder.",
+    });
+    expect(answer.saved).toContain("paper/a.md");
   });
 
   it("fails a file that is edited again during every save", async () => {

@@ -358,27 +358,41 @@ attempt.
 Text a person typed is on disk only once the window holding it has saved it.
 `scient/editorFlush/EditorFlush.ts` lets a server operation ask every window
 of this environment to save its editors for one folder, and wait:
-`flushFolder({ checkoutRoot, folder, timeout })`. Nothing calls it yet; the
-Overleaf agent tools will, before prepare and again before confirm.
+`flushFolder({ checkoutRoot, folder, timeout, overallTimeout })`. Nothing
+calls it yet; the Overleaf agent tools will, before prepare and again before
+confirm.
 
 - Each window subscribes once (`editors.flushConnect`), asks where its
-  editors' files are (`editors.flushResolve`), and answers
-  (`editors.flushRespond`) with the files it saved and every file it could not
-  save, named relative to the checkout, with the reason: `unconverted-input`
-  (visual input not yet source), `composing` (an input method is composing),
-  `save-failed`, or `conflict` (the file changed outside an editor holding
-  unsaved text). All three need the filesystem write scope.
+  editors' files are (`editors.flushResolve`), answers (`editors.flushRespond`)
+  with the files it saved and every file it could not save, named relative to
+  the checkout, with the reason: `unconverted-input` (visual input not yet
+  source), `composing` (an input method is composing), `save-failed`, or
+  `conflict` (the file changed outside an editor holding unsaved text), and
+  says goodbye when it closes (`editors.flushLeave`, sent on `pagehide`, which
+  a closing desktop window also fires). All four need the filesystem write
+  scope.
 - A window is known by the authenticated session of its connection and the
-  id it chose. Another session can neither replace it nor answer or resolve
-  for it. A window that reconnects replaces its own earlier connection.
-- Membership is not the set of open streams. A window whose connection drops
-  stays present for a grace (10 seconds): a request asks it, sends the request
-  again when it is back, and counts it `Unanswered` (`disconnected`) if it is
-  not. A window that registers while a request is open is asked too, and the
-  request waits for it. A service younger than the grace waits that long for
-  a first window before reporting `NoWindowOpen`. Each window has the timeout
-  from when it is asked.
-- The result is `NoWindowOpen` (no window present: nothing is unsaved),
+  id it chose. Another session can neither replace it nor answer, resolve or
+  say goodbye for it. A window that reconnects replaces its own earlier
+  connection.
+- Membership is not the set of open streams. A window that says goodbye is
+  forgotten at once, and a request still awaiting it stops waiting. A window
+  whose connection drops without a goodbye stays known for five minutes: every
+  flush asks it, sends the request again when it is back, and otherwise counts
+  it `Unanswered` (`disconnected`), so the sync stops and names it. After five
+  minutes it is retired. A window that registers while a request is open is
+  asked too.
+- The boundary: a window lost for longer than five minutes, or one that
+  connects only after a new server's ten-second wait for its first window
+  (that wait cannot prove no window exists), is not asked. Its unsaved drafts
+  stay protected by the outside-change and revision conflict (contract
+  section 10): a later save from it cannot silently overwrite what the sync
+  wrote. The remaining risk is only that the sync ran without that window's
+  latest typing.
+- A window's answer time (`timeout`) starts when the request reaches it, so
+  one that reconnects late still gets the whole time. The request as a whole
+  ends at `overallTimeout`, however many windows join meanwhile.
+- The result is `NoWindowOpen` (no window known: nothing is unsaved),
   `FolderUnavailable` (the folder could not be examined), or `Answered` with
   one outcome per window and `allSaved`. An unanswered window is never a
   success.
@@ -398,10 +412,11 @@ Overleaf agent tools will, before prepare and again before confirm.
   the document registry, and ordinary file editors through
   `WorkspaceFileSessionRegistry.flushWhere`. Source editors and the Markdown
   Visual editor register their composition state (`editorComposition.ts`).
-- Right before answering, every editor in the folder (and every one the
-  server could not place) is checked again at once, including editors opened
-  meanwhile. If any has unsaved text the whole save runs once more; a file
-  still unsaved then fails as edited again.
+- Right before answering, every editor in the folder, every one the server
+  could not place, and every one not yet placed (opened while the server was
+  being asked) is checked again at once. If any has unsaved text the whole
+  save runs once more; a file still unsaved then fails, as edited again or as
+  not placed.
 
 ## Remaining integration gates
 

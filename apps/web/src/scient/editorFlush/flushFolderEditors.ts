@@ -68,8 +68,10 @@ const targetOf = (target: MarkdownPersistenceTarget): MarkdownPersistenceTarget 
  * through each editor's own save pipeline, and names every file it could not
  * save. The server places files by physical identity (`locate`). A file it
  * cannot place fails when its editor holds unsaved text. Right before
- * answering, every editor in the folder is checked again at once; if any
- * changed meanwhile the whole save runs once more, then such files fail.
+ * answering, every editor in the folder, or not known to be outside it
+ * (including one opened while the server was being asked), is checked again
+ * at once; if any holds unsaved text the whole save runs once more, then such
+ * files fail.
  */
 export async function flushFolderEditors(
   environmentId: EnvironmentId,
@@ -99,11 +101,12 @@ export async function flushFolderEditors(
   const locationOf = (target: MarkdownPersistenceTarget) =>
     target.environmentId === environmentId ? locations.get(keyOf(target)) : undefined;
   const inside = (target: MarkdownPersistenceTarget) => locationOf(target)?.status === "inside";
-  /** In the folder, or possibly: the server could not tell. */
-  const concerned = (target: MarkdownPersistenceTarget) => {
-    const status = locationOf(target)?.status;
-    return status === "inside" || status === "unknown";
-  };
+  /**
+   * In the folder, or possibly: the server could not tell, or has not been
+   * asked yet (an editor opened while it was being asked).
+   */
+  const concerned = (target: MarkdownPersistenceTarget) =>
+    target.environmentId === environmentId && locationOf(target)?.status !== "outside";
   const nameOf = (target: MarkdownPersistenceTarget) => {
     const location = locationOf(target);
     return location?.status === "inside"

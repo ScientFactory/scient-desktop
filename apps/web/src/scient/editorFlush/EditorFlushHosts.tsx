@@ -7,12 +7,10 @@ import {
 import {
   type EditorFlushRequest,
   type EditorFlushResponse,
-  type EditorFlushStreamEvent,
   type EnvironmentId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
-import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 
 import { workspaceFileSessionFlush } from "~/components/files/useFileSaveCoordinator";
@@ -24,19 +22,28 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { latexDocumentInputs } from "../latex/latexDocumentInputs";
 import { markdownPersistenceRegistry } from "../markdownEditor/persistence/markdownPersistenceRegistry";
 import { editorCompositions } from "./editorComposition";
+import { createEditorFlushConsumerAtom } from "./editorFlushConsumer";
 import { flushFolderEditors, type LocateFiles, type WindowEditors } from "./flushFolderEditors";
 
 const editorFlushRequests = createEnvironmentSubscriptionAtomFamily(connectionAtomRuntime, {
   label: "environment-data:scient-editor-flush:requests",
   // An atom publishes only a chunk's last value, so keep one event each.
   subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.editorsFlushConnect>) =>
-    subscribe(WS_METHODS.editorsFlushConnect, input).pipe(Stream.rechunk(1)),
+    // A goodbye or a replaced connection ends the stream; a window still open joins again.
+    subscribe(WS_METHODS.editorsFlushConnect, input, {
+      resubscribeOnCompleteAfter: "1 second",
+    }).pipe(Stream.rechunk(1)),
   idleTtlMs: 0,
 });
 
 const locateEditorFiles = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-data:scient-editor-flush:resolve",
   tag: WS_METHODS.editorsFlushResolve,
+});
+
+const leaveEditorFlush = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:scient-editor-flush:leave",
+  tag: WS_METHODS.editorsFlushLeave,
 });
 
 const respondToEditorFlush = createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -73,57 +80,13 @@ async function answer(
   }
 }
 
-/** Answers each request once, on the connection it came from, independently of React renders. */
-function createEditorFlushConsumerAtom<E>(options: {
-  readonly requestsAtom: Atom.Atom<AsyncResult.AsyncResult<EditorFlushStreamEvent, E>>;
-  readonly clientId: string;
-  readonly environmentId: EnvironmentId;
-  readonly locate: (requestId: string) => LocateFiles;
-  readonly respond: (response: EditorFlushResponse) => Promise<unknown>;
-}): Atom.Atom<void> {
-  return Atom.make((get) => {
-    let disposed = false;
-    const answered = new Set<string>();
-    const consume = (result: AsyncResult.AsyncResult<EditorFlushStreamEvent, E>) => {
-      if (disposed || !AsyncResult.isSuccess(result) || result.value.type !== "request") return;
-      const { connectionId, request } = result.value;
-      const key = `${connectionId}\0${request.requestId}`;
-      if (answered.has(key)) return;
-      answered.add(key);
-      const oldest = answered.values().next().value;
-      if (answered.size > 256 && oldest !== undefined) answered.delete(oldest);
-      void answer(options.environmentId, request, options.locate(request.requestId))
-        .then((reply) =>
-          disposed
-            ? undefined
-            : options.respond({
-                clientId: options.clientId,
-                requestId: request.requestId,
-                ...reply,
-              }),
-        )
-        .catch(() => {
-          // The connection is gone; the server counts this window as unanswered.
-        });
-    };
-    get.addFinalizer(() => {
-      disposed = true;
-    });
-    // Subscribe before reading the cached value; request ids prevent answering twice.
-    const initial = get.once(options.requestsAtom);
-    get.subscribe(options.requestsAtom, consume);
-    consume(initial);
-  }).pipe(
-    Atom.setIdleTTL(0),
-    Atom.withLabel(`scient-editor-flush:${options.environmentId}:${options.clientId}`),
-  );
-}
-
 function EditorFlushEnvironmentHost(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
   const [clientId] = useState(() => `scient-editors-${randomUUID()}`);
   const respond = useAtomCommand(respondToEditorFlush, { reportFailure: false });
   const resolve = useAtomCommand(locateEditorFiles, { reportFailure: false });
+  const leave = useAtomCommand(leaveEditorFlush, { reportFailure: false });
+  const leaveLatest = useStableCallback(() => leave({ environmentId, input: { clientId } }));
   const respondLatest = useStableCallback((response: EditorFlushResponse) =>
     respond({ environmentId, input: response }),
   );
@@ -137,8 +100,9 @@ function EditorFlushEnvironmentHost(props: { readonly environmentId: Environment
       requestsAtom: editorFlushRequests({ environmentId, input: { clientId } }),
       clientId,
       environmentId,
-      locate: locateLatest,
+      flush: (request) => answer(environmentId, request, locateLatest(request.requestId)),
       respond: respondLatest,
+      leave: leaveLatest,
     }),
   );
   useAtomMount(consumer);

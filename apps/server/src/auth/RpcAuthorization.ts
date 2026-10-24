@@ -260,6 +260,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.editorsFlushConnect]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushResolve]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushRespond]: AuthFilesystemWriteScope,
+  [WS_METHODS.editorsFlushLeave]: AuthFilesystemWriteScope,
   // SCIENT-FORK:END
   [WS_METHODS.subscribeComputeSessions]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAnalysisRuns]: AuthOrchestrationReadScope,

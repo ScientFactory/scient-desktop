@@ -12,16 +12,17 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { EditorFlush, layerWith } from "./EditorFlush.ts";
+import { EditorFlush, layer, layerWith } from "./EditorFlush.ts";
 
-const flushLayer = (presenceGrace: Duration.Input) =>
-  layerWith({ presenceGrace }).pipe(Layer.provide(NodeServices.layer));
-/** No grace: a dropped window is gone at once, and a new service waits for nobody. */
-const NoGrace = flushLayer("0 millis");
+const flushLayer = (startupWait: Duration.Input) =>
+  layerWith({ retirement: "5 minutes", startupWait }).pipe(Layer.provide(NodeServices.layer));
+/** A new service that waits for nobody. */
+const NoStartupWait = flushLayer("0 millis");
 
 let base: string;
 let checkoutRoot: string;
@@ -40,7 +41,8 @@ afterAll(() => {
   NodeFS.rmSync(base, { recursive: true, force: true });
 });
 
-const folder = () => ({ checkoutRoot, folder: "paper", timeout: "5 seconds" }) as const;
+const folder = () =>
+  ({ checkoutRoot, folder: "paper", timeout: "5 seconds", overallTimeout: "1 minute" }) as const;
 
 type Answer = Pick<EditorFlushResponse, "saved" | "failures">;
 
@@ -49,6 +51,8 @@ interface FakeWindow {
   readonly requests: Array<EditorFlushRequest>;
   /** Completed when the window receives its first request. */
   readonly asked: Deferred.Deferred<EditorFlushRequest>;
+  /** Every request, as it arrives. */
+  readonly received: Queue.Queue<EditorFlushRequest>;
 }
 
 /**
@@ -64,10 +68,12 @@ const openWindow = Effect.fn("openWindow")(function* (
   const connected = yield* Deferred.make<string>();
   const asked = yield* Deferred.make<EditorFlushRequest>();
   const requests: Array<EditorFlushRequest> = [];
+  const received = yield* Queue.unbounded<EditorFlushRequest>();
   const events = yield* flush.connect(sessionId, { clientId });
   yield* Stream.runForEach(events, (event) => {
     if (event.type === "connected") return Deferred.succeed(connected, event.connectionId);
     requests.push(event.request);
+    Queue.offerUnsafe(received, event.request);
     const reply =
       answer === undefined
         ? Effect.void
@@ -80,7 +86,7 @@ const openWindow = Effect.fn("openWindow")(function* (
             .pipe(Effect.asVoid);
     return Deferred.succeed(asked, event.request).pipe(Effect.andThen(reply));
   }).pipe(Effect.forkScoped);
-  return { connectionId: yield* Deferred.await(connected), requests, asked };
+  return { connectionId: yield* Deferred.await(connected), requests, asked, received };
 });
 
 const savesEverything = (request: EditorFlushRequest): Answer => ({
@@ -93,7 +99,7 @@ it.effect("reports plainly that nothing is unsaved when no window is present", (
   Effect.gen(function* () {
     const flush = yield* EditorFlush;
     expect(yield* flush.flushFolder(folder())).toEqual({ _tag: "NoWindowOpen" });
-  }).pipe(Effect.provide(NoGrace)),
+  }).pipe(Effect.provide(NoStartupWait)),
 );
 
 it.effect("refuses a folder it cannot examine", () =>
@@ -102,7 +108,7 @@ it.effect("refuses a folder it cannot examine", () =>
     yield* openWindow("session", "window-a", savesEverything);
     const result = yield* flush.flushFolder({ ...folder(), folder: "missing" });
     expect(result._tag).toBe("FolderUnavailable");
-  }).pipe(Effect.scoped, Effect.provide(NoGrace)),
+  }).pipe(Effect.scoped, Effect.provide(NoStartupWait)),
 );
 
 it.effect("asks every window and succeeds when all saved", () =>
@@ -123,7 +129,7 @@ it.effect("asks every window and succeeds when all saved", () =>
     });
     for (const window of [first, second])
       expect(window.requests[0]).toMatchObject({ checkoutRoot, folder: "paper" });
-  }).pipe(Effect.scoped, Effect.provide(NoGrace)),
+  }).pipe(Effect.scoped, Effect.provide(NoStartupWait)),
 );
 
 it.effect("names the file and reason when one window cannot save", () =>
@@ -149,7 +155,7 @@ it.effect("names the file and reason when one window cannot save", () =>
         { path: "paper/chapter.tex", reason: "unconverted-input", message: "Not LaTeX yet." },
       ],
     });
-  }).pipe(Effect.scoped, Effect.provide(NoGrace)),
+  }).pipe(Effect.scoped, Effect.provide(NoStartupWait)),
 );
 
 it.effect("fails, naming the window, when a window does not answer in time", () =>
@@ -177,7 +183,7 @@ it.effect("fails, naming the window, when a window does not answer in time", () 
       ...savesNothing(),
     });
     expect(late.accepted).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(NoGrace)),
+  }).pipe(Effect.scoped, Effect.provide(NoStartupWait)),
 );
 
 it.effect("asks a window that connects while the request is open, and waits for it", () =>
@@ -212,7 +218,7 @@ it.effect("asks a window that connects while the request is open, and waits for 
         },
       ],
     });
-  }).pipe(Effect.scoped, Effect.provide(NoGrace)),
+  }).pipe(Effect.scoped, Effect.provide(NoStartupWait)),
 );
 
 it.effect("asks a reconnecting window once it is back, instead of treating it as absent", () =>
@@ -241,10 +247,93 @@ it.effect("asks a reconnecting window once it is back, instead of treating it as
   }).pipe(Effect.scoped, Effect.provide(flushLayer("10 seconds"))),
 );
 
-it.effect("fails a window that stays away, and forgets it after the grace", () =>
+it.effect("keeps failing on a window lost without a goodbye until it is retired", () =>
   Effect.gen(function* () {
     const flush = yield* EditorFlush;
-    // The service is older than its grace, so no wait for first windows.
+    // The service is past its startup wait.
+    yield* TestClock.adjust("10 seconds");
+    const helper = yield* openWindow("session", "window-helper", savesNothing);
+    const connection = yield* Scope.make();
+    yield* openWindow("session", "window-a", undefined).pipe(Scope.provide(connection));
+    yield* Scope.close(connection, Exit.void);
+    const lostWindow = {
+      _tag: "Unanswered",
+      window: { clientId: "window-a" },
+      reason: "disconnected",
+    } as const;
+    const helperSaved = { _tag: "Saved", window: { clientId: "window-helper" }, saved: [] };
+
+    // Well past any reconnect, the lost window still stops the flush.
+    for (const after of ["11 seconds", "4 minutes"] as const) {
+      yield* TestClock.adjust(after);
+      const running = yield* flush
+        .flushFolder({ ...folder(), overallTimeout: "2 seconds" })
+        .pipe(Effect.forkScoped);
+      yield* Queue.take(helper.received);
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* Fiber.join(running)).toEqual({
+        _tag: "Answered",
+        allSaved: false,
+        windows: [helperSaved, lostWindow],
+      });
+    }
+
+    // Retired five minutes after it was lost.
+    yield* TestClock.adjust("1 minute");
+    expect(yield* flush.flushFolder(folder())).toEqual({
+      _tag: "Answered",
+      allSaved: true,
+      windows: [helperSaved],
+    });
+    // The production retirement and startup wait.
+  }).pipe(Effect.scoped, Effect.provide(layer.pipe(Layer.provide(NodeServices.layer)))),
+);
+
+it.effect("forgets a window that says goodbye at once, even while a request awaits it", () =>
+  Effect.gen(function* () {
+    const flush = yield* EditorFlush;
+    const window = yield* openWindow("session", "window-a", undefined);
+    const running = yield* flush.flushFolder(folder()).pipe(Effect.forkScoped);
+    yield* Deferred.await(window.asked);
+
+    // Another session cannot say goodbye for it.
+    expect((yield* flush.leave("session-other", { clientId: "window-a" })).accepted).toBe(false);
+    expect((yield* flush.leave("session", { clientId: "window-a" })).accepted).toBe(true);
+
+    expect(yield* Fiber.join(running)).toEqual({ _tag: "NoWindowOpen" });
+    expect(yield* flush.flushFolder(folder())).toEqual({ _tag: "NoWindowOpen" });
+  }).pipe(Effect.scoped, Effect.provide(NoStartupWait)),
+);
+
+it.effect("starts a window's answer time when the request reaches it", () =>
+  Effect.gen(function* () {
+    const flush = yield* EditorFlush;
+    yield* TestClock.adjust("10 seconds");
+    const helper = yield* openWindow("session", "window-helper", savesNothing);
+    const connection = yield* Scope.make();
+    yield* openWindow("session", "window-a", undefined).pipe(Scope.provide(connection));
+    yield* Scope.close(connection, Exit.void);
+
+    const running = yield* flush.flushFolder(folder()).pipe(Effect.forkScoped);
+    yield* Deferred.await(helper.asked);
+    // Back after 4 s of a 5 s answer time: it still has 5 s from now.
+    yield* TestClock.adjust("4 seconds");
+    const back = yield* openWindow("session", "window-a", undefined);
+    const request = yield* Deferred.await(back.asked);
+    yield* TestClock.adjust("4 seconds");
+    yield* flush.respond("session", {
+      clientId: "window-a",
+      requestId: request.requestId,
+      ...savesNothing(),
+    });
+
+    expect(yield* Fiber.join(running)).toMatchObject({ _tag: "Answered", allSaved: true });
+  }).pipe(Effect.scoped, Effect.provide(flushLayer("10 seconds"))),
+);
+
+it.effect("ends the whole request at its overall deadline", () =>
+  Effect.gen(function* () {
+    const flush = yield* EditorFlush;
     yield* TestClock.adjust("10 seconds");
     const helper = yield* openWindow("session", "window-helper", savesNothing);
     const connection = yield* Scope.make();
@@ -252,24 +341,23 @@ it.effect("fails a window that stays away, and forgets it after the grace", () =
     yield* Scope.close(connection, Exit.void);
 
     const running = yield* flush
-      .flushFolder({ ...folder(), timeout: "2 seconds" })
+      .flushFolder({ ...folder(), overallTimeout: "6 seconds" })
       .pipe(Effect.forkScoped);
     yield* Deferred.await(helper.asked);
+    // A window that joins late is asked, but cannot extend the request.
+    yield* TestClock.adjust("4 seconds");
+    const late = yield* openWindow("session", "window-late", undefined);
+    yield* Deferred.await(late.asked);
     yield* TestClock.adjust("2 seconds");
+
     expect(yield* Fiber.join(running)).toEqual({
       _tag: "Answered",
       allSaved: false,
       windows: [
         { _tag: "Saved", window: { clientId: "window-helper" }, saved: [] },
         { _tag: "Unanswered", window: { clientId: "window-a" }, reason: "disconnected" },
+        { _tag: "Unanswered", window: { clientId: "window-late" }, reason: "timeout" },
       ],
-    });
-
-    yield* TestClock.adjust("10 seconds");
-    expect(yield* flush.flushFolder(folder())).toEqual({
-      _tag: "Answered",
-      allSaved: true,
-      windows: [{ _tag: "Saved", window: { clientId: "window-helper" }, saved: [] }],
     });
   }).pipe(Effect.scoped, Effect.provide(flushLayer("10 seconds"))),
 );
@@ -327,7 +415,7 @@ it.effect("keeps another session from replacing a window or answering for it", (
         { _tag: "Saved", window: { clientId: "window-a" }, saved: [] },
       ],
     });
-  }).pipe(Effect.scoped, Effect.provide(NoGrace)),
+  }).pipe(Effect.scoped, Effect.provide(NoStartupWait)),
 );
 
 it.effect("locates files by physical identity, whatever path spelling an editor uses", () =>
@@ -368,5 +456,5 @@ it.effect("locates files by physical identity, whatever path spelling an editor 
       ...savesNothing(),
     });
     yield* Fiber.join(running);
-  }).pipe(Effect.scoped, Effect.provide(NoGrace)),
+  }).pipe(Effect.scoped, Effect.provide(NoStartupWait)),
 );
