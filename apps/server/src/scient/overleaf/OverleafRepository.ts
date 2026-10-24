@@ -211,6 +211,11 @@ export class OverleafRepository extends Context.Service<
       readonly repo: string;
       readonly commit: string;
     }) => Effect.Effect<string, OverleafRepositoryError | OverleafGitError>;
+    /** The commit's tree, or null when the repository no longer holds the commit. */
+    readonly findTree: (input: {
+      readonly repo: string;
+      readonly commit: string;
+    }) => Effect.Effect<string | null, OverleafRepositoryError | OverleafGitError>;
     /** Three-way merge of two trees over an explicit base tree. Nothing is checked out. */
     readonly merge: (input: {
       readonly repo: string;
@@ -273,6 +278,15 @@ export class OverleafRepository extends Context.Service<
       readonly repo: string;
       readonly name: string;
     }) => Effect.Effect<void, OverleafRepositoryError | OverleafGitError>;
+    /** Whether the repository holds the object; false only when Git says it is absent. */
+    readonly hasObject: (input: {
+      readonly repo: string;
+      readonly oid: string;
+    }) => Effect.Effect<boolean, OverleafRepositoryError | OverleafGitError>;
+    /** Every one of Scient's own references, by name (without `refs/scient/`). */
+    readonly listRefs: (input: {
+      readonly repo: string;
+    }) => Effect.Effect<ReadonlyMap<string, string>, OverleafRepositoryError | OverleafGitError>;
   }
 >()("t3/scient/overleaf/OverleafRepository") {}
 
@@ -448,6 +462,16 @@ export const make = Effect.gen(function* () {
       Effect.map((result) => result.stdout),
     );
 
+  const findTree: OverleafRepository["Service"]["findTree"] = (input) =>
+    run(input.repo, ["rev-parse", "--verify", "-q", "--end-of-options", `${input.commit}^{tree}`], {
+      acceptExitCodes: [1],
+    }).pipe(
+      Effect.map((result) => {
+        const tree = text(result.stdout).trim();
+        return result.exitCode === 0 && OID.test(tree) ? tree : null;
+      }),
+    );
+
   const commit: OverleafRepository["Service"]["commit"] = (input) =>
     oidLine(
       input.repo,
@@ -599,6 +623,29 @@ export const make = Effect.gen(function* () {
   const deleteRef: OverleafRepository["Service"]["deleteRef"] = (input) =>
     run(input.repo, ["update-ref", "-d", refName(input.name)]).pipe(Effect.asVoid);
 
+  const hasObject: OverleafRepository["Service"]["hasObject"] = (input) =>
+    run(input.repo, ["cat-file", "-e", input.oid], { acceptExitCodes: [1] }).pipe(
+      Effect.map((result) => result.exitCode === 0),
+    );
+  const listRefs: OverleafRepository["Service"]["listRefs"] = Effect.fn(
+    "OverleafRepository.listRefs",
+  )(function* (input) {
+    const result = yield* run(input.repo, [
+      "for-each-ref",
+      "--format=%(refname) %(objectname)",
+      "refs/scient/",
+    ]);
+    const refs = new Map<string, string>();
+    for (const line of text(result.stdout).split("\n")) {
+      if (line === "") continue;
+      const match = /^refs\/scient\/(\S+) ([0-9a-f]+)$/u.exec(line);
+      if (!match || !OID.test(match[2]!))
+        return yield* unreadable("git for-each-ref returned an unreadable reference");
+      refs.set(match[1]!, match[2]!);
+    }
+    return refs;
+  });
+
   return OverleafRepository.of({
     initialize,
     writeBlob,
@@ -609,6 +656,7 @@ export const make = Effect.gen(function* () {
     readBlob,
     commit,
     treeOf,
+    findTree,
     merge,
     diff,
     discoverBranch,
@@ -619,6 +667,8 @@ export const make = Effect.gen(function* () {
     setRef,
     readRef,
     deleteRef,
+    hasObject,
+    listRefs,
   });
 });
 
