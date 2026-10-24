@@ -125,6 +125,8 @@ export type OverleafActivity = ReadonlyArray<OverleafOtherAgent> | null;
 export interface OverleafReviewView {
   readonly reviewId: string;
   readonly digest: string;
+  /** Overleaf's tree this review was built against; conflict choices answer it. */
+  readonly remoteTree: string;
   readonly upToDate: boolean;
   /** True only when a conflict has no choice yet: the one thing that stops a sync. */
   readonly needsDecision: boolean;
@@ -145,6 +147,7 @@ export interface OverleafReviewView {
 const viewOverleafReview = (review: OverleafReview): OverleafReviewView => ({
   reviewId: review.id,
   digest: review.digest,
+  remoteTree: review.binding.remoteTree,
   upToDate: review.upToDate,
   needsDecision: review.conflicts.some((conflict) => conflict.chosen === null),
   incoming: review.incoming,
@@ -495,20 +498,19 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
 
   const list = Effect.fn("OverleafSync.list")(function* (caller: OverleafCaller) {
     const resolved = yield* resolveCaller(caller);
-    const all = yield* connections.list();
+    const owns = ownedBy(resolved);
     const result: Array<OverleafConnectionSummary & { readonly linkedHere: boolean }> = [];
-    for (const connection of all) {
-      if (connection.state !== "active") continue;
-      const linked = yield* resolver
-        .resolveWorkspaceRoot(connection.checkoutRoot)
-        .pipe(Effect.option);
-      if (
-        Option.isSome(linked) &&
-        linked.value.binding.hostProjectId === resolved.binding.hostProjectId
-      )
+    for (const document of yield* connections.documents) {
+      if (document.state !== "active") continue;
+      // Ownership is the recorded binding's project, whatever the folder's path resolves to now.
+      if (!(yield* owns(document.binding.bindingId))) continue;
+      const summary = (yield* connections.list({
+        checkoutRoot: document.checkout.canonicalRoot,
+      })).find((entry) => entry.connectionId === document.connectionId);
+      if (summary !== undefined)
         result.push({
-          ...connection,
-          linkedHere: linked.value.binding.bindingId === resolved.binding.bindingId,
+          ...summary,
+          linkedHere: document.binding.bindingId === resolved.binding.bindingId,
         });
     }
     return result;
@@ -521,9 +523,8 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     readonly project: string;
     readonly requestId: string;
   }) {
-    const projectId = parseOverleafProject(input.project);
-    if (projectId === null)
-      return yield* new OverleafSyncRefusedError({ reason: "project-invalid" });
+    // An invalid project is refused inside connect, so the refusal has its receipt.
+    const projectId = parseOverleafProject(input.project) ?? input.project.slice(0, 2_048);
     const resolved = yield* resolveCaller(input.caller);
     // The token is read and used under one credential permit: renewal waits for it.
     return yield* credentialLock.withPermits(1)(
@@ -585,12 +586,56 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     readonly requestId: string;
     /** Conflict choices by conflict key: how a person or agent settles a conflict. */
     readonly choices?: ReadonlyMap<string, ConflictChoice>;
+    /**
+     * Overleaf's tree of the review whose conflicts the choices answer (its
+     * `remoteTree`). If Overleaf has moved since, the choices are not applied to its
+     * new content: the sync asks again.
+     */
+    readonly reviewedRemote?: string;
   }) {
     const { document, guard, linkedElsewhere } = yield* authorize(input.caller, input.connectionId);
     yield* requireToken;
+    // One sync per connection here: claimed before anything else, and never replaced
+    // by a competitor, so cancel always reaches the running one.
+    if (syncs.has(input.connectionId))
+      return yield* new OverleafCoordinator.OverleafOperationActiveError({
+        connectionId: input.connectionId,
+      });
+    const running = { operationId: newOverleafId(), cancelled: false };
+    syncs.set(input.connectionId, running);
+    // The connection is held for the whole sync, gaps included: a disconnect or relink
+    // can't slip in between its steps. Its own coordinator calls run under this hold.
+    return yield* OverleafCoordinator.reserveOverleafConnection(
+      reservations,
+      input.connectionId,
+      (owner) =>
+        syncClaimed(input, document, guard, linkedElsewhere, running).pipe(
+          Effect.provideService(OverleafCoordinator.OverleafReservationOwner, owner),
+        ),
+    ).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (syncs.get(input.connectionId) === running) syncs.delete(input.connectionId);
+        }),
+      ),
+    );
+  });
+
+  const syncClaimed = Effect.fn("OverleafSync.syncClaimed")(function* (
+    input: {
+      readonly caller: OverleafCaller;
+      readonly connectionId: string;
+      readonly requestId: string;
+      readonly choices?: ReadonlyMap<string, ConflictChoice>;
+      readonly reviewedRemote?: string;
+    },
+    document: OverleafConnectionDocument,
+    guard: (connection: OverleafConnectionDocument) => Effect.Effect<boolean>,
+    linkedElsewhere: boolean,
+    running: { readonly operationId: string; cancelled: boolean },
+  ) {
     // The sync's own receipt: a repeated request returns it instead of syncing again.
     yield* store.admitWritable;
-    const operationId = newOverleafId();
     const started = DateTime.formatIso(yield* DateTime.now);
     const begun = yield* store.beginReceipt({
       schemaVersion: 1,
@@ -600,10 +645,11 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       payloadDigest: sha256(
         [
           "sync",
+          input.reviewedRemote ?? "",
           ...[...(input.choices ?? new Map())].map(([key, choice]) => `${key}=${choice}`).sort(),
         ].join("\0"),
       ),
-      operationId,
+      operationId: running.operationId,
       status: "running",
       resultCategory: null,
       createdAt: started,
@@ -611,14 +657,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     });
     if (begun._tag === "existing")
       return { _tag: "duplicate", receipt: begun.receipt } satisfies OverleafSyncOutcome;
-    const running = { operationId, cancelled: false };
-    syncs.set(input.connectionId, running);
     const outcome = yield* engine(guard, syncOnce(input, document, linkedElsewhere, running)).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (syncs.get(input.connectionId) === running) syncs.delete(input.connectionId);
-        }),
-      ),
       Effect.tapError(() =>
         store
           .finishReceipt({
@@ -648,6 +687,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       readonly connectionId: string;
       readonly requestId: string;
       readonly choices?: ReadonlyMap<string, ConflictChoice>;
+      readonly reviewedRemote?: string;
     },
     document: OverleafConnectionDocument,
     linkedElsewhere: boolean,
@@ -659,6 +699,16 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       mergeActivity(before, after),
     );
     let retried = false;
+    // Choices answer conflicts as they stood against one Overleaf tree. When Overleaf
+    // has moved since (a new sync after out-of-date, a rebuilt review), the conflicts
+    // are shown again without them rather than settled on content nobody saw.
+    let decidedAgainst = input.reviewedRemote ?? null;
+    const askAgain = (review: OverleafReview) =>
+      input.choices !== undefined &&
+      input.choices.size > 0 &&
+      review.conflicts.length > 0 &&
+      decidedAgainst !== null &&
+      review.binding.remoteTree !== decidedAgainst;
     const prepareInput = {
       connectionId: input.connectionId,
       ...(input.choices ? { selections: selectionsWith(input.choices) } : {}),
@@ -676,6 +726,19 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
         return { _tag: "unsettled", reason: "recovery-repeated" } satisfies OverleafSyncOutcome;
       let review = prepared.review;
       for (let round = 0; ; round++) {
+        if (decidedAgainst === null && input.choices !== undefined && review.conflicts.length > 0)
+          decidedAgainst = review.binding.remoteTree;
+        if (askAgain(review)) {
+          const fresh = yield* coordinator.prepare({ connectionId: input.connectionId });
+          if (fresh._tag !== "review")
+            return { _tag: "unsettled", reason: "overleaf-moved" } satisfies OverleafSyncOutcome;
+          return {
+            _tag: "needs-decision",
+            review: viewOverleafReview(fresh.review),
+            activity: yield* activityNow,
+            linkedElsewhere,
+          } satisfies OverleafSyncOutcome;
+        }
         const view = viewOverleafReview(review);
         if (view.needsDecision)
           return {

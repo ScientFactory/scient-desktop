@@ -44,6 +44,7 @@ const withScenario = <A, E>(
     readonly review: (
       options?: Partial<OverleafReviewInput> & {
         readonly select?: ReadonlyArray<string>;
+        readonly send?: ReadonlyArray<string>;
         readonly request?: ReadonlyArray<string>;
         readonly choices?: ReadonlyMap<string, ConflictChoice>;
       },
@@ -103,6 +104,7 @@ const withScenario = <A, E>(
       const review = (
         options: Partial<OverleafReviewInput> & {
           readonly select?: ReadonlyArray<string>;
+          readonly send?: ReadonlyArray<string>;
           readonly request?: ReadonlyArray<string>;
           readonly choices?: ReadonlyMap<string, ConflictChoice>;
         } = {},
@@ -113,8 +115,10 @@ const withScenario = <A, E>(
             managedPaths: connection.managedPaths,
             localOnlyPaths: connection.localOnlyPaths,
             selectedAdditions: options.select ?? [],
+            sendLocalOnly: options.send ?? [],
             requestedPaths: options.request ?? [],
             stagingPaths: [],
+            atCheckoutTop: false,
           };
           const captured = yield* Effect.promise(() => captureOverleafInventory(inventoryInput));
           if (captured._tag !== "captured") return yield* Effect.die(captured.refusal.reason);
@@ -123,7 +127,6 @@ const withScenario = <A, E>(
             connection,
             inventory: captured.inventory,
             remote: { commit: remoteCommit, tree: remoteTree },
-            selectedAdditions: options.select ?? [],
             collisionPaths: options.request ?? [],
             choices: options.choices ?? new Map(),
             interrupted: [],
@@ -165,7 +168,7 @@ describe("buildOverleafReview", () => {
     ),
   );
 
-  it.live("first sync: sends only checked additions and remembers the rest as local-only", () =>
+  it.live("first sync: sends only checked additions and remembers deselected default ones", () =>
     withScenario(
       {
         base: null,
@@ -177,12 +180,31 @@ describe("buildOverleafReview", () => {
           const unselected = reviewOf(yield* review());
           expect(unselected.outgoing).toEqual([]);
           expect(unselected.incoming).toEqual([{ kind: "added", path: "refs.bib" }]);
-          expect(unselected.binding.newLocalOnly).toEqual(["main.aux", "main.tex"]);
+          // Build output is skipped by a rule, not remembered.
+          expect(unselected.binding.newLocalOnly).toEqual(["main.tex"]);
+          expect(unselected.additions).toEqual([
+            {
+              path: "main.aux",
+              size: 3,
+              checkedByDefault: false,
+              uncheckedReason: "build-output",
+              selected: false,
+            },
+            {
+              path: "main.tex",
+              size: 4,
+              checkedByDefault: true,
+              uncheckedReason: null,
+              selected: false,
+            },
+          ]);
           expect(unselected.warnings).toEqual([{ kind: "first-sync" }]);
 
           const selected = reviewOf(yield* review({ select: ["main.tex"] }));
           expect(selected.outgoing).toEqual([{ kind: "added", path: "main.tex" }]);
-          expect(selected.binding.newLocalOnly).toEqual(["main.aux"]);
+          expect(selected.binding.newLocalOnly).toEqual([]);
+          expect(selected.binding.selectedAdditions).toEqual(["main.tex"]);
+          expect(selected.additions.map((addition) => addition.selected)).toEqual([false, true]);
           expect(selected.warnings).toEqual([{ kind: "first-sync" }, { kind: "no-sync-history" }]);
           expect(selected.binding.acknowledgements).toEqual(["first-sync", "no-sync-history"]);
           expect(targetText(selected, "refs.bib")).toBe("@book{}");
@@ -749,7 +771,14 @@ describe("buildOverleafReview", () => {
     withScenario(
       {
         base: { "main.tex": "m" },
-        local: { "main.tex": "m", "a.aux": "a", "b.aux": "b" },
+        local: {
+          "main.tex": "m",
+          "a.tex": "a",
+          "b.tex": "b",
+          "c.aux": "c",
+          ".env": "e",
+          "old.log": "o",
+        },
         remote: { "main.tex": "m" },
         localOnly: ["old.log"],
       },
@@ -759,7 +788,35 @@ describe("buildOverleafReview", () => {
             _tag: "refused",
             refusal: { reason: "local-only-limit" },
           });
-          expect((yield* review({ limits: { localOnlyPaths: 3 } }))._tag).toBe("review");
+          // Files a rule skips are not remembered, so they never count.
+          const built = reviewOf(yield* review({ limits: { localOnlyPaths: 3 } }));
+          expect(built.binding.newLocalOnly).toEqual(["a.tex", "b.tex"]);
+          // A local-only file being sent leaves the list.
+          expect(
+            (yield* review({ send: ["old.log"], select: ["a.tex"], limits: { localOnlyPaths: 1 } }))
+              ._tag,
+          ).toBe("review");
+        }),
+    ),
+  );
+
+  it.live("sends a local-only file like a selected addition", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "m", "notes.tex": "mine", "kept.tex": "k" },
+        remote: { "main.tex": "m" },
+        localOnly: ["notes.tex", "kept.tex"],
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          const built = reviewOf(yield* review({ send: ["notes.tex"] }));
+          expect(built.outgoing).toEqual([{ kind: "added", path: "notes.tex" }]);
+          expect(built.binding.sentLocalOnly).toEqual(["notes.tex"]);
+          expect(built.binding.newLocalOnly).toEqual([]);
+          expect(built.localOnly).toEqual(["kept.tex"]);
+          expect(built.additions).toEqual([]);
+          expect(targetText(built, "notes.tex")).toBe("mine");
         }),
     ),
   );

@@ -64,6 +64,8 @@ export const ScientOverleafSyncRequest = Schema.Struct({
   connectionId: ConnectionId,
   requestId: RequestId,
   choices: Schema.optional(Schema.Array(Choice).check(Schema.isMaxLength(4_000))),
+  /** The `remoteTree` of the review whose conflicts `choices` answer. */
+  reviewedRemote: Schema.optional(Schema.String.check(Schema.isPattern(/^[0-9a-f]{40,64}$/u))),
 });
 export type ScientOverleafSyncRequest = typeof ScientOverleafSyncRequest.Type;
 
@@ -179,6 +181,7 @@ export type ScientOverleafWarning = typeof ScientOverleafWarning.Type;
 export const ScientOverleafReview = Schema.Struct({
   reviewId: Schema.String,
   digest: Schema.String,
+  remoteTree: Schema.String,
   upToDate: Schema.Boolean,
   needsDecision: Schema.Boolean,
   incoming: Schema.Array(ScientOverleafChange),

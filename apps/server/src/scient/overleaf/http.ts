@@ -220,6 +220,7 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
               connectionId: payload.connectionId,
               requestId: payload.requestId,
               ...(choices ? { choices } : {}),
+              ...(payload.reviewedRemote ? { reviewedRemote: payload.reviewedRemote } : {}),
             }),
           );
           return syncView(outcome);

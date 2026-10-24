@@ -35,8 +35,10 @@ const capture = (root: string, input: Partial<OverleafInventoryInput> = {}) =>
     managedPaths: [],
     localOnlyPaths: [],
     selectedAdditions: [],
+    sendLocalOnly: [],
     requestedPaths: [],
     stagingPaths: [],
+    atCheckoutTop: false,
     ...input,
   });
 
@@ -72,7 +74,7 @@ describe("captureOverleafInventory", () => {
     expect(inventory.localOnly).toEqual(["private.txt"]);
     expect(inventory.additions).toEqual([
       { path: ".hidden/cache.txt", size: 6, checkedByDefault: false, uncheckedReason: "hidden" },
-      { path: ".latexmkrc", size: 2, checkedByDefault: true, uncheckedReason: null },
+      { path: ".latexmkrc", size: 2, checkedByDefault: false, uncheckedReason: "hidden" },
       { path: "figures/plot.pdf", size: 3, checkedByDefault: true, uncheckedReason: null },
       { path: "main.aux", size: 3, checkedByDefault: false, uncheckedReason: "build-output" },
     ]);
@@ -209,6 +211,151 @@ describe("captureOverleafInventory", () => {
     expect([...inventory.captured.keys()].sort()).toEqual(["main.aux", "private.txt"]);
     expect(inventory.localOnly).toEqual([]);
     expect(inventory.additions).toEqual([]);
+  });
+
+  it("selects new files by default, skipping build output, hidden and Scient's own files", async () => {
+    const files = {
+      "main.tex": "main",
+      "figures/plot.pdf": "pdf",
+      "main.aux": "aux",
+      ".env": "SECRET=1",
+      ".latexmkrc": "rc",
+      ".cache/notes.txt": "hidden folder",
+      "drafts/.notes.md": "hidden name",
+      "AGENTS.md": "agents",
+      "PROJECT.md": "project",
+      "chapters/AGENTS.md": "not at the top",
+    };
+    const root = await folder(files);
+    const top = await captured(root, {
+      atCheckoutTop: true,
+      defaultSelection: { except: [], lenient: false },
+    });
+    expect(top.selectedAdditions.map((addition) => addition.path)).toEqual([
+      "chapters/AGENTS.md",
+      "figures/plot.pdf",
+      "main.tex",
+    ]);
+    expect([...top.captured.keys()].sort()).toEqual([
+      "chapters/AGENTS.md",
+      "figures/plot.pdf",
+      "main.tex",
+    ]);
+    expect(top.additions.map((addition) => [addition.path, addition.uncheckedReason])).toEqual([
+      [".cache/notes.txt", "hidden"],
+      [".env", "hidden"],
+      [".latexmkrc", "hidden"],
+      ["AGENTS.md", "scient-project-file"],
+      ["PROJECT.md", "scient-project-file"],
+      ["drafts/.notes.md", "hidden"],
+      ["main.aux", "build-output"],
+    ]);
+    // Below the checkout's top, Scient's own file names are ordinary files.
+    const below = await captured(root, { defaultSelection: { except: [], lenient: false } });
+    expect(below.selectedAdditions.map((addition) => addition.path)).toContain("AGENTS.md");
+    expect(below.selectedAdditions.map((addition) => addition.path)).toContain("PROJECT.md");
+    // A default file named in `except` is left out, as an addition still checked by default.
+    const kept = await captured(root, {
+      defaultSelection: { except: ["main.tex"], lenient: false },
+    });
+    expect(kept.captured.has("main.tex")).toBe(false);
+    expect(kept.additions).toContainEqual({
+      path: "main.tex",
+      size: 4,
+      checkedByDefault: true,
+      uncheckedReason: null,
+    });
+    // Without the default selection nothing is selected that was not named.
+    expect((await captured(root)).selectedAdditions).toEqual([]);
+    // A file a rule skips can still be selected explicitly.
+    const env = await captured(root, { selectedAdditions: [".env"] });
+    expect(env.captured.has(".env")).toBe(true);
+    expect(env.selectedAdditions).toEqual([
+      { path: ".env", size: 8, checkedByDefault: false, uncheckedReason: "hidden" },
+    ]);
+  });
+
+  it("never reads a new file too large for Overleaf, and refuses selecting it", async () => {
+    // Read even by prefix, this file would be recognized as an LFS pointer and excluded.
+    const pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 1\n";
+    const root = await folder({ "huge.bin": pointer, "kept.bin": "small" });
+    const limits = { fileBytes: pointer.length - 1 };
+    const inventory = await captured(root, {
+      limits,
+      localOnlyPaths: ["kept.bin"],
+      defaultSelection: { except: [], lenient: false },
+    });
+    expect(inventory.excluded).toEqual([]);
+    expect(inventory.captured.size).toBe(0);
+    expect(inventory.additions).toEqual([
+      {
+        path: "huge.bin",
+        size: pointer.length,
+        checkedByDefault: false,
+        uncheckedReason: "too-large",
+      },
+    ]);
+    expect(await refusal(root, { limits, selectedAdditions: ["huge.bin"] })).toEqual({
+      reason: "file-too-large",
+      path: "huge.bin",
+    });
+    expect(
+      await refusal(root, {
+        limits: { fileBytes: 4 },
+        localOnlyPaths: ["kept.bin"],
+        sendLocalOnly: ["kept.bin"],
+      }),
+    ).toEqual({ reason: "file-too-large", path: "kept.bin" });
+    // Rebuilt from an earlier review, a selected file that has grown too large is left out.
+    const rebuilt = await captured(root, {
+      limits,
+      selectedAdditions: ["huge.bin"],
+      defaultSelection: { except: [], lenient: true },
+    });
+    expect([...rebuilt.captured.keys()]).toEqual(["kept.bin"]);
+    expect(rebuilt.additions.map((addition) => addition.path)).toEqual(["huge.bin"]);
+  });
+
+  it("leaves an LFS pointer out of the default selection instead of refusing", async () => {
+    const pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 1\n";
+    const root = await folder({ "data.bin": pointer, "main.tex": "m" });
+    const inventory = await captured(root, { defaultSelection: { except: [], lenient: false } });
+    expect([...inventory.captured.keys()]).toEqual(["main.tex"]);
+    expect(inventory.excluded).toEqual([{ path: "data.bin", reason: "lfs-pointer" }]);
+  });
+
+  it("reads a local-only file being sent, and refuses one that is not local-only", async () => {
+    const root = await folder({ "private.txt": "mine", "other.txt": "o", "new.tex": "n" });
+    const inventory = await captured(root, {
+      localOnlyPaths: ["private.txt", "other.txt", "gone.txt"],
+      sendLocalOnly: ["private.txt"],
+    });
+    expect([...inventory.captured.keys()]).toEqual(["private.txt"]);
+    expect(inventory.sentLocalOnly).toEqual(["private.txt"]);
+    expect(inventory.localOnly).toEqual(["other.txt"]);
+    const input = { localOnlyPaths: ["private.txt", "gone.txt"] };
+    expect(await refusal(root, { ...input, sendLocalOnly: ["new.tex"] })).toEqual({
+      reason: "not-local-only",
+      path: "new.tex",
+    });
+    expect(await refusal(root, { ...input, sendLocalOnly: ["gone.txt"] })).toEqual({
+      reason: "not-selectable",
+      path: "gone.txt",
+    });
+    // A local-only file is not an addition: it is sent through its own list.
+    expect(await refusal(root, { ...input, selectedAdditions: ["private.txt"] })).toEqual({
+      reason: "not-selectable",
+      path: "private.txt",
+    });
+    // Rebuilt from an earlier review, what is no longer selectable is left out.
+    const lenient = await captured(root, {
+      ...input,
+      selectedAdditions: ["absent.tex"],
+      sendLocalOnly: ["gone.txt", "new.tex"],
+      defaultSelection: { except: [], lenient: true },
+    });
+    expect([...lenient.captured.keys()].sort()).toEqual(["new.tex", "other.txt"]);
+    expect(lenient.sentLocalOnly).toEqual([]);
   });
 
   it("enforces Overleaf's file size exactly, in decimal bytes", async () => {

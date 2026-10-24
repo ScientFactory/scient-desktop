@@ -82,7 +82,19 @@ export type OverleafConnectionRefusal =
   /** Disconnect or relink while an apply or its staged files are unsettled. */
   | "local-work-pending"
   /** The caller's workspace authority changed while the request ran. */
-  | "authority-changed";
+  | "authority-changed"
+  /**
+   * An earlier request with this ID started and never recorded its result (the
+   * process stopped). It is not run again; send a new request.
+   */
+  | "request-incomplete"
+  /**
+   * A connection record cannot be read, so which folders are linked is unknown.
+   * Nothing is linked or moved until it is repaired.
+   */
+  | "records-unreadable"
+  /** Not an Overleaf project link or ID. */
+  | "project-invalid";
 
 export type OverleafConnectResult =
   | {
@@ -263,16 +275,20 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
       return volume === null ? null : { volume, fileId: String(stat.ino) };
     });
 
-  const connections = Effect.gen(function* () {
+  /** Every readable connection of this environment, and whether any record could not be read. */
+  const readAll = Effect.gen(function* () {
     const ids = yield* store.listConnections;
     const found: OverleafConnectionDocument[] = [];
+    let unreadable = false;
     for (const id of ids) {
       const read = yield* store.readConnection(id);
-      if (read._tag === "ready" && read.document.environmentId === options.environmentId)
-        found.push(read.document);
+      if (read._tag === "ready") {
+        if (read.document.environmentId === options.environmentId) found.push(read.document);
+      } else if (read._tag !== "missing") unreadable = true;
     }
-    return found;
+    return { found, unreadable };
   });
+  const connections = Effect.map(readAll, (all) => all.found);
 
   /** Every component from the checkout down to `relative` is a real folder, not a link. */
   const containedFolder = (checkoutRoot: string, relative: string) =>
@@ -322,12 +338,6 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     readonly owns: (bindingId: string) => Effect.Effect<boolean>;
   }) {
     const folderPath = input.folder.replace(/\/+$/u, "");
-    if (folderPath !== "" && manuscriptPathProblem(folderPath) !== null)
-      return { _tag: "refused", reason: "folder-invalid" } satisfies OverleafConnectResult;
-    if (input.create && folderPath === "")
-      return { _tag: "refused", reason: "folder-invalid" } satisfies OverleafConnectResult;
-    if (!PROJECT_ID.test(input.projectId))
-      return { _tag: "refused", reason: "project-not-found" } satisfies OverleafConnectResult;
     yield* store.admitWritable;
     return yield* registration.withPermits(1)(
       Effect.gen(function* () {
@@ -357,6 +367,8 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
           createdAt: started,
           updatedAt: started,
         });
+        if (begun._tag === "existing" && begun.receipt.status === "running")
+          return { _tag: "refused", reason: "request-incomplete" } satisfies OverleafConnectResult;
         if (begun._tag === "existing" && begun.receipt.status === "failed")
           return {
             _tag: "refused",
@@ -391,6 +403,12 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
               Effect.andThen(finish("failed", reason)),
               Effect.as({ _tag: "refused", reason } satisfies OverleafConnectResult),
             );
+          if (
+            (folderPath !== "" && manuscriptPathProblem(folderPath) !== null) ||
+            (input.create && folderPath === "")
+          )
+            return yield* refuse("folder-invalid");
+          if (!PROJECT_ID.test(input.projectId)) return yield* refuse("project-invalid");
           // Contract rule 2: the authority resolved for this request still holds, here
           // inside registration, before anything is created or recorded.
           if (!(yield* input.stillAuthorized)) return yield* refuse("authority-changed");
@@ -428,7 +446,10 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
           // Contract rule 1: one connection owns a folder; none is inside another.
           const chain = yield* Effect.promise(() => identityChain(absolute));
           if (chain === null) return yield* refuse("folder-missing");
-          const others = yield* connections;
+          // Contract rule 1 needs every record: one that cannot be read may own this folder.
+          const all = yield* readAll;
+          if (all.unreadable) return yield* refuse("records-unreadable");
+          const others = all.found;
           let archive: OverleafConnectionDocument | null = null;
           for (const other of others) {
             const otherChain = yield* Effect.promise(() => identityChain(folderOf(other)));
@@ -616,7 +637,9 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
       createdAt: started,
       updatedAt: started,
     });
-    if (begun._tag === "existing" && begun.receipt.status !== "running") {
+    if (begun._tag === "existing" && begun.receipt.status === "running")
+      return { _tag: "refused", reason: "request-incomplete" } satisfies OverleafManageResult;
+    if (begun._tag === "existing") {
       if (begun.receipt.status === "failed")
         return {
           _tag: "refused",
@@ -687,8 +710,6 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     readonly stillAuthorized: Effect.Effect<boolean>;
   }) {
     const folderPath = input.folder.replace(/\/+$/u, "");
-    if (folderPath !== "" && manuscriptPathProblem(folderPath) !== null)
-      return { _tag: "refused", reason: "folder-invalid" } satisfies OverleafManageResult;
     yield* store.admitWritable;
     return yield* registration.withPermits(1)(
       reserveOverleafConnection(options.reservations, input.connectionId, () =>
@@ -700,6 +721,8 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
             payload: [input.authority.bindingId, input.checkoutRoot, folderPath],
           },
           Effect.gen(function* () {
+            if (folderPath !== "" && manuscriptPathProblem(folderPath) !== null)
+              return { _tag: "refused", reason: "folder-invalid" } satisfies OverleafManageResult;
             const document = yield* readActive(input.connectionId);
             if (document.activeApply !== null || document.stagingPaths.length > 0)
               return {
@@ -723,7 +746,13 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
             const chain = yield* Effect.promise(() => identityChain(absolute));
             if (chain === null)
               return { _tag: "refused", reason: "folder-missing" } satisfies OverleafManageResult;
-            for (const other of yield* connections) {
+            const all = yield* readAll;
+            if (all.unreadable)
+              return {
+                _tag: "refused",
+                reason: "records-unreadable",
+              } satisfies OverleafManageResult;
+            for (const other of all.found) {
               if (other.connectionId === document.connectionId || other.state !== "active")
                 continue;
               const otherChain = yield* Effect.promise(() => identityChain(folderOf(other)));
@@ -889,8 +918,10 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
         ],
         localOnlyPaths: document.localOnlyPaths,
         selectedAdditions: [],
+        sendLocalOnly: [],
         requestedPaths: [],
         stagingPaths: document.stagingPaths,
+        atCheckoutTop: document.folder.relativePath === "",
       }),
     );
     if (captured._tag === "refused")
@@ -911,7 +942,10 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     } satisfies OverleafLocalChanges;
   });
 
-  return { connect, disconnect, relink, status, list };
+  /** Readable connection records with their recorded bindings, for ownership checks. */
+  const documents = connections;
+
+  return { connect, disconnect, relink, status, list, documents };
 });
 
 export type OverleafConnections = Effect.Success<ReturnType<typeof makeOverleafConnections>>;

@@ -21,6 +21,7 @@ const binding: OverleafReviewBinding = {
   remoteTree: "d".repeat(40),
   selectedAdditions: [],
   newLocalOnly: [],
+  sentLocalOnly: [],
   collisionPaths: [],
   choices: [],
   interrupted: [],
@@ -156,6 +157,7 @@ describe("overleafReviewStaleness", () => {
     ["remote", { remoteCommit: "f".repeat(40) }],
     // A new unchecked file leaves the captured tree alone but changes what is remembered.
     ["inventory", { newLocalOnly: ["new.txt"] }],
+    ["inventory", { sentLocalOnly: ["notes.txt"] }],
     ["inventory", { collisionPaths: ["notes.txt"] }],
     ["inventory", { unresolvedMarkers: ["main.tex"] }],
     ["review", { warnings: [] }],

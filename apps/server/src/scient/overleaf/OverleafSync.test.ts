@@ -4,6 +4,7 @@
  * Overleaf: connecting, the "only a conflict stops" sync, authority across
  * worktrees, the other-agents line, offline status, disconnect and relink.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -11,7 +12,9 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
@@ -22,6 +25,7 @@ import {
   fileExchangeTestHelper,
   filePublicationTestHelper,
 } from "../workspace/fileExchange.testkit.ts";
+import { OverleafReservationOwner } from "./OverleafCoordinator.ts";
 import { canApply } from "./OverleafCoordinator.testkit.ts";
 import * as OverleafGitExecutor from "./OverleafGitExecutor.ts";
 import * as OverleafRepository from "./OverleafRepository.ts";
@@ -247,6 +251,7 @@ const world = (input?: {
     return {
       service,
       store,
+      stateRoot,
       main,
       worktree,
       elsewhere,
@@ -505,27 +510,16 @@ describe.skipIf(!canApply)("OverleafSync", () => {
           requestId: "c8",
         });
         expect(elsewhere).toMatchObject({ _tag: "connected" });
-        const bad = yield* Effect.exit(
-          w.service.connect({
+        // Not an Overleaf project: a recorded refusal, never a connection.
+        expect(
+          yield* w.service.connect({
             caller: w.at(w.main),
             folder: "x",
             create: true,
             project: "https://evil.example/project/1",
             requestId: "c9",
           }),
-        );
-        expect(Exit.isFailure(bad)).toBe(true);
-        expect(
-          yield* Effect.flip(
-            w.service.connect({
-              caller: w.at(w.main),
-              folder: "x",
-              create: true,
-              project: "https://evil.example/project/1",
-              requestId: "c10",
-            }),
-          ),
-        ).toMatchObject({ reason: "project-invalid" });
+        ).toMatchObject({ _tag: "refused", reason: "project-invalid" });
       }),
     ),
   );
@@ -1114,6 +1108,277 @@ describe.skipIf(!canApply)("OverleafSync", () => {
           stage: "before-prepare",
         });
         expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe(null);
+      }),
+    ),
+  );
+  it.live("never runs a management request again whose result was not recorded", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        // A disconnect that began and stopped before recording its result.
+        yield* w.store.admitWritable;
+        yield* w.store.beginReceipt({
+          schemaVersion: 1,
+          connectionId: id,
+          requestId: "d1",
+          kind: "disconnect",
+          payloadDigest: NodeCrypto.createHash("sha256")
+            .update(["disconnect", "binding-main"].join("\0"))
+            .digest("hex"),
+          operationId: "op-1",
+          status: "running",
+          resultCategory: null,
+          createdAt: "2026-10-24T00:00:00.000Z",
+          updatedAt: "2026-10-24T00:00:00.000Z",
+        });
+        expect(
+          yield* w.service.disconnect({ caller: w.at(w.main), connectionId: id, requestId: "d1" }),
+        ).toMatchObject({
+          _tag: "refused",
+          reason: "request-incomplete",
+        });
+        expect(yield* w.store.readConnection(id)).toMatchObject({ document: { state: "active" } });
+        // Refused input is recorded too: the same request ID cannot be reused for other input.
+        expect(
+          yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "../bad",
+            create: true,
+            project: PROJECT,
+            requestId: "c9",
+          }),
+        ).toMatchObject({ _tag: "refused", reason: "folder-invalid" });
+        expect(
+          yield* Effect.flip(
+            w.service.connect({
+              caller: w.at(w.main),
+              folder: "good",
+              create: true,
+              project: OTHER_PROJECT,
+              requestId: "c9",
+            }),
+          ),
+        ).toMatchObject({ _tag: "OverleafRequestReusedError" });
+      }),
+    ),
+  );
+
+  it.live("keeps a running sync cancellable when a competing sync is refused", () =>
+    run(
+      Effect.gen(function* () {
+        const reached = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let pause = false;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "A" } },
+          at: (point) =>
+            point === "admitting" && pause
+              ? Deferred.succeed(reached, undefined).pipe(Effect.andThen(Deferred.await(release)))
+              : Effect.void,
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+        yield* write(NodePath.join(w.main, "paper"), { "main.tex": "A, edited" });
+        pause = true;
+        const first = yield* Effect.forkChild(
+          w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+        );
+        yield* Deferred.await(reached);
+        expect(
+          yield* Effect.flip(
+            w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
+          ),
+        ).toMatchObject({ _tag: "OverleafOperationActiveError" });
+        expect(yield* w.service.cancel({ caller: w.at(w.main), connectionId: id })).toMatchObject({
+          _tag: "requested",
+        });
+        yield* Deferred.succeed(release, undefined);
+        // Past its last boundary, the send finishes and stands.
+        expect(yield* Fiber.join(first)).toMatchObject({
+          _tag: "synced",
+          publication: { _tag: "accepted" },
+        });
+      }),
+    ),
+  );
+
+  it.live("refuses to link while a connection record cannot be read", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "a.tex": "A" }, [OTHER_PROJECT]: { "b.tex": "B" } },
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(
+            NodePath.join(w.stateRoot, "connections", `${connected.connection.connectionId}.json`),
+            "{ not json",
+          ),
+        );
+        expect(
+          yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: false,
+            project: PROJECT,
+            requestId: "c2",
+          }),
+        ).toMatchObject({ _tag: "refused", reason: "records-unreadable" });
+      }),
+    ),
+  );
+
+  it.live("lists a connection only for the project that owns its recorded binding", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        expect(yield* w.service.list(w.at(w.main))).toMatchObject([
+          { connectionId: connected.connection.connectionId, linkedHere: true },
+        ]);
+        // The same path registered again under another project does not inherit the link.
+        w.bindings.set(w.main, {
+          bindingId: "binding-main-b",
+          hostProjectId: "project-2",
+          generation: 1,
+        });
+        expect(yield* w.service.list(w.at(w.main))).toEqual([]);
+      }),
+    ),
+  );
+  it.live("asks again when Overleaf moved after the conflict was decided", () =>
+    run(
+      Effect.gen(function* () {
+        let moveOverleaf: Effect.Effect<void> = Effect.void;
+        let armed = false;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "line\n" } },
+          at: (point) =>
+            point === "admitting" && armed
+              ? Effect.suspend(() => {
+                  armed = false;
+                  return moveOverleaf;
+                })
+              : Effect.void,
+        });
+        moveOverleaf = Effect.orDie(
+          w.collaborate(PROJECT, { "main.tex": "theirs-v2-unreviewed\n" }),
+        );
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const folder = NodePath.join(w.main, "paper");
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+        yield* write(folder, { "main.tex": "mine\n", "other.tex": "new" });
+        yield* w.collaborate(PROJECT, { "main.tex": "theirs-v1\n" });
+        const stopped = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s2",
+        });
+        if (stopped._tag !== "needs-decision") return yield* Effect.die(stopped);
+        // Overleaf moves again while the decided sync is sending.
+        armed = true;
+        const decided = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s3",
+          choices: new Map([[stopped.review.conflicts[0]!.key, "mine"]]),
+          reviewedRemote: stopped.review.remoteTree,
+        });
+        expect(decided).toMatchObject({ _tag: "needs-decision", review: { needsDecision: true } });
+        expect((yield* w.overleafNow(PROJECT))["main.tex"]).toBe("theirs-v2-unreviewed\n");
+      }),
+    ),
+  );
+
+  it.live("holds the connection for the whole sync, so a disconnect cannot slip in", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        let refused: unknown = null;
+        w.onActivity(() =>
+          // Another request, in its own context: it does not hold the sync's reservation.
+          Effect.flip(
+            w.service
+              .disconnect({ caller: w.at(w.main), connectionId: id, requestId: "d1" })
+              .pipe(Effect.provideService(OverleafReservationOwner, null)),
+          ).pipe(
+            Effect.tap((error) => Effect.sync(() => (refused = error))),
+            Effect.ignore,
+          ),
+        );
+        expect(
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" }),
+        ).toMatchObject({ _tag: "synced" });
+        expect(refused).toMatchObject({ _tag: "OverleafOperationActiveError" });
+        expect(yield* w.store.readConnection(id)).toMatchObject({ document: { state: "active" } });
+        // A refused relink folder is recorded too.
+        w.onActivity(() => Effect.void);
+        expect(
+          yield* w.service.relink({
+            caller: w.at(w.main),
+            connectionId: id,
+            folder: "../bad",
+            requestId: "r1",
+          }),
+        ).toMatchObject({ _tag: "refused", reason: "folder-invalid" });
+        expect(
+          yield* Effect.flip(
+            w.service.relink({
+              caller: w.at(w.main),
+              connectionId: id,
+              folder: "paper",
+              requestId: "r1",
+            }),
+          ),
+        ).toMatchObject({ _tag: "OverleafRequestReusedError" });
       }),
     ),
   );
