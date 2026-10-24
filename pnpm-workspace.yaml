@@ -376,7 +376,7 @@ patchedDependencies:
   mathlive@0.108.2: patches/mathlive@0.108.2.patch
   react-native-enriched-markdown@1.2.0-t3.15: patches/react-native-enriched-markdown@1.2.0-t3.15.patch
   react-native-image-viewing@0.2.2: patches/react-native-image-viewing@0.2.2.patch
-  react-native-screens@5.0.0-t3.37: patches/react-native-screens@5.0.0-t3.37.patch
+  react-native-screens@5.0.0-t3.43: patches/react-native-screens@5.0.0-t3.43.patch
   mdast-util-math@3.0.0: patches/mdast-util-math@3.0.0.patch
   micromark-extension-llm-math@3.1.0: patches/micromark-extension-llm-math@3.1.0.patch
   micromark-extension-gfm-table@2.1.1: patches/micromark-extension-gfm-table@2.1.1.patch
