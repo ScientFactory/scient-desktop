@@ -88,7 +88,7 @@ import {
 import { workspaceFileSessionFlush } from "./useFileSaveCoordinator";
 // SCIENT-FORK:END
 // SCIENT-FORK:START
-import { subscribeWorkspaceFileSaves } from "~/scient/fileSurfaces/workspaceFileSaves";
+import { subscribeWorkspaceFileSaves } from "~/scient/files/workspaceFileSaves";
 // SCIENT-FORK:END
 const environmentId = EnvironmentId.make("generic-save-hook");
 const props: FileSaveOptions = {
