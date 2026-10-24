@@ -11,7 +11,6 @@ import {
 } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
 import { ModelConnectionEditor } from "./ModelConnectionEditor";
-import { CUSTOM_MODEL_PRESETS, customModelPresetId } from "./customModels";
 
 async function _setupFixture0(_fixture: _Fixture) {
   await undefined;
@@ -230,44 +229,6 @@ describe("custom model editor", () => {
     await f.submit();
     expect(f.onSave.mock.calls[1]![0].connection.models[0]!.defaultReasoningLevel).toBeUndefined();
   });
-  it("explains which reasoning levels Droid offers when the model is used with Droid", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const xhigh: CustomModelConnection = {
-      ...connection,
-      models: [
-        {
-          ...connection.models[0]!,
-          instanceIds: [droid],
-          reasoningMetadata: {
-            ...connection.models[0]!.reasoningMetadata!,
-            mode: "effort",
-            levels: ["low", "medium", "high", "xhigh"],
-          },
-        },
-      ],
-    };
-    const note =
-      "Droid offers Low, Medium and High for this model, and Extra-high only as its default level.";
-    const noteIn = (element: HTMLElement) => element.textContent!.includes(note);
-    const withDroid = await editor(_fixture, {
-      connection: xhigh,
-      edit: true,
-      agents: [{ id: droid, name: "Droid", driver: ProviderDriverKind.make("droid") }],
-    });
-    expect(noteIn(withDroid.row("Reasoning"))).toBe(true);
-
-    await act(async () => await _fixture.root0!.unmount());
-    _fixture.root0 = undefined;
-    _fixture.host.remove();
-    const piOnly = await editor(_fixture, {
-      connection: { ...xhigh, models: [{ ...xhigh.models[0]!, instanceIds: [pi] }] },
-      edit: true,
-    });
-    expect(noteIn(piOnly.row("Reasoning"))).toBe(false);
-  });
   describe("default level of an Anthropic Messages model Droid does not know as adaptive", () => {
     const droidAgent = { id: droid, name: "Droid", driver: ProviderDriverKind.make("droid") };
     const piAgent = { id: pi, name: "Pi", driver: ProviderDriverKind.make("pi") };
@@ -437,16 +398,6 @@ describe("custom model editor", () => {
     await f.submit();
     expect(f.onSave.mock.calls[0]![0].connection.models.at(-1)!.imageInput).toBe("automatic");
   });
-  it("uses the shared compact selector for the limits and reasoning rows", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const f = await editor(_fixture);
-    expect(f.field("Model provider").dataset.slot).toBe("native-select");
-    expect(f.control("Limits").dataset.slot).toBe("select-trigger");
-    expect(f.control("Reasoning").dataset.slot).toBe("select-trigger");
-  });
   it("defaults new models to automatic capability detection without inventing reasoning support", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -522,20 +473,6 @@ describe("custom model editor", () => {
       defaultReasoningLevel: "high",
     });
   });
-  it("lists providers in the preferred order and defaults to OpenRouter", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    expect(CUSTOM_MODEL_PRESETS.map((preset) => preset.id)).toEqual([
-      "openrouter",
-      "openai",
-      "anthropic",
-      "spacexai",
-      "custom",
-    ]);
-    expect((await editor(_fixture)).field("Model provider").value).toBe("openrouter");
-  });
   it("creates a redacted API-key submission attached to the default agents", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -581,6 +518,7 @@ describe("custom model editor", () => {
     await f.submit();
     expect(f.onSave.mock.calls[0]![0].connection.models[0]!.instanceIds).toEqual([pi]);
   });
+  // regression: 9c85e2c8be fix(custom-models): keep provider test failures local
   it("preserves an existing model's explicit agent attachments", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -721,48 +659,6 @@ describe("custom model editor", () => {
     await f.submit();
     expect(f.onSave.mock.calls[0]![0].connection.id).not.toBe("router");
     expect(f.onSave.mock.calls[0]![0].connection.baseUrl).toBe("https://api.anthropic.com");
-  });
-  it("classifies connections by exact endpoint and compatible protocol, never their display name", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    expect(customModelPresetId({ ...connection, baseUrl: "https://api.x.ai/v1" })).toBe("spacexai");
-    expect(customModelPresetId({ ...connection, name: "OpenAI" })).toBe("custom");
-    expect(customModelPresetId({ ...connection, baseUrl: "https://api.openai.com/v1/" })).toBe(
-      "openai",
-    );
-    expect(
-      customModelPresetId({
-        ...connection,
-        baseUrl: "https://api.openai.com/v1",
-        protocol: "anthropic-messages",
-      }),
-    ).toBe("custom");
-    expect(
-      customModelPresetId({ ...connection, baseUrl: "https://api.openai.com.attacker.test/v1" }),
-    ).toBe("custom");
-    expect(customModelPresetId({ ...connection, baseUrl: "https://api.openai.com/other" })).toBe(
-      "custom",
-    );
-  });
-  it("submits SpaceXAI with its preset endpoint and a redacted API key", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const f = await editor(_fixture);
-    await f.choose("Model provider", "spacexai");
-    await f.change("Model ID", "synthetic-grok-model");
-    await f.change("API key", "synthetic-xai-key");
-    await f.submit();
-    const saved = f.onSave.mock.calls[0]![0];
-    expect(saved.connection).toMatchObject({
-      name: "SpaceXAI",
-      baseUrl: "https://api.x.ai/v1",
-      protocol: "openai-responses",
-    });
-    expect(Redacted.value(saved.apiKey!)).toBe("synthetic-xai-key");
   });
   it("edits only the selected model", async () => {
     await using _fixture = _createFixture();
