@@ -29,7 +29,7 @@ import { sanitizeComputeEnvironment, validateProjectRoot } from "./ComputeEnviro
 import { normalizePythonDiagnostic } from "./PythonDiagnostic.ts";
 
 export const PYTHON_LANGUAGE_ID = ComputeLanguageId.make("python");
-export const JUPYTER_BRIDGE_TRANSPORT_KIND = ComputeTransportKind.make("jupyter-bridge");
+const JUPYTER_BRIDGE_TRANSPORT_KIND = ComputeTransportKind.make("jupyter-bridge");
 
 // Minimum version requirements (from Phase 2 plan §2.6)
 

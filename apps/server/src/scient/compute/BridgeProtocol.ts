@@ -130,13 +130,12 @@ const NULLABLE_REQUEST_ID_TYPES: ReadonlySet<BridgeMessageType> = new Set([
 const Label = Schema.String.check(Schema.isMaxLength(256));
 const ShortText = Schema.String.check(Schema.isMaxLength(MaxDetailLength));
 
-export const HelloPayload = Schema.Struct({
+const HelloPayload = Schema.Struct({
   buildId: Label,
   frameLimit: Schema.Int.check(Schema.isGreaterThan(0)),
   requiredCapabilities: Schema.Array(ComputeCapability),
   ownerToken: Schema.NonEmptyString.check(Schema.isMaxLength(MaxOwnerTokenLength)),
 });
-export type HelloPayload = typeof HelloPayload.Type;
 
 export const HelloAckPayload = Schema.Struct({
   ownerToken: Schema.NonEmptyString.check(Schema.isMaxLength(MaxOwnerTokenLength)),
@@ -202,14 +201,13 @@ export const ExecuteSourceContext = Schema.Struct({
 });
 export type ExecuteSourceContext = typeof ExecuteSourceContext.Type;
 
-export const KernelReadyPayload = Schema.Struct({
+const KernelReadyPayload = Schema.Struct({
   kernelPid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   languageId: ComputeLanguageId,
   languageVersion: Label,
   protocolVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   capabilities: Schema.Array(ComputeCapability),
 });
-export type KernelReadyPayload = typeof KernelReadyPayload.Type;
 
 export const ExecutePayload = Schema.Struct({
   code: Schema.String.check(Schema.isMaxLength(MaxCodeLength), utf8Bound(MaxCodeLength)),
@@ -340,10 +338,9 @@ export type ExecutionCompletePayload = typeof ExecutionCompletePayload.Type;
 export const InterruptPayload = Schema.Struct({});
 export type InterruptPayload = typeof InterruptPayload.Type;
 
-export const InterruptResultPayload = Schema.Struct({
+const InterruptResultPayload = Schema.Struct({
   result: Schema.Literals(["interrupted", "terminal", "rejected", "timeout"]),
 });
-export type InterruptResultPayload = typeof InterruptResultPayload.Type;
 
 export const InspectVariablesPayload = Schema.Struct({});
 export type InspectVariablesPayload = typeof InspectVariablesPayload.Type;
@@ -368,10 +365,9 @@ export type RestartPayload = typeof RestartPayload.Type;
  * could disagree with it, and there would be no principled way to say which one
  * the session is actually at.
  */
-export const RestartedPayload = Schema.Struct({
+const RestartedPayload = Schema.Struct({
   kernelPid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
 });
-export type RestartedPayload = typeof RestartedPayload.Type;
 
 export const ShutdownPayload = Schema.Struct({});
 export type ShutdownPayload = typeof ShutdownPayload.Type;

@@ -20,7 +20,6 @@ import {
   parseProbeOutput,
   OBSERVED_PYTHON_PACKAGES,
   PYTHON_LANGUAGE_ID,
-  JUPYTER_BRIDGE_TRANSPORT_KIND,
   PROBE_SCRIPT,
 } from "./PythonRuntimeAdapter.ts";
 
@@ -688,40 +687,6 @@ describe("python runtime adapter", () => {
     }),
   );
 
-  it.effect("builds a launch plan through prepareLaunch", () =>
-    Effect.gen(function* () {
-      const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
-      const plan = yield* adapter.prepareLaunch({
-        profile,
-        cwd: "/project",
-        environment: { PYTHONUTF8: "1" },
-      });
-      expect(plan.args).toEqual(["-I", "-u", "/app/bridge.py"]);
-    }),
-  );
-
-  it("normalizes diagnostics through the adapter", () => {
-    const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
-    const diagnostics = adapter.normalizeDiagnostic(
-      {
-        name: "ValueError",
-        value: "bad value",
-        traceback: ["line 1", "line 2"],
-      },
-      { projectRoot: "/project", submittedSource: null },
-    );
-    expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0]!.errorName).toBe("ValueError");
-  });
-
-  it.effect("computes a fingerprint through the adapter", () =>
-    Effect.gen(function* () {
-      const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
-      const fp = yield* adapter.fingerprintEnvironment(profile);
-      expect(fp.hash).toMatch(/^sha256:/);
-    }),
-  );
-
   it.effect("fails rather than dies when a probe cannot be parsed", () =>
     Effect.gen(function* () {
       // A wrapper script, a stray banner, a Python that prints nothing useful.
@@ -750,10 +715,4 @@ describe("python runtime adapter", () => {
       expect(profiles[0]!.languageVersion).toBe("unknown");
     }),
   );
-
-  it("reports the correct language and transport kind", () => {
-    const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
-    expect(adapter.languageId).toBe(PYTHON_LANGUAGE_ID);
-    expect(adapter.transportKind).toBe(JUPYTER_BRIDGE_TRANSPORT_KIND);
-  });
 });

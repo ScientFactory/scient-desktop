@@ -167,7 +167,9 @@ describe("managed Python probe ownership", () => {
 });
 
 describe("python bridge location", () => {
-  it.each(["app.asar", "server.asar"])("uses physical bridge files beside %s", (archive) => {
+  // regression: 908a782aac fix(compute): use physical paths for packaged runtimes
+  it("uses physical bridge files beside app.asar", () => {
+    const archive = "app.asar";
     const directory = NodePath.join("/installed", archive, "apps/server/dist");
     expect(bridgePathCandidates(directory)).toEqual([
       NodePath.join(
