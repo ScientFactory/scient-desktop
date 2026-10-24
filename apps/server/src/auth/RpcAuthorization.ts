@@ -256,6 +256,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeResourceTelemetry]: AuthDiagnosticsReadScope,
   [WS_METHODS.documentsHostConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.documentsHostRespond]: AuthOrchestrationOperateScope,
+  // SCIENT-FORK:START — a window answers editor flushes only if it can save files.
+  [WS_METHODS.editorsFlushConnect]: AuthFilesystemWriteScope,
+  [WS_METHODS.editorsFlushRespond]: AuthFilesystemWriteScope,
+  // SCIENT-FORK:END
   [WS_METHODS.subscribeComputeSessions]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAnalysisRuns]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDocumentBindingChanges]: AuthFilesystemReadScope,

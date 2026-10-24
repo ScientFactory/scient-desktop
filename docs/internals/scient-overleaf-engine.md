@@ -353,12 +353,47 @@ A crash after the send leaves the confirm receipt `running` and the attempt
 `unknown`. A repeated request returns that receipt, and recovery settles the
 attempt.
 
+## Saving open editors
+
+Text a person typed is on disk only once the window holding it has saved it.
+`scient/editorFlush/EditorFlush.ts` lets a server operation ask every window
+connected to this environment to save its editors for one folder, and wait:
+`flushFolder({ checkoutRoot, folder, timeout })`. Nothing calls it yet; the
+Overleaf agent tools will, before prepare and again before confirm.
+
+- Each window subscribes once (`editors.flushConnect`, a stream of requests)
+  and answers each request (`editors.flushRespond`) with the files it saved and
+  every file it could not save, named relative to the checkout, with the
+  reason: `unconverted-input` (visual input not yet source), `composing` (an
+  input method is composing), `save-failed`, or `conflict` (the file changed
+  outside an editor holding unsaved text). Both need the filesystem write
+  scope; a window that cannot save does not take part.
+- The result is `NoWindowOpen` when no window is connected (nothing is
+  unsaved), or `Answered` with one outcome per window and `allSaved`. A window
+  that does not answer within the timeout, or disconnects first, is
+  `Unanswered` and names the window (its client id and connection); it is never
+  a success. A window that reconnects replaces its earlier connection, failing
+  that connection's open requests as disconnected.
+- The window side (`apps/web/src/scient/editorFlush/`) uses the existing save
+  pipelines only: LaTeX Visual fields are finished first
+  (`latexDocumentInputs.finishWhere`), then open documents are flushed through
+  the document registry (a retained pending input or a composing editor fails
+  the file), then ordinary file editors through
+  `WorkspaceFileSessionRegistry.flushWhere`, the same flush a last lease's
+  release runs. A file is under the folder when its environment matches and
+  its absolute path (`cwd` joined with its relative path) lies inside
+  `checkoutRoot`/`folder`, compared lexically (Windows paths without regard to
+  case or separator). A window that opened the folder through another spelling
+  of the path (a symlink) is not matched; its unsaved draft stays protected by
+  the outside-change conflict.
+
 ## Remaining integration gates
 
 The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
 defines the remaining work and tracks each step's status.
-Before exposing operations, implement connection ownership/binding checks,
-bounded repository retention and the editor-flush bridge, and derive status (a
+Before exposing operations, implement connection ownership/binding checks and
+bounded repository retention, call the editor flush before prepare and confirm,
+and derive status (a
 `running` receipt whose operation is no longer live was interrupted). The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
 release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds

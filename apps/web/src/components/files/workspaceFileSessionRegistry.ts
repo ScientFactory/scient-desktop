@@ -50,6 +50,8 @@ export interface WorkspaceFileSessionLeaseOptions<A, E> extends WorkspaceFileSes
   E
 > {
   readonly key: string;
+  /** The file this session saves; a session without one is never in a folder flush. */
+  readonly target?: MarkdownPersistenceTarget;
   readonly debounceMs: number;
   readonly initialRevision: string;
   readonly initialSource: string;
@@ -94,6 +96,19 @@ export interface WorkspaceFileSessionLease {
   readonly release: () => void;
 }
 
+/** Why a session could not save: the file changed outside it, or the save failed. */
+export type WorkspaceFileSessionProblem =
+  | { readonly kind: "conflict" }
+  | { readonly kind: "save-failed"; readonly message?: string };
+
+export type WorkspaceFileSessionFlushOutcome =
+  | { readonly target: MarkdownPersistenceTarget; readonly saved: true }
+  | {
+      readonly target: MarkdownPersistenceTarget;
+      readonly saved: false;
+      readonly problem: WorkspaceFileSessionProblem;
+    };
+
 interface LeaseRecord<A, E> {
   readonly id: symbol;
   readonly callbacks: WorkspaceFileSessionCallbacks<A, E>;
@@ -106,6 +121,7 @@ interface LeaseRecord<A, E> {
 
 interface SessionEntry<A, E> {
   readonly key: string;
+  readonly target: MarkdownPersistenceTarget | undefined;
   coordinator: FileSaveCoordinator<A, E>;
   readonly leases: Map<symbol, LeaseRecord<A, E>>;
   readonly pendingCallbacks: Set<(pending: boolean) => void>;
@@ -291,6 +307,40 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
     };
   }
 
+  /**
+   * Saves every session whose file `select` picks, through each session's own
+   * save pipeline, as a released last lease would. Sessions without a target
+   * are never picked.
+   */
+  async flushWhere(
+    select: (target: MarkdownPersistenceTarget) => boolean,
+  ): Promise<ReadonlyArray<WorkspaceFileSessionFlushOutcome>> {
+    const picked = [...this.entries.values()].filter(
+      (entry): entry is SessionEntry<A, E> & { readonly target: MarkdownPersistenceTarget } =>
+        entry.target !== undefined && select(entry.target),
+    );
+    return Promise.all(
+      picked.map(async (entry): Promise<WorkspaceFileSessionFlushOutcome> => {
+        if (await entry.coordinator.flush()) return { target: entry.target, saved: true };
+        return { target: entry.target, saved: false, problem: this.problemOf(entry) };
+      }),
+    );
+  }
+
+  /** Why a session's flush left its text unsaved, from what the session last saw. */
+  private problemOf(entry: SessionEntry<A, E>): WorkspaceFileSessionProblem {
+    const attention = entry.coordinator.publicationAttention;
+    if (attention !== null) return { kind: "save-failed", message: attention.message };
+    if (entry.coordinator.getRenameIntent() !== null)
+      return { kind: "save-failed", message: "A rename of this file has not finished." };
+    const failure = entry.lastFailure;
+    if (failure !== null && "result" in failure) {
+      const kind = activeTransport(entry).classifyFailure?.(failure.result.cause);
+      if (kind === "conflict") return { kind: "conflict" };
+    }
+    return { kind: "save-failed" };
+  }
+
   get entryCount(): number {
     return this.entries.size;
   }
@@ -308,6 +358,7 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
     const { key, debounceMs, initialRevision, initialSource, journalStore } = options;
     const entry: SessionEntry<A, E> = {
       key,
+      target: options.target,
       coordinator: null as unknown as FileSaveCoordinator<A, E>,
       leases: new Map<symbol, LeaseRecord<A, E>>(),
       pendingCallbacks: new Set<(pending: boolean) => void>(),

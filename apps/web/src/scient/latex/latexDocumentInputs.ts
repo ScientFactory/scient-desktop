@@ -45,6 +45,23 @@ export class LatexDocumentInputs {
   pending(target: MarkdownPersistenceTarget, paths: ReadonlySet<string>): boolean {
     return this.relevant(target, paths).some((owner) => owner.pending());
   }
+
+  /**
+   * Finishes the input of every editor whose file, or whose document's root
+   * file, `select` picks. Returns the editors that could not finish (still
+   * composing, or holding input that could not become source: `pending`),
+   * each named by the picked file: its own when picked, else its root.
+   */
+  finishWhere(
+    select: (target: MarkdownPersistenceTarget) => boolean,
+  ): ReadonlyArray<{ readonly target: MarkdownPersistenceTarget; readonly pending: boolean }> {
+    return [...this.owners].flatMap((owner) => {
+      const root = { ...owner.target, relativePath: owner.root };
+      const picked = select(owner.target) ? owner.target : select(root) ? root : null;
+      if (picked === null || owner.finish()) return [];
+      return [{ target: picked, pending: owner.pending() }];
+    });
+  }
 }
 
 export const latexDocumentInputs = new LatexDocumentInputs();
