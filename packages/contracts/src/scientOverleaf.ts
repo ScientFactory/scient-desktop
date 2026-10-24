@@ -353,6 +353,66 @@ export const ScientOverleafRestoreResult = Schema.Union([
 ]);
 export type ScientOverleafRestoreResult = typeof ScientOverleafRestoreResult.Type;
 
+export const ScientOverleafUndoRequest = Schema.Struct({
+  workspaceRoot: WorkspaceRoot,
+  connectionId: ConnectionId,
+  requestId: RequestId,
+  /** The accepted send to undo, by its number (`send #N` in a sync result). */
+  attemptNumber: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type ScientOverleafUndoRequest = typeof ScientOverleafUndoRequest.Type;
+
+/** Sends Undo can put back, newest first, each with what it changed on Overleaf. */
+export const ScientOverleafUndoableSends = Schema.Struct({
+  sends: Schema.Array(
+    Schema.Struct({
+      attemptNumber: Schema.Number,
+      recordedAt: Schema.String,
+      changes: Schema.Array(ScientOverleafChange),
+    }),
+  ),
+});
+export type ScientOverleafUndoableSends = typeof ScientOverleafUndoableSends.Type;
+
+/**
+ * An undo (design section 4.3). `undone` lists what it set out to put back and
+ * every path it left alone, with why; `outcome` is how its apply ended (null when
+ * every path was skipped and nothing was written), and `sync` the sync that sent
+ * the restored files, run only when the apply completed.
+ */
+export const ScientOverleafUndoResult = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal("undone"),
+    /** Files the send changed, back to Overleaf's earlier version. */
+    restored: Schema.Array(ManuscriptPath),
+    /** Files the send added, removed. */
+    removed: Schema.Array(ManuscriptPath),
+    /** Files the send deleted, written again. */
+    recreated: Schema.Array(ManuscriptPath),
+    skipped: Schema.Array(
+      Schema.Struct({
+        path: ManuscriptPath,
+        reason: Schema.Literals(["changed", "already-undone", "name-clash", "too-large"]),
+      }),
+    ),
+    outcome: Schema.NullOr(ScientOverleafApplyOutcome),
+    sync: Schema.NullOr(ScientOverleafSyncResult),
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal("not-eligible"),
+    reason: Schema.Literals([
+      "not-recorded",
+      "unresolved",
+      "not-sent",
+      "out-of-date",
+      "history-unavailable",
+    ]),
+  }),
+  Schema.Struct({ _tag: Schema.Literal("refused"), refusal: ScientOverleafRefusal }),
+  Schema.Struct({ _tag: Schema.Literal("duplicate") }),
+]);
+export type ScientOverleafUndoResult = typeof ScientOverleafUndoResult.Type;
+
 /**
  * An Overleaf operation that did not run, with a fixed reason: another one holds
  * the connection, the token is missing, an open editor could not save, and so on.

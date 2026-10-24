@@ -5,13 +5,20 @@ import type {
   EnvironmentId,
   ScientOverleafConflictChoice,
   ScientOverleafSyncResult,
+  ScientOverleafUndoResult,
 } from "@t3tools/contracts";
 
 import { refreshProjectFiles } from "~/components/files/projectFilesQueryState";
 import { toastManager } from "~/components/ui/toast";
 import { readLocalApi } from "~/localApi";
 
-import { cancelOverleafSync, overleafRequestId, previewOverleaf, syncOverleaf } from "./client";
+import {
+  cancelOverleafSync,
+  overleafRequestId,
+  previewOverleaf,
+  syncOverleaf,
+  undoOverleafSend,
+} from "./client";
 import {
   fileDecisionsRequest,
   operationErrorText,
@@ -114,6 +121,39 @@ export async function runOverleafSync(
   } finally {
     setOverleafSyncing(environmentId, connection.connectionId, false);
     // Files came in: the tree and the chip read again.
+    refreshProjectFiles(environmentId, workspaceRoot);
+    void reloadOverleafWorkspaces(environmentId, workspaceRoot);
+  }
+}
+
+/**
+ * Undoes one accepted send (design section 4.3): the server saves the folder's
+ * editors, puts back what Overleaf had before it, then syncs. The sync's result
+ * is recorded like any other; a conflict opens the review tab.
+ */
+export async function runOverleafUndo(
+  context: Pick<
+    OverleafSyncContext,
+    "environmentId" | "workspaceRoot" | "connection" | "openReview"
+  >,
+  attemptNumber: number,
+): Promise<ScientOverleafUndoResult> {
+  const { environmentId, workspaceRoot, connection } = context;
+  setOverleafSyncing(environmentId, connection.connectionId, true);
+  try {
+    const result = await undoOverleafSend(environmentId, {
+      workspaceRoot,
+      connectionId: connection.connectionId,
+      requestId: overleafRequestId(),
+      attemptNumber,
+    });
+    if (result._tag === "undone" && result.sync !== null) {
+      recordOverleafSync(environmentId, connection.connectionId, result.sync);
+      if (result.sync._tag === "needs-decision") context.openReview?.();
+    }
+    return result;
+  } finally {
+    setOverleafSyncing(environmentId, connection.connectionId, false);
     refreshProjectFiles(environmentId, workspaceRoot);
     void reloadOverleafWorkspaces(environmentId, workspaceRoot);
   }

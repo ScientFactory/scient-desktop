@@ -154,7 +154,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(43);
+      expect(scientTools).toHaveLength(44);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "preview_click",
         "preview_dialog",
@@ -191,6 +191,7 @@ it.live(
         "scient_overleaf_status",
         "scient_overleaf_sync",
         "scient_overleaf_token",
+        "scient_overleaf_undo",
         "scient_pdf_build",
         "scient_skill_load",
         "scient_skill_read_resource",

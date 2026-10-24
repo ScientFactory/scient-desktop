@@ -31,6 +31,7 @@ import {
   overleafManageForInvocation,
   overleafSyncForInvocation,
   overleafTokenForInvocation,
+  overleafUndoForInvocation,
 } from "./handlers.ts";
 import { ScientOverleafToolError, ScientOverleafToolkit } from "./tools.ts";
 
@@ -190,6 +191,115 @@ describe("Overleaf tool handlers", () => {
           connected.lines.some((line) => line.startsWith("The first sync could not be previewed")),
         ).toBe(true);
       }),
+  );
+
+  it.effect("undo lists the sends, then says what it put back, what it left and what synced", () =>
+    Effect.gen(function* () {
+      const asked: unknown[] = [];
+      const overleaf = fakeOverleaf({
+        undoableSends: () =>
+          Effect.succeed([
+            {
+              attemptNumber: 4,
+              recordedAt: "2026-10-24T12:00:00.000Z",
+              changes: [
+                { kind: "modified", path: "main.tex" },
+                { kind: "added", path: "notes.tex" },
+              ],
+            },
+          ]),
+        undo: (input: unknown) =>
+          Effect.sync(() => {
+            asked.push(input);
+            return {
+              _tag: "undone",
+              restored: ["main.tex"],
+              removed: [],
+              recreated: ["gone.tex"],
+              skipped: [{ path: "notes.tex", reason: "changed" }],
+              adopted: { outcome: "complete" },
+              sync: {
+                _tag: "synced",
+                review: {
+                  reviewId: "r",
+                  digest: "d",
+                  remoteTree: "b".repeat(40),
+                  upToDate: false,
+                  needsDecision: false,
+                  incoming: [],
+                  outgoing: [
+                    { kind: "modified", path: "main.tex" },
+                    { kind: "added", path: "gone.tex" },
+                  ],
+                  conflicts: [],
+                  warnings: [],
+                  unresolvedMarkers: [],
+                  collisions: [],
+                  selectedAdditions: [],
+                  additions: [],
+                  localOnly: [],
+                },
+                adopted: { outcome: "complete", interrupted: [], markerPaths: [] },
+                publication: { _tag: "accepted", attemptNumber: 5 },
+                retried: false,
+                settled: null,
+                activity: [],
+                linkedElsewhere: false,
+              },
+            };
+          }) as never,
+      } as Partial<OverleafSyncShape>);
+      const listed = yield* overleafUndoForInvocation({ connectionId: "c-1" }).pipe(
+        provide(overleaf),
+      );
+      expect(listed.result).toBeNull();
+      expect(listed.lines).toEqual([
+        "Sends you can undo, newest first:",
+        "- send #4 (2026-10-24T12:00:00.000Z): main.tex, notes.tex (new).",
+      ]);
+      // Listing changes nothing.
+      expect(asked).toEqual([]);
+
+      const undone = yield* overleafUndoForInvocation({
+        connectionId: "c-1",
+        attemptNumber: 4,
+      }).pipe(provide(overleaf));
+      expect(asked).toEqual([expect.objectContaining({ connectionId: "c-1", attemptNumber: 4 })]);
+      expect(undone.sends).toBeNull();
+      expect(undone.result).toMatchObject({
+        _tag: "undone",
+        outcome: "complete",
+        sync: { _tag: "synced", publication: { _tag: "accepted", attemptNumber: 5 } },
+      });
+      expect(undone.lines).toEqual([
+        "Put back what Overleaf had before send #4: restored main.tex; wrote back gone.tex (the send deleted them). The files it replaced are kept as copies.",
+        "Left as it is: notes.tex (edited since that send).",
+        "Then it synced:",
+        "Sent 2 files to Overleaf (send #5): main.tex, gone.tex (new).",
+      ]);
+
+      const refusedWith = (result: unknown) =>
+        overleafUndoForInvocation({ connectionId: "c-1", attemptNumber: 4 }).pipe(
+          provide(fakeOverleaf({ undo: () => Effect.succeed(result) as never })),
+          Effect.map((done) => done.lines),
+        );
+      expect(yield* refusedWith({ _tag: "not-eligible", reason: "unresolved" })).toEqual([
+        "Overleaf never answered send #4, so what it changed is not known. Nothing changed.",
+      ]);
+      // An apply that wrote nothing is never reported as put back.
+      const replanned = yield* refusedWith({
+        _tag: "undone",
+        restored: ["main.tex"],
+        removed: [],
+        recreated: [],
+        skipped: [],
+        adopted: { outcome: "replan" },
+        sync: null,
+      });
+      expect(replanned).toEqual([
+        "The undo of send #4 wrote nothing: the folder changed while it ran. Call again.",
+      ]);
+    }),
   );
 
   it.effect("maps failures to fixed categories, never Git's text", () =>

@@ -8,6 +8,7 @@ import {
   type ScientOverleafRefusal,
   type ScientOverleafRestoreResult,
   type ScientOverleafSyncResult,
+  type ScientOverleafUndoResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -28,6 +29,7 @@ import {
   overleafRefusalReason,
   type OverleafCaller,
   type OverleafEditorUnsavedError,
+  type OverleafUndoOutcome,
   type OverleafSyncOutcome,
 } from "./OverleafSync.ts";
 import type { ConflictChoice } from "./syncRules.ts";
@@ -87,6 +89,28 @@ const publicationView = (publication: OverleafPublication): ScientOverleafPublic
 
 export const settledView = (settled: OverleafAdopted | null) =>
   settled === null ? null : settledApplyView(settled);
+
+/** An undo as clients see it: what it put back and skipped, how it ended, and its sync. */
+export const undoView = (result: OverleafUndoOutcome): ScientOverleafUndoResult => {
+  switch (result._tag) {
+    case "undone":
+      return {
+        _tag: "undone",
+        restored: result.restored,
+        removed: result.removed,
+        recreated: result.recreated,
+        skipped: result.skipped,
+        outcome: result.adopted?.outcome ?? null,
+        sync: result.sync === null ? null : syncView(result.sync),
+      };
+    case "not-eligible":
+      return { _tag: "not-eligible", reason: result.reason };
+    case "refused":
+      return { _tag: "refused", refusal: refusalView(result.refusal) };
+    case "duplicate":
+      return { _tag: "duplicate" };
+  }
+};
 
 /** A kept-copy restore as clients see it: a restore that ran says how its apply ended. */
 export const restoreView = (result: OverleafRestoreResult): ScientOverleafRestoreResult =>
@@ -153,9 +177,9 @@ const workspace = (workspaceRoot: string): OverleafCaller => ({ _tag: "workspace
 
 /**
  * Overleaf sync over HTTP. Reading the token's presence, connections, status,
- * a preview and kept copies needs the read scope; connecting, syncing,
- * recovering, restoring, disconnecting, relinking and changing the token need
- * operate scope. The service resolves the workspace and checks the binding.
+ * kept copies and the sends Undo can put back needs the read scope; previewing,
+ * connecting, syncing, recovering, restoring, undoing, disconnecting, relinking
+ * and changing the token need operate scope. The service resolves the workspace and checks the binding.
  */
 export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -320,6 +344,34 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
             }),
           );
           return restoreView(result);
+        }),
+      )
+      .handle("undoableSends", ({ endpoint, payload }) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const sends = yield* mapErrors(
+            overleaf.undoableSends({
+              caller: workspace(payload.workspaceRoot),
+              connectionId: payload.connectionId,
+            }),
+          );
+          return { sends };
+        }),
+      )
+      .handle("undo", ({ endpoint, payload }) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const result = yield* mapErrors(
+            overleaf.undo({
+              caller: workspace(payload.workspaceRoot),
+              connectionId: payload.connectionId,
+              requestId: payload.requestId,
+              attemptNumber: payload.attemptNumber,
+            }),
+          );
+          return undoView(result);
         }),
       )
       .handle("disconnect", ({ endpoint, payload }) =>

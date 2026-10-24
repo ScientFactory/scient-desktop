@@ -23,6 +23,8 @@ const client = vi.hoisted(() => ({
   restoreOverleafKeptCopy: vi.fn(),
   disconnectOverleaf: vi.fn(),
   cancelOverleafSync: vi.fn(),
+  listOverleafUndoableSends: vi.fn(),
+  undoOverleafSend: vi.fn(),
 }));
 vi.mock("./client", () => ({ ...client, overleafRequestId: () => "request-1" }));
 
@@ -235,6 +237,51 @@ describe("OverleafFileChip", () => {
           "paper/main.tex couldn't be saved, so nothing was changed. Save it, then try again.",
       }),
     ]);
+  });
+
+  it("undoes the last send: shows what it puts back, then what it did and the sync", async () => {
+    reset();
+    client.listOverleafUndoableSends.mockResolvedValue({
+      sends: [
+        {
+          attemptNumber: 4,
+          recordedAt: "2026-10-24T12:00:00.000Z",
+          changes: [
+            { kind: "modified", path: "main.tex" },
+            { kind: "added", path: "notes.tex" },
+          ],
+        },
+      ],
+    });
+    client.undoOverleafSend.mockResolvedValue({
+      _tag: "undone",
+      restored: ["main.tex"],
+      removed: [],
+      recreated: [],
+      skipped: [{ path: "notes.tex", reason: "changed" }],
+      outcome: "complete",
+      sync: { ...sent, review: { ...sent.review, incoming: [] } },
+    });
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Undo last send…" }).click();
+    await expect.element(page.getByText("Undo send #4")).toBeVisible();
+    await expect.element(page.getByText("Earlier version")).toBeVisible();
+    await expect.element(page.getByText("Removed")).toBeVisible();
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect.element(page.getByText("Put back 1 file")).toBeVisible();
+    await expect.element(page.getByText("Left as it is: notes.tex (edited since).")).toBeVisible();
+    await expect.element(page.getByText("1 file was sent.")).toBeVisible();
+    expect(client.undoOverleafSend).toHaveBeenCalledExactlyOnceWith(environmentId, {
+      workspaceRoot: "/work/project",
+      connectionId: "c1",
+      requestId: "request-1",
+      attemptNumber: 4,
+    });
+    // The undo's sync is recorded like any other.
+    expect(
+      readOverleafWorkspace(environmentId, "/work/project").lastSync.get("c1")?.result,
+    ).toEqual(expect.objectContaining({ _tag: "synced" }));
   });
 
   it("in another worktree, says the link belongs to the main copy and offers to sync it", async () => {

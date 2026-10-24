@@ -26,6 +26,7 @@ is deleted on either side).
 | `overleaf/OverleafReviewPanel.tsx`           | The side-panel tab (`scient:overleaf-review:<cwd>:<connection>`).                                                                                                                                                                                                           |
 | `overleaf/OverleafSettings.tsx`              | Source Control ▸ Overleaf, Project Settings ▸ Overleaf.                                                                                                                                                                                                                     |
 | `overleaf/OverleafKeptCopies.tsx`            | Kept copies inside "Retained file versions".                                                                                                                                                                                                                                |
+| `overleaf/OverleafUndoDialog.tsx`            | Undo of one send, from the chip and the review tab.                                                                                                                                                                                                                         |
 | `overleaf/overleafPaletteItems.tsx`          | "Sync with Overleaf" in the command palette.                                                                                                                                                                                                                                |
 | `overleaf/OverleafNewProject.tsx`            | Add project ▸ Overleaf project: the palette entry and the dialog host mounted in `__root.tsx`.                                                                                                                                                                              |
 | `overleaf/createProjectForOverleaf.ts`       | Makes the Scient project as Add project does: register, then Scient setup.                                                                                                                                                                                                  |
@@ -205,6 +206,20 @@ nothing ("The file changed while restoring, so nothing was written. Try again.")
 may have stopped partway. Compare and
 **Show in Finder** need the copy's location or bytes, which the routes don't return yet.
 
+## Undo
+
+`OverleafUndoDialog` undoes one accepted send (design section 4.3). The chip's **Undo last
+send…** (shown once the link has synced, not while a sync runs) opens it for the newest send; the
+review tab's **Undo send** icon button (shown when the review it displays is from a sync whose send
+Overleaf accepted) opens it for that send's number. It reads `undoableSends` (the newest ten
+accepted sends with their changes) and lists each file with what Undo does to it: **Earlier
+version**, **Removed**, **Back**, **Old name back**. **Undo** posts `undo` through
+`runOverleafUndo`; the server saves the folder's editors, puts the earlier versions back and syncs.
+The dialog then shows `overleafUndoView`: "Put back N files", the files left as they are with why
+(edited since, already back, name in use, too large), and the sync's own title and lines. The
+sync is recorded like any other; one that stops at a conflict opens the review tab. A replanned
+undo says "Nothing was put back"; one needing attention says so.
+
 ## Conflict marks in the editor
 
 `overleafConflictBlocks` reads `<<<<<<< Scient` … `=======` … `>>>>>>> Overleaf` blocks, the labels
@@ -224,5 +239,4 @@ are disabled while editing is.
 
 ## Not built here
 
-- Undo of a send: engine addition first.
 - Settings ▸ Overleaf "Test" of the token: no route.

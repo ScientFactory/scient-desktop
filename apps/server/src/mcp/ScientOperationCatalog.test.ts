@@ -54,9 +54,9 @@ it("preserves automatic Sources writes independently of the Browser grant", () =
   const available = scientOperationCatalog
     .list()
     .filter((operation) => hasOperationCapabilities(operation, baseline));
-  // 3 document builds, 7 Overleaf tools (no grant of their own) and 9 Sources tools.
-  expect(available).toHaveLength(19);
-  expect(available.filter((operation) => operation.family === "overleaf")).toHaveLength(7);
+  // 3 document builds, 8 Overleaf tools (no grant of their own) and 9 Sources tools.
+  expect(available).toHaveLength(20);
+  expect(available.filter((operation) => operation.family === "overleaf")).toHaveLength(8);
   expect(available.filter((operation) => operation.family === "sources")).toHaveLength(9);
   expect(available.some((operation) => operation.family === "browser")).toBe(false);
   for (const operation of scientOperationCatalog.list().filter((op) => op.family === "sources")) {
