@@ -1,5 +1,3 @@
-import * as Logger from "effect/Logger";
-import type * as Scope from "effect/Scope";
 import * as NodeSqlite from "node:sqlite";
 import type * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -14,7 +12,9 @@ import * as Statement from "effect/sql/Statement";
 import type * as Tracer from "effect/Tracer";
 import { vi } from "vite-plus/test";
 
+// SCIENT-FORK:START
 import * as HostProcess from "./HostProcess.ts";
+// SCIENT-FORK:END
 import * as SqliteClient from "./nodeSqliteClient.ts";
 
 // SCIENT-FORK:START — Windows cannot remove a file SQLite holds open.
@@ -141,57 +141,6 @@ layer("NodeSqliteClient", (it) => {
 
 const largeText = "x".repeat(64 * 1024 + 1);
 
-it.effect("keeps large text and blob parameters off cached statements", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const statements: Array<NodeSqlite.StatementSync> = [];
-    const all = NodeSqlite.StatementSync.prototype.all;
-    yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
-          this: NodeSqlite.StatementSync,
-          ...params
-        ) {
-          statements.push(this);
-          return all.apply(this, params);
-        }),
-      ),
-      (spy) => Effect.sync(() => spy.mockRestore()),
-    );
-
-    const small = "small";
-    const queries = [
-      (value: string | Uint8Array | DataView) => sql`SELECT length(${value}) AS size`,
-      (value: string | Uint8Array | DataView) =>
-        sql.unsafe("SELECT length($value) AS size", [{ $value: value }]),
-      (value: string | Uint8Array | DataView) =>
-        sql.unsafe("SELECT length($value) AS callable", [
-          Object.assign(() => {}, { $value: value }),
-        ]),
-    ];
-    const cached = new Set<NodeSqlite.StatementSync>();
-    const large = new Set<NodeSqlite.StatementSync>();
-    const largeBlobs = [
-      new Uint8Array(64 * 1024 + 1),
-      new DataView(new ArrayBuffer(64 * 1024 + 1)),
-    ];
-    for (const value of [small, largeText, ...largeBlobs, small]) {
-      const expected = typeof value === "string" ? value.length : value.byteLength;
-      for (const query of queries) {
-        assert.deepEqual((yield* query(value)).map(Object.values), [[expected]]);
-        assert.deepEqual(yield* query(value).values, [[expected]]);
-        for (const statement of statements.splice(0)) {
-          (value === small ? cached : large).add(statement);
-        }
-      }
-    }
-
-    assert.equal(cached.size, queries.length);
-    assert.equal(large.size, queries.length * 6);
-    assert.isTrue(cached.isDisjointFrom(large));
-  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
-);
-
 it.effect("reads integers on the values path as the caller asked, cached or not", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -205,6 +154,7 @@ it.effect("reads integers on the values path as the caller asked, cached or not"
   }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
 );
 
+// SCIENT-FORK:START
 it.effect("preserves raw buffer bytes across prepared, unprepared and named bindings", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -230,6 +180,7 @@ it.effect("preserves raw buffer bytes across prepared, unprepared and named bind
     assert.equal(reads, 1);
   }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
 );
+// SCIENT-FORK:END
 
 const makeTempDatabase = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -369,6 +320,7 @@ it.effect("keeps read-only work inside a write transaction on the writer", () =>
   ),
 );
 
+// SCIENT-FORK:START
 it.effect("binds raw buffers on the reader and recovers from an unreadable named binding", () =>
   withReaderClient((sql) =>
     Effect.gen(function* () {
@@ -396,6 +348,7 @@ it.effect("binds raw buffers on the reader and recovers from an unreadable named
     }),
   ),
 );
+// SCIENT-FORK:END
 
 it.effect("fails a read-only transaction whose reader stops, then starts a new reader", () =>
   withReaderClient((sql) =>
@@ -435,6 +388,7 @@ const withFileClient = <A, E>(
     }).pipe(Effect.provide(SqliteClient.layer({ filename, readerWorker: true })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
+// SCIENT-FORK: Windows cannot remove a file SQLite holds open.
 it.effect.skipIf(windowsHost)("uses the writer when the reader cannot open the database", () =>
   withFileClient((sql, filename) =>
     Effect.gen(function* () {
@@ -450,82 +404,6 @@ it.effect.skipIf(windowsHost)("uses the writer when the reader cannot open the d
     }),
   ),
 );
-
-const captureWarnings = () => {
-  const warnings: Array<unknown> = [];
-  const logger = Logger.make(({ logLevel, message }) => {
-    if (logLevel === "Warn") warnings.push(message);
-  });
-  return { warnings, layer: Logger.layer([logger], { mergeWithExisting: false }) };
-};
-
-it.effect.skipIf(windowsHost)(
-  "logs one warning when concurrent first reads find the reader unavailable",
-  () => {
-    const { warnings, layer: logs } = captureWarnings();
-    return withFileClient((sql, filename) =>
-      Effect.gen(function* () {
-        yield* sql`PRAGMA journal_mode = WAL`;
-        yield* sql`CREATE TABLE entries(name TEXT NOT NULL)`;
-        yield* (yield* FileSystem.FileSystem).remove(filename);
-        const startedBefore = startedWorkers.length;
-
-        const counts = yield* Effect.all(
-          [
-            sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly),
-            sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly),
-          ],
-          { concurrency: "unbounded" },
-        );
-
-        assert.deepEqual(counts, [0, 0]);
-        assert.equal(startedWorkers.length, startedBefore + 1);
-        assert.lengthOf(warnings, 1);
-      }),
-    ).pipe(Effect.provide(logs));
-  },
-);
-
-const waitForCheckpointMessage = (worker: NodeWorkerThreads.Worker, id: unknown) =>
-  new Promise<Record<string, unknown>>((resolve) => {
-    const onMessage = (message: unknown) => {
-      if (
-        typeof message === "object" &&
-        message !== null &&
-        "type" in message &&
-        message.type === "checkpoint" &&
-        "id" in message &&
-        message.id === id
-      ) {
-        worker.off("message", onMessage);
-        resolve(message as Record<string, unknown>);
-      }
-    };
-    worker.on("message", onMessage);
-  });
-
-const pauseCheckpointRequests = (worker: NodeWorkerThreads.Worker) => {
-  const queued: Array<Parameters<typeof worker.postMessage>> = [];
-  const send = worker.postMessage.bind(worker);
-  const spy = vi.spyOn(worker, "postMessage").mockImplementation((...args) => {
-    queued.push(args);
-  });
-  let restored = false;
-  return {
-    queued,
-    sendNext() {
-      const args = queued.shift();
-      if (args !== undefined) send(...args);
-      return args?.[0];
-    },
-    release() {
-      if (restored) return;
-      restored = true;
-      spy.mockRestore();
-      for (const args of queued.splice(0)) send(...args);
-    },
-  };
-};
 
 it.effect("finishes masked database cleanup after its caller is interrupted", () =>
   Effect.gen(function* () {

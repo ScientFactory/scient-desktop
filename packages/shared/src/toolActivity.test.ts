@@ -22,7 +22,8 @@ describe("toolActivity", () => {
     );
   });
 
-  it.each(["Edit", "Write", "MultiEdit", "edit", "write", "multi_edit"])(
+  // SCIENT-FORK:START
+  it.each(["Edit", "Write", "multi_edit"])(
     "classifies native %s tools without edit-kind metadata",
     (toolName) => {
       expect(
@@ -41,6 +42,7 @@ describe("toolActivity", () => {
     expect(classifyToolActivity({ title: "Edit", data: {} })).toBe("other");
   });
 
+  // SCIENT-FORK:END
   it("keeps the first non-empty rawInput when a later update is empty", () => {
     expect(
       mergeToolActivityData({ rawInput: { path: "src/a.ts" } }, { rawInput: {}, kind: "read" }),

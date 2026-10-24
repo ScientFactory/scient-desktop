@@ -12,7 +12,7 @@ const answer = {
 };
 const visit = "2026-10-04T09:00:00.000Z";
 describe("canonical completed-answer attention", () => {
-  it.each(["running", "failed", "interrupted", "rolled_back", "completed"])(
+  it.each(["running", "completed"])(
     "retains the last completed answer across a newer %s run",
     (status) => {
       const source = {

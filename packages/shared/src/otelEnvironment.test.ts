@@ -161,6 +161,7 @@ describe("OtelEnvironment", () => {
         logs: "Off",
         warnings: [],
       },
+      // SCIENT-FORK:START
       {
         name: "an exporter of none turns its signal off with no endpoint named",
         env: { OTEL_METRICS_EXPORTER: " NONE " },
@@ -217,6 +218,7 @@ describe("OtelEnvironment", () => {
           "OTEL_LOGS_EXPORTER names console, otlpp, which Scient does not export to, so they were ignored",
         ],
       },
+      // SCIENT-FORK:END
     ])("$name", ({ env, traces, metrics, logs, warnings }) =>
       Effect.gen(function* () {
         const resolved = yield* load(env);

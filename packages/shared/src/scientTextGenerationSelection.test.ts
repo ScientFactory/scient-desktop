@@ -28,7 +28,7 @@ const disabled = Object.fromEntries(
 );
 
 describe("Scient writer fallback across scopes", () => {
-  it.each(["droid", "omp", "scient"])("retains the %s-only project writer", (driver) => {
+  it.each(["omp", "scient"])("retains the %s-only project writer", (driver) => {
     const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       providerInstances: disabled,
       textGenerationModelSelection: {

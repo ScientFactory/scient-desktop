@@ -1,6 +1,7 @@
 // @effect-diagnostics globalDate:off -- A fixed instant keeps calendar-window assertions deterministic.
 import { describe, expect, it, vi } from "vite-plus/test";
 
+// SCIENT-FORK:START
 import { formatHourShort, formatUsdPrecise, makeWindow } from "./usageFormat.ts";
 
 describe("usage currency formatting", () => {
@@ -12,6 +13,7 @@ describe("usage currency formatting", () => {
     expect(formatUsdPrecise(12.5)).toBe("$12.50");
   });
 });
+// SCIENT-FORK:END
 
 describe("hourly usage formatting", () => {
   it("keeps requested zones separate when formatting repeated calls", () => {
