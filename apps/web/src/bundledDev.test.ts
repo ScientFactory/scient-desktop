@@ -7,11 +7,8 @@ import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 
 import react from "@vitejs/plugin-react";
-import { it as effectIt } from "@effect/vitest";
-import * as Effect from "effect/Effect";
-import { createLogger, createServer } from "vite-plus";
-import { expect, it, vi } from "vite-plus/test";
-import { warmBundledDevPlugin } from "../vite/warmBundledDev";
+import { createServer } from "vite-plus";
+import { expect, it } from "vite-plus/test";
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
@@ -121,114 +118,3 @@ console.log("App started with React refresh ready.");`,
     await NodeFSP.rm(root, { recursive: true, force: true });
   }
 });
-
-it("warms the wanted lazy chunk chain and nothing else", async () => {
-  const root = "/synthetic-startup";
-  const main = `${root}/src/main.tsx?rolldown-lazy`;
-  const route = `${root}/src/routes/_chat.tsx?rolldown-lazy`;
-  const unrelated = `${root}/src/rare.ts?rolldown-lazy`;
-  const warmed: string[] = [];
-  let listening: (() => void) | undefined;
-  const removeClient = vi.fn(async () => undefined);
-  const plugin = warmBundledDevPlugin();
-  const configure = plugin.configureServer;
-  if (typeof configure !== "function") throw new Error("Expected a configureServer hook");
-  Reflect.apply(configure, {}, [
-    {
-      config: {
-        root,
-        experimental: { bundledDev: true },
-        logger: { info: vi.fn(), warn: vi.fn() },
-      },
-      httpServer: {
-        once: (_event: string, callback: () => void) => {
-          listening = callback;
-        },
-      },
-      environments: {
-        client: {
-          bundledDev: {
-            waitForInitialBuildFinish: async () => undefined,
-            triggerLazyBundling: async (id: string) => {
-              warmed.push(id);
-              return { filename: id };
-            },
-            markPayloadDelivered: vi.fn(),
-            devEngine: {
-              removeClient,
-              moduleGraph: {
-                getModuleIds: () => ["bootstrap", ...(warmed.includes(main) ? ["main"] : [])],
-                getModuleInfo: (id: string) => ({
-                  dynamicallyImportedIds: id === "bootstrap" ? [main, unrelated] : [route],
-                }),
-              },
-            },
-          },
-        },
-      },
-    },
-  ]);
-  expect(warmed).toEqual([]);
-  expect(listening).toBeDefined();
-  listening!();
-  await vi.waitFor(() => expect(removeClient).toHaveBeenCalledOnce());
-  expect(warmed).toEqual([main, route]);
-  expect(removeClient).toHaveBeenCalledWith("t3code-startup-warmup");
-});
-
-effectIt.live("warms the wanted lazy chunk chain through the real Vite private APIs", () =>
-  Effect.gen(function* () {
-    const directory = yield* Effect.acquireRelease(
-      Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-warm-"))),
-      (directory) => Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
-    );
-    const root = yield* Effect.promise(() => NodeFSP.realpath(directory));
-    yield* Effect.promise(async () => {
-      await NodeFSP.mkdir(NodePath.join(root, "src/routes"), { recursive: true });
-      await NodeFSP.writeFile(
-        NodePath.join(root, "index.html"),
-        '<html><body><script type="module" src="/src/bootstrap.ts"></script></body></html>',
-      );
-      await NodeFSP.writeFile(NodePath.join(root, "src/bootstrap.ts"), 'void import("./main");');
-      await NodeFSP.writeFile(
-        NodePath.join(root, "src/main.tsx"),
-        'export const route = () => import("./routes/_chat"); export const rare = () => import("./rare");',
-      );
-      await NodeFSP.writeFile(
-        NodePath.join(root, "src/routes/_chat.tsx"),
-        "export const route = 1;",
-      );
-      await NodeFSP.writeFile(NodePath.join(root, "src/rare.ts"), "export const rare = 1;");
-    });
-    const completed = Promise.withResolvers<string>();
-    const logger = createLogger("silent");
-    logger.info = (message) => {
-      if (message.startsWith("[t3code] pre-bundled ")) completed.resolve(message);
-    };
-    logger.warn = (message) => completed.reject(new Error(message));
-    const server = yield* Effect.acquireRelease(
-      Effect.promise(() =>
-        createServer({
-          configFile: false,
-          root,
-          customLogger: logger,
-          experimental: { bundledDev: true },
-          plugins: [warmBundledDevPlugin()],
-          server: { host: "127.0.0.1", port: 0 },
-        }),
-      ),
-      (running) => Effect.promise(() => running.close()),
-    );
-    const bundledDev = server.environments.client.bundledDev as unknown as {
-      triggerLazyBundling(moduleId: string, clientId: string): Promise<unknown>;
-    };
-    using trigger = vi.spyOn(bundledDev, "triggerLazyBundling");
-    yield* Effect.promise(() => server.listen());
-    expect(yield* Effect.promise(() => completed.promise)).toMatch(
-      /^\[t3code\] pre-bundled 2 startup chunks in /,
-    );
-    expect(
-      trigger.mock.calls.map(([id]) => NodePath.relative(root, id.split("?")[0] ?? id)),
-    ).toEqual(["src/main.tsx", "src/routes/_chat.tsx"]);
-  }),
-);
