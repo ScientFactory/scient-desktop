@@ -59,6 +59,7 @@ import {
   publicationLeaseBindings,
   decodeRetainedRecord,
   readRetainedRecord,
+  type RetainedRecord,
   retainedFileNames,
   retainedMutationReceipt,
   retainedPaths,
@@ -508,13 +509,37 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     }
   };
   /**
-   * A kept record that is finished: a version 2 journal at `done`. Nothing makes
-   * it unfinished again, and its target, mutation id, outcome and published
-   * revision never change. Anything else may still change: settlement finishes
-   * an unfinished one, an index without its journal yet is a write in flight,
-   * and an unreadable journal is unknown.
+   * A kept record that is finished: a version 2 journal at `done` with no
+   * discard under way. Its target, mutation id, outcome and published revision
+   * never change. Anything else may still change: settlement finishes an
+   * unfinished one or an interrupted discard, an index without its journal yet
+   * is a write in flight, and an unreadable journal is unknown.
    */
-  const finished = (entry: Stored) => entry.record?.version === 2 && entry.record.phase === "done";
+  const finished = (entry: Stored) =>
+    entry.record?.version === 2 &&
+    entry.record.phase === "done" &&
+    (entry.record.discarding ?? []).length === 0;
+  /**
+   * Removes the copies a discard names, each before its view (a view made
+   * meanwhile is then removed too, or never made), syncs the folder and only
+   * then drops the mark. Each step may already have happened.
+   */
+  const finishDiscard = async (directory: string, record: RetainedRecord) => {
+    if (record.version !== 2) return;
+    const extension = NodePath.extname(record.target),
+      safeExtension = /^\.[a-zA-Z0-9]{1,16}$/u.test(extension) ? extension : ".txt";
+    for (const leaf of record.discarding ?? [])
+      for (const name of [leaf, `view-${leaf}${safeExtension}`])
+        await NodeFSP.unlink(NodePath.join(directory, name)).catch((e: NodeJS.ErrnoException) => {
+          if (e.code !== "ENOENT") throw e;
+        });
+    await syncDirectory(directory);
+    const { discarding: _, ...rest } = record;
+    await durableJson(NodePath.join(directory, "record.json"), {
+      ...rest,
+      generation: record.generation + 1,
+    });
+  };
   /**
    * Finished records already read, by their place in a store, with how their
    * folders and journal stood just before they were read. A finished journal
@@ -758,8 +783,15 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   ) => {
     let settled = false;
     for (const { directory, record, mutationId } of records) {
-      if (!record || record.version !== 2 || record.phase === "done" || directory === skipDirectory)
+      if (!record || record.version !== 2 || directory === skipDirectory) continue;
+      if (record.phase === "done") {
+        // A discard a crash interrupted: this lease holds the record, so finish it.
+        if ((record.discarding ?? []).length > 0) {
+          settled = true;
+          await finishDiscard(directory, record);
+        }
         continue;
+      }
       settled = true;
       if (
         !record.binding ||
@@ -3117,17 +3149,22 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                 "An active retained object cannot be discarded.",
                 found.mutationId,
               );
-            if (!found.record.discarded.includes(match[2]!))
-              await durableJson(NodePath.join(found.directory, "record.json"), {
-                ...found.record,
-                discarded: [...found.record.discarded, match[2]],
-                generation: found.record.generation + 1,
-              });
-          } else
-            await durableJson(NodePath.join(found.directory, `discard-${match[2]}.json`), {
-              version: 1,
-              discarded: true,
-            });
+            const leaf = match[2] as (typeof retainedFileNames)[number];
+            // The mark is durable before anything goes; the removals finish under it.
+            const marked = {
+              ...found.record,
+              discarded: [...new Set([...found.record.discarded, leaf])],
+              discarding: [...new Set([...(found.record.discarding ?? []), leaf])],
+              generation: found.record.generation + 1,
+            };
+            await durableJson(NodePath.join(found.directory, "record.json"), marked);
+            await finishDiscard(found.directory, marked);
+            return { versionId: input.versionId };
+          }
+          await durableJson(NodePath.join(found.directory, `discard-${match[2]}.json`), {
+            version: 1,
+            discarded: true,
+          });
           await NodeFSP.unlink(NodePath.join(found.directory, match[2]!)).catch(
             (e: NodeJS.ErrnoException) => {
               if (e.code !== "ENOENT") throw e;

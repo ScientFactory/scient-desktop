@@ -113,8 +113,8 @@ change, and no other:
 
 - its own record;
 - every record not finished: settlement may finish it. This includes an index
-  whose journal is not written yet (a write in flight) and a journal that
-  cannot be read.
+  whose journal is not written yet (a write in flight), a journal that cannot
+  be read, and a finished record with a discard under way (below).
 
 Settled reads, the workspace epoch and the publication fence (`withRoot`) and
 listing one file's versions hold only unfinished records too; a discard holds
@@ -140,6 +140,17 @@ records accumulate, that a save succeeds beside 300 finished records, that a
 file with 300 versions lists and discards them, and that reads and the epoch
 succeed beside 260 accepted attentions; the benchmark's `incoming 300` case
 syncs 300 new files into one folder.
+
+A discard marks the version in the journal (`discarded`, and `discarding`
+until it is done) and syncs that before anything goes, then removes the copy,
+then its view, syncs the folder and only then drops `discarding`. A crash at
+any point leaves the mark: the record then counts as unfinished, so the next
+settled read, epoch or write that finds it holds it and finishes the removals
+(each may already have happened). Without the mark a discard killed between
+the copy and its view left the view holding the old bytes, hidden from the
+listing yet counted against the retention budget
+(`RetainedDiscard.crash.test.ts` kills a child before the copy goes, between
+the two, and after both).
 
 Finding the records still reads every record its store keeps, on each
 discovery (several per write). A finished record already read is taken from

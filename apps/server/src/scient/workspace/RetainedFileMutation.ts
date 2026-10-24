@@ -117,6 +117,14 @@ const Journal = Schema.Struct({
   retainedAt: Schema.Number,
   generation: Schema.Number,
   discarded: Schema.Array(Schema.String),
+  /**
+   * Copies a discard is removing: written (with `discarded`) before the first
+   * removal and dropped once the copy and its view are gone and synced, so a
+   * discard a crash interrupts is found and finished (`settle`).
+   */
+  discarding: Schema.optionalKey(
+    Schema.Array(Schema.Literals(["slot", "retained", "provisional"])),
+  ),
   reviewedBinding: Schema.NullOr(Binding),
   reviewedRevision: Schema.NullOr(Schema.String),
   outcome: Schema.NullOr(Schema.Literals(["done", "skipped", "attention"])),
