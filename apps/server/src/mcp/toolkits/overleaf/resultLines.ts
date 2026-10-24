@@ -277,25 +277,58 @@ const refusalLine = (refusal: ScientOverleafRefusal): string => {
 const sendTense = (publication: ScientOverleafPublication): SendTense =>
   publication._tag === "accepted" ? "sent" : publication._tag === "unknown" ? "maybe" : "unsent";
 
+/**
+ * What came in, as far as the apply's outcome establishes it. Only a complete apply
+ * proves Overleaf's changes are in the folder; a replanned one wrote nothing; one
+ * that needs attention may have stopped partway.
+ */
+const incomingLines = (result: Extract<ScientOverleafSyncResult, { _tag: "synced" }>): string[] => {
+  const incoming = result.review.incoming;
+  const changes = `${plural(incoming.length, "file")} (${named(incoming.map(changeText))})`;
+  switch (result.outcome) {
+    case "complete":
+      return incoming.length === 0
+        ? []
+        : [
+            `${plural(incoming.length, "file")} came in from Overleaf: ${named(incoming.map(changeText))}.`,
+          ];
+    case "replan":
+      return [
+        incoming.length === 0
+          ? "A file here changed while the sync was applying, so nothing was written to the folder. Sync again."
+          : `Overleaf's changes to ${changes} were not brought in: a file here changed while the sync was applying them, so nothing was written. Sync again.`,
+      ];
+    default: {
+      const reasons = [
+        ...(result.interrupted > 0
+          ? [
+              `applying stopped partway in ${plural(result.interrupted, "file group")}, which the next sync shows as conflicts to settle`,
+            ]
+          : []),
+        ...(result.markerPaths.length > 0 ? ["files have conflict marks"] : []),
+        ...(result.interrupted === 0 && result.markerPaths.length === 0
+          ? ["a file or a kept copy changed while the changes were written"]
+          : []),
+      ].join("; ");
+      return [
+        incoming.length === 0
+          ? `Part of the folder needs attention: ${reasons}. Check scient_overleaf_status before syncing again.`
+          : `Overleaf's changes to ${changes} were applied as far as the folder allowed, and part of it needs attention: ${reasons}. Check scient_overleaf_status before syncing again.`,
+      ];
+    }
+  }
+};
+
 /** A sync's result lines, in the order a person reads them. */
 export const syncLines = (result: ScientOverleafSyncResult): string[] => {
   switch (result._tag) {
     case "synced": {
-      const lines: string[] = [];
-      const incoming = result.review.incoming;
-      if (incoming.length > 0)
-        lines.push(
-          `${plural(incoming.length, "file")} came in from Overleaf: ${named(incoming.map(changeText))}.`,
-        );
+      const lines: string[] = [...incomingLines(result)];
       lines.push(...publicationLines(result.publication, result.review, result.markerPaths));
       if (lines.length === 0) lines.push("Up to date: nothing came in and nothing needed sending.");
       if (result.retried) lines.push("Overleaf changed while sending, so one new sync ran.");
       lines.push(...fileLines(result.review));
       lines.push(...warningLines(result.review.warnings, sendTense(result.publication)));
-      if (result.interrupted > 0)
-        lines.push(
-          `${plural(result.interrupted, "file group")} an interrupted earlier sync left half done ${result.interrupted === 1 ? "was" : "were"} settled.`,
-        );
       if (result.publication._tag !== "blocked" || result.publication.reason !== "markers") {
         const marked = [...new Set([...result.markerPaths, ...result.review.unresolvedMarkers])];
         if (marked.length > 0) lines.push(markerLine(marked));

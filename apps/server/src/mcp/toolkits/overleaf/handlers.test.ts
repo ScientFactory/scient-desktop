@@ -513,7 +513,7 @@ describe("Overleaf tool handlers", () => {
                   review,
                   adopted: {
                     applyId: "x",
-                    outcome: "applied",
+                    outcome: "complete",
                     interrupted: [],
                     markerPaths: [],
                     baseGeneration: 1,
@@ -555,6 +555,177 @@ describe("Overleaf tool handlers", () => {
       expect(refused).toContain(
         "Nothing was sent: the folder, the project's workspace or the Overleaf token changed before sending. Sync again.",
       );
+    }),
+  );
+
+  it.effect("claims incoming changes only when the apply completed", () =>
+    Effect.gen(function* () {
+      const review = (incoming: ReadonlyArray<unknown>) => ({
+        reviewId: "r",
+        digest: "d",
+        remoteTree: "b".repeat(40),
+        upToDate: false,
+        needsDecision: false,
+        incoming,
+        outgoing: [],
+        conflicts: [],
+        warnings: [],
+        unresolvedMarkers: [],
+        collisions: [],
+        selectedAdditions: [],
+        additions: [],
+        localOnly: [],
+      });
+      const linesFor = (
+        outcome: string,
+        options?: {
+          readonly incoming?: ReadonlyArray<unknown>;
+          readonly interrupted?: ReadonlyArray<ReadonlyArray<string>>;
+          readonly markerPaths?: ReadonlyArray<string>;
+        },
+      ) =>
+        overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+          provide(
+            fakeOverleaf({
+              sync: () =>
+                Effect.succeed({
+                  _tag: "synced",
+                  review: review(options?.incoming ?? [{ kind: "modified", path: "main.tex" }]),
+                  adopted: {
+                    applyId: "x",
+                    outcome,
+                    interrupted: options?.interrupted ?? [],
+                    markerPaths: options?.markerPaths ?? [],
+                    baseGeneration: 1,
+                  },
+                  publication: { _tag: "none" },
+                  retried: false,
+                  activity: [],
+                  linkedElsewhere: false,
+                }) as never,
+            }),
+          ),
+          Effect.map((result) => result.lines),
+        );
+      expect((yield* linesFor("complete"))[0]).toBe("1 file came in from Overleaf: main.tex.");
+      const replanned = yield* linesFor("replan");
+      expect(replanned.some((line) => line.includes("came in"))).toBe(false);
+      expect(replanned[0]).toContain("were not brought in: a file here changed");
+      expect((yield* linesFor("replan", { incoming: [] }))[0]).toContain(
+        "nothing was written to the folder",
+      );
+      const interrupted = yield* linesFor("attention", { interrupted: [["main.tex"]] });
+      expect(interrupted.some((line) => line.includes("came in"))).toBe(false);
+      expect(interrupted[0]).toContain("applying stopped partway in 1 file group");
+      expect(
+        (yield* linesFor("attention", { incoming: [], interrupted: [["a.tex"]] }))[0],
+      ).toContain("Part of the folder needs attention");
+      expect((yield* linesFor("attention", { markerPaths: ["main.tex"] }))[0]).toContain(
+        "files have conflict marks",
+      );
+    }),
+  );
+
+  it.effect("a restore or preview after a relink reports the folder it ran in", () =>
+    Effect.gen(function* () {
+      const moved = {
+        ...summary,
+        checkoutRoot: "/projects/main-2",
+        folder: "moved-paper",
+        linkedHere: false,
+      };
+      // The first `staleLists` lookups see `paper`; the relink lands before the retry.
+      const relinking = (operation: Partial<OverleafSyncShape>, staleLists: number) => {
+        let listed = 0;
+        let calls = 0;
+        return fakeOverleaf({
+          list: () => Effect.sync(() => [++listed <= staleLists ? summary : moved]),
+          keptCopies: () => Effect.succeed([]),
+          ...Object.fromEntries(
+            Object.entries(operation).map(([name, succeed]) => [
+              name,
+              () =>
+                Effect.suspend(() =>
+                  ++calls === 1
+                    ? Effect.fail(new OverleafSyncRefusedError({ reason: "folder-changed" }))
+                    : (succeed as () => Effect.Effect<unknown>)(),
+                ),
+            ]),
+          ),
+        } as Partial<OverleafSyncShape>);
+      };
+      const restored = yield* overleafKeptCopiesForInvocation({
+        connectionId: "c-1",
+        restore: { applyId: "a", kept: "k", keptRevision: "r", currentRevision: null },
+      }).pipe(
+        // The restore looks the link up once before its save, then once per attempt.
+        provide(relinking({ restoreKept: () => Effect.succeed({ _tag: "restored" }) } as never, 2)),
+      );
+      expect(restored.restored).toBe("restored");
+      expect(restored.link).toMatchObject({
+        folder: "moved-paper",
+        checkoutRoot: "/projects/main-2",
+      });
+      expect(restored.lines[0]).toContain("the copy of the project at /projects/main-2");
+
+      const previewed = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
+        provide(
+          relinking(
+            {
+              preview: () => Effect.succeed({ _tag: "refused", refusal: { reason: "walk-limit" } }),
+            } as never,
+            1,
+          ),
+        ),
+      );
+      expect(previewed.link.folder).toBe("moved-paper");
+      expect(previewed.lines[0]).toContain("the copy of the project at /projects/main-2");
+    }),
+  );
+
+  it.effect("names files the rule skips, files kept only here, and files too large to send", () =>
+    Effect.gen(function* () {
+      const previewed = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
+        provide(
+          fakeOverleaf({
+            preview: () =>
+              Effect.succeed({
+                _tag: "review",
+                review: {
+                  reviewId: "r",
+                  digest: "d",
+                  remoteTree: "b".repeat(40),
+                  upToDate: true,
+                  needsDecision: false,
+                  incoming: [],
+                  outgoing: [],
+                  conflicts: [],
+                  warnings: [],
+                  unresolvedMarkers: [],
+                  collisions: [],
+                  selectedAdditions: [],
+                  additions: [
+                    { path: "main.aux", size: 4, selected: false, skippedBecause: "build-output" },
+                    {
+                      path: "data.bin",
+                      size: 60_000_000,
+                      selected: false,
+                      skippedBecause: "too-large",
+                    },
+                  ],
+                  localOnly: ["notes.tex"],
+                },
+              }) as never,
+          }),
+        ),
+      );
+      // An up-to-date preview still says what stays here, and how to send it.
+      expect(previewed.lines).toEqual([
+        "Up to date: nothing would come in or be sent.",
+        "New files not sent by the rule: main.aux (build output). Send one with files.send.",
+        "New files over Overleaf's 50 MB limit stay only on this computer: data.bin.",
+        "Kept only on this computer: notes.tex. Send one with files.send.",
+      ]);
     }),
   );
 });

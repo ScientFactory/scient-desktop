@@ -633,7 +633,9 @@ export const overleafKeptCopiesForInvocation = Effect.fn("ScientOverleafToolkit.
   }) {
     const overleaf = yield* OverleafSync;
     const caller = yield* callerOf;
-    const link = yield* linkFor(overleaf, caller, input.connectionId);
+    // A restore saves editors first and may find the link moved; the result names the
+    // folder it finally ran in.
+    let link = yield* linkFor(overleaf, caller, input.connectionId);
     const lines: string[] = [];
     let restored: "restored" | "stale" | "unknown-copy" | "duplicate" | null = null;
     if (input.restore !== undefined) {
@@ -644,7 +646,7 @@ export const overleafKeptCopiesForInvocation = Effect.fn("ScientOverleafToolkit.
       const path =
         before.find((copy) => copy.applyId === restore.applyId && copy.kept === restore.kept)
           ?.relativePath ?? "the file";
-      const { value: result } = yield* afterSavingEditors(
+      const saved = yield* afterSavingEditors(
         overleaf,
         caller,
         link.connectionId,
@@ -658,6 +660,8 @@ export const overleafKeptCopiesForInvocation = Effect.fn("ScientOverleafToolkit.
             savedFolder,
           }),
       );
+      link = saved.link;
+      const result = saved.value;
       restored = result._tag;
       lines.push(
         result._tag === "restored"

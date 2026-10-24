@@ -26,7 +26,6 @@ import {
 import {
   overleafConnectForInvocation,
   overleafKeptCopiesForInvocation,
-  overleafPreviewForInvocation,
   overleafStatusForInvocation,
   overleafSyncForInvocation,
 } from "./handlers.ts";
@@ -42,7 +41,9 @@ const asThread = (threadId: string) =>
 
 /**
  * A thread in the main checkout and one in a worktree of the same project, the
- * tools over the real service, and the paper brought in by connect and a first sync.
+ * tools over the real service, and the paper linked and brought in through the
+ * service itself (the connect tool has its own test), so each test spends its
+ * real Git round trips on what it checks.
  */
 const connectedPaper = Effect.gen(function* () {
   const w = yield* overleafSyncWorld({ overleaf: { [PROJECT]: { "main.tex": "line\n" } } });
@@ -58,53 +59,39 @@ const connectedPaper = Effect.gen(function* () {
         Effect.provideService(OverleafEditorSave, saver.service),
       );
   const folder = NodePath.join(w.main, "paper");
-
-  const connected = yield* overleafConnectForInvocation({
-    project: `https://www.overleaf.com/project/${PROJECT}`,
-    mode: "new-folder",
+  const connected = yield* w.service.connect({
+    caller: w.at(w.main),
     folder: "paper",
-  }).pipe(as("main-thread"));
-  if (connected.result._tag !== "done") return yield* Effect.die(connected);
-  const connectionId = connected.result.connection.connectionId;
-  // The result shows what the first sync will bring in, before anything changes.
-  expect(connected.firstSync).toMatchObject({ _tag: "review" });
-  expect(connected.lines).toContain("Would bring in 1 file: main.tex (new).");
-  expect(connected.suggestNewFolder).toBe(false);
-  expect(yield* read(folder, "main.tex")).toBeNull();
-
-  const first = yield* overleafSyncForInvocation({ connectionId }).pipe(as("main-thread"));
-  expect(first.result).toMatchObject({ _tag: "synced", publication: { _tag: "none" } });
-  expect(first.lines[0]).toBe("1 file came in from Overleaf: main.tex (new).");
+    create: true,
+    project: PROJECT,
+    requestId: "c1",
+  });
+  if (connected._tag !== "connected") return yield* Effect.die(connected);
+  const connectionId = connected.connection.connectionId;
+  yield* w.service.sync({ caller: w.at(w.main), connectionId, requestId: "s1" });
   expect(yield* read(folder, "main.tex")).toBe("line\n");
-
   return { w, as, saver, folder, connectionId };
 });
 
 describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
-  it.live("connects with a first-sync preview, then stops for a conflict and settles it", () =>
+  it.live("stops for a conflict, then settles it with the reviewed choice", () =>
     runOverleafSync(
       Effect.gen(function* () {
         const { w, as, saver, folder, connectionId } = yield* connectedPaper;
-        // Edits on both sides: the preview shows the conflict and changes nothing.
+        // Edits on both sides: the sync stops on the conflict and changes nothing.
         yield* write(folder, { "main.tex": "mine\n" });
         yield* w.collaborate(PROJECT, { "main.tex": "theirs\n" });
-        const preview = yield* overleafPreviewForInvocation({ connectionId }).pipe(
-          as("main-thread"),
-        );
-        if (preview.preview._tag !== "review") return yield* Effect.die(preview);
-        expect(preview.preview.review.needsDecision).toBe(true);
-        const key = preview.preview.review.conflicts[0]!.key;
-        expect(
-          preview.lines.some((line) => line.startsWith(`- key ${key}: main.tex; allowed:`)),
-        ).toBe(true);
-        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "theirs\n" });
-
         const stopped = yield* overleafSyncForInvocation({ connectionId }).pipe(as("main-thread"));
         if (stopped.result._tag !== "needs-decision") return yield* Effect.die(stopped);
         const reviewedRemote = stopped.result.review.remoteTree;
+        const key = stopped.result.review.conflicts[0]!.key;
         expect(stopped.lines[0]).toBe("Nothing was applied or sent.");
         expect(stopped.lines[1]).toContain(`reviewedRemote ${reviewedRemote}`);
+        expect(
+          stopped.lines.some((line) => line.startsWith(`- key ${key}: main.tex; allowed:`)),
+        ).toBe(true);
         expect(yield* read(folder, "main.tex")).toBe("mine\n");
+        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "theirs\n" });
 
         const settled = yield* overleafSyncForInvocation({
           connectionId,
@@ -121,30 +108,29 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
         expect(kept.copies.map((copy) => copy.relativePath)).toEqual(["main.tex"]);
         expect(kept.lines[0]).toBe("1 kept copy:");
 
-        // Every call that may write saved the linked folder's editors first: connect's
-        // first-sync preview, the first sync, the preview, and both syncs after it.
+        // Both syncs saved the linked folder's editors first.
         expect(saver.calls).toEqual(
-          Array.from({ length: 5 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
+          Array.from({ length: 2 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
         );
       }),
     ),
   );
 
-  it.live("sends edits, and from another worktree syncs the linked copy and says so", () =>
+  it.live("from another worktree syncs and sends from the linked copy, and says so", () =>
     runOverleafSync(
       Effect.gen(function* () {
         const { w, as, saver, folder, connectionId } = yield* connectedPaper;
-        // An edit here is sent, and the result says so.
-        yield* write(folder, { "main.tex": "theirs, edited here\n" });
-        const sent = yield* overleafSyncForInvocation({ connectionId }).pipe(as("main-thread"));
-        expect(sent.result).toMatchObject({ _tag: "synced", publication: { _tag: "accepted" } });
-        expect(sent.lines[0]).toMatch(/^Sent 1 file to Overleaf \(send #\d+\): main\.tex\.$/u);
-        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "theirs, edited here\n" });
-
-        // From another worktree the tools act on the linked copy, and say so.
+        // From another worktree the tools act on the linked copy, send its edit, and say so.
         yield* write(folder, { "main.tex": "edited in main\n" });
         const fromWorktree = yield* overleafSyncForInvocation({ connectionId }).pipe(
           as("worktree-thread"),
+        );
+        expect(fromWorktree.result).toMatchObject({
+          _tag: "synced",
+          publication: { _tag: "accepted" },
+        });
+        expect(fromWorktree.lines[1]).toMatch(
+          /^Sent 1 file to Overleaf \(send #\d+\): main\.tex\.$/u,
         );
         expect(fromWorktree.link).toMatchObject({ checkoutRoot: w.main, linkedElsewhere: true });
         expect(fromWorktree.lines[0]).toBe(
@@ -155,10 +141,9 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
         expect(status.connections).toMatchObject([{ connectionId, linkedHere: false }]);
         expect(status.lines).toContain("No edits to send since the last sync.");
 
-        // Every call that may write saved the linked folder's editors first, in the
-        // linked copy: connect's first-sync preview and the three syncs.
+        // The sync saved the linked folder's editors first, in the linked copy.
         expect(saver.calls).toEqual(
-          Array.from({ length: 4 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
+          Array.from({ length: 1 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
         );
       }),
     ),
@@ -179,12 +164,6 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
         );
         expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "line\n" });
 
-        const preview = yield* overleafPreviewForInvocation({ connectionId }).pipe(
-          as("main-thread"),
-        );
-        expect(preview.lines).toContain(
-          "Kept only on this computer: notes.tex. Send one with files.send.",
-        );
         const sent = yield* overleafSyncForInvocation({
           connectionId,
           files: { send: ["notes.tex"] },
@@ -198,39 +177,65 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
     ),
   );
 
-  it.live("suggests a new folder when a linked folder looks like more than a paper", () =>
-    runOverleafSync(
-      Effect.gen(function* () {
-        const w = yield* overleafSyncWorld();
-        w.threadRoots.set("main-thread", w.main);
-        yield* write(w.main, {
-          "paper.tex": "x",
-          ...Object.fromEntries(
-            ["a.py", "b.py", "c.csv", "d.ipynb", "e.json"].map((name) => [`analysis/${name}`, "1"]),
-          ),
-        });
-        const connected = yield* overleafConnectForInvocation({
-          project: PROJECT,
-          mode: "link-folder",
-          folder: "",
-        }).pipe(
-          Effect.provideService(
-            AgentInvocationContext.AgentInvocationContext,
-            asThread("main-thread"),
-          ),
-          Effect.provideService(OverleafSync, w.service),
-          Effect.provideService(OverleafEditorSave, recordingEditorSave({ _tag: "saved" }).service),
-        );
-        expect(connected.result).toMatchObject({ _tag: "done" });
-        expect(connected.suggestNewFolder).toBe(true);
-        expect(
-          connected.lines.some((line) =>
-            line.startsWith("This folder looks like more than a paper"),
-          ),
-        ).toBe(true);
-        // Information only: the link is made and nothing was sent.
-        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "from Overleaf" });
-      }),
-    ),
+  it.live(
+    "connects with a first-sync preview, and suggests a new folder for more than a paper",
+    () =>
+      runOverleafSync(
+        Effect.gen(function* () {
+          const w = yield* overleafSyncWorld();
+          w.threadRoots.set("main-thread", w.main);
+          w.threadRoots.set("worktree-thread", w.worktree);
+          const saver = recordingEditorSave({ _tag: "saved" });
+          const as =
+            (threadId: string) =>
+            <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+              effect.pipe(
+                Effect.provideService(
+                  AgentInvocationContext.AgentInvocationContext,
+                  asThread(threadId),
+                ),
+                Effect.provideService(OverleafSync, w.service),
+                Effect.provideService(OverleafEditorSave, saver.service),
+              );
+          // A new folder: the result shows what the first sync will bring in, changing nothing.
+          const fresh = yield* overleafConnectForInvocation({
+            project: `https://www.overleaf.com/project/${PROJECT}`,
+            mode: "new-folder",
+            folder: "paper",
+          }).pipe(as("worktree-thread"));
+          expect(fresh.result).toMatchObject({ _tag: "done" });
+          expect(fresh.firstSync).toMatchObject({ _tag: "review" });
+          expect(fresh.lines).toContain("Would bring in 1 file: main.tex (new).");
+          expect(fresh.suggestNewFolder).toBe(false);
+          expect(yield* read(NodePath.join(w.worktree, "paper"), "main.tex")).toBeNull();
+          // The preview saved the new folder's editors first.
+          expect(saver.calls).toEqual([{ checkoutRoot: w.worktree, folder: "paper" }]);
+
+          // Another copy linking its top folder, which holds analysis too.
+          yield* write(w.main, {
+            "paper.tex": "x",
+            ...Object.fromEntries(
+              ["a.py", "b.py", "c.csv", "d.ipynb", "e.json"].map((name) => [
+                `analysis/${name}`,
+                "1",
+              ]),
+            ),
+          });
+          const connected = yield* overleafConnectForInvocation({
+            project: PROJECT,
+            mode: "link-folder",
+            folder: "",
+          }).pipe(as("main-thread"));
+          expect(connected.result).toMatchObject({ _tag: "done" });
+          expect(connected.suggestNewFolder).toBe(true);
+          expect(
+            connected.lines.some((line) =>
+              line.startsWith("This folder looks like more than a paper"),
+            ),
+          ).toBe(true);
+          // Information only: the link is made and nothing was sent.
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "from Overleaf" });
+        }),
+      ),
   );
 });

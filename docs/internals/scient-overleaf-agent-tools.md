@@ -77,6 +77,11 @@ earlier receipt instead of running again; a retried tool call is a new request.
   choices were not applied.
 - **Cancel** asks the link's running sync (in this server) to stop at its next
   stage boundary; an apply or send in progress finishes.
+- **Incoming wording.** Overleaf's changes are said to have come in only when the
+  apply completed. A replanned apply wrote nothing (a file changed while it was
+  applied: sync again); one that needs attention may have stopped partway, and
+  the result says why (interrupted file groups, conflict marks, or a file or kept
+  copy that changed).
 - **Send wording.** Renames and older versions are said as done only when
   Overleaf accepted the send; for a send with no answer the result says they may
   have been sent, and when nothing was sent it says so and leaves them for the
