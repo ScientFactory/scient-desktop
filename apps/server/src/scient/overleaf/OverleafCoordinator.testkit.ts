@@ -10,7 +10,9 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Scope from "effect/Scope";
 
 import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
 import {
@@ -79,6 +81,8 @@ export const world = (input: {
   readonly at?: (point: Point) => Effect.Effect<void>;
   /** Runs at the native publication hooks of every step the applier takes. */
   readonly native?: (point: MutationPoint, folder: string, stateRoot: string) => Promise<void>;
+  /** Runs just before the applier takes each step, with the step's path. */
+  readonly beforeStep?: (path: string, folder: string) => Promise<void>;
   /** Wraps the real applier, to shape what it reports. */
   readonly applier?: (real: WorkspaceApplier["Service"]) => WorkspaceApplier["Service"];
   readonly limits?: OverleafCoordinator.OverleafCoordinatorOptions["limits"];
@@ -123,13 +127,22 @@ export const world = (input: {
     const repos = yield* OverleafRepository.make.pipe(
       Effect.provideService(OverleafGitExecutor.OverleafGitExecutor, git),
     );
-    const store = yield* OverleafStateStore.make({ root: stateRoot, volumeUuid });
+    // The store has a scope of its own, so a restart can release its lease.
+    let storeScope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(storeScope, Exit.void));
+    const store = yield* OverleafStateStore.make({ root: stateRoot, volumeUuid }).pipe(
+      Scope.provide(storeScope),
+    );
     const files = yield* makeApplierFiles({
       root,
       helper,
       retainedHooks: { at: async (point) => input.native?.(point, folder, stateRoot) },
     });
-    const applier = yield* makeApplier().pipe(Effect.provideService(WorkspaceFileSystem, files));
+    const applier = yield* makeApplier({
+      at: async (point, path) => {
+        if (point === "before-step" && path !== undefined) await input.beforeStep?.(path, folder);
+      },
+    }).pipe(Effect.provideService(WorkspaceFileSystem, files));
     const barrier = makeCheckoutBarrier();
     const registry = makeOverleafReviewRegistry();
 
@@ -341,6 +354,33 @@ export const world = (input: {
       },
       /** With `git`: a collaborator's commit of `contents` on Overleaf's head. */
       collaborate,
+      /**
+       * A server restart: the store's lease is released and a new store and coordinator,
+       * with nothing in memory, take over the same state folder.
+       */
+      restart: Effect.fnUntraced(function* () {
+        yield* Scope.close(storeScope, Exit.void);
+        storeScope = yield* Scope.make();
+        const next = yield* OverleafStateStore.make({ root: stateRoot, volumeUuid }).pipe(
+          Scope.provide(storeScope),
+        );
+        // Reviews live in memory: none survives a restart.
+        const coordinator = yield* OverleafCoordinator.make({
+          ...options,
+          registry: makeOverleafReviewRegistry(),
+        }).pipe(
+          Effect.provideService(OverleafStateStore.OverleafStateStore, next),
+          Effect.provideService(OverleafRepository.OverleafRepository, repos),
+          Effect.provideService(WorkspaceApplier, applier),
+          Effect.provideService(CheckoutBarrier, makeCheckoutBarrier()),
+        );
+        return { store: next, coordinator };
+      }),
+      /** Drops every object of the private repository that no ref reaches. */
+      collectGarbage: Effect.gen(function* () {
+        yield* git.execute({ cwd: repo, args: ["reflog", "expire", "--expire=now", "--all"] });
+        yield* git.execute({ cwd: repo, args: ["gc", "-q", "--prune=now"] });
+      }),
       /** With `git`: replaces Overleaf's history with commits of `chain`, oldest first (forced). */
       rewriteHistory: Effect.fnUntraced(function* (chain: ReadonlyArray<Record<string, string>>) {
         let last: string | undefined;
