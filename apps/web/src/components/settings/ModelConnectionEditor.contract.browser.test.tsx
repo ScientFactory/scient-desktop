@@ -142,7 +142,20 @@ async function editor(
   const optionLabel = (value: string) => optionLabels.get(value) ?? value;
   const select = async (label: string, value: string) => {
     await userEvent.click(control(label));
-    await page.getByRole("option", { name: optionLabel(value), exact: true }).click();
+    try {
+      await page
+        .getByRole("option", { name: optionLabel(value), exact: true })
+        .click({ timeout: 10_000 });
+    } catch (cause) {
+      // Say what the menu looked like, so a CI-only failure is readable from the log.
+      const menu = {
+        expanded: control(label)?.getAttribute("aria-expanded"),
+        options: [...document.querySelectorAll('[role="option"]')].map((o) => o.textContent),
+      };
+      throw new Error(`Option "${optionLabel(value)}" never appeared: ${JSON.stringify(menu)}`, {
+        cause,
+      });
+    }
   };
   const item = async (value: string) => {
     await userEvent.click(control("Reasoning"));
@@ -155,6 +168,16 @@ async function editor(
       ? { disabled: option.getAttribute("aria-disabled") === "true" }
       : undefined;
     await userEvent.keyboard("{Escape}");
+    // Wait for the menu to finish closing (its options stay mounted, hidden): on a slow runner
+    // the next click otherwise lands on the still-open menu and closes it instead.
+    await vi.waitFor(() => {
+      expect(control("Reasoning").getAttribute("aria-expanded")).toBe("false");
+      expect(
+        [...document.querySelectorAll<HTMLElement>('[role="option"]')].some((o) =>
+          o.checkVisibility(),
+        ),
+      ).toBe(false);
+    });
     return state;
   };
   const submit = async () => {
