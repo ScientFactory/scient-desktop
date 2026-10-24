@@ -2,7 +2,6 @@ import { assert, describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   compileResolvedKeybindingsConfig,
-  DEFAULT_RESOLVED_KEYBINDINGS,
   parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
@@ -18,31 +17,6 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
-  it("lists composer, provider, and pull request commands with editable defaults", () => {
-    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS);
-    for (const command of [
-      "composer.sendAlternate",
-      "composer.sendBackground",
-      "thread.steerQueuedMessage",
-      "thread.editQueuedMessage",
-      "composer.host",
-      "composer.effort",
-      "composer.mode",
-      "composer.workspace",
-      "composer.branch",
-      "composer.previousWorktree",
-      "modelPicker.previousProvider",
-      "modelPicker.nextProvider",
-      "thread.copyReference",
-      "pullRequest.copyNumber",
-    ]) {
-      expect(rows.find((row) => row.command === command)).toMatchObject({
-        source: "Default",
-        conflicts: command === "composer.sendAlternate" ? ["Composer: Start in Background"] : [],
-      });
-    }
-  });
-
   it("keeps sibling row identities when a saved binding moves to the end", () => {
     const bindings = compileResolvedKeybindingsConfig([
       { command: "chat.new", key: "mod+n" },

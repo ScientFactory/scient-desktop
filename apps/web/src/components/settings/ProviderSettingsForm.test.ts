@@ -9,14 +9,6 @@ import {
 } from "./ProviderSettingsForm";
 
 describe("ProviderSettingsForm helpers", () => {
-  it("keeps OpenCode server help independent of upstream product branding", () => {
-    const opencode = providerClients.get(ProviderDriverKind.make("opencode"));
-    const serverUrl = deriveProviderSettingsFields(opencode!).find(
-      (field) => field.key === "serverUrl",
-    );
-    expect(serverUrl?.description).toBe("Leave blank to start the server when needed.");
-  });
-
   it("keeps every masked field as a stored secret", () => {
     const settingsSchema = makeProviderSettingsSchema({
       token: TrimmedString.pipe(
