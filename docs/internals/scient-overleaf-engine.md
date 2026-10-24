@@ -74,6 +74,26 @@ the first displacement. Recovery recognizes ownership by identity rather than
 content equality. The record directory must be host-owned and on the same
 filesystem as the manuscript; it is not an arbitrary client-selected path.
 
+Each file write costs helper runs, so the file layer avoids the ones that
+decide nothing (it once took about 300 runs per file, growing with every
+record kept in the same folder):
+
+- A lease binds each directory it locks natively when it is taken, walking the
+  path from `/` without following links, and is refused if any identity
+  differs. The bindings handed to it for a directory on itself (every ancestor
+  up to the volume's edge, each kept record's folder, a retention folder) are
+  therefore observed in process on macOS and Linux: the path is canonical and
+  names a directory, not a link, with that device and inode. A path that is
+  not canonical, or Windows, still asks the helper.
+- The helper's capabilities are asked once per helper binary (path, device,
+  inode, size, change time) and root (canonical path and volume); a replaced
+  helper or a root on another volume asks again.
+- A private retention folder that already stands canonical, owned by this
+  user and closed to everyone else is not provisioned again; anything else
+  goes through the helper as before.
+
+Journals, their syncs and the order of every step are unchanged.
+
 On macOS/Linux an explicitly supplied host-owned helper can exchange the staged
 file with the manuscript atomically. Compile the shipped C source with:
 

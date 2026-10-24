@@ -209,20 +209,55 @@ function parseResult(value: string): NativeFilePublicationResult {
     );
   }
 }
+/**
+ * Replies already given, by the helper binary (path, device, inode, size and
+ * change time) and the root's canonical path and volume. Every answer but one
+ * describes the helper alone; that one (`atomicCreateMetadata`) describes the
+ * root's volume. A replaced helper, a root reached through a link, or a root
+ * now on another volume asks the helper again.
+ */
+const knownCapabilities = new Map<string, typeof Capabilities.Type>();
+const capabilitiesKey = async (helperPath: string, rootPath: string | undefined) => {
+  try {
+    const helper = await NodeFSP.stat(helperPath, { bigint: true });
+    let volume = "";
+    if (rootPath !== undefined) {
+      if ((await NodeFSP.realpath(rootPath)) !== rootPath) return null;
+      const root = await NodeFSP.lstat(rootPath, { bigint: true });
+      if (!root.isDirectory()) return null;
+      volume = String(root.dev);
+    }
+    return [
+      helperPath,
+      `${helper.dev}:${helper.ino}:${helper.size}:${helper.ctimeNs}:${helper.mtimeNs}`,
+      rootPath ?? "",
+      volume,
+    ].join("\0");
+  } catch {
+    return null;
+  }
+};
+
 /** A generic inquiry deliberately cannot authorize creation on an unspecified volume. */
 export async function nativeFilePublicationCapabilities(helperPath: string, rootPath?: string) {
   if (rootPath !== undefined && (!NodePath.isAbsolute(rootPath) || rootPath.includes("\0")))
     throw new NativeFilePublicationError("Native capability root must be an absolute path.", null);
+  const key = await capabilitiesKey(helperPath, rootPath);
+  const known = key === null ? undefined : knownCapabilities.get(key);
+  if (known !== undefined) return known;
   const reply = await invoke(helperPath, [
     "--protocol=1",
     "capabilities",
     ...(rootPath === undefined ? [] : [rootPath]),
   ]);
+  let capabilities;
   try {
-    return decodeCapabilities(reply);
+    capabilities = decodeCapabilities(reply);
   } catch {
     throw new NativeFilePublicationError("Invalid native publication capability reply.", null);
   }
+  if (key !== null) knownCapabilities.set(key, capabilities);
+  return capabilities;
 }
 function validatePaths(
   paths: Pick<NativeFileBinding, "rootPath" | "parentRelativePath" | "recordPath">,
@@ -347,6 +382,64 @@ function directoryArguments({ binding, operation, name }: NativeFileDirectoryReq
   ];
 }
 
+/**
+ * A lease binding of a directory on itself (root and parent alike), observed in
+ * this process rather than by a helper run: its canonical path names a
+ * directory, not a link, with this device and inode. Only on POSIX hosts, where
+ * the helper reports the same `fstat` identity. Taking the lease binds every
+ * directory again natively (walking from `/` without following links) and is
+ * refused if any identity differs, so this saves one process per directory and
+ * no check. Anything unusual (another spelling of the path, no directory there,
+ * Windows) asks the helper, which answers or fails as it always did.
+ */
+export async function observedDirectoryBinding(
+  helperPath: string,
+  directory: string,
+): Promise<Omit<NativeFileLeaseBinding, "mode">> {
+  if (HostProcess.Platform.defaultValue() !== "win32" && NodePath.isAbsolute(directory)) {
+    const observed = await NodeFSP.realpath(directory).then(
+      async (canonical) => {
+        if (canonical !== directory) return null;
+        const stat = await NodeFSP.lstat(directory, { bigint: true });
+        return stat.isDirectory() && !stat.isSymbolicLink()
+          ? { dev: String(stat.dev), ino: String(stat.ino) }
+          : null;
+      },
+      () => null,
+    );
+    if (observed !== null)
+      return {
+        rootPath: directory,
+        parentRelativePath: "",
+        rootIdentity: observed,
+        parentIdentity: observed,
+      };
+  }
+  return bindNativeFilePublicationParent(helperPath, directory, "");
+}
+
+/**
+ * A POSIX directory that already stands at its canonical path, not a link,
+ * owned by this user and closed to everyone else: what provisioning would leave
+ * there, so there is nothing to provision. Anything else (missing, open to
+ * others, another spelling, Windows) goes through the helper as always.
+ */
+async function alreadyPrivate(directory: string) {
+  if (HostProcess.Platform.defaultValue() === "win32") return false;
+  try {
+    if ((await NodeFSP.realpath(directory)) !== directory) return false;
+    const stat = await NodeFSP.lstat(directory);
+    return (
+      stat.isDirectory() &&
+      !stat.isSymbolicLink() &&
+      (process.getuid === undefined || stat.uid === process.getuid()) &&
+      (stat.mode & 0o077) === 0
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Existing directory permissions are never repaired. Only newly missing host directories are made private. */
 export async function ensureNativePrivateRetentionDirectory(
   helperPath: string,
@@ -364,6 +457,7 @@ export async function ensureNativePrivateRetentionDirectory(
       "A volume root cannot be a private retention directory.",
       null,
     );
+  if (await alreadyPrivate(destination)) return destination;
   let canonicalParent: string;
   try {
     canonicalParent = await NodeFSP.realpath(parent);
@@ -371,13 +465,13 @@ export async function ensureNativePrivateRetentionDirectory(
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     canonicalParent = await ensureNativePrivateRetentionDirectory(helperPath, parent);
   }
-  const binding = await bindNativeFilePublicationParent(helperPath, canonicalParent, ".");
+  const binding = await observedDirectoryBinding(helperPath, canonicalParent);
   const bindings: NativeFileLeaseBinding[] = [{ ...binding, mode: "exclusive" }];
   let ancestor = canonicalParent;
   for (;;) {
     const next = NodePath.dirname(ancestor);
     if (next === ancestor) break;
-    const ancestorBinding = await bindNativeFilePublicationParent(helperPath, next, ".");
+    const ancestorBinding = await observedDirectoryBinding(helperPath, next);
     if (ancestorBinding.parentIdentity.dev !== binding.parentIdentity.dev) break;
     bindings.push({ ...ancestorBinding, mode: "shared" });
     ancestor = next;
