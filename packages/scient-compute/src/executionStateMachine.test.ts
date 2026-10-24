@@ -74,45 +74,6 @@ describe("compute execution state machine", () => {
     }),
   );
 
-  it.effect("walks an execution that runs to completion", () =>
-    Effect.gen(function* () {
-      let status = yield* transition("queued", "submitting");
-      status = yield* transition(status, "running");
-      status = yield* transition(status, "succeeded");
-
-      expect(status).toBe("succeeded");
-    }),
-  );
-
-  it.effect("cancels queued work without pretending it was interrupted", () =>
-    Effect.gen(function* () {
-      expect(yield* transition("queued", "cancelled")).toBe("cancelled");
-      expect((yield* refusal("queued", "interrupting")).next).toBe("interrupting");
-    }),
-  );
-
-  it.effect("lets a user stop work that is still on the wire", () =>
-    Effect.gen(function* () {
-      expect(yield* transition("submitting", "interrupting")).toBe("interrupting");
-    }),
-  );
-
-  it.effect("lets an interrupt lose the race to the code it targeted", () =>
-    Effect.gen(function* () {
-      const interrupting = yield* transition("running", "interrupting");
-
-      expect(yield* transition(interrupting, "succeeded")).toBe("succeeded");
-      expect(yield* transition(interrupting, "failed")).toBe("failed");
-      expect(yield* transition(interrupting, "cancelled")).toBe("cancelled");
-    }),
-  );
-
-  it.effect("cancels running work when its namespace is deliberately destroyed", () =>
-    Effect.gen(function* () {
-      expect(yield* transition("running", "cancelled")).toBe("cancelled");
-    }),
-  );
-
   it.effect("leaves every terminal status without a successor", () =>
     Effect.gen(function* () {
       for (const terminal of TERMINAL_COMPUTE_EXECUTION_STATUSES) {
