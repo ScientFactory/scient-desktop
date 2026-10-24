@@ -586,6 +586,7 @@ const UNDO_SKIPPED: Record<
   "already-undone": "already back",
   "name-clash": "name in use",
   "too-large": "too large",
+  "kept-only-here": "kept only here",
 };
 
 const UNDO_NOT_ELIGIBLE: Record<

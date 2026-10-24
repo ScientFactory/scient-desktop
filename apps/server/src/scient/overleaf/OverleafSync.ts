@@ -1169,6 +1169,9 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
             connectionId: input.connectionId,
             requestId: input.requestId,
             attemptNumber: input.attemptNumber,
+            // A file kept only on this computer is never written by the undo, so its
+            // classification can't change before the sync below keeps it here.
+            keepOnlyHere: input.files?.keepOnlyHere ?? [],
           }),
         );
         if (undone._tag !== "undone") return undone satisfies OverleafUndoOutcome;

@@ -1828,4 +1828,74 @@ describe.skipIf(!canApply)("OverleafSync", () => {
         }),
       ),
   );
+
+  it.live(
+    "undo never writes a file kept only on this computer, restored or recreated, so it never reaches Overleaf",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({
+            overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O", "gone.tex": "G" } },
+          });
+          const caller = w.at(w.main);
+          const connected = yield* w.service.connect({
+            caller,
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          const paper = NodePath.join(w.main, "paper");
+          const remove = (path: string) =>
+            Effect.promise(() => NodeFSP.rm(NodePath.join(paper, path)));
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+          // Send #1 changes main.tex and other.tex, and deletes gone.tex.
+          yield* write(paper, { "main.tex": "B", "other.tex": "O2" });
+          yield* remove("gone.tex");
+          const sent = yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
+          if (sent._tag !== "synced" || sent.publication._tag !== "accepted")
+            return yield* Effect.die(sent);
+          // A later send deletes main.tex; then it is recreated here and kept only here.
+          yield* remove("main.tex");
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s3" });
+          yield* write(paper, { "main.tex": "B", "gone.tex": "private new file" });
+          // gone.tex is kept too, then removed while the editors save: Undo must not
+          // recreate it either.
+          w.setEditorSave({ _tag: "saved" }, remove("gone.tex"));
+          const undone = yield* w.service.undo({
+            caller,
+            connectionId: id,
+            requestId: "u1",
+            attemptNumber: sent.publication.attemptNumber,
+            files: { keepOnlyHere: ["main.tex", "gone.tex"] },
+          });
+          // other.tex goes back and is sent; the sync after the undo keeps main.tex here.
+          expect(undone).toMatchObject({
+            _tag: "undone",
+            restored: ["other.tex"],
+            recreated: [],
+            skipped: [
+              { path: "gone.tex", reason: "kept-only-here" },
+              { path: "main.tex", reason: "kept-only-here" },
+            ],
+            sync: { _tag: "synced", publication: { _tag: "accepted" } },
+          });
+          // Untouched here, never on Overleaf, and remembered as kept only here.
+          expect(yield* read(paper, "main.tex")).toBe("B");
+          expect(yield* read(paper, "gone.tex")).toBeNull();
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "other.tex": "O" });
+          // A later ordinary sync, with no decision, keeps it here too.
+          w.setEditorSave({ _tag: "saved" });
+          expect(
+            yield* w.service.sync({ caller, connectionId: id, requestId: "s4" }),
+          ).toMatchObject({ _tag: "synced", review: { localOnly: ["main.tex"] } });
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "other.tex": "O" });
+          expect(yield* w.store.readConnection(id)).toMatchObject({
+            document: { localOnlyPaths: ["main.tex"] },
+          });
+        }),
+      ),
+  );
 });

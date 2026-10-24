@@ -291,7 +291,12 @@ export type OverleafUndoSkip =
   /** Putting it back would collide with another file or folder now in the folder. */
   | "name-clash"
   /** Overleaf's earlier version is larger than Scient puts back. */
-  | "too-large";
+  | "too-large"
+  /**
+   * The path is kept only on this computer (recorded, or asked for with this undo):
+   * Undo never writes it, so it never becomes part of the sync.
+   */
+  | "kept-only-here";
 
 export type OverleafUndoResult =
   | {
@@ -656,11 +661,16 @@ export class OverleafCoordinator extends Context.Service<
      *
      * The caller saves the folder's open editors, in every window, before calling,
      * and does not call if a save fails; this operation reads only the disk.
+     *
+     * A path kept only on this computer, recorded (`localOnlyPaths`) or asked for
+     * with this request (`keepOnlyHere`, the decision the caller's next sync
+     * carries), is never written: it is skipped as `kept-only-here`.
      */
     readonly undo: (input: {
       readonly connectionId: string;
       readonly requestId: string;
       readonly attemptNumber: number;
+      readonly keepOnlyHere?: ReadonlyArray<string>;
     }) => Effect.Effect<OverleafUndoResult, OverleafCoordinatorError>;
     /**
      * The newest sends Undo can put back, newest first, each with what it changed
@@ -2221,6 +2231,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     repo: string,
     connection: OverleafConnectionDocument,
     attempt: OverleafPublicationAttempt,
+    /** Paths kept only on this computer, recorded or asked for: never written. */
+    keptHere: ReadonlySet<string>,
   ) {
     // Both commits must still be held; a record from before accepted sends were pinned
     // may name ones that are gone.
@@ -2299,6 +2311,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     const current = new Map<string, string>();
     const creations: string[] = [];
     for (const path of changed) {
+      if (keptHere.has(path)) {
+        skipped.set(path, "kept-only-here");
+        continue;
+      }
       const left = sent.get(path);
       const now = inventory.captured.get(path);
       const nowOid =
@@ -2445,7 +2461,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           connectionId: input.connectionId,
           requestId: input.requestId,
           kind: "undo",
-          payloadDigest: sha256(`attempt\0${input.attemptNumber}`),
+          payloadDigest: sha256(
+            [
+              `attempt\0${input.attemptNumber}`,
+              ...unique(input.keepOnlyHere ?? []).map((path) => `keep=${path}`),
+            ].join("\0"),
+          ),
           operationId,
           status: "running",
           resultCategory: null,
@@ -2496,7 +2517,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                           ? ("not-sent" as const)
                           : ("out-of-date" as const),
                 };
-              const plan = yield* undoPlan(repo, connection, attempt);
+              const plan = yield* undoPlan(
+                repo,
+                connection,
+                attempt,
+                new Set([...connection.localOnlyPaths, ...(input.keepOnlyHere ?? [])]),
+              );
               if (plan._tag === "refused") return plan;
               if (plan._tag === "history-unavailable")
                 return { _tag: "not-eligible" as const, reason: "history-unavailable" as const };
