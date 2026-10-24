@@ -10,7 +10,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { bytesRevision } from "./RetainedFileMutation.ts";
+import { bytesRevision, decodeRetainedRecord, durableJson } from "./RetainedFileMutation.ts";
 import { fileMutationFixture, nativePublicationHost } from "./fileExchange.testkit.ts";
 
 const native = await nativePublicationHost();
@@ -119,6 +119,105 @@ describe.skipIf(!native)("native publication lease", () => {
       );
       expect(await NodeFSP.readFile(NodePath.join(h.cwd, "next.tex"), "utf8")).toBe("1");
       expect((await h.settledRead("kept.tex")).contents).toBe("1");
+    }),
+  );
+
+  it.live("lists and discards the versions of a file that keeps 300 records", () =>
+    fileMutationFixture(async (h) => {
+      await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "A");
+      const save = (contents: string, previous: string, mutationId: string) =>
+        h.run(
+          h.methods.writeFile({
+            cwd: h.cwd,
+            relativePath: "main.tex",
+            contents,
+            expectedRevision: bytesRevision(Buffer.from(previous)),
+            mutationId,
+          }),
+        );
+      await save("B", "A", "first");
+      const [known] = (
+        await h.run(h.methods.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }))
+      ).versions;
+      // 300 more finished versions of main.tex, each its own record.
+      const folder = await NodeFSP.stat(h.cwd);
+      const storage = NodePath.join(h.retentionRoot, `${folder.dev}-${folder.ino}`);
+      const [original] = await NodeFSP.readdir(storage);
+      for (let index = 0; index < 300; index++) {
+        const copy = NodePath.join(storage, `copy-${index}`);
+        // Not the listing's views: a copy is not a link of the copy beside it.
+        await NodeFSP.cp(NodePath.join(storage, original!), copy, {
+          recursive: true,
+          filter: (source) => !NodePath.basename(source).startsWith("view-"),
+        });
+        const journal = NodePath.join(copy, "record.json");
+        const record = decodeRetainedRecord(await NodeFSP.readFile(journal, "utf8"));
+        await durableJson(journal, { ...record, mutationId: `copy-${index}` });
+      }
+      await save("C", "B", "last");
+      const listed = await h.run(
+        h.methods.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }),
+      );
+      expect(listed.versions.length).toBeGreaterThan(300);
+      await h.run(
+        h.methods.discardFileVersion({
+          cwd: h.cwd,
+          relativePath: "main.tex",
+          versionId: known!.versionId,
+        }),
+      );
+      const after = await h.run(
+        h.methods.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }),
+      );
+      expect(after.versions.map((version) => version.versionId)).not.toContain(known!.versionId);
+    }),
+  );
+
+  it.live("reads the workspace beside 260 accepted records asking for attention", () =>
+    fileMutationFixture(async (h) => {
+      await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "A");
+      await h.run(
+        h.methods.writeFile({
+          cwd: h.cwd,
+          relativePath: "main.tex",
+          contents: "B",
+          expectedRevision: bytesRevision(Buffer.from("A")),
+          mutationId: "first",
+        }),
+      );
+      const folder = await NodeFSP.stat(h.cwd);
+      const storage = NodePath.join(h.retentionRoot, `${folder.dev}-${folder.ino}`);
+      const [original] = await NodeFSP.readdir(storage);
+      // 260 records, each of its own file, that ended asking for attention, each accepted.
+      for (let index = 0; index < 260; index++) {
+        const copy = NodePath.join(storage, `attention-${index}`);
+        const relativePath = `other-${index}.tex`;
+        const target = NodePath.join(h.cwd, relativePath);
+        await NodeFSP.cp(NodePath.join(storage, original!), copy, { recursive: true });
+        const journal = NodePath.join(copy, "record.json");
+        const record = decodeRetainedRecord(await NodeFSP.readFile(journal, "utf8"));
+        await durableJson(journal, {
+          ...record,
+          target,
+          requestedPath: target,
+          mutationId: `attention-${index}`,
+          outcome: "attention",
+          failure: "recovery",
+        });
+        await NodeFSP.writeFile(target, "B");
+        await h.run(
+          h.methods.resolveFileMutation({
+            cwd: h.cwd,
+            relativePath,
+            recoveryId: `attention-${index}`,
+            choice: "accept-current",
+            currentRevision: bytesRevision(Buffer.from("B")),
+          }),
+        );
+      }
+      await h.run(h.methods.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void));
+      expect(typeof (await h.run(h.methods.getMutationEpoch({ cwd: h.cwd })))).toBe("string");
+      expect((await h.settledRead("other-0.tex")).contents).toBe("B");
     }),
   );
 });
