@@ -1222,12 +1222,17 @@ describe("ManagedRuntimeCatalog service", () => {
 });
 
 describe("latest qualified repair selection", () => {
+  // regression: c30f48f25f fix(providers): complete qualified managed runtime updates and latest repair
+  // One semantic-version provider and Cursor's date scheme; repair selection is shared,
+  // and "keeps release facts synchronized with every bundled provider target" covers each policy.
   it.each(
-    policies.map(({ provider, resolve }) => ({
-      caseTitle: `repairs latest for ${provider} and never downgrades a newer compatible receipt offline`,
-      provider,
-      resolve,
-    })),
+    policies
+      .filter(({ provider }) => provider === "codex" || provider === "cursor")
+      .map(({ provider, resolve }) => ({
+        caseTitle: `repairs latest for ${provider} and never downgrades a newer compatible receipt offline`,
+        provider,
+        resolve,
+      })),
   )("$caseTitle", ({ provider, resolve }) => {
     const bundled = resolve({ platform: "darwin", arch: "arm64" });
     assert.isDefined(bundled);

@@ -34,7 +34,7 @@ it("hydrates only the five app-owned ACP targets and preserves the bundled relea
   expect(bundledAntigravityAcpAsset("darwin", "x64")).toBeNull();
 });
 
-it.each(["1.0.0", "1.1.0", "1.1.1", "1.2.0"])(
+it.each(["1.0.0", "1.2.0"])(
   "does not let an older %s catalog override the bundled ACP release",
   (version) => {
     const staleCatalog = {

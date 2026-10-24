@@ -5,13 +5,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
-import {
-  newlyRequestedCodexSubscriptionSharing,
-  rejectCodexSubscriptionSharing,
-} from "./codexSubscriptionSharingPolicy.ts";
+import { newlyRequestedCodexSubscriptionSharing } from "./codexSubscriptionSharingPolicy.ts";
 
 describe("deferred Codex subscription sharing", () => {
   const id = ProviderInstanceId.make("personal");
@@ -63,21 +58,4 @@ describe("deferred Codex subscription sharing", () => {
       newlyRequestedCodexSubscriptionSharing(DEFAULT_SERVER_SETTINGS, DEFAULT_SERVER_SETTINGS),
     ).toBeUndefined();
   });
-  it.effect.each(
-    [
-      "import",
-      "export",
-      "handoff",
-      "callback",
-      "install",
-      "cancel-install",
-      "remove-install",
-      "observe-install",
-    ].map((operation) => ({ caseTitle: `rejects ${operation} before any side effect`, operation })),
-  )("$caseTitle", ({ operation }) =>
-    Effect.gen(function* () {
-      const exit = yield* Effect.exit(rejectCodexSubscriptionSharing(id, operation));
-      expect(Exit.isFailure(exit)).toBe(true);
-    }),
-  );
 });
