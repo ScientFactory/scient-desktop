@@ -174,6 +174,7 @@ import {
 import { ScientFileVersionHistory } from "~/scient/fileSurfaces/ScientFileVersionHistory";
 // SCIENT-FORK:START — Overleaf sync state beside "Saved"
 import { OverleafFileChip } from "~/scient/overleaf/OverleafFileChip";
+import { OverleafConflictActions } from "~/scient/overleaf/OverleafConflictActions";
 // SCIENT-FORK:END
 import {
   type FileSaveResolution,
@@ -1308,6 +1309,14 @@ export function EditableFileEditor({
             revealId={revealRequestId}
           />
         ) : null}
+        {/* SCIENT-FORK:START — Overleaf conflict blocks: highlighted, with a choice above each */}
+        <OverleafConflictActions
+          editor={editor}
+          surface={surface}
+          source={editedContents ?? externalFile.contents}
+          disabled={!editable || editingBlocked || restorationBlocked}
+        />
+        {/* SCIENT-FORK:END */}
         {/* SCIENT-FORK:START — Explain source refusal without discarding retained edits. */}
         {restorationBlocked ? (
           <div role="alert" className="p-2 text-xs text-muted-foreground">

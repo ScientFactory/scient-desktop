@@ -140,7 +140,9 @@ opens with each conflict and its choices:
   marks (`<<<<<<< Scient`, `=======`, `>>>>>>> Overleaf`).
 - **Ask the agent:** Scient writes the marks, then puts a message in the chat
   asking the agent to merge them and explain its choices. Send it as it is or
-  add to it.
+  add to it. When your thread works in another worktree than the linked copy,
+  Scient opens a new thread on the linked copy with the message instead, since
+  that is where the marks are.
 
 A conflict across several files (a rename on both sides, a file replaced by a
 folder) offers **Keep mine** or **Use Overleaf's** for the whole group.
@@ -148,8 +150,10 @@ folder) offers **Keep mine** or **Use Overleaf's** for the whole group.
 Choose for every conflict, then **Sync again**.
 
 While a file has conflict marks, the LaTeX editor says **This file has N
-Overleaf conflicts to settle** instead of a failed build. Remove the marks, keep
-what you want, and sync. Until the marks are gone, Scient sends nothing to
+Overleaf conflicts to settle** instead of a failed build. In the Source view
+each block is highlighted, with **Use mine**, **Use Overleaf's** and **Keep
+both** above it; each is an ordinary edit, so Undo takes it back. Or edit the
+block yourself and remove the marks. Then sync. Until the marks are gone, Scient sends nothing to
 Overleaf; your version from before the sync is always kept.
 
 ## Kept copies

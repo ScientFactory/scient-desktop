@@ -16,6 +16,7 @@ import { toastManager } from "~/components/ui/toast";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
+import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 
@@ -25,6 +26,7 @@ import {
   readOverleafChanges,
   runOverleafSync,
 } from "./overleafActions";
+import { askAgentOnLinkedCopy } from "./askAgentOnLinkedCopy";
 import { askAgentMessage, choicesFor, overleafResultView, workspacePathOf } from "./overleafModel";
 import { useOverleafWorkspace } from "./overleafStore";
 
@@ -117,6 +119,7 @@ export function OverleafReviewPanel(props: {
   const preview = workspace.previews.get(connectionId) ?? null;
   const syncing = workspace.syncing.has(connectionId);
   const composer = useComposerHandleContext();
+  const handleNewThread = useNewThreadHandler();
   const [chosen, setChosen] = useState<ReadonlyMap<string, OverleafReviewChoice>>(new Map());
   const lastReview =
     last && (last.result._tag === "synced" || last.result._tag === "needs-decision")
@@ -161,6 +164,24 @@ export function OverleafReviewPanel(props: {
       connection,
       askAgent.flatMap((conflict) => conflict.paths),
     );
+    // In another worktree, this thread's agent can't see the marks: ask on the linked copy.
+    if (!connection.linkedHere || result.linkedElsewhere) {
+      const started = await askAgentOnLinkedCopy({
+        environmentId,
+        threadRef,
+        connection,
+        message: askAgentMessage(paths),
+        handleNewThread,
+      });
+      if (!started)
+        toastManager.add({
+          type: "warning",
+          title: "Couldn't ask the agent",
+          description:
+            "The conflict marks are in the linked copy's files. Start a thread there to ask.",
+        });
+      return;
+    }
     const inserted = composer?.current?.insertTextAtEnd(askAgentMessage(paths), {
       ensureLeadingBoundary: true,
     });

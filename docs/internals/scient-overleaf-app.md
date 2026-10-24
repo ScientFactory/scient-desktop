@@ -98,7 +98,12 @@ per-file Overleaf diff itself.
 Conflicts: each offers the engine's allowed choices. A file conflict (`markers` allowed) shows
 **Keep mine**, **Use Overleaf's**, **Merge myself** and **Ask the agent**; a group shows the first
 two. **Ask the agent** is sent as `markers`; after the sync applies, the app inserts a message
-naming the files into the current chat's composer and focuses it (it does not send it). **Sync
+naming the files into the current chat's composer and focuses it (it does not send it). When the
+link is in another copy (`linkedHere` false, or the result's `linkedElsewhere`), this thread's
+agent can't see the marks, so `askAgentOnLinkedCopy` starts a new thread there through the app's
+own new-thread handler, as "New thread on this branch" does: the project whose folder is the
+linked checkout (`envMode: "local"`), or this thread's project with the checkout as its worktree
+(`envMode: "worktree"`). The message is placed in that draft's composer, not sent. **Sync
 again** is enabled once every conflict has a choice and sends them with the sync.
 
 ## Connect
@@ -118,15 +123,23 @@ filtered by path) with **Restore** (`restoreKept` with the revisions the list re
 
 ## Conflict marks in the editor
 
-`countOverleafConflictBlocks` counts `<<<<<<< Scient` … `>>>>>>> Overleaf` blocks (Git adds
-`:<path>` to a label after a rename). The LaTeX surface shows "This file has N Overleaf conflicts
-to settle" in place of the build status while any remain. Highlighting the blocks in Source with
-**Use mine**, **Use Overleaf's** and **Keep both** above each is not built yet.
+`overleafConflictBlocks` reads `<<<<<<< Scient` … `=======` … `>>>>>>> Overleaf` blocks, the labels
+`OverleafRepository` gives its merge sides (Git adds `:<path>` to a label after a rename; a
+`|||||||` base section, if the user's Git config asks for one, is dropped from both sides). The
+LaTeX surface shows "This file has N Overleaf conflicts to settle" in place of the build status
+while any remain.
+
+In Source, `OverleafConflictActions` sits in the file editor's surface (a marked hook in
+`FilePreviewPanel`'s `EditableFileEditor`, so Markdown and BibTeX get it too). It measures the
+rendered rows (`[data-content] > [data-line]`, in the editor's shadow roots) after scrolling,
+resizing and row changes, draws a light highlight over each block's visible rows and puts **Use
+mine**, **Use Overleaf's** and **Keep both** on the block's first row. A choice finds the block
+again in the editor's current text and replaces it with `editor.applyEdits`, the editor's own
+edit path: it joins the undo history and reaches the document session like typing. The actions
+are disabled while editing is.
 
 ## Not built here
 
 - Undo of a send, "Keep only on this computer" and "Send this file": engine additions first.
 - Settings ▸ Overleaf "Test" of the token: no route.
 - Add project ▸ Overleaf project (a new Scient project with the paper in a subfolder).
-- A new thread on the linked copy for **Ask the agent** from another worktree; today it writes
-  into the current chat.

@@ -511,31 +511,76 @@ export function askAgentMessage(paths: ReadonlyArray<string>): string {
   ].join("\n\n");
 }
 
-/** The labels Scient's Overleaf merge writes on its conflict marks. */
+/** The labels Scient's Overleaf merge writes on its conflict marks (OverleafRepository). */
 const OURS_MARK = "<<<<<<< Scient";
 const THEIRS_MARK = ">>>>>>> Overleaf";
+const BASE_MARK = "|||||||";
+const SEPARATOR = "=======";
+
+/** One block of Scient's conflict marks, by zero-based line. */
+export interface OverleafConflictBlock {
+  /** The `<<<<<<< Scient` line. */
+  readonly startLine: number;
+  /** The `>>>>>>> Overleaf` line. */
+  readonly endLine: number;
+  /** This computer's lines, before `|||||||` or `=======`. */
+  readonly mine: ReadonlyArray<string>;
+  /** Overleaf's lines, after `=======`. */
+  readonly theirs: ReadonlyArray<string>;
+}
+
+/** Git adds ":<path>" to a label after a rename on one side. */
+const marks = (line: string, label: string) => {
+  const trimmed = line.trimEnd();
+  return trimmed === label || trimmed.startsWith(`${label}:`);
+};
 
 /**
- * Scient's Overleaf conflict blocks in a file: a `<<<<<<< Scient` line closed by
- * a `>>>>>>> Overleaf` line. A Markdown `=======` alone, or another tool's
- * marks, is not one.
+ * Scient's Overleaf conflict blocks in a file: a `<<<<<<< Scient` line, an
+ * optional `|||||||` base section, `=======`, and a `>>>>>>> Overleaf` line.
+ * A Markdown `=======` alone, or another tool's marks, is not one.
  */
-export function countOverleafConflictBlocks(contents: string): number {
-  if (!contents.includes(OURS_MARK)) return 0;
-  let count = 0;
-  let open = false;
-  // Git adds ":<path>" to a label when the file was renamed on one side.
-  const marks = (line: string, label: string) => {
-    const trimmed = line.trimEnd();
-    return trimmed === label || trimmed.startsWith(`${label}:`);
-  };
-  for (const line of contents.split(/\r?\n/u)) {
+export function overleafConflictBlocks(contents: string): ReadonlyArray<OverleafConflictBlock> {
+  if (!contents.includes(OURS_MARK)) return [];
+  const lines = contents.split(/\r?\n/u);
+  const blocks: OverleafConflictBlock[] = [];
+  let open: { start: number; base: number | null; separator: number | null } | null = null;
+  for (const [index, line] of lines.entries()) {
     if (marks(line, OURS_MARK)) {
-      open = true;
-    } else if (open && marks(line, THEIRS_MARK)) {
-      open = false;
-      count++;
+      open = { start: index, base: null, separator: null };
+    } else if (open === null) {
+      continue;
+    } else if (open.separator === null && open.base === null && line.startsWith(BASE_MARK)) {
+      open.base = index;
+    } else if (open.separator === null && line.trimEnd() === SEPARATOR) {
+      open.separator = index;
+    } else if (open.separator !== null && marks(line, THEIRS_MARK)) {
+      blocks.push({
+        startLine: open.start,
+        endLine: index,
+        mine: lines.slice(open.start + 1, open.base ?? open.separator),
+        theirs: lines.slice(open.separator + 1, index),
+      });
+      open = null;
     }
   }
-  return count;
+  return blocks;
+}
+
+export function countOverleafConflictBlocks(contents: string): number {
+  return overleafConflictBlocks(contents).length;
+}
+
+export type OverleafConflictResolution = "mine" | "theirs" | "both";
+
+/** The lines that replace a block: this computer's, Overleaf's, or both in that order. */
+export function resolvedConflictLines(
+  block: OverleafConflictBlock,
+  resolution: OverleafConflictResolution,
+): ReadonlyArray<string> {
+  return resolution === "mine"
+    ? block.mine
+    : resolution === "theirs"
+      ? block.theirs
+      : [...block.mine, ...block.theirs];
 }

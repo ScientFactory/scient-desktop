@@ -30,6 +30,24 @@ vi.mock("./client", () => ({ ...client, overleafRequestId: () => "request-1" }))
 const toasts = vi.hoisted(() => ({ add: vi.fn(() => "toast"), close: vi.fn() }));
 vi.mock("~/components/ui/toast", () => ({ toastManager: toasts }));
 
+// Starting a thread on the linked copy goes through the app's own new-thread path.
+const threads = vi.hoisted(() => ({
+  handle: vi.fn(),
+  projects: [] as Array<{ environmentId: string; id: string; workspaceRoot: string }>,
+  shellProjectId: null as string | null,
+}));
+vi.mock("~/hooks/useHandleNewThread", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/hooks/useHandleNewThread")>()),
+  useNewThreadHandler: () => threads.handle,
+}));
+vi.mock("~/state/entities", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/entities")>()),
+  readProjects: () => threads.projects,
+  readThreadShell: () =>
+    threads.shellProjectId === null ? null : { projectId: threads.shellProjectId },
+}));
+
+const { useComposerDraftStore } = await import("~/composerDraftStore");
 const { OverleafReviewPanel } = await import("./OverleafReviewPanel");
 const { recordOverleafSync, resetOverleafStoreForTests } = await import("./overleafStore");
 
@@ -205,6 +223,82 @@ describe("OverleafReviewPanel", () => {
     expect(client.previewOverleaf).toHaveBeenCalledExactlyOnceWith(environmentId, {
       workspaceRoot: "/work/project",
       connectionId: "c1",
+    });
+  });
+
+  describe("Ask the agent from another worktree", () => {
+    function setupWorktree(checkoutRoot: string) {
+      reset();
+      client.listOverleafConnections.mockResolvedValue({
+        connections: [{ ...connection, checkoutRoot, linkedHere: false }],
+      });
+      client.syncOverleaf.mockResolvedValue({ ...applied, linkedElsewhere: true });
+      recordOverleafSync(environmentId, "/work/project-wt", "c1", decision);
+      threads.handle.mockReset().mockResolvedValue({ draftId: "draft-1", threadId: "t-new" });
+      const setPrompt = vi.fn();
+      const getState = useComposerDraftStore.getState;
+      const spy = vi
+        .spyOn(useComposerDraftStore, "getState")
+        .mockImplementation(() => ({ ...getState(), setPrompt }));
+      return { setPrompt, [Symbol.dispose]: () => spy.mockRestore() };
+    }
+
+    async function askAboutMain(composer: ReturnType<typeof composerStub>) {
+      await using _screen = await render(
+        <ComposerHandleContext value={composer.ref}>
+          <OverleafReviewPanel
+            environmentId={environmentId}
+            cwd="/work/project-wt"
+            connectionId="c1"
+            threadRef={threadRef}
+            onOpenFile={() => {}}
+          />
+        </ComposerHandleContext>,
+      );
+      for (const [path, choice] of [
+        ["main.tex", "Ask the agent"],
+        ["intro.tex", "Keep mine"],
+        ["old.tex", "Keep mine"],
+      ] as const) {
+        await page
+          .getByRole("group", { name: `Settle ${path}` })
+          .getByRole("button", { name: choice })
+          .click();
+      }
+      await page.getByRole("button", { name: "Sync again" }).click();
+      await expect.poll(() => threads.handle.mock.calls.length).toBe(1);
+    }
+
+    it("starts a thread in the project's own folder when that is the linked copy", async () => {
+      using worktree = setupWorktree("/work/project");
+      threads.projects = [{ environmentId, id: "p-main", workspaceRoot: "/work/project" }];
+      threads.shellProjectId = "p-main";
+      const composer = composerStub();
+      await askAboutMain(composer);
+
+      expect(threads.handle).toHaveBeenCalledExactlyOnceWith(
+        { environmentId, projectId: "p-main" },
+        { worktreePath: null, envMode: "local" },
+      );
+      await expect.poll(() => worktree.setPrompt.mock.calls.length).toBe(1);
+      const [draftId, message] = worktree.setPrompt.mock.calls[0] as [string, string];
+      expect(draftId).toBe("draft-1");
+      expect(message).toContain("- paper/main.tex");
+      // This thread's composer is left alone: its agent can't see the linked copy's files.
+      expect(composer.insertTextAtEnd).not.toHaveBeenCalled();
+    });
+
+    it("starts a thread in the linked worktree when the link is in another worktree", async () => {
+      using worktree = setupWorktree("/work/paper-wt");
+      threads.projects = [{ environmentId, id: "p-main", workspaceRoot: "/work/project" }];
+      threads.shellProjectId = "p-main";
+      await askAboutMain(composerStub());
+
+      expect(threads.handle).toHaveBeenCalledExactlyOnceWith(
+        { environmentId, projectId: "p-main" },
+        { worktreePath: "/work/paper-wt", envMode: "worktree" },
+      );
+      await expect.poll(() => worktree.setPrompt.mock.calls.length).toBe(1);
     });
   });
 });

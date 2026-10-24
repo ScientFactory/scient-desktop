@@ -10,6 +10,8 @@ import {
   choicesFor,
   connectionForPath,
   countOverleafConflictBlocks,
+  overleafConflictBlocks,
+  resolvedConflictLines,
   folderNameProblem,
   newFolderPath,
   operationErrorText,
@@ -317,6 +319,29 @@ describe("conflict marks", () => {
     expect(countOverleafConflictBlocks(text)).toBe(2);
     expect(countOverleafConflictBlocks("Title\n=======\n")).toBe(0);
     expect(countOverleafConflictBlocks("<<<<<<< HEAD\na\n=======\nb\n>>>>>>> main\n")).toBe(0);
+  });
+
+  it("reads each block's two sides, skipping a base section", () => {
+    const text = [
+      "a",
+      "<<<<<<< Scient",
+      "mine 1",
+      "mine 2",
+      "||||||| base",
+      "base",
+      "=======",
+      "theirs",
+      ">>>>>>> Overleaf",
+      "<<<<<<< Scient",
+      "unclosed",
+    ].join("\r\n");
+    const blocks = overleafConflictBlocks(text);
+    expect(blocks).toEqual([
+      { startLine: 1, endLine: 8, mine: ["mine 1", "mine 2"], theirs: ["theirs"] },
+    ]);
+    expect(resolvedConflictLines(blocks[0]!, "mine")).toEqual(["mine 1", "mine 2"]);
+    expect(resolvedConflictLines(blocks[0]!, "theirs")).toEqual(["theirs"]);
+    expect(resolvedConflictLines(blocks[0]!, "both")).toEqual(["mine 1", "mine 2", "theirs"]);
   });
 
   it("asks the agent to merge the files it names", () => {
