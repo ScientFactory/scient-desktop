@@ -401,7 +401,13 @@ export const ScientOverleafUndoResult = Schema.Union([
     skipped: Schema.Array(
       Schema.Struct({
         path: ManuscriptPath,
-        reason: Schema.Literals(["changed", "already-undone", "name-clash", "too-large"]),
+        reason: Schema.Literals([
+          "changed",
+          "already-undone",
+          "name-clash",
+          "too-large",
+          "kept-only-here",
+        ]),
       }),
     ),
     outcome: Schema.NullOr(ScientOverleafApplyOutcome),

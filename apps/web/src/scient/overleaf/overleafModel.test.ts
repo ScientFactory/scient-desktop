@@ -534,6 +534,14 @@ describe("conflict marks", () => {
     expect(overleafUndoView({ ...undone, outcome: "attention" }).title).toBe(
       "Undo needs attention",
     );
+    // A file kept only on this computer is never written by Undo, and is named.
+    expect(
+      overleafUndoView({
+        ...undone,
+        skipped: [{ path: "private.tex", reason: "kept-only-here" }],
+        outcome: null,
+      }).lines,
+    ).toEqual(["Left as it is: private.tex (kept only here)."]);
     expect(overleafUndoView({ _tag: "cancelled" })).toMatchObject({
       title: "Undo cancelled",
       lines: ["Nothing was changed."],

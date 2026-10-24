@@ -292,6 +292,20 @@ describe("Overleaf tool handlers", () => {
           provide(fakeOverleaf({ undo: () => Effect.succeed(result) as never })),
           Effect.map((done) => done.lines),
         );
+      expect(
+        yield* refusedWith({
+          _tag: "undone",
+          restored: [],
+          removed: [],
+          recreated: [],
+          skipped: [{ path: "private.tex", reason: "kept-only-here" }],
+          adopted: null,
+          sync: null,
+        }),
+      ).toEqual([
+        "Nothing of send #4 was put back.",
+        "Left as it is: private.tex (kept only on this computer).",
+      ]);
       expect(yield* refusedWith({ _tag: "cancelled" })).toEqual([
         "The undo of send #4 stopped on request before putting anything back.",
       ]);

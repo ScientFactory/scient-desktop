@@ -504,6 +504,7 @@ const UNDO_SKIP_TEXT: Record<
   "already-undone": "already Overleaf's earlier version",
   "name-clash": "another file or folder is in its place",
   "too-large": "Overleaf's earlier version is too large to put back",
+  "kept-only-here": "kept only on this computer",
 };
 
 /** What an undo put back and left alone, then what the sync after it did (design section 4.3). */
