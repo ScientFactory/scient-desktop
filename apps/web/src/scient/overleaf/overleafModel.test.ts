@@ -14,6 +14,7 @@ import {
   resolvedConflictLines,
   folderNameProblem,
   newFolderPath,
+  OVERLEAF_REQUEST_FAILED,
   operationErrorText,
   overleafChipView,
   overleafResultView,
@@ -295,7 +296,24 @@ describe("refusalText", () => {
     expect(operationErrorText({ reason: "token-missing", message: "x" })).toContain(
       "No Overleaf token is saved",
     );
-    expect(operationErrorText(new Error("boom"))).toBe("boom");
+    // A typed refusal keeps its reason and path; anything else gets one fixed line.
+    expect(
+      operationErrorText({
+        _tag: "ScientOverleafOperationError",
+        reason: "access-denied",
+        message: "Overleaf refused the token.",
+      }),
+    ).toBe("Overleaf refused the token, or this account has no Git access to the project.");
+    expect(operationErrorText({ reason: "editor-unsaved", path: "paper/main.tex" })).toBe(
+      "paper/main.tex couldn't be saved, so nothing was synced. Save it, then sync again.",
+    );
+    for (const raw of [
+      new Error("Failed to fetch remote environment endpoint https://host:3773/api/x (TypeError)"),
+      { reason: "https://host/x" },
+      { _tag: "EnvironmentInternalError", message: '{"cause":"boom"}' },
+      "boom",
+    ])
+      expect(operationErrorText(raw)).toBe(OVERLEAF_REQUEST_FAILED);
   });
 });
 

@@ -48,6 +48,13 @@ vi.mock("~/state/entities", async (importOriginal) => ({
     threads.shellProjectId === null ? null : { projectId: threads.shellProjectId },
 }));
 
+// The thread the window shows when the sync finishes.
+const shown = vi.hoisted(() => ({ thread: null as unknown }));
+vi.mock("./overleafThreadTarget", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./overleafThreadTarget")>()),
+  useReadShownThread: () => () => shown.thread,
+}));
+
 const { useComposerDraftStore } = await import("~/composerDraftStore");
 const { OverleafReviewPanel } = await import("./OverleafReviewPanel");
 const { recordOverleafSync, resetOverleafStoreForTests } = await import("./overleafStore");
@@ -132,6 +139,7 @@ function composerStub() {
 
 function reset() {
   resetOverleafStoreForTests();
+  shown.thread = threadRef;
   for (const mock of Object.values(client)) mock.mockReset();
   toasts.add.mockClear();
   client.listOverleafConnections.mockResolvedValue({ connections: [connection] });
@@ -308,6 +316,61 @@ describe("OverleafReviewPanel", () => {
     await expect.element(page.getByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
   });
 
+  it("forgets choices when another review replaces the one they were made on", async () => {
+    reset();
+    recordOverleafSync(environmentId, "/work/project", "c1", decision);
+    // The header's Sync finds the same files in conflict, against a newer Overleaf.
+    client.syncOverleaf.mockResolvedValue({
+      ...decision,
+      review: review({ reviewId: "r2", remoteTree: "c".repeat(40) }),
+    });
+    await using _screen = await render(panel());
+    const keepMain = page
+      .getByRole("group", { name: "Settle main.tex" })
+      .getByRole("button", { name: "Keep mine" });
+    for (const path of ["main.tex", "intro.tex", "old.tex"])
+      await page
+        .getByRole("group", { name: `Settle ${path}` })
+        .getByRole("button", { name: "Keep mine" })
+        .click();
+    await expect.element(keepMain).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Sync", exact: true }).click();
+    await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+    await expect.element(keepMain).toHaveAttribute("aria-pressed", "false");
+    await expect.element(page.getByRole("button", { name: "Sync again" })).toBeDisabled();
+  });
+
+  it("writes Ask the agent into the thread that asked, even after moving to another", async () => {
+    reset();
+    recordOverleafSync(environmentId, "/work/project", "c1", decision);
+    // By the time the sync finishes, the window shows another thread.
+    shown.thread = { environmentId, threadId: ThreadId.make("thread-2") };
+    const setPrompt = vi.fn();
+    const getState = useComposerDraftStore.getState;
+    using _spy = vi
+      .spyOn(useComposerDraftStore, "getState")
+      .mockImplementation(() => ({ ...getState(), getComposerDraft: () => null, setPrompt }));
+    const composer = composerStub();
+    await using _screen = await render(
+      <ComposerHandleContext value={composer.ref}>{panel()}</ComposerHandleContext>,
+    );
+    for (const [path, choice] of [
+      ["main.tex", "Ask the agent"],
+      ["intro.tex", "Keep mine"],
+      ["old.tex", "Keep mine"],
+    ] as const)
+      await page
+        .getByRole("group", { name: `Settle ${path}` })
+        .getByRole("button", { name: choice })
+        .click();
+    await page.getByRole("button", { name: "Sync again" }).click();
+    await expect.poll(() => setPrompt.mock.calls.length).toBe(1);
+    expect(setPrompt.mock.calls[0]![0]).toEqual(threadRef);
+    expect(setPrompt.mock.calls[0]![1]).toContain("- paper/main.tex");
+    // The composer on screen belongs to the other thread: it is left alone.
+    expect(composer.insertTextAtEnd).not.toHaveBeenCalled();
+  });
+
   describe("per-file decisions", () => {
     const newFiles = review({
       needsDecision: false,
@@ -351,6 +414,26 @@ describe("OverleafReviewPanel", () => {
         requestId: "request-1",
         files: { keepOnlyHere: ["figures/plot.pdf"] },
       });
+    });
+
+    it("holds decisions while a sync runs", async () => {
+      await using _screen = await readNewFiles();
+      let finish!: (result: ScientOverleafSyncResult) => void;
+      client.syncOverleaf.mockReturnValue(
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      );
+      const keep = page.getByRole("button", {
+        name: "Keep only on this computer: figures/plot.pdf",
+      });
+      await page.getByRole("button", { name: "Sync", exact: true }).click();
+      await expect.element(keep).toBeDisabled();
+      await expect
+        .element(page.getByRole("button", { name: "Send this file: notes.md" }))
+        .toBeDisabled();
+      finish({ _tag: "cancelled", stage: "before-apply" });
+      await expect.element(keep).toBeEnabled();
     });
 
     it("sends a skipped file and one kept only here, but never one over Overleaf's limit", async () => {

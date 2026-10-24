@@ -146,7 +146,8 @@ and how many it will send:
   file**.
 
 A choice waits for the tab's next **Sync** (or **Sync again** after a
-conflict), which carries it; press it again to take it back. Once a file is on
+conflict), which carries it; press it again to take it back. While a sync runs,
+the choices wait. Once a file is on
 Overleaf it syncs like any other: keeping it only here is no longer offered.
 
 ## Conflicts

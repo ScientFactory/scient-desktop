@@ -44,6 +44,11 @@ vi.mock("~/scient/markdownEditor/persistence/markdownPersistenceRegistry", () =>
     flushTarget: editors.flushTarget,
   },
 }));
+// Plain text editors of the folder, saved through the file-session registry.
+const plainEditors = vi.hoisted(() => ({ flushWhere: vi.fn() }));
+vi.mock("~/components/files/useFileSaveCoordinator", () => ({
+  workspaceFileSessionFlush: { flushWhere: plainEditors.flushWhere },
+}));
 const toasts = vi.hoisted(() => ({ add: vi.fn(() => "toast"), close: vi.fn() }));
 vi.mock("~/components/ui/toast", () => ({ toastManager: toasts }));
 
@@ -116,6 +121,7 @@ function reset(input: { linkedHere?: boolean; status?: ScientOverleafStatus } = 
   toasts.add.mockClear();
   editors.entries = [];
   editors.flushTarget.mockReset().mockResolvedValue(true);
+  plainEditors.flushWhere.mockReset().mockResolvedValue([]);
   client.listOverleafConnections.mockResolvedValue({
     connections: [connection(input.linkedHere ?? true)],
   });
@@ -272,5 +278,74 @@ describe("OverleafFileChip", () => {
     expect(toasts.add.mock.calls[0]).toEqual([
       expect.objectContaining({ type: "info", title: "Sync cancelled" }),
     ]);
+  });
+
+  it("saves the folder's plain text editors too, and doesn't sync over one that can't save", async () => {
+    reset();
+    const picked: string[] = [];
+    plainEditors.flushWhere.mockImplementation(
+      async (
+        select: (target: { environmentId: string; cwd: string; relativePath: string }) => boolean,
+      ) => {
+        for (const relativePath of ["paper/refs.bib", "paper/sub/a.sty", "notes/todo.txt"])
+          if (select({ environmentId, cwd: "/work/project", relativePath }))
+            picked.push(relativePath);
+        // Another checkout's file of the same name is not this folder's.
+        if (select({ environmentId, cwd: "/elsewhere", relativePath: "paper/x.tex" }))
+          picked.push("elsewhere");
+        return [
+          {
+            target: { environmentId, cwd: "/work/project", relativePath: "paper/refs.bib" },
+            saved: false,
+            problem: { kind: "save-failed" },
+          },
+        ];
+      },
+    );
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Sync now" }).click();
+    await expect.poll(() => toasts.add.mock.calls.length).toBe(1);
+    expect(picked).toEqual(["paper/refs.bib", "paper/sub/a.sty"]);
+    expect(toasts.add.mock.calls[0]).toEqual([
+      expect.objectContaining({
+        type: "error",
+        description:
+          "paper/refs.bib couldn't be saved, so nothing was synced. Save it, then sync again.",
+      }),
+    ]);
+    expect(client.syncOverleaf).not.toHaveBeenCalled();
+  });
+
+  it("a cancel while editors are saving stops the sync before its request", async () => {
+    reset();
+    editors.entries = [
+      {
+        environmentId,
+        cwd: "/work/project",
+        relativePath: "paper/main.tex",
+        pending: true,
+        attention: false,
+      },
+    ];
+    let saved!: (done: boolean) => void;
+    editors.flushTarget.mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        saved = resolve;
+      }),
+    );
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Sync now" }).click();
+    await page.getByRole("button", { name: "Overleaf: Syncing…" }).click();
+    await page.getByRole("menuitem", { name: "Cancel sync" }).click();
+    saved(true);
+    await expect.poll(() => toasts.add.mock.calls.length).toBe(1);
+    expect(toasts.add.mock.calls[0]).toEqual([
+      expect.objectContaining({ type: "info", title: "Sync cancelled" }),
+    ]);
+    // Nothing reached the server: no sync, and nothing there to cancel.
+    expect(client.syncOverleaf).not.toHaveBeenCalled();
+    expect(client.cancelOverleafSync).not.toHaveBeenCalled();
   });
 });

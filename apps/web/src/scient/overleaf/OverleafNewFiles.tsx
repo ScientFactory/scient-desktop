@@ -54,16 +54,19 @@ function DecisionButton(props: {
   readonly label: string;
   readonly pressed: boolean;
   readonly path: string;
+  readonly disabled: boolean;
   readonly onPress: () => void;
 }) {
   return (
     <button
       type="button"
       aria-pressed={props.pressed}
+      disabled={props.disabled}
       aria-label={`${props.label}: ${props.path}`}
       className={cn(
         "h-5 shrink-0 cursor-pointer rounded px-1.5 text-2xs transition-colors duration-75",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        "disabled:cursor-default disabled:opacity-50",
         props.pressed
           ? "bg-accent text-foreground"
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
@@ -105,6 +108,8 @@ export function OverleafNewFiles(props: {
   readonly decisions: ReadonlyMap<string, OverleafFileDecision>;
   readonly onDecide: (path: string, decision: OverleafFileDecision | null) => void;
   readonly onOpenFile: (path: string) => void;
+  /** While a sync runs, decisions wait: one made now wouldn't be in it. */
+  readonly disabled?: boolean;
 }) {
   const { review, folder, decisions, onDecide } = props;
   const toggle = (path: string, decision: OverleafFileDecision) =>
@@ -136,6 +141,7 @@ export function OverleafNewFiles(props: {
                     label="Keep only on this computer"
                     path={addition.path}
                     pressed={decisions.get(addition.path) === "keep"}
+                    disabled={props.disabled ?? false}
                     onPress={() => toggle(addition.path, "keep")}
                   />
                 </FileRow>
@@ -152,6 +158,7 @@ export function OverleafNewFiles(props: {
                       label="Send this file"
                       path={addition.path}
                       pressed={decisions.get(addition.path) === "send"}
+                      disabled={props.disabled ?? false}
                       onPress={() => toggle(addition.path, "send")}
                     />
                   )}
@@ -177,6 +184,7 @@ export function OverleafNewFiles(props: {
                   label="Send this file"
                   path={path}
                   pressed={decisions.get(path) === "send"}
+                  disabled={props.disabled ?? false}
                   onPress={() => toggle(path, "send")}
                 />
               </FileRow>

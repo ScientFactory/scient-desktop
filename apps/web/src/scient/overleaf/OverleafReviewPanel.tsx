@@ -28,6 +28,7 @@ import {
   runOverleafSync,
 } from "./overleafActions";
 import { askAgentOnLinkedCopy } from "./askAgentOnLinkedCopy";
+import { appendToThreadDraft, sameThread, useReadShownThread } from "./overleafThreadTarget";
 import {
   fileDecisionsRequest,
   OverleafNewFiles,
@@ -117,6 +118,12 @@ function newFilesLine(count: number, sent: boolean): string {
   return sent ? `${files} ${count === 1 ? "was" : "were"} sent.` : `${files} will be sent.`;
 }
 
+const NO_CHOICES: ReadonlyMap<string, OverleafReviewChoice> = new Map();
+
+/** One review: the engine's ID and the Overleaf tree its conflicts were found against. */
+const reviewIdentity = (review: Pick<ScientOverleafReview, "reviewId" | "remoteTree">) =>
+  `${review.reviewId}\u0000${review.remoteTree}`;
+
 export function OverleafReviewPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
@@ -132,9 +139,14 @@ export function OverleafReviewPanel(props: {
   const syncing = workspace.syncing.has(connectionId);
   const composer = useComposerHandleContext();
   const handleNewThread = useNewThreadHandler();
-  const [chosen, setChosen] = useState<ReadonlyMap<string, OverleafReviewChoice>>(new Map());
-  // Overleaf moved after the choices were made: the conflicts are shown again.
-  const [chooseAgain, setChooseAgain] = useState(false);
+  const readShownThread = useReadShownThread();
+  // Choices answer one review: they are kept with its identity and shown only for it.
+  const [choiceState, setChoiceState] = useState<{
+    readonly review: string;
+    readonly choices: ReadonlyMap<string, OverleafReviewChoice>;
+  }>({ review: "", choices: new Map() });
+  // Overleaf moved after the choices were made: the review the conflicts are shown again in.
+  const [chooseAgainFor, setChooseAgainFor] = useState<string | null>(null);
   // Per-file decisions wait for the tab's next Sync, which carries them.
   const [fileDecisions, setFileDecisions] = useState<ReadonlyMap<string, OverleafFileDecision>>(
     new Map(),
@@ -159,6 +171,18 @@ export function OverleafReviewPanel(props: {
   const reading = workspace.previewing.has(connectionId);
   const readError = workspace.previewErrors.get(connectionId) ?? null;
   const readChanges = () => void readOverleafChanges(environmentId, cwd, connectionId);
+  const shownReview = review === null ? "" : reviewIdentity(review);
+  const chosen = choiceState.review === shownReview ? choiceState.choices : NO_CHOICES;
+  const chooseAgain = chooseAgainFor !== null && chooseAgainFor === shownReview;
+  const setChosen = (
+    change: (
+      current: ReadonlyMap<string, OverleafReviewChoice>,
+    ) => ReadonlyMap<string, OverleafReviewChoice>,
+  ) =>
+    setChoiceState((current) => ({
+      review: shownReview,
+      choices: change(current.review === shownReview ? current.choices : NO_CHOICES),
+    }));
 
   if (!connection) {
     return (
@@ -200,13 +224,12 @@ export function OverleafReviewPanel(props: {
       },
     );
     if (result?._tag === "needs-decision") {
-      setChosen(new Map());
-      setChooseAgain(true);
+      // The fresh review has no choices yet; the old ones belonged to the review they answered.
+      setChooseAgainFor(reviewIdentity(result.review));
       return;
     }
     if (result?._tag !== "synced") return;
-    setChosen(new Map());
-    setChooseAgain(false);
+    setChooseAgainFor(null);
     setFileDecisions(new Map());
     if (askAgent.length === 0) return;
     const paths = conflictWorkspacePaths(
@@ -231,16 +254,29 @@ export function OverleafReviewPanel(props: {
         });
       return;
     }
-    const inserted = composer?.current?.insertTextAtEnd(askAgentMessage(paths), {
-      ensureLeadingBoundary: true,
-    });
-    if (inserted) composer?.current?.focusAtEnd();
-    else
+    const message = askAgentMessage(paths);
+    // The window may show another thread by now: write only to the one that asked.
+    if (sameThread(readShownThread(), threadRef)) {
+      const inserted = composer?.current?.insertTextAtEnd(message, { ensureLeadingBoundary: true });
+      if (inserted) {
+        composer?.current?.focusAtEnd();
+        return;
+      }
+    }
+    if (threadRef) {
+      appendToThreadDraft(threadRef, message);
       toastManager.add({
-        type: "warning",
-        title: "Couldn't ask the agent",
-        description: "The conflict marks are in the files. Open a chat for this project to ask.",
+        type: "info",
+        title: "The message for the agent is in the thread's draft",
+        description: "Go back to the thread that synced to send it.",
       });
+      return;
+    }
+    toastManager.add({
+      type: "warning",
+      title: "Couldn't ask the agent",
+      description: "The conflict marks are in the files. Open a chat for this project to ask.",
+    });
   };
 
   return (
@@ -418,6 +454,8 @@ export function OverleafReviewPanel(props: {
                 review={synced ? { additions: [], localOnly: review.localOnly } : review}
                 folder={connection.folder}
                 decisions={fileDecisions}
+                // A decision made while a sync runs wouldn't be in it, yet would be cleared by it.
+                disabled={syncing}
                 onDecide={decideFile}
                 onOpenFile={props.onOpenFile}
               />

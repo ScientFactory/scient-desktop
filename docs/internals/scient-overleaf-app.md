@@ -42,7 +42,11 @@ surface list, content and icon, `ScientFileVersionHistory.tsx`, `ScientLatexSurf
 link of the host project with `linkedHere`) and reads each one's offline status. The status reads
 the folder, so it is never read per file header: once per workspace, again after any sync,
 connect or unlink, on window focus when older than 10 s, and for one link when an open editor of
-one of its files finishes a save (the chip subscribes to the document registry).
+one of its files finishes a save (the chip subscribes to the document registry). Every list and
+status read is numbered when it starts, and a response is used only if no read of the same thing
+started after it; a forced load (after an operation) starts afresh rather than joining one already
+running. So a read from during a sync can't answer after the sync's own refresh and leave the chip
+on "Syncing…".
 
 `overleafChipView` maps the status:
 
@@ -67,11 +71,12 @@ records any change to the link, so it can read later than the real last sync.
 
 `saveOverleafFolderEditors` flushes every document session (Markdown, LaTeX, BibTeX) in the
 document registry whose workspace is the caller's root or the link's checkout and whose path is
-inside the folder. A session holding unconverted input, or a failed flush, names its file and the
-sync doesn't run. This is this window only; the server-side request that saves editors in every
-window is PR C1's, and the sync should switch to it then. Plain code editors (generic save
-coordinator) have no shared registry and are not flushed; their 500 ms debounced save usually
-lands first.
+inside the folder, and every plain text editor's file session in the same folder through
+`workspaceFileSessionFlush.flushWhere`. That scoped flush (a `target` on each session,
+`flushWhere`, `sessionTargets`, `unsavedWhere`) is copied verbatim from PR #643, so the two merge
+as one. A session holding unconverted input, or one whose flush fails, names its file and the
+sync doesn't run. This is this window only; #643's server request saves a folder's editors in
+every window, and the sync should switch to it once both are in.
 
 ## Sync and its result
 
@@ -79,10 +84,17 @@ lands first.
 window, saves editors, posts `sync` with a fresh request ID and any conflict choices, records the
 result, refreshes the file tree and the statuses, and reports. Choices always travel with
 `reviewedRemote`, the `remoteTree` of the review they answer; when Overleaf has moved since, the
-server answers `needs-decision` with a fresh review, and the tab clears the choices and says
-"Overleaf changed since you chose. Choose again." **Cancel sync** (chip) and **Cancel** (tab)
-post `cancel`; the sync stops at a stage boundary and returns `cancelled`, reported as "Sync
-cancelled. Nothing was changed." The server already retries once
+server answers `needs-decision` with a fresh review, and the tab says "Overleaf changed since you
+chose. Choose again." Choices are kept with the identity of the review they were made on (its
+`reviewId` and `remoteTree`) and shown only while that review is: any sync or read that brings
+another review leaves it with no choices, so an old choice is never sent against a newer review.
+**Cancel sync** (chip) and **Cancel** (tab) stop a sync. While this window is still saving
+editors, the cancel is local: the request is never sent, and the result is `cancelled` here.
+Once the request has left, they post `cancel`; the sync stops at a stage boundary and returns
+`cancelled`, reported as "Sync cancelled. Nothing was changed." A failure shows only fixed
+words: the server's `ScientOverleafOperationError` reaches the app as itself (the HTTP adapter
+passes it through) and its reason is mapped; anything else is "The Overleaf request didn't go
+through. Try again.", never an address or a serialized error. The server already retries once
 when Overleaf moved during the send. `overleafResultView` turns the result into a title ("3 files
 came in, 2 were sent"), the lines of design section 4.1 and a tone; the toast carries **See
 changes** when there were changes, and a conflict opens the review tab instead. The Connect
@@ -106,14 +118,17 @@ computer**; a skipped one shows its `skippedBecause` in a few words and offers *
 except `too-large` (Overleaf refuses it). `localOnly` is listed as **Kept only here**, each with
 **Send this file**. A decision is a pending toggle, not a sync of its own: the tab's next **Sync**
 or **Sync again** sends them as `files: { keepOnlyHere, send }`, and a sync that applies clears
-them. One sync then carries every decision together with any conflict choices, and a decision
+them. While a sync runs the buttons are disabled: a decision made then wouldn't be in it, yet
+would be cleared by it. One sync then carries every decision together with any conflict choices, and a decision
 taken while a conflict waits isn't lost to a sync that stops at that conflict. After a sync the
 tab shows "N new files were sent" and only the kept-only list.
 
 Conflicts: each offers the engine's allowed choices. A file conflict (`markers` allowed) shows
 **Keep mine**, **Use Overleaf's**, **Merge myself** and **Ask the agent**; a group shows the first
-two. **Ask the agent** is sent as `markers`; after the sync applies, the app inserts a message
-naming the files into the current chat's composer and focuses it (it does not send it). When the
+two. **Ask the agent** is sent as `markers`; after the sync applies, the app writes a message
+naming the files to the thread the request came from (it does not send it): into its composer
+when the window still shows that thread, else appended to that thread's draft by identity, never
+into whichever composer is on screen. When the
 link is in another copy (`linkedHere` false, or the result's `linkedElsewhere`), this thread's
 agent can't see the marks, so `askAgentOnLinkedCopy` starts a new thread there through the app's
 own new-thread handler, as "New thread on this branch" does: the project whose folder is the

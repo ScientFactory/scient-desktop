@@ -72,6 +72,15 @@ export function readOverleafWorkspace(
   return snapshots.get(keyOf(environmentId, workspaceRoot)) ?? EMPTY;
 }
 
+/**
+ * Each read is numbered when it starts. A response is used only if no read
+ * started after it, so a read from before a sync can't answer after the
+ * sync's own refresh (and leave the chip on "Syncing…").
+ */
+const statusReads = new Map<string, number>();
+const listReads = new Map<string, number>();
+let readCounter = 0;
+
 /** Reads one link's offline status again. */
 export async function refreshOverleafStatus(
   environmentId: EnvironmentId,
@@ -79,8 +88,12 @@ export async function refreshOverleafStatus(
   connectionId: string,
 ): Promise<void> {
   const key = keyOf(environmentId, workspaceRoot);
+  const read = ++readCounter;
+  const readKey = `${key}\u0000${connectionId}`;
+  statusReads.set(readKey, read);
   try {
     const status = await readOverleafStatus(environmentId, { workspaceRoot, connectionId });
+    if (statusReads.get(readKey) !== read) return;
     update(key, (current) => ({
       ...current,
       statuses: new Map(current.statuses).set(connectionId, status),
@@ -98,14 +111,18 @@ export function loadOverleafWorkspace(
 ): Promise<void> {
   const key = keyOf(environmentId, workspaceRoot);
   const running = inflight.get(key);
-  if (running) return running;
+  // A forced load (after an operation) starts afresh; the earlier one's answers are stale.
+  if (running && !options.force) return running;
   const age = Date.now() - (loadedAt.get(key) ?? 0);
   if (!options.force && snapshots.get(key)?.loaded && age < (options.maxAgeMs ?? Infinity)) {
     return Promise.resolve();
   }
+  const read = ++readCounter;
+  listReads.set(key, read);
   const load = (async () => {
     try {
       const listed = await listOverleafConnections(environmentId, workspaceRoot);
+      if (listReads.get(key) !== read) return;
       update(key, (current) => ({
         ...current,
         loaded: true,
@@ -118,11 +135,14 @@ export function loadOverleafWorkspace(
         ),
       );
     } catch (error) {
+      if (listReads.get(key) !== read) return;
       // An environment without Overleaf sync, or a folder that isn't a project, has no links.
       update(key, (current) => ({ ...current, loaded: true, error: operationErrorText(error) }));
     } finally {
-      loadedAt.set(key, Date.now());
-      inflight.delete(key);
+      if (listReads.get(key) === read) {
+        loadedAt.set(key, Date.now());
+        inflight.delete(key);
+      }
     }
   })();
   inflight.set(key, load);
@@ -151,7 +171,8 @@ export function recordOverleafSync(
 ): void {
   update(keyOf(environmentId, workspaceRoot), (current) => {
     const previews = new Map(current.previews);
-    previews.delete(connectionId);
+    // A result with its own review replaces the one read before; a cancel or refusal doesn't.
+    if (result._tag === "synced" || result._tag === "needs-decision") previews.delete(connectionId);
     return {
       ...current,
       previews,
@@ -252,6 +273,8 @@ export function useOverleafTokenSaved(environmentId: EnvironmentId | null): Toke
 export function resetOverleafStoreForTests(): void {
   snapshots.clear();
   loadedAt.clear();
+  statusReads.clear();
+  listReads.clear();
   inflight.clear();
   tokens.clear();
 }

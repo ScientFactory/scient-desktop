@@ -253,6 +253,8 @@ export function refusalText(refusal: ScientOverleafRefusal): string {
       return "An earlier attempt stopped before it finished, so it isn't run again. Try again.";
     case "records-unreadable":
       return "Scient can't read its Overleaf link records, so nothing was linked or changed.";
+    case "editor-unsaved":
+      return `${refusal.path ?? "An open file"} couldn't be saved, so nothing was synced. Save it, then sync again.`;
     case "overleaf-moved":
       return "Overleaf kept changing while the conflicts were shown. Sync again.";
     case "folder-kept-changing":
@@ -265,13 +267,23 @@ export function refusalText(refusal: ScientOverleafRefusal): string {
 }
 
 /** What an operation's thrown error says: the server's fixed reason when it gave one. */
+/** What any other failure says: no address, status or serialized error reaches the screen. */
+export const OVERLEAF_REQUEST_FAILED = "The Overleaf request didn't go through. Try again.";
+
+const REASON = /^[a-z][a-z-]{0,63}$/u;
+
+/**
+ * What an operation's thrown error says. The server's typed refusal
+ * (`ScientOverleafOperationError`) and the app's own reasoned errors carry a
+ * fixed reason, mapped to its words; anything else gets one fixed line.
+ */
 export function operationErrorText(error: unknown): string {
   if (typeof error === "object" && error !== null && "reason" in error) {
-    const reason = (error as { readonly reason: unknown }).reason;
-    if (typeof reason === "string") return refusalText({ reason });
+    const { reason, path } = error as { readonly reason: unknown; readonly path?: unknown };
+    if (typeof reason === "string" && REASON.test(reason))
+      return refusalText({ reason, ...(typeof path === "string" ? { path } : {}) });
   }
-  if (error instanceof Error && error.message.length > 0) return error.message;
-  return "The Overleaf request failed.";
+  return OVERLEAF_REQUEST_FAILED;
 }
 
 export interface OverleafResultView {

@@ -119,4 +119,25 @@ describe("scientOverleafHttp", () => {
       ]);
     }),
   );
+
+  it.effect("keeps the server's typed refusal, with its fixed reason", () =>
+    Effect.gen(function* () {
+      const fetchFn = (async () =>
+        Response.json(
+          {
+            _tag: "ScientOverleafOperationError",
+            reason: "access-denied",
+            message:
+              "Overleaf refused the token, or this account has no Git access to the project.",
+          },
+          { status: 409 },
+        )) satisfies typeof fetch;
+      const failure = yield* syncEnvironmentOverleaf({
+        prepared: PREPARED,
+        request: { workspaceRoot: "/work/project", connectionId: "c1", requestId: "request-1" },
+      }).pipe(Effect.provide(layerRemoteHttpClient(fetchFn)), Effect.flip);
+      expect(failure._tag).toBe("ScientOverleafOperationError");
+      expect(failure).toMatchObject({ reason: "access-denied" });
+    }),
+  );
 });
