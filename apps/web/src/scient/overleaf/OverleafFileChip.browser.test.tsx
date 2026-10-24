@@ -110,6 +110,7 @@ const sent: ScientOverleafSyncResult = {
     conflicts: [],
     warnings: [],
     unresolvedMarkers: [],
+    released: [],
     collisions: [],
     selectedAdditions: [],
     additions: [],

@@ -159,7 +159,11 @@ const fileLines = (review: ScientOverleafReview): string[] => {
 };
 
 const markerLine = (paths: ReadonlyArray<string>) =>
-  `${plural(paths.length, "file")} still ${paths.length === 1 ? "has" : "have"} conflict marks: ${named(paths)}. Merge each marked block, remove every mark, then sync again; a file with marks is not sent.`;
+  `${plural(paths.length, "file")} still ${paths.length === 1 ? "has" : "have"} conflict marks: ${named(paths)}. Merge each marked block, remove every mark, then sync again; a file with marks is not sent. If the marks are a file's content, send it as it is with files.release.`;
+
+/** Files with marks a review sends as they are, as `files.release` asked. */
+const releasedLine = (paths: ReadonlyArray<string>, tense: Exclude<SendTense, "unsent">) =>
+  `${OLDER_VERB[tense]} ${named(paths)} as ${paths.length === 1 ? "it is" : "they are"}, conflict marks included, as files.release asked.`;
 
 /** What a review would do: the preview's lines. */
 const reviewLines = (review: ScientOverleafReview): string[] => {
@@ -180,6 +184,7 @@ const reviewLines = (review: ScientOverleafReview): string[] => {
   lines.push(...fileLines(review));
   lines.push(...warningLines(review.warnings, "would"));
   if (review.unresolvedMarkers.length > 0) lines.push(markerLine(review.unresolvedMarkers));
+  if (review.released.length > 0) lines.push(releasedLine(review.released, "would"));
   return lines;
 };
 
@@ -275,6 +280,8 @@ const refusalReason = (refusal: ScientOverleafRefusal): string => {
       return `a Git LFS pointer cannot be synced${at}.`;
     case "alias":
       return `a synced file is on disk under a name that differs only by letter case or Unicode spelling${at}. Rename it back.`;
+    case "release-held":
+      return `${refusal.path ?? "a file"} can't be sent as it is: another file held for its conflict marks keeps that place on Overleaf. Settle that file's marks first, or leave it out of files.release.`;
     default:
       return `the review was refused (${refusal.reason})${at}.`;
   }
@@ -418,6 +425,9 @@ export const syncLines = (result: ScientOverleafSyncResult): string[] => {
         const marked = [...new Set([...result.markerPaths, ...result.review.unresolvedMarkers])];
         if (marked.length > 0) lines.push(markerLine(marked));
       }
+      const tense = sendTense(result.publication);
+      if (result.review.released.length > 0 && tense !== "unsent")
+        lines.push(releasedLine(result.review.released, tense));
       return [...progressLines(result), ...lines, ...activityLines(result.activity)];
     }
     case "needs-decision":
