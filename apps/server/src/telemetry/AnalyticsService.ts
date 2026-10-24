@@ -25,6 +25,8 @@ export class AnalyticsService extends Context.Service<
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
+      /** In-memory observer fence; never persisted or exported. */
+      expectedCollectionEpoch?: number,
     ) => Effect.Effect<void>;
 
     /** Attempt delivery of the currently due local outbox batch. */
