@@ -209,7 +209,7 @@ describe("recovering unsaved work", () => {
       expect(mounted!.view.dom.dataset.latexLoading).not.toBe("true");
     });
     if (openingSave) await openingSave();
-    _fixture.clock ??= _fixture.cleanup.use(fakeTimers());
+    _fixture.clock ??= _fixture.stack.use(fakeTimers());
   }
   /** Something else wrote the file; the host adopts it. */
   const changeOutside = async (source: string) =>

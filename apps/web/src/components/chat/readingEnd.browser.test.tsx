@@ -4,12 +4,13 @@ import {
   render as _fixtureRender,
   type Screen,
 } from "../../../test/render";
+import { advanceTestClock } from "../../../test/testClock";
 import "../../index.css";
 import { EnvironmentId, MessageId, RunId, TurnId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef } from "react";
 
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, vi, type TestContext } from "vite-plus/test";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { readerAtReadingEnd, readingEndGapOnScreen, withReadingEnd } from "./readerScrollPolicy";
@@ -56,8 +57,8 @@ async function scroll(operation: () => Promise<void>) {
   await vi.waitFor(() => receipt);
 }
 
-async function advanceClock(ms = 64) {
-  await _fixtureAct(() => vi.advanceTimersByTimeAsync(ms));
+async function advanceClock(_fixture: _Fixture, ms = 64) {
+  await advanceTestClock(_fixture.signal, ms);
 }
 async function render(
   _fixture: _Fixture,
@@ -73,7 +74,7 @@ async function render(
     _fixture.root0 = _fixture.stack.use(
       await _fixtureRender(null, { container: _fixture.host, router: false }),
     );
-    _fixture.cleanup.use(fakeTimers());
+    _fixture.stack.use(fakeTimers());
   }
   await _fixtureAct(
     async () =>
@@ -118,8 +119,8 @@ function firstLinesVisible(_fixture: _Fixture, messageId: string) {
   );
 }
 
-it("reveals past progress notes to the start of the message the agent is writing", async () => {
-  await using _fixture = _createFixture();
+it("reveals past progress notes to the start of the message the agent is writing", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:notes";
@@ -140,11 +141,11 @@ it("reveals past progress notes to the start of the message the agent is writing
   );
   let timeline = [...entries, prompt];
   await render(_fixture, key, timeline, running);
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   for (const note of notes) {
     timeline.push(note);
     await render(_fixture, key, timeline, running);
-    await advanceClock(192);
+    await advanceClock(_fixture, 192);
   }
   const latest = notes.at(-1)!.message.id;
   await vi.waitFor(() => {
@@ -152,8 +153,8 @@ it("reveals past progress notes to the start of the message the agent is writing
   });
 });
 
-it("counts one unread per response, not one per progress note", async () => {
-  await using _fixture = _createFixture();
+it("counts one unread per response, not one per progress note", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:unread";
@@ -164,7 +165,7 @@ it("counts one unread per response, not one per progress note", async () => {
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 200, animated: false }));
-  await advanceClock();
+  await advanceClock(_fixture);
   const later = "2026-09-29T01:00:00.000Z";
   let timeline = [...entries, message(40, "user", "Question", "turn-40", later)];
   for (let i = 0; i < 5; i++) {
@@ -177,15 +178,15 @@ it("counts one unread per response, not one per progress note", async () => {
       isWorking: true,
       runningRunId: RunId.make("turn-40"),
     });
-    await advanceClock(48);
+    await advanceClock(_fixture, 48);
   }
   await vi.waitFor(() => {
     expect(onUnreadBelowChange.mock.lastCall?.[0]).toBe(1);
   });
 });
 
-it("keeps revealing after a click or text selection in the timeline", async () => {
-  await using _fixture = _createFixture();
+it("keeps revealing after a click or text selection in the timeline", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:click";
@@ -197,7 +198,7 @@ it("keeps revealing after a click or text selection in the timeline", async () =
   const prompt = message(20, "user", "Question");
   const running = { isWorking: true, readingFollowPromptId: prompt.message.id };
   await render(_fixture, key, [...entries, prompt], running);
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   node(_fixture).dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
   // Scrolling down (or trackpad momentum toward the end) is not a cancel either.
   node(_fixture).dispatchEvent(new WheelEvent("wheel", { deltaY: 40, bubbles: true }));
@@ -208,8 +209,8 @@ it("keeps revealing after a click or text selection in the timeline", async () =
   });
 });
 
-it("treats the end of the last message's text as the bottom", async () => {
-  await using _fixture = _createFixture();
+it("treats the end of the last message's text as the bottom", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:bottom";
@@ -226,7 +227,7 @@ it("treats the end of the last message's text as the bottom", async () => {
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock();
+  await advanceClock(_fixture);
   const state = _fixture.listRef.current!.getState();
   const reading = withReadingEnd(state, COMPOSER_INSET)!;
   // Rows after the answer's text (its timestamp and actions) are not reading content.
@@ -240,21 +241,21 @@ it("treats the end of the last message's text as the bottom", async () => {
       animated: false,
     }),
   );
-  await advanceClock();
+  await advanceClock(_fixture);
   expect(
     resolveTimelineIsAtEnd(withReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET)),
   ).toBe(true);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
 });
 
-it("opens a thread without a saved position at the end, even when rows grow after the first jump", async () => {
-  await using _fixture = _createFixture();
+it("opens a thread without a saved position at the end, even when rows grow after the first jump", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:fresh-open";
   const entries = [...history(11), message(11, "assistant", "Short answer.")];
   await render(_fixture, key, entries);
-  await advanceClock(48);
+  await advanceClock(_fixture, 48);
   // The last answer grows just after the first jump to the end (late layout).
   await render(_fixture, key, [
     ...entries.slice(0, -1),
@@ -265,8 +266,8 @@ it("opens a thread without a saved position at the end, even when rows grow afte
   });
 });
 
-it("keeps the end in view while idle, and never moves the reader while the thread works", async () => {
-  await using _fixture = _createFixture();
+it("keeps the end in view while idle, and never moves the reader while the thread works", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:idle";
@@ -276,7 +277,7 @@ it("keeps the end in view while idle, and never moves the reader while the threa
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(160);
+  await advanceClock(_fixture, 160);
   expect(gapToListEnd(_fixture)).toBeLessThanOrEqual(1);
   // Late layout at the end of an idle thread (a diagram finishing its render).
   await render(_fixture, key, [
@@ -296,12 +297,12 @@ it("keeps the end in view while idle, and never moves the reader while the threa
       isWorking: true,
     },
   );
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   expect(Math.abs(node(_fixture).scrollTop - before)).toBeLessThanOrEqual(1);
 });
 
-it("stops paging history for a missing saved message after a few pages", async () => {
-  await using _fixture = _createFixture();
+it("stops paging history for a missing saved message after a few pages", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:missing";
@@ -326,10 +327,10 @@ it("stops paging history for a missing saved message after a few pages", async (
   });
   await render(_fixture, key, recent, { loadEarlier: loadEarlier() });
   for (let i = 0; i < 6; i++) {
-    await advanceClock(64);
+    await advanceClock(_fixture, 64);
     await render(_fixture, key, recent, { loadEarlier: loadEarlier() });
   }
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   expect(load.mock.calls.length).toBeLessThanOrEqual(2);
   // The reader is placed (at a neighbor or the end) rather than left waiting.
   await vi.waitFor(() => {
@@ -337,8 +338,8 @@ it("stops paging history for a missing saved message after a few pages", async (
   });
 });
 
-it("reveals the latest message after very tall notes", async () => {
-  await using _fixture = _createFixture();
+it("reveals the latest message after very tall notes", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:virtualized";
@@ -355,7 +356,7 @@ it("reveals the latest message after very tall notes", async () => {
     readingFollowPromptId: prompt.message.id,
   };
   await render(_fixture, key, [...entries, prompt], running);
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   // Several very tall notes push the next message far past the rendered window.
   const tallNotes = [21, 22, 23, 24].map((index) =>
     message(
@@ -369,9 +370,9 @@ it("reveals the latest message after very tall notes", async () => {
   // The notes are measured first; the latest message arrives afterwards, far
   // below the rendered window.
   await render(_fixture, key, [...entries, prompt, ...tallNotes], running);
-  await advanceClock(192);
+  await advanceClock(_fixture, 192);
   await render(_fixture, key, [...entries, prompt, ...tallNotes, latest], running);
-  await advanceClock(16);
+  await advanceClock(_fixture, 16);
   // Precondition: the latest message has never been rendered.
   expect(rowRect(_fixture, latest.message.id)).toBeNull();
   await vi.waitFor(() => {
@@ -379,8 +380,8 @@ it("reveals the latest message after very tall notes", async () => {
   });
 });
 
-it("waits for a history page still loading before giving up on the saved message", async () => {
-  await using _fixture = _createFixture();
+it("waits for a history page still loading before giving up on the saved message", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:slow-page";
@@ -413,7 +414,7 @@ it("waits for a history page still loading before giving up on the saved message
   await render(_fixture, key, [...middle, ...recent], {
     loadEarlier: { loading: true, cursor: "page-2", onLoadEarlier: load },
   });
-  await advanceClock(480);
+  await advanceClock(_fixture, 480);
   const all = [
     ...Array.from({ length: 10 }, (_, i) => message(i, "user", paragraph(i))),
     ...middle,
@@ -432,8 +433,8 @@ it("waits for a history page still loading before giving up on the saved message
   });
 });
 
-it("pins the idle end again once a reveal has finished", async () => {
-  await using _fixture = _createFixture();
+it("pins the idle end again once a reveal has finished", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:after-reveal";
@@ -448,9 +449,9 @@ it("pins the idle end again once a reveal has finished", async () => {
   await render(_fixture, key, [...entries, prompt, answer], {
     readingFollowPromptId: prompt.message.id,
   });
-  await advanceClock(160);
+  await advanceClock(_fixture, 160);
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(160);
+  await advanceClock(_fixture, 160);
   await render(
     _fixture,
     key,
@@ -464,8 +465,8 @@ it("pins the idle end again once a reveal has finished", async () => {
   });
 });
 
-it("does not pin the end right after a click that expands content", async () => {
-  await using _fixture = _createFixture();
+it("does not pin the end right after a click that expands content", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:click-expand";
@@ -475,7 +476,7 @@ it("does not pin the end right after a click that expands content", async () => 
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(160);
+  await advanceClock(_fixture, 160);
   const before = node(_fixture).scrollTop;
   // A click (e.g. Show full message) grows content below the reader.
   node(_fixture).dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -483,12 +484,12 @@ it("does not pin the end right after a click that expands content", async () => 
     ...entries.slice(0, -1),
     message(11, "assistant", paragraph(11).repeat(3)),
   ]);
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   expect(Math.abs(node(_fixture).scrollTop - before)).toBeLessThanOrEqual(1);
 });
 
-it("keeps the end of the answer's text in view while idle, not the end of what follows it", async () => {
-  await using _fixture = _createFixture();
+it("keeps the end of the answer's text in view while idle, not the end of what follows it", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:idle-text-end";
@@ -499,7 +500,7 @@ it("keeps the end of the answer's text in view while idle, not the end of what f
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   // Rest exactly at the end of the answer's text, above its trailing rows.
   const state = _fixture.listRef.current!.getState();
   const trailing = state.contentLength - withReadingEnd(state, COMPOSER_INSET)!.contentLength;
@@ -509,7 +510,7 @@ it("keeps the end of the answer's text in view while idle, not the end of what f
       animated: false,
     }),
   );
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   const readingGap = () => {
     const now = _fixture.listRef.current!.getState();
     return withReadingEnd(now, COMPOSER_INSET)!.contentLength - now.scroll - now.scrollLength;
@@ -522,8 +523,8 @@ it("keeps the end of the answer's text in view while idle, not the end of what f
   });
 });
 
-it("keeps the answer's end in view when content above it grows in the same layout", async () => {
-  await using _fixture = _createFixture();
+it("keeps the answer's end in view when content above it grows in the same layout", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:grow-above";
@@ -535,7 +536,7 @@ it("keeps the answer's end in view when content above it grows in the same layou
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   const readingGap = () => {
     const now = _fixture.listRef.current!.getState();
     // The virtualizer can report its requested scroll after the browser clamps
@@ -557,8 +558,8 @@ it("keeps the answer's end in view when content above it grows in the same layou
   });
 });
 
-it("never pulls the reader back when they scroll in the same frame the answer grows", async () => {
-  await using _fixture = _createFixture();
+it("never pulls the reader back when they scroll in the same frame the answer grows", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:scroll-and-grow";
@@ -568,7 +569,7 @@ it("never pulls the reader back when they scroll in the same frame the answer gr
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(160);
+  await advanceClock(_fixture, 160);
   // The reader scrolls up, and the answer grows before the next frame.
   node(_fixture).dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true }));
   node(_fixture).scrollTop -= 120;
@@ -577,12 +578,12 @@ it("never pulls the reader back when they scroll in the same frame the answer gr
     ...entries.slice(0, -1),
     message(11, "assistant", paragraph(11).repeat(3)),
   ]);
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   expect(Math.abs(node(_fixture).scrollTop - readerTop)).toBeLessThanOrEqual(1);
 });
 
-it("never pulls the reader back during a scrollbar drag that spans several frames", async () => {
-  await using _fixture = _createFixture();
+it("never pulls the reader back during a scrollbar drag that spans several frames", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:scrollbar-drag";
@@ -592,12 +593,12 @@ it("never pulls the reader back during a scrollbar drag that spans several frame
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(160);
+  await advanceClock(_fixture, 160);
   // A press on the scroll node itself (its scrollbar), then movement over frames.
   node(_fixture).dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
   for (let step = 0; step < 3; step++) {
     node(_fixture).scrollTop -= 40;
-    await advanceClock(16);
+    await advanceClock(_fixture, 16);
   }
   const readerTop = node(_fixture).scrollTop;
   // A late render lands mid-drag, several frames after the only input event.
@@ -605,13 +606,13 @@ it("never pulls the reader back during a scrollbar drag that spans several frame
     ...entries.slice(0, -1),
     message(11, "assistant", paragraph(11).repeat(3)),
   ]);
-  await advanceClock(128);
+  await advanceClock(_fixture, 128);
   expect(Math.abs(node(_fixture).scrollTop - readerTop)).toBeLessThanOrEqual(1);
   document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
 });
 
-it("still keeps the end after typing in the composer", async () => {
-  await using _fixture = _createFixture();
+it("still keeps the end after typing in the composer", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:typing";
@@ -621,12 +622,12 @@ it("still keeps the end after typing in the composer", async () => {
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(160);
+  await advanceClock(_fixture, 160);
   const composer = document.createElement("textarea");
   document.body.append(composer);
   composer.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
   composer.remove();
-  await advanceClock(32);
+  await advanceClock(_fixture, 32);
   await render(_fixture, key, [
     ...entries.slice(0, -1),
     message(11, "assistant", paragraph(11).repeat(3)),
@@ -636,8 +637,8 @@ it("still keeps the end after typing in the composer", async () => {
   });
 });
 
-it("counts the reader at the end when only their own latest message is hidden below the answer", async () => {
-  await using _fixture = _createFixture();
+it("counts the reader at the end when only their own latest message is hidden below the answer", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:own-message-below";
@@ -650,14 +651,14 @@ it("counts the reader at the end when only their own latest message is hidden be
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   // Scroll up until the answer's text ends exactly at the visible bottom.
   const state = _fixture.listRef.current!.getState();
   const atTextEnd = withReadingEnd(state, COMPOSER_INSET)!.contentLength - state.scrollLength;
   await scroll(() =>
     _fixture.listRef.current!.scrollToOffset({ offset: atTextEnd, animated: false }),
   );
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   expect(rowRect(_fixture, sent.message.id)?.top ?? Infinity).toBeGreaterThan(
     node(_fixture).getBoundingClientRect().top + node(_fixture).clientHeight - COMPOSER_INSET,
   );
@@ -665,8 +666,8 @@ it("counts the reader at the end when only their own latest message is hidden be
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
 });
 
-it("still judges a thread with no answer yet by the reader's own latest message", async () => {
-  await using _fixture = _createFixture();
+it("still judges a thread with no answer yet by the reader's own latest message", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:no-answer";
@@ -675,7 +676,7 @@ it("still judges a thread with no answer yet by the reader's own latest message"
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   expect(readerAtReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET)).toBe(true);
   // Before any answer, the inherited 40px band holds past the message's text
   // end: 30px hidden is the end, 60px is not (three lines would allow ~68px).
@@ -685,15 +686,15 @@ it("still judges a thread with no answer yet by the reader's own latest message"
   await scroll(() =>
     _fixture.listRef.current!.scrollToOffset({ offset: atTextEnd - 30, animated: false }),
   );
-  await advanceClock(64);
+  await advanceClock(_fixture, 64);
   expect(readerAtReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET)).toBe(true);
   await scroll(() =>
     _fixture.listRef.current!.scrollToOffset({ offset: atTextEnd - 60, animated: false }),
   );
-  await advanceClock(64);
+  await advanceClock(_fixture, 64);
   expect(readerAtReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET)).toBe(false);
   await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: end, animated: false }));
-  await advanceClock(64);
+  await advanceClock(_fixture, 64);
   // Well above the end (far more than three lines) is not the end.
   await scroll(() =>
     _fixture.listRef.current!.scrollToOffset({
@@ -701,12 +702,12 @@ it("still judges a thread with no answer yet by the reader's own latest message"
       animated: false,
     }),
   );
-  await advanceClock(64);
+  await advanceClock(_fixture, 64);
   expect(readerAtReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET)).toBe(false);
 });
 
-it("shows the end control while a running turn has new activity below the reader", async () => {
-  await using _fixture = _createFixture();
+it("shows the end control while a running turn has new activity below the reader", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:running-activity";
@@ -735,7 +736,7 @@ it("shows the end control while a running turn has new activity below the reader
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   expect(readerAtReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET, true)).toBe(true);
   // The reader scrolls up a little: the turn's latest tool steps are now below them.
   await scroll(() =>
@@ -744,7 +745,7 @@ it("shows the end control while a running turn has new activity below the reader
       animated: false,
     }),
   );
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   const state = _fixture.listRef.current!.getState();
   // Precondition: the previous answer is still in view, while new activity
   // is hidden below (judging by that answer alone would say "at the end").
@@ -777,8 +778,8 @@ function toolRows(run: string, count: number) {
 const isAtEndNow = (_fixture: _Fixture, running: boolean) =>
   readerAtReadingEnd(_fixture.listRef.current!.getState(), COMPOSER_INSET, running);
 
-it("keeps an interrupted turn's unseen activity below the reader counted", async () => {
-  await using _fixture = _createFixture();
+it("keeps an interrupted turn's unseen activity below the reader counted", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:interrupted";
@@ -803,7 +804,7 @@ it("keeps an interrupted turn's unseen activity below the reader counted", async
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   // Rest with the interim note in view and the tool steps after it hidden.
   const view = () =>
     node(_fixture).getBoundingClientRect().top + node(_fixture).clientHeight - COMPOSER_INSET;
@@ -814,7 +815,7 @@ it("keeps an interrupted turn's unseen activity below the reader counted", async
       animated: false,
     }),
   );
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   const now = _fixture.listRef.current!.getState();
   expect(rowRect(_fixture, message(32, "assistant", "").message.id)!.bottom).toBeLessThanOrEqual(
     view(),
@@ -834,13 +835,13 @@ it("keeps an interrupted turn's unseen activity below the reader counted", async
     latestRun: interrupted,
     onIsAtEndChange,
   });
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   expect(isAtEndNow(_fixture, true)).toBe(false);
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
 });
 
-it("judges a finished turn by its answer, and a busy thread without a running turn too", async () => {
-  await using _fixture = _createFixture();
+it("judges a finished turn by its answer, and a busy thread without a running turn too", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   const key = "reading-end:finished-turn";
@@ -860,13 +861,13 @@ it("judges a finished turn by its answer, and a busy thread without a running tu
     expect(readTimelinePosition(key)).toBeDefined();
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   const state = _fixture.listRef.current!.getState();
   const atTextEnd = withReadingEnd(state, COMPOSER_INSET)!.contentLength - state.scrollLength;
   await scroll(() =>
     _fixture.listRef.current!.scrollToOffset({ offset: atTextEnd, animated: false }),
   );
-  await advanceClock(96);
+  await advanceClock(_fixture, 96);
   const now = _fixture.listRef.current!.getState();
   // Precondition: the trailing tool rows are hidden below.
   expect(now.contentLength - now.scroll - now.scrollLength).toBeGreaterThan(40);
@@ -874,7 +875,7 @@ it("judges a finished turn by its answer, and a busy thread without a running tu
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
 });
 
-function _createFixture() {
+function _createFixture(context: TestContext) {
   const stack = new AsyncDisposableStack();
   const cleanup = new AsyncDisposableStack();
   const listRef = createRef<LegendListRef>();
@@ -914,6 +915,8 @@ function _createFixture() {
     host: undefined! as HTMLDivElement | undefined,
     stack,
     cleanup,
+    /** Aborts at the test's deadline; advanceClock stops on it. */
+    signal: context.signal,
     root0: undefined! as Screen | undefined,
     async [Symbol.asyncDispose]() {
       try {

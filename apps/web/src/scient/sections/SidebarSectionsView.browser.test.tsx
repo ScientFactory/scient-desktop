@@ -342,7 +342,7 @@ it.each([
       new DOMMatrixReadOnly(last.style.transform).m42;
     await vi.waitFor(() => expect(last.getBoundingClientRect().top).toBeCloseTo(landingTop, 0));
     const previewTop = last.getBoundingClientRect().top;
-    _fixture.cleanup.use(fakeTimers());
+    _fixture.stack.use(fakeTimers());
     await act(() => vi.advanceTimersByTimeAsync(250));
     expect(last.getBoundingClientRect().top).toBeCloseTo(previewTop, 0);
     await pointer(_fixture, "pointerup", document, x, y);

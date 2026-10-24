@@ -170,15 +170,19 @@ real modules that load Shiki or diff workers.
 CI runners lay out pages several times slower than a developer Mac, so a test
 that passes locally can still race there.
 
-- Wait on the state you check: a receipt, an owner's event, or a measurement.
-  Never wait a fixed delay or a number of frames or steps, and do not let fake
-  time stand in for rendering: a fake clock does not lay out or measure.
+- Wait on the state you check: a receipt, an owner's event, or a measurement
+  (`test/listMeasurement.ts` for a list row's size). Never wait a fixed delay or
+  a number of frames or steps, and do not let fake time stand in for rendering:
+  a fake clock does not lay out or measure.
 - `vi.waitFor`, `expect.poll` and `expect.element` default to 5 s in the browser
   project, for eventual readiness. A test that checks something happens quickly
   states its own `timeout`.
-- Unmount before restoring fake timers: acquire `fakeTimers()` on the stack that
-  outlives the rendered tree. A loop that drives the clock stops when the test's
-  `signal` aborts.
+- Unmount before restoring fake timers, so the tree cancels what it scheduled
+  on them: put `fakeTimers()` on the fixture stack that outlives the unmount.
+- A test past its deadline keeps running, and the fake clock is shared. Drive
+  it through `advanceTestClock(signal, ms)` (`test/testClock.ts`), which stops
+  once the test's `signal` aborts; `vi.waitFor` and `expect.poll` stop retrying
+  then too.
 - Prove a flaky-test fix under CI-like slowness and a targeted probe (a delayed
   observer, grammar load or visibility report): fail before, pass after, under
   the same condition. `SCIENT_TEST_CPU_THROTTLE=<rate>` slows each test page's
@@ -192,8 +196,9 @@ so disposal restores them even on failure; avoid module-level screens and
 `setup()` call at the start of each test. `t3code/require-disposable-render`
 enforces this lifecycle. Test meaningful behavior rather than static markup
 that only repeats props or callback wiring.
-Acquire timers and spies driven after mounting after the render, so they dispose
-before unmounting. A render helper that waits or interacts must own its screen in
+Acquire spies driven after mounting after the render, so they dispose before
+unmounting; fake timers are acquired after the render too, but dispose after it
+unmounts (above). A render helper that waits or interacts must own its screen in
 an `AsyncDisposableStack` until it returns successfully. Give `rerender` a fresh
 element. The router is enabled by default; explain any `router: false` fixture.
 

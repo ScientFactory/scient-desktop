@@ -96,7 +96,7 @@ async function open(
   await _fixture.root0.rerender(<Harness />);
   const editor = () => readMountedLatexVisualTestEditor(_fixture.container);
   await vi.waitFor(async () => expect(await editor()).toBeTruthy(), { timeout: 20000 });
-  if (controlledClock) _fixture.clock ??= _fixture.cleanup.use(fakeTimers());
+  if (controlledClock) _fixture.clock ??= _fixture.stack.use(fakeTimers());
   if (!loaded) return editor()!;
   await vi.waitFor(
     async () =>
