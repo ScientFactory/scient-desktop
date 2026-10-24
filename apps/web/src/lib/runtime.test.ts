@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+// Subject reloads must not include the shared schema graph's cold loader work.
+import "@t3tools/contracts";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Effect from "effect/Effect";
 import * as Tracer from "effect/Tracer";

@@ -84,11 +84,12 @@ process.stdin.on("data", (data) => {
       process.stdout.write(line({ id: message.id, result: { sessionId: "s", configOptions: options() } }));
     else if (message.method === "session/prompt") {
       promptId = message.id;
-      fs.writeFileSync(process.env.ACP_PROMPT, "received");
+      process.stderr.write("fixture:prompt-received\n");
     }
     else if (message.method === "session/set_config_option") {
       writes.push({ id: message.id, configId: message.params.configId, value: message.params.value });
       fs.appendFileSync(process.env.ACP_WRITES, message.params.value + "\n");
+      process.stderr.write("fixture:write-received\n");
       void run(writes.length - 1);
     }
   }
@@ -119,17 +120,19 @@ const scriptedRuntime = (
     const agent = NodePath.join(directory, "agent.mjs");
     const writes = NodePath.join(directory, "writes");
     const pid = NodePath.join(directory, "pid");
-    const prompt = NodePath.join(directory, "prompt");
     NodeFS.writeFileSync(agent, AGENT_SOURCE);
     NodeFS.writeFileSync(writes, "");
     const scope = yield* Effect.scope;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     let childExit: Fiber.Fiber<unknown, unknown> | undefined;
+    const promptReceived = yield* Deferred.make<void>();
+    const writeReceived = yield* Deferred.make<void>();
+    let receiptBuffer = "";
     const runtime = yield* AcpSessionRuntime.make({
       spawn: {
         command: process.execPath,
         args: [agent],
-        env: { ACP_PLAN: encodePlan(plan), ACP_WRITES: writes, ACP_PID: pid, ACP_PROMPT: prompt },
+        env: { ACP_PLAN: encodePlan(plan), ACP_WRITES: writes, ACP_PID: pid },
       },
       cwd: directory,
       clientInfo: { name: "t3-test", version: "0.0.0" },
@@ -137,6 +140,15 @@ const scriptedRuntime = (
       configOptionTransport,
       configOptionSettleTimeout: settleTimeout as never,
       ...(onTermination === undefined ? {} : { onTermination }),
+      onStderr: Effect.fn("test.observeAgentReceipt")(function* (text: string) {
+        receiptBuffer += text;
+        if (receiptBuffer.includes("fixture:prompt-received\n")) {
+          yield* Deferred.succeed(promptReceived, undefined);
+        }
+        if (receiptBuffer.includes("fixture:write-received\n")) {
+          yield* Deferred.succeed(writeReceived, undefined);
+        }
+      }),
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
         ...spawner,
@@ -156,26 +168,13 @@ const scriptedRuntime = (
       }),
     );
     yield* runtime.start();
-    const awaitReceipt = Effect.fn("test.awaitAgentReceipt")(function* (predicate: () => boolean) {
-      yield* Effect.callback<void, Error>((resume) => {
-        const check = () => {
-          if (predicate()) resume(Effect.void);
-        };
-        const watcher = NodeFS.watch(directory, check);
-        watcher.on("error", (error) => resume(Effect.fail(error)));
-        check();
-        return Effect.sync(() => watcher.close());
-      });
-    });
     return {
       ...runtime,
       /** The values of the writes that reached the agent. */
       writesReceived: () => NodeFS.readFileSync(writes, "utf8").split("\n").filter(Boolean),
       childPid: () => decodePid(NodeFS.readFileSync(pid, "utf8")),
-      awaitPromptReceived: awaitReceipt(() => NodeFS.existsSync(prompt)),
-      awaitWriteReceived: awaitReceipt(
-        () => NodeFS.existsSync(writes) && NodeFS.readFileSync(writes, "utf8").length > 0,
-      ),
+      awaitPromptReceived: Deferred.await(promptReceived),
+      awaitWriteReceived: Deferred.await(writeReceived),
       awaitChildExit: Effect.suspend(() =>
         childExit ? Fiber.await(childExit).pipe(Effect.asVoid) : Effect.die("Missing native child"),
       ),
