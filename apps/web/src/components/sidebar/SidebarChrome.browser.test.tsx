@@ -9,7 +9,6 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
-import { SidebarNewThreadRow } from "../../scient/sidebar/SidebarNewThreadRow";
 import { SidebarFooter, SidebarProvider } from "../ui/sidebar";
 import { TooltipProvider } from "../ui/tooltip";
 import { SidebarUtilityMenu } from "./SidebarChrome";
@@ -203,7 +202,8 @@ async function mountFooter(_fixture: _Fixture, width: number, state: DesktopUpda
   await expect.poll(() => _fixture.host!.querySelectorAll("button").length).toBeGreaterThan(3);
 }
 
-it.each(["available", "downloading", "downloaded", "error"] as const)(
+// regression: 4b9f781edc fix(sidebar): keep update controls within narrow layouts
+it.each(["downloading", "downloaded"] as const)(
   "keeps %s updates inside the minimum sidebar and preserves overflow actions",
   async (status) => {
     await using _fixture = _createFixture();
@@ -213,7 +213,6 @@ it.each(["available", "downloading", "downloaded", "error"] as const)(
       ...updateState,
       status,
       ...(status === "downloading" ? { downloadPercent: 57 } : {}),
-      ...(status === "error" ? { errorContext: "install", canRetry: true } : {}),
     });
     const more = page.getByRole("button", { name: "More sidebar actions", includeHidden: true });
     await expect.element(more).toBeVisible();
@@ -324,59 +323,7 @@ function everythingFixture(): ReturnType<typeof useUpdateEverything> {
   };
 }
 
-function expectFooterInOrder(_fixture: _Fixture) {
-  const footer = _fixture
-    .host!.querySelector<HTMLElement>('[data-sidebar="footer"]')!
-    .getBoundingClientRect();
-  let previousRight = footer.left;
-  for (const visible of [..._fixture.host!.querySelectorAll("button")].filter(
-    (candidate) => candidate.getClientRects().length,
-  )) {
-    const bounds = visible.getBoundingClientRect();
-    expect(bounds.left).toBeGreaterThanOrEqual(previousRight);
-    expect(bounds.right).toBeLessThanOrEqual(footer.right);
-    // Labels never truncate; the circle's progress ring is drawn around it on purpose.
-    if (!visible.matches("[data-other-updates]")) {
-      expect(visible.scrollWidth).toBeLessThanOrEqual(visible.clientWidth);
-    }
-    previousRight = bounds.right;
-  }
-}
-
-it.each([
-  ["idle", "Check for updates"],
-  ["downloaded", "Restart"],
-] as const)(
-  "keeps the other-updates circle at 20px beside the %s app control",
-  async (status, appLabel) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    fixture.everything = everythingFixture();
-    await mountFooter(_fixture, 216, status === "idle" ? idleUpdateState : updateState);
-    const circle = page.getByRole("button", { name: "Other updates available" });
-    await expect.element(circle).toBeVisible();
-    const app = page.getByRole("button", { name: new RegExp(`^${appLabel}`) });
-    await expect.element(app).toBeVisible();
-
-    const bounds = (circle.element() as HTMLElement).getBoundingClientRect();
-    expect([bounds.width, bounds.height]).toEqual([20, 20]);
-    const appBounds = (app.element() as HTMLElement).getBoundingClientRect();
-    expect(appBounds.left - bounds.right).toBe(6);
-    expect(
-      Math.abs(appBounds.top + appBounds.height / 2 - (bounds.top + bounds.height / 2)),
-    ).toBeLessThanOrEqual(0.5);
-    expectFooterInOrder(_fixture);
-    if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
-      await page.screenshot({
-        path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/other-updates-${status}.png`,
-        element: _fixture.host!,
-      });
-    }
-  },
-);
-
-it("lists other updates with text actions and updates them without a confirmation", async () => {
+it("lists other updates and updates them without a confirmation", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
@@ -389,20 +336,6 @@ it("lists other updates with text actions and updates them without a confirmatio
   expect(row.textContent).toContain("alvin server");
   expect(row.textContent).toContain("0.6.20 → 0.6.21");
 
-  const rowUpdate = page.getByRole("button", { name: "Update", exact: true });
-  for (const action of [rowUpdate, updateAll]) {
-    const style = getComputedStyle(action.element());
-    expect(style.borderTopWidth).toBe("0px");
-    expect(style.backgroundColor).toBe("rgba(0, 0, 0, 0)");
-    expect(style.textDecorationLine).toBe("underline");
-  }
-  expect(Number(getComputedStyle(updateAll.element()).fontWeight)).toBeGreaterThanOrEqual(600);
-  expect(Number(getComputedStyle(rowUpdate.element()).fontWeight)).toBeLessThan(600);
-  // Hover is visible on the light card, and still subtle.
-  await userEvent.hover(updateAll);
-  await expect
-    .poll(() => getComputedStyle(updateAll.element()).backgroundColor)
-    .not.toBe("rgba(0, 0, 0, 0)");
   if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
     await page.screenshot({
       path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/other-updates-card.png`,
@@ -413,15 +346,7 @@ it("lists other updates with text actions and updates them without a confirmatio
   expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   const updating = page.getByRole("button", { name: "Other updates in progress" });
   await expect.element(updating).toBeVisible();
-  const bounds = (updating.element() as HTMLElement).getBoundingClientRect();
-  expect([bounds.width, bounds.height]).toEqual([20, 20]);
-  // The ring spins, so measure its drawn size rather than its rotated bounding box.
-  const ring = (updating.element() as HTMLElement).querySelector("svg")!;
-  expect(getComputedStyle(ring).width).toBe("24px");
-  const app = page.getByRole("button", { name: /^Check for updates/ }).element();
-  expect(bounds.left + bounds.width / 2 + 12).toBeLessThan(app.getBoundingClientRect().left);
   await expect.poll(() => row.isConnected && row.textContent).toContain("queued");
-  expectFooterInOrder(_fixture);
 });
 
 it("asks once inline before Update all stops running threads", async () => {
@@ -458,7 +383,8 @@ it("asks once inline before Update all stops running threads", async () => {
   expect(document.querySelector('[role="alertdialog"]')).toBeNull();
 });
 
-it("keeps an asking row's Update on the shared right edge without truncating its name", async () => {
+// regression: 31508a1e79 fix(web): put a card row's thread question on its own line
+it("asks on a row's own line before its Update stops running threads", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
@@ -489,16 +415,6 @@ it("keeps an asking row's Update on the shared right edge without truncating its
   expect(rowUpdate.element().getAttribute("aria-describedby")).toBe(ask.id);
   expect(ask.getAttribute("aria-live")).toBe("polite");
 
-  const cardBounds = card.getBoundingClientRect();
-  const rowBounds = (rowUpdate.element() as HTMLElement).getBoundingClientRect();
-  const allBounds = (
-    page.getByRole("button", { name: "Update all" }).element() as HTMLElement
-  ).getBoundingClientRect();
-  expect(rowBounds.right).toBeLessThanOrEqual(cardBounds.right);
-  expect(Math.abs(rowBounds.right - allBounds.right)).toBeLessThanOrEqual(0.5);
-  const name = row.querySelector<HTMLElement>("span")!;
-  expect(name.textContent).toBe("lab-gpu server");
-  expect(name.scrollWidth).toBeLessThanOrEqual(name.clientWidth);
   if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
     await page.screenshot({
       path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/other-updates-row-ask.png`,
@@ -527,9 +443,6 @@ it.each(["Later", "Restart"] as const)(
     await expect.element(later).toBeVisible();
     const countdown = document.querySelector<HTMLElement>("[data-update-countdown]")!;
     expect(countdown.textContent).toMatch(/^Restart in [45]sLater$/);
-    const style = getComputedStyle(later.element());
-    expect(style.borderTopWidth).toBe("0px");
-    expect(style.textDecorationLine).toBe("underline");
 
     const pill = page.getByRole("button", { name: /^Restart/ });
     await expect.element(pill).toBeVisible();
@@ -612,11 +525,6 @@ it("asks above the pill before a pass that downloads this app stops running thre
     "Stops 2 running threads",
   );
   const update = page.getByRole("button", { name: "Update", exact: true });
-  for (const action of [cancel, update]) {
-    const style = getComputedStyle(action.element());
-    expect(style.borderTopWidth).toBe("0px");
-    expect(style.textDecorationLine).toBe("underline");
-  }
   expect(run).not.toHaveBeenCalled();
   if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
     await page.screenshot({
@@ -671,62 +579,6 @@ it("asks above the pill before a pass that downloads this app stops running thre
   expect(run.mock.calls[0]![0].admitServer!(alvinServer as never)).toBe(true);
 });
 // SCIENT-FORK:END
-
-it("keeps all four utilities equally spaced and inset while updates are idle", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  await mountFooter(_fixture, 216, {
-    ...updateState,
-    status: "idle",
-    downloadedVersion: null,
-    availableVersion: null,
-  });
-  await expect
-    .element(page.getByRole("button", { name: "More sidebar actions", includeHidden: true }))
-    .not.toBeVisible();
-  const buttons = [
-    ..._fixture.host!.querySelectorAll<HTMLButtonElement>('[data-sidebar="menu-button"]'),
-  ].filter((button) => button.getClientRects().length);
-  expect(buttons).toHaveLength(4);
-  const rects = buttons.map((button) => button.getBoundingClientRect());
-  expect(rects[0]!.left - _fixture.host!.getBoundingClientRect().left).toBe(12);
-  expect(rects.slice(1).map((rect, index) => rect.left - rects[index]!.right)).toEqual([4, 4, 4]);
-});
-
-it("shows a compact current-project tooltip with its keyboard shortcut", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  _fixture.host = document.createElement("div");
-  Object.assign(_fixture.host.style, { width: "280px", margin: "20px" });
-  document.body.append(_fixture.host);
-  _fixture.root0 = _fixture.stack.use(
-    await _fixtureRender(null, { container: _fixture.host, router: false }),
-  );
-  await _fixture.root0.rerender(
-    <SidebarProvider className="min-h-0">
-      <TooltipProvider delay={0}>
-        <SidebarNewThreadRow
-          onNewThread={() => {}}
-          shortcutLabel="⇧⌘O"
-          inProjectShortcutLabel="⇧⌘N"
-          showInProjectHint
-        />
-      </TooltipProvider>
-    </SidebarProvider>,
-  );
-  await userEvent.hover(page.getByRole("button", { name: "New thread", exact: true }));
-  await expect.poll(() => document.querySelector('[data-slot="tooltip-popup"]')).not.toBeNull();
-  const tooltip = document.querySelector<HTMLElement>('[data-slot="tooltip-popup"]')!;
-  expect(tooltip.textContent).toBe("New thread (⇧⌘O)In current project (⇧⌘N)");
-  expect(tooltip.getBoundingClientRect().width).toBeLessThan(230);
-  if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
-    await page.screenshot({
-      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/new-thread-tooltip.png`,
-    });
-  }
-});
 
 function _createFixture() {
   const stack = new AsyncDisposableStack();

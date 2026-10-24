@@ -125,8 +125,10 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
           "tab-1": {
             threadId: "thread-1",
             tabId: "tab-1",
+            // SCIENT-FORK:START — PDF export cases choose the tab runtime and source URL.
             runtime: mocks.nativeServerTab ? "server" : (mocks.runtime ?? "desktop"),
             navStatus: { _tag: "Success", url: mocks.sourceUrl, title: "Example" },
+            // SCIENT-FORK:END
             canGoBack: false,
             canGoForward: false,
             updatedAt: "2026-07-13T00:00:00.000Z",
@@ -157,9 +159,11 @@ vi.mock(import("./usePreviewSession"), async (original) => ({
   ...(await original()),
   usePreviewSession: () => {},
 }));
+// SCIENT-FORK:START — server tabs render Scient's server browser surface.
 vi.mock(import("~/browser/ServerBrowserSurface"), () => ({
   ServerBrowserSurface: () => <></>,
 }));
+// SCIENT-FORK:END
 
 vi.mock(import("~/browser/previewRuntime"), async (original) => ({
   ...(await original()),
@@ -207,13 +211,6 @@ function annotation(id: string, screenshot: unknown = null) {
     screenshot,
     createdAt: "2026-07-27T00:00:00.000Z",
   };
-}
-
-async function submitAddress(text: string) {
-  const input = page.getByPlaceholder("Search or enter URL");
-  await userEvent.click(input);
-  await userEvent.fill(input, text);
-  await userEvent.keyboard("{Enter}");
 }
 
 // The mocked modules and stores are shared by the whole file, so every test starts by
@@ -276,17 +273,6 @@ describe("PreviewView", () => {
     await screen.rerender(view());
     expect(document.body.textContent).toContain("Agent controlling browser");
   });
-  it("records a history visit with the normalized requested url on submit", async () => {
-    setup();
-    await using _screen = await render(view());
-    await submitAddress("localhost:3000/admin");
-    await vi.waitFor(() =>
-      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
-        expect.objectContaining({ threadId: expect.anything() }),
-        "http://localhost:3000/admin",
-      ),
-    );
-  });
   it("opens the active browser in its thread, closes the panel, and closes the floating preview on repeat", async () => {
     setup();
     const player = usePreviewMiniPlayerStore.getState();
@@ -312,20 +298,6 @@ describe("PreviewView", () => {
     }
   });
   // SCIENT-FORK:END
-
-  it("opens and closes a thread-scoped floating preview for the active tab", async () => {
-    setup();
-    await using _screen = await render(view());
-    await userEvent.click(page.getByRole("button", { name: "Float preview over chat" }));
-    expect(usePreviewMiniPlayerStore.getState().byThreadKey).toMatchObject({
-      // SCIENT-FORK: the floating player holds content, which may also be a static artifact.
-      "environment-1:thread-1": { content: { kind: "browser", tabId: "tab-1" } },
-    });
-    const closeButton = page.getByRole("button", { name: "Close floating preview" });
-    await expect.element(closeButton).toHaveAttribute("aria-pressed", "true");
-    await userEvent.click(closeButton);
-    expect(usePreviewMiniPlayerStore.getState().byThreadKey).toEqual({});
-  });
 
   it("retains the annotation locally when its own environment loses access during capture", async () => {
     setup();

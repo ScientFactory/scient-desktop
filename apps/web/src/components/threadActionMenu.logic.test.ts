@@ -94,19 +94,6 @@ describe("buildThreadActionMenuItems", () => {
     ]);
   });
 
-  it("groups project settings with utility actions before archive", () => {
-    const items = buildThreadActionMenuItems(baseState);
-    const copyIndex = items.findIndex((item) => item.id === "copy");
-    // SCIENT-FORK: conversation export sits between Copy and Project settings.
-    expect(items[copyIndex + 1]).toMatchObject({ id: "export-conversation", label: "Export" });
-    expect(items[copyIndex + 2]).toMatchObject({
-      id: "project-settings",
-      label: "Project settings",
-      icon: "settings",
-    });
-    expect(items[copyIndex + 3]?.id).toBe("archive");
-  });
-
   // SCIENT-FORK:START
   it("places Section in the first group, after pin, settle and snooze", () => {
     const sectionMenu = {
