@@ -613,41 +613,42 @@ export function overleafUndoView(
               `Left as it is: ${result.skipped.map((skip) => `${skip.path} (${UNDO_SKIPPED[skip.reason]})`).join(", ")}.`,
             ];
       const put = result.restored.length + result.removed.length + result.recreated.length;
-      // The sync that follows every undo: what it sent, and any conflict it stopped at.
-      const synced = overleafResultView(result.sync);
-      const syncLines = [`${synced.title}.`, ...synced.lines];
+      // The sync after the undo: what it sent and any conflict it stopped at, or that
+      // none ran because the undo stopped partway.
+      const synced = result.sync._tag === "not-synced" ? null : overleafResultView(result.sync);
+      const syncLines =
+        synced === null
+          ? ["Undo stopped partway; nothing was sent. Check the files, then sync."]
+          : [`${synced.title}.`, ...synced.lines];
+      const needsDecision = synced?.needsDecision ?? false;
       switch (result.outcome) {
         case null:
           return {
             title: "Nothing was put back",
             lines: [...skipped, ...syncLines],
             tone: "info",
-            needsDecision: synced.needsDecision,
+            needsDecision,
           };
         case "replan":
           return {
             title: "Nothing was put back",
-            lines: ["The folder changed during the undo. Try again.", ...syncLines],
+            lines: ["The folder changed during the undo.", ...syncLines],
             tone: "warning",
-            needsDecision: synced.needsDecision,
+            needsDecision,
           };
         case "attention":
           return {
             title: "Undo needs attention",
-            lines: [
-              "It may have stopped partway. Check the files before syncing.",
-              ...skipped,
-              ...syncLines,
-            ],
+            lines: [...skipped, ...syncLines],
             tone: "warning",
-            needsDecision: synced.needsDecision,
+            needsDecision,
           };
         default:
           return {
             title: `Put back ${fileCount(put)}`,
             lines: [...skipped, ...syncLines],
-            tone: synced.tone,
-            needsDecision: synced.needsDecision,
+            tone: synced?.tone ?? "success",
+            needsDecision,
           };
       }
     }
