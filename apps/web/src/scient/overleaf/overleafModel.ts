@@ -257,7 +257,9 @@ export function refusalText(refusal: ScientOverleafRefusal): string {
     case "records-unreadable":
       return "Scient can't read its Overleaf link records, so nothing was linked or changed.";
     case "editor-unsaved":
-      return `${refusal.path ?? "An open file"} couldn't be saved, so nothing was synced. Save it, then sync again.`;
+      return refusal.path
+        ? `${refusal.path} couldn't be saved, so nothing was changed. Save it, then try again.`
+        : "An open Scient window didn't answer the request to save its editors, so nothing was changed. Try again.";
     case "overleaf-moved":
       return "Overleaf kept changing while the conflicts were shown. Sync again.";
     case "folder-kept-changing":
@@ -282,9 +284,11 @@ const REASON = /^[a-z][a-z-]{0,63}$/u;
  */
 export function operationErrorText(error: unknown): string {
   if (typeof error === "object" && error !== null && "reason" in error) {
-    const { reason, path } = error as { readonly reason: unknown; readonly path?: unknown };
+    const { reason, paths } = error as { readonly reason: unknown; readonly paths?: unknown };
+    // An editor that couldn't save is named by the first of the files the server lists.
+    const path = Array.isArray(paths) && typeof paths[0] === "string" ? paths[0] : undefined;
     if (typeof reason === "string" && REASON.test(reason))
-      return refusalText({ reason, ...(typeof path === "string" ? { path } : {}) });
+      return refusalText({ reason, ...(path === undefined ? {} : { path }) });
   }
   return OVERLEAF_REQUEST_FAILED;
 }

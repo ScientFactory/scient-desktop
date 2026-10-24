@@ -105,9 +105,11 @@ Start a sync from:
 - **Settings ▸ Source Control ▸ Overleaf** or **Project Settings ▸ Overleaf**:
   **Sync now** beside each link.
 
-Before it syncs, Scient saves the folder's open editors in this window. If an
-editor can't save (for example, Visual editor input that isn't converted yet),
-nothing is synced and the message names the file.
+Before it syncs, Scient saves the folder's open editors in every open window.
+The same happens before anything else that may write the folder: reading the
+changes, restoring a kept copy and Undo. If an editor can't save (for example,
+Visual editor input that isn't converted yet), or a window doesn't answer,
+nothing is changed and the message names the file.
 
 Clicking Sync is the confirmation. Overleaf's changes come into the folder, then
 the folder's changes go to Overleaf. New files, deletions, renames and older
@@ -271,7 +273,7 @@ Linking the same folder to the same project again picks up where it left off.
 | The project is made, but Overleaf isn't linked yet.                  | Fix what follows it, then **Connect** again; the project stays.            |
 | The token wasn't saved. Try again.                                   | Paste the token again and **Connect**; nothing was made.                   |
 | The project is made but not in the sidebar yet.                      | Wait for it to appear, or open its folder with Add project ▸ Local folder. |
-| _file_ couldn't be saved, so nothing was synced.                     | Save the file (finish Visual editor input), then sync again.               |
+| _file_ couldn't be saved, so nothing was changed.                    | Save the file (finish Visual editor input), then try again.                |
 | Another Overleaf operation is running on this folder.                | Wait for it to finish.                                                     |
 | A pull, branch switch or checkpoint restore is changing the project. | Sync again after it.                                                       |
 | An earlier sync didn't finish.                                       | Sync again: Scient finishes it first.                                      |

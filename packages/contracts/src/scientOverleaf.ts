@@ -346,13 +346,15 @@ export type ScientOverleafRestoreResult = typeof ScientOverleafRestoreResult.Typ
 
 /**
  * An Overleaf operation that did not run, with a fixed reason: another one holds
- * the connection, the token is missing, the folder changed, and so on.
+ * the connection, the token is missing, an open editor could not save, and so on.
  */
 export class ScientOverleafOperationError extends Schema.TaggedError<ScientOverleafOperationError>()(
   "ScientOverleafOperationError",
   {
     reason: Schema.String,
     message: Schema.String,
+    /** For `editor-unsaved`: the files that could not be saved, relative to the checkout. */
+    paths: Schema.optional(Schema.Array(ManuscriptPath)),
   },
   { httpApiStatus: 409 },
 ) {

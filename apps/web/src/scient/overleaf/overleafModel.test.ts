@@ -359,8 +359,18 @@ describe("refusalText", () => {
         message: "Overleaf refused the token.",
       }),
     ).toBe("Overleaf refused the token, or this account has no Git access to the project.");
-    expect(operationErrorText({ reason: "editor-unsaved", path: "paper/main.tex" })).toBe(
-      "paper/main.tex couldn't be saved, so nothing was synced. Save it, then sync again.",
+    // The server saved the folder's editors first and names the files that couldn't save.
+    expect(
+      operationErrorText({
+        _tag: "ScientOverleafOperationError",
+        reason: "editor-unsaved",
+        message: "Open editors were not all saved.",
+        paths: ["paper/main.tex", "paper/intro.tex"],
+      }),
+    ).toBe("paper/main.tex couldn't be saved, so nothing was changed. Save it, then try again.");
+    // Only a window that didn't answer: no file to name.
+    expect(operationErrorText({ reason: "editor-unsaved", message: "x", paths: [] })).toContain(
+      "didn't answer the request to save its editors",
     );
     for (const raw of [
       new Error("Failed to fetch remote environment endpoint https://host:3773/api/x (TypeError)"),
