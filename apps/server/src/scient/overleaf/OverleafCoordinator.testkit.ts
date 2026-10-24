@@ -74,6 +74,8 @@ export const world = (input: {
   readonly localOnly?: Record<string, string>;
   /** Paths recorded as holding Scient conflict material. */
   readonly markerPaths?: ReadonlyArray<string>;
+  /** The linked folder is the checkout's top instead of its `paper` folder. */
+  readonly atCheckoutTop?: boolean;
   readonly at?: (point: Point) => Effect.Effect<void>;
   /** Runs at the native publication hooks of every step the applier takes. */
   readonly native?: (point: MutationPoint, folder: string, stateRoot: string) => Promise<void>;
@@ -101,11 +103,11 @@ export const world = (input: {
       (directory) => Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
     );
     const checkout = NodePath.join(root, "workspace");
-    const folder = NodePath.join(checkout, "paper");
+    const folder = input.atCheckoutTop ? checkout : NodePath.join(checkout, "paper");
     const stateRoot = NodePath.join(root, "state");
     yield* Effect.promise(async () => {
       await NodeFSP.mkdir(NodePath.join(checkout, ".git"), { recursive: true });
-      await NodeFSP.mkdir(folder);
+      await NodeFSP.mkdir(folder, { recursive: true });
       await NodeFSP.mkdir(stateRoot, { recursive: true, mode: 0o700 });
     });
     yield* write(folder, input.synced);
@@ -250,7 +252,7 @@ export const world = (input: {
         identity: { volume: VOLUME, fileId: yield* fileId(checkout) },
       },
       folder: {
-        relativePath: "paper",
+        relativePath: input.atCheckoutTop ? "" : "paper",
         identity: { volume: VOLUME, fileId: yield* fileId(folder) },
       },
       base: { commit: synced.commit, tree: synced.tree, generation: 1 },
