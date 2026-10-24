@@ -236,7 +236,8 @@ The dialog lists every file that send changed and what Undo does to it
 it deleted). Click **Undo**: Scient saves the folder's open editors, puts the
 earlier versions back, keeps the files it replaces as copies, then syncs, so
 Overleaf has its earlier text again. A file you edited since that send is left
-as it is and named. If collaborators changed the same files since, they merge
+as it is and named, and so is a file you keep only on this computer: Undo never
+writes it. If collaborators changed the same files since, they merge
 like any other edit, and only a conflict stops. Only a send Overleaf accepted
 can be undone, among the last 64.
 

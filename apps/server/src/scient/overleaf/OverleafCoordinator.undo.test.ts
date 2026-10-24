@@ -706,21 +706,14 @@ describe.skipIf(!canApply)("OverleafCoordinator, undo", () => {
     ),
   );
 
-  it.live("keeps a local-only file local-only when the undo could not write it", () => {
-    let interfere = false;
-    return run(
+  it.live("never writes a file kept only on this computer, recorded or asked for", () =>
+    run(
       Effect.gen(function* () {
         const w = yield* world({
-          synced: { "main.tex": "A", "keep.tex": "K" },
-          remote: { "main.tex": "A", "keep.tex": "K" },
-          // Changed just before the undo's step writes it.
-          beforeStep: async (path, folder) => {
-            if (!interfere || path !== "main.tex") return;
-            interfere = false;
-            await NodeFSP.writeFile(NodePath.join(folder, path), "private edit during Undo");
-          },
+          synced: { "main.tex": "A", "keep.tex": "K", "other.tex": "O" },
+          remote: { "main.tex": "A", "keep.tex": "K", "other.tex": "O" },
         });
-        yield* write(w.folder, { "main.tex": "B" });
+        yield* write(w.folder, { "main.tex": "B", "other.tex": "O2" });
         expect(yield* w.sync("send-1")).toMatchObject({ publication: { _tag: "accepted" } });
         yield* remove(w.folder, "main.tex");
         expect(yield* w.sync("send-2")).toMatchObject({ publication: { _tag: "accepted" } });
@@ -736,18 +729,36 @@ describe.skipIf(!canApply)("OverleafCoordinator, undo", () => {
             localOnlyPaths: [...deleted.localOnlyPaths, "main.tex"],
           },
         });
-        interfere = true;
-        expect(yield* undo(w, 1)).toMatchObject({
-          restored: ["main.tex"],
-          adopted: { outcome: "attention" },
+        // Asked for with the request, for a path the sync still manages: nothing written.
+        expect(
+          yield* w.coordinator.undo({
+            connectionId: CONNECTION,
+            requestId: "undo-1",
+            attemptNumber: 1,
+            keepOnlyHere: ["other.tex"],
+          }),
+        ).toMatchObject({
+          restored: [],
+          skipped: [
+            { path: "main.tex", reason: "kept-only-here" },
+            { path: "other.tex", reason: "kept-only-here" },
+          ],
+          adopted: null,
         });
-        expect(yield* read(w.folder, "main.tex")).toBe("private edit during Undo");
+        expect(yield* read(w.folder, "other.tex")).toBe("O2");
+        // Recorded local-only: other.tex goes back, main.tex is never written.
+        expect(yield* undo(w, 1, "undo-2")).toMatchObject({
+          restored: ["other.tex"],
+          skipped: [{ path: "main.tex", reason: "kept-only-here" }],
+          adopted: { outcome: "complete" },
+        });
+        expect(yield* read(w.folder, "other.tex")).toBe("O");
+        expect(yield* read(w.folder, "main.tex")).toBe("B");
         const after = yield* w.connection;
         expect(after.localOnlyPaths).toContain("main.tex");
-        // Outside the base and unmanaged, the next sync leaves it alone.
         expect(after.managedPaths).not.toContain("main.tex");
         expect(after.base).toEqual(deleted.base);
       }),
-    );
-  });
+    ),
+  );
 });
