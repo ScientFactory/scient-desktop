@@ -362,7 +362,7 @@ describe("OverleafFileChip", () => {
 
   it("reads the status again when a document in the linked folder finishes saving", async () => {
     reset();
-    const { notifyWorkspaceFileSaved } = await import("~/scient/fileSurfaces/workspaceFileSaves");
+    const { notifyWorkspaceFileSaved } = await import("~/scient/files/workspaceFileSaves");
     editors.entries = [
       {
         environmentId,
@@ -397,7 +397,7 @@ describe("OverleafFileChip", () => {
 
   it("reads the status again, once, after plain text saves in the linked folder", async () => {
     reset();
-    const { notifyWorkspaceFileSaved } = await import("~/scient/fileSurfaces/workspaceFileSaves");
+    const { notifyWorkspaceFileSaved } = await import("~/scient/files/workspaceFileSaves");
     await using _screen = await render(chip());
     await expect
       .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
@@ -453,7 +453,7 @@ describe("OverleafFileChip", () => {
 
   it("a chip that appears reads a stale status again, but not a fresh one", async () => {
     reset();
-    const { notifyWorkspaceFileSaved } = await import("~/scient/fileSurfaces/workspaceFileSaves");
+    const { notifyWorkspaceFileSaved } = await import("~/scient/files/workspaceFileSaves");
     {
       await using _screen = await render(chip());
       await expect
