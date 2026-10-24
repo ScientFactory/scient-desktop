@@ -32,6 +32,7 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Metric from "effect/Metric";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -3414,5 +3415,241 @@ it.effect(
       });
 
       yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
+    }),
+);
+
+// Upstream deleted these fix-commit cases in 05696c636e; Scient keeps them as
+// the only guards of the behaviour.
+// regression: c299308a83 fix(server): metrics count interrupted work on the monotonic clock (#16207)
+it.effect("ProviderSessionManagerV2 records provider session and turn metrics", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-metrics");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({ idAllocator, threadId, providerSessionId, now });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn({
+        appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+        threadId,
+        runId,
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+        rootNodeId: idAllocator.derive.rootNode({ runId }),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+          text: "hello",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: CODEX_DRIVER,
+          nativeTurnId: "native-turn",
+        }),
+      });
+      yield* manager.close(providerSessionId);
+
+      const snapshots = yield* Metric.snapshot;
+      const has = (id: string, attributes: Readonly<Record<string, string>>) =>
+        snapshots.some(
+          (snapshot) =>
+            snapshot.id === id &&
+            Object.entries(attributes).every(
+              ([key, value]) => snapshot.attributes?.[key] === value,
+            ),
+        );
+      assert.isTrue(
+        has("t3_provider_sessions_total", {
+          provider: "codex",
+          operation: "open",
+          outcome: "success",
+        }),
+      );
+      assert.isTrue(
+        has("t3_provider_sessions_total", {
+          provider: "codex",
+          operation: "release",
+          reason: "manual_shutdown",
+          outcome: "success",
+        }),
+      );
+      assert.isTrue(
+        has("t3_provider_turns_total", {
+          provider: "codex",
+          operation: "send",
+          modelFamily: "gpt",
+          outcome: "success",
+        }),
+      );
+      assert.isTrue(has("t3_provider_turn_duration", { provider: "codex", operation: "send" }));
+      assert.isTrue(
+        has("t3_provider_turns_total", {
+          provider: "codex",
+          operation: "interrupt",
+          outcome: "success",
+        }),
+      );
+    });
+
+    yield* effect.pipe(
+      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })),
+      // A private registry keeps other tests' provider metrics out of the assertions.
+      Effect.provideService(Metric.MetricRegistry, new Map()),
+    );
+  }),
+);
+
+// regression: 4b5c604853 fix(server): provider sessions clean up when their start is interrupted (#15571)
+it.effect("ProviderSessionManagerV2 releases an idle session whose turn start was stopped", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const startTurnReached = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-stopped-turn-start");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      const starting = yield* runtime
+        .startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "stopped before the provider accepted it",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(startTurnReached);
+
+      // Stop lands while the provider is still accepting the turn. No terminal
+      // event follows, so the session must count itself idle again.
+      yield* Fiber.interrupt(starting);
+      yield* TestClock.adjust("2 seconds");
+      yield* Effect.yieldNow;
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 1000,
+          startTurn: () =>
+            Deferred.succeed(startTurnReached, undefined).pipe(Effect.andThen(Effect.never)),
+        }),
+      ),
+    );
+  }),
+);
+
+// regression: eba0521563 fix(server): unload Codex threads left idle on the shared app-server (#16917)
+it.effect(
+  "ProviderSessionManagerV2 unloads a shared-runtime thread left idle, and reloads it on its next turn",
+  () =>
+    runIdleThreadUnloadScenario(
+      "idle-unload",
+      ({ state, manager, providerSessionId, threadA, startTurn, endTurn, resume }) =>
+        Effect.gen(function* () {
+          yield* startTurn(threadA, 1);
+          assert.equal((yield* Ref.get(state)).resumeCount, 2);
+          yield* endTurn(threadA, 1);
+
+          // A follow-up before the timeout keeps the thread loaded.
+          yield* TestClock.adjust("500 millis");
+          yield* startTurn(threadA, 2);
+          yield* TestClock.adjust("1 second");
+          assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+
+          // Idle for the full timeout after its last turn, A is unloaded while
+          // the runtime stays up for B.
+          yield* endTurn(threadA, 2);
+          yield* TestClock.adjust("1 second");
+          assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [`native-${threadA}`]);
+          assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+          assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+          // The next turn's resume reaches the provider and reloads A.
+          const resumes = (yield* Ref.get(state)).resumeCount;
+          yield* resume(threadA);
+          assert.equal((yield* Ref.get(state)).resumeCount, resumes + 1);
+        }),
+    ),
+);
+
+// regression: eba0521563 fix(server): unload Codex threads left idle on the shared app-server (#16917)
+it.effect(
+  "ProviderSessionManagerV2 keeps an idle shared-runtime thread loaded while its background work runs",
+  () =>
+    Effect.gen(function* () {
+      const pendingWork = yield* Ref.make(true);
+      yield* runIdleThreadUnloadScenario(
+        "idle-unload-pinned",
+        ({ state, threadA, startTurn, endTurn }) =>
+          Effect.gen(function* () {
+            yield* startTurn(threadA, 1);
+            yield* endTurn(threadA, 1);
+            yield* TestClock.adjust("3 seconds");
+            assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+
+            yield* Ref.set(pendingWork, false);
+            yield* TestClock.adjust("1 second");
+            assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+              `native-${threadA}`,
+            ]);
+          }),
+        { hasPendingBackgroundWorkForThread: Ref.get(pendingWork) },
+      );
     }),
 );

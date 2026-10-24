@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { CodexSettings } from "@t3tools/contracts";
+import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -149,11 +150,64 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex catalog disco
     }),
   );
 
-  // regression: ed0f7b908b fix(server): Sol Ultrafast stops vanishing from the Codex model menu.
+  // regression: ed0f7b908b fix(server): Sol Ultrafast stops vanishing from the Codex model picker (#18200).
   // Its probe also pins the real child's originator and client identity.
   it.effect("keeps Ultrafast when another Codex client wrote the shared catalog cache", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* solServiceTiers(true), ["default", "priority", "ultrafast"]);
     }).pipe(Effect.scoped),
+  );
+
+  // regression: ed0f7b908b (the not-entitled branch)
+  it.effect("drops Ultrafast once the account is no longer entitled to it", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* solServiceTiers(false), ["default", "priority"]);
+    }).pipe(Effect.scoped),
+  );
+
+  // regression: 3b844dab5c fix(codex): display inherited service tiers across models (#15623)
+  it.effect("displays the inherited global Fast tier on every discovered model", () =>
+    Effect.gen(function* () {
+      for (const tier of ["fast", "priority"]) {
+        const provider = yield* probeCatalog(false, tier);
+        assert.deepStrictEqual(
+          provider.models.map((model) => model.slug),
+          ["gpt-6.1-sol", "gpt-6-luna"],
+        );
+        for (const model of provider.models) {
+          const descriptors = model.capabilities?.optionDescriptors ?? [];
+          const serviceTier = descriptors.find((descriptor) => descriptor.id === "serviceTier");
+          assert.equal(serviceTier?.type, "select");
+          if (serviceTier?.type !== "select") return;
+          assert.equal(getProviderOptionCurrentLabel(serviceTier), "Fast");
+          assert.deepStrictEqual(
+            serviceTier.options.filter((option) => option.isDefault).map((option) => option.id),
+            ["priority"],
+          );
+          assert.equal(
+            descriptors.find((descriptor) => descriptor.id === "reasoningEffort")?.currentValue,
+            "high",
+          );
+        }
+        assert.equal(provider.models.find((model) => model.isDefault)?.slug, "gpt-6.1-sol");
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  // regression: 3b844dab5c fix(codex): display inherited service tiers across models (#15623)
+  it.effect(
+    "preserves the catalog when global tier config is missing, unknown, failing, or stalled",
+    () =>
+      Effect.gen(function* () {
+        const baseline = yield* probeCatalog(false, "missing");
+        const serviceTier = baseline.models[0]?.capabilities?.optionDescriptors?.find(
+          (descriptor) => descriptor.id === "serviceTier",
+        );
+        assert.equal(getProviderOptionCurrentLabel(serviceTier), "Standard");
+        for (const config of ["unsupported", "error", "hang"]) {
+          const provider = yield* probeCatalog(false, config);
+          assert.deepStrictEqual(provider.models, baseline.models, config);
+        }
+      }).pipe(Effect.scoped, Effect.timeout("8 seconds")),
   );
 });

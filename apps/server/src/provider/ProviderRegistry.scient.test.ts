@@ -16,9 +16,11 @@ import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as CodexErrors from "effect-codex-app-server/errors";
 import {
   EnvironmentId,
   ClaudeSettings,
+  CodexSettings,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -28,6 +30,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
+import { checkCodexProviderStatus } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 
@@ -45,6 +48,7 @@ import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 
 const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
+const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
 
 process.env.T3CODE_CURSOR_ENABLED = "1";
 
@@ -185,6 +189,41 @@ const TestNodeServices = Layer.mergeAll(
 it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), TestHttpClientLive))(
   "ProviderRegistry",
   (it) => {
+    describe("checkCodexProviderStatus", () => {
+      // regression: 2a264adc6f fix(server): explain how to configure a missing Codex executable (#11345)
+      it.effect.each([
+        "codex",
+        "/Applications/Custom App.app/Contents/Resources/codex",
+        "C:\\Tools\\codex.exe",
+      ])("explains how to configure a Codex executable that cannot start: %s", (binaryPath) =>
+        Effect.gen(function* () {
+          const settings = { ...defaultCodexSettings, binaryPath };
+          const status = yield* checkCodexProviderStatus(settings, (input) => {
+            assert.strictEqual(input.binaryPath, binaryPath);
+            return Effect.fail(
+              new CodexErrors.CodexAppServerSpawnError({
+                command: `${binaryPath} app-server`,
+                cause: new Error("spawn ENOENT"),
+              }),
+            );
+          });
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.installed, false);
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.include(status.message, binaryPath);
+          assert.include(
+            status.message,
+            "Settings → Providers → Codex → Binary path on the server",
+          );
+          assert.strictEqual(
+            status.message?.includes("Installing ChatGPT or Codex desktop"),
+            binaryPath === "codex",
+          );
+          assert.strictEqual(settings.binaryPath, binaryPath);
+        }),
+      );
+    });
+
     describe("ProviderRegistryLive", () => {
       it("replaces cached Claude aliases with its authoritative curated and custom catalog", () => {
         const previousProvider = {
@@ -472,6 +511,121 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             ?.optionDescriptors,
           [],
         );
+      });
+
+      describe("Codex model inventories", () => {
+        const cachedProvider = {
+          instanceId: ProviderInstanceId.make("codex-personal"),
+          driver: ProviderDriverKind.make("codex"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-09-04T19:00:00.000Z",
+          version: "0.153.3",
+          models: [
+            "vega-alpha",
+            "joule-alpha",
+            "kindle-alpha",
+            "ultima-alpha",
+            "solstice-alpha",
+          ].map((slug) => ({ slug, name: slug, isCustom: false, capabilities: null })),
+          slashCommands: [],
+          skills: [],
+        } satisfies ServerProvider;
+        const customModel = {
+          slug: "custom-model",
+          name: "Custom model",
+          isCustom: true,
+          capabilities: null,
+        } as const;
+        const refreshedProvider = {
+          ...cachedProvider,
+          checkedAt: "2026-09-04T19:01:00.000Z",
+          models: [
+            { slug: "gpt-6-astra", name: "GPT 6 Astra", isCustom: false, capabilities: null },
+            cachedProvider.models[0]!,
+            customModel,
+          ],
+        } satisfies ServerProvider;
+
+        // regression: bfef973d9e fix(server): remove retired Codex models after refresh (#9773)
+        it("clears discovered models after sign-out, disable, uninstall, or empty discovery", () => {
+          const emptyProvider = { ...refreshedProvider, models: [customModel] };
+          const clearedProviders = [
+            { ...emptyProvider, status: "error", auth: { status: "unauthenticated" } },
+            { ...emptyProvider, status: "disabled", enabled: false },
+            { ...emptyProvider, status: "error", installed: false, auth: { status: "unknown" } },
+            emptyProvider,
+            { ...emptyProvider, models: [] },
+          ] satisfies ReadonlyArray<ServerProvider>;
+
+          for (const provider of clearedProviders) {
+            assert.deepStrictEqual(
+              mergeProviderSnapshot(cachedProvider, provider).models,
+              provider.models,
+            );
+          }
+        });
+      });
+
+      describe("Antigravity saved account", () => {
+        const signedIn = {
+          instanceId: ProviderInstanceId.make("antigravity-personal"),
+          driver: ProviderDriverKind.make("antigravity"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated", type: "oauth-personal", label: "Google account" },
+          checkedAt: "2026-09-05T00:00:00.000Z",
+          version: "agy_acp_server_1.1.1",
+          models: [
+            {
+              slug: "gemini-3.7-flash-high",
+              name: "Gemini 3.7 Flash",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [{ name: "plan" }],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const uncheckedMessage =
+          "Antigravity is installed. Google account access is not checked yet.";
+        const restartProbe = {
+          ...signedIn,
+          status: "warning",
+          auth: { status: "unknown" },
+          checkedAt: "2026-09-05T00:01:00.000Z",
+          message: uncheckedMessage,
+          models: [],
+        } as const satisfies ServerProvider;
+
+        // regression: c8872fd22a fix(server): keep the Antigravity Google sign-in across server restarts (#10244)
+        it("carries the account through the boot probe and a failed probe without hiding them", () => {
+          const booting = {
+            ...restartProbe,
+            installed: false,
+            version: null,
+            message: "Checking Antigravity availability.",
+          } satisfies ServerProvider;
+          assert.deepStrictEqual(mergeProviderSnapshot(signedIn, booting), {
+            ...booting,
+            auth: signedIn.auth,
+            models: signedIn.models,
+          });
+
+          const failed = {
+            ...restartProbe,
+            status: "error",
+            message: "Antigravity did not respond to its local health check within 90 seconds.",
+          } satisfies ServerProvider;
+          assert.deepStrictEqual(mergeProviderSnapshot(signedIn, failed), {
+            ...failed,
+            auth: signedIn.auth,
+            models: signedIn.models,
+          });
+        });
       });
 
       it.effect("does not publish an older provider snapshot after terminal runtime state", () =>
