@@ -19,6 +19,9 @@ import * as Schema from "effect/Schema";
 const DEFAULT_TIMEOUT: Duration.Input = "2 minutes";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const STDERR_MAX_BYTES = 256 * 1024;
+/** macOS's `xcrun` launcher for the developer tools' Git, never run itself. */
+const MACOS_GIT_LAUNCHER = "/usr/bin/git";
+const XCODE_SELECT = "/usr/bin/xcode-select";
 
 /** `git merge-tree --write-tree -z` reports conflicts as structured records from this version on. */
 export const MINIMUM_GIT_VERSION = [2, 39] as const;
@@ -376,6 +379,36 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
   const exists = (candidate: string) =>
     fs.exists(candidate).pipe(Effect.orElseSucceed(() => false));
 
+  /**
+   * The real Git of the selected developer tools on macOS, or null. Never the
+   * `/usr/bin/git` launcher: that one runs `xcrun` on every call, and with the
+   * fresh `HOME` each command gets it misses its cache and rewrites a shared
+   * database in the user's temporary folder (or opens an installer dialog when
+   * the tools are absent).
+   */
+  const developerGit = Effect.gen(function* () {
+    const selected = yield* Effect.promise(
+      () =>
+        new Promise<string | null>((resolve) =>
+          NodeChildProcess.execFile(
+            XCODE_SELECT,
+            ["-p"],
+            { env: { PATH: "/usr/bin:/bin" }, timeout: 10_000, windowsHide: true },
+            (error, stdout) => resolve(error === null ? stdout.trim() : null),
+          ),
+        ),
+    );
+    for (const developer of [
+      ...(selected !== null && path.isAbsolute(selected) ? [selected] : []),
+      "/Library/Developer/CommandLineTools",
+      "/Applications/Xcode.app/Contents/Developer",
+    ]) {
+      const candidate = path.join(developer, "usr", "bin", "git");
+      if (candidate !== MACOS_GIT_LAUNCHER && (yield* exists(candidate))) return candidate;
+    }
+    return null;
+  });
+
   const locate = Effect.gen(function* () {
     const delimiter = windows ? ";" : ":";
     const extensions = windows
@@ -391,17 +424,16 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
         path.join(systemDrive, "Program Files", "Git", "bin", "git.exe"),
       );
     } else {
-      candidates.push("/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git");
+      candidates.push(MACOS_GIT_LAUNCHER, "/usr/local/bin/git", "/opt/homebrew/bin/git");
     }
     for (const candidate of candidates) {
       if (!path.isAbsolute(candidate) || !(yield* exists(candidate))) continue;
-      // macOS ships /usr/bin/git as a stub that opens an installer dialog when
-      // the developer tools are absent. Never run that stub.
-      if (platform === "darwin" && candidate === "/usr/bin/git") {
-        const installed =
-          (yield* exists("/Library/Developer/CommandLineTools/usr/bin/git")) ||
-          (yield* exists("/Applications/Xcode.app/Contents/Developer/usr/bin/git"));
-        if (!installed) continue;
+      // Where the launcher stands in the search order, the Git it would launch is
+      // run directly; without developer tools there is none, and the next is tried.
+      if (platform === "darwin" && path.resolve(candidate) === MACOS_GIT_LAUNCHER) {
+        const real = yield* developerGit;
+        if (real === null) continue;
+        return real;
       }
       return path.resolve(candidate);
     }
