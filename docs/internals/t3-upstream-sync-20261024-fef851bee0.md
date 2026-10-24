@@ -43,7 +43,9 @@ before composition.
 - **Muse usage:** Scient's driver factory carries upstream's usage requirements
   (`Path`, `MuseUsageHome`).
 - **Mobile:** upstream's Duo, iPad and navigation changes with Scient's name and
-  compact-iPad compose; Usage moves from Settings to workspace navigation.
+  compact-iPad compose; Usage moves from Settings to workspace navigation. Scient's
+  compact-iPad toolbar test mocks the toolbar's new imports; its compact-tabs mock
+  follows the real hook, so a phone's compose stays with the compact tab picker.
 - **react-native-screens** moves to the PixPMusic fork's `5.0.0-t3.43`. It still
   lacks Scient's collapsed-column removal guard, so the patch is re-keyed to the
   new version; it applies without changes and is present in the installed package.
@@ -61,14 +63,14 @@ before composition.
 On `4eea0c3f2b630ad16cfff2e5152eea5713466f46`, with Node 26.12.1 and pnpm 12.14.0 and a synthetic home for every test
 command:
 
-| Check                                            | Result                                                                                                                                                                                                         |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Typecheck                                        | All 49 workspace packages.                                                                                                                                                                                     |
-| Format and lint (`vp check`), Knip, brand, icons | Pass; 0 lint errors.                                                                                                                                                                                           |
-| Seams                                            | All six seam checks pass.                                                                                                                                                                                      |
-| Affected suites                                  | Every suite upstream changed in the range and every suite beside a conflicted or edited file: server 812 (1 skip), client runtime 123, contracts 91, mobile 73, Muse 25, web 17, relay 8, desktop 6, shared 2. |
-| `alignment:checks --base HEAD --run`             | Shared, server (all boundaries), web unit and web browser groups pass.                                                                                                                                         |
-| Build, desktop and release smoke                 | All six build tasks; synthetic-state Electron smoke; release smoke. Not visual acceptance.                                                                                                                     |
+| Check                                            | Result                                                                                                                                                                                                                                                 |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Typecheck                                        | All 49 workspace packages.                                                                                                                                                                                                                             |
+| Format and lint (`vp check`), Knip, brand, icons | Pass; 0 lint errors.                                                                                                                                                                                                                                   |
+| Seams                                            | All six seam checks pass.                                                                                                                                                                                                                              |
+| Affected suites                                  | Every suite upstream changed in the range and every suite beside a conflicted or edited file: server 812 (1 skip), client runtime 123, contracts 91, Muse 25, web 17, relay 8, desktop 6, shared 2; the whole mobile suite, 221 files and 2,462 cases. |
+| `alignment:checks --base HEAD --run`             | Shared, server (all boundaries), web unit and web browser groups pass.                                                                                                                                                                                 |
+| Build, desktop and release smoke                 | All six build tasks; synthetic-state Electron smoke; release smoke. Not visual acceptance.                                                                                                                                                             |
 
 `lint:mobile` needs ktlint and detekt, which CI installs; it was not run locally.
 The full workspace suite is qualified by hosted CI on the exact PR head.
