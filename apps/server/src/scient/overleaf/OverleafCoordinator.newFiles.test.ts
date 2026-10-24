@@ -348,6 +348,76 @@ describe.skipIf(!canApply)("OverleafCoordinator, new files", () => {
     ),
   );
 
+  it.live("keeps a file an explicit list left out through a disappearance and return", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "M" },
+          remote: { "main.tex": "M" },
+        });
+        const kept = NodePath.join(w.folder, "private.tex");
+        yield* write(w.folder, { "private.tex": "mine" });
+        const review = yield* prepared(w, {
+          selectedAdditions: [],
+          collisionPaths: [],
+          choices: new Map(),
+        });
+        expect(review.binding.keepOnlyHere).toEqual(["private.tex"]);
+        yield* Effect.promise(() => NodeFSP.rm(kept));
+        const gone = yield* confirmed(w, review);
+        if (gone._tag !== "stale") return yield* Effect.die(gone);
+        expect(gone.review.binding.keepOnlyHere).toEqual(["private.tex"]);
+        yield* Effect.promise(() => NodeFSP.writeFile(kept, "mine again"));
+        const back = yield* confirmed(w, gone.review, "request-2");
+        if (back._tag !== "stale") return yield* Effect.die(back);
+        expect(back.review.binding.selectedAdditions).toEqual([]);
+        expect(yield* confirmed(w, back.review, "request-3")).toMatchObject({ _tag: "applied" });
+        expect((yield* w.connection).localOnlyPaths).toEqual(["private.tex"]);
+        yield* write(w.folder, { "main.tex": "M2" });
+        expect(yield* w.sync("request-4")).toMatchObject({ publication: { _tag: "accepted" } });
+        expect((yield* w.overleafNow).contents).toEqual({ "main.tex": "M2" });
+      }),
+    ),
+  );
+
+  it.live("makes a local-only file sent where Overleaf has one a reviewed collision", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "M" },
+          remote: { "main.tex": "M", "notes.tex": "remote" },
+          localOnly: { "notes.tex": "" },
+        });
+        for (const selections of [
+          { send: ["notes.tex"], collisionPaths: [], choices: new Map() },
+          { sendLocalOnly: ["notes.tex"], collisionPaths: [], choices: new Map() },
+        ]) {
+          const review = yield* prepared(w, selections);
+          expect(review.collisions).toEqual(["notes.tex"]);
+          expect(review.confirmable).toBe(false);
+          expect(review.conflicts.map((conflict) => conflict.paths)).toEqual([["notes.tex"]]);
+        }
+        const first = yield* prepared(w, {
+          send: ["notes.tex"],
+          collisionPaths: [],
+          choices: new Map(),
+        });
+        const chosen = yield* prepared(w, {
+          send: ["notes.tex"],
+          collisionPaths: first.binding.collisionPaths,
+          choices: new Map(first.conflicts.map((conflict) => [conflict.key, "mine" as const])),
+        });
+        expect(yield* confirmed(w, chosen)).toMatchObject({ publication: { _tag: "accepted" } });
+        // Kept mine: the local bytes stay and are what Overleaf now has.
+        expect(yield* read(w.folder, "notes.tex")).toBe("");
+        expect((yield* w.overleafNow).contents).toEqual({ "main.tex": "M", "notes.tex": "" });
+        expect((yield* w.connection).localOnlyPaths).toEqual([]);
+      }),
+    ),
+  );
+
   it.live("never reads or sends a new file over Overleaf's limit, and refuses selecting it", () =>
     run(
       Effect.gen(function* () {

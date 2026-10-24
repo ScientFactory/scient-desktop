@@ -598,7 +598,10 @@ export async function captureOverleafInventory(
       input.selectedAdditions.filter((path) => !keep.has(path) && selectable(path, false)),
     );
     const sent = new Set(
-      input.sendLocalOnly.filter((path) => !keep.has(path) && selectable(path, true)),
+      // One read as a collision is decided in the review, not sent as it is.
+      input.sendLocalOnly.filter(
+        (path) => !keep.has(path) && !requested.has(path) && selectable(path, true),
+      ),
     );
     for (const path of input.send ?? []) {
       // Already managed, or read in full as a collision: sent with the sync as it is.

@@ -182,6 +182,8 @@ describe("buildOverleafReview", () => {
           expect(unselected.incoming).toEqual([{ kind: "added", path: "refs.bib" }]);
           // Build output is skipped by a rule, not remembered.
           expect(unselected.binding.newLocalOnly).toEqual(["main.tex"]);
+          // The deselection is carried as a request to keep it, for replacement reviews.
+          expect(unselected.binding.keepOnlyHere).toEqual(["main.tex"]);
           expect(unselected.additions).toEqual([
             {
               path: "main.aux",
@@ -796,6 +798,30 @@ describe("buildOverleafReview", () => {
             (yield* review({ send: ["old.log"], select: ["a.tex"], limits: { localOnlyPaths: 1 } }))
               ._tag,
           ).toBe("review");
+        }),
+    ),
+  );
+
+  it.live("reviews a local-only file being sent that Overleaf also has as a collision", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "m", "notes.tex": "" },
+        remote: { "main.tex": "m", "notes.tex": "remote" },
+        localOnly: ["notes.tex"],
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          // An empty file would merge cleanly into Overleaf's: it must be read and decided.
+          expect(yield* review({ send: ["notes.tex"] })).toEqual({
+            _tag: "needs-capture",
+            paths: ["notes.tex"],
+          });
+          const built = reviewOf(yield* review({ send: ["notes.tex"], request: ["notes.tex"] }));
+          expect(built.collisions).toEqual(["notes.tex"]);
+          expect(built.conflicts.map((conflict) => conflict.paths)).toEqual([["notes.tex"]]);
+          expect(built.confirmable).toBe(false);
+          expect(built.binding.sentLocalOnly).toEqual([]);
         }),
     ),
   );

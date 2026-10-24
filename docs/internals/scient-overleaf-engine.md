@@ -281,7 +281,12 @@ settles earlier sends, and lists and restores kept copies.
   new file (refusing one too large), sends a local-only one, and is already
   satisfied for a managed one, so a retry after the apply succeeds. Both are
   recorded in the binding and applied again by every replacement review, so a
-  kept file that disappears and returns, or shrinks, stays kept.
+  kept file that disappears and returns, or shrinks, stays kept. The binding's
+  `keepOnlyHere` also holds every deliberate deselection, including one an
+  explicit `selectedAdditions` list implied, so it survives replacements the
+  same way. A local-only file being sent stays a collision candidate: where
+  Overleaf has content at its place it is read in full and reviewed as a
+  collision (keep mine or use Overleaf's), never merged into Overleaf's file.
 - **Confirm.** Inside the section, it checks the folder and retention
   identities, captures the folder again and rebuilds the review with the same
   choices, the same selected and sent files, the same deliberate deselections,

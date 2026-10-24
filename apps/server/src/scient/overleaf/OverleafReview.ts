@@ -102,9 +102,10 @@ export interface OverleafReviewBinding {
   /** Local-only files this review sends; they leave the local-only list and become managed. */
   readonly sentLocalOnly: ReadonlyArray<string>;
   /**
-   * The requests to keep files only here and to send files, as asked. A
-   * replacement review applies them again to its own capture, so a file that
-   * comes and goes, or changes size, keeps the decision made for it.
+   * The requests to keep files only here and to send files. `keepOnlyHere`
+   * also holds every deliberate deselection, including one an explicit list
+   * implied. A replacement review applies them again to its own capture, so a
+   * file that comes and goes, or changes size, keeps the decision made for it.
    */
   readonly keepOnlyHere: ReadonlyArray<string>;
   readonly send: ReadonlyArray<string>;
@@ -280,8 +281,12 @@ function findCollisions(input: {
   readonly collisionPaths: ReadonlySet<string>;
 }) {
   const { inventory } = input;
+  // A local-only file being sent is still never synchronized: Overleaf content at
+  // its place makes it a reviewed collision, never a merge that could replace it.
+  const sent = new Set(inventory.sentLocalOnly);
   const unsynced = new Set([
     ...inventory.localOnly,
+    ...inventory.sentLocalOnly,
     ...inventory.additions.map((entry) => entry.path),
     ...input.collisionPaths,
   ]);
@@ -299,7 +304,8 @@ function findCollisions(input: {
     meets.set(local, (meets.get(local) ?? new Set()).add(remote));
   };
   for (const path of input.remote.keys()) {
-    if (inventory.captured.has(path) && !input.collisionPaths.has(path)) continue;
+    if (inventory.captured.has(path) && !input.collisionPaths.has(path) && !sent.has(path))
+      continue;
     if (
       excluded.has(path) ||
       excludedBeneath.has(path) ||
@@ -724,7 +730,9 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     // Deselected default additions are remembered as local-only once the review is applied.
     newLocalOnly: sorted(newLocalOnly),
     sentLocalOnly: sorted(sent),
-    keepOnlyHere: sorted(new Set(input.requests?.keepOnlyHere ?? [])),
+    // A deliberate deselection is a request to keep the file here from now on,
+    // whether or not the file is there when a replacement review is built.
+    keepOnlyHere: sorted(new Set([...(input.requests?.keepOnlyHere ?? []), ...newLocalOnly])),
     send: sorted(new Set(input.requests?.send ?? [])),
     collisionPaths: sorted(requested),
     choices: conflicts.flatMap((conflict) =>
