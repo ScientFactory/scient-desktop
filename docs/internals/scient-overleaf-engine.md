@@ -431,9 +431,12 @@ coordinator's per-connection reservations.
   `request-incomplete`. Connect and relink refuse (`records-unreadable`) while
   any connection record cannot be read, since it may own the folder. Connecting a folder whose archived
   connection has the same project reactivates that archive, so its base, kept
-  copies and unresolved sends survive, but only when the archive's recorded
-  binding belongs to the caller's host project; otherwise a new connection
-  starts. Git failures leave as fixed categories
+  copies and unresolved sends survive, but only when the folder is the very
+  directory the archive recorded (same volume and file ID) and the archive's
+  recorded binding belongs to the caller's host project; otherwise a new
+  connection starts with an empty base and the archive is left as it is. A new
+  directory made at an archived folder's path would otherwise inherit the old
+  base, and its first sync would delete Overleaf's files. Git failures leave as fixed categories
   (`access-denied`, `project-not-found`, `unreachable`, `no-branch`,
   `git-unavailable`).
 - **Disconnect** archives the connection; it refuses while an apply or its

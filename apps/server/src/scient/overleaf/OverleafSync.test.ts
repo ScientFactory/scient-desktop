@@ -13,7 +13,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 
@@ -919,6 +918,53 @@ describe.skipIf(!canApply)("OverleafSync", () => {
       }),
     ),
   );
+  it.live("a new folder at an archived folder's path starts a new link, not the archive's", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O" } } });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+        yield* w.service.disconnect({ caller: w.at(w.main), connectionId: id, requestId: "d1" });
+        // The archived folder is moved aside and a new, empty one is brought in at its path.
+        yield* Effect.promise(() =>
+          NodeFSP.rename(NodePath.join(w.main, "paper"), NodePath.join(w.main, "paper-old")),
+        );
+        const again = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c2",
+        });
+        if (again._tag !== "connected") return yield* Effect.die(again);
+        expect(again.reconnected).toBe(false);
+        expect(again.connection.connectionId).not.toBe(id);
+        // Its first sync brings Overleaf's files in; nothing is deleted on Overleaf.
+        expect(
+          yield* w.service.sync({
+            caller: w.at(w.main),
+            connectionId: again.connection.connectionId,
+            requestId: "s2",
+          }),
+        ).toMatchObject({ _tag: "synced" });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "A", "other.tex": "O" });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("A");
+        // The archive is kept as it was.
+        const archived = yield* w.store.readConnection(id);
+        if (archived._tag !== "ready") return yield* Effect.die(archived);
+        expect(archived.document.state).toBe("archived");
+      }),
+    ),
+  );
+
   it.live("never reactivates another project's archive of the same folder", () =>
     run(
       Effect.gen(function* () {

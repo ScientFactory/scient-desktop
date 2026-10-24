@@ -453,15 +453,18 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
           let archive: OverleafConnectionDocument | null = null;
           for (const other of others) {
             const otherChain = yield* Effect.promise(() => identityChain(folderOf(other)));
-            const sameFolder =
-              (other.folder.identity.volume === folderIdentity.volume &&
-                other.folder.identity.fileId === folderIdentity.fileId) ||
-              (otherChain !== null && otherChain[0] === chain[0]);
+            const sameDirectory =
+              other.folder.identity.volume === folderIdentity.volume &&
+              other.folder.identity.fileId === folderIdentity.fileId;
+            const sameFolder = sameDirectory || (otherChain !== null && otherChain[0] === chain[0]);
             if (other.state === "archived") {
-              // An archive is reactivated only for its own project; one whose owner is
-              // unknown or another project's is left alone, and a new connection starts.
+              // An archive is reactivated only for its own project and only for the very
+              // directory it recorded: a replacement made at the same path would inherit
+              // the archive's base and its first sync would delete Overleaf's files. One
+              // whose owner is unknown or another project's is left alone, and a new
+              // connection starts.
               if (
-                sameFolder &&
+                sameDirectory &&
                 other.remote.projectId === input.projectId &&
                 archive === null &&
                 (yield* input.owns(other.binding.bindingId))
