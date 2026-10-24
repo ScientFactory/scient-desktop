@@ -559,7 +559,6 @@ export {
   THREAD_ID,
   SESSION_ID,
   FAKE_SESSION_FILE,
-  FAKE_PID,
   runtimePolicy,
   modelSelection,
   recordedIdleState,
