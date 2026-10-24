@@ -93,9 +93,14 @@ record kept in the same folder):
 - The helper's capabilities are asked once per helper binary (path, device,
   inode, size, change time) and root (canonical path and volume); a replaced
   helper or a root on another volume asks again.
-- A private retention folder that already stands canonical, owned by this
-  user and closed to everyone else is not provisioned again; anything else
-  goes through the helper as before.
+- A private retention folder the helper already found private in this
+  process is not provisioned again while it stands unchanged: same canonical
+  path, device, inode and change time as just before the helper looked. Mode
+  bits alone are not enough, because only the helper reads access lists (a
+  macOS ACL can open a 0700 folder to everyone), and any change to owner, mode
+  or access list moves the change time. A folder seen for the first time, or
+  changed since, goes through the helper as before; a folder that gains
+  entries changes too, so a record store is asked about on each write.
 
 Journals, their syncs and the order of every step are unchanged.
 
