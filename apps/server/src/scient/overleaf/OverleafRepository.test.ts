@@ -404,6 +404,21 @@ describe("OverleafRepository transport", () => {
     ),
   );
 
+  it.effect("reads Overleaf's head without fetching it, and none for a missing branch", () =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const server = yield* overleaf(h, { "main.tex": "v1\n" });
+        const repo = yield* h.repo("connection", server.remote);
+        expect(yield* h.repos.remoteHead({ repo, branch: "main", token: TOKEN })).toBe(
+          server.commit,
+        );
+        // Nothing was downloaded: the commit is not in the connection's repository.
+        expect(yield* h.repos.hasObject({ repo, oid: server.commit })).toBe(false);
+        expect(yield* h.repos.remoteHead({ repo, branch: "master", token: TOKEN })).toBeNull();
+      }),
+    ),
+  );
+
   it.effect("reports an unreachable remote as an unknown publish outcome, not a failure", () =>
     withHarness((h) =>
       Effect.gen(function* () {
