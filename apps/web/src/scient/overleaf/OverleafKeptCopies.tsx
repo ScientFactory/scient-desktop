@@ -1,7 +1,11 @@
 // SCIENT-OWNED: Overleaf's kept copies of one file, inside its "Retained file
 // versions" menu. A sync keeps the bytes it replaces; Restore puts one back as
 // an ordinary local change for the next sync.
-import type { EnvironmentId, ScientOverleafKeptCopies } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScientOverleafKeptCopies,
+  ScientOverleafRestoreResult,
+} from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -19,12 +23,26 @@ import {
 
 type KeptCopy = ScientOverleafKeptCopies["copies"][number];
 
-const RESTORE_TEXT: Record<"restored" | "stale" | "unknown-copy" | "duplicate", string> = {
-  restored: "Restored. The next sync sends it.",
-  stale: "The file or the copy changed since this list was read. Nothing was restored.",
-  "unknown-copy": "That copy is no longer kept. Nothing was restored.",
-  duplicate: "That restore already ran.",
-};
+/**
+ * What a restore did. Only a complete apply put the copy back: a replanned one
+ * wrote nothing, and one that needs attention may have stopped partway.
+ */
+function restoreText(result: ScientOverleafRestoreResult): string {
+  switch (result._tag) {
+    case "restored":
+      return result.outcome === "complete"
+        ? "Restored. The next sync sends it."
+        : result.outcome === "replan"
+          ? "The file changed while restoring, so nothing was written. Try again."
+          : "The restore needs attention: it may have stopped partway. Check the file before syncing.";
+    case "stale":
+      return "The file or the copy changed since this list was read. Nothing was restored.";
+    case "unknown-copy":
+      return "That copy is no longer kept. Nothing was restored.";
+    case "duplicate":
+      return "That restore already ran.";
+  }
+}
 
 // Outside the component: the React Compiler does not compile try/finally.
 async function settleOverleafOperation(
@@ -150,7 +168,7 @@ export function OverleafKeptCopies(props: {
           keptRevision,
           currentRevision: copy.currentRevision,
         });
-        setMessage(RESTORE_TEXT[result._tag]);
+        setMessage(restoreText(result));
         await load(connection.connectionId);
       },
       (error) => setMessage(operationErrorText(error)),
