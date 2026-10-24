@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -180,22 +181,55 @@ describe.skipIf(!posix)("helper answers that are reused", () => {
       expect(await second.runs()).toBe(2);
     }));
 
-  it("never provisions a private folder that is already there, and always one that is not", () =>
-    inScratch("scient-private-retention-", async (root) => {
-      // A helper that refuses everything: reaching it fails the call.
-      const refusing = await fakeHelper(root, "helper-refusing", null);
-      const ready = NodePath.join(root, "ready");
-      await NodeFSP.mkdir(ready, { mode: 0o700 });
-      expect(await ensureNativePrivateRetentionDirectory(refusing.path, ready)).toBe(ready);
-      expect(await refusing.runs()).toBe(0);
-      // Open to others, or missing: provisioning (the helper) decides, as before.
-      const open = NodePath.join(root, "open");
-      await NodeFSP.mkdir(open);
-      await NodeFSP.chmod(open, 0o755);
-      await expect(ensureNativePrivateRetentionDirectory(refusing.path, open)).rejects.toThrow();
-      await expect(
-        ensureNativePrivateRetentionDirectory(refusing.path, NodePath.join(root, "missing")),
-      ).rejects.toThrow();
-      expect(await refusing.runs()).toBeGreaterThanOrEqual(2);
-    }));
+  it.skipIf(helper === undefined)(
+    "asks the helper about a private folder once while it stays as it was, and again after a change",
+    () =>
+      inScratch("scient-private-retention-", async (root) => {
+        // A helper that refuses everything: reaching it fails the call.
+        const refusing = await fakeHelper(root, "helper-refusing", null);
+        const ready = NodePath.join(root, "ready");
+        await NodeFSP.mkdir(ready, { mode: 0o700 });
+        // Mode bits alone are not enough: the real helper looks first.
+        await expect(ensureNativePrivateRetentionDirectory(refusing.path, ready)).rejects.toThrow();
+        expect(await ensureNativePrivateRetentionDirectory(helper!, ready)).toBe(ready);
+        const runs = await refusing.runs();
+        expect(await ensureNativePrivateRetentionDirectory(refusing.path, ready)).toBe(ready);
+        expect(await refusing.runs()).toBe(runs);
+        // A change to its metadata (here the same mode again) asks the helper again.
+        await NodeFSP.chmod(ready, 0o700);
+        await expect(ensureNativePrivateRetentionDirectory(refusing.path, ready)).rejects.toThrow();
+        // Open to others, or missing: provisioning (the helper) decides, as before.
+        const open = NodePath.join(root, "open");
+        await NodeFSP.mkdir(open);
+        await NodeFSP.chmod(open, 0o755);
+        await expect(ensureNativePrivateRetentionDirectory(refusing.path, open)).rejects.toThrow();
+        await expect(
+          ensureNativePrivateRetentionDirectory(refusing.path, NodePath.join(root, "missing")),
+        ).rejects.toThrow();
+        expect(await refusing.runs()).toBeGreaterThanOrEqual(runs + 3);
+      }),
+  );
+
+  it.skipIf(helper === undefined || HostProcess.Platform.defaultValue() !== "darwin")(
+    "refuses a 0700 folder an access list opens to everyone, also one found private before",
+    () =>
+      inScratch("scient-private-retention-", async (root) => {
+        const openToAll = (folder: string) =>
+          NodeChildProcess.execFileSync("/bin/chmod", [
+            "+a",
+            "everyone allow list,search,read,readattr,readextattr,readsecurity,file_inherit,directory_inherit",
+            folder,
+          ]);
+        const fresh = NodePath.join(root, "fresh");
+        await NodeFSP.mkdir(fresh, { mode: 0o700 });
+        openToAll(fresh);
+        await expect(ensureNativePrivateRetentionDirectory(helper!, fresh)).rejects.toThrow();
+        const known = NodePath.join(root, "known");
+        await NodeFSP.mkdir(known, { mode: 0o700 });
+        expect(await ensureNativePrivateRetentionDirectory(helper!, known)).toBe(known);
+        openToAll(known);
+        expect((await NodeFSP.stat(known)).mode & 0o077).toBe(0);
+        await expect(ensureNativePrivateRetentionDirectory(helper!, known)).rejects.toThrow();
+      }),
+  );
 });
