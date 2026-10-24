@@ -8,6 +8,7 @@ import { create } from "zustand";
 import { ITEM_ICON_CLASS, type CommandPaletteActionItem } from "~/components/CommandPalette.logic";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { waitForProjectProjection } from "~/lib/projectProjection";
 import { readLocalApi } from "~/localApi";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 
@@ -104,8 +105,8 @@ function OverleafNewProjectDialog({ request }: { readonly request: OverleafNewPr
   const close = () => {
     useRequest.setState({ request: null });
     const project = made.current;
-    if (project === null || !project.ready) return;
-    void openNewThread(project.projectRef).catch((error: unknown) => {
+    if (project === null) return;
+    void openMadeProject(project).catch((error: unknown) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -114,6 +115,22 @@ function OverleafNewProjectDialog({ request }: { readonly request: OverleafNewPr
         }),
       );
     });
+  };
+
+  const openMadeProject = async (project: ProjectForOverleaf) => {
+    // The project may have reached the sidebar since it was made; wait for it again.
+    const ready = project.ready || (await waitForProjectProjection(project.projectRef));
+    if (!ready) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "The project is made but not in the sidebar yet",
+          description: `It's in ${project.cwd}. It appears in the sidebar once this window catches up; Add project ▸ Local folder opens it too.`,
+        }),
+      );
+      return;
+    }
+    await openNewThread(project.projectRef);
   };
 
   return (

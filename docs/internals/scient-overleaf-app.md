@@ -53,7 +53,7 @@ announce each confirmed save through `scient/fileSurfaces/workspaceFileSaves.ts`
 a stale status, or one older than 5 s, again. Every list and
 status read is numbered when it starts, and a response is used only if no read of the same thing
 started after it; a forced load (after an operation) starts afresh rather than joining one already
-running. So a read from during a sync can't answer after the sync's own refresh and leave the chip
+running, and so does the load of a view marked stale by another view's operation. So a read from during a sync can't answer after the sync's own refresh and leave the chip
 on "Syncing…".
 
 `overleafChipView` maps the status:
@@ -180,8 +180,9 @@ The dialog takes a link (`overleaf.com/project/<id>`, `git.overleaf.com/<id>`) o
 client-side to the ID the server accepts. **Bring it in as a new folder** is the default: a name
 (default `paper`) inside the selected folder, or at the project's top. Overleaf's Git access does
 not expose the project's title, so the folder can't be named from it. **Link** uses the selected
-folder, or a typed one from Project Settings. With no token saved the dialog asks for it, saves it
-first, then connects and runs the first sync with `quiet`.
+folder, or a typed one from Project Settings. Connect waits until the token's status is known. With
+no token saved the dialog asks for it, saves it first (a token the server didn't save stops there),
+then connects and runs the first sync with `quiet`.
 
 **Add project ▸ Overleaf project** opens the same dialog with `newProject`: a project name, a
 location (Add project's starting folder, plus the system folder chooser on this computer) and the
@@ -191,7 +192,8 @@ paper's folder name (default `paper`); no Link choice. Connect saves the token, 
 folder that already is a project is used as it is), then connects with `create: true` into the
 subfolder and syncs. The paper never goes at the project's top. A refusal after the project is made
 says so and keeps the project; the project fields lock, and Connect again only links. Closing the
-dialog opens a new thread in the project. Overleaf's title isn't available, so the project is named
+dialog opens a new thread in the project; if the project hadn't reached the sidebar when it was
+made, closing waits for it again, and says where the project is if it still isn't there. Overleaf's title isn't available, so the project is named
 from the typed name.
 
 ## Kept copies

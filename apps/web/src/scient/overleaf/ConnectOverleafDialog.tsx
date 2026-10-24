@@ -100,10 +100,14 @@ export function ConnectOverleafDialog(props: {
   const [madeRoot, setMadeRoot] = useState<string | null>(null);
   const cwd = newProject ? (madeRoot ?? "") : props.cwd;
   const busy = phase._tag === "working";
+  // Until the token's status is known, Connect waits: without it, a missing
+  // token would only show after the project was made.
+  const tokenKnown = token.loaded;
   const needsToken = token.loaded && !token.saved;
   const folderLabel = folder === "" ? "the project's top folder" : folder;
 
   const connect = async () => {
+    if (!tokenKnown) return;
     setError(null);
     const projectId = parseOverleafProjectInput(project);
     if (projectId === null) {
@@ -143,6 +147,12 @@ export function ConnectOverleafDialog(props: {
         setPhase({ _tag: "working", step: "token" });
         const saved = await saveOverleafToken(environmentId, tokenDraft.trim());
         setOverleafTokenSaved(environmentId, saved.saved);
+        if (!saved.saved) {
+          // Nothing is made without a token Overleaf can be asked with.
+          setError(`${projectMade ? MADE_NOT_LINKED : ""}The token wasn't saved. Try again.`);
+          setPhase({ _tag: "form" });
+          return;
+        }
         setTokenDraft("");
       }
       let workspaceRoot = cwd;
@@ -448,7 +458,7 @@ export function ConnectOverleafDialog(props: {
               <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
                 Cancel
               </Button>
-              <Button type="submit" form="connect-overleaf-form" disabled={busy}>
+              <Button type="submit" form="connect-overleaf-form" disabled={busy || !tokenKnown}>
                 {phase._tag === "working"
                   ? phase.step === "sync"
                     ? "Syncing…"

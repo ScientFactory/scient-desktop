@@ -154,6 +154,40 @@ describe("overleafStore", () => {
     ).toEqual(["c1"]);
   });
 
+  it("a hidden view reopened while its earlier list is on its way reads afresh after another view's operation", async () => {
+    resetOverleafStoreForTests();
+    const HIDDEN = "/work/project-hidden";
+    const before = deferred<{ connections: unknown[] }>();
+    const second = { ...link, connectionId: "c2", folder: "thesis", linkedHere: false };
+    client.listOverleafConnections
+      .mockReset()
+      .mockImplementation(async (_environment: unknown, root: string) =>
+        root === ROOT ? { connections: [{ ...link, linkedHere: true }, second] } : before.promise,
+      );
+    client.readOverleafStatus.mockReset().mockResolvedValue(status(false));
+    // The view starts listing, then leaves the screen before the answer comes.
+    const unsubscribe = subscribeOverleafWorkspace(environmentId, HIDDEN, () => {});
+    const earlier = loadOverleafWorkspace(environmentId, HIDDEN);
+    unsubscribe();
+    // An operation in the main checkout connects a second link; the hidden view is marked stale.
+    await reloadOverleafWorkspaces(environmentId, ROOT);
+    expect(client.listOverleafConnections).toHaveBeenCalledTimes(2);
+
+    // Reopened before the earlier list answers: it reads afresh instead of joining it.
+    client.listOverleafConnections.mockImplementation(async () => ({
+      connections: [{ ...link, linkedHere: false }, second],
+    }));
+    const reopened = loadOverleafWorkspace(environmentId, HIDDEN);
+    expect(client.listOverleafConnections).toHaveBeenCalledTimes(3);
+    await reopened;
+    // The earlier list, asked before the operation, answers last and is ignored.
+    before.resolve({ connections: [{ ...link, linkedHere: false }] });
+    await earlier;
+    expect(
+      readOverleafWorkspace(environmentId, HIDDEN).connections.map((entry) => entry.connectionId),
+    ).toEqual(["c1", "c2"]);
+  });
+
   it("a read of the changes that answers after a sync never replaces the sync's review", async () => {
     resetOverleafStoreForTests();
     const review = (reviewId: string) => ({

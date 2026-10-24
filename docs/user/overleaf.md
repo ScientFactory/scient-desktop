@@ -255,52 +255,54 @@ Linking the same folder to the same project again picks up where it left off.
 
 ## Messages
 
-| Message                                                              | What to do                                                                |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| No Overleaf token is saved.                                          | Save one in Settings ▸ Source Control ▸ Overleaf.                         |
-| Overleaf refused the token, or this account has no Git access.       | Make a new token, or ask the project's owner for Git access.              |
-| Overleaf has no such project.                                        | Check the link or ID.                                                     |
-| That isn't an Overleaf project link or ID.                           | Paste the address of the project on Overleaf.                             |
-| Overleaf couldn't be reached.                                        | Check the connection and sync again.                                      |
-| Overleaf sync needs Git 2.39 or newer.                               | Install the command line tools (`xcode-select --install`) or a newer Git. |
-| The Overleaf project has no single main branch.                      | Ask Overleaf support; the project's Git history is unusual.               |
-| A folder with that name already has files.                           | Pick another name, or link that folder instead.                           |
-| This folder, or one inside or around it, is linked already.          | Use the existing link, or unlink it first.                                |
-| This Overleaf project is linked to another folder of this project.   | Sync that folder instead.                                                 |
-| The project wasn't made: _reason_                                    | Fix what the reason says (often the location), then **Connect** again.    |
-| The project is made, but Overleaf isn't linked yet.                  | Fix what follows it, then **Connect** again; the project stays.           |
-| _file_ couldn't be saved, so nothing was synced.                     | Save the file (finish Visual editor input), then sync again.              |
-| Another Overleaf operation is running on this folder.                | Wait for it to finish.                                                    |
-| A pull, branch switch or checkpoint restore is changing the project. | Sync again after it.                                                      |
-| An earlier sync didn't finish.                                       | Sync again: Scient finishes it first.                                     |
-| More than 2,000 files, or 250 MiB, to sync.                          | Choose a narrower folder.                                                 |
-| The folder has more than 5,000 entries.                              | Choose a narrower folder.                                                 |
-| A file is over Overleaf's 50 MB limit.                               | Make it smaller, or move it out of the folder.                            |
-| A file changed while Scient read it.                                 | Sync again.                                                               |
-| The folder kept changing during the sync.                            | Sync again when edits pause.                                              |
-| Two names differ only by letter case or accents.                     | Rename one and sync again.                                                |
-| Overleaf sent something Scient won't write.                          | Remove the link, repository or LFS file on Overleaf.                      |
-| The folder isn't there, or its disk isn't connected.                 | Connect the disk, or relink the folder.                                   |
-| This project's folder changed since it was linked.                   | Relink it.                                                                |
-| Another Scient process holds the Overleaf state.                     | Quit the other Scient and sync again.                                     |
-| An earlier attempt stopped before it finished.                       | Try again; Scient never repeats an attempt that may have half run.        |
-| Scient can't read its Overleaf link records.                         | Nothing was linked or changed. Report it; the records need repair.        |
-| Overleaf kept changing while the conflicts were shown.               | Sync again.                                                               |
-| The project changed while this ran.                                  | Try again.                                                                |
-| Overleaf changed since you chose. Choose again.                      | Choose for each conflict as it is now, then Sync again.                   |
-| Sync cancelled. Nothing was changed.                                 | Sync again when you're ready.                                             |
-| No sync is running.                                                  | Nothing to cancel; the sync had already finished.                         |
-| Nothing was sent: N files still have conflict marks.                 | Settle the marks, then sync again.                                        |
-| Nothing was sent: the folder changed during the sync.                | Nothing to do; the edit goes with the next sync.                          |
-| Nothing was sent: a kept copy changed during this sync.              | Sync again; the next sync checks again.                                   |
-| Nothing was sent: the Overleaf token changed during the sync.        | Sync again.                                                               |
-| Overleaf changed again while this sync was sending.                  | Sync again.                                                               |
-| Scient couldn't tell whether Overleaf received this send.            | Nothing to do: it is never sent twice, and the next sync checks.          |
-| An earlier send never got an answer.                                 | Nothing to do; this sync may carry some of the same changes again.        |
-| Renamed _a_ to _b_. Overleaf drops comments and tracked changes.     | Nothing to do; re-add comments on Overleaf if you need them.              |
-| Sent older versions of N files.                                      | Expected after switching to an older branch or restoring a checkpoint.    |
-| The project is bigger than Overleaf recommends.                      | Consider moving large files out of the folder.                            |
-| Another agent is working in this copy.                               | Nothing to do; its edits go with a later sync.                            |
-| Scient couldn't check whether other agents are working in this copy. | Nothing to do.                                                            |
-| Synced the main copy. Your edits in this worktree aren't in it.      | Merge the worktree's branch, then sync again.                             |
-| N conflicts with Overleaf                                            | Choose for each one in the Overleaf tab, then Sync again.                 |
+| Message                                                              | What to do                                                                 |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| No Overleaf token is saved.                                          | Save one in Settings ▸ Source Control ▸ Overleaf.                          |
+| Overleaf refused the token, or this account has no Git access.       | Make a new token, or ask the project's owner for Git access.               |
+| Overleaf has no such project.                                        | Check the link or ID.                                                      |
+| That isn't an Overleaf project link or ID.                           | Paste the address of the project on Overleaf.                              |
+| Overleaf couldn't be reached.                                        | Check the connection and sync again.                                       |
+| Overleaf sync needs Git 2.39 or newer.                               | Install the command line tools (`xcode-select --install`) or a newer Git.  |
+| The Overleaf project has no single main branch.                      | Ask Overleaf support; the project's Git history is unusual.                |
+| A folder with that name already has files.                           | Pick another name, or link that folder instead.                            |
+| This folder, or one inside or around it, is linked already.          | Use the existing link, or unlink it first.                                 |
+| This Overleaf project is linked to another folder of this project.   | Sync that folder instead.                                                  |
+| The project wasn't made: _reason_                                    | Fix what the reason says (often the location), then **Connect** again.     |
+| The project is made, but Overleaf isn't linked yet.                  | Fix what follows it, then **Connect** again; the project stays.            |
+| The token wasn't saved. Try again.                                   | Paste the token again and **Connect**; nothing was made.                   |
+| The project is made but not in the sidebar yet.                      | Wait for it to appear, or open its folder with Add project ▸ Local folder. |
+| _file_ couldn't be saved, so nothing was synced.                     | Save the file (finish Visual editor input), then sync again.               |
+| Another Overleaf operation is running on this folder.                | Wait for it to finish.                                                     |
+| A pull, branch switch or checkpoint restore is changing the project. | Sync again after it.                                                       |
+| An earlier sync didn't finish.                                       | Sync again: Scient finishes it first.                                      |
+| More than 2,000 files, or 250 MiB, to sync.                          | Choose a narrower folder.                                                  |
+| The folder has more than 5,000 entries.                              | Choose a narrower folder.                                                  |
+| A file is over Overleaf's 50 MB limit.                               | Make it smaller, or move it out of the folder.                             |
+| A file changed while Scient read it.                                 | Sync again.                                                                |
+| The folder kept changing during the sync.                            | Sync again when edits pause.                                               |
+| Two names differ only by letter case or accents.                     | Rename one and sync again.                                                 |
+| Overleaf sent something Scient won't write.                          | Remove the link, repository or LFS file on Overleaf.                       |
+| The folder isn't there, or its disk isn't connected.                 | Connect the disk, or relink the folder.                                    |
+| This project's folder changed since it was linked.                   | Relink it.                                                                 |
+| Another Scient process holds the Overleaf state.                     | Quit the other Scient and sync again.                                      |
+| An earlier attempt stopped before it finished.                       | Try again; Scient never repeats an attempt that may have half run.         |
+| Scient can't read its Overleaf link records.                         | Nothing was linked or changed. Report it; the records need repair.         |
+| Overleaf kept changing while the conflicts were shown.               | Sync again.                                                                |
+| The project changed while this ran.                                  | Try again.                                                                 |
+| Overleaf changed since you chose. Choose again.                      | Choose for each conflict as it is now, then Sync again.                    |
+| Sync cancelled. Nothing was changed.                                 | Sync again when you're ready.                                              |
+| No sync is running.                                                  | Nothing to cancel; the sync had already finished.                          |
+| Nothing was sent: N files still have conflict marks.                 | Settle the marks, then sync again.                                         |
+| Nothing was sent: the folder changed during the sync.                | Nothing to do; the edit goes with the next sync.                           |
+| Nothing was sent: a kept copy changed during this sync.              | Sync again; the next sync checks again.                                    |
+| Nothing was sent: the Overleaf token changed during the sync.        | Sync again.                                                                |
+| Overleaf changed again while this sync was sending.                  | Sync again.                                                                |
+| Scient couldn't tell whether Overleaf received this send.            | Nothing to do: it is never sent twice, and the next sync checks.           |
+| An earlier send never got an answer.                                 | Nothing to do; this sync may carry some of the same changes again.         |
+| Renamed _a_ to _b_. Overleaf drops comments and tracked changes.     | Nothing to do; re-add comments on Overleaf if you need them.               |
+| Sent older versions of N files.                                      | Expected after switching to an older branch or restoring a checkpoint.     |
+| The project is bigger than Overleaf recommends.                      | Consider moving large files out of the folder.                             |
+| Another agent is working in this copy.                               | Nothing to do; its edits go with a later sync.                             |
+| Scient couldn't check whether other agents are working in this copy. | Nothing to do.                                                             |
+| Synced the main copy. Your edits in this worktree aren't in it.      | Merge the worktree's branch, then sync again.                              |
+| N conflicts with Overleaf                                            | Choose for each one in the Overleaf tab, then Sync again.                  |

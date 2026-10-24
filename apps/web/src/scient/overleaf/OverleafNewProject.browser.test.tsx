@@ -25,6 +25,13 @@ const project = vi.hoisted(() => ({ createProjectForOverleaf: vi.fn() }));
 vi.mock("./createProjectForOverleaf", () => project);
 const openNewThread = vi.hoisted(() => vi.fn());
 vi.mock("~/hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => openNewThread }));
+const projection = vi.hoisted(() => ({ waitForProjectProjection: vi.fn() }));
+vi.mock("~/lib/projectProjection", () => projection);
+const toastAdd = vi.hoisted(() => vi.fn());
+vi.mock("~/components/ui/toast", async (original) => ({
+  ...(await original<typeof import("~/components/ui/toast")>()),
+  toastManager: { add: toastAdd, close: vi.fn(), update: vi.fn() },
+}));
 
 const { OverleafNewProjectDialogHost, insertOverleafAddProjectItem, overleafAddProjectItem } =
   await import("./OverleafNewProject");
@@ -79,7 +86,13 @@ const firstSync: ScientOverleafSyncResult = {
 
 function reset(tokenSaved: boolean) {
   resetOverleafStoreForTests();
-  for (const mock of [...Object.values(client), project.createProjectForOverleaf, openNewThread]) {
+  for (const mock of [
+    ...Object.values(client),
+    project.createProjectForOverleaf,
+    openNewThread,
+    projection.waitForProjectProjection,
+    toastAdd,
+  ]) {
     mock.mockReset();
   }
   client.readOverleafToken.mockResolvedValue({ saved: tokenSaved });
@@ -93,6 +106,23 @@ function reset(tokenSaved: boolean) {
     ready: true,
   });
   openNewThread.mockResolvedValue(null);
+  projection.waitForProjectProjection.mockResolvedValue(true);
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+/** Fills the form and connects; the token field only when asked. */
+async function fillAndConnect(token?: string) {
+  await page.getByLabelText("Overleaf project").fill(ID);
+  await page.getByLabelText("Project name").fill("Thesis");
+  if (token !== undefined) await page.getByLabelText("Overleaf Git token").fill(token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
 }
 
 /** Chooses Add project ▸ Overleaf project, as the palette does. */
@@ -244,5 +274,78 @@ describe("Add project ▸ Overleaf project", () => {
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
     expect(openNewThread).toHaveBeenCalledExactlyOnceWith(projectRef);
     expect(client.syncOverleaf).not.toHaveBeenCalled();
+  });
+
+  it("Done opens a project that reached the sidebar late, and says where it is when it hasn't", async () => {
+    reset(true);
+    client.connectOverleaf.mockResolvedValue({ _tag: "done", connection: summary });
+    // The project's 5 s wait for the sidebar ran out while it was made.
+    project.createProjectForOverleaf.mockResolvedValue({
+      projectRef,
+      cwd: ROOT,
+      created: true,
+      ready: false,
+    });
+    const late = deferred<boolean>();
+    projection.waitForProjectProjection.mockReturnValueOnce(late.promise);
+    await using _screen = await render(<OverleafNewProjectDialogHost />);
+    await chooseOverleafProject();
+    await fillAndConnect();
+    await page.getByRole("button", { name: "Done" }).click();
+    // Closing waits for the project again, and opens it once it is there.
+    expect(projection.waitForProjectProjection).toHaveBeenCalledExactlyOnceWith(projectRef);
+    expect(openNewThread).not.toHaveBeenCalled();
+    late.resolve(true);
+    await vi.waitFor(() => expect(openNewThread).toHaveBeenCalledExactlyOnceWith(projectRef));
+    expect(toastAdd).not.toHaveBeenCalled();
+
+    // Still not there: it says so, and where the project is, instead of doing nothing.
+    projection.waitForProjectProjection.mockResolvedValueOnce(false);
+    await chooseOverleafProject();
+    await fillAndConnect();
+    await page.getByRole("button", { name: "Done" }).click();
+    await vi.waitFor(() =>
+      expect(toastAdd).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "warning",
+          title: "The project is made but not in the sidebar yet",
+          description: expect.stringContaining(ROOT),
+        }),
+      ),
+    );
+    expect(openNewThread).toHaveBeenCalledOnce();
+  });
+
+  it("waits for the token's status, and makes nothing until a needed token is saved", async () => {
+    reset(false);
+    const tokenStatus = deferred<{ saved: boolean }>();
+    client.readOverleafToken.mockReturnValue(tokenStatus.promise);
+    client.saveOverleafToken.mockResolvedValueOnce({ saved: false });
+    client.connectOverleaf.mockResolvedValue({ _tag: "done", connection: summary });
+    await using _screen = await render(<OverleafNewProjectDialogHost />);
+    await chooseOverleafProject();
+
+    // While the token's status is unknown, Connect can't make the project.
+    await page.getByLabelText("Overleaf project").fill(ID);
+    await page.getByLabelText("Project name").fill("Thesis");
+    await expect.element(page.getByRole("button", { name: "Connect", exact: true })).toBeDisabled();
+    tokenStatus.resolve({ saved: false });
+    await expect.element(page.getByLabelText("Overleaf Git token")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Connect", exact: true })).toBeEnabled();
+
+    // A token the server didn't save stops before anything is made.
+    await page.getByLabelText("Overleaf Git token").fill("olp_secret");
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await expect.element(page.getByText("The token wasn't saved. Try again.")).toBeVisible();
+    expect(project.createProjectForOverleaf).not.toHaveBeenCalled();
+    expect(client.connectOverleaf).not.toHaveBeenCalled();
+
+    await page.getByLabelText("Overleaf Git token").fill("olp_secret");
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await expect.element(page.getByText("Linked Thesis/paper.")).toBeVisible();
+    expect(client.saveOverleafToken).toHaveBeenCalledTimes(2);
+    expect(client.saveOverleafToken.mock.invocationCallOrder[1]).toBeLessThan(
+      project.createProjectForOverleaf.mock.invocationCallOrder[0]!,
+    );
   });
 });

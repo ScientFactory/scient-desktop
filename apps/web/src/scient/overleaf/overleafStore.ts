@@ -273,8 +273,10 @@ export function loadOverleafWorkspace(
 ): Promise<void> {
   const key = keyOf(environmentId, workspaceRoot);
   const running = inflight.get(key);
-  // A forced load (after an operation) starts afresh; the earlier one's answers are stale.
-  if (running && !options.force) return running;
+  // A forced load (after an operation) starts afresh, and so does a view another
+  // view's operation marked stale: a load already running may have been asked
+  // before that operation, so its answers are stale.
+  if (running && !options.force && !staleWorkspaces.has(key)) return running;
   const age = Date.now() - (loadedAt.get(key) ?? 0);
   if (
     !options.force &&
