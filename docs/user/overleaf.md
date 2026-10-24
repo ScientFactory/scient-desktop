@@ -118,8 +118,7 @@ the folder last synced, **Open in Overleaf** and **Overleaf settings…**.
 
 ## What is sent
 
-- **New files in the folder are sent**, and the Overleaf tab says how many ("2
-  new files will be sent"). Skipped, every sync:
+- **New files in the folder are sent.** Skipped, every sync:
   - LaTeX build leftovers (`.aux`, `.log`, `.synctex.gz`, `.fls`,
     `.fdb_latexmk`, `.out`, `.toc`, `.bbl`);
   - hidden files and anything in a hidden folder, such as `.env`;
@@ -132,6 +131,23 @@ the folder last synced, **Open in Overleaf** and **Overleaf settings…**.
 - A file Overleaf already has is synced like any other, even if its name is on
   the skip list.
 - A `.gitignore` in the folder is not read.
+
+### Decide file by file
+
+The Overleaf tab (**See changes**) lists the new files the next sync finds,
+and how many it will send:
+
+- a file that will be sent has **Keep only on this computer**. Scient remembers
+  it and leaves it out of every sync until you send it;
+- a skipped file says why ("Build output", "Hidden file", "Scient project
+  file") and has **Send this file**. A file over Overleaf's 50 MB limit can't
+  be sent;
+- **Kept only here** lists the files you kept back, each with **Send this
+  file**.
+
+A choice waits for the tab's next **Sync** (or **Sync again** after a
+conflict), which carries it; press it again to take it back. Once a file is on
+Overleaf it syncs like any other: keeping it only here is no longer offered.
 
 ## Conflicts
 

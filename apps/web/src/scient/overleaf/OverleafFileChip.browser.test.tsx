@@ -98,6 +98,8 @@ const sent: ScientOverleafSyncResult = {
     unresolvedMarkers: [],
     collisions: [],
     selectedAdditions: [],
+    additions: [],
+    localOnly: [],
   },
   outcome: "complete",
   interrupted: 0,

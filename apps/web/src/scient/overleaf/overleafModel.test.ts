@@ -65,6 +65,8 @@ function review(overrides: Partial<ScientOverleafReview> = {}): ScientOverleafRe
     unresolvedMarkers: [],
     collisions: [],
     selectedAdditions: [],
+    additions: [],
+    localOnly: [],
     ...overrides,
   };
 }

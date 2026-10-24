@@ -28,6 +28,11 @@ import {
   runOverleafSync,
 } from "./overleafActions";
 import { askAgentOnLinkedCopy } from "./askAgentOnLinkedCopy";
+import {
+  fileDecisionsRequest,
+  OverleafNewFiles,
+  type OverleafFileDecision,
+} from "./OverleafNewFiles";
 import { askAgentMessage, choicesFor, overleafResultView, workspacePathOf } from "./overleafModel";
 import { useOverleafWorkspace } from "./overleafStore";
 
@@ -130,6 +135,17 @@ export function OverleafReviewPanel(props: {
   const [chosen, setChosen] = useState<ReadonlyMap<string, OverleafReviewChoice>>(new Map());
   // Overleaf moved after the choices were made: the conflicts are shown again.
   const [chooseAgain, setChooseAgain] = useState(false);
+  // Per-file decisions wait for the tab's next Sync, which carries them.
+  const [fileDecisions, setFileDecisions] = useState<ReadonlyMap<string, OverleafFileDecision>>(
+    new Map(),
+  );
+  const decideFile = (path: string, decision: OverleafFileDecision | null) =>
+    setFileDecisions((current) => {
+      const next = new Map(current);
+      if (decision === null) next.delete(path);
+      else next.set(path, decision);
+      return next;
+    });
   const lastReview =
     last && (last.result._tag === "synced" || last.result._tag === "needs-decision")
       ? last.result.review
@@ -163,12 +179,25 @@ export function OverleafReviewPanel(props: {
     conflicts.length > 0 &&
     conflicts.every((conflict) => chosen.has(conflict.key) || conflict.chosen !== null);
 
+  /** The header's Sync, carrying the per-file decisions made in this tab. */
+  const syncNow = async () => {
+    const result = await runOverleafSync(
+      { environmentId, workspaceRoot: cwd, connection, openReview },
+      { files: fileDecisionsRequest(fileDecisions) },
+    );
+    if (result?._tag === "synced") setFileDecisions(new Map());
+  };
+
   const syncWithChoices = async () => {
     if (!review) return;
     const askAgent = conflicts.filter((conflict) => chosen.get(conflict.key) === "agent");
     const result = await runOverleafSync(
       { environmentId, workspaceRoot: cwd, connection, openReview },
-      { choices: choicesFor(review, engineChoices), reviewedRemote: review.remoteTree },
+      {
+        choices: choicesFor(review, engineChoices),
+        reviewedRemote: review.remoteTree,
+        files: fileDecisionsRequest(fileDecisions),
+      },
     );
     if (result?._tag === "needs-decision") {
       setChosen(new Map());
@@ -178,6 +207,7 @@ export function OverleafReviewPanel(props: {
     if (result?._tag !== "synced") return;
     setChosen(new Map());
     setChooseAgain(false);
+    setFileDecisions(new Map());
     if (askAgent.length === 0) return;
     const paths = conflictWorkspacePaths(
       connection,
@@ -256,14 +286,7 @@ export function OverleafReviewPanel(props: {
             </TooltipTrigger>
             <TooltipPopup>Open in Overleaf</TooltipPopup>
           </Tooltip>
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={syncing}
-            onClick={() =>
-              void runOverleafSync({ environmentId, workspaceRoot: cwd, connection, openReview })
-            }
-          >
+          <Button size="xs" variant="outline" disabled={syncing} onClick={() => void syncNow()}>
             <RefreshCw aria-hidden className={syncing ? "size-3.5 animate-spin" : "size-3.5"} />
             {syncing ? "Syncing…" : "Sync"}
           </Button>
@@ -385,11 +408,19 @@ export function OverleafReviewPanel(props: {
                 folder={connection.folder}
                 onOpenFile={props.onOpenFile}
               />
-              {review.selectedAdditions.length > 0 ? (
+              {synced && review.selectedAdditions.length > 0 ? (
                 <p className="px-1 text-xs text-muted-foreground" data-overleaf-new-files>
                   {newFilesLine(review.selectedAdditions.length, sent)}
                 </p>
               ) : null}
+              <OverleafNewFiles
+                // After a sync, its new files are decided; files kept only here still can be sent.
+                review={synced ? { additions: [], localOnly: review.localOnly } : review}
+                folder={connection.folder}
+                decisions={fileDecisions}
+                onDecide={decideFile}
+                onOpenFile={props.onOpenFile}
+              />
             </>
           ) : null}
         </div>

@@ -98,6 +98,8 @@ function review(overrides: Partial<ScientOverleafReview> = {}): ScientOverleafRe
     unresolvedMarkers: [],
     collisions: [],
     selectedAdditions: [],
+    additions: [],
+    localOnly: [],
     ...overrides,
   };
 }
@@ -215,6 +217,7 @@ describe("OverleafReviewPanel", () => {
         needsDecision: false,
         conflicts: [],
         selectedAdditions: ["figures/plot.pdf"],
+        additions: [{ path: "figures/plot.pdf", size: 10, selected: true, skippedBecause: null }],
       }),
     });
     const onOpenFile = vi.fn();
@@ -227,7 +230,9 @@ describe("OverleafReviewPanel", () => {
       .element(page.getByRole("region", { name: "To send" }).getByText("figures/plot.pdf"))
       .toBeVisible();
     // New files go by default; the review says how many.
-    await expect.element(page.getByText("1 new file will be sent.")).toBeVisible();
+    await expect
+      .element(page.getByRole("region", { name: "New files" }).getByText("1 will be sent"))
+      .toBeVisible();
     await incoming.getByText("refs.bib").click();
     expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("paper/refs.bib");
     expect(client.previewOverleaf).toHaveBeenCalledExactlyOnceWith(environmentId, {
@@ -301,6 +306,82 @@ describe("OverleafReviewPanel", () => {
     finish({ _tag: "cancelled", stage: "before-apply" });
     await expect.element(page.getByText("Sync cancelled")).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
+  describe("per-file decisions", () => {
+    const newFiles = review({
+      needsDecision: false,
+      conflicts: [],
+      selectedAdditions: ["figures/plot.pdf"],
+      additions: [
+        { path: "figures/plot.pdf", size: 10, selected: true, skippedBecause: null },
+        { path: "main.aux", size: 10, selected: false, skippedBecause: "build-output" },
+        { path: "data/raw.bin", size: 60_000_000, selected: false, skippedBecause: "too-large" },
+      ],
+      localOnly: ["notes.md"],
+    });
+
+    async function readNewFiles() {
+      reset();
+      client.previewOverleaf.mockResolvedValue({ _tag: "review", review: newFiles });
+      const screen = await render(panel());
+      await page.getByRole("button", { name: "Read changes" }).click();
+      await expect.element(page.getByRole("region", { name: "New files" })).toBeVisible();
+      return screen;
+    }
+
+    it("keeps a new file only on this computer at the next sync", async () => {
+      await using _screen = await readNewFiles();
+      const keep = page.getByRole("button", {
+        name: "Keep only on this computer: figures/plot.pdf",
+      });
+      await keep.click();
+      await expect.element(keep).toHaveAttribute("aria-pressed", "true");
+      await expect.element(page.getByText("0 will be sent at the next sync")).toBeVisible();
+      // Pressing it again takes the decision back.
+      await keep.click();
+      await expect.element(page.getByText("1 will be sent", { exact: true })).toBeVisible();
+      await keep.click();
+
+      await page.getByRole("button", { name: "Sync", exact: true }).click();
+      await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+      expect(client.syncOverleaf).toHaveBeenCalledWith(environmentId, {
+        workspaceRoot: "/work/project",
+        connectionId: "c1",
+        requestId: "request-1",
+        files: { keepOnlyHere: ["figures/plot.pdf"] },
+      });
+    });
+
+    it("sends a skipped file and one kept only here, but never one over Overleaf's limit", async () => {
+      await using _screen = await readNewFiles();
+      const files = page.getByRole("region", { name: "New files" });
+      await expect.element(files.getByText("Build output")).toBeVisible();
+      await expect.element(files.getByText("Over Overleaf's 50 MB limit")).toBeVisible();
+      await expect
+        .element(page.getByRole("button", { name: "Send this file: data/raw.bin" }))
+        .not.toBeInTheDocument();
+      await page.getByRole("button", { name: "Send this file: main.aux" }).click();
+      await page
+        .getByRole("region", { name: "Kept only here" })
+        .getByRole("button", { name: "Send this file: notes.md" })
+        .click();
+      await expect.element(page.getByText("2 will be sent at the next sync")).toBeVisible();
+
+      client.syncOverleaf.mockResolvedValue({
+        ...applied,
+        review: review({ needsDecision: false, conflicts: [], localOnly: ["notes.md"] }),
+      });
+      await page.getByRole("button", { name: "Sync", exact: true }).click();
+      await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+      expect(client.syncOverleaf.mock.calls[0]![1]).toMatchObject({
+        files: { send: ["main.aux", "notes.md"] },
+      });
+      // Applied: the decisions are spent.
+      await expect
+        .element(page.getByRole("button", { name: "Send this file: notes.md" }))
+        .toHaveAttribute("aria-pressed", "false");
+    });
   });
 
   describe("Ask the agent from another worktree", () => {

@@ -99,7 +99,7 @@ export function openOverleafProject(projectId: string): void {
 export async function runOverleafSync(
   context: OverleafSyncContext,
   decision?: {
-    readonly choices: ReadonlyArray<{
+    readonly choices?: ReadonlyArray<{
       readonly key: string;
       readonly choice: ScientOverleafConflictChoice;
     }>;
@@ -107,7 +107,12 @@ export async function runOverleafSync(
      * The `remoteTree` of the review whose conflicts the choices answer. If
      * Overleaf has moved since, the server shows the conflicts again instead.
      */
-    readonly reviewedRemote: string;
+    readonly reviewedRemote?: string;
+    /** Per-file decisions: new files to keep only here, files to send anyway. */
+    readonly files?: {
+      readonly keepOnlyHere: ReadonlyArray<string>;
+      readonly send: ReadonlyArray<string>;
+    };
   },
 ): Promise<ScientOverleafSyncResult | null> {
   const { environmentId, workspaceRoot, connection } = context;
@@ -134,8 +139,22 @@ export async function runOverleafSync(
       workspaceRoot,
       connectionId: connection.connectionId,
       requestId: overleafRequestId(),
-      ...(decision && decision.choices.length > 0
-        ? { choices: [...decision.choices], reviewedRemote: decision.reviewedRemote }
+      ...(decision?.choices && decision.choices.length > 0
+        ? {
+            choices: [...decision.choices],
+            ...(decision.reviewedRemote ? { reviewedRemote: decision.reviewedRemote } : {}),
+          }
+        : {}),
+      ...(decision?.files &&
+      (decision.files.keepOnlyHere.length > 0 || decision.files.send.length > 0)
+        ? {
+            files: {
+              ...(decision.files.keepOnlyHere.length > 0
+                ? { keepOnlyHere: [...decision.files.keepOnlyHere] }
+                : {}),
+              ...(decision.files.send.length > 0 ? { send: [...decision.files.send] } : {}),
+            },
+          }
         : {}),
     });
     recordOverleafSync(environmentId, workspaceRoot, connection.connectionId, result);

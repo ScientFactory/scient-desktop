@@ -96,10 +96,19 @@ when the publication is `accepted`.
 A side-panel surface, `scient:overleaf-review:<encoded cwd>:<connection>`, persisted with the
 other tabs. It shows the last sync's review from this window, else a review read by `preview`
 (**See changes** reads one when none is held; after a restart the tab offers **Read changes**).
-It lists what came in and what is or was sent, with "N new files will be sent" from the review's
-`selectedAdditions` (new files go by default); a file opens in its editor, and **Show in Diff**
+It lists what came in and what is or was sent; a file opens in its editor, and **Show in Diff**
 opens the thread's Diff tab. The engine exposes paths, not contents, so the tab doesn't draw a
 per-file Overleaf diff itself.
+
+Per-file decisions (`OverleafNewFiles`): for a review still to run (a preview, or one waiting on a
+conflict), the tab lists the review's `additions`. A selected one offers **Keep only on this
+computer**; a skipped one shows its `skippedBecause` in a few words and offers **Send this file**,
+except `too-large` (Overleaf refuses it). `localOnly` is listed as **Kept only here**, each with
+**Send this file**. A decision is a pending toggle, not a sync of its own: the tab's next **Sync**
+or **Sync again** sends them as `files: { keepOnlyHere, send }`, and a sync that applies clears
+them. One sync then carries every decision together with any conflict choices, and a decision
+taken while a conflict waits isn't lost to a sync that stops at that conflict. After a sync the
+tab shows "N new files were sent" and only the kept-only list.
 
 Conflicts: each offers the engine's allowed choices. A file conflict (`markers` allowed) shows
 **Keep mine**, **Use Overleaf's**, **Merge myself** and **Ask the agent**; a group shows the first
@@ -147,9 +156,5 @@ are disabled while editing is.
 ## Not built here
 
 - Undo of a send: engine addition first.
-- "Keep only on this computer" and "Send this file" per new file: the engine has them
-  (`sendLocalOnly` and the addition list in the prepare selections), but the HTTP sync request
-  carries only `choices` and `reviewedRemote`, and the review view lists only the selected
-  additions, not the skipped ones with their reasons.
 - Settings ▸ Overleaf "Test" of the token: no route.
 - Add project ▸ Overleaf project (a new Scient project with the paper in a subfolder).
