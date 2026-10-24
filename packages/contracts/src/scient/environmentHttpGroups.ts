@@ -154,6 +154,9 @@ import {
   ScientOverleafSyncRequest,
   ScientOverleafSyncResult,
   ScientOverleafTokenStatus,
+  ScientOverleafUndoableSends,
+  ScientOverleafUndoRequest,
+  ScientOverleafUndoResult,
   ScientOverleafWorkspaceRequest,
 } from "../scientOverleaf.ts";
 
@@ -836,6 +839,22 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientOverleafRestoreRequest,
         success: ScientOverleafRestoreResult,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("undoableSends", "/api/scient/overleaf/v1/undo/sends", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafConnectionRequest,
+        success: ScientOverleafUndoableSends,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("undo", "/api/scient/overleaf/v1/undo", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafUndoRequest,
+        success: ScientOverleafUndoResult,
         error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
       }).middleware(EnvironmentAuthenticatedAuth),
     )

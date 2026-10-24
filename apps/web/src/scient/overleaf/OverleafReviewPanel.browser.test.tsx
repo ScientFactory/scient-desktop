@@ -26,6 +26,8 @@ const client = vi.hoisted(() => ({
   restoreOverleafKeptCopy: vi.fn(),
   disconnectOverleaf: vi.fn(),
   cancelOverleafSync: vi.fn(),
+  listOverleafUndoableSends: vi.fn(),
+  undoOverleafSend: vi.fn(),
 }));
 vi.mock("./client", () => ({ ...client, overleafRequestId: () => "request-1" }));
 const toasts = vi.hoisted(() => ({ add: vi.fn(() => "toast"), close: vi.fn() }));
@@ -253,6 +255,35 @@ describe("OverleafReviewPanel", () => {
       workspaceRoot: "/work/project",
       connectionId: "c1",
     });
+  });
+
+  it("offers Undo after a sync that sent, for that send", async () => {
+    reset();
+    client.listOverleafUndoableSends.mockResolvedValue({
+      sends: [
+        {
+          attemptNumber: 7,
+          recordedAt: "2026-10-24T12:00:00.000Z",
+          changes: [{ kind: "added", path: "figures/plot.pdf" }],
+        },
+      ],
+    });
+    // A sync that stopped at marks sent nothing: nothing to undo.
+    recordOverleafSync(environmentId, "c1", applied);
+    await using _screen = await render(panel());
+    await expect.element(page.getByText("refs.bib")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Undo send" })).not.toBeInTheDocument();
+    recordOverleafSync(environmentId, "c1", {
+      ...applied,
+      outcome: "complete",
+      markerPaths: [],
+      publication: { _tag: "accepted", attemptNumber: 7 },
+    });
+    await page.getByRole("button", { name: "Undo send" }).click();
+    await expect.element(page.getByText("Undo send #7")).toBeVisible();
+    await expect
+      .element(page.getByRole("list", { name: "What Undo puts back" }).getByText("Removed"))
+      .toBeVisible();
   });
 
   it("shows the conflicts again when Overleaf moved after the choices were made", async () => {

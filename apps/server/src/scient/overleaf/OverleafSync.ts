@@ -336,6 +336,17 @@ export type OverleafSyncOutcome =
       readonly stage: "before-prepare" | "before-apply";
     } & OverleafSyncProgress);
 
+/**
+ * What an undo did (pr-c-design.md section 4.3): the coordinator's result, and
+ * when it wrote the folder completely, the sync that sent the restored files.
+ */
+export type OverleafUndoOutcome =
+  | (Extract<OverleafCoordinator.OverleafUndoResult, { _tag: "undone" }> & {
+      /** Null when the undo's apply did not complete, so nothing was synced. */
+      readonly sync: OverleafSyncOutcome | null;
+    })
+  | Exclude<OverleafCoordinator.OverleafUndoResult, { _tag: "undone" }>;
+
 /** The stored token's name: one token per Overleaf site (contract section 3). */
 const TOKEN_SECRET = `overleaf-git-token-${Buffer.from("www.overleaf.com", "utf8").toString("base64url")}`;
 /** Reviews rebuilt in one sync before it reports the folder as unsettled. */
@@ -809,28 +820,36 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   }) {
     const { document, guard, linkedElsewhere } = yield* authorize(input.caller, input.connectionId);
     yield* requireToken;
-    // One sync per connection here: claimed before anything else, and never replaced
-    // by a competitor, so cancel always reaches the running one.
-    if (syncs.has(input.connectionId))
-      return yield* new OverleafCoordinator.OverleafOperationActiveError({
-        connectionId: input.connectionId,
-      });
-    const running = { operationId: newOverleafId(), cancelled: false };
-    syncs.set(input.connectionId, running);
-    // The connection is held for the whole sync, from saving the folder's editors on,
-    // gaps included: a disconnect or relink can't slip in between its steps. Its own
-    // coordinator calls run under this hold.
-    return yield* savingEditorsFirst(
-      input.connectionId,
+    return yield* claimingSync(input.connectionId, (running) =>
       syncClaimed(input, document, guard, linkedElsewhere, running),
-    ).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (syncs.get(input.connectionId) === running) syncs.delete(input.connectionId);
-        }),
-      ),
     );
   });
+
+  /**
+   * Runs a sync-like operation (a sync, or an undo and the sync after it). One per
+   * connection here: claimed before anything else, and never replaced by a
+   * competitor, so cancel always reaches the running one. The connection is held for
+   * the whole operation, from saving the folder's editors on, gaps included: a
+   * disconnect or relink can't slip in between its steps. Its own coordinator calls
+   * run under this hold.
+   */
+  const claimingSync = <A, E, R>(
+    connectionId: string,
+    body: (running: { readonly operationId: string; cancelled: boolean }) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.suspend(() => {
+      if (syncs.has(connectionId))
+        return Effect.fail(new OverleafCoordinator.OverleafOperationActiveError({ connectionId }));
+      const running = { operationId: newOverleafId(), cancelled: false };
+      syncs.set(connectionId, running);
+      return savingEditorsFirst(connectionId, body(running)).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (syncs.get(connectionId) === running) syncs.delete(connectionId);
+          }),
+        ),
+      );
+    });
 
   const syncClaimed = Effect.fn("OverleafSync.syncClaimed")(function* (
     input: {
@@ -1098,6 +1117,73 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     );
   });
 
+  /** Sends Undo can put back, newest first, with what each changed on Overleaf. Reads only. */
+  const undoableSends = Effect.fn("OverleafSync.undoableSends")(function* (input: {
+    readonly caller: OverleafCaller;
+    readonly connectionId: string;
+  }) {
+    const { guard } = yield* authorize(input.caller, input.connectionId);
+    return yield* engine(guard, coordinator.undoableSends({ connectionId: input.connectionId }));
+  });
+
+  /**
+   * Puts back what Overleaf had before one accepted send (pr-c-design.md section
+   * 4.3), then syncs, so the restored files go out as ordinary local changes and
+   * only a conflict stops. Editors are saved first and the connection is held from
+   * there to the end of the sync. The sync runs only when the undo's apply
+   * completed; it has its own receipt, derived from the request's, so a repeated
+   * request never applies or syncs twice. A refusal the sync meets after the undo
+   * wrote the folder comes back as its result, never hiding the undo.
+   */
+  const undo = Effect.fn("OverleafSync.undo")(function* (input: {
+    readonly caller: OverleafCaller;
+    readonly connectionId: string;
+    readonly requestId: string;
+    readonly attemptNumber: number;
+  }) {
+    const { document, guard, linkedElsewhere } = yield* authorize(input.caller, input.connectionId);
+    yield* requireToken;
+    return yield* claimingSync(input.connectionId, (running) =>
+      Effect.gen(function* () {
+        const undone = yield* engine(
+          guard,
+          coordinator.undo({
+            connectionId: input.connectionId,
+            requestId: input.requestId,
+            attemptNumber: input.attemptNumber,
+          }),
+        );
+        if (undone._tag !== "undone") return undone satisfies OverleafUndoOutcome;
+        if (undone.adopted?.outcome !== "complete")
+          return { ...undone, sync: null } satisfies OverleafUndoOutcome;
+        const synced = yield* syncClaimed(
+          {
+            caller: input.caller,
+            connectionId: input.connectionId,
+            // Server-made: 64 characters, longer than any request ID a client may send.
+            requestId: sha256(`undo\0${input.requestId}`),
+          },
+          document,
+          guard,
+          linkedElsewhere,
+          running,
+        ).pipe(
+          Effect.catch((error) =>
+            isActionable(error)
+              ? Effect.succeed({
+                  _tag: "refused" as const,
+                  refusal: { reason: overleafRefusalReason(error) },
+                  retried: false,
+                  settled: null,
+                } satisfies OverleafSyncOutcome)
+              : Effect.fail(error),
+          ),
+        );
+        return { ...undone, sync: synced } satisfies OverleafUndoOutcome;
+      }),
+    );
+  });
+
   const disconnect = Effect.fn("OverleafSync.disconnect")(function* (input: {
     readonly caller: OverleafCaller;
     readonly connectionId: string;
@@ -1172,6 +1258,8 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     recover,
     keptCopies,
     restoreKept,
+    undoableSends,
+    undo,
     disconnect,
     cancel,
     relink,

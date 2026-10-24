@@ -8,7 +8,14 @@ import type {
   ScientOverleafReview,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { ArrowDownToLine, ArrowUpFromLine, ExternalLink, FileDiff, RefreshCw } from "lucide-react";
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  ExternalLink,
+  FileDiff,
+  RefreshCw,
+  Undo2,
+} from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -30,6 +37,7 @@ import {
 import { askAgentOnLinkedCopy, openFileOnLinkedCopy } from "./askAgentOnLinkedCopy";
 import { appendToThreadDraft, sameThread, useReadShownThread } from "./overleafThreadTarget";
 import { OverleafNewFiles } from "./OverleafNewFiles";
+import { OverleafUndoDialog } from "./OverleafUndoDialog";
 import {
   askAgentMessage,
   choicesFor,
@@ -153,6 +161,8 @@ export function OverleafReviewPanel(props: {
   }>({ review: "", choices: new Map() });
   // Overleaf moved after the choices were made: the review the conflicts are shown again in.
   const [chooseAgainFor, setChooseAgainFor] = useState<string | null>(null);
+  // The send the Undo dialog is open for.
+  const [undoing, setUndoing] = useState<number | null>(null);
   // Per-file decisions wait for the tab's next Sync, which carries them. They live in the
   // store, so opening a file (which replaces this tab) keeps them; an applied sync clears them.
   const decideFile = (path: string, decision: OverleafFileDecision | null) =>
@@ -221,6 +231,11 @@ export function OverleafReviewPanel(props: {
     });
   };
   const conflicts = review?.conflicts ?? [];
+  // The send of the sync shown, which Undo can put back (design section 4.3).
+  const sentAttempt =
+    sent && last?.result._tag === "synced" && last.result.publication._tag === "accepted"
+      ? (last.result.publication.attemptNumber ?? null)
+      : null;
   const engineChoices = new Map<string, ScientOverleafConflictChoice>(
     [...chosen].map(([key, choice]) => [key, choice === "agent" ? "markers" : choice]),
   );
@@ -323,6 +338,24 @@ export function OverleafReviewPanel(props: {
                 <FileDiff aria-hidden className="scient-quiet-icon size-4" />
               </TooltipTrigger>
               <TooltipPopup>Show in Diff</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {sentAttempt !== null ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    aria-label="Undo send"
+                    disabled={syncing}
+                    onClick={() => setUndoing(sentAttempt)}
+                  />
+                }
+              >
+                <Undo2 aria-hidden className="scient-quiet-icon size-[17px]" strokeWidth={1.75} />
+              </TooltipTrigger>
+              <TooltipPopup>Undo send</TooltipPopup>
             </Tooltip>
           ) : null}
           <Tooltip>
@@ -492,6 +525,15 @@ export function OverleafReviewPanel(props: {
             </>
           ) : null}
         </div>
+        {undoing !== null ? (
+          <OverleafUndoDialog
+            environmentId={environmentId}
+            workspaceRoot={cwd}
+            connection={connection}
+            attemptNumber={undoing}
+            onClose={() => setUndoing(null)}
+          />
+        ) : null}
       </div>
     </TooltipProvider>
   );

@@ -323,6 +323,14 @@ export type OverleafUndoResult =
   | { readonly _tag: "refused"; readonly refusal: OverleafInventoryRefusal }
   | { readonly _tag: "duplicate"; readonly receipt: OverleafOperationReceipt };
 
+/** A send Undo can put back: accepted by Overleaf, still recorded, its commits still held. */
+export interface OverleafUndoableSend {
+  readonly attemptNumber: number;
+  readonly recordedAt: string;
+  /** What the send changed on Overleaf: what Undo puts back, path by path. */
+  readonly changes: ReadonlyArray<OverleafRepository.TreeChange>;
+}
+
 /** `attempts` is null when Overleaf could not be reached to check earlier sends. */
 export type OverleafRecoverResult =
   | { readonly _tag: "none"; readonly attempts: OverleafAttemptsChecked | null }
@@ -469,6 +477,9 @@ const holdOverleafConnection = <A, E, R>(
     body,
     () => Effect.sync(() => reservations.delete(connectionId)),
   );
+
+/** Accepted sends `undoableSends` lists with their changes; older ones are undone by number. */
+const UNDOABLE_LISTED = 10;
 
 /** A kept copy's place in the retention folder, as `OverleafConnectionState` records it. */
 const KEPT_PATH =
@@ -649,6 +660,14 @@ export class OverleafCoordinator extends Context.Service<
       readonly requestId: string;
       readonly attemptNumber: number;
     }) => Effect.Effect<OverleafUndoResult, OverleafCoordinatorError>;
+    /**
+     * The newest sends Undo can put back, newest first, each with what it changed
+     * on Overleaf (design section 4.3). Reads only: never fetches, never takes the
+     * connection. Older accepted sends can still be undone by number.
+     */
+    readonly undoableSends: (input: {
+      readonly connectionId: string;
+    }) => Effect.Effect<ReadonlyArray<OverleafUndoableSend>, OverleafCoordinatorError>;
   }
 >()("t3/scient/overleaf/OverleafCoordinator") {}
 
@@ -2387,6 +2406,33 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     };
   });
 
+  const undoableSends: OverleafCoordinator["Service"]["undoableSends"] = Effect.fn(
+    "OverleafCoordinator.undoableSends",
+  )(function* (input) {
+    const connection = yield* readActive(input.connectionId);
+    const repo = yield* repositoryFor(connection);
+    const accepted = connection.attempts
+      .filter((attempt) => attempt.outcome === "accepted")
+      .toSorted((left, right) => right.attemptNumber - left.attemptNumber)
+      .slice(0, UNDOABLE_LISTED);
+    const sends: OverleafUndoableSend[] = [];
+    for (const attempt of accepted) {
+      // As `undoPlan` requires: both commits still held, the sent one as recorded.
+      const parentTree = yield* repos.findTree({ repo, commit: attempt.parentCommit });
+      if (
+        parentTree === null ||
+        (yield* repos.findTree({ repo, commit: attempt.candidateCommit })) !== attempt.candidateTree
+      )
+        continue;
+      sends.push({
+        attemptNumber: attempt.attemptNumber,
+        recordedAt: attempt.recordedAt,
+        changes: yield* repos.diff({ repo, from: parentTree, to: attempt.candidateTree }),
+      });
+    }
+    return sends;
+  });
+
   const undo: OverleafCoordinator["Service"]["undo"] = (input) =>
     reserve(input.connectionId, (operationId) =>
       Effect.gen(function* () {
@@ -2612,5 +2658,13 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     }),
   );
 
-  return OverleafCoordinator.of({ prepare, confirm, recover, keptCopies, restoreKept, undo });
+  return OverleafCoordinator.of({
+    prepare,
+    confirm,
+    recover,
+    keptCopies,
+    restoreKept,
+    undo,
+    undoableSends,
+  });
 });

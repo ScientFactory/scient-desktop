@@ -1,11 +1,13 @@
 // SCIENT-OWNED: what the Overleaf screens say, decided from the server's fixed
 // categories. Pure functions, so every line a person sees is tested here.
 import type {
+  ScientOverleafChange,
   ScientOverleafConnectionSummary,
   ScientOverleafRefusal,
   ScientOverleafReview,
   ScientOverleafStatus,
   ScientOverleafSyncResult,
+  ScientOverleafUndoResult,
 } from "@t3tools/contracts";
 
 /** Overleaf's own page for a project. */
@@ -531,6 +533,106 @@ export function overleafResultView(result: ScientOverleafSyncResult): OverleafRe
         hasChanges: false,
         needsDecision: false,
       };
+  }
+}
+
+/** What Undo does to a file a send changed: the reverse of the send. */
+export function undoChangeLabel(change: ScientOverleafChange): string {
+  switch (change.kind) {
+    case "modified":
+      return "Earlier version";
+    case "added":
+      return "Removed";
+    case "deleted":
+      return "Back";
+    case "renamed":
+      return "Old name back";
+  }
+}
+
+const UNDO_SKIPPED: Record<
+  Extract<ScientOverleafUndoResult, { _tag: "undone" }>["skipped"][number]["reason"],
+  string
+> = {
+  changed: "edited since",
+  "already-undone": "already back",
+  "name-clash": "name in use",
+  "too-large": "too large",
+};
+
+const UNDO_NOT_ELIGIBLE: Record<
+  Extract<ScientOverleafUndoResult, { _tag: "not-eligible" }>["reason"],
+  string
+> = {
+  "not-recorded": "Scient no longer records this send.",
+  unresolved: "Overleaf never answered this send.",
+  "not-sent": "This send never went out.",
+  "out-of-date": "Overleaf refused this send, so it changed nothing.",
+  "history-unavailable": "Scient no longer holds what this send replaced.",
+};
+
+/** What an undo did (design section 4.3): what it put back, what it left and why, then its sync. */
+export function overleafUndoView(
+  result: ScientOverleafUndoResult,
+): Pick<OverleafResultView, "title" | "lines" | "tone" | "needsDecision"> {
+  switch (result._tag) {
+    case "undone": {
+      const skipped =
+        result.skipped.length === 0
+          ? []
+          : [
+              `Left as it is: ${result.skipped.map((skip) => `${skip.path} (${UNDO_SKIPPED[skip.reason]})`).join(", ")}.`,
+            ];
+      const put = result.restored.length + result.removed.length + result.recreated.length;
+      switch (result.outcome) {
+        case null:
+          return {
+            title: "Nothing was put back",
+            lines: skipped,
+            tone: "info",
+            needsDecision: false,
+          };
+        case "replan":
+          return {
+            title: "Nothing was put back",
+            lines: ["The folder changed during the undo. Try again."],
+            tone: "warning",
+            needsDecision: false,
+          };
+        case "attention":
+          return {
+            title: "Undo needs attention",
+            lines: ["It may have stopped partway. Check the files before syncing.", ...skipped],
+            tone: "warning",
+            needsDecision: false,
+          };
+        default: {
+          const synced = result.sync === null ? null : overleafResultView(result.sync);
+          return {
+            title: `Put back ${fileCount(put)}`,
+            lines: [...skipped, ...(synced === null ? [] : [`${synced.title}.`, ...synced.lines])],
+            tone: synced?.tone ?? "success",
+            needsDecision: synced?.needsDecision ?? false,
+          };
+        }
+      }
+    }
+    case "not-eligible":
+      return {
+        title: "Can't undo this send",
+        lines: [UNDO_NOT_ELIGIBLE[result.reason]],
+        tone: "error",
+        needsDecision: false,
+      };
+    case "refused":
+      return {
+        title: "Couldn't undo",
+        lines: [refusalText(result.refusal)],
+        tone: "error",
+        needsDecision: false,
+      };
+    case "duplicate":
+      return { title: "That undo already ran", lines: [], tone: "info", needsDecision: false };
   }
 }
 

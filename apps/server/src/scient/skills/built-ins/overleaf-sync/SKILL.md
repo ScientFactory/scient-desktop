@@ -46,6 +46,10 @@ Decide the way you would for a Git merge conflict: follow the user's instruction
 
 The version a sync replaced is kept as a copy. `scient_overleaf_kept_copies` lists them and restores one.
 
+## Undo
+
+Undo puts back what Overleaf had before one send: for example after an older branch's files were sent over a collaborator's newer text, or a deletion was sent by mistake. `scient_overleaf_undo` without `attemptNumber` lists the sends you can undo, with what each changed. With the send's number (`send #N` in a sync result) it saves the open editors, puts back the earlier version of every file that send changed, keeps the replaced files as copies, then syncs. A file edited since that send is left as it is and reported. Tell the user what was put back and what was left.
+
 ## When Something Stops
 
 Errors name what happened and what to do next: Overleaf unreachable, a missing or refused token, an editor that could not save, a link to relink (`scient_overleaf_manage` with action `relink`), or an interrupted sync to recover (action `recover`). Action `cancel` asks a running sync to stop before its next step. Do what the message says, or tell the user when only they can fix it.

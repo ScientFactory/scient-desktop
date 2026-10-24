@@ -216,6 +216,24 @@ file is an ordinary change that the next sync sends. If the file changes while
 it is being restored, nothing is written and the menu says so: restore again. In another worktree the
 copies are the main copy's: **Open there** opens the file on the main copy.
 
+## Undo
+
+Undo puts back what Overleaf had before one send. Use it when a sync sent
+something you didn't mean to: older versions of files (after switching to an
+older branch, say) over a collaborator's newer text, or a deletion.
+
+- From the Overleaf chip: **Undo last send…**.
+- From the Overleaf tab, after a sync that sent: the **Undo send** button.
+
+The dialog lists every file that send changed and what Undo does to it
+(**Earlier version**, **Removed** for a file the send added, **Back** for one
+it deleted). Click **Undo**: Scient saves the folder's open editors, puts the
+earlier versions back, keeps the files it replaces as copies, then syncs, so
+Overleaf has its earlier text again. A file you edited since that send is left
+as it is and named. If collaborators changed the same files since, they merge
+like any other edit, and only a conflict stops. Only a send Overleaf accepted
+can be undone, among the last 64.
+
 ## Worktrees
 
 A link belongs to one copy of the project, usually the main one. In a thread
@@ -275,6 +293,8 @@ Linking the same folder to the same project again picks up where it left off.
 | The token wasn't saved. Try again.                                   | Paste the token again and **Connect**; nothing was made.                   |
 | The project is made but not in the sidebar yet.                      | Wait for it to appear, or open its folder with Add project ▸ Local folder. |
 | _file_ couldn't be saved, so nothing was changed.                    | Save the file (finish Visual editor input), then try again.                |
+| Can't undo this send.                                                | Overleaf never accepted it, or Scient no longer records it.                |
+| Nothing was put back: the folder changed during the undo.            | Undo again.                                                                |
 | Another Overleaf operation is running on this folder.                | Wait for it to finish.                                                     |
 | A pull, branch switch or checkpoint restore is changing the project. | Sync again after it.                                                       |
 | An earlier sync didn't finish.                                       | Sync again: Scient finishes it first.                                      |

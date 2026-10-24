@@ -159,6 +159,34 @@ describe.skipIf(!canApply)("OverleafCoordinator, undo", () => {
     ),
   );
 
+  it.live("lists the sends it can undo, newest first, with what each changed on Overleaf", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* sentTwoFiles();
+        const listed = () => w.coordinator.undoableSends({ connectionId: CONNECTION });
+        expect(yield* listed()).toEqual([
+          {
+            attemptNumber: 1,
+            recordedAt: expect.any(String),
+            changes: [
+              { kind: "modified", path: "main.tex" },
+              { kind: "modified", path: "other.tex" },
+              { kind: "modified", path: "third.tex" },
+            ],
+          },
+        ]);
+        // An undo writes the folder only; the sync after it is the next accepted send.
+        expect(yield* undo(w, 1)).toMatchObject({ _tag: "undone" });
+        expect(yield* w.sync("send-2")).toMatchObject({
+          publication: { _tag: "accepted", attemptNumber: 2 },
+        });
+        expect((yield* listed()).map((send) => send.attemptNumber)).toEqual([2, 1]);
+        // Listing reads only: no receipt, no hold, nothing written.
+        expect((yield* w.connection).activeApply).toBeNull();
+      }),
+    ),
+  );
+
   it.live("leaves a deleted file's name alone when another spelling of it is there now", () =>
     run(
       Effect.gen(function* () {
