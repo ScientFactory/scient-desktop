@@ -5,28 +5,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
-import { SCIENT_SOURCES_DIRECTORY } from "@scientfactory/scient-sources/store";
 import { SCIENT_PDF_EDIT_MAX_BYTES, ScientPdfEditError } from "@t3tools/contracts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import { KnownWorkspaces } from "../../workspace/KnownWorkspaces.ts";
 import { GeneratedDocumentStore } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import { revisionForBytes } from "../workspace/WorkspaceFileMutations.ts";
+import { isInSourcesFolder } from "../sources/sourceFileStore.ts";
 import { PDF_EDIT_PRODUCER, publishEditedPdfCopy } from "./EditedPdfCopy.ts";
 
 const isPdfEditError = Schema.is(ScientPdfEditError);
-const SOURCES_SEGMENTS = SCIENT_SOURCES_DIRECTORY.split("/");
-
-/**
- * Sources keeps one content-addressed file per imported PDF, shared by every
- * attachment with those bytes, so it is never edited in place.
- */
-function isInsideSourcesStore(path: string) {
-  const segments = path.split(/[\\/]/u).map((segment) => segment.toLowerCase());
-  return segments.some((_, start) =>
-    SOURCES_SEGMENTS.every((segment, offset) => segments[start + offset] === segment),
-  );
-}
-
 export const savePdfFileEdit = Effect.fn("PdfFileEdits.save")(
   function* (input: {
     readonly source: PdfSourceDescriptor;
@@ -95,6 +82,14 @@ export const savePdfFileEdit = Effect.fn("PdfFileEdits.save")(
     );
     const relativePath =
       source._tag === "workspace-pdf" ? source.relativePath : NodePath.basename(source.path);
+    // Classify the fully resolved file first. The shared writer also refuses Sources' files
+    // at the target it resolves itself, so a folder swapped in later fails rather than writes.
+    const resolved = yield* fs.realPath(NodePath.resolve(cwd, relativePath));
+    if (
+      (source._tag === "workspace-pdf" && source.origin !== undefined) ||
+      isInSourcesFolder(resolved)
+    )
+      return yield* publishCopyOf(resolved);
     const target = yield* files.inspectWriteTarget({ cwd, relativePath });
     if (target.traversesSymlink) {
       return yield* new ScientPdfEditError({
@@ -102,12 +97,6 @@ export const savePdfFileEdit = Effect.fn("PdfFileEdits.save")(
       });
     }
     const path = NodePath.resolve(cwd, target.canonicalRelativePath);
-    // Classify the fully resolved file, in case the file itself was reached through a link.
-    if (
-      (source._tag === "workspace-pdf" && source.origin !== undefined) ||
-      isInsideSourcesStore(yield* fs.realPath(path))
-    )
-      return yield* publishCopyOf(path);
     const header = (yield* Stream.runCollect(fs.stream(path, { bytesToRead: 1024 })))
       .map((chunk) => new TextDecoder().decode(chunk))
       .join("");

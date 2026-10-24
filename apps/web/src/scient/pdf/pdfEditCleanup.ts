@@ -17,13 +17,23 @@ const name = (value: string) => PDFName.of(value);
 // data. Over-counting only keeps more; missing a drawn XObject would break the page.
 const NAME_TOKEN = /\/([^\0\t\n\f\r ()<>[\]{}/%]*)/gu;
 
-/** A content stream's text, or null when it cannot be decoded. */
+/** One character per byte, so raw high-byte names keep their exact value. */
+function byteString(bytes: Uint8Array) {
+  let text = "";
+  for (let start = 0; start < bytes.length; start += 0x8000)
+    text += String.fromCharCode(...bytes.subarray(start, start + 0x8000));
+  return text;
+}
+
+/** A content stream's text, or null when it cannot be decoded faithfully. */
 function streamText(stream: PDFObject | undefined) {
   try {
-    if (stream instanceof PDFRawStream)
-      return new TextDecoder("latin1").decode(decodePDFRawStream(stream).decode());
-    if (stream instanceof PDFContentStream)
-      return new TextDecoder("latin1").decode(stream.getUnencodedContents());
+    if (stream instanceof PDFRawStream) {
+      // pdf-lib ignores decode parameters such as predictors, and cannot read external files.
+      if (stream.dict.has(name("DecodeParms")) || stream.dict.has(name("F"))) return null;
+      return byteString(decodePDFRawStream(stream).decode());
+    }
+    if (stream instanceof PDFContentStream) return byteString(stream.getUnencodedContents());
   } catch {
     // Undecodable content leaves its resources untouched.
   }
@@ -39,6 +49,36 @@ function contentParts(document: PDFDocument, contents: PDFObject | undefined) {
     const text = streamText(document.context.lookup(part));
     if (text === null) return null;
     texts.push(text);
+  }
+  return texts;
+}
+
+/**
+ * Appearance streams without resources of their own, which older PDFs let draw
+ * with the page's. Null when one cannot be read.
+ */
+function appearancesUsingPageResources(document: PDFDocument, page: PDFPage) {
+  const texts: string[] = [];
+  const annotations = page.node.lookup(name("Annots"));
+  if (!(annotations instanceof PDFArray)) return texts;
+  for (const entry of annotations.asArray()) {
+    const annotation = document.context.lookup(entry);
+    const appearances = annotation instanceof PDFDict ? annotation.lookup(name("AP")) : undefined;
+    if (!(appearances instanceof PDFDict)) continue;
+    for (const [, value] of appearances.entries()) {
+      const appearance = document.context.lookup(value);
+      // An appearance is a stream, or a dictionary of streams, one per state.
+      const streams =
+        appearance instanceof PDFDict
+          ? appearance.entries().map(([, state]) => document.context.lookup(state))
+          : [appearance];
+      for (const stream of streams) {
+        if (!(stream instanceof PDFStream) || stream.dict.has(name("Resources"))) continue;
+        const text = streamText(stream);
+        if (text === null) return null;
+        texts.push(text);
+      }
+    }
   }
   return texts;
 }
@@ -150,8 +190,14 @@ export function keepOnlyDrawnXObjects(document: PDFDocument) {
     // Each page holds its own reference before the tree's shared copy is dropped below.
     page.node.set(name("Resources"), page.node.getInheritableAttribute(name("Resources"))!);
     const texts = contentParts(document, page.node.get(name("Contents")));
-    if (texts === null) continue;
-    const narrowed = narrowResources(document, resources, texts, narrowedForms);
+    const appearances = appearancesUsingPageResources(document, page);
+    if (texts === null || appearances === null) continue;
+    const narrowed = narrowResources(
+      document,
+      resources,
+      [...texts, ...appearances],
+      narrowedForms,
+    );
     if (narrowed !== resources) page.node.set(name("Resources"), narrowed);
   }
   const pending: PDFObject[] = [document.catalog.get(name("Pages"))!];

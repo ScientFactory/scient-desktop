@@ -6,6 +6,7 @@ import {
   PDFHexString,
   PDFName,
   PDFNumber,
+  type PDFObject,
   PDFString,
   StandardFonts,
 } from "pdf-lib";
@@ -615,4 +616,85 @@ it("drops a deleted page's forms from resources inherited through the page tree 
   expect(text).toContain("KEPT_NESTED");
   expect(text).not.toContain("GONE_INHERITED");
   expect(text).not.toContain("GONE_NESTED");
+});
+
+async function deflate(bytes: Uint8Array) {
+  const stream = new Blob([new Uint8Array(bytes)])
+    .stream()
+    .pipeThrough(new CompressionStream("deflate"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+it("keeps XObjects drawn by raw high-byte names, predictor-encoded content and resource-less appearances", async () => {
+  using editor = editingWorker();
+  const document = await PDFDocument.create();
+  const bytes = (text: string) => Uint8Array.from(text, (character) => character.charCodeAt(0));
+  // TIFF predictor 2: each byte is stored as its difference from the previous one.
+  const plain = bytes("/Mark Do");
+  const predicted = plain.map((byte, index) => (byte - (index ? plain[index - 1]! : 0)) & 0xff);
+  const cases: { name: string; contents: PDFObject[]; annotation?: PDFObject }[] = [
+    {
+      name: "\u0080",
+      contents: [document.context.stream(bytes("/\u0080 Do"))],
+    },
+    {
+      name: "Mark",
+      contents: [
+        document.context.stream(await deflate(predicted), {
+          Filter: "FlateDecode",
+          DecodeParms: { Predictor: 2, Colors: 1, BitsPerComponent: 8, Columns: plain.length },
+        }),
+      ],
+    },
+    {
+      name: "Mark",
+      contents: [],
+      annotation: document.context.obj({
+        Type: "Annot",
+        Subtype: "Stamp",
+        Rect: [0, 0, 10, 10],
+        AP: {
+          N: document.context.register(
+            document.context.stream("/Mark Do", { BBox: [0, 0, 10, 10] }),
+          ),
+        },
+      }),
+    },
+  ];
+  for (const { name, contents, annotation } of cases) {
+    const page = document.addPage([300, 300]);
+    page.node.set(
+      PDFName.of("Resources"),
+      document.context.obj({
+        XObject: { [name]: markForm(document, "MARK"), Unused: markForm(document, "UNUSED") },
+      }),
+    );
+    page.node.set(
+      PDFName.of("Contents"),
+      document.context.obj(contents.map((part) => document.context.register(part))),
+    );
+    if (annotation)
+      page.node.set(
+        PDFName.of("Annots"),
+        document.context.obj([document.context.register(annotation)]),
+      );
+  }
+  const loaded = await request(editor.worker, {
+    kind: "load",
+    id: 1,
+    sourceId: "faithful-content",
+    bytes: await document.save(),
+  });
+  if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
+  const built = await request(editor.worker, {
+    kind: "build",
+    id: 2,
+    pages: loaded.pages.map((entry) => ({ ...entry, rotation: 90 })),
+  });
+  if (built.kind !== "built") throw new Error("Expected the edited PDF.");
+  const saved = await PDFDocument.load(built.bytes);
+  saved.getPages().forEach((page, index) => {
+    const xobjects = page.node.Resources()!.lookup(PDFName.of("XObject"), PDFDict);
+    expect(xobjects.has(PDFName.of(cases[index]!.name))).toBe(true);
+  });
 });

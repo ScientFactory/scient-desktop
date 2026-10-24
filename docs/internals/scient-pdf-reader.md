@@ -220,8 +220,11 @@ Workspace/environment PDFs use the shared binary-file mutation boundary with
 a SHA-256 expected revision and a unique operation ID. A concurrent writer is
 never silently overwritten. Generated PDFs, Sources PDFs (a `source` origin, or any path inside a
 project's `.scient/sources`, whose content-addressed files are shared by every
-attachment with the same bytes) and environment PDFs outside known writable
-projects publish independent, validated revisions through
+attachment with the same bytes; the save classifies the fully resolved file, and
+the shared workspace writer itself refuses `.scient/sources/files` at the target
+it resolves, so a folder swapped in mid-save fails instead of writing) and
+environment PDFs outside known writable projects publish independent, validated
+revisions through
 `GeneratedDocumentStore`, under a PDF-editor-owned binding. Later saves check
 that binding's expected revision under a per-binding lease. The original PDF
 remains immutable; only registered workspace files use the workspace writer.
@@ -242,10 +245,11 @@ page nodes. Before serializing, `keepOnlyDrawnXObjects` narrows each page's and
 each drawn form's XObject list to the names its content could draw, and the page
 tree stops passing a shared resource dictionary down. A name counts as drawn if
 it appears anywhere in the content, read as one joined stream and part by part,
-including in strings, comments and inline image data, plus everything forms
-without their own resources draw with the caller's. Over-counting only keeps
-more; scopes with undecodable content or Type 3 fonts drawing with caller
-resources are left whole. Then objects the trailer (Root, Info, Encrypt, ID) no
+including in strings, comments and inline image data, read byte for byte, plus
+everything forms and annotation appearances without their own resources draw
+with the caller's. Over-counting only keeps more; scopes with undecodable content,
+decode parameters pdf-lib does not apply (such as predictors), external stream
+data, or Type 3 fonts drawing with caller resources are left whole. Then objects the trailer (Root, Info, Encrypt, ID) no
 longer reaches are removed; pdf-lib otherwise writes every object it loaded.
 Fonts, patterns and annotation appearances are not narrowed.
 A tagged base PDF (one with a `StructTreeRoot`) must keep each original page

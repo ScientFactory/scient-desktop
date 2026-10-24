@@ -217,6 +217,28 @@ describe("PdfFileEdits", () => {
       }),
     );
 
+    it.effect("refuses a save whose folder is replaced by a link into Sources mid-save", () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.promise(() => makeFixtureDirectory(fixtures, "pdf-edit-"));
+        yield* Effect.promise(() => writeFixtureFile(root, BLOB, original));
+        yield* Effect.promise(() => writeFixtureFile(root, "plain/abcdef.pdf", original));
+        const { result } = yield* save({
+          root,
+          source: workspaceSource(root, "plain/abcdef.pdf", false),
+          beforeWrite: async () => {
+            await NodeFSP.rename(NodePath.join(root, "plain"), NodePath.join(root, "moved"));
+            await NodeFSP.symlink(
+              NodePath.join(root, NodePath.dirname(BLOB)),
+              NodePath.join(root, "plain"),
+            );
+          },
+        });
+        expect(result._tag).toBe("Failure");
+        expect(yield* readFixture(root, BLOB)).toEqual(Buffer.from(original));
+        expect(yield* readFixture(root, "moved/abcdef.pdf")).toEqual(Buffer.from(original));
+      }),
+    );
+
     it.effect("refuses to copy a Sources PDF that differs from the edited revision", () =>
       Effect.gen(function* () {
         const root = yield* Effect.promise(() => makeFixtureDirectory(fixtures, "pdf-edit-"));
