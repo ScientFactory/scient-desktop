@@ -163,7 +163,7 @@ const panel = (onOpenFile: (path: string) => void = () => {}) => (
 describe("OverleafReviewPanel", () => {
   it("offers four choices per file conflict and two for a group, then syncs again with them", async () => {
     reset();
-    recordOverleafSync(environmentId, "/work/project", "c1", decision);
+    recordOverleafSync(environmentId, "c1", decision);
     const composer = composerStub();
     await using _screen = await render(
       <ComposerHandleContext value={composer.ref}>{panel()}</ComposerHandleContext>,
@@ -254,7 +254,7 @@ describe("OverleafReviewPanel", () => {
 
   it("shows the conflicts again when Overleaf moved after the choices were made", async () => {
     reset();
-    recordOverleafSync(environmentId, "/work/project", "c1", decision);
+    recordOverleafSync(environmentId, "c1", decision);
     // Overleaf moved: the server answers with a fresh review instead of applying.
     const fresh = review({
       remoteTree: "b".repeat(40),
@@ -306,7 +306,7 @@ describe("OverleafReviewPanel", () => {
       }),
     );
     client.cancelOverleafSync.mockResolvedValue({ _tag: "requested", operationId: "op-1" });
-    recordOverleafSync(environmentId, "/work/project", "c1", applied);
+    recordOverleafSync(environmentId, "c1", applied);
     await using _screen = await render(panel());
     await page.getByRole("button", { name: "Sync", exact: true }).click();
     await page.getByRole("button", { name: "Cancel" }).click();
@@ -321,7 +321,7 @@ describe("OverleafReviewPanel", () => {
 
   it("keeps the conflicts and their choices when a retry is cancelled or refused", async () => {
     reset();
-    recordOverleafSync(environmentId, "/work/project", "c1", decision);
+    recordOverleafSync(environmentId, "c1", decision);
     await using _screen = await render(panel());
     for (const path of ["main.tex", "intro.tex", "old.tex"])
       await page
@@ -352,7 +352,7 @@ describe("OverleafReviewPanel", () => {
 
   it("forgets choices when another review replaces the one they were made on", async () => {
     reset();
-    recordOverleafSync(environmentId, "/work/project", "c1", decision);
+    recordOverleafSync(environmentId, "c1", decision);
     // The header's Sync finds the same files in conflict, against a newer Overleaf.
     client.syncOverleaf.mockResolvedValue({
       ...decision,
@@ -376,7 +376,7 @@ describe("OverleafReviewPanel", () => {
 
   it("writes Ask the agent into the thread that asked, even after moving to another", async () => {
     reset();
-    recordOverleafSync(environmentId, "/work/project", "c1", decision);
+    recordOverleafSync(environmentId, "c1", decision);
     // By the time the sync finishes, the window shows another thread.
     shown.thread = { environmentId, threadId: ThreadId.make("thread-2") };
     const setPrompt = vi.fn();
@@ -407,7 +407,7 @@ describe("OverleafReviewPanel", () => {
 
   it("checks again after an earlier sync, so new files can be decided before they are sent", async () => {
     reset();
-    recordOverleafSync(environmentId, "/work/project", "c1", {
+    recordOverleafSync(environmentId, "c1", {
       ...applied,
       publication: { _tag: "accepted", attemptNumber: 1 },
       review: review({ needsDecision: false, conflicts: [] }),
@@ -705,7 +705,7 @@ describe("OverleafReviewPanel", () => {
     threads.projects = [{ environmentId, id: "p-main", workspaceRoot: "/work/project" }];
     threads.shellProjectId = "p-main";
     threads.handle.mockReset().mockResolvedValue({ draftId: "draft-1", threadId: "t-linked" });
-    recordOverleafSync(environmentId, "/work/project-wt", "c1", decision);
+    recordOverleafSync(environmentId, "c1", decision);
     const onOpenFile = vi.fn();
     await using _screen = await render(
       <OverleafReviewPanel
@@ -741,7 +741,7 @@ describe("OverleafReviewPanel", () => {
         connections: [{ ...connection, checkoutRoot, linkedHere: false }],
       });
       client.syncOverleaf.mockResolvedValue({ ...applied, linkedElsewhere: true });
-      recordOverleafSync(environmentId, "/work/project-wt", "c1", decision);
+      recordOverleafSync(environmentId, "c1", decision);
       threads.handle.mockReset().mockResolvedValue({ draftId: "draft-1", threadId: "t-new" });
       const setPrompt = vi.fn();
       const getState = useComposerDraftStore.getState;

@@ -14,20 +14,20 @@ is deleted on either side).
 
 ## Layers
 
-| File                                         | What it holds                                                                                                                            |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `client-runtime/state/scientOverleafHttp.ts` | One Effect function per route of the `scientOverleaf` group, like `scientWordExportHttp.ts`.                                             |
-| `overleaf/client.ts`                         | Promises over those functions for the web (`runtime.runPromise`). Tests mock this module.                                                |
-| `overleaf/overleafModel.ts`                  | Pure: project links, folder paths, chip states, the result lines of design section 4.1, reason texts, choices.                           |
-| `overleaf/overleafStore.ts`                  | Per workspace (`environmentId` + root): links, offline statuses, running syncs, last results, read changes. Token state per environment. |
-| `overleaf/overleafActions.ts`                | Save editors, sync, report; read changes for the review tab; open the project on Overleaf.                                               |
-| `overleaf/ConnectOverleafDialog.tsx`         | The one Connect dialog.                                                                                                                  |
-| `overleaf/OverleafFileChip.tsx`              | The chip next to "Saved".                                                                                                                |
-| `overleaf/OverleafReviewPanel.tsx`           | The side-panel tab (`scient:overleaf-review:<cwd>:<connection>`).                                                                        |
-| `overleaf/OverleafSettings.tsx`              | Source Control ▸ Overleaf, Project Settings ▸ Overleaf.                                                                                  |
-| `overleaf/OverleafKeptCopies.tsx`            | Kept copies inside "Retained file versions".                                                                                             |
-| `overleaf/overleafPaletteItems.tsx`          | "Sync with Overleaf" in the command palette.                                                                                             |
-| `overleaf/useOverleafFolderConnect.tsx`      | The Files panel's Connect dialog and the tree's marks.                                                                                   |
+| File                                         | What it holds                                                                                                                                                                                                                                                               |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `client-runtime/state/scientOverleafHttp.ts` | One Effect function per route of the `scientOverleaf` group, like `scientWordExportHttp.ts`.                                                                                                                                                                                |
+| `overleaf/client.ts`                         | Promises over those functions for the web (`runtime.runPromise`). Tests mock this module.                                                                                                                                                                                   |
+| `overleaf/overleafModel.ts`                  | Pure: project links, folder paths, chip states, the result lines of design section 4.1, reason texts, choices.                                                                                                                                                              |
+| `overleaf/overleafStore.ts`                  | Per workspace view (`environmentId` + root): links and offline statuses. Per link (`environmentId` + connection ID), shared by every view: running syncs, last results, the shown review, reads of the changes, pending and carried decisions. Token state per environment. |
+| `overleaf/overleafActions.ts`                | Save editors, sync, report; read changes for the review tab; open the project on Overleaf.                                                                                                                                                                                  |
+| `overleaf/ConnectOverleafDialog.tsx`         | The one Connect dialog.                                                                                                                                                                                                                                                     |
+| `overleaf/OverleafFileChip.tsx`              | The chip next to "Saved".                                                                                                                                                                                                                                                   |
+| `overleaf/OverleafReviewPanel.tsx`           | The side-panel tab (`scient:overleaf-review:<cwd>:<connection>`).                                                                                                                                                                                                           |
+| `overleaf/OverleafSettings.tsx`              | Source Control ▸ Overleaf, Project Settings ▸ Overleaf.                                                                                                                                                                                                                     |
+| `overleaf/OverleafKeptCopies.tsx`            | Kept copies inside "Retained file versions".                                                                                                                                                                                                                                |
+| `overleaf/overleafPaletteItems.tsx`          | "Sync with Overleaf" in the command palette.                                                                                                                                                                                                                                |
+| `overleaf/useOverleafFolderConnect.tsx`      | The Files panel's Connect dialog and the tree's marks.                                                                                                                                                                                                                      |
 
 Hooks in upstream files, each between `SCIENT-FORK` markers: `FileBrowserPanel.tsx` (Connect
 button, right-click **Connect to ▸ Overleaf…**, row marks, icon sprite), `FilePreviewPanel.tsx`
@@ -184,7 +184,10 @@ first, then connects and runs the first sync with `quiet`.
 ## Kept copies
 
 The "Retained file versions" popover lists the link's kept copies of the open file (`keptCopies`,
-filtered by path) with **Restore** (`restoreKept` with the revisions the list read). Compare and
+filtered by path) with **Restore** (`restoreKept` with the revisions the list read), only when the
+file belongs to the linked copy (`linkedHere`). In another worktree the copies, and a restore,
+would be the other checkout's, so it says "Kept copies are in the main copy." with **Open there**,
+which opens that file on the linked copy the way the Overleaf tab does. Compare and
 **Show in Finder** need the copy's location or bytes, which the routes don't return yet.
 
 ## Conflict marks in the editor

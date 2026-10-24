@@ -113,8 +113,8 @@ describe("overleafStore", () => {
       localOnly: [],
     });
     // "Read changes" starts, a sync applies meanwhile, then the read answers.
-    const started = beginOverleafPreview(environmentId, ROOT, "c1");
-    recordOverleafSync(environmentId, ROOT, "c1", {
+    const started = beginOverleafPreview(environmentId, "c1");
+    recordOverleafSync(environmentId, "c1", {
       _tag: "synced",
       review: review("applied"),
       outcome: "complete",
@@ -125,7 +125,7 @@ describe("overleafStore", () => {
       activity: [],
       linkedElsewhere: false,
     });
-    finishOverleafPreview(environmentId, ROOT, "c1", started, {
+    finishOverleafPreview(environmentId, "c1", started, {
       _tag: "review",
       review: review("old"),
     });
@@ -138,13 +138,13 @@ describe("overleafStore", () => {
     expect(shown.previewing.has("c1")).toBe(false);
 
     // A read that started after it is current, but a failed one leaves the shown review.
-    const failing = beginOverleafPreview(environmentId, ROOT, "c1");
-    finishOverleafPreview(environmentId, ROOT, "c1", failing, { _tag: "failed", message: "x" });
+    const failing = beginOverleafPreview(environmentId, "c1");
+    finishOverleafPreview(environmentId, "c1", failing, { _tag: "failed", message: "x" });
     expect(readOverleafWorkspace(environmentId, ROOT).reviews.get("c1")?.review.reviewId).toBe(
       "applied",
     );
-    const fresh = beginOverleafPreview(environmentId, ROOT, "c1");
-    finishOverleafPreview(environmentId, ROOT, "c1", fresh, {
+    const fresh = beginOverleafPreview(environmentId, "c1");
+    finishOverleafPreview(environmentId, "c1", fresh, {
       _tag: "review",
       review: review("new"),
     });
@@ -175,17 +175,11 @@ describe("overleafStore", () => {
       additions: additions.map((addition) => ({ ...addition, size: 1 })),
       localOnly,
     });
-    const accept = (root: string, review: ReturnType<typeof withFiles>) =>
-      finishOverleafPreview(
-        environmentId,
-        root,
-        "c1",
-        beginOverleafPreview(environmentId, root, "c1"),
-        {
-          _tag: "review",
-          review,
-        },
-      );
+    const accept = (review: ReturnType<typeof withFiles>) =>
+      finishOverleafPreview(environmentId, "c1", beginOverleafPreview(environmentId, "c1"), {
+        _tag: "review",
+        review,
+      });
     const pending = (root = ROOT) => [
       ...pendingOverleafDecisions(readOverleafWorkspace(environmentId, root), "c1"),
     ];
@@ -193,17 +187,15 @@ describe("overleafStore", () => {
     it("a fresh review drops decisions it no longer allows, for good", () => {
       resetOverleafStoreForTests();
       accept(
-        ROOT,
         withFiles("r1", [{ path: "main.aux", selected: false, skippedBecause: "build-output" }]),
       );
-      setOverleafFileDecision(environmentId, ROOT, "c1", "main.aux", "send");
+      setOverleafFileDecision(environmentId, "c1", "main.aux", "send");
       expect(pending()).toEqual([["main.aux", "send"]]);
       // main.aux is deleted: the decision goes...
-      accept(ROOT, withFiles("r2", []));
+      accept(withFiles("r2", []));
       expect(readOverleafWorkspace(environmentId, ROOT).fileDecisions.get("c1")).toBeUndefined();
       // ...and a recreated main.aux doesn't bring it back.
       accept(
-        ROOT,
         withFiles("r3", [{ path: "main.aux", selected: false, skippedBecause: "build-output" }]),
       );
       expect(pending()).toEqual([]);
@@ -211,14 +203,9 @@ describe("overleafStore", () => {
 
     it("forgetting a link clears its review, decisions and carried record in every view", () => {
       resetOverleafStoreForTests();
-      for (const root of [ROOT, "/work/project-wt"]) {
-        accept(
-          root,
-          withFiles("r1", [{ path: "draft.tex", selected: true, skippedBecause: null }]),
-        );
-        setOverleafFileDecision(environmentId, root, "c1", "draft.tex", "keep");
-      }
-      const late = beginOverleafPreview(environmentId, ROOT, "c1");
+      accept(withFiles("r1", [{ path: "draft.tex", selected: true, skippedBecause: null }]));
+      setOverleafFileDecision(environmentId, "c1", "draft.tex", "keep");
+      const late = beginOverleafPreview(environmentId, "c1");
       forgetOverleafConnection(environmentId, "c1");
       for (const root of [ROOT, "/work/project-wt"]) {
         const view = readOverleafWorkspace(environmentId, root);
@@ -227,11 +214,38 @@ describe("overleafStore", () => {
         expect(view.submittedDecisions.has("c1")).toBe(false);
       }
       // A read that started before is dropped.
-      finishOverleafPreview(environmentId, ROOT, "c1", late, {
+      finishOverleafPreview(environmentId, "c1", late, {
         _tag: "review",
         review: withFiles("stale", []),
       });
       expect(readOverleafWorkspace(environmentId, ROOT).reviews.has("c1")).toBe(false);
+    });
+
+    it("one state per link: a decision made in a worktree's view counts in the main view", () => {
+      resetOverleafStoreForTests();
+      const MAIN = ROOT;
+      const WORKTREE = "/work/project-wt";
+      // Both views are read (and cached) before anything happens.
+      readOverleafWorkspace(environmentId, MAIN);
+      readOverleafWorkspace(environmentId, WORKTREE);
+      accept(withFiles("r1", [{ path: "draft.tex", selected: true, skippedBecause: null }]));
+      setOverleafFileDecision(environmentId, "c1", "draft.tex", "keep");
+      expect(pending(MAIN)).toEqual([["draft.tex", "keep"]]);
+      expect(pending(WORKTREE)).toEqual([["draft.tex", "keep"]]);
+      // A sync that applies (here, from the main view) spends it in every view.
+      recordOverleafSync(environmentId, "c1", {
+        _tag: "synced",
+        review: withFiles("applied", []),
+        outcome: "complete",
+        interrupted: 0,
+        markerPaths: [],
+        publication: { _tag: "accepted", attemptNumber: 1 },
+        retried: false,
+        activity: [],
+        linkedElsewhere: false,
+      });
+      expect(readOverleafWorkspace(environmentId, WORKTREE).fileDecisions.has("c1")).toBe(false);
+      expect(readOverleafWorkspace(environmentId, WORKTREE).reviews.get("c1")?.applied).toBe(true);
     });
   });
 });

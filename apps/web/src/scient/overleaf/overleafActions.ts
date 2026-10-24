@@ -146,7 +146,7 @@ export async function runOverleafSync(
   if (readOverleafWorkspace(environmentId, workspaceRoot).syncing.has(connection.connectionId)) {
     return null;
   }
-  setOverleafSyncing(environmentId, workspaceRoot, connection.connectionId, true);
+  setOverleafSyncing(environmentId, connection.connectionId, true);
   const run = { cancelled: false, sent: false };
   const key = runKey(environmentId, connection.connectionId);
   localRuns.set(key, run);
@@ -168,7 +168,7 @@ export async function runOverleafSync(
     // Cancelled while editors were saving: the request is never sent.
     if (run.cancelled) {
       const cancelled: ScientOverleafSyncResult = { _tag: "cancelled", stage: "before-prepare" };
-      recordOverleafSync(environmentId, workspaceRoot, connection.connectionId, cancelled);
+      recordOverleafSync(environmentId, connection.connectionId, cancelled);
       if (!context.quiet) reportOverleafSync(context, cancelled);
       return cancelled;
     }
@@ -199,7 +199,7 @@ export async function runOverleafSync(
           }
         : {}),
     });
-    recordOverleafSync(environmentId, workspaceRoot, connection.connectionId, result, carried);
+    recordOverleafSync(environmentId, connection.connectionId, result, carried);
     if (!context.quiet) reportOverleafSync(context, result);
     return result;
   } catch (error) {
@@ -212,7 +212,7 @@ export async function runOverleafSync(
     return null;
   } finally {
     if (localRuns.get(key) === run) localRuns.delete(key);
-    setOverleafSyncing(environmentId, workspaceRoot, connection.connectionId, false);
+    setOverleafSyncing(environmentId, connection.connectionId, false);
     // Files came in: the tree and the chip read again.
     refreshProjectFiles(environmentId, workspaceRoot);
     void loadOverleafWorkspace(environmentId, workspaceRoot, { force: true });
@@ -264,12 +264,11 @@ export async function readOverleafChanges(
 ): Promise<void> {
   const current = readOverleafWorkspace(environmentId, workspaceRoot);
   if (current.previewing.has(connectionId)) return;
-  const startedAt = beginOverleafPreview(environmentId, workspaceRoot, connectionId);
+  const startedAt = beginOverleafPreview(environmentId, connectionId);
   try {
     const result = await previewOverleaf(environmentId, { workspaceRoot, connectionId });
     finishOverleafPreview(
       environmentId,
-      workspaceRoot,
       connectionId,
       startedAt,
       result._tag === "review"
@@ -283,7 +282,7 @@ export async function readOverleafChanges(
           },
     );
   } catch (error) {
-    finishOverleafPreview(environmentId, workspaceRoot, connectionId, startedAt, {
+    finishOverleafPreview(environmentId, connectionId, startedAt, {
       _tag: "failed",
       message: operationErrorText(error),
     });

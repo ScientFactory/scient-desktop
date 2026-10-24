@@ -133,7 +133,7 @@ describe("ConnectOverleafDialog", () => {
   it("links the selected folder as it is, without asking for a saved token again", async () => {
     reset(true);
     // A link reconnected from an archive keeps its ID; what this window remembered is stale.
-    setOverleafFileDecision(environmentId, "/work/project", "c1", "notes.md", "send");
+    setOverleafFileDecision(environmentId, "c1", "notes.md", "send");
     // The first sync doesn't apply, so nothing else clears it.
     client.syncOverleaf.mockResolvedValue({ _tag: "refused", refusal: { reason: "unreachable" } });
     client.connectOverleaf.mockResolvedValue({ _tag: "done", connection: summary("thesis") });

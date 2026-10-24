@@ -497,24 +497,18 @@ describe("OverleafFileChip", () => {
       .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
       .toBeVisible();
     // Decisions made in the Overleaf tab on the review it read.
-    finishOverleafPreview(
-      environmentId,
-      "/work/project",
-      "c1",
-      beginOverleafPreview(environmentId, "/work/project", "c1"),
-      {
-        _tag: "review",
-        review: {
-          ...sent.review,
-          additions: [
-            { path: "draft.tex", size: 1, selected: true, skippedBecause: null },
-            { path: "main.aux", size: 1, selected: false, skippedBecause: "build-output" },
-          ],
-        },
+    finishOverleafPreview(environmentId, "c1", beginOverleafPreview(environmentId, "c1"), {
+      _tag: "review",
+      review: {
+        ...sent.review,
+        additions: [
+          { path: "draft.tex", size: 1, selected: true, skippedBecause: null },
+          { path: "main.aux", size: 1, selected: false, skippedBecause: "build-output" },
+        ],
       },
-    );
-    setOverleafFileDecision(environmentId, "/work/project", "c1", "draft.tex", "keep");
-    setOverleafFileDecision(environmentId, "/work/project", "c1", "main.aux", "send");
+    });
+    setOverleafFileDecision(environmentId, "c1", "draft.tex", "keep");
+    setOverleafFileDecision(environmentId, "c1", "main.aux", "send");
     await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
     await page.getByRole("menuitem", { name: "Sync now" }).click();
     await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);

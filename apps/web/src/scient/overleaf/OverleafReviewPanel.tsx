@@ -156,7 +156,7 @@ export function OverleafReviewPanel(props: {
   // Per-file decisions wait for the tab's next Sync, which carries them. They live in the
   // store, so opening a file (which replaces this tab) keeps them; an applied sync clears them.
   const decideFile = (path: string, decision: OverleafFileDecision | null) =>
-    setOverleafFileDecision(environmentId, cwd, connectionId, path, decision);
+    setOverleafFileDecision(environmentId, connectionId, path, decision);
   const review: ScientOverleafReview | null = shownState?.review ?? null;
   const resultView = last ? overleafResultView(last.result) : null;
   // The review shown is what a sync here applied, rather than one still to run.

@@ -83,20 +83,77 @@ const EMPTY: OverleafWorkspaceSnapshot = {
   submittedDecisions: new Map(),
 };
 
-const snapshots = new Map<string, OverleafWorkspaceSnapshot>();
+/** What one workspace view lists: its links and their status as this workspace reads them. */
+type WorkspacePart = Pick<
+  OverleafWorkspaceSnapshot,
+  "loaded" | "connections" | "error" | "statuses"
+>;
+/**
+ * Everything about a link's syncs, reviews and decisions: one state per link
+ * (environment and connection ID), shared by every workspace view of it, so a
+ * decision made in a worktree's view counts in the main one and a sync that
+ * applies anywhere clears it everywhere.
+ */
+type Lifecycle = Omit<OverleafWorkspaceSnapshot, keyof WorkspacePart>;
+
+const EMPTY_PART: WorkspacePart = {
+  loaded: false,
+  connections: [],
+  error: null,
+  statuses: new Map(),
+};
+const EMPTY_LIFECYCLE: Lifecycle = {
+  syncing: new Set(),
+  lastSync: new Map(),
+  reviews: new Map(),
+  syncedAt: new Map(),
+  previewing: new Set(),
+  previewErrors: new Map(),
+  fileDecisions: new Map(),
+  submittedDecisions: new Map(),
+};
+
+const snapshots = new Map<string, WorkspacePart>();
+/** Lifecycle maps by environment; inside, every map is keyed by connection ID. */
+const lifecycles = new Map<EnvironmentId, Lifecycle>();
+/** Each workspace view, merged and kept stable until either part changes. */
+const views = new Map<string, OverleafWorkspaceSnapshot>();
 const loadedAt = new Map<string, number>();
 const inflight = new Map<string, Promise<void>>();
 const listeners = new Map<string, Set<() => void>>();
 
 const keyOf = (environmentId: EnvironmentId, workspaceRoot: string) =>
   `${environmentId}\u0000${workspaceRoot}`;
+const environmentOf = (key: string) => key.slice(0, key.indexOf("\u0000")) as EnvironmentId;
 
-function update(
-  key: string,
-  change: (current: OverleafWorkspaceSnapshot) => OverleafWorkspaceSnapshot,
-) {
-  snapshots.set(key, change(snapshots.get(key) ?? EMPTY));
+function viewOf(key: string): OverleafWorkspaceSnapshot {
+  let view = views.get(key);
+  if (view === undefined) {
+    view = {
+      ...(snapshots.get(key) ?? EMPTY_PART),
+      ...(lifecycles.get(environmentOf(key)) ?? EMPTY_LIFECYCLE),
+    };
+    views.set(key, view);
+  }
+  return view;
+}
+
+function notify(key: string) {
+  views.delete(key);
   for (const listener of listeners.get(key) ?? []) listener();
+}
+
+/** Changes one workspace view's own part: its list and statuses. */
+function update(key: string, change: (current: WorkspacePart) => WorkspacePart) {
+  snapshots.set(key, change(snapshots.get(key) ?? EMPTY_PART));
+  notify(key);
+}
+
+/** Changes a link's lifecycle, seen by every workspace view of its environment. */
+function updateLifecycle(environmentId: EnvironmentId, change: (current: Lifecycle) => Lifecycle) {
+  lifecycles.set(environmentId, change(lifecycles.get(environmentId) ?? EMPTY_LIFECYCLE));
+  for (const key of new Set([...snapshots.keys(), ...listeners.keys(), ...views.keys()]))
+    if (environmentOf(key) === environmentId) notify(key);
 }
 
 /** The workspace's state now, without loading anything. */
@@ -104,7 +161,7 @@ export function readOverleafWorkspace(
   environmentId: EnvironmentId,
   workspaceRoot: string,
 ): OverleafWorkspaceSnapshot {
-  return snapshots.get(keyOf(environmentId, workspaceRoot)) ?? EMPTY;
+  return viewOf(keyOf(environmentId, workspaceRoot));
 }
 
 /**
@@ -254,11 +311,10 @@ export function loadOverleafWorkspace(
 
 export function setOverleafSyncing(
   environmentId: EnvironmentId,
-  workspaceRoot: string,
   connectionId: string,
   syncing: boolean,
 ): void {
-  update(keyOf(environmentId, workspaceRoot), (current) => {
+  updateLifecycle(environmentId, (current) => {
     const next = new Set(current.syncing);
     if (syncing) next.add(connectionId);
     else next.delete(connectionId);
@@ -272,7 +328,7 @@ export function setOverleafSyncing(
  * shows.
  */
 export function pendingOverleafDecisions(
-  snapshot: OverleafWorkspaceSnapshot,
+  snapshot: Pick<OverleafWorkspaceSnapshot, "reviews" | "submittedDecisions" | "fileDecisions">,
   connectionId: string,
 ): ReadonlyMap<string, OverleafFileDecision> {
   return actionableDecisions(
@@ -291,10 +347,7 @@ const NO_FILE_DECISIONS: ReadonlyMap<string, OverleafFileDecision> = new Map();
  * lists or allows are dropped for good, so a file recreated later doesn't
  * bring back an old decision.
  */
-function pruneDecisions(
-  snapshot: OverleafWorkspaceSnapshot,
-  connectionId: string,
-): OverleafWorkspaceSnapshot["fileDecisions"] {
+function pruneDecisions(snapshot: Lifecycle, connectionId: string): Lifecycle["fileDecisions"] {
   const current = snapshot.fileDecisions.get(connectionId);
   if (current === undefined) return snapshot.fileDecisions;
   const kept = pendingOverleafDecisions(snapshot, connectionId);
@@ -311,18 +364,17 @@ function pruneDecisions(
  */
 export function recordOverleafSync(
   environmentId: EnvironmentId,
-  workspaceRoot: string,
   connectionId: string,
   result: ScientOverleafSyncResult,
   carried: ReadonlyMap<string, OverleafFileDecision> = NO_FILE_DECISIONS,
 ): void {
   const at = Date.now();
-  update(keyOf(environmentId, workspaceRoot), (current) => {
+  updateLifecycle(environmentId, (current) => {
     const reviews = new Map(current.reviews);
     const syncedAt = new Map(current.syncedAt);
     // A result with its own review replaces the shown one; a cancel or refusal doesn't.
     if (result._tag === "synced" || result._tag === "needs-decision") {
-      const versionKey = reviewKeyOf(environmentId, workspaceRoot, connectionId);
+      const versionKey = reviewKeyOf(environmentId, connectionId);
       reviewVersions.set(versionKey, (reviewVersions.get(versionKey) ?? 0) + 1);
     }
     let { fileDecisions, submittedDecisions } = current;
@@ -365,12 +417,11 @@ export function recordOverleafSync(
 /** Makes, changes or takes back one file's decision for the link's next sync. */
 export function setOverleafFileDecision(
   environmentId: EnvironmentId,
-  workspaceRoot: string,
   connectionId: string,
   path: string,
   decision: OverleafFileDecision | null,
 ): void {
-  update(keyOf(environmentId, workspaceRoot), (current) => {
+  updateLifecycle(environmentId, (current) => {
     const decisions = new Map(current.fileDecisions.get(connectionId) ?? []);
     if (decision === null) decisions.delete(path);
     else decisions.set(path, decision);
@@ -387,26 +438,23 @@ export function setOverleafFileDecision(
  * forgotten in every workspace view, and a read already on its way is dropped.
  */
 export function forgetOverleafConnection(environmentId: EnvironmentId, connectionId: string): void {
-  for (const key of snapshots.keys()) {
-    if (!key.startsWith(`${environmentId}\u0000`)) continue;
-    const versionKey = `${key}\u0000${connectionId}`;
-    reviewVersions.set(versionKey, (reviewVersions.get(versionKey) ?? 0) + 1);
-    update(key, (current) => {
-      const without = <V>(map: ReadonlyMap<string, V>) => {
-        const next = new Map(map);
-        next.delete(connectionId);
-        return next;
-      };
-      return {
-        ...current,
-        reviews: without(current.reviews),
-        fileDecisions: without(current.fileDecisions),
-        submittedDecisions: without(current.submittedDecisions),
-        lastSync: without(current.lastSync),
-        previewErrors: without(current.previewErrors),
-      };
-    });
-  }
+  const versionKey = reviewKeyOf(environmentId, connectionId);
+  reviewVersions.set(versionKey, (reviewVersions.get(versionKey) ?? 0) + 1);
+  updateLifecycle(environmentId, (current) => {
+    const without = <V>(map: ReadonlyMap<string, V>) => {
+      const next = new Map(map);
+      next.delete(connectionId);
+      return next;
+    };
+    return {
+      ...current,
+      reviews: without(current.reviews),
+      fileDecisions: without(current.fileDecisions),
+      submittedDecisions: without(current.submittedDecisions),
+      lastSync: without(current.lastSync),
+      previewErrors: without(current.previewErrors),
+    };
+  });
 }
 
 /**
@@ -416,37 +464,32 @@ export function forgetOverleafConnection(environmentId: EnvironmentId, connectio
  * conflicts over a sync that applied.
  */
 const reviewVersions = new Map<string, number>();
-const reviewKeyOf = (environmentId: EnvironmentId, workspaceRoot: string, connectionId: string) =>
-  `${keyOf(environmentId, workspaceRoot)}\u0000${connectionId}`;
+const reviewKeyOf = (environmentId: EnvironmentId, connectionId: string) =>
+  `${environmentId}\u0000${connectionId}`;
 
 /** A read of a link's changes starts; returns what its answer must still match. */
-export function beginOverleafPreview(
-  environmentId: EnvironmentId,
-  workspaceRoot: string,
-  connectionId: string,
-): number {
-  update(keyOf(environmentId, workspaceRoot), (current) => ({
+export function beginOverleafPreview(environmentId: EnvironmentId, connectionId: string): number {
+  updateLifecycle(environmentId, (current) => ({
     ...current,
     previewing: new Set(current.previewing).add(connectionId),
   }));
-  return reviewVersions.get(reviewKeyOf(environmentId, workspaceRoot, connectionId)) ?? 0;
+  return reviewVersions.get(reviewKeyOf(environmentId, connectionId)) ?? 0;
 }
 
 /** A read of a link's changes answered with a review, or failed. A superseded answer is dropped. */
 export function finishOverleafPreview(
   environmentId: EnvironmentId,
-  workspaceRoot: string,
   connectionId: string,
   startedAt: number,
   outcome:
     | { readonly _tag: "review"; readonly review: ScientOverleafReview }
     | { readonly _tag: "failed"; readonly message: string },
 ): void {
-  const versionKey = reviewKeyOf(environmentId, workspaceRoot, connectionId);
+  const versionKey = reviewKeyOf(environmentId, connectionId);
   const current = reviewVersions.get(versionKey) ?? 0;
   const superseded = current !== startedAt;
   if (!superseded && outcome._tag === "review") reviewVersions.set(versionKey, current + 1);
-  update(keyOf(environmentId, workspaceRoot), (snapshot) => {
+  updateLifecycle(environmentId, (snapshot) => {
     const previewing = new Set(snapshot.previewing);
     previewing.delete(connectionId);
     if (superseded) return { ...snapshot, previewing };
@@ -479,7 +522,7 @@ export function useOverleafWorkspace(
       listeners.set(key, set);
       return () => set.delete(listener);
     },
-    () => (key === null ? EMPTY : (snapshots.get(key) ?? EMPTY)),
+    () => (key === null ? EMPTY : viewOf(key)),
   );
   useEffect(() => {
     if (environmentId === null || workspaceRoot === null) return;
@@ -533,6 +576,8 @@ export function useOverleafTokenSaved(environmentId: EnvironmentId | null): Toke
 /** Tests only: forget every workspace. */
 export function resetOverleafStoreForTests(): void {
   snapshots.clear();
+  lifecycles.clear();
+  views.clear();
   loadedAt.clear();
   statusReads.clear();
   statusReadAt.clear();

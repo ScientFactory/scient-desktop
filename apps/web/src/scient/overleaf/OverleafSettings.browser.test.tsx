@@ -128,7 +128,7 @@ describe("Project Settings ▸ Overleaf", () => {
     await expect.element(slides.getByRole("button", { name: "Open in Overleaf" })).toBeVisible();
     await expect.element(slides.getByText(/Not synced yet/u)).toBeVisible();
     // A decision this window holds for the link is forgotten with it.
-    setOverleafFileDecision(environmentId, "/work/project", "c2", "notes.md", "send");
+    setOverleafFileDecision(environmentId, "c2", "notes.md", "send");
     await slides.getByRole("button", { name: "Unlink" }).click();
 
     await expect.element(page.getByText("slides")).not.toBeInTheDocument();

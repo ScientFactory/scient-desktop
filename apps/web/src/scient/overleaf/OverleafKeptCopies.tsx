@@ -5,10 +5,17 @@ import type { EnvironmentId, ScientOverleafKeptCopies } from "@t3tools/contracts
 import { useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
+import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { useThreadRouteRef } from "~/hooks/useThreadRouteTarget";
 
+import { openFileOnLinkedCopy } from "./askAgentOnLinkedCopy";
 import { listOverleafKeptCopies, overleafRequestId, restoreOverleafKeptCopy } from "./client";
 import { connectionForPath, operationErrorText, workspacePathOf } from "./overleafModel";
-import { loadOverleafWorkspace, useOverleafWorkspace } from "./overleafStore";
+import {
+  loadOverleafWorkspace,
+  useOverleafWorkspace,
+  type OverleafConnection,
+} from "./overleafStore";
 
 type KeptCopy = ScientOverleafKeptCopies["copies"][number];
 
@@ -19,6 +26,43 @@ const RESTORE_TEXT: Record<"restored" | "stale" | "unknown-copy" | "duplicate", 
   duplicate: "That restore already ran.",
 };
 
+/** From another worktree: the kept copies are the linked copy's; this offers to open it there. */
+function KeptInLinkedCopy(props: {
+  readonly environmentId: EnvironmentId;
+  readonly connection: OverleafConnection;
+  readonly relativePath: string;
+}) {
+  const threadRef = useThreadRouteRef();
+  const handleNewThread = useNewThreadHandler();
+  const [message, setMessage] = useState<string | null>(null);
+  return (
+    <section className="mt-4 flex flex-col gap-2 text-xs" aria-label="Kept by Overleaf sync">
+      <p className="font-medium">Kept by Overleaf sync</p>
+      <div className="flex items-center gap-2">
+        <p className="min-w-0 flex-1 text-muted-foreground">Kept copies are in the main copy.</p>
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() =>
+            void openFileOnLinkedCopy({
+              environmentId: props.environmentId,
+              threadRef,
+              connection: props.connection,
+              handleNewThread,
+              relativePath: props.relativePath,
+            }).then((opened) => {
+              if (!opened) setMessage("The main copy's file couldn't be opened.");
+            })
+          }
+        >
+          Open there
+        </Button>
+      </div>
+      {message ? <p role="status">{message}</p> : null}
+    </section>
+  );
+}
+
 export function OverleafKeptCopies(props: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
@@ -27,7 +71,10 @@ export function OverleafKeptCopies(props: {
   const { environmentId, cwd, relativePath } = props;
   const workspace = useOverleafWorkspace(environmentId, cwd);
   const connection = connectionForPath(workspace.connections, relativePath);
-  const connectionId = connection?.connectionId ?? null;
+  // Kept copies belong to the linked copy: from another worktree they aren't this file's.
+  const linkedHere = connection?.linkedHere ?? false;
+  const connectionId = connection !== null && linkedHere ? connection.connectionId : null;
+
   const [copies, setCopies] = useState<ReadonlyArray<KeptCopy> | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -60,6 +107,14 @@ export function OverleafKeptCopies(props: {
   }, [environmentId, cwd, connectionId]);
 
   if (!connection) return null;
+  if (!linkedHere)
+    return (
+      <KeptInLinkedCopy
+        environmentId={environmentId}
+        connection={connection}
+        relativePath={relativePath}
+      />
+    );
   const mine = (copies ?? []).filter(
     (copy) => workspacePathOf(connection.folder, copy.relativePath) === relativePath,
   );
