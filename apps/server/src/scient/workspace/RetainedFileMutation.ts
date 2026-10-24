@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import {
   bindNativeFilePublication,
   bindNativeFilePublicationParent,
+  observedDirectoryBinding,
   nativeFilePublicationCapabilities,
   ensureNativePrivateRetentionDirectory,
   withNativeFilePublicationLease,
@@ -251,7 +252,7 @@ export async function publicationLeaseBindings(
     let binding = nativeParents.get(path);
     if (!binding) {
       const identity = await identityFor(path);
-      binding = await bindNativeFilePublicationParent(helper, path, "");
+      binding = await observedDirectoryBinding(helper, path);
       if (
         !sameIdentity(binding.rootIdentity, identity) ||
         !sameIdentity(binding.parentIdentity, identity)
