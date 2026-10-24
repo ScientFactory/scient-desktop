@@ -48,11 +48,13 @@ describe("Scient skill management", () => {
           "pdf-authoring",
           "html-pdf-authoring",
           "latex-authoring",
+          "overleaf-sync",
         ]);
         expect(initial.skills.map((skill) => skill.category)).toEqual([
           "Workspace readiness",
           "Workspace readiness",
           "Skill creation",
+          "Document creation",
           "Document creation",
           "Document creation",
           "Document creation",
@@ -171,7 +173,7 @@ describe("Scient skill management", () => {
           active: false,
           invocationPolicy: "explicit",
         });
-        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(6);
+        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(7);
       }).pipe(Effect.provide(managementLayer));
     }),
   );

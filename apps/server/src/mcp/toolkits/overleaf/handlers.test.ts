@@ -1,0 +1,397 @@
+/**
+ * The Overleaf tools against a fake service, where real Git is not the point:
+ * the editor save that comes first, errors as fixed categories, and the token
+ * flow through a secretRef. The real service runs in handlers.git.test.ts.
+ */
+import { EnvironmentId, SecretRef, SecretRequestError, ThreadId } from "@t3tools/contracts";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
+import {
+  OverleafEditorSave,
+  type OverleafEditorSaveResult,
+} from "../../../scient/overleaf/OverleafEditorSave.ts";
+import { recordingEditorSave } from "../../../scient/overleaf/OverleafEditorSave.testkit.ts";
+import {
+  OverleafConnectionNotReadyError,
+  OverleafOperationActiveError,
+} from "../../../scient/overleaf/OverleafCoordinator.ts";
+import { OverleafGitError } from "../../../scient/overleaf/OverleafGitExecutor.ts";
+import { OverleafRepositoryError } from "../../../scient/overleaf/OverleafRepository.ts";
+import {
+  OverleafSync,
+  OverleafSyncRefusedError,
+  type OverleafSyncShape,
+} from "../../../scient/overleaf/OverleafSync.ts";
+import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import { workspaceResolverForTest } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
+import { SecretRequests } from "../../../secrets/SecretRequests.ts";
+import {
+  overleafKeptCopiesForInvocation,
+  overleafManageForInvocation,
+  overleafSyncForInvocation,
+  overleafTokenForInvocation,
+} from "./handlers.ts";
+import { ScientOverleafToolkit } from "./tools.ts";
+
+const ENVIRONMENT = EnvironmentId.make("environment-overleaf-tools");
+const THREAD = ThreadId.make("thread-overleaf-tools");
+const SECRET = "olp_super-secret-token-value";
+
+const invocation = AgentInvocationContext.AgentInvocationContext.of({
+  nativeSessionId: "overleaf-tools",
+  environmentId: ENVIRONMENT,
+  threadId: THREAD,
+  issuedAt: 1,
+  capabilities: new Set(["documents:build"]),
+  // The admitted workspace the dispatcher hands to workspace operations.
+  workspace: {
+    binding: {
+      environmentId: ENVIRONMENT,
+      hostProjectId: "project-1",
+      trustState: "verified",
+      supersededBy: null,
+    },
+  } as never,
+});
+
+const summary = {
+  connectionId: "c-1",
+  checkoutRoot: "/projects/main",
+  folder: "paper",
+  projectId: "0123456789abcdef01234567",
+  branch: "master" as const,
+  state: "active" as const,
+  completedSyncCount: 1,
+  createdAt: "2026-10-24T00:00:00.000Z",
+  updatedAt: "2026-10-24T00:00:00.000Z",
+  linkedHere: true,
+};
+
+/** A service whose every operation not given fails the test. */
+const fakeOverleaf = (overrides: Partial<OverleafSyncShape>): OverleafSyncShape =>
+  new Proxy({ list: () => Effect.succeed([summary]), ...overrides } as OverleafSyncShape, {
+    get: (target, name: string) =>
+      name in target
+        ? target[name as keyof OverleafSyncShape]
+        : () => Effect.die(new Error(`unexpected OverleafSync.${name}`)),
+  });
+
+const provide =
+  (overleaf: OverleafSyncShape, saver = recordingEditorSave({ _tag: "saved" }).service) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provideService(AgentInvocationContext.AgentInvocationContext, invocation),
+      Effect.provideService(OverleafSync, overleaf),
+      Effect.provideService(OverleafEditorSave, saver),
+    );
+
+const encodeToken = Schema.encodeSync(
+  Schema.fromJsonString(ScientOverleafToolkit.tools.scient_overleaf_token.successSchema),
+);
+const encodeError = Schema.encodeSync(
+  Schema.fromJsonString(ScientOverleafToolkit.tools.scient_overleaf_token.failureSchema),
+);
+
+describe("Overleaf tool handlers", () => {
+  it.effect("a failed editor save stops sync and restore before anything changes", () =>
+    Effect.gen(function* () {
+      let changed = 0;
+      const overleaf = fakeOverleaf({
+        sync: () => Effect.sync(() => changed++) as never,
+        restoreKept: () => Effect.sync(() => changed++) as never,
+        keptCopies: () => Effect.succeed([]),
+      });
+      const outcomes: ReadonlyArray<OverleafEditorSaveResult> = [
+        {
+          _tag: "failed",
+          failures: [
+            { path: "paper/main.tex", reason: "unconverted-input" },
+            { path: "paper/intro.tex", reason: "save-failed" },
+          ],
+          unanswered: [],
+        },
+        { _tag: "failed", failures: [], unanswered: [{ window: "window-2", reason: "timeout" }] },
+        { _tag: "unavailable" },
+      ];
+      for (const outcome of outcomes) {
+        const saver = recordingEditorSave(outcome);
+        const synced = yield* Effect.flip(
+          overleafSyncForInvocation({ connectionId: "c-1" }).pipe(provide(overleaf, saver.service)),
+        );
+        expect(synced).toMatchObject({ code: "editor-save-failed" });
+        expect(synced.message).toContain("Nothing was synced.");
+        expect(saver.calls).toEqual([{ checkoutRoot: "/projects/main", folder: "paper" }]);
+        const restored = yield* Effect.flip(
+          overleafKeptCopiesForInvocation({
+            connectionId: "c-1",
+            restore: { applyId: "a", kept: "k", keptRevision: "r", currentRevision: null },
+          }).pipe(provide(overleaf, saver.service)),
+        );
+        expect(restored).toMatchObject({ code: "editor-save-failed" });
+        expect(restored.message).toContain("Nothing was restored.");
+      }
+      const first = yield* Effect.flip(
+        overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+          provide(overleaf, recordingEditorSave(outcomes[0]!).service),
+        ),
+      );
+      // The agent learns which file failed, and why.
+      expect(first.message).toContain("paper/main.tex (unconverted-input)");
+      // A window that did not answer is named too.
+      const silent = yield* Effect.flip(
+        overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+          provide(overleaf, recordingEditorSave(outcomes[1]!).service),
+        ),
+      );
+      expect(silent.message).toContain("window window-2 (timeout)");
+      expect(first.paths).toEqual(["paper/main.tex", "paper/intro.tex"]);
+      expect(changed).toBe(0);
+    }),
+  );
+
+  it.effect("maps failures to fixed categories, never Git's text", () =>
+    Effect.gen(function* () {
+      const failWith = (error: { readonly _tag: string; readonly message: string }) =>
+        Effect.flip(
+          overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+            provide(fakeOverleaf({ sync: () => Effect.fail(error) as never })),
+          ),
+        );
+      const gitDetail = `fatal: Authentication failed for 'https://git:${SECRET}@git.overleaf.com/x'`;
+      const cases: ReadonlyArray<
+        readonly [{ readonly _tag: string; readonly message: string }, string]
+      > = [
+        [
+          new OverleafGitError({ reason: "non-zero-exit", exitCode: 128, detail: gitDetail }),
+          "overleaf-access-denied",
+        ],
+        [
+          new OverleafGitError({ reason: "timeout", exitCode: null, detail: gitDetail }),
+          "overleaf-unreachable",
+        ],
+        [
+          new OverleafGitError({
+            reason: "non-zero-exit",
+            exitCode: 128,
+            detail: `fatal: repository not found ${SECRET}`,
+          }),
+          "overleaf-project-not-found",
+        ],
+        [
+          new OverleafGitError({ reason: "git-too-old", exitCode: null, detail: gitDetail }),
+          "git-unavailable",
+        ],
+        [
+          new OverleafGitError({
+            reason: "non-zero-exit",
+            exitCode: 1,
+            detail: `fatal: odd ${SECRET}`,
+          }),
+          "failed",
+        ],
+        [new OverleafRepositoryError({ reason: "unreadable-output", detail: SECRET }), "failed"],
+        [new OverleafOperationActiveError({ connectionId: "c-1" }), "operation-active"],
+        [
+          new OverleafConnectionNotReadyError({ connectionId: "c-1", reason: "recovery-required" }),
+          "recovery-required",
+        ],
+        [new OverleafSyncRefusedError({ reason: "token-missing" }), "token-missing"],
+        [new OverleafSyncRefusedError({ reason: "relink-needed" }), "relink-needed"],
+        [new OverleafSyncRefusedError({ reason: "access-denied" }), "overleaf-access-denied"],
+        [new OverleafSyncRefusedError({ reason: "unreachable" }), "overleaf-unreachable"],
+        [new OverleafSyncRefusedError({ reason: "git-failed" }), "failed"],
+        [
+          new OverleafConnectionNotReadyError({ connectionId: "c-1", reason: "authority-changed" }),
+          "connection-changed",
+        ],
+      ];
+      for (const [error, code] of cases) {
+        const mapped = yield* failWith(error);
+        expect(mapped.code, code).toBe(code);
+        expect(encodeError(mapped)).not.toContain(SECRET);
+        expect(mapped.message).not.toContain("fatal");
+      }
+      // A missing token tells the agent how to get one, through the secure request.
+      expect(
+        (yield* failWith(new OverleafSyncRefusedError({ reason: "token-missing" }))).message,
+      ).toContain("request_secret");
+    }),
+  );
+
+  it.effect("saves the token from a secretRef; the value is in no input, output or error", () =>
+    Effect.gen(function* () {
+      const saved: string[] = [];
+      let removed = 0;
+      const consumed: Array<{ readonly ref: string; readonly projectId: string }> = [];
+      const overleaf = fakeOverleaf({
+        tokenStatus: Effect.sync(() => ({ saved: saved.length > 0 && removed === 0 })),
+        saveToken: (token: string) =>
+          token.includes(" ")
+            ? Effect.fail(new OverleafSyncRefusedError({ reason: "token-missing" }))
+            : Effect.sync(() => void saved.push(token)),
+        removeToken: Effect.sync(() => void removed++),
+      } as Partial<OverleafSyncShape>);
+      let value = SECRET;
+      const secrets = SecretRequests.of({
+        answer: () => Effect.die("unused"),
+        savedRef: () => Effect.die("unused"),
+        consume: (input) =>
+          Effect.suspend(() => {
+            consumed.push(input);
+            return consumed.length > 2
+              ? Effect.fail(new SecretRequestError({ reason: "ref_unavailable" }))
+              : Effect.succeed(value);
+          }),
+      });
+      const run = <A, E>(
+        effect: Effect.Effect<
+          A,
+          E,
+          | OverleafSync
+          | OverleafEditorSave
+          | SecretRequests
+          | WorkspaceBindingResolver
+          | AgentInvocationContext.AgentInvocationContext
+        >,
+      ) =>
+        effect.pipe(
+          provide(overleaf),
+          Effect.provideService(SecretRequests, secrets),
+          Effect.provideService(WorkspaceBindingResolver, workspaceResolverForTest(new Map())),
+        );
+      const ref = SecretRef.make("secret-ref:0123456789abcdef0123456789abcdef");
+
+      // The tool takes no token: only a reference to a secret the user entered.
+      const input = ScientOverleafToolkit.tools.scient_overleaf_token.parametersSchema;
+      expect(Object.keys(input.fields)).toEqual(["action", "secretRef"]);
+
+      const result = yield* run(overleafTokenForInvocation({ action: "save", secretRef: ref }));
+      expect(saved).toEqual([SECRET]);
+      expect(consumed).toEqual([{ ref, projectId: "project-1" }]);
+      expect(result.saved).toBe(true);
+      expect(encodeToken(result)).not.toContain(SECRET);
+      expect(
+        encodeToken(yield* run(overleafTokenForInvocation({ action: "status" }))),
+      ).not.toContain(SECRET);
+
+      // A value that is not a token is refused without repeating it.
+      value = `${SECRET} with spaces`;
+      const invalid = yield* Effect.flip(
+        run(overleafTokenForInvocation({ action: "save", secretRef: ref })),
+      );
+      expect(invalid.code).toBe("token-invalid");
+      expect(encodeError(invalid)).not.toContain(SECRET);
+      // A used reference says so and points back to request_secret.
+      const used = yield* Effect.flip(
+        run(overleafTokenForInvocation({ action: "save", secretRef: ref })),
+      );
+      expect(used).toMatchObject({ code: "secret-unavailable" });
+      expect(used.message).toContain("request_secret");
+      expect((yield* Effect.flip(run(overleafTokenForInvocation({ action: "save" })))).code).toBe(
+        "invalid-input",
+      );
+
+      const after = yield* run(overleafTokenForInvocation({ action: "remove" }));
+      expect(after).toMatchObject({ saved: false });
+      expect(removed).toBe(1);
+    }),
+  );
+
+  it.effect("a thread in another copy is told which copy the link used", () =>
+    Effect.gen(function* () {
+      const overleaf = fakeOverleaf({
+        list: () => Effect.succeed([{ ...summary, linkedHere: false }]),
+        sync: () => Effect.succeed({ _tag: "unsettled", reason: "folder-kept-changing" }) as never,
+      });
+      const synced = yield* overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+        provide(overleaf),
+      );
+      expect(synced.link).toMatchObject({ checkoutRoot: "/projects/main", linkedElsewhere: true });
+      expect(synced.lines[0]).toContain("the copy of the project at /projects/main");
+      expect(synced.lines[0]).toContain("not in it until they are merged there");
+    }),
+  );
+
+  it.effect("manage needs a folder to relink, and recover reports earlier sends", () =>
+    Effect.gen(function* () {
+      const overleaf = fakeOverleaf({
+        recover: () =>
+          Effect.succeed({ _tag: "none", attempts: { accepted: [3], unresolved: [4] } }) as never,
+      });
+      const relink = yield* Effect.flip(
+        overleafManageForInvocation({ connectionId: "c-1", action: "relink" }).pipe(
+          provide(overleaf),
+        ),
+      );
+      expect(relink.code).toBe("invalid-input");
+      const recovered = yield* overleafManageForInvocation({
+        connectionId: "c-1",
+        action: "recover",
+      }).pipe(provide(overleaf));
+      const cancelled = yield* overleafManageForInvocation({
+        connectionId: "c-1",
+        action: "cancel",
+      }).pipe(
+        provide(
+          fakeOverleaf({
+            cancel: () => Effect.succeed({ _tag: "requested", operationId: "op" }) as never,
+          }),
+        ),
+      );
+      expect(cancelled.lines[0]).toContain("Asked this link's running sync to stop");
+      expect(recovered.lines).toEqual([
+        "No interrupted sync to finish.",
+        "Earlier sends #3 arrived on Overleaf.",
+        "Sends #4 still have no answer; Scient never sends them again.",
+      ]);
+    }),
+  );
+
+  it.effect("says when Overleaf moved under the choices, so they were not applied", () =>
+    Effect.gen(function* () {
+      const review = {
+        reviewId: "r",
+        digest: "d",
+        remoteTree: "b".repeat(40),
+        upToDate: false,
+        needsDecision: true,
+        incoming: [],
+        outgoing: [],
+        conflicts: [{ key: "k2", paths: ["main.tex"], allowed: ["mine", "theirs"], chosen: null }],
+        warnings: [],
+        unresolvedMarkers: [],
+        collisions: [],
+        selectedAdditions: [],
+        additions: [],
+        localOnly: [],
+      };
+      const overleaf = fakeOverleaf({
+        sync: () =>
+          Effect.succeed({
+            _tag: "needs-decision",
+            review,
+            activity: [],
+            linkedElsewhere: false,
+          }) as never,
+      });
+      const moved = yield* overleafSyncForInvocation({
+        connectionId: "c-1",
+        choices: [{ key: "k1", choice: "mine" }],
+        reviewedRemote: "a".repeat(40),
+      }).pipe(provide(overleaf));
+      expect(moved.lines[0]).toContain("Overleaf changed since the review your choices answered");
+      expect(moved.lines).toContain(`- key k2: main.tex; allowed: mine, theirs`);
+      const same = yield* overleafSyncForInvocation({
+        connectionId: "c-1",
+        choices: [{ key: "k1", choice: "mine" }],
+        reviewedRemote: "b".repeat(40),
+      }).pipe(provide(overleaf));
+      expect(same.lines[0]).toBe("Nothing was applied or sent.");
+      // The next call needs the review's Overleaf tree with its choices.
+      expect(same.lines[1]).toContain(`reviewedRemote ${"b".repeat(40)}`);
+    }),
+  );
+});

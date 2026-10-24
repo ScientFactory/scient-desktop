@@ -60,6 +60,7 @@ import * as PandocManagedTool from "./pandoc/PandocManagedTool.ts";
 import * as PandocWordConverter from "./pandoc/PandocWordConverter.ts";
 import * as WordFileExport from "./pandoc/WordFileExport.ts";
 import { scientOverleafHttpApiLayer } from "./overleaf/http.ts";
+import * as OverleafEditorSave from "./overleaf/OverleafEditorSave.ts";
 import * as OverleafSync from "./overleaf/OverleafSync.ts";
 
 // Skill discovery and selected-turn delivery share one live policy/catalog.
@@ -206,6 +207,8 @@ export function makeScientRouteServices<
       Layer.provide(ScientificRuntimePreferencesLive),
       Layer.provide(ScientLatexServicesLive),
       Layer.provide(OverleafSyncLive),
+      // The agent tools save editors through this seam; the editor-save request connects here.
+      Layer.provide(OverleafEditorSave.layerNotConnected),
     );
 
   /** Self-update that hands running threads to the next server. */

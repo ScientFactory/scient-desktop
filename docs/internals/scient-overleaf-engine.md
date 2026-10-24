@@ -1,8 +1,9 @@
 # Overleaf manuscript engine
 
 The server mounts it behind authenticated routes (`/api/scient/overleaf/v1/*`)
-through `OverleafSync`; no screen or agent tool calls them yet, and nothing
-synchronizes automatically. Its plan, contract, owner decisions
+and agent tools ([Overleaf agent tools](scient-overleaf-agent-tools.md)), both
+through `OverleafSync`; no screen calls them yet, and nothing synchronizes
+automatically. Its plan, contract, owner decisions
 and status live on the working-documents PR
 [#535](https://github.com/ScientFactory/scient-desktop/pull/535), which is
 closed rather than merged; this file records what is implemented.
@@ -389,8 +390,8 @@ attempt.
 
 ## Service and routes
 
-`OverleafSync` (`OverleafSync.ts`) is what the routes, and later the agent
-tools, call. It owns one coordinator and `OverleafConnections`, which share the
+`OverleafSync` (`OverleafSync.ts`) is what the routes and the
+[agent tools](scient-overleaf-agent-tools.md) call. It owns one coordinator and `OverleafConnections`, which share the
 coordinator's per-connection reservations.
 
 - **Listing.** A connection is listed only for the host project that owns its
@@ -471,8 +472,9 @@ coordinator's per-connection reservations.
 ## Remaining integration gates
 
 The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
-defines the remaining work and tracks each step's status. The editor-save
-request, the agent tools and the screens come next. Derive interrupted
+defines the remaining work and tracks each step's status. The agent tools save
+open editors through `OverleafEditorSave`, which stops them until the
+editor-save request is connected there; the screens come next. Derive interrupted
 operations in status (a `running` receipt whose operation is no longer live was
 interrupted). The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
