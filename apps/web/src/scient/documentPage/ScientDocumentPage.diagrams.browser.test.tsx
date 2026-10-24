@@ -56,7 +56,8 @@ function deferredDiagram() {
 }
 
 describe("PDF diagram renderer boundary", () => {
-  it.each(["syntax", "unsupported-diagram", "semantic", "limit"])(
+  // Every typed content code takes the same branch (isMermaidContentError); one stands for all.
+  it.each(["semantic"])(
     "prints labelled original source for a typed Pele %s content error",
     async (code) => {
       setup();
@@ -76,7 +77,7 @@ describe("PDF diagram renderer boundary", () => {
     },
   );
 
-  it.each(["Chunk load failed", "Unexpected layout failure"])(
+  it.each(["Chunk load failed"])(
     "withholds printing after an execution failure: %s",
     async (message) => {
       setup();

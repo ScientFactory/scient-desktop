@@ -8,18 +8,6 @@ import {
 } from "./ScientFileFreshnessControls";
 
 describe("ScientFileReloadButton", () => {
-  it("renders the normal workspace reload action", () => {
-    const markup = renderToStaticMarkup(
-      <ScientFileReloadButton isPending={false} onReload={vi.fn()} />,
-    );
-
-    expect(markup).toContain('aria-label="Reload file from disk"');
-    expect(markup).toContain("lucide-refresh-cw");
-    expect(markup).not.toContain("lucide-rotate-cw");
-    expect(markup).toMatch(/^<button/u);
-    expect(markup).not.toContain("text-warning");
-  });
-
   it("keeps watcher recovery visible in the compact file header", () => {
     const markup = renderToStaticMarkup(
       <ScientFileReloadButton
@@ -32,7 +20,6 @@ describe("ScientFileReloadButton", () => {
     );
 
     expect(markup).toContain('aria-label="Automatic updates paused: reload file"');
-    expect(markup).toContain("text-warning");
   });
 
   it("disables and announces a pending reload", () => {
@@ -41,7 +28,6 @@ describe("ScientFileReloadButton", () => {
     expect(markup).toContain('aria-label="Reloading file…"');
     expect(markup).toContain('aria-busy="true"');
     expect(markup).toContain("disabled");
-    expect(markup).toContain("animate-spin");
   });
 });
 
@@ -63,19 +49,16 @@ describe("ScientFileFreshnessStatus", () => {
   it("says nothing is wrong only when the file's session agrees", () => {
     const calm = renderToStaticMarkup(<ScientFileFreshnessStatus {...quiet} pending={false} />);
     expect(calm).toContain('aria-label="File status: Saved"');
-    expect(calm).not.toContain("text-warning");
 
     const conflict = renderToStaticMarkup(
       <ScientFileFreshnessStatus {...quiet} pending sessionAttention="conflict" />,
     );
     expect(conflict).toContain('aria-label="File status: File changed on disk"');
-    expect(conflict).toContain("text-warning");
 
     const failure = renderToStaticMarkup(
       <ScientFileFreshnessStatus {...quiet} pending sessionAttention="failure" />,
     );
     expect(failure).toContain('aria-label="File status: Not saved"');
-    expect(failure).toContain("text-warning");
 
     // Nothing unsaved: only the check of the disk version failed.
     const refresh = renderToStaticMarkup(

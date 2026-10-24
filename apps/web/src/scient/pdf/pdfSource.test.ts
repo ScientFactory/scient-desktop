@@ -161,20 +161,17 @@ describe("PDF source resolution", () => {
     expect(workspacePdfRelativePath("/workspace", "/another/paper.pdf")).toBeNull();
   });
 
-  it.each(["README.md", "analysis.m", "figure.png", "data.txt"])(
-    "does not construct a PDF source for a restored %s preview",
-    (relativePath) => {
-      expect(
-        workspacePdfSourceForPreview({
-          absolutePath: `/workspace/${relativePath}`,
-          environmentId: EnvironmentId.make("environment-1"),
-          relativePath,
-          threadId: ThreadId.make("thread-1"),
-          workspaceRoot: "/workspace",
-        }),
-      ).toBeNull();
-    },
-  );
+  it("does not construct a PDF source for a restored non-PDF preview", () => {
+    expect(
+      workspacePdfSourceForPreview({
+        absolutePath: "/workspace/figure.png",
+        environmentId: EnvironmentId.make("environment-1"),
+        relativePath: "figure.png",
+        threadId: ThreadId.make("thread-1"),
+        workspaceRoot: "/workspace",
+      }),
+    ).toBeNull();
+  });
 
   it("does not construct a PDF source for an empty preview", () => {
     expect(

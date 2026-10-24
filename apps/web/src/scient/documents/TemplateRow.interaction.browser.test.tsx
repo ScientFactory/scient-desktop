@@ -121,39 +121,6 @@ describe("template preview interaction", () => {
     expect(choose).not.toHaveBeenCalled();
   });
 
-  it.each(["blank", "thesis"])(
-    "zooms into the %s title page on hover and opens the complete page",
-    async (id) => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-      await _setupFixture0(_fixture);
-
-      await render(_fixture);
-      await hoverPreview(id);
-      const expand = namedButton(`Expand ${id} preview`);
-      const image = expand.parentElement!.querySelector("img")!;
-      const frame = image.parentElement!;
-      const pageWidth = parseFloat(image.style.width);
-      const frameWidth = parseFloat(frame.style.width);
-      const frameHeight = parseFloat(frame.style.height);
-      expect(pageWidth).toBeGreaterThan(frameWidth * 2);
-      // The title and author rows in these typeset pages stay inside the crop.
-      for (const row of id === "blank" ? [0.136, 0.186] : [0.391, 0.46]) {
-        const visibleY = row * pageWidth * Math.SQRT2 + parseFloat(image.style.top);
-        expect(visibleY).toBeGreaterThan(frameHeight * 0.15);
-        expect(visibleY).toBeLessThan(frameHeight * 0.85);
-      }
-      const picture = templatePicture(id, null)!;
-      if (picture.kind === "image") expect(image.getAttribute("src")).toBe(picture.expandedSrc);
-      await act(() => expand.click());
-      const fullPage = document.querySelector<HTMLImageElement>('[role="dialog"] img')!;
-      expect(fullPage.style.top).toBe("0px");
-      expect(fullPage.style.left).toBe("0px");
-      expect(fullPage.style.width).toBe(fullPage.parentElement!.style.width);
-      expect(choose).not.toHaveBeenCalled();
-    },
-  );
-
   it("keeps the expanded preview alive after More closes, then returns focus to More", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

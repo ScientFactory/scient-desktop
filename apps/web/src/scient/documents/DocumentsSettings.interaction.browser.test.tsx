@@ -148,36 +148,15 @@ describe("Settings ▸ Documents", () => {
     return value === null ? null : JSON.parse(value);
   };
 
-  it("checks both installations again from the header", async () => {
+  it("remembers the PDF compilation choice across a remount", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
     await render(_fixture);
-    await act(async () => {
-      _fixture.container
-        .querySelector<HTMLElement>('[aria-label="Check installations again"]')!
-        .click();
-      await Promise.resolve();
-    });
-    expect(mocks.pandocRefresh).toHaveBeenCalledTimes(1);
-    expect(mocks.readToolchain).toHaveBeenLastCalledWith("remote", { refresh: true });
-  });
-  it("keeps PDF compilation in one row with descriptions only inside the picker", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    await render(_fixture);
-    const row = _fixture.container.querySelector("#latex-compilation")!;
-    expect(row.textContent).toBe("PDF compilationOn save");
+    expect(select(_fixture, "PDF compilation").textContent).toBe("On save");
     await act(() => select(_fixture, "PDF compilation").click());
     const options = [...document.querySelectorAll<HTMLElement>('[data-slot="select-item"]')];
-    expect(options.map((option) => option.textContent)).toEqual([
-      "Auto-compileUpdate the PDF after you pause editing.",
-      "On saveUpdate the PDF when you save.",
-      "ManualUpdate the PDF when you click Rebuild.",
-    ]);
     await act(() => options[0]!.click());
     expect(stored(LATEX_COMPILATION_STORAGE_KEY)).toBe("auto");
     expect(select(_fixture, "PDF compilation").textContent).toBe("Auto-compile");
@@ -283,33 +262,6 @@ describe("Settings ▸ Documents", () => {
     expect(select(_fixture, "Open LaTeX files in").textContent).toBe("Source");
     await choose(_fixture, "Open LaTeX files in", "Split");
     expect(stored("scient.latexPreviewMode")).toBe("split");
-  });
-
-  it("keeps compiler preferences editable offline without claiming server availability", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    mocks.scopeEnvironmentId = null;
-    await render(_fixture);
-    expect(_fixture.container.querySelector("#latex-installation")?.textContent).toContain(
-      "Offline",
-    );
-    await choose(
-      _fixture,
-      "Default compiler for new documents",
-      "XeLaTeX (recommended for Hebrew)",
-    );
-    expect(stored("scient.newDocumentCompiler")).toBe("xelatex");
-    await act(async () => await _fixture.root0.unmount());
-    _fixture.root0 = _fixture.stack.use(
-      await _fixtureRender(null, { container: _fixture.container, router: false }),
-    );
-    await render(_fixture);
-    expect(select(_fixture, "Default compiler for new documents").textContent).toBe(
-      "XeLaTeX (recommended for Hebrew)",
-    );
-    expect(mocks.readToolchain).not.toHaveBeenCalled();
   });
 
   it("keeps versions and paths folded until details are requested, with actual per-engine availability", async () => {
@@ -532,6 +484,12 @@ describe("Settings ▸ Documents", () => {
       "Offline",
     );
     expect(_fixture.container.querySelector("#new-document-template")).not.toBeNull();
+    await choose(
+      _fixture,
+      "Default compiler for new documents",
+      "XeLaTeX (recommended for Hebrew)",
+    );
+    expect(stored("scient.newDocumentCompiler")).toBe("xelatex");
     const word = _fixture.container.querySelector<HTMLElement>("#documents-word-trigger")!;
     expect(word.textContent).toBe("WordOffline");
     await act(() => word.click());

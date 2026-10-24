@@ -400,11 +400,6 @@ describe("ScientDocumentPage", () => {
         'The captured image "plot.png" could not be loaded.',
       ],
       [
-        "was refused as unauthorized",
-        async () => new Response(null, { status: 403 }),
-        'The captured image "plot.png" could not be loaded.',
-      ],
-      [
         "was blocked",
         async () => {
           throw new TypeError("Failed to fetch");

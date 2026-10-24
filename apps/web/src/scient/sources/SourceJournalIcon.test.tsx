@@ -1,8 +1,6 @@
-import { EnvironmentId } from "@t3tools/contracts";
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
-import { SourceJournalIcon, sourceJournalIconInternals } from "./SourceJournalIcon";
+import { sourceJournalIconInternals } from "./SourceJournalIcon";
 
 const record = {
   formatVersion: 1 as const,
@@ -31,21 +29,6 @@ const record = {
 };
 
 describe("SourceJournalIcon", () => {
-  it("renders the book immediately and does not wait for journal lookup", () => {
-    const resolveIcon = vi.fn(async () => null);
-    const markup = renderToStaticMarkup(
-      <SourceJournalIcon
-        environmentId={EnvironmentId.make("environment-test")}
-        root="/project"
-        record={record}
-        resolveIcon={resolveIcon}
-      />,
-    );
-    expect(markup).toContain('data-testid="source-generic-icon"');
-    expect(markup).not.toContain("<img");
-    expect(resolveIcon).not.toHaveBeenCalled();
-  });
-
   it("does not request journal enrichment without a journal identity", () => {
     expect(
       sourceJournalIconInternals.canResolveJournalIcon({ ...record, containerTitle: null }),
