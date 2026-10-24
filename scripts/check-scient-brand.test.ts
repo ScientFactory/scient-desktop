@@ -29,12 +29,18 @@ describe("Scient brand guard", () => {
     });
   });
 
-  it.each(["apps/mobile/src/lib/threadActivity.ts"])(
-    "covers owned tool presentation without expanding donor-wide enforcement: %s",
-    (path) => {
-      expect(rulesHit(path, 'const label = "Reading a T3 thread";')).toContain("inherited-brand");
-    },
-  );
+  // regression: a892edfa6b fix: brand owned agent tools as Scient
+  // One row per listed surface: dropping a file from LEGACY_SURFACE_FILES fails only its row.
+  it.each([
+    "packages/client-runtime/src/work-log/presentation.ts",
+    "apps/mobile/src/lib/threadActivity.ts",
+    "apps/mobile/src/features/threads/thread-work-log.tsx",
+    "apps/mobile/src/components/CompactBrandTitle.tsx",
+    "apps/mobile/src/lib/authClientMetadata.ts",
+    "apps/mobile/src/features/settings/SettingsAboutRouteScreen.tsx",
+  ])("covers owned tool presentation without expanding donor-wide enforcement: %s", (path) => {
+    expect(rulesHit(path, 'const label = "Reading a T3 thread";')).toContain("inherited-brand");
+  });
 
   it.each([
     'Tool.make("t3_thread_read", {})',
