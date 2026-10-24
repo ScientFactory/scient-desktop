@@ -24,7 +24,7 @@ vi.mock("./LatexMathField", () => ({
 vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
 }));
-import { LatexVisualEditor } from "./LatexVisualEditor";
+import { LatexVisualEditor, type LatexBackgroundCommit } from "./LatexVisualEditor";
 import {
   createLatexVisualTestOwner,
   readMountedLatexVisualTestEditor,
@@ -102,6 +102,9 @@ describe("pending fields across outside document changes", () => {
         onLocalDraftChange={pending}
         registerFinishEditing={(callback) => {
           _fixture.finish = callback;
+        }}
+        registerBackgroundCommit={(callback) => {
+          _fixture.background = callback;
         }}
         onEdit={(request) => {
           writes(request.edit.source, request.edit);
@@ -394,6 +397,55 @@ describe("pending fields across outside document changes", () => {
     expect(writes).toHaveBeenCalledTimes(1);
     expect(_fixture.finish?.()).toBe(true);
   });
+
+  it("commits typing in the background, keeping focus and selection", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    _fixture.shown = "\\documentclass{article}\n\\begin{document}\nBody text.\n\\end{document}";
+    await render(_fixture);
+    let position = 0;
+    editor(_fixture).state.doc.descendants((node, at) => {
+      if (node.type.name === "paragraph") position = at + 1;
+    });
+    await act(() => {
+      editor(_fixture).view.dom.focus();
+      editor(_fixture).commands.setTextSelection(position);
+      editor(_fixture).commands.insertContent("AB");
+    });
+    const selection = editor(_fixture).state.selection.toJSON();
+    expect(document.activeElement).toBe(editor(_fixture).view.dom);
+    expect(writes).not.toHaveBeenCalled();
+
+    await act(() => expect(_fixture.background?.commit()).toBe("clean"));
+
+    expect(writes).toHaveBeenCalled();
+    expect(_fixture.shown).toContain("ABBody text.");
+    expect(document.activeElement).toBe(editor(_fixture).view.dom);
+    expect(editor(_fixture).state.selection.toJSON()).toEqual(selection);
+    expect(_fixture.background?.inspect()).toBe("clean");
+  });
+
+  it("reports an open field's input instead of closing or blurring it", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await mount(_fixture);
+    await typeTitle(_fixture);
+    expect(document.activeElement).toBe(field(_fixture));
+    await act(() => expect(_fixture.background?.commit()).toBe("unconverted"));
+    expect(document.activeElement).toBe(field(_fixture));
+    expect(field(_fixture).value).toBe("Local unfinished title");
+
+    await act(() =>
+      field(_fixture).dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })),
+    );
+    expect(_fixture.background?.inspect()).toBe("composing");
+    await act(() => expect(_fixture.background?.commit()).toBe("composing"));
+    expect(document.activeElement).toBe(field(_fixture));
+  });
 });
 
 function _createFixture() {
@@ -437,6 +489,7 @@ function _createFixture() {
     },
 
     restoreFonts: () => {},
+    background: null as LatexBackgroundCommit | null,
 
     container: undefined! as HTMLDivElement,
     stack,

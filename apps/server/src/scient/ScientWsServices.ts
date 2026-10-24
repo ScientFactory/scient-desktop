@@ -12,6 +12,7 @@ import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as ComputeSessionService from "./compute/ComputeSessionService.ts";
 import { ScientificRuntimePreferences } from "./compute/ScientificRuntimePreferences.ts";
 import { ConversationExportService } from "./conversationExport/ConversationExportService.ts";
+import { EditorFlush } from "./editorFlush/EditorFlush.ts";
 import * as ProviderConnectionManager from "./providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeManager.ts";
@@ -21,6 +22,7 @@ export const captureScientWsServices = Effect.gen(function* () {
   const compute = yield* ComputeSessionService.ComputeSessionService;
   const runtimePreferences = yield* ScientificRuntimePreferences;
   const conversationExports = yield* ConversationExportService;
+  const editorFlush = yield* EditorFlush;
   const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
   const providerLifecycleCoordinator =
     yield* ProviderLifecycleCoordinator.ProviderLifecycleCoordinator;
@@ -36,5 +38,6 @@ export const captureScientWsServices = Effect.gen(function* () {
     Layer.succeed(ComputeSessionService.ComputeSessionService, compute),
     Layer.succeed(ScientificRuntimePreferences, runtimePreferences),
     Layer.succeed(ConversationExportService, conversationExports),
+    Layer.succeed(EditorFlush, editorFlush),
   );
 });

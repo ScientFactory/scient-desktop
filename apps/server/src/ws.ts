@@ -291,6 +291,9 @@ import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDoc
 import { ConversationExportService } from "./scient/conversationExport/ConversationExportService.ts";
 import { makeDocumentPdfRpcHandlers } from "./scient/documentExport/DocumentPdfRpcHandlers.ts";
 import { makeFileOpeningRpcHandlers } from "./scient/fileOpening/FileOpeningRpcHandlers.ts";
+// SCIENT-FORK:START — windows answer the server's editor flush requests.
+import { makeEditorFlushRpcHandlers } from "./scient/editorFlush/EditorFlushRpcHandlers.ts";
+// SCIENT-FORK:END
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import {
@@ -2037,6 +2040,13 @@ export const layerWsRpc = (
         [WS_METHODS.documentsHostConnect]: (input) =>
           Stream.unwrap(documentHostBroker.connect(input)),
         [WS_METHODS.documentsHostRespond]: (input) => documentHostBroker.respond(input),
+        // SCIENT-FORK:START — windows answer the server's editor flush requests.
+        ...makeEditorFlushRpcHandlers({
+          observeRpcEffect,
+          observeRpcStream,
+          sessionId: currentSessionId,
+        }),
+        // SCIENT-FORK:END
         [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),
         [WS_METHODS.mcpAppsUpdateModelContext]: (input) => mcpAppRequests.updateModelContext(input),

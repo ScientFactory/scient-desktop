@@ -46,6 +46,17 @@ export function clearWorkspaceFileSessionsForTests(): void {
   workspaceFileSessions.clear();
 }
 
+// SCIENT-FORK:START — the server's editor flush saves the file sessions of one folder.
+export const workspaceFileSessionFlush: Pick<
+  WorkspaceFileSessionRegistry,
+  "flushWhere" | "sessionTargets" | "unsavedWhere"
+> = {
+  flushWhere: (select) => workspaceFileSessions.flushWhere(select),
+  sessionTargets: () => workspaceFileSessions.sessionTargets(),
+  unsavedWhere: (select) => workspaceFileSessions.unsavedWhere(select),
+};
+// SCIENT-FORK:END
+
 export interface FileSaveOptions {
   enabled?: boolean;
   debounceMs?: number;
@@ -286,6 +297,7 @@ function createFileSaveSession({
       const initialAttention = readAttention();
       const lease = workspaceFileSessions.acquire({
         key: projectFileOperationKey({ environmentId, cwd, relativePath }),
+        target: { environmentId, cwd, relativePath },
         debounceMs,
         canPersist: () => readEnvironmentScope(environmentId, AuthFilesystemWriteScope),
         initialRevision: readRevision(),

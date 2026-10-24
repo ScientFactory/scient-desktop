@@ -105,6 +105,7 @@ import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntime
 import { ConversationExportService } from "./scient/conversationExport/ConversationExportService.ts";
 import { ConversationForkService } from "./orchestration-v2/scient-fork/ConversationForkService.ts";
 import * as DocumentHostBroker from "./scient/documents/DocumentHostBroker.ts";
+import { EditorFlush } from "./scient/editorFlush/EditorFlush.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as ExtensionsServices from "./scient/extensions/ExtensionsServices.ts";
 import { ExtensionsChangeFeed } from "./scient/extensions/ExtensionsRpcHandlers.ts";
@@ -318,6 +319,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ConversationExportService)({}),
   Layer.mock(ConversationForkService)({}),
   Layer.mock(DocumentHostBroker.DocumentHostBroker)({}),
+  Layer.mock(EditorFlush)({}),
   Layer.mock(GeneratedDocumentStore.GeneratedDocumentStore)({}),
   Layer.mock(ProviderConnectionManager.ProviderConnectionManager)({}),
   Layer.mock(ProviderRuntimeManager.ProviderRuntimeManager)({}),

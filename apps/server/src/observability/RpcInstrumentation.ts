@@ -288,6 +288,12 @@ const RPC_AGGREGATES = {
   [WS_METHODS.documentsPublishDocumentPdf]: "documents",
   [WS_METHODS.documentsPrepareConversationPdf]: "documents",
   [WS_METHODS.documentsReleaseDocumentPdf]: "documents",
+  // SCIENT-FORK:START — Scient editor flush RPCs.
+  [WS_METHODS.editorsFlushConnect]: "editors",
+  [WS_METHODS.editorsFlushResolve]: "editors",
+  [WS_METHODS.editorsFlushRespond]: "editors",
+  [WS_METHODS.editorsFlushLeave]: "editors",
+  // SCIENT-FORK:END
   [WS_METHODS.serverStartProviderConnection]: "server",
   [WS_METHODS.serverCancelProviderConnection]: "server",
   // SCIENT-FORK:START — sign-in page claims count with the other server RPCs.
