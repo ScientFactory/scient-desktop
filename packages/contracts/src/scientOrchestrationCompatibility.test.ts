@@ -1,8 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { CommandId, ProjectId } from "./baseSchemas.ts";
 import { isProviderSendTurnSupportedImageMimeType } from "./chatAttachment.ts";
+import { OrchestrationGetTurnDiffInput, ThreadTurnDiff } from "./checkpointDiff.ts";
 import {
   OrchestrationEvent,
   OrchestrationSession,
@@ -13,6 +15,8 @@ import {
   ThreadMetaUpdatedPayload,
   ThreadTurnStartRequestedPayload,
 } from "./legacy/orchestrationEvent.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 import {
   ProjectFaviconPath,
@@ -796,5 +800,64 @@ it.effect("recovers legacy monograms inside snapshots and writes their canonical
       assert.deepEqual(recovered.projectIcon, projectIcon);
       assert.deepEqual(yield* encodeProjectShell(recovered), shell);
     }
+  }),
+);
+
+// Upstream deleted the cases below in its Oct 20 cut (#22557). No other test
+// fails when the validation or literal they cover is removed, so they stay.
+const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
+const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
+const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
+const decodeRoutedModelSelection = Schema.decodeUnknownEffect(ModelSelection);
+
+// regression: 8824f8f24f fix(web): retry failed thread bootstraps with a fresh id (#7664)
+it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
+  Effect.gen(function* () {
+    const error = yield* decodeDispatchCommandError({
+      _tag: "OrchestrationDispatchCommandError",
+      message: "Failed to create worktree.",
+      bootstrapThreadDisposition: "deleted",
+    });
+
+    assert.strictEqual(error.bootstrapThreadDisposition, "deleted");
+  }),
+);
+
+it.effect("rejects turn diff input when fromTurnCount > toTurnCount", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeTurnDiffInput({
+        threadId: "thread-1",
+        fromTurnCount: 3,
+        toTurnCount: 2,
+      }),
+    );
+    assert.strictEqual(Exit.isFailure(result), true);
+  }),
+);
+
+it.effect("rejects thread turn diff when fromTurnCount > toTurnCount", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeThreadTurnDiff({
+        threadId: "thread-1",
+        fromTurnCount: 3,
+        toTurnCount: 2,
+        diff: "patch",
+      }),
+    );
+    assert.strictEqual(Exit.isFailure(result), true);
+  }),
+);
+
+it.effect("ModelSelection rejects malformed instance ids", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeRoutedModelSelection({
+        instanceId: "1invalid", // must start with a letter
+        model: "x",
+      }),
+    );
+    assert.strictEqual(Exit.isFailure(result), true);
   }),
 );
