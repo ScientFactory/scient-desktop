@@ -83,15 +83,6 @@ export type OverleafCaller =
   | { readonly _tag: "workspace"; readonly workspaceRoot: string }
   | { readonly _tag: "thread"; readonly threadId: string };
 
-/** How an interrupted apply ended (the coordinator's `OverleafAdopted`), carried on a refusal. */
-const OverleafSettledApply = Schema.Struct({
-  applyId: Schema.String,
-  outcome: Schema.Literals(["complete", "replan", "attention"]),
-  interrupted: Schema.Array(Schema.Array(Schema.String)),
-  markerPaths: Schema.Array(Schema.String),
-  baseGeneration: Schema.Number,
-});
-
 /**
  * Why the service stopped. A fixed category, safe to show; never Git's text or a
  * token. A sync or preview refused after it already did something says what, as
@@ -119,10 +110,6 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
       /** The link moved to another folder while the caller was saving its editors. */
       "folder-changed",
     ]),
-    /** The sync's first attempt applied a review whose send was out of date. */
-    retried: Schema.optional(Schema.Boolean),
-    /** An interrupted earlier sync settled before the refusal, and how its apply ended. */
-    settled: Schema.optional(OverleafSettledApply),
   },
 ) {
   override get message(): string {
@@ -233,21 +220,61 @@ export interface OverleafSyncProgress {
 /** A sync's or preview's progress so far, collected as it goes. */
 type Progress = { -readonly [K in keyof OverleafSyncProgress]: OverleafSyncProgress[K] };
 
+/** Errors a person or agent can act on; anything else is an internal failure. */
+export const OVERLEAF_ACTIONABLE_ERRORS: ReadonlySet<string> = new Set([
+  "OverleafSyncRefusedError",
+  "OverleafOperationActiveError",
+  "OverleafConnectionNotReadyError",
+  "OverleafRetainedLimitError",
+  "CheckoutSuspendedError",
+  "CheckoutRecoveryRequiredError",
+  "OverleafStateLockedError",
+  "OverleafConnectionStaleError",
+  "OverleafConnectionUnavailableError",
+  "OverleafRequestReusedError",
+  "OverleafRetentionUnavailableError",
+]);
+
+/** An actionable error's fixed reason: its own `reason`, else its tag (`operation-active`). */
+export const overleafRefusalReason = (error: { readonly _tag: string }): string => {
+  const own = (error as { readonly reason?: unknown }).reason;
+  return typeof own === "string"
+    ? own
+    : error._tag
+        .replace(/^Overleaf|Error$/gu, "")
+        .replace(/[A-Z]/gu, (letter, index: number) =>
+          index === 0 ? letter.toLowerCase() : `-${letter.toLowerCase()}`,
+        );
+};
+
+const isActionable = (error: unknown): error is { readonly _tag: string } =>
+  typeof error === "object" &&
+  error !== null &&
+  "_tag" in error &&
+  typeof error._tag === "string" &&
+  OVERLEAF_ACTIONABLE_ERRORS.has(error._tag);
+
 /**
- * A refusal raised after progress carries it, so an error never hides that the
- * folder was written. Other failures (store or file-system defects) pass as they are.
+ * Once a sync or preview has written the folder (it settled an interrupted apply,
+ * or its first attempt applied a review), an actionable refusal comes back as a
+ * `refused` result carrying that progress, so nothing hides that the folder
+ * changed. Before any progress, refusals stay errors.
  */
-const isOverleafSyncRefused = Schema.is(OverleafSyncRefusedError);
-const carryingProgress =
+const refusedAfterProgress =
   (progress: OverleafSyncProgress) =>
-  <E>(error: E): E | OverleafSyncRefusedError =>
-    isOverleafSyncRefused(error) && (progress.retried || progress.settled !== null)
-      ? new OverleafSyncRefusedError({
-          reason: error.reason,
-          ...(progress.retried ? { retried: true } : {}),
-          ...(progress.settled === null ? {} : { settled: progress.settled }),
-        })
-      : error;
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.catch((error: E) =>
+        (progress.retried || progress.settled !== null) && isActionable(error)
+          ? Effect.succeed({
+              _tag: "refused" as const,
+              refusal: { reason: overleafRefusalReason(error) },
+              retried: progress.retried,
+              settled: progress.settled,
+            })
+          : Effect.fail(error),
+      ),
+    );
 
 /** What one sync did, in the order a person or agent reads it. */
 export type OverleafSyncOutcome =
@@ -269,10 +296,8 @@ export type OverleafSyncOutcome =
     } & OverleafSyncProgress)
   | ({
       readonly _tag: "refused";
-      readonly refusal: Extract<
-        OverleafCoordinator.OverleafPrepareResult,
-        { _tag: "refused" }
-      >["refusal"];
+      /** The review's refusal, or an actionable refusal raised after progress. */
+      readonly refusal: { readonly reason: string; readonly path?: string };
     } & OverleafSyncProgress)
   /** A repeated request: its receipt, never a second sync. */
   | {
@@ -697,7 +722,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
           return yield* coordinator.prepare(prepareInput);
         }),
       ),
-    ).pipe(Effect.mapError(carryingProgress(progress)));
+    ).pipe(refusedAfterProgress(progress));
     switch (prepared._tag) {
       case "review":
         return {
@@ -826,7 +851,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       guard,
       syncOnce(input, document, linkedElsewhere, running, progress),
     ).pipe(
-      Effect.mapError(carryingProgress(progress)),
+      refusedAfterProgress(progress),
       Effect.tapError(() =>
         store
           .finishReceipt({

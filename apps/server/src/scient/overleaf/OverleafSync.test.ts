@@ -1444,17 +1444,15 @@ describe.skipIf(!canApply)("OverleafSync", () => {
           yield* Effect.promise(() =>
             NodeFSP.rename(w.overleafFor(PROJECT), `${w.overleafFor(PROJECT)}.offline`),
           );
+          // Once the folder was written, the refusal is a result that says so, not an error.
           const refused =
             operation === "sync"
-              ? yield* Effect.flip(
-                  w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
-                )
-              : yield* Effect.flip(w.service.preview({ caller: w.at(w.main), connectionId: id }));
+              ? yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" })
+              : yield* w.service.preview({ caller: w.at(w.main), connectionId: id });
           expect(refused).toMatchObject({
-            _tag: "OverleafSyncRefusedError",
+            _tag: "refused",
             settled: { outcome: "complete" },
           });
-          expect(refused).not.toHaveProperty("retried");
           // The settled sync wrote the folder, and the record took it in.
           expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("after\n");
           expect(yield* w.store.readConnection(id)).toMatchObject({
@@ -1463,6 +1461,54 @@ describe.skipIf(!canApply)("OverleafSync", () => {
           });
         }),
       ),
+  );
+
+  it.live("a sync whose authority changes after it settled still says it settled", () =>
+    run(
+      Effect.gen(function* () {
+        let crash = false;
+        let revokeAfterSettling = false;
+        let revoke: () => void = () => {};
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "after\n" } },
+          at: (point) =>
+            point === "applied" && crash
+              ? Effect.die("stopped")
+              : point === "adopted" && revokeAfterSettling
+                ? Effect.sync(() => {
+                    revokeAfterSettling = false;
+                    revoke();
+                  })
+                : Effect.void,
+        });
+        revoke = () => w.revoke();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        crash = true;
+        expect(
+          (yield* Effect.exit(
+            w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+          ))._tag,
+        ).toBe("Failure");
+        crash = false;
+        revokeAfterSettling = true;
+        expect(
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
+        ).toMatchObject({
+          _tag: "refused",
+          refusal: { reason: "authority-changed" },
+          settled: { outcome: "complete" },
+        });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("after\n");
+      }),
+    ),
   );
 
   it.live("a sync refused while running again after Overleaf moved says it retried", () =>
@@ -1499,11 +1545,16 @@ describe.skipIf(!canApply)("OverleafSync", () => {
           NodeFSP.rename(w.overleafFor(PROJECT), `${w.overleafFor(PROJECT)}.offline`),
         );
         armed = true;
-        const refused = yield* Effect.flip(
-          w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
-        );
-        expect(refused).toMatchObject({ _tag: "OverleafSyncRefusedError", retried: true });
-        expect(refused).not.toHaveProperty("settled");
+        const refused = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s2",
+        });
+        expect(refused).toMatchObject({
+          _tag: "refused",
+          retried: true,
+          settled: null,
+        });
         expect(yield* w.store.readConnection(id)).toMatchObject({
           _tag: "ready",
           document: { activeApply: null, attempts: [{ outcome: "out-of-date" }] },

@@ -353,10 +353,6 @@ export class ScientOverleafOperationError extends Schema.TaggedError<ScientOverl
   {
     reason: Schema.String,
     message: Schema.String,
-    /** A sync refused after its first attempt applied a review whose send was out of date. */
-    retried: Schema.optional(Schema.Boolean),
-    /** A sync or preview refused after it settled an interrupted earlier sync. */
-    settled: Schema.optional(ScientOverleafSettledApply),
   },
   { httpApiStatus: 409 },
 ) {

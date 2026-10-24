@@ -9,7 +9,6 @@ import {
   type ScientOverleafSyncResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import {
@@ -19,9 +18,10 @@ import {
 } from "../../auth/http.ts";
 import type { OverleafAdopted, OverleafPublication } from "./OverleafCoordinator.ts";
 import {
+  OVERLEAF_ACTIONABLE_ERRORS,
   OverleafSync,
+  overleafRefusalReason,
   type OverleafCaller,
-  OverleafSyncRefusedError,
   type OverleafSyncOutcome,
 } from "./OverleafSync.ts";
 import type { ConflictChoice } from "./syncRules.ts";
@@ -33,8 +33,6 @@ import type { ConflictChoice } from "./syncRules.ts";
  */
 type TaggedFailure = { readonly _tag: string; readonly message: string };
 
-const isOverleafSyncRefused = Schema.is(OverleafSyncRefusedError);
-
 /** An interrupted earlier sync that was settled first, as clients see it. */
 const settledApplyView = (
   settled: Pick<OverleafAdopted, "outcome" | "interrupted" | "markerPaths">,
@@ -44,46 +42,17 @@ const settledApplyView = (
   markerPaths: settled.markerPaths,
 });
 
-/** `OverleafOperationActiveError` → `operation-active`; a `reason` field wins when present. */
-const operationError = (error: TaggedFailure) => {
-  const ownReason = (error as { readonly reason?: unknown }).reason;
-  const reason =
-    typeof ownReason === "string"
-      ? ownReason
-      : error._tag
-          .replace(/^Overleaf|Error$/gu, "")
-          .replace(/[A-Z]/gu, (letter, index: number) =>
-            index === 0 ? letter.toLowerCase() : `-${letter.toLowerCase()}`,
-          );
-  // A sync or preview refused after progress says what it already did.
-  const progress = isOverleafSyncRefused(error) ? error : null;
-  return new ScientOverleafOperationError({
-    reason,
+const operationError = (error: TaggedFailure) =>
+  new ScientOverleafOperationError({
+    reason: overleafRefusalReason(error),
     message: error.message,
-    ...(progress?.retried === undefined ? {} : { retried: progress.retried }),
-    ...(progress?.settled === undefined ? {} : { settled: settledApplyView(progress.settled) }),
   });
-};
-
-const ACTIONABLE = new Set([
-  "OverleafSyncRefusedError",
-  "OverleafOperationActiveError",
-  "OverleafConnectionNotReadyError",
-  "OverleafRetainedLimitError",
-  "CheckoutSuspendedError",
-  "CheckoutRecoveryRequiredError",
-  "OverleafStateLockedError",
-  "OverleafConnectionStaleError",
-  "OverleafConnectionUnavailableError",
-  "OverleafRequestReusedError",
-  "OverleafRetentionUnavailableError",
-]);
 
 const mapErrors = <A, E extends TaggedFailure, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.catch(
       (error): Effect.Effect<never, ScientOverleafOperationError | EnvironmentInternalError> =>
-        ACTIONABLE.has(error._tag)
+        OVERLEAF_ACTIONABLE_ERRORS.has(error._tag)
           ? Effect.fail(operationError(error))
           : failEnvironmentInternal("scient_overleaf_operation_failed", error),
     ),

@@ -458,11 +458,12 @@ coordinator's per-connection reservations.
   refusal, says what it did before: `retried` (the first attempt applied a
   review and its send was out of date, so that attempt wrote the folder and
   sent nothing) and `settled` (an interrupted earlier sync it finished first,
-  with how that apply ended). An `OverleafSyncRefusedError` raised after either
-  (a Git failure on the fetch that follows, for one) carries them too, and the
-  route passes them on as optional `retried` / `settled` on
-  `ScientOverleafOperationError`; other failures (state store or file-system
-  defects) do not. Settlement is its own prepare step: the coordinator's
+  with how that apply ended). Once either happened, an actionable refusal
+  (a Git failure on the fetch that follows, authority that changed, a busy
+  connection) comes back as a `refused` result carrying them, not as an error,
+  so nothing hides that the folder was written; before any progress, refusals
+  stay errors. Other failures (state store or file-system defects) stay internal
+  errors. Settlement is its own prepare step: the coordinator's
   prepare that finds an interrupted apply settles it and returns `recovered`
   with how it ended, never fetching or building in the same call; sync and
   preview record it and prepare again. Conflict choices answer one Overleaf tree
