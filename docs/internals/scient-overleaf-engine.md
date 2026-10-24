@@ -1,8 +1,8 @@
 # Overleaf manuscript engine
 
-This is an unmounted server foundation, not an available product feature. No
-routes, UI, automatic synchronization or network publication coordinator uses
-it; the coordinator is being built in steps. Its plan, contract, owner decisions
+The server mounts it behind authenticated routes (`/api/scient/overleaf/v1/*`)
+through `OverleafSync`; no screen or agent tool calls them yet, and nothing
+synchronizes automatically. Its plan, contract, owner decisions
 and status live on the working-documents PR
 [#535](https://github.com/ScientFactory/scient-desktop/pull/535), which is
 closed rather than merged; this file records what is implemented.
@@ -246,7 +246,7 @@ outside it.
 
 ## Coordinator
 
-`OverleafCoordinator` (unmounted until step 5) prepares reviews, applies a
+`OverleafCoordinator` prepares reviews, applies a
 confirmed one and sends its result to Overleaf, recovers an interrupted apply,
 settles earlier sends, and lists and restores kept copies.
 
@@ -373,13 +373,91 @@ A crash after the send leaves the confirm receipt `running` and the attempt
 `unknown`. A repeated request returns that receipt, and recovery settles the
 attempt.
 
+## Service and routes
+
+`OverleafSync` (`OverleafSync.ts`) is what the routes, and later the agent
+tools, call. It owns one coordinator and `OverleafConnections`, which share the
+coordinator's per-connection reservations.
+
+- **Listing.** A connection is listed only for the host project that owns its
+  recorded binding (by binding ID), whatever its folder's path resolves to now.
+- **Authority.** A request names the caller's workspace or thread; the server
+  resolves it. A connection is used only while its checkout still resolves to
+  the binding and authority generation it recorded (otherwise `relink-needed`),
+  and only by callers of the same host project. A caller in another worktree acts
+  on the linked copy, and results say so (`linkedElsewhere`). Both authorities,
+  as resolved when the request began, are checked again with the folders before
+  every change to them and inside send admission (`OverleafAuthorityGuard`); a
+  change there is `authority-changed`, or `not-sent` at the send. Relink is
+  allowed only to the host project that owns the binding the connection
+  recorded, found by its ID even when the old checkout is gone; unknown
+  ownership refuses.
+- **The token.** One Overleaf Git token, in the server secret store
+  (`overleaf-git-token-<site>`). Saving or removing it advances the credential
+  epoch, so reviews built before it are stale, and waits for fetches and pushes
+  in progress. A push runs only with the token its review was built with; a
+  missing or renewed token fails it before Git runs. The token is never
+  returned, logged or put in an error. Git failures leave the service as fixed
+  reasons (`access-denied`, `project-not-found`, `unreachable`,
+  `git-unavailable`, `git-failed`).
+- **Connect** (`OverleafConnections.connect`). It refuses folders that are not
+  real folders inside the checkout, a folder equal to, inside or around another
+  active connection's (compared by the device and inode of each folder up the
+  path, so letter case and Unicode spelling cannot hide a nesting), and a second link of one project in one checkout. It
+  then prepares the retention folder, discovers the single `main`/`master`
+  branch, fetches once and records an empty base. It writes no manuscript file
+  and sends nothing. "Bring in as a new folder" creates the folder, which must be
+  absent or empty, and removes it again if connect fails. Connect checks again,
+  inside registration and before it records anything, that the caller's
+  authority still holds. A connect has a receipt bound to its caller's binding
+  and request: a repeated request returns its connection or recorded refusal,
+  and the same request ID with other input is refused. Disconnect and relink
+  have receipts the same way. A request whose receipt was begun but never
+  finished (the process stopped) is never run again: it answers
+  `request-incomplete`. Connect and relink refuse (`records-unreadable`) while
+  any connection record cannot be read, since it may own the folder. Connecting a folder whose archived
+  connection has the same project reactivates that archive, so its base, kept
+  copies and unresolved sends survive, but only when the archive's recorded
+  binding belongs to the caller's host project; otherwise a new connection
+  starts. Git failures leave as fixed categories
+  (`access-denied`, `project-not-found`, `unreachable`, `no-branch`,
+  `git-unavailable`).
+- **Disconnect** archives the connection; it refuses while an apply or its
+  staged files are unsettled, and rechecks authority before the change. **Relink** records a moved folder or a renewed
+  workspace binding, finds the retention folder by its recorded identity, and
+  keeps the base. It refuses a second link of one project in the target
+  checkout.
+- **Status** reads disk only, and is reused for two seconds while the
+  connection's record is unchanged: availability (`ready`, `recovery-required`,
+  `attention`, `unavailable`, `disconnected`) with every reason, and the
+  folder's changes against the base by Git object ID (changed, deleted, and new
+  files the next sync would send).
+- **Sync** is the product rule: only a conflict stops it. It prepares a review
+  with the default selections; a review whose every conflict has a choice is
+  confirmed at once with its acknowledgements. A review rebuilt because the
+  folder changed is confirmed the same way, up to three times. An out-of-date
+  push starts one new sync. Conflict choices answer one Overleaf tree
+  (`reviewedRemote`); when Overleaf has moved, a review that still has conflicts
+  is shown again without them, and one that has none is confirmed as usual.
+  Per-file decisions (`files.keepOnlyHere`, `files.send`) keep a new file only
+  here or send a skipped or kept-only file; reviews list every new file with its
+  selection and skip reason. The coordinator's confirmations inside a sync use
+  server-made 64-character request IDs, which no client request ID can equal.
+  **Cancel** asks the running sync to stop at its next stage boundary (before
+  it prepares again, or before it applies); an apply or send already started
+  finishes, and its outcome stands. A sync has its own receipt, so a repeated request
+  returns it instead of syncing again. The result names other agents working
+  in the same checkout (a running turn or background work), read before and
+  after the sync, never the caller or its subagents, and `null` when activity
+  could not be read.
+
 ## Remaining integration gates
 
 The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
-defines the remaining work and tracks each step's status.
-Before exposing operations, implement connection ownership/binding checks,
-bounded repository retention and the editor-flush bridge, and derive status (a
-`running` receipt whose operation is no longer live was interrupted). The coordinator must implement cancellation between
+defines the remaining work and tracks each step's status. The editor-save
+request, the agent tools and the screens come next. Derive interrupted
+operations in status (a `running` receipt whose operation is no longer live was
+interrupted). The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
 release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
 in the development app. The exercised Cloud protocol behavior is recorded on #535;
