@@ -403,6 +403,18 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
           });
         }),
       ),
+    remoteHead: (input) =>
+      credentialLock.withPermits(1)(
+        Effect.gen(function* () {
+          const token = yield* readToken;
+          if (token === null || token.length === 0) return yield* credentialUnavailable;
+          return yield* repos.remoteHead({
+            repo: input.repo,
+            branch: input.connection.remote.branch,
+            token,
+          });
+        }),
+      ),
     // Never under another token than the review's: a renewal between send admission and
     // here fails the push before Git runs, and the attempt stays unknown, never resent.
     pushRemote: (input) =>

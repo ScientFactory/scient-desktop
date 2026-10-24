@@ -360,6 +360,15 @@ export interface OverleafCoordinatorOptions {
     readonly connection: OverleafConnectionDocument;
   }) => Effect.Effect<{ readonly commit: string; readonly tree: string }, FetchError>;
   /**
+   * Overleaf's branch head without fetching (one ref advertisement), or null when
+   * the branch is gone. Confirm asks it and fetches only when Overleaf moved since
+   * the review; without it, confirm always fetches.
+   */
+  readonly remoteHead?: (input: {
+    readonly repo: string;
+    readonly connection: OverleafConnectionDocument;
+  }) => Effect.Effect<string | null, FetchError>;
+  /**
    * Sends one commit to Overleaf's branch, never forced. Step 5 supplies the
    * authenticated push, which must not send under another credential than the
    * review was built with (`credentialEpoch`).
@@ -741,6 +750,23 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       ...connection.managedPaths,
       ...connection.forcedConflicts.flat(),
     ]);
+
+  /**
+   * Overleaf's head for a confirm: the reviewed one when a ref check finds Overleaf
+   * has not moved since (its objects were fetched for the review), else a fetch.
+   */
+  const currentRemote = Effect.fn("OverleafCoordinator.currentRemote")(function* (
+    repo: string,
+    connection: OverleafConnectionDocument,
+    reviewed: Pick<OverleafReviewBinding, "remoteCommit" | "remoteTree">,
+  ) {
+    if (
+      options.remoteHead !== undefined &&
+      (yield* options.remoteHead({ repo, connection })) === reviewed.remoteCommit
+    )
+      return { commit: reviewed.remoteCommit, tree: reviewed.remoteTree };
+    return yield* options.fetchRemote({ repo, connection });
+  });
 
   /** Captures the folder and builds the review, reading requested collisions in full. */
   const buildReview = Effect.fn("OverleafCoordinator.buildReview")(function* (input: {
@@ -1698,7 +1724,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               reason: "recovery-required",
             });
           const repo = yield* repositoryFor(first);
-          const remote = yield* options.fetchRemote({ repo, connection: first });
+          const remote = yield* currentRemote(repo, first, review.binding);
           const inSection = yield* barrier.application(folderOf(first), (section) =>
             Effect.gen(function* () {
               const connection = yield* readActive(input.connectionId);

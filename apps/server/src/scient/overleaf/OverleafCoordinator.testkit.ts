@@ -229,8 +229,19 @@ export const world = (input: {
           };
         return head;
       });
+    /** How many times the coordinator fetched Overleaf. */
+    const fetches = { count: 0 };
     const fetchRemote: OverleafCoordinator.OverleafCoordinatorOptions["fetchRemote"] = (fetch) =>
-      real ? repos.fetch({ repo: fetch.repo, branch: "main", token: TOKEN }) : scriptedFetch();
+      Effect.suspend(() => {
+        fetches.count += 1;
+        return real
+          ? repos.fetch({ repo: fetch.repo, branch: "main", token: TOKEN })
+          : scriptedFetch();
+      });
+    const remoteHead: OverleafCoordinator.OverleafCoordinatorOptions["remoteHead"] = (head) =>
+      real
+        ? repos.remoteHead({ repo: head.repo, branch: "main", token: TOKEN })
+        : scriptedFetch().pipe(Effect.map((found) => found.commit));
     const pushRemote: OverleafCoordinator.OverleafCoordinatorOptions["pushRemote"] = (push) =>
       Effect.gen(function* () {
         pushes.push(push.commit);
@@ -284,6 +295,7 @@ export const world = (input: {
       stateRoot,
       exchangeHelper,
       fetchRemote,
+      remoteHead,
       pushRemote,
       gitUrl: () => gitUrl,
       volumeUuid,
@@ -350,6 +362,7 @@ export const world = (input: {
       connection,
       sync,
       pushes,
+      fetches,
       overleafNow,
       /** Scripted: Overleaf's next head. */
       setRemote: (next: Record<string, string>) => {
