@@ -17,9 +17,7 @@ import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { joinHostPath } from "~/components/files/filePath";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { scientEnvironmentFileSurface } from "~/scient/rightPanel/surfaces";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 
 import {
@@ -29,16 +27,21 @@ import {
   readOverleafChanges,
   runOverleafSync,
 } from "./overleafActions";
-import { askAgentOnLinkedCopy } from "./askAgentOnLinkedCopy";
+import { askAgentOnLinkedCopy, openFileOnLinkedCopy } from "./askAgentOnLinkedCopy";
 import { appendToThreadDraft, sameThread, useReadShownThread } from "./overleafThreadTarget";
+import { actionableDecisions, fileDecisionsRequest, OverleafNewFiles } from "./OverleafNewFiles";
 import {
-  actionableDecisions,
-  fileDecisionsRequest,
-  OverleafNewFiles,
+  askAgentMessage,
+  choicesFor,
+  overleafResultView,
+  workspacePathOf,
   type OverleafFileDecision,
-} from "./OverleafNewFiles";
-import { askAgentMessage, choicesFor, overleafResultView, workspacePathOf } from "./overleafModel";
-import { useOverleafWorkspace } from "./overleafStore";
+} from "./overleafModel";
+import {
+  recordOverleafSubmittedDecisions,
+  setOverleafFileDecision,
+  useOverleafWorkspace,
+} from "./overleafStore";
 
 /** A person's choice: the engine's three, plus "Ask the agent", which writes the marks too. */
 export type OverleafReviewChoice = ScientOverleafConflictChoice | "agent";
@@ -153,22 +156,12 @@ export function OverleafReviewPanel(props: {
   }>({ review: "", choices: new Map() });
   // Overleaf moved after the choices were made: the review the conflicts are shown again in.
   const [chooseAgainFor, setChooseAgainFor] = useState<string | null>(null);
-  // Per-file decisions wait for the tab's next Sync, which carries them.
-  const [fileDecisions, setFileDecisions] = useState<ReadonlyMap<string, OverleafFileDecision>>(
-    new Map(),
-  );
-  // The decisions a sync carried when it stopped at a conflict, with the review it returned.
-  const [submittedFor, setSubmittedFor] = useState<{
-    readonly review: string;
-    readonly decisions: ReadonlyMap<string, OverleafFileDecision>;
-  } | null>(null);
+  // Per-file decisions wait for the tab's next Sync, which carries them. They live in the
+  // store, so opening a file (which replaces this tab) keeps them; an applied sync clears them.
+  const fileDecisions = workspace.fileDecisions.get(connectionId) ?? NO_DECISIONS;
+  const submittedFor = workspace.submittedDecisions.get(connectionId) ?? null;
   const decideFile = (path: string, decision: OverleafFileDecision | null) =>
-    setFileDecisions((current) => {
-      const next = new Map(current);
-      if (decision === null) next.delete(path);
-      else next.set(path, decision);
-      return next;
-    });
+    setOverleafFileDecision(environmentId, cwd, connectionId, path, decision);
   const review: ScientOverleafReview | null = shownState?.review ?? null;
   const resultView = last ? overleafResultView(last.result) : null;
   // The review shown is what a sync here applied, rather than one still to run.
@@ -227,20 +220,27 @@ export function OverleafReviewPanel(props: {
   const openReview = () => {
     // Already showing: nothing to open.
   };
-  // A link in another copy of the project: its files open from that copy, never this
-  // checkout's file of the same name.
+  // A link in another copy of the project: its files open in their normal editor in a thread on
+  // that copy, never as this checkout's file of the same name.
   const openFile = (workspacePath: string) => {
     if (connection.linkedHere) {
       props.onOpenFile(workspacePath);
       return;
     }
-    if (!threadRef) return;
-    useRightPanelStore.getState().openScient(
+    void openFileOnLinkedCopy({
+      environmentId,
       threadRef,
-      scientEnvironmentFileSurface({
-        path: joinHostPath(connection.checkoutRoot, workspacePath),
-      }),
-    );
+      connection,
+      handleNewThread,
+      relativePath: workspacePath,
+    }).then((opened) => {
+      if (!opened)
+        toastManager.add({
+          type: "warning",
+          title: "Couldn't open the linked copy's file",
+          description: "Start a thread on the linked copy to open it.",
+        });
+    });
   };
   const conflicts = review?.conflicts ?? [];
   const engineChoices = new Map<string, ScientOverleafConflictChoice>(
@@ -256,10 +256,15 @@ export function OverleafReviewPanel(props: {
       { environmentId, workspaceRoot: cwd, connection, openReview },
       { files: fileDecisionsRequest(pendingDecisions) },
     );
-    if (result?._tag === "synced") setFileDecisions(new Map());
     // Stopped at a conflict: the decisions stay pending, and the review now encodes them.
     if (result?._tag === "needs-decision")
-      setSubmittedFor({ review: reviewIdentity(result.review), decisions: pendingDecisions });
+      recordOverleafSubmittedDecisions(
+        environmentId,
+        cwd,
+        connectionId,
+        reviewIdentity(result.review),
+        pendingDecisions,
+      );
   };
 
   const syncWithChoices = async () => {
@@ -276,12 +281,17 @@ export function OverleafReviewPanel(props: {
     if (result?._tag === "needs-decision") {
       // The fresh review has no choices yet; the old ones belonged to the review they answered.
       setChooseAgainFor(reviewIdentity(result.review));
-      setSubmittedFor({ review: reviewIdentity(result.review), decisions: pendingDecisions });
+      recordOverleafSubmittedDecisions(
+        environmentId,
+        cwd,
+        connectionId,
+        reviewIdentity(result.review),
+        pendingDecisions,
+      );
       return;
     }
     if (result?._tag !== "synced") return;
     setChooseAgainFor(null);
-    setFileDecisions(new Map());
     if (askAgent.length === 0) return;
     const paths = conflictWorkspacePaths(
       connection,

@@ -59,7 +59,8 @@ const { useComposerDraftStore } = await import("~/composerDraftStore");
 const { useRightPanelStore } = await import("~/rightPanelStore");
 const { scopedThreadKey } = await import("@t3tools/client-runtime/environment");
 const { OverleafReviewPanel } = await import("./OverleafReviewPanel");
-const { recordOverleafSync, resetOverleafStoreForTests } = await import("./overleafStore");
+const { readOverleafWorkspace, recordOverleafSync, resetOverleafStoreForTests } =
+  await import("./overleafStore");
 
 const environmentId = EnvironmentId.make("local");
 const threadRef = { environmentId, threadId: ThreadId.make("thread-1") };
@@ -569,6 +570,59 @@ describe("OverleafReviewPanel", () => {
       });
     });
 
+    it("counts an undone decision by the rule, not by the earlier sync's selection", async () => {
+      await using _screen = await readNewFiles();
+      const keep = page.getByRole("button", {
+        name: "Keep only on this computer: figures/plot.pdf",
+      });
+      await keep.click();
+      client.syncOverleaf.mockResolvedValueOnce({
+        ...decision,
+        review: review({
+          reviewId: "r-conflict",
+          conflicts: [
+            { key: "k-main", paths: ["main.tex"], allowed: ["mine", "theirs"], chosen: null },
+          ],
+          // The review leaves the kept file out, as the sync was asked.
+          additions: [
+            { path: "figures/plot.pdf", size: 10, selected: false, skippedBecause: null },
+            { path: "main.aux", size: 10, selected: false, skippedBecause: "build-output" },
+          ],
+          localOnly: [],
+        }),
+      });
+      await page.getByRole("button", { name: "Sync", exact: true }).click();
+      await expect.element(page.getByText("0 will be sent at the next sync")).toBeVisible();
+      // Taking the decision back: the rule sends the file again.
+      await keep.click();
+      await expect.element(page.getByText("1 will be sent", { exact: true })).toBeVisible();
+    });
+
+    it("keeps decisions when the tab closes and opens again, until a sync applies", async () => {
+      {
+        await using _screen = await readNewFiles();
+        await page
+          .getByRole("button", { name: "Keep only on this computer: figures/plot.pdf" })
+          .click();
+      }
+      // Opening a file replaced the tab; it comes back with the decision.
+      await using _again = await render(panel());
+      const keep = page.getByRole("button", {
+        name: "Keep only on this computer: figures/plot.pdf",
+      });
+      await expect.element(keep).toHaveAttribute("aria-pressed", "true");
+      client.syncOverleaf.mockResolvedValue(applied);
+      await page.getByRole("button", { name: "Sync", exact: true }).click();
+      await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+      expect(client.syncOverleaf.mock.calls[0]![1]).toMatchObject({
+        files: { keepOnlyHere: ["figures/plot.pdf"] },
+      });
+      // Applied: the decisions are spent.
+      await expect
+        .poll(() => readOverleafWorkspace(environmentId, "/work/project").fileDecisions.get("c1"))
+        .toBeUndefined();
+    });
+
     it("keeps a new file only on this computer at the next sync", async () => {
       await using _screen = await readNewFiles();
       const keep = page.getByRole("button", {
@@ -643,11 +697,14 @@ describe("OverleafReviewPanel", () => {
     });
   });
 
-  it("opens a linked copy's files from that copy, not this worktree", async () => {
+  it("opens a linked copy's file in its normal editor, in a thread on that copy", async () => {
     reset();
     client.listOverleafConnections.mockResolvedValue({
       connections: [{ ...connection, checkoutRoot: "/work/project", linkedHere: false }],
     });
+    threads.projects = [{ environmentId, id: "p-main", workspaceRoot: "/work/project" }];
+    threads.shellProjectId = "p-main";
+    threads.handle.mockReset().mockResolvedValue({ draftId: "draft-1", threadId: "t-linked" });
     recordOverleafSync(environmentId, "/work/project-wt", "c1", decision);
     const onOpenFile = vi.fn();
     await using _screen = await render(
@@ -659,18 +716,22 @@ describe("OverleafReviewPanel", () => {
         onOpenFile={onOpenFile}
       />,
     );
-    const openedPaths = () =>
-      (
-        useRightPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.surfaces ?? []
-      ).flatMap((surface) =>
-        surface.kind === "scient" && surface.module === "file" ? [surface.path] : [],
+    const linkedThread = { environmentId, threadId: ThreadId.make("t-linked") };
+    const openedIn = (ref: typeof threadRef) =>
+      (useRightPanelStore.getState().byThreadKey[scopedThreadKey(ref)]?.surfaces ?? []).flatMap(
+        (surface) => (surface.kind === "file" ? [surface.relativePath] : []),
       );
     await page.getByRole("region", { name: "To bring in" }).getByText("refs.bib").click();
     await page.getByRole("button", { name: "intro.tex" }).click();
-    expect(onOpenFile).not.toHaveBeenCalled();
-    expect(openedPaths()).toEqual(
-      expect.arrayContaining(["/work/project/paper/refs.bib", "/work/project/paper/intro.tex"]),
+    await expect.poll(() => openedIn(linkedThread)).toEqual(["paper/refs.bib", "paper/intro.tex"]);
+    // The thread is on the linked copy (the project's own folder here)...
+    expect(threads.handle).toHaveBeenCalledWith(
+      { environmentId, projectId: "p-main" },
+      { worktreePath: null, envMode: "local" },
     );
+    // ...and nothing opened as this worktree's file of the same name.
+    expect(onOpenFile).not.toHaveBeenCalled();
+    expect(openedIn(threadRef)).toEqual([]);
   });
 
   describe("Ask the agent from another worktree", () => {

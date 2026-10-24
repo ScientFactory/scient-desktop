@@ -80,6 +80,9 @@ export function folderNameProblem(name: string): string | null {
   return null;
 }
 
+/** A person's per-file decision: keep a new file only here, or send one anyway. */
+export type OverleafFileDecision = "keep" | "send";
+
 export type OverleafChipState = "syncing" | "up-to-date" | "edits" | "decision" | "problem";
 
 export interface OverleafChipView {

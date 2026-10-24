@@ -7,9 +7,7 @@ import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
-import { workspacePathOf } from "./overleafModel";
-
-export type OverleafFileDecision = "keep" | "send";
+import { workspacePathOf, type OverleafFileDecision } from "./overleafModel";
 
 /** Why the rule leaves a new file out, in a few words. */
 function skippedReasonText(reason: string): string {
@@ -37,8 +35,12 @@ function newFilesToSend(
   review: Pick<ScientOverleafReview, "additions">,
   decisions: ReadonlyMap<string, OverleafFileDecision>,
 ): number {
+  // Without a decision a file goes by the rule: sent unless the rule skips it. A review's
+  // `selected` may encode the decision of the sync that produced it, which may since be undone.
   return review.additions.filter((addition) =>
-    decisions.has(addition.path) ? decisions.get(addition.path) === "send" : addition.selected,
+    decisions.has(addition.path)
+      ? decisions.get(addition.path) === "send"
+      : addition.skippedBecause === null,
   ).length;
 }
 

@@ -124,7 +124,8 @@ changes**; with one it offers **Check again**, so after a sync the next sync's n
 decided before they are sent. The chip's **See changes** reads again unless the shown review is
 still to run (a read, or a conflict waiting); the toast's **See changes** shows what that sync did.
 It lists what came in and what is or was sent; a file opens in its editor (for a link in another
-copy of the project, the linked copy's file, opened by its absolute path as a file tab, never
+copy of the project, the linked copy's file in its normal editor, in a new thread on that copy
+started the way Ask the agent starts one, so its conflict marks can be settled and saved; never
 this checkout's file of the same name), and **Show in Diff**
 opens the thread's Diff tab. The engine exposes paths, not contents, so the tab doesn't draw a
 per-file Overleaf diff itself.
@@ -140,8 +141,11 @@ them. Before they are shown or sent, the decisions are reconciled with the revie
 the rule skips (and Overleaf would take) or one kept only here. Rows and rules follow the rule
 (`skippedBecause`), not the review's `selected`, because a review from a sync that carried
 decisions already encodes them: a kept file unselected, a sent one selected, and a sent local-only
-file read like a new one, in neither list. The tab remembers the decisions a sync carried with
-the review it returned at a conflict, shows such a local-only file under **Kept only here**, and
+file read like a new one, in neither list. The decisions, and the ones a sync carried with
+the review it returned at a conflict, live in the store by connection (`fileDecisions`,
+`submittedDecisions`), so opening a file, which replaces the tab, keeps them; a sync that applies
+clears them. The count of files to send takes a file without a decision by the rule, not by the
+review's `selected`. The tab shows such a local-only file under **Kept only here**, and
 keeps sending all of them until a sync applies, so the server never falls back to its defaults. One for a file a fresh read no longer lists or
 allows is dropped, never sent; the rest survive a cancel or a refusal. While a sync runs the
 buttons are disabled: a decision made then wouldn't be in it, yet

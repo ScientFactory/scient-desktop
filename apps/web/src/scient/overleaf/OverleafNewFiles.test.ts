@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { actionableDecisions, type OverleafFileDecision } from "./OverleafNewFiles";
+import { actionableDecisions } from "./OverleafNewFiles";
+import type { OverleafFileDecision } from "./overleafModel";
 
 const review = {
   additions: [

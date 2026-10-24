@@ -11,7 +11,7 @@ import type {
 import { useEffect, useSyncExternalStore } from "react";
 
 import { listOverleafConnections, readOverleafStatus, readOverleafToken } from "./client";
-import { connectionForPath, operationErrorText } from "./overleafModel";
+import { connectionForPath, operationErrorText, type OverleafFileDecision } from "./overleafModel";
 
 export type OverleafConnection = ScientOverleafConnectionList["connections"][number];
 
@@ -49,6 +49,16 @@ export interface OverleafWorkspaceSnapshot {
   readonly previewing: ReadonlySet<string>;
   /** Why the last read of a link's changes failed. */
   readonly previewErrors: ReadonlyMap<string, string>;
+  /**
+   * Per-file decisions waiting for the next sync, by connection. Kept here, not
+   * in the tab, so opening a file (which replaces the tab) doesn't lose them.
+   */
+  readonly fileDecisions: ReadonlyMap<string, ReadonlyMap<string, OverleafFileDecision>>;
+  /** The decisions a sync carried when it stopped at a conflict, with the review it returned. */
+  readonly submittedDecisions: ReadonlyMap<
+    string,
+    { readonly review: string; readonly decisions: ReadonlyMap<string, OverleafFileDecision> }
+  >;
 }
 
 const EMPTY: OverleafWorkspaceSnapshot = {
@@ -62,6 +72,8 @@ const EMPTY: OverleafWorkspaceSnapshot = {
   syncedAt: new Map(),
   previewing: new Set(),
   previewErrors: new Map(),
+  fileDecisions: new Map(),
+  submittedDecisions: new Map(),
 };
 
 const snapshots = new Map<string, OverleafWorkspaceSnapshot>();
@@ -262,7 +274,15 @@ export function recordOverleafSync(
       const versionKey = reviewKeyOf(environmentId, workspaceRoot, connectionId);
       reviewVersions.set(versionKey, (reviewVersions.get(versionKey) ?? 0) + 1);
     }
+    let { fileDecisions, submittedDecisions } = current;
     if (result._tag === "synced") {
+      // Applied: the decisions it carried are spent.
+      const spentDecisions = new Map(fileDecisions);
+      spentDecisions.delete(connectionId);
+      fileDecisions = spentDecisions;
+      const spentSubmitted = new Map(submittedDecisions);
+      spentSubmitted.delete(connectionId);
+      submittedDecisions = spentSubmitted;
       reviews.set(connectionId, {
         review: result.review,
         applied: true,
@@ -276,9 +296,47 @@ export function recordOverleafSync(
       ...current,
       reviews,
       syncedAt,
+      fileDecisions,
+      submittedDecisions,
       lastSync: new Map(current.lastSync).set(connectionId, { result, at }),
     };
   });
+}
+
+/** Makes, changes or takes back one file's decision for the link's next sync. */
+export function setOverleafFileDecision(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+  connectionId: string,
+  path: string,
+  decision: OverleafFileDecision | null,
+): void {
+  update(keyOf(environmentId, workspaceRoot), (current) => {
+    const decisions = new Map(current.fileDecisions.get(connectionId) ?? []);
+    if (decision === null) decisions.delete(path);
+    else decisions.set(path, decision);
+    return {
+      ...current,
+      fileDecisions: new Map(current.fileDecisions).set(connectionId, decisions),
+    };
+  });
+}
+
+/** A sync carried `decisions` and stopped at a conflict with the review `review` identifies. */
+export function recordOverleafSubmittedDecisions(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+  connectionId: string,
+  review: string,
+  decisions: ReadonlyMap<string, OverleafFileDecision>,
+): void {
+  update(keyOf(environmentId, workspaceRoot), (current) => ({
+    ...current,
+    submittedDecisions: new Map(current.submittedDecisions).set(connectionId, {
+      review,
+      decisions,
+    }),
+  }));
 }
 
 /**
