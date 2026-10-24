@@ -15,7 +15,7 @@ uncommitted work.
 
 ## Install Once
 
-From any up-to-date checkout of this repository, with Node 24 active:
+From any up-to-date checkout of this repository, with the Node version pinned in its `package.json` active:
 
 ```sh
 pnpm dev:app:stable install

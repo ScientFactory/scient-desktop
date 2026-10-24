@@ -1235,10 +1235,12 @@ function uninstallApp() {
 }
 
 async function main() {
-  const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "", 10);
-  if (nodeMajor !== 24) {
+  const requiredNodeVersion = JSON.parse(
+    NodeFS.readFileSync(NodePath.join(repoRoot, "package.json"), "utf8"),
+  ).engines.node;
+  if (process.versions.node !== requiredNodeVersion) {
     throw new Error(
-      `Scient development requires Node 24; received ${process.version}. Activate the repository's Node 24 runtime and retry.`,
+      `Scient development requires Node ${requiredNodeVersion}; received ${process.version}. Activate the repository's declared runtime and retry.`,
     );
   }
   const [command, ...rawFlags] = process.argv.slice(2);

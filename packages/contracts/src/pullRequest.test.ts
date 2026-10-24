@@ -2,7 +2,14 @@ import { SourceControlProviderKind } from "./sourceControl.ts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { PullRequestDetail, PullRequestListResult, pullRequestHostOf } from "./pullRequest.ts";
+import {
+  PullRequestDetail,
+  PullRequestFilterOptions,
+  PullRequestFilterOptionsInput,
+  PullRequestListResult,
+  pullRequestHostOf,
+  resolvePullRequestAuthorFilter,
+} from "./pullRequest.ts";
 
 const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestDetail));
 
@@ -88,6 +95,44 @@ describe("PullRequestListResult", () => {
   });
 });
 
+describe("PullRequestFilterOptions", () => {
+  it("round-trips hosted labels and authors through the RPC JSON codec", () => {
+    const options: typeof PullRequestFilterOptions.Type = {
+      labels: [{ name: "bug", color: "d73a4a" }],
+      authors: [
+        {
+          login: "octocat",
+          name: "Octocat",
+          avatarUrl: "https://avatars.example/octocat.png",
+        },
+      ],
+      truncated: true,
+    };
+    const codec = Schema.toCodecJson(PullRequestFilterOptions);
+
+    expect(Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(options))).toStrictEqual(
+      options,
+    );
+  });
+
+  it("bounds option searches to 100 project IDs and 100 query characters", () => {
+    const decode = Schema.decodeUnknownSync(PullRequestFilterOptionsInput);
+
+    expect(() =>
+      decode({
+        kind: "labels",
+        projectIds: Array.from({ length: 101 }, (_, index) => `project-${index}`),
+      }),
+    ).toThrow();
+    expect(() =>
+      decode({
+        kind: "authors",
+        query: "x".repeat(101),
+      }),
+    ).toThrow();
+  });
+});
+
 describe("PullRequestCapabilities", () => {
   const base = {
     diff: true,
@@ -142,5 +187,22 @@ describe("PullRequestCapabilities", () => {
       requestReviewers: true,
     });
     expect(decoded.title).toBe(detail.title);
+  });
+});
+
+describe("resolvePullRequestAuthorFilter", () => {
+  it("reads me as the signed-in account on the host", () => {
+    expect(resolvePullRequestAuthorFilter("me", "bilal")).toBe("bilal");
+    expect(resolvePullRequestAuthorFilter(" @Me ", "bilal")).toBe("bilal");
+  });
+
+  it("keeps me as a literal login when the host has no viewer", () => {
+    expect(resolvePullRequestAuthorFilter("me", null)).toBe("me");
+    expect(resolvePullRequestAuthorFilter("@me", " ")).toBe("@me");
+  });
+
+  it("passes any other login through trimmed", () => {
+    expect(resolvePullRequestAuthorFilter(" ana ", "bilal")).toBe("ana");
+    expect(resolvePullRequestAuthorFilter("meredith", "bilal")).toBe("meredith");
   });
 });

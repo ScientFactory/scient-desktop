@@ -1,3 +1,4 @@
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -61,6 +62,49 @@ afterEach(() => {
   for (const root of roots.splice(0)) {
     NodeFS.rmSync(root, { recursive: true, force: true });
   }
+});
+
+describe("local dev app declared Node runtime", () => {
+  function runRuntimeCheck(requiredVersion, command) {
+    const { paths } = fixture();
+    NodeFS.mkdirSync(paths.root, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(paths.root, "package.json"),
+      JSON.stringify({ engines: { node: requiredVersion } }),
+    );
+    const result = NodeChildProcess.spawnSync(
+      process.execPath,
+      [NodePath.join(import.meta.dirname, "local-dev-app.mjs"), command],
+      {
+        encoding: "utf8",
+        env: {
+          HOME: NodePath.dirname(paths.applicationsDir),
+          PATH: process.env.PATH,
+          SCIENT_DEV_APP_CHECKOUT: paths.root,
+        },
+      },
+    );
+    return { paths, result };
+  }
+
+  it("admits the checkout's declared runtime for status", () => {
+    const { paths, result } = runRuntimeCheck(process.versions.node, "status");
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.include(result.stdout, paths.root);
+    assert.isFalse(NodeFS.existsSync(paths.runnerDir));
+    assert.isFalse(NodeFS.existsSync(paths.appBundlePath));
+  });
+
+  it("rejects a different runtime before starting anything", () => {
+    const { paths, result } = runRuntimeCheck("0.0.0", "start");
+
+    assert.equal(result.status, 1);
+    assert.include(result.stderr, "Node 0.0.0");
+    assert.include(result.stderr, process.version);
+    assert.isFalse(NodeFS.existsSync(paths.runnerDir));
+    assert.isFalse(NodeFS.existsSync(paths.appBundlePath));
+  });
 });
 
 describe("local dev app installation", () => {
