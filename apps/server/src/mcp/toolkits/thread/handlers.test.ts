@@ -55,6 +55,7 @@ const tasks = [task(projectId), task(otherProjectId)];
 const matches = [projectId, otherProjectId].map((id) => ({
   projectId: id,
   threadId: ThreadId.make(`result:${id}`),
+  title: `Thread in ${id}`,
   source: "assistant" as const,
   snippet: id === projectId ? "Caller project result" : "Other project's private result",
   messageCreatedAt: null,
@@ -128,10 +129,16 @@ const makeHarness = Effect.fn("threadToolPolicy.makeHarness")(function* (
         }),
     }),
     Layer.mock(ThreadSearch.ThreadSearch)({
-      search: () =>
+      // The service applies the project filter in its query, as searchThreads does.
+      searchThreads: (query) =>
         Effect.sync(() => {
           calls.search++;
-          return { matches };
+          return {
+            matches:
+              query.projectId === undefined
+                ? matches
+                : matches.filter((match) => match.projectId === query.projectId),
+          };
         }),
     }),
   );

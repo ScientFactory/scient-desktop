@@ -11745,6 +11745,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 source: "assistant",
                 snippet: "Search reached the final response.",
                 messageCreatedAt: "2026-06-01T00:01:00.000Z",
+                // Upstream's indexed search ranks matches: an exact phrase, one hit.
+                quality: 1.25,
+                hits: 1,
+                messageId: MessageId.make("assistant-0"),
               },
             ]);
           }),

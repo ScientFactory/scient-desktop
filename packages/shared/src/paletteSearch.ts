@@ -913,7 +913,11 @@ export interface SearchMatchHint {
 // Most threads' branches start with the app's own worktree prefix ("t3/", and
 // "t3code/" before it), so "t3 connect" would match nearly every thread.
 // Only before more text, so typing "t3/" does not empty the list for a keystroke.
-const WORKTREE_BRANCH_PREFIX_PATTERN = new RegExp(`^(?:${WORKTREE_BRANCH_PREFIX}|t3code)/(?=\\S)`);
+// SCIENT-FORK:START — Scient's prefix is "scient/"; its older worktrees used "t3/".
+const WORKTREE_BRANCH_PREFIX_PATTERN = new RegExp(
+  `^(?:${WORKTREE_BRANCH_PREFIX}|t3|t3code)/(?=\\S)`,
+);
+// SCIENT-FORK:END
 
 function searchableBranch(branch: string | null | undefined): string | null {
   return branch ? branch.replace(WORKTREE_BRANCH_PREFIX_PATTERN, "") : null;

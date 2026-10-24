@@ -1,8 +1,8 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { act } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+
+import { render } from "../../../test/render";
 
 const shell = vi.hoisted(() => ({
   current: undefined as
@@ -25,31 +25,23 @@ vi.mock("@t3tools/client-runtime/state/thread-search", () => ({ claimThreadOpen:
 const environmentId = EnvironmentId.make("environment-open");
 const threadId = ThreadId.make("thread-open");
 
-async function mount() {
-  const { ThreadOpenRecorder } = await import("./ThreadOpenRecorder");
-  const container = document.createElement("div");
-  const root = createRoot(container);
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  await act(async () =>
-    root.render(<ThreadOpenRecorder threadRef={scopeThreadRef(environmentId, threadId)} />),
-  );
-  return { [Symbol.dispose]: () => act(() => root.unmount()) };
-}
-
-afterEach(() => {
+async function renderRecorder(lastVisitedAt: string | null) {
   visit.mockClear();
   claim.mockClear();
-  vi.unstubAllGlobals();
-});
-
-it("records an open at the current watermark, never at the thread's latest activity", async () => {
   shell.current = {
     environmentId,
     id: threadId,
-    lastVisitedAt: "2026-10-24T10:00:00.000Z",
+    lastVisitedAt,
     updatedAt: "2026-10-24T12:00:00.000Z",
   };
-  using _mounted = await mount();
+  const { ThreadOpenRecorder } = await import("./ThreadOpenRecorder");
+  return render(<ThreadOpenRecorder threadRef={scopeThreadRef(environmentId, threadId)} />, {
+    router: false,
+  });
+}
+
+it("records an open at the current watermark, never at the thread's latest activity", async () => {
+  await using _screen = await renderRecorder("2026-10-24T10:00:00.000Z");
   expect(claim).toHaveBeenCalledOnce();
   expect(visit).toHaveBeenCalledWith({
     environmentId,
@@ -58,13 +50,7 @@ it("records an open at the current watermark, never at the thread's latest activ
 });
 
 it("keeps a never-read thread's open local", async () => {
-  shell.current = {
-    environmentId,
-    id: threadId,
-    lastVisitedAt: null,
-    updatedAt: "2026-10-24T12:00:00.000Z",
-  };
-  using _mounted = await mount();
+  await using _screen = await renderRecorder(null);
   expect(claim).toHaveBeenCalledOnce();
   expect(visit).not.toHaveBeenCalled();
 });

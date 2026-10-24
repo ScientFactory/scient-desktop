@@ -167,6 +167,21 @@ describe("scoreThreadSearch", () => {
     expect(scoreThreadSearch(foldSearchQuery("t3/cmdk"), subject, NOW)).not.toBeNull();
   });
 
+  // SCIENT-FORK:START — Scient worktrees use "scient/" (older ones "t3/").
+  it("ranks a title holding the words above Scient's own branch prefix", () => {
+    const busy = { activityAt: NOW, opens: { openedAt: NOW, score: 6, picks: [] } };
+    expect(
+      rankTitles("scient connect", [
+        thread("Diagnose Connect provisioning failures", {
+          ...busy,
+          branch: "scient/diagnose-connect",
+        }),
+        thread("Scient Connect Tunnel Lifecycle Review"),
+      ])[0],
+    ).toBe("Scient Connect Tunnel Lifecycle Review");
+  });
+  // SCIENT-FORK:END
+
   it("ranks a title holding the words above the app's own branch prefix and project name", () => {
     const busy = { activityAt: NOW, opens: { openedAt: NOW, score: 6, picks: [] } };
     expect(
