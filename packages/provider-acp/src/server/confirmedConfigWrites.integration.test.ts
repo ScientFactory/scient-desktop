@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -89,8 +90,8 @@ process.stdin.on("data", (data) => {
     else if (message.method === "session/set_config_option") {
       writes.push({ id: message.id, configId: message.params.configId, value: message.params.value });
       fs.appendFileSync(process.env.ACP_WRITES, message.params.value + "\n");
-      process.stderr.write("fixture:write-received\n");
       void run(writes.length - 1);
+      process.stderr.write("fixture:write-received\n");
     }
   }
 });
@@ -176,7 +177,7 @@ const scriptedRuntime = (
       awaitPromptReceived: Deferred.await(promptReceived),
       awaitWriteReceived: Deferred.await(writeReceived),
       awaitChildExit: Effect.suspend(() =>
-        childExit ? Fiber.await(childExit).pipe(Effect.asVoid) : Effect.die("Missing native child"),
+        childExit ? Fiber.await(childExit) : Effect.die("Missing native child"),
       ),
     };
   });
@@ -195,7 +196,11 @@ const currentValue = (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"], i
   );
 const live = <A, E>(name: string, body: () => Effect.Effect<A, E, never>) => it.live(name, body);
 const scoped = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  effect.pipe(
+    Effect.scoped,
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(HostProcess.Platform, HostProcess.Platform.defaultValue()),
+  );
 
 const NO_ANSWER =
   'The agent did not answer the change of autonomy_level to "auto-high" within 0.4 s, so its session was closed.';
@@ -504,7 +509,9 @@ describe("confirmed config writes", () => {
         expect((failure(second.exit) as Error | undefined)?.message).toBe(
           'The change of model to "b" was interrupted before the agent reported the applied value, so its session was closed.',
         );
-        yield* runtime.awaitChildExit;
+        const childExit = yield* runtime.awaitChildExit;
+        // Windows force-terminates SIGTERM recipients without running their JavaScript handlers.
+        if ((yield* HostProcess.Platform) !== "win32") expect(childExit).toEqual(Exit.succeed(0));
         expect(runtime.writesReceived()).toEqual(["b"]);
       }),
     ),
