@@ -71,9 +71,9 @@ describe("dependency recovery presentation", () => {
     expect(markup).not.toContain("reports pandas installed");
   });
   it.each([
+    // The guessing rules are computeDependencyRecovery.test.ts's; one row
+    // proves this view shows nothing when that model declines.
     ["python", "No module named 'project_utils'"],
-    ["python", "No module named 'pandas.compat'"],
-    ["matlab", "No module named 'pandas'"],
   ])("does not suggest an environment change for %s / %s", (language, message) => {
     const markup = renderDiagnostic(language, message);
     expect(markup).not.toContain("Choose Python environment");
