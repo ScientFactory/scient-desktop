@@ -22,6 +22,7 @@ import {
   OverleafSync,
   overleafRefusalReason,
   type OverleafCaller,
+  type OverleafEditorUnsavedError,
   type OverleafSyncOutcome,
 } from "./OverleafSync.ts";
 import type { ConflictChoice } from "./syncRules.ts";
@@ -46,6 +47,14 @@ const operationError = (error: TaggedFailure) =>
   new ScientOverleafOperationError({
     reason: overleafRefusalReason(error),
     message: error.message,
+    // An editor that could not save is named, so the screen can say which.
+    ...(error._tag === "OverleafEditorUnsavedError"
+      ? {
+          paths: (error as unknown as OverleafEditorUnsavedError).failures.map(
+            (failure) => failure.path,
+          ),
+        }
+      : {}),
   });
 
 const mapErrors = <A, E extends TaggedFailure, R>(effect: Effect.Effect<A, E, R>) =>

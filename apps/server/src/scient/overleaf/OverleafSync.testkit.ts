@@ -21,6 +21,7 @@ import {
   fileExchangeTestHelper,
   filePublicationTestHelper,
 } from "../workspace/fileExchange.testkit.ts";
+import { OverleafEditorSave, type OverleafEditorSaveResult } from "./OverleafEditorSave.ts";
 import * as OverleafGitExecutor from "./OverleafGitExecutor.ts";
 import * as OverleafRepository from "./OverleafRepository.ts";
 import * as OverleafStateStore from "./OverleafStateStore.ts";
@@ -223,6 +224,18 @@ export const overleafSyncWorld = (input?: {
       remove: () => Effect.sync(() => void secretValues.delete("token")),
     });
 
+    // The editor-save request: every window saves, unless a test says otherwise.
+    let editorResult: OverleafEditorSaveResult = { _tag: "saved" };
+    let whileSaving: Effect.Effect<void> = Effect.void;
+    const editorSaves: Array<{ readonly checkoutRoot: string; readonly folder: string }> = [];
+    const editors = OverleafEditorSave.of({
+      saveFolder: (input) =>
+        Effect.suspend(() => {
+          editorSaves.push({ checkoutRoot: input.checkoutRoot, folder: input.folder });
+          return Effect.as(whileSaving, editorResult);
+        }),
+    });
+
     let threads: ReadonlyArray<OverleafTestThread> | null = [];
     let onActivity: () => Effect.Effect<void> = () => Effect.void;
     const service = yield* makeOverleafSync({
@@ -240,6 +253,7 @@ export const overleafSyncWorld = (input?: {
       Effect.provideService(OverleafStateStore.OverleafStateStore, store),
       Effect.provideService(OverleafRepository.OverleafRepository, repos),
       Effect.provideService(WorkspaceApplier, applier),
+      Effect.provideService(OverleafEditorSave, editors),
     );
     const at = (workspaceRoot: string): OverleafCaller => ({ _tag: "workspace", workspaceRoot });
     return {
@@ -255,6 +269,16 @@ export const overleafSyncWorld = (input?: {
       overleafFor,
       bindings,
       threadRoots,
+      /** Each folder whose open editors the service asked every window to save, in order. */
+      editorSaves,
+      /** What the next requests to save editors answer, and what runs while they save. */
+      setEditorSave: (
+        next: OverleafEditorSaveResult,
+        during: Effect.Effect<void> = Effect.void,
+      ) => {
+        editorResult = next;
+        whileSaving = during;
+      },
       setThreads: (next: ReadonlyArray<OverleafTestThread> | null) => {
         threads = next;
       },

@@ -1,6 +1,6 @@
 /**
  * The Overleaf tools against a fake service, where real Git is not the point:
- * the editor save that comes first, errors as fixed categories, and the token
+ * what an editor that could not save says, errors as fixed categories, and the token
  * flow through a secretRef. The real service runs in handlers.git.test.ts.
  */
 import { EnvironmentId, SecretRef, SecretRequestError, ThreadId } from "@t3tools/contracts";
@@ -10,17 +10,13 @@ import * as Schema from "effect/Schema";
 
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
-  OverleafEditorSave,
-  type OverleafEditorSaveResult,
-} from "../../../scient/overleaf/OverleafEditorSave.ts";
-import { recordingEditorSave } from "../../../scient/overleaf/OverleafEditorSave.testkit.ts";
-import {
   OverleafConnectionNotReadyError,
   OverleafOperationActiveError,
 } from "../../../scient/overleaf/OverleafCoordinator.ts";
 import { OverleafGitError } from "../../../scient/overleaf/OverleafGitExecutor.ts";
 import { OverleafRepositoryError } from "../../../scient/overleaf/OverleafRepository.ts";
 import {
+  OverleafEditorUnsavedError,
   OverleafSync,
   OverleafSyncRefusedError,
   type OverleafSyncShape,
@@ -36,7 +32,7 @@ import {
   overleafSyncForInvocation,
   overleafTokenForInvocation,
 } from "./handlers.ts";
-import { ScientOverleafToolkit } from "./tools.ts";
+import { ScientOverleafToolError, ScientOverleafToolkit } from "./tools.ts";
 
 const ENVIRONMENT = EnvironmentId.make("environment-overleaf-tools");
 const THREAD = ThreadId.make("thread-overleaf-tools");
@@ -101,12 +97,11 @@ const fakeOverleaf = (overrides: Partial<OverleafSyncShape>): OverleafSyncShape 
   });
 
 const provide =
-  (overleaf: OverleafSyncShape, saver = recordingEditorSave({ _tag: "saved" }).service) =>
+  (overleaf: OverleafSyncShape) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(AgentInvocationContext.AgentInvocationContext, invocation),
       Effect.provideService(OverleafSync, overleaf),
-      Effect.provideService(OverleafEditorSave, saver),
     );
 
 const encodeToken = Schema.encodeSync(
@@ -126,61 +121,52 @@ const infersFromReplan = (line: string) =>
   );
 
 describe("Overleaf tool handlers", () => {
-  it.effect("a failed editor save stops every call that may write before anything changes", () =>
-    Effect.gen(function* () {
-      let changed = 0;
-      const overleaf = fakeOverleaf({
-        sync: () => Effect.sync(() => changed++) as never,
-        restoreKept: () => Effect.sync(() => changed++) as never,
-        // Preparing and recovering can finish an interrupted apply, which writes.
-        preview: () => Effect.sync(() => changed++) as never,
-        recover: () => Effect.sync(() => changed++) as never,
-        keptCopies: () => Effect.succeed([]),
-      });
-      const outcomes: ReadonlyArray<OverleafEditorSaveResult> = [
-        {
-          _tag: "failed",
+  it.effect(
+    "an editor the service could not save is named, with the window that did not answer",
+    () =>
+      Effect.gen(function* () {
+        // The service saves the folder's open editors before any operation that may
+        // write it; the tool only says what stopped it.
+        const unsaved = new OverleafEditorUnsavedError({
           failures: [
             { path: "paper/main.tex", reason: "unconverted-input" },
             { path: "paper/intro.tex", reason: "save-failed" },
           ],
-          unanswered: [],
-        },
-        { _tag: "failed", failures: [], unanswered: [{ window: "window-2", reason: "timeout" }] },
-        {
-          _tag: "failed",
-          failures: [{ path: "paper", reason: "folder-unavailable" }],
-          unanswered: [],
-        },
-      ];
-      for (const outcome of outcomes) {
-        const saver = recordingEditorSave(outcome);
-        const synced = yield* Effect.flip(
-          overleafSyncForInvocation({ connectionId: "c-1" }).pipe(provide(overleaf, saver.service)),
-        );
-        expect(synced).toMatchObject({ code: "editor-save-failed" });
-        expect(synced.message).toContain("Nothing was synced.");
-        expect(saver.calls).toEqual([{ checkoutRoot: "/projects/main", folder: "paper" }]);
-        const restored = yield* Effect.flip(
+          unanswered: [{ window: "window-2", reason: "timeout" }],
+        });
+        const overleaf = fakeOverleaf({
+          sync: () => Effect.fail(unsaved) as never,
+          restoreKept: () => Effect.fail(unsaved) as never,
+          preview: () => Effect.fail(unsaved) as never,
+          recover: () => Effect.fail(unsaved) as never,
+          keptCopies: () => Effect.succeed([]),
+        });
+        const calls: ReadonlyArray<
+          Effect.Effect<
+            unknown,
+            ScientOverleafToolError,
+            AgentInvocationContext.AgentInvocationContext | OverleafSync
+          >
+        > = [
+          overleafSyncForInvocation({ connectionId: "c-1" }),
           overleafKeptCopiesForInvocation({
             connectionId: "c-1",
             restore: { applyId: "a", kept: "k", keptRevision: "r", currentRevision: null },
-          }).pipe(provide(overleaf, saver.service)),
-        );
-        expect(restored).toMatchObject({ code: "editor-save-failed" });
-        expect(restored.message).toContain("Nothing was restored.");
-        const previewed = yield* Effect.flip(
-          overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
-            provide(overleaf, saver.service),
-          ),
-        );
-        expect(previewed).toMatchObject({ code: "editor-save-failed" });
-        const recovered = yield* Effect.flip(
-          overleafManageForInvocation({ connectionId: "c-1", action: "recover" }).pipe(
-            provide(overleaf, saver.service),
-          ),
-        );
-        expect(recovered).toMatchObject({ code: "editor-save-failed" });
+          }),
+          overleafPreviewForInvocation({ connectionId: "c-1" }),
+          overleafManageForInvocation({ connectionId: "c-1", action: "recover" }),
+        ];
+        for (const call of calls) {
+          const failed = yield* Effect.flip(Effect.asVoid(call).pipe(provide(overleaf)));
+          expect(failed).toMatchObject({
+            code: "editor-save-failed",
+            paths: ["paper/main.tex", "paper/intro.tex"],
+          });
+          // The agent learns which file failed and why, and which window did not answer.
+          expect(failed.message).toContain("paper/main.tex (unconverted-input)");
+          expect(failed.message).toContain("window window-2 (timeout)");
+          expect(failed.message).toContain("Nothing was changed.");
+        }
         // Connecting still links; only its first-sync preview is left out, and says why.
         const connected = yield* overleafConnectForInvocation({
           project: "0123456789abcdef01234567",
@@ -195,33 +181,15 @@ describe("Overleaf tool handlers", () => {
                   connection: summary,
                   reconnected: false,
                 }) as never,
-              preview: () => Effect.sync(() => changed++) as never,
+              preview: () => Effect.fail(unsaved) as never,
             }),
-            saver.service,
           ),
         );
         expect(connected.firstSync).toBeNull();
         expect(
           connected.lines.some((line) => line.startsWith("The first sync could not be previewed")),
         ).toBe(true);
-      }
-      const first = yield* Effect.flip(
-        overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
-          provide(overleaf, recordingEditorSave(outcomes[0]!).service),
-        ),
-      );
-      // The agent learns which file failed, and why.
-      expect(first.message).toContain("paper/main.tex (unconverted-input)");
-      // A window that did not answer is named too.
-      const silent = yield* Effect.flip(
-        overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
-          provide(overleaf, recordingEditorSave(outcomes[1]!).service),
-        ),
-      );
-      expect(silent.message).toContain("window window-2 (timeout)");
-      expect(first.paths).toEqual(["paper/main.tex", "paper/intro.tex"]);
-      expect(changed).toBe(0);
-    }),
+      }),
   );
 
   it.effect("maps failures to fixed categories, never Git's text", () =>
@@ -323,7 +291,6 @@ describe("Overleaf tool handlers", () => {
           A,
           E,
           | OverleafSync
-          | OverleafEditorSave
           | SecretRequests
           | WorkspaceBindingResolver
           | AgentInvocationContext.AgentInvocationContext
@@ -473,53 +440,6 @@ describe("Overleaf tool handlers", () => {
     }),
   );
 
-  it.effect(
-    "names the saved folder, and when a relink moved it, saves the new one and retries once",
-    () =>
-      Effect.gen(function* () {
-        const folders = ["paper", "papers/paper"];
-        let listed = 0;
-        const asked: unknown[] = [];
-        const overleaf = fakeOverleaf({
-          list: () => Effect.sync(() => [{ ...summary, folder: folders[Math.min(listed++, 1)]! }]),
-          sync: (input: { readonly savedFolder?: unknown }) =>
-            Effect.suspend(() => {
-              asked.push(input.savedFolder);
-              return asked.length === 1
-                ? Effect.fail(new OverleafSyncRefusedError({ reason: "folder-changed" }))
-                : Effect.succeed({ _tag: "unsettled", reason: "folder-kept-changing" });
-            }) as never,
-        } as Partial<OverleafSyncShape>);
-        const saver = recordingEditorSave({ _tag: "saved" });
-        const synced = yield* overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
-          provide(overleaf, saver.service),
-        );
-        expect(synced.result._tag).toBe("unsettled");
-        expect(saver.calls.map((call) => call.folder)).toEqual(["paper", "papers/paper"]);
-        expect(asked).toEqual([
-          { checkoutRoot: "/projects/main", folder: "paper" },
-          { checkoutRoot: "/projects/main", folder: "papers/paper" },
-        ]);
-        expect(synced.link.folder).toBe("papers/paper");
-
-        // A second move is reported, not chased.
-        let tries = 0;
-        const restless = fakeOverleaf({
-          sync: () =>
-            Effect.suspend(() => {
-              tries++;
-              return Effect.fail(new OverleafSyncRefusedError({ reason: "folder-changed" }));
-            }) as never,
-        });
-        const moved = yield* Effect.flip(
-          overleafSyncForInvocation({ connectionId: "c-1" }).pipe(provide(restless)),
-        );
-        expect(moved.code).toBe("connection-changed");
-        expect(moved.message).toContain("Nothing was synced.");
-        expect(tries).toBe(2);
-      }),
-  );
-
   it.effect("says a send-related change happened only when Overleaf accepted the send", () =>
     Effect.gen(function* () {
       const review = {
@@ -664,71 +584,6 @@ describe("Overleaf tool handlers", () => {
       expect((yield* linesFor("attention", { markerPaths: ["main.tex"] }))[0]).toContain(
         "files have conflict marks",
       );
-    }),
-  );
-
-  it.effect("a restore or preview after a relink reports the folder it ran in", () =>
-    Effect.gen(function* () {
-      const moved = {
-        ...summary,
-        checkoutRoot: "/projects/main-2",
-        folder: "moved-paper",
-        linkedHere: false,
-      };
-      // The first `staleLists` lookups see `paper`; the relink lands before the retry.
-      const relinking = (operation: Partial<OverleafSyncShape>, staleLists: number) => {
-        let listed = 0;
-        let calls = 0;
-        return fakeOverleaf({
-          list: () => Effect.sync(() => [++listed <= staleLists ? summary : moved]),
-          keptCopies: () => Effect.succeed([]),
-          ...Object.fromEntries(
-            Object.entries(operation).map(([name, succeed]) => [
-              name,
-              () =>
-                Effect.suspend(() =>
-                  ++calls === 1
-                    ? Effect.fail(new OverleafSyncRefusedError({ reason: "folder-changed" }))
-                    : (succeed as () => Effect.Effect<unknown>)(),
-                ),
-            ]),
-          ),
-        } as Partial<OverleafSyncShape>);
-      };
-      const restored = yield* overleafKeptCopiesForInvocation({
-        connectionId: "c-1",
-        restore: { applyId: "a", kept: "k", keptRevision: "r", currentRevision: null },
-      }).pipe(
-        // The restore looks the link up once before its save, then once per attempt.
-        provide(
-          relinking(
-            {
-              restoreKept: () =>
-                Effect.succeed({ _tag: "restored", adopted: { outcome: "complete" } }),
-            } as never,
-            2,
-          ),
-        ),
-      );
-      expect(restored.restored).toBe("restored");
-      expect(restored.link).toMatchObject({
-        folder: "moved-paper",
-        checkoutRoot: "/projects/main-2",
-      });
-      expect(restored.lines[0]).toContain("the copy of the project at /projects/main-2");
-
-      const previewed = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
-        provide(
-          relinking(
-            {
-              preview: () => Effect.succeed({ _tag: "refused", refusal: { reason: "walk-limit" } }),
-            } as never,
-            1,
-          ),
-        ),
-      );
-      expect(previewed.link.folder).toBe("moved-paper");
-      expect(previewed.lines[0]).toContain("the copy of the project at /projects/main-2");
     }),
   );
 

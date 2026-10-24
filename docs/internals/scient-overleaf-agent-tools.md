@@ -60,8 +60,8 @@ earlier receipt instead of running again; a retried tool call is a new request.
   no links) and sets `suggestNewFolder` when it holds five or more code or data
   files, or any when the folder is the project's top. That is information, not
   a step (pr-c-design.md section 3).
-- **Sync**, **restore**, **preview** and **recover** look the link up in the project's list first, so the
-  editor save names the linked checkout and folder; a link the list leaves out
+- **Sync**, **restore**, **preview** and **recover** look the link up in the project's list first, so
+  the result names the linked copy; a link the list leaves out
   fails with the service's own reason (relink, another project, disconnected).
 - **Relink** records the folder in the calling thread's copy.
 - **Files** (pr-c-design.md section 5) are fields on preview and sync, not a
@@ -115,26 +115,22 @@ earlier receipt instead of running again; a retried tool call is a new request.
 ## Saving editors first
 
 Every call that may write the folder saves its open editors first: sync, a
-kept-copy restore, and every preview, connect's first-sync preview and recover,
-because preparing or recovering can finish an interrupted apply (and Undo, when it
-lands). They call `OverleafEditorSave`
-(`apps/server/src/scient/overleaf/OverleafEditorSave.ts`) with the linked
-checkout and folder before anything reads the folder, then pass that folder to the
-service as `savedFolder`. The service holds the connection and refuses with
-`folder-changed` if a relink moved the link meanwhile; the tool then saves the new
-folder and tries once more, and reports a second move as `connection-changed`. Anything but `saved` stops
-the tool with `editor-save-failed` before a file changes, naming each file a
+kept-copy restore, undo, and every preview, connect's first-sync preview and
+recover, because preparing or recovering can finish an interrupted apply. The
+tools don't do it themselves: `OverleafSync` does, for the tools and the screens
+alike, holding the connection from the save to the end of the operation (see
+the engine document). A failed save comes back as `OverleafEditorUnsavedError`,
+which the tool reports as `editor-save-failed` with `paths`, naming each file a
 window could not save and why, and each window that did not answer (timed out
-or went away). `saved` also covers "no window is open". The editor-save request
-(`EditorFlush.flushFolder`) maps onto it directly: no window open or every
-window saved is `saved`; any failed or unanswered window is `failed`.
+or went away); nothing was changed. No window open counts as saved.
 
-The service is the one seam to the editor-save request: the server provides
+`OverleafEditorSave` (`apps/server/src/scient/overleaf/OverleafEditorSave.ts`)
+is the one seam to the editor-save request: the server provides
 `layerFromEditorFlush`, which asks every open window through `EditorFlush`
 (each window has 10 seconds, the whole request 30), sharing one `EditorFlush`
 with the WebSocket handlers the windows answer on. A folder the request cannot
-examine is a failed save of that folder. `OverleafEditorSave.testkit.ts` records
-calls for tests.
+examine is a failed save of that folder. `OverleafSync.testkit.ts` answers saves
+as a test says and records each folder asked.
 
 ## The token
 

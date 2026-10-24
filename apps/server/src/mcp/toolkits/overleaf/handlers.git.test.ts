@@ -12,8 +12,6 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
-import { OverleafEditorSave } from "../../../scient/overleaf/OverleafEditorSave.ts";
-import { recordingEditorSave } from "../../../scient/overleaf/OverleafEditorSave.testkit.ts";
 import { canApply } from "../../../scient/overleaf/OverleafCoordinator.testkit.ts";
 import { OverleafSync } from "../../../scient/overleaf/OverleafSync.ts";
 import {
@@ -49,14 +47,12 @@ const connectedPaper = Effect.gen(function* () {
   const w = yield* overleafSyncWorld({ overleaf: { [PROJECT]: { "main.tex": "line\n" } } });
   w.threadRoots.set("main-thread", w.main);
   w.threadRoots.set("worktree-thread", w.worktree);
-  const saver = recordingEditorSave({ _tag: "saved" });
   const as =
     (threadId: string) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
         Effect.provideService(AgentInvocationContext.AgentInvocationContext, asThread(threadId)),
         Effect.provideService(OverleafSync, w.service),
-        Effect.provideService(OverleafEditorSave, saver.service),
       );
   const folder = NodePath.join(w.main, "paper");
   const connected = yield* w.service.connect({
@@ -70,14 +66,15 @@ const connectedPaper = Effect.gen(function* () {
   const connectionId = connected.connection.connectionId;
   yield* w.service.sync({ caller: w.at(w.main), connectionId, requestId: "s1" });
   expect(yield* read(folder, "main.tex")).toBe("line\n");
-  return { w, as, saver, folder, connectionId };
+  w.editorSaves.length = 0;
+  return { w, as, folder, connectionId };
 });
 
 describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
   it.live("stops for a conflict, then settles it with the reviewed choice", () =>
     runOverleafSync(
       Effect.gen(function* () {
-        const { w, as, saver, folder, connectionId } = yield* connectedPaper;
+        const { w, as, folder, connectionId } = yield* connectedPaper;
         // Edits on both sides: the sync stops on the conflict and changes nothing.
         yield* write(folder, { "main.tex": "mine\n" });
         yield* w.collaborate(PROJECT, { "main.tex": "theirs\n" });
@@ -110,8 +107,8 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
         expect(kept.copies.map((copy) => copy.relativePath)).toEqual(["main.tex"]);
         expect(kept.lines[0]).toBe("1 kept copy:");
 
-        // Both syncs saved the linked folder's editors first.
-        expect(saver.calls).toEqual(
+        // Both syncs saved the linked folder's editors first; listing kept copies reads only.
+        expect(w.editorSaves).toEqual(
           Array.from({ length: 2 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
         );
       }),
@@ -121,7 +118,7 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
   it.live("from another worktree syncs and sends from the linked copy, and says so", () =>
     runOverleafSync(
       Effect.gen(function* () {
-        const { w, as, saver, folder, connectionId } = yield* connectedPaper;
+        const { w, as, folder, connectionId } = yield* connectedPaper;
         // From another worktree the tools act on the linked copy, send its edit, and say so.
         yield* write(folder, { "main.tex": "edited in main\n" });
         const fromWorktree = yield* overleafSyncForInvocation({ connectionId }).pipe(
@@ -144,9 +141,7 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
         expect(status.lines).toContain("No edits to send since the last sync.");
 
         // The sync saved the linked folder's editors first, in the linked copy.
-        expect(saver.calls).toEqual(
-          Array.from({ length: 1 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
-        );
+        expect(w.editorSaves).toEqual([{ checkoutRoot: w.main, folder: "paper" }]);
       }),
     ),
   );
@@ -187,7 +182,6 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
           const w = yield* overleafSyncWorld();
           w.threadRoots.set("main-thread", w.main);
           w.threadRoots.set("worktree-thread", w.worktree);
-          const saver = recordingEditorSave({ _tag: "saved" });
           const as =
             (threadId: string) =>
             <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -197,7 +191,6 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
                   asThread(threadId),
                 ),
                 Effect.provideService(OverleafSync, w.service),
-                Effect.provideService(OverleafEditorSave, saver.service),
               );
           // A new folder: the result shows what the first sync will bring in, changing nothing.
           const fresh = yield* overleafConnectForInvocation({
@@ -211,7 +204,7 @@ describe.skipIf(!canApply)("Overleaf tools over real Git", () => {
           expect(fresh.suggestNewFolder).toBe(false);
           expect(yield* read(NodePath.join(w.worktree, "paper"), "main.tex")).toBeNull();
           // The preview saved the new folder's editors first.
-          expect(saver.calls).toEqual([{ checkoutRoot: w.worktree, folder: "paper" }]);
+          expect(w.editorSaves).toEqual([{ checkoutRoot: w.worktree, folder: "paper" }]);
 
           // Another copy linking its top folder, which holds analysis too.
           yield* write(w.main, {

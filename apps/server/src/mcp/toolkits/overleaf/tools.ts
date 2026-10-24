@@ -16,7 +16,6 @@ import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
-import { OverleafEditorSave } from "../../../scient/overleaf/OverleafEditorSave.ts";
 import { OverleafSync } from "../../../scient/overleaf/OverleafSync.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 
@@ -73,7 +72,6 @@ const dependencies = [
   AgentInvocationContext.AgentInvocationContext,
   WorkspaceBindingResolver,
   OverleafSync,
-  OverleafEditorSave,
   SecretRequests,
 ];
 
