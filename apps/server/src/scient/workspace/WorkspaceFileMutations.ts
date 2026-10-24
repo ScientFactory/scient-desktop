@@ -308,6 +308,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         return new WorkspaceFileMutationUnavailableError({
           ...fields,
           publicationOutcome: "unchanged",
+          ...(cause.refusal ? { reason: cause.refusal } : {}),
         });
       if (cause.reason === "target")
         return new WorkspaceFileTargetChangedError({ ...fields, publicationOutcome: "unchanged" });
@@ -544,23 +545,24 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     );
   };
   /**
-   * Removes `path` and, where it is a folder (a kept copy may be one: a folder
-   * that stood where a file was), everything in it, never following a link: a
-   * link is removed as a name. Whatever is already gone is skipped, so a removal
-   * a crash interrupted part way is finished by running it again.
+   * Removes the name `path`: a file or a link with `unlink`, and a folder (a
+   * kept copy may be one: a folder that stood where a file was) with a single
+   * `rmdir`, which removes only an empty real folder and fails, harmlessly, on
+   * one with anything in it, a link or a mount point. Nothing below the name is
+   * ever visited, so nothing outside the record can be reached through it.
+   * Whatever is already gone is skipped.
    */
   const removeKept = async (path: string): Promise<void> => {
-    const gone = (e: NodeJS.ErrnoException) => {
-      if (e.code !== "ENOENT") throw e;
-    };
-    const stat = await NodeFSP.lstat(path).catch((e: NodeJS.ErrnoException) => {
-      gone(e);
-      return null;
-    });
-    if (stat === null) return;
-    if (!stat.isDirectory()) return NodeFSP.unlink(path).catch(gone);
-    for (const name of await NodeFSP.readdir(path)) await removeKept(NodePath.join(path, name));
-    await NodeFSP.rmdir(path).catch(gone);
+    try {
+      await NodeFSP.unlink(path);
+    } catch (cause) {
+      if (isNodeError(cause, "ENOENT")) return;
+      // A folder: `unlink` refuses it (EPERM on macOS, EISDIR on Linux).
+      if (!isNodeError(cause, "EPERM") && !isNodeError(cause, "EISDIR")) throw cause;
+      await NodeFSP.rmdir(path).catch((e: NodeJS.ErrnoException) => {
+        if (e.code !== "ENOENT") throw e;
+      });
+    }
   };
   /**
    * Removes discarded copies, each before its view (a view made meanwhile is
@@ -3213,6 +3215,21 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               "target",
               "Retained version is not bound to this target.",
               input.versionId,
+            );
+          // Only an empty kept folder goes (a single `rmdir`): one with anything in
+          // it is refused before the discard marks anything.
+          const copy = NodePath.join(found.directory, match[2]!);
+          const kept = await NodeFSP.lstat(copy).catch((e: NodeJS.ErrnoException) => {
+            if (e.code !== "ENOENT") throw e;
+            return null;
+          });
+          if (kept?.isDirectory() && (await NodeFSP.readdir(copy)).length > 0)
+            throw new RetainedMutationError(
+              "unavailable",
+              "A kept folder with anything in it cannot be discarded.",
+              found.mutationId,
+              [],
+              { refusal: "kept-folder-not-empty" },
             );
           if (found.record?.version === 2) {
             if (found.record.phase !== "done")
