@@ -191,11 +191,17 @@ describe("ManagedRuntimeCatalogReconciler", () => {
       }),
   );
 
-  // One driver: the reconciler matches every managed driver to its catalog key the
-  // same way, and "maps actual managed drivers to every non-ACP catalog key" covers each.
-  it.effect("publishes a newly available managed update without reloading the provider", () =>
+  // regression: 7f68536737 fix(providers): restore managed update discovery and notifications (#254)
+  // One row per driver: a driver-specific gap in the change filter fails only its own row.
+  it.effect.each(
+    MANAGED_RUNTIME_CATALOG_PROVIDERS.filter((provider) => provider !== "antigravityAcp").map(
+      (driver) => ({
+        caseTitle: `publishes a newly available ${driver} managed update without reloading the provider`,
+        driver,
+      }),
+    ),
+  )("$caseTitle", ({ driver }) =>
     Effect.gen(function* () {
-      const driver = "codex";
       const publications = yield* Ref.make<
         ReadonlyArray<{
           readonly runtime: ProviderRuntimeSummary | null;

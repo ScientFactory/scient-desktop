@@ -41,8 +41,13 @@ describe("workspaceEntryDisposition", () => {
     [".scient/project-init.json", internalOwner("scient.project-transaction")],
     // regression: 90900bc82b fix(files): refine workspace visibility and search
     [".scient/sources", ordinaryOwner("scient.sources-container")],
+    // Each source area is its own condition: one row per area.
+    [".scient/sources/files/sha256/ab/paper.pdf", ordinaryOwner("scient.sources-durable-data")],
     [".scient/sources/records/source.json", ordinaryOwner("scient.sources-durable-data")],
+    [".scient/sources/history/source/1.json", ordinaryOwner("scient.sources-durable-data")],
+    [".scient/sources/receipts/receipt.json", ordinaryOwner("scient.sources-durable-data")],
     [".scient/sources/operations/import.json", internalOwner("scient.sources-runtime")],
+    [".scient/sources/staging/source.pdf", internalOwner("scient.sources-runtime")],
     [".scient/sources/future/index.json", internalOwner("scient.sources-managed")],
   ] satisfies ReadonlyArray<readonly [string, WorkspaceEntryDisposition]>)(
     "classifies %s without broad name heuristics",
