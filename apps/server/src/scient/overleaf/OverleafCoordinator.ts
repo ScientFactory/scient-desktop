@@ -23,21 +23,19 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import {
-  CheckoutBarrier,
-  type CheckoutLookupError,
-  CheckoutRecoveryRequiredError,
-  type CheckoutSection,
-  type CheckoutSuspendedError,
-} from "../workspace/CheckoutBarrier.ts";
+import * as CheckoutBarrier from "../workspace/CheckoutBarrier.ts";
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 import {
   ATTEMPT_LIMIT,
   FORCED_CONFLICT_LIMIT,
   isOverleafAttemptUnresolved,
   KEPT_VERSION_LIMIT,
+  KeptPath,
+  LOCAL_SNAPSHOT_LIMIT,
   MANAGED_PATH_LIMIT,
   overleafRequiredPins,
+  PRIOR_BASE_LIMIT,
+  RETAINED_COPY_LIMIT,
   UNRESOLVED_ATTEMPT_LIMIT,
   type OverleafConnectionDocument,
   type OverleafOperationReceipt,
@@ -50,11 +48,7 @@ import {
   type OverleafInventoryRefusal,
 } from "./OverleafInventory.ts";
 import { probeAcceptance } from "./OverleafProtocolProbe.ts";
-import {
-  OverleafRepository,
-  type OverleafRepositoryError,
-  type PushOutcome,
-} from "./OverleafRepository.ts";
+import * as OverleafRepository from "./OverleafRepository.ts";
 import { macVolumeUuid, type OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
 import {
   buildOverleafReview,
@@ -69,24 +63,9 @@ import {
   type OverleafReviewStaleReason,
   type OverleafReviewTakeRefusal,
 } from "./OverleafReviewRegistry.ts";
-import {
-  OverleafStateStore,
-  type OverleafConnectionStaleError,
-  type OverleafConnectionUnavailableError,
-  type OverleafRecordInvalidError,
-  type OverleafRequestReusedError,
-  type OverleafRetentionUnavailableError,
-  type OverleafStateIoError,
-  type OverleafStateLockedError,
-  type OverleafTransitionRejectedError,
-} from "./OverleafStateStore.ts";
+import * as OverleafStateStore from "./OverleafStateStore.ts";
 import type { ConflictChoice } from "./syncRules.ts";
-import {
-  interruptibleGroups,
-  WorkspaceApplier,
-  type WorkspaceApplyError,
-  type WorkspaceApplyResult,
-} from "./WorkspaceApplier.ts";
+import * as WorkspaceApplier from "./WorkspaceApplier.ts";
 
 /** Another operation holds this connection. Admission never queues. */
 export class OverleafOperationActiveError extends Schema.TaggedError<OverleafOperationActiveError>()(
@@ -180,7 +159,7 @@ export type OverleafPrepareResult =
 /** What one apply did to the folder and the connection. */
 export interface OverleafAdopted {
   readonly applyId: string;
-  readonly outcome: WorkspaceApplyResult["outcome"];
+  readonly outcome: WorkspaceApplier.WorkspaceApplyResult["outcome"];
   readonly interrupted: ReadonlyArray<ReadonlyArray<string>>;
   readonly markerPaths: ReadonlyArray<string>;
   readonly baseGeneration: number;
@@ -270,24 +249,24 @@ export type OverleafRecoverResult =
       readonly attempts: OverleafAttemptsChecked | null;
     };
 
-type FetchError = OverleafRepositoryError | OverleafGitError;
+type FetchError = OverleafRepository.OverleafRepositoryError | OverleafGitError;
 /** Everything a coordinator operation can fail with; business outcomes are results instead. */
 export type OverleafCoordinatorError =
   | OverleafOperationActiveError
   | OverleafConnectionNotReadyError
   | OverleafRetainedLimitError
-  | CheckoutSuspendedError
-  | CheckoutLookupError
+  | CheckoutBarrier.CheckoutSuspendedError
+  | CheckoutBarrier.CheckoutLookupError
   | FetchError
-  | WorkspaceApplyError
-  | OverleafStateIoError
-  | OverleafStateLockedError
-  | OverleafConnectionStaleError
-  | OverleafConnectionUnavailableError
-  | OverleafTransitionRejectedError
-  | OverleafRecordInvalidError
-  | OverleafRequestReusedError
-  | OverleafRetentionUnavailableError;
+  | WorkspaceApplier.WorkspaceApplyError
+  | OverleafStateStore.OverleafStateIoError
+  | OverleafStateStore.OverleafStateLockedError
+  | OverleafStateStore.OverleafConnectionStaleError
+  | OverleafStateStore.OverleafConnectionUnavailableError
+  | OverleafStateStore.OverleafTransitionRejectedError
+  | OverleafStateStore.OverleafRecordInvalidError
+  | OverleafStateStore.OverleafRequestReusedError
+  | OverleafStateStore.OverleafRetentionUnavailableError;
 
 export interface OverleafCoordinatorOptions {
   /** `stateDir/overleaf`: repositories and scratch folders live here. */
@@ -304,7 +283,7 @@ export interface OverleafCoordinatorOptions {
     readonly repo: string;
     readonly connection: OverleafConnectionDocument;
     readonly commit: string;
-  }) => Effect.Effect<PushOutcome, FetchError>;
+  }) => Effect.Effect<OverleafRepository.PushOutcome, FetchError>;
   /** Test seam: the Git address of the connection's project. Defaults to Overleaf's. */
   readonly gitUrl?: (connection: OverleafConnectionDocument) => string;
   /** The host credential epoch; renewing the token advances it. */
@@ -327,16 +306,10 @@ export interface OverleafCoordinatorOptions {
   };
 }
 
-const RETAINED_COPY_LIMIT = 4_096;
-/** A kept copy's place in the retention folder, as `OverleafConnectionState` records it. */
-const KEPT_PATH =
-  /^[a-z0-9][a-z0-9-]{0,63}\/files\/step-\d{1,5}(?:-\d{1,5})?\/(?:retained|slot|provisional)$/u;
 /** The largest file a restore or listing reads: a kept copy or the folder's file. */
 const RESTORE_MAX_BYTES = 50 * 1024 * 1024;
 /** What one listing of kept copies reads at most: as much as one inventory may hold. */
 const LISTING_MAX_BYTES = OVERLEAF_LIMITS.totalBytes;
-const PRIOR_BASE_LIMIT = 20;
-const LOCAL_SNAPSHOT_LIMIT = 10;
 
 const byPath = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 const unique = (paths: Iterable<string>) => [...new Set(paths)].sort(byPath);
@@ -474,10 +447,10 @@ export class OverleafCoordinator extends Context.Service<
 export const make = Effect.fn("OverleafCoordinator.make")(function* (
   options: OverleafCoordinatorOptions,
 ) {
-  const store = yield* OverleafStateStore;
-  const repos = yield* OverleafRepository;
-  const applier = yield* WorkspaceApplier;
-  const barrier = yield* CheckoutBarrier;
+  const store = yield* OverleafStateStore.OverleafStateStore;
+  const repos = yield* OverleafRepository.OverleafRepository;
+  const applier = yield* WorkspaceApplier.WorkspaceApplier;
+  const barrier = yield* CheckoutBarrier.CheckoutBarrier;
   const registry = options.registry ?? makeOverleafReviewRegistry();
   const volumeUuid = options.volumeUuid ?? macVolumeUuid;
   const credentialEpoch = options.credentialEpoch ?? (() => 0);
@@ -622,7 +595,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         epochs: { checkout: input.checkoutEpoch, credential: credentialEpoch() },
         scratch,
       }).pipe(
-        Effect.provideService(OverleafRepository, repos),
+        Effect.provideService(OverleafRepository.OverleafRepository, repos),
         Effect.ensuring(
           Effect.promise(() => NodeFSP.rm(scratch, { recursive: true, force: true })),
         ),
@@ -659,7 +632,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   const adoption = Effect.fn("OverleafCoordinator.adoption")(function* (
     repo: string,
     connection: OverleafConnectionDocument,
-    result: WorkspaceApplyResult,
+    result: WorkspaceApplier.WorkspaceApplyResult,
     vault: string,
   ) {
     const link = connection.activeApply!;
@@ -674,7 +647,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     const keptAt = (path: string | null) => {
       const kept =
         path === null ? null : NodePath.relative(vault, path).split(NodePath.sep).join("/");
-      return kept !== null && KEPT_PATH.test(kept) ? kept : null;
+      return kept !== null && Schema.is(KeptPath)(kept) ? kept : null;
     };
     /**
      * One record per path this apply kept, naming every version the applier
@@ -887,7 +860,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   /** Recovers a linked apply, under a section of its own or one a bulk change holds. */
   const recoverHeld = Effect.fn("OverleafCoordinator.recoverHeld")(function* (
     connectionId: string,
-    within?: CheckoutSection,
+    within?: CheckoutBarrier.CheckoutSection,
   ) {
     const pending = yield* readActive(connectionId);
     if (pending.activeApply === null) return { _tag: "none" as const };
@@ -940,7 +913,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       captured: captured.inventory.captured,
       scratch,
     }).pipe(
-      Effect.provideService(OverleafRepository, repos),
+      Effect.provideService(OverleafRepository.OverleafRepository, repos),
       Effect.ensuring(Effect.promise(() => NodeFSP.rm(scratch, { recursive: true, force: true }))),
     );
     return written.tree;
@@ -1189,12 +1162,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
    * `not-sent`. Changes after admission are later local changes; they never alter what
    * is sent.
    */
-  const send = Effect.fn("OverleafCoordinator.send")(function* (input: {
+  const send = Effect.fn("OverleafCoordinator.publish")(function* (input: {
     readonly repo: string;
     readonly review: OverleafReview;
     readonly folder: string;
     /** The checkout the folder was verified in: its key chain and epoch. */
-    readonly verified: Pick<CheckoutSection, "keys" | "epoch">;
+    readonly verified: Pick<CheckoutBarrier.CheckoutSection, "keys" | "epoch">;
     readonly attemptNumber: number;
     readonly candidateCommit: string;
     readonly recorded: OverleafConnectionDocument;
@@ -1228,7 +1201,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     const pushed = yield* options
       .pushRemote({ repo, connection: recorded, commit: input.candidateCommit })
       // A push that failed partway may still have reached Overleaf.
-      .pipe(Effect.orElseSucceed((): PushOutcome => ({ _tag: "unknown", detail: "push failed" })));
+      .pipe(
+        Effect.orElseSucceed((): OverleafRepository.PushOutcome => ({
+          _tag: "unknown",
+          detail: "push failed",
+        })),
+      );
     yield* hook(options, "sent");
     if (pushed._tag === "unknown")
       return { _tag: "unknown", attemptNumber } satisfies OverleafPublication;
@@ -1248,7 +1226,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     return { _tag: pushed._tag, attemptNumber } satisfies OverleafPublication;
   });
 
-  const prepare: OverleafCoordinator["Service"]["prepare"] = (input) =>
+  const prepare: OverleafCoordinator["Service"]["prepare"] = Effect.fn(
+    "OverleafCoordinator.prepare",
+  )((input) =>
     reserve(input.connectionId, () =>
       Effect.gen(function* () {
         // Writable admission before anything touches the private repository.
@@ -1283,9 +1263,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         if (built._tag === "review") registry.offer(built.review, yield* now);
         return built;
       }),
-    );
+    ),
+  );
 
-  const confirm: OverleafCoordinator["Service"]["confirm"] = (input) =>
+  const confirm: OverleafCoordinator["Service"]["confirm"] = Effect.fn(
+    "OverleafCoordinator.confirm",
+  )((input) =>
     reserve(input.connectionId, (operationId) =>
       Effect.gen(function* () {
         yield* store.admitWritable;
@@ -1381,7 +1364,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 });
               // An interrupted unit leaves every path it guards as one forced conflict.
               // Each group must fit the record, or no adoption could ever be written.
-              const groups = interruptibleGroups(plan);
+              const groups = WorkspaceApplier.interruptibleGroups(plan);
               if (
                 groups.length > FORCED_CONFLICT_LIMIT ||
                 groups.some((group) => group.length > conflictPaths)
@@ -1474,9 +1457,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         );
         return result;
       }),
-    );
+    ),
+  );
 
-  const recover: OverleafCoordinator["Service"]["recover"] = (input) =>
+  const recover: OverleafCoordinator["Service"]["recover"] = Effect.fn(
+    "OverleafCoordinator.recover",
+  )((input) =>
     reserve(input.connectionId, () =>
       Effect.gen(function* () {
         const recovered = yield* recoverHeld(input.connectionId);
@@ -1493,7 +1479,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           attempts: yield* checkAttempts(repo, input.connectionId, head.value),
         };
       }),
-    );
+    ),
+  );
 
   const vaultOf = (connection: OverleafConnectionDocument) =>
     store
@@ -1552,7 +1539,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     return listed;
   });
 
-  const restoreKept: OverleafCoordinator["Service"]["restoreKept"] = (input) =>
+  const restoreKept: OverleafCoordinator["Service"]["restoreKept"] = Effect.fn(
+    "OverleafCoordinator.restoreKept",
+  )((input) =>
     reserve(input.connectionId, (operationId) =>
       Effect.gen(function* () {
         yield* store.admitWritable;
@@ -1710,7 +1699,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           ),
         );
       }),
-    );
+    ),
+  );
 
   // A bulk change of a checkout first settles an apply left pending in it, when
   // nothing else holds that connection (owner decision 3); otherwise it refuses.
@@ -1719,7 +1709,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   // quarantined or repaired.
   yield* barrier.settleBeforeBulk((section) =>
     Effect.gen(function* () {
-      const refuse = new CheckoutRecoveryRequiredError({ checkout: section.root });
+      const refuse = new CheckoutBarrier.CheckoutRecoveryRequiredError({ checkout: section.root });
       const connectionIds = yield* store.listConnections.pipe(Effect.mapError(() => refuse));
       for (const connectionId of connectionIds) {
         const read = yield* store.readConnection(connectionId).pipe(Effect.mapError(() => refuse));

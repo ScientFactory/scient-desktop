@@ -15,6 +15,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
+  ProviderTurnId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -3037,12 +3038,20 @@ it.effect("ProviderSessionManagerV2 keeps a replacement behind the exact retirin
       yield* eventSink.write({
         events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
       });
-      yield* manager.open({
+      const originalRuntime = yield* manager.open({
         threadId,
         providerSessionId,
         modelSelection,
         runtimePolicy,
       });
+      const cleanupRequest = {
+        providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+        providerTurnId: ProviderTurnId.make("stale-pin-turn"),
+        requestRuntimeRestart: true,
+        onlyIfActive: true,
+      };
+      yield* originalRuntime.interruptTurn(cleanupRequest);
+      assert.equal((yield* Ref.get(state)).interruptCount, 1);
 
       yield* TestClock.adjust("1 second");
       yield* Deferred.await(checkEntered);
@@ -3066,13 +3075,27 @@ it.effect("ProviderSessionManagerV2 keeps a replacement behind the exact retirin
       const closing = yield* manager.getCloseState!(providerSessionId);
       assert.isTrue(Option.isSome(closing));
       assert.equal(Option.getOrUndefined(closing)?.state, "pending");
+      // Ingestion failure must not join the retirement that is waiting for this probe.
+      yield* originalRuntime.interruptTurn(cleanupRequest);
+      assert.equal((yield* Ref.get(state)).interruptCount, 1);
 
       // Let the stale probe finish. Its result must not regain authority over
       // a replacement; the retained owner closes first, then a fresh owner opens.
       yield* Deferred.succeed(checkGate, undefined);
       yield* Fiber.join(closeFiber);
-      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      const replacement = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
       assert.equal((yield* Ref.get(state)).openCount, 2);
+      yield* originalRuntime.interruptTurn(cleanupRequest);
+      assert.equal((yield* Ref.get(state)).interruptCount, 1);
+      yield* replacement.interruptTurn(cleanupRequest);
+      assert.equal((yield* Ref.get(state)).interruptCount, 2);
+      yield* originalRuntime.interruptTurn({ ...cleanupRequest, onlyIfActive: false });
+      assert.equal((yield* Ref.get(state)).interruptCount, 3);
 
       assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
       assert.equal((yield* Ref.get(state)).closeCount, 1);

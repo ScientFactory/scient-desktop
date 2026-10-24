@@ -56,7 +56,7 @@ export function conversationFileReviewHtml(
       : `<main>${messages}</main>`;
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-<meta name="color-scheme" content="light dark"><title>Open conversation — Scient</title>
+<meta name="color-scheme" content="light dark"><title>Open conversation (Scient)</title>
 <style>
 *{box-sizing:border-box}html,body{height:100%}body{margin:0;padding:20px 22px 18px;display:flex;flex-direction:column;gap:10px;background:Canvas;color:CanvasText;font:14px/1.5 system-ui,sans-serif}
 h1{font-size:18px;line-height:1.3;margin:0;overflow-wrap:anywhere}p{margin:0;color:GrayText}

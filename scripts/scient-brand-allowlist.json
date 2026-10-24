@@ -380,21 +380,21 @@
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/AddEnvironmentDialog.tsx",
     "line": "description: `${routeTarget.label} falls back to T3 Connect when its other routes are unreachable.`,",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/AddEnvironmentDialog.tsx",
     "line": "This machine is on your T3 Connect account. Use it as a fallback route.",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
+    "path": "apps/web/src/components/settings/AddEnvironmentDialog.tsx",
     "line": "Add T3 Connect",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",

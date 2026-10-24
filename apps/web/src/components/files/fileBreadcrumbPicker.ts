@@ -122,7 +122,7 @@ export function resolveFileBreadcrumbPickerListing(input: {
       incomplete: true,
       message:
         entries.length === 0
-          ? "No listed entries—workspace listing is incomplete."
+          ? "No listed entries. Workspace listing is incomplete."
           : "Workspace listing may be incomplete.",
     };
   }

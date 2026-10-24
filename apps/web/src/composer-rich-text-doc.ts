@@ -35,7 +35,8 @@ import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { nextOrderedMarkerText } from "~/composer-list-continuation";
 import { parseInlineMarkdown, RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
-// SCIENT-FORK:START — literal math uses the same guarded grammar as chat.
+import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
+// SCIENT-FORK:START — file-link masking and scientific math use the same authored offsets.
 import { scientMathRanges } from "~/scient/math/scientMathRanges";
 // SCIENT-FORK:END
 
@@ -128,9 +129,14 @@ function codePairCaretPlugin(type: MarkType) {
  */
 export const ComposerCodeExtension = Code.extend({
   excludes: "code",
-  // ArrowRight leaves code through the caret stops at styled edges, so the
-  // stock exit (inserting a space at the end of a line) is not needed.
+  // The forward arrow leaves code through the caret stops at styled edges, so
+  // the stock exit (inserting a space at the end of a line) is not needed.
   exitable: false,
+  // Code reads left to right inside an Arabic or Hebrew line, and the isolate
+  // keeps its punctuation from trading places with the text around it.
+  addOptions() {
+    return { ...this.parent!(), HTMLAttributes: { dir: "ltr" } };
+  },
   addProseMirrorPlugins() {
     return [...(this.parent?.() ?? []), codePairCaretPlugin(this.type)];
   },
@@ -578,7 +584,7 @@ export function buildTiptapContent(
   const atomSources: string[] = [];
   const literal = value.slice(0, options?.literalLength ?? 0);
   const remainder = value.slice(literal.length);
-  const formulas = scientMathRanges(remainder);
+  const formulas = composerMathRanges(remainder, undefined, scientMathRanges);
   let offset = 0;
   const chunks: Array<{ text: string } | { source: string }> = [];
   for (const formula of formulas) {
@@ -1404,7 +1410,7 @@ export function skillChipReplacements(
     }
   });
   const map = serializeEditorDoc(doc);
-  const formulas = scientMathRanges(map.value);
+  const formulas = composerMathRanges(map.value, undefined, scientMathRanges);
   let end = 0;
   for (const segment of splitPromptIntoComposerSegments(map.value)) {
     const start = end;

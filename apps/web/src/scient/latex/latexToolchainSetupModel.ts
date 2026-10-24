@@ -96,7 +96,7 @@ function downloadBody(install: ScientLatexManagedInstallState): string {
   const { bytesReceived, totalBytes } = install;
   return bytesReceived === null || totalBytes === null || totalBytes <= 0
     ? "Downloading TinyTeX…"
-    : `Downloading TinyTeX — ${formatLatexDownloadSize(bytesReceived)} of ${formatLatexDownloadSize(totalBytes)}.`;
+    : `Downloading TinyTeX: ${formatLatexDownloadSize(bytesReceived)} of ${formatLatexDownloadSize(totalBytes)}.`;
 }
 
 function latexInstallFailureMessage(
