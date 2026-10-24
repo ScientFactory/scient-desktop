@@ -42,7 +42,12 @@ describe("scientOverleafHttp", () => {
     "posts a sync with its workspace, link, request ID, choices and the reviewed tree",
     () =>
       Effect.gen(function* () {
-        const server = recordingFetch({ _tag: "unsettled", reason: "folder-kept-changing" });
+        const server = recordingFetch({
+          _tag: "unsettled",
+          reason: "folder-kept-changing",
+          retried: false,
+          settled: null,
+        });
         const result = yield* syncEnvironmentOverleaf({
           prepared: PREPARED,
           request: {
@@ -53,7 +58,12 @@ describe("scientOverleafHttp", () => {
             reviewedRemote: "a".repeat(40),
           },
         }).pipe(Effect.provide(layerRemoteHttpClient(server.fetchFn)));
-        expect(result).toEqual({ _tag: "unsettled", reason: "folder-kept-changing" });
+        expect(result).toEqual({
+          _tag: "unsettled",
+          reason: "folder-kept-changing",
+          retried: false,
+          settled: null,
+        });
         expect(server.requests).toEqual([
           {
             url: "https://environment.example.test/api/scient/overleaf/v1/sync",

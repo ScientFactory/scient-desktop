@@ -303,6 +303,7 @@ describe("Scient plugin registry", () => {
         expect(plugins.map((plugin) => plugin.pluginId)).toEqual([
           "scient.sources",
           "scient.documents",
+          "scient.overleaf",
           "scient.compute",
           "scient.browser-devices",
           "scient.pull-requests",
