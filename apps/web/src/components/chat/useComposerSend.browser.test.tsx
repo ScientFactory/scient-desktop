@@ -492,7 +492,8 @@ function fanoutInput(fixture: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe("mounted composer send admission owner", () => {
-  it.each(["/compact keep the API notes", "/compact\n  tests"])(
+  // The command regex itself is covered in ContextWindowMeter.logic.scient.test.ts.
+  it.each(["/compact keep the API notes"])(
     "dispatches an instructed compaction once without a preceding bare command: %s",
     async (prompt) => {
       await using fixture = await setup({
@@ -637,7 +638,8 @@ describe("mounted composer send admission owner", () => {
     ).toBe(before);
   });
 
-  it.each(["/plan", "/default", "/fork"])(
+  // /plan and /default take the same interaction-mode branch; /fork takes its own.
+  it.each(["/plan", "/fork"])(
     "runs the local %s command without declining a shown feedback request",
     async (prompt) => {
       const requestId = RuntimeRequestId.make("local-command-feedback");

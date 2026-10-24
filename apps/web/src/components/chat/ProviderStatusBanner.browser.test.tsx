@@ -65,6 +65,7 @@ describe("ProviderStatusBanner", () => {
     expect(markup).toContain('aria-label="Dismiss Codex provider warning"');
   });
 
+  // regression: b44ed835c6 fix(web): sync provider banner dismissal
   it("labels error dismiss controls with the correct severity", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
