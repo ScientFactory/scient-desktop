@@ -185,8 +185,10 @@ may have left it at, and its paths on Overleaf. A kept copy of conflict material
 remembers its file's other paths (`markerLinks`), which never change. The
 document is at schema version 2. A version 1 document, which recorded folder
 paths only (`markerPaths`, and a pending apply's `priorMarkers`), is read and
-upgraded in memory, each path becoming a file whose one path it is and each kept
-copy knowing no other path; the next replacement writes version 2. A later
+upgraded in memory, each path becoming a file whose one path it is; a kept copy
+of conflict material (and a pending apply's held file) gets `markerLinks: null`,
+other paths unknown, and a restore holds it at every path Overleaf has. The next
+replacement writes version 2. A later
 version is reported unsupported; an older one that does not upgrade cleanly is
 reported corrupt.
 
@@ -332,18 +334,43 @@ among them.
   keeps `a.tex` and gets no `b.tex`.
 - **Which files**: each one given new marks in this apply (a group merged in the
   editor is one path no rename touches), each recorded one whose file still has
-  marks, and any file carrying Scient's own labelled marks (`<<<<<<< Scient`,
-  `>>>>>>> Overleaf`), recorded or not. A Markdown underline never matches.
-- **Finding a recorded file**: at its folder path, then at its other recorded
-  paths, then where a rename in the folder took it. Git sees a rename only from
-  the base, which may no longer have the file, so a lookup that finds nothing
-  proves nothing: a file with Scient's labelled marks found elsewhere is held
-  with the paths of every record not found. Only when none is left is a record
-  not found taken as deleted or settled, and its deletion sent.
+  marks, and any other file with a conflict, recorded or not: Scient's own
+  labelled marks (`<<<<<<< Scient`, `>>>>>>> Overleaf`), or a whole conflict
+  block whatever its labels (an opening, a separator and a closing line, in
+  that order, each a line of its own; `hasConflictBlock`). A Markdown underline
+  never matches. Every captured file is checked from the bytes the inventory
+  already read; most are ruled out by the absence of `<<<<<<<` and `>>>>>>>`.
+- **Finding a recorded file**: at its folder path, its other recorded paths and
+  where a rename in the folder took it; it is held where one of them has marks.
+  Finding it proves less than it seems: Git sees a rename only from the base,
+  which may no longer have the file, and a clean file at a recorded path may be
+  a newcomer put there after the marked file moved. So a record is settled only
+  when nothing left could still be its file:
+  - found clean, while some unrecorded file has a conflict: each such file is
+    held with the record's paths (a marked `main.tex` moved to `moved.tex`, and
+    a new `main.tex` written: Overleaf keeps its `main.tex`);
+  - found nowhere, while any file is held: every held file keeps its paths,
+    recorded or given new marks (a marked `a.tex` moved over the marked `b.tex`:
+    Overleaf keeps both).
+
+  Otherwise the record is settled and the file's edit, rename or deletion goes
+  out. A record found nowhere thus waits for every other conflict to be settled
+  first; a clean file at a recorded path waits for every unrecorded conflict.
+
 - **Records** move with the file: after an apply, at the path the result holds
-  it (Overleaf's rename moves it), with the file's paths Overleaf has. A record
-  stays until the marks are gone, across acceptance, restart and recovery. A
-  restored kept copy of conflict material is held at the paths its file had.
+  it (Overleaf's rename moves it), with the file's paths Overleaf has, and the
+  paths of the records it took over. A record stays until the marks are gone,
+  across acceptance, restart and recovery. A restored kept copy of conflict
+  material is held at the paths its file had; one kept before those were
+  recorded (version 1) is held at every path of the base, since any of them may
+  have been its file's.
+- **Sending one as it is** (`releaseMarked` in the selections): a file whose
+  marks are its content (a guide quoting them) is sent, marks included, when
+  the request lists it. It is a choice, not a permission: the review lists the
+  files that may be released (`unresolvedMarkers`: the held files with marks
+  already in the folder) and those it sends as they are (`released`, bound in
+  the digest). Marks the review itself writes are never released, and a
+  released file's record is dropped.
 - **The publication tree is validated** like any other: a held path that the
   result turns into a folder, or the other way round, is refused
   (`held-file-clash`); the file and size limits apply to it too.

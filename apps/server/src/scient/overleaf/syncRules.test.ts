@@ -13,6 +13,7 @@ import {
   firstStaleFile,
   guardedPaths,
   hasConflictMarkers,
+  hasConflictBlock,
   hasScientConflictMarkers,
   heldFiles,
   publicationTree,
@@ -271,7 +272,8 @@ describe("heldFiles", () => {
       localRenames: [],
       remoteRenames: [],
       marked: () => true,
-      labelled: () => false,
+      conflicted: () => false,
+      released: [],
       ...input,
     });
   const record = (path: string, overleafPaths = [path], folderPaths: string[] = []) => ({
@@ -279,7 +281,7 @@ describe("heldFiles", () => {
     folderPaths,
     overleafPaths,
   });
-  const nothing = { paths: [], unresolved: [], carried: [] };
+  const nothing = { paths: [], unresolved: [], carried: [], released: [] };
 
   it("holds a file given new marks at its one path", () => {
     expect(
@@ -300,6 +302,7 @@ describe("heldFiles", () => {
       paths: ["a.tex", "b.tex"],
       unresolved: [{ path: "b.tex", links: ["a.tex"] }],
       carried: [record("b.tex", ["a.tex"])],
+      released: [],
     });
   });
 
@@ -316,6 +319,7 @@ describe("heldFiles", () => {
       paths: ["a.tex", "c.tex"],
       unresolved: [{ path: "a.tex", links: ["c.tex"] }],
       carried: [record("c.tex", ["c.tex"], ["a.tex"])],
+      released: [],
     });
   });
 
@@ -345,6 +349,7 @@ describe("heldFiles", () => {
       paths: ["new.tex", "old.tex"],
       unresolved: [{ path: "old.tex", links: ["new.tex"] }],
       carried: [record("new.tex", ["new.tex"], ["old.tex"])],
+      released: [],
     });
   });
 
@@ -368,19 +373,20 @@ describe("heldFiles", () => {
         local: tree({ "b.tex": "m", "notes.md": "n" }),
         remote: tree({ "x.tex": "1" }),
         target: tree({ "b.tex": "m", "notes.md": "n" }),
-        labelled: (path) => path === "b.tex",
+        conflicted: (path) => path === "b.tex",
       }),
     ).toEqual({
       paths: ["a.tex", "b.tex", "x.tex"],
       unresolved: [{ path: "b.tex", links: ["a.tex", "x.tex"] }],
       carried: [record("b.tex", ["x.tex"])],
+      released: [],
     });
     // Without a record, a file with Scient's marks is held all the same.
     expect(
       held({
         local: tree({ "b.tex": "m" }),
         target: tree({ "b.tex": "m" }),
-        labelled: () => true,
+        conflicted: () => true,
       }).paths,
     ).toEqual(["b.tex"]);
   });
@@ -391,7 +397,95 @@ describe("heldFiles", () => {
         recorded: [record("a.tex")],
         local: tree({ "a.tex": "m" }),
       }),
-    ).toEqual({ paths: ["a.tex"], unresolved: [{ path: "a.tex", links: [] }], carried: [] });
+    ).toEqual({ ...nothing, paths: ["a.tex"], unresolved: [{ path: "a.tex", links: [] }] });
+  });
+
+  it("does not take a clean file at a recorded path as settled while another file has a conflict", () => {
+    // The marked a.tex moved to b.tex, and a new a.tex took its place.
+    expect(
+      held({
+        recorded: [record("a.tex")],
+        local: tree({ "a.tex": "new", "b.tex": "m" }),
+        remote: tree({ "a.tex": "1" }),
+        target: tree({ "a.tex": "new", "b.tex": "m" }),
+        marked: (path) => path === "b.tex",
+        conflicted: (path) => path === "b.tex",
+      }),
+    ).toEqual({
+      ...nothing,
+      paths: ["a.tex", "b.tex"],
+      unresolved: [{ path: "b.tex", links: ["a.tex"] }],
+      carried: [record("b.tex", ["a.tex"])],
+    });
+    // With no other conflict, the clean file is the settled one.
+    expect(
+      held({
+        recorded: [record("a.tex")],
+        local: tree({ "a.tex": "new", "b.tex": "m" }),
+        remote: tree({ "a.tex": "1" }),
+        target: tree({ "a.tex": "new", "b.tex": "m" }),
+        marked: () => false,
+      }),
+    ).toEqual(nothing);
+  });
+
+  it("gives a record found nowhere to every held file, even one its own record claims", () => {
+    // The marked a.tex moved over the marked b.tex.
+    expect(
+      held({
+        recorded: [record("a.tex"), record("b.tex")],
+        local: tree({ "b.tex": "m" }),
+        remote: tree({ "a.tex": "1", "b.tex": "2" }),
+        target: tree({ "b.tex": "m" }),
+        conflicted: () => true,
+      }),
+    ).toEqual({
+      ...nothing,
+      paths: ["a.tex", "b.tex"],
+      unresolved: [{ path: "b.tex", links: ["a.tex"] }],
+      carried: [record("b.tex", ["a.tex", "b.tex"])],
+    });
+    // A file given new marks keeps them too, without becoming unresolved.
+    expect(
+      held({
+        recorded: [record("a.tex")],
+        fresh: ["c.tex"],
+        local: tree({ "c.tex": "1" }),
+        remote: tree({ "a.tex": "1", "c.tex": "2" }),
+        target: tree({ "c.tex": "m" }),
+      }),
+    ).toEqual({
+      ...nothing,
+      paths: ["a.tex", "c.tex"],
+      carried: [record("c.tex", ["a.tex", "c.tex"])],
+    });
+  });
+
+  it("sends a released file as it is, and never releases marks this sync writes", () => {
+    expect(
+      held({
+        recorded: [record("a.tex")],
+        fresh: ["c.tex"],
+        local: tree({ "a.tex": "m", "guide.md": "g", "c.tex": "1" }),
+        remote: tree({ "a.tex": "1", "c.tex": "2" }),
+        target: tree({ "a.tex": "m", "guide.md": "g", "c.tex": "m" }),
+        conflicted: (path) => path === "guide.md",
+        released: ["a.tex", "guide.md", "c.tex", "absent.tex"],
+      }),
+    ).toEqual({ ...nothing, paths: ["c.tex"], released: ["a.tex", "guide.md"] });
+  });
+});
+
+describe("hasConflictBlock", () => {
+  it("finds an opening, a separator and a closing line in order, whatever the labels", () => {
+    expect(hasConflictBlock("a\n<<<<<<<\nx\n=======\ny\n>>>>>>>\nb\n")).toBe(true);
+    expect(hasConflictBlock("<<<<<<< HEAD\r\nx\r\n=======\r\ny\r\n>>>>>>> main\r\n")).toBe(true);
+    expect(hasConflictBlock("<<<<<<< a\n||||||| base\nz\n=======\ny\n>>>>>>> b")).toBe(true);
+    // A Markdown underline, lone marks, or the lines out of order are not a block.
+    expect(hasConflictBlock("Results\n=======\n\nAll good.\n")).toBe(false);
+    expect(hasConflictBlock("<<<<<<< a\nx\n>>>>>>> b\n")).toBe(false);
+    expect(hasConflictBlock(">>>>>>> b\n=======\n<<<<<<< a\n")).toBe(false);
+    expect(hasConflictBlock("  <<<<<<< a\n=======\n>>>>>>> b\n")).toBe(false);
   });
 });
 

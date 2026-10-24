@@ -404,6 +404,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           selectedAdditions: ["new.tex"],
           collisionPaths: [],
           choices,
+          releaseMarked: [],
         });
         const first = yield* w.coordinator.prepare({
           connectionId: CONNECTION,
@@ -753,6 +754,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             selectedAdditions: [],
             collisionPaths: first.review.binding.collisionPaths,
             choices,
+            releaseMarked: [],
           },
         });
         if (chosen._tag !== "review") return yield* Effect.die(chosen);

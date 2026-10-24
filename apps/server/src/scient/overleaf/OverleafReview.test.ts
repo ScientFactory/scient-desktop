@@ -128,6 +128,7 @@ const withScenario = <A, E>(
             choices: options.choices ?? new Map(),
             interrupted: [],
             markers: [],
+            releaseMarked: [],
             epochs: { checkout: 1, credential: 1 },
             scratch: NodePath.join(root, "scratch"),
             ...options,
@@ -718,9 +719,9 @@ describe("buildOverleafReview", () => {
     withScenario(
       {
         base: { "main.tex": "m", "other.tex": "o" },
-        // Unlabelled marks: held only while recorded.
+        // A lone unlabelled mark, no whole block: held only while recorded.
         local: {
-          "main.tex": "<<<<<<< mine\nx\n=======\ny\n>>>>>>> theirs\n",
+          "main.tex": "<<<<<<< mine\nx\n",
           "other.tex": "o2",
         },
         remote: { "main.tex": "m", "other.tex": "o" },
@@ -752,24 +753,27 @@ describe("buildOverleafReview", () => {
     ),
   );
 
-  it.live("holds any file with Scient's labelled marks, and no Markdown underline", () =>
-    withScenario(
-      {
-        base: { "main.tex": "m", "notes.md": "n" },
-        local: {
-          "main.tex": "<<<<<<< Scient\nx\n=======\ny\n>>>>>>> Overleaf\n",
-          "notes.md": "Results\n=======\n",
+  it.live(
+    "holds any file with Scient's labelled marks or a whole conflict block, and no Markdown underline",
+    () =>
+      withScenario(
+        {
+          base: { "git.tex": "g", "main.tex": "m", "notes.md": "n" },
+          local: {
+            "git.tex": "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> main\n",
+            "main.tex": "<<<<<<< Scient\nx\n=======\ny\n>>>>>>> Overleaf\n",
+            "notes.md": "Results\n=======\n",
+          },
+          remote: { "git.tex": "g", "main.tex": "m", "notes.md": "n" },
         },
-        remote: { "main.tex": "m", "notes.md": "n" },
-      },
-      ({ review }) =>
-        Effect.gen(function* () {
-          const built = reviewOf(yield* review());
-          expect(built.binding.heldPaths).toEqual(["main.tex"]);
-          expect(built.unresolvedMarkers).toEqual(["main.tex"]);
-          expect(built.outgoing).toEqual([{ kind: "modified", path: "notes.md" }]);
-        }),
-    ),
+        ({ review }) =>
+          Effect.gen(function* () {
+            const built = reviewOf(yield* review());
+            expect(built.binding.heldPaths).toEqual(["git.tex", "main.tex"]);
+            expect(built.unresolvedMarkers).toEqual(["git.tex", "main.tex"]);
+            expect(built.outgoing).toEqual([{ kind: "modified", path: "notes.md" }]);
+          }),
+      ),
   );
 
   it.live("refuses a held file whose Overleaf path the result makes a folder", () =>

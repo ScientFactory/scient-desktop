@@ -30,6 +30,8 @@ const binding: OverleafReviewBinding = {
   candidateTree: "e".repeat(40),
   publicationTree: "e".repeat(40),
   heldPaths: [],
+  releaseMarked: [],
+  released: [],
   carriedMarkers: [],
   conflictKeys: [],
   markerPaths: [],

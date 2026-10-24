@@ -366,17 +366,24 @@ export interface HeldFile {
  * The files one sync holds back because they have conflict marks: each file is
  * held whole, every path it has in the base, the folder and on Overleaf, linked
  * by renames on either side. Held are the files that get new marks (`fresh`), the
- * recorded ones whose file still has marks, and any other file carrying Scient's
- * own labelled marks.
+ * recorded ones whose file still has marks, and any other file with a conflict
+ * (`conflicted`: Scient's own labelled marks, or a whole conflict block), unless
+ * the person or agent chose to send it as it is (`released`).
  *
- * A recorded file is looked for at its folder path, then at its other recorded
- * paths, then where a rename in the folder took it. Git sees a rename only from
- * the base, which may no longer have the file (Overleaf deleted it, or an apply
- * did not finish), so a lookup that finds nothing proves nothing: a file still
- * carrying Scient's labelled marks is held wherever it is, and keeps the paths of
- * every record not found. Only when no such file is left is a record not found
- * taken as deleted or settled. Without this, a marked file renamed on either side
- * sent the rename, or its marks, to Overleaf.
+ * A recorded file is looked for at its folder path, its other recorded paths and
+ * where a rename in the folder took it; it is held where one of them has marks.
+ * Finding it proves less than it seems. Git sees a rename only from the base,
+ * which may no longer have the file (Overleaf deleted it, or an apply did not
+ * finish), and a clean file at a recorded path may be a new one put there after
+ * the marked file moved. So a record is taken as settled only when nothing is
+ * left that could still be its file:
+ *
+ * - found clean, while some unrecorded file has a conflict: those files keep the
+ *   record's paths;
+ * - found nowhere, while any file is held: every held file keeps them.
+ *
+ * Without this, a marked file moved in the folder sent its rename, or its marks,
+ * to Overleaf, or replaced Overleaf's version of the file still in conflict.
  */
 export function heldFiles(input: {
   readonly recorded: ReadonlyArray<MarkerRecord>;
@@ -391,25 +398,38 @@ export function heldFiles(input: {
   readonly remoteRenames: ReadonlyArray<Rename>;
   /** Whether the folder's file at `path` has conflict marks now (`hasConflictMarkers`). */
   readonly marked: (path: string) => boolean;
-  /** Whether it has Scient's own labelled marks (`hasScientConflictMarkers`). */
-  readonly labelled: (path: string) => boolean;
+  /**
+   * Whether it has a conflict whatever its record: Scient's own labelled marks
+   * (`hasScientConflictMarkers`) or a whole conflict block (`hasConflictBlock`).
+   */
+  readonly conflicted: (path: string) => boolean;
+  /** Folder paths to send as they are, marks included: a deliberate choice. */
+  readonly released: ReadonlyArray<string>;
 }): {
   /** Every path of every held file. */
   readonly paths: ReadonlyArray<string>;
-  /** Files marked before this sync, at their folder paths now. */
+  /** Files with marks before this sync, at their folder paths now. */
   readonly unresolved: ReadonlyArray<HeldFile>;
   /** Their records once this sync is applied; a file the result no longer holds has none. */
   readonly carried: ReadonlyArray<MarkerRecord>;
+  /** Released paths that would otherwise be held: sent as they are. */
+  readonly released: ReadonlyArray<string>;
 } {
   const renames = [...input.localRenames, ...input.remoteRenames];
+  const releasing = new Set(input.released);
+  const fresh = new Set(input.fresh);
+  const released = new Set<string>();
   const held = new Set<string>();
   const unresolved = new Map<string, Set<string>>();
   const carried = new Map<string, { folder: Set<string>; overleaf: Set<string> }>();
+  /** Holds the file at `current` with `identity`; one given new marks is not unresolved. */
   const hold = (current: string, identity: ReadonlyArray<string>) => {
     for (const path of identity) held.add(path);
-    const links = unresolved.get(current) ?? new Set<string>();
-    for (const path of identity) if (path !== current) links.add(path);
-    unresolved.set(current, links);
+    if (!fresh.has(current)) {
+      const links = unresolved.get(current) ?? new Set<string>();
+      for (const path of identity) if (path !== current) links.add(path);
+      unresolved.set(current, links);
+    }
     // Where the file is after this sync: where it is now, or where Overleaf's rename takes it.
     const after = input.target.has(current)
       ? current
@@ -422,26 +442,41 @@ export function heldFiles(input: {
     for (const path of identity) if (input.remote.has(path)) entry.overleaf.add(path);
     carried.set(after, entry);
   };
-  /** The paths of each record whose file was found nowhere. */
+  /** Marks that would hold the file at `path`, unless it is released (which is noted). */
+  const holds = (path: string, marks: (path: string) => boolean) => {
+    if (!marks(path)) return false;
+    if (!releasing.has(path) || fresh.has(path)) return true;
+    released.add(path);
+    return false;
+  };
+  /** The paths of records found clean, and of records found nowhere. */
+  const doubtful: string[] = [];
   const lost: string[] = [];
   for (const record of input.recorded) {
     const known = [record.path, ...record.folderPaths, ...record.overleafPaths];
-    const current = input.local.has(record.path)
-      ? record.path
-      : ([...record.folderPaths, ...record.overleafPaths].find(
-          (path) => input.local.has(path) && input.marked(path),
-        ) ??
-        input.localRenames.find(
-          (rename) => known.includes(rename.from) && input.local.has(rename.to),
-        )?.to);
-    if (current === undefined) lost.push(...known);
-    else if (input.marked(current)) hold(current, closeOverRenames([...known, current], renames));
+    const places = [
+      ...new Set([
+        ...known,
+        ...input.localRenames.filter((rename) => known.includes(rename.from)).map((r) => r.to),
+      ]),
+    ].filter((path) => input.local.has(path));
+    const current = places.find((path) => holds(path, input.marked));
+    if (current !== undefined) hold(current, closeOverRenames([...known, current], renames));
+    else if (places.some((path) => released.has(path))) continue;
+    else if (places.length > 0) doubtful.push(...known);
+    else lost.push(...known);
   }
+  // A file given new marks is recorded at its one path when applied (`OverleafCoordinator`).
   for (const path of closeOverRenames(input.fresh, renames)) held.add(path);
-  // No file carrying Scient's own marks is sent, recorded or not.
+  // A file with a conflict is never sent unless released, recorded or not. It may be
+  // the file of a record found clean, renamed away from a clean newcomer.
   const claimed = new Set([...unresolved.keys(), ...input.fresh]);
   for (const path of [...input.local.keys()].sort())
-    if (!claimed.has(path) && input.labelled(path))
+    if (!claimed.has(path) && holds(path, input.conflicted))
+      hold(path, closeOverRenames([path, ...doubtful], renames));
+  // A record found nowhere may be any held file, recorded or not: each keeps its paths.
+  if (lost.length > 0)
+    for (const path of [...unresolved.keys(), ...input.fresh])
       hold(path, closeOverRenames([path, ...lost], renames));
   return {
     paths: [...held].sort(),
@@ -453,6 +488,7 @@ export function heldFiles(input: {
       folderPaths: [...carried.get(path)!.folder].sort(),
       overleafPaths: [...carried.get(path)!.overleaf].sort(),
     })),
+    released: [...released].sort(),
   };
 }
 
@@ -513,6 +549,23 @@ const SCIENT_CONFLICT_MARKER = /^(?:<{7} Scient|>{7} Overleaf)(?::[^\r\n]*)?\r?$
  */
 export function hasScientConflictMarkers(text: string): boolean {
   return SCIENT_CONFLICT_MARKER.test(text);
+}
+
+/** The three lines of a conflict block, in the order they must come. */
+const CONFLICT_BLOCK_LINES = [/^<{7,}(?:[ \t].*)?$/u, /^={7,}[ \t]*$/u, /^>{7,}(?:[ \t].*)?$/u];
+
+/**
+ * A whole conflict block, whatever its labels: an opening line (`<<<<<<<`), then a
+ * separator (`=======`), then a closing line (`>>>>>>>`), in that order, each a
+ * line of its own. Marks whose labels were edited away are still found; a
+ * Markdown underline alone never matches. One pass over the lines.
+ */
+export function hasConflictBlock(text: string): boolean {
+  let next = 0;
+  for (const line of text.split("\n"))
+    if (CONFLICT_BLOCK_LINES[next]!.test(line.endsWith("\r") ? line.slice(0, -1) : line))
+      if (++next === CONFLICT_BLOCK_LINES.length) return true;
+  return false;
 }
 
 const CONFLICT_MARKER =

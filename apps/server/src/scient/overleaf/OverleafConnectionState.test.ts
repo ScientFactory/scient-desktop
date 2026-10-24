@@ -396,6 +396,16 @@ describe("overleafTransitionViolation", () => {
         },
       }),
     ).toBe("retained-copy-rewritten");
+    // Unknown other paths (version 1) never become known, not even as none.
+    const unknown = holding({ state: "kept", markers: true, markerLinks: null }, 2);
+    expect(
+      violation(unknown, {
+        retention: {
+          ...unknown.retention,
+          copies: [{ ...unknown.retention.copies[0]!, markerLinks: [] }],
+        },
+      }),
+    ).toBe("retained-copy-rewritten");
   });
 });
 

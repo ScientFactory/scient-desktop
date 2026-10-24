@@ -167,6 +167,13 @@ export interface OverleafSelections {
   /** Local paths read in full because Overleaf has content at their place. */
   readonly collisionPaths: ReadonlyArray<string>;
   readonly choices: ReadonlyMap<string, ConflictChoice>;
+  /**
+   * Files with conflict marks to send as they are, marks included, instead of
+   * holding them back: a deliberate choice for a file whose marks are its content
+   * (a guide quoting them, say). Marks the review writes are never released; the
+   * review lists those sent as they are (`released`).
+   */
+  readonly releaseMarked: ReadonlyArray<string>;
 }
 
 export type OverleafPrepareResult =
@@ -645,6 +652,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         choices: input.selections.choices,
         interrupted: connection.forcedConflicts,
         markers: connection.markers,
+        releaseMarked: input.selections.releaseMarked,
         epochs: { checkout: input.checkoutEpoch, credential: credentialEpoch() },
         scratch,
       }).pipe(
@@ -712,7 +720,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       settle: (path: string) => OverleafConnectionDocument["retention"]["copies"][number]["state"],
       syncCount: number,
       /** Held files at their paths before this apply, with their other paths. */
-      held: ReadonlyArray<{ readonly path: string; readonly links: ReadonlyArray<string> }>,
+      held: ReadonlyArray<{
+        readonly path: string;
+        readonly links: ReadonlyArray<string> | null;
+      }>,
     ) => {
       const versionsOf = new Map<string, typeof result.retained>();
       for (const kept of result.retained)
@@ -746,7 +757,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
             retainedAtSyncCount: syncCount,
             kept: keptAt(main.retainedPath)!,
             markers: marked !== undefined,
-            markerLinks: marked === undefined ? [] : unique(marked.links),
+            markerLinks:
+              marked === undefined ? [] : marked.links === null ? null : unique(marked.links),
             // Beyond the limit, the rest stay in the apply's folder; the record is ambiguous.
             versions: others.slice(0, KEPT_VERSION_LIMIT),
             // No stamp matches "0:0": an unverified copy is read again whenever listed.
@@ -1388,6 +1400,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
             selectedAdditions: [],
             collisionPaths: [],
             choices: new Map(),
+            releaseMarked: [],
           },
           remote,
           checkoutEpoch: section.epoch,
@@ -1464,6 +1477,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   selectedAdditions: review.binding.selectedAdditions,
                   collisionPaths: review.binding.collisionPaths,
                   choices: new Map(review.binding.choices),
+                  releaseMarked: review.binding.releaseMarked,
                 },
                 remote,
                 checkoutEpoch: section.epoch,
@@ -1727,16 +1741,29 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 return { _tag: "unknown-copy" as const };
               // Conflict material kept as the main version is tracked again once back,
               // held at the path it returns to and at every other path its file had when
-              // kept. A copy kept before those were recorded knows only its own.
-              const priorMarkers =
-                copy.markers && input.kept === copy.kept
-                  ? [{ path: copy.relativePath, links: copy.markerLinks }]
-                  : [];
-              const markers = priorMarkers.map((file) => ({
-                path: file.path,
-                folderPaths: [],
-                overleafPaths: unique([file.path, ...file.links]),
-              }));
+              // kept. For a copy kept before those were recorded, any path Overleaf has
+              // may have been its file's: it is held at all of them.
+              const restoresMarks = copy.markers && input.kept === copy.kept;
+              const links =
+                !restoresMarks || copy.markerLinks !== null
+                  ? (copy.markerLinks ?? [])
+                  : connection.base.tree === null
+                    ? []
+                    : (yield* repos.readTree({ repo, tree: connection.base.tree })).map(
+                        (entry) => entry.path,
+                      );
+              const priorMarkers = restoresMarks
+                ? [{ path: copy.relativePath, links: copy.markerLinks }]
+                : [];
+              const markers = restoresMarks
+                ? [
+                    {
+                      path: copy.relativePath,
+                      folderPaths: [],
+                      overleafPaths: unique([copy.relativePath, ...links]),
+                    },
+                  ]
+                : [];
               // Room for what the restore keeps, for the path it may bring back into the
               // sync, for the group it may leave and for the conflict material it tracks
               // again, before anything is written.
@@ -1759,7 +1786,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   connectionId: input.connectionId,
                   limit: "conflict-group",
                 });
-              if (mergeMarkers(connection.markers, markers).length > MANAGED_PATH_LIMIT)
+              if (
+                mergeMarkers(connection.markers, markers).length > MANAGED_PATH_LIMIT ||
+                markers.some((record) => record.overleafPaths.length > MANAGED_PATH_LIMIT)
+              )
                 return yield* new OverleafRetainedLimitError({
                   connectionId: input.connectionId,
                   limit: "marker-paths",

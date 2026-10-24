@@ -40,6 +40,7 @@ const syncChoosing = (
     readonly requestId?: string;
     readonly select?: ReadonlyArray<string>;
     readonly known?: ReadonlyArray<ReadonlyArray<string>>;
+    readonly release?: ReadonlyArray<string>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -47,6 +48,7 @@ const syncChoosing = (
       selectedAdditions: options.select ?? [],
       collisionPaths: [],
       choices,
+      releaseMarked: options.release ?? [],
     });
     const open = yield* coordinator.prepare({
       connectionId: CONNECTION,
@@ -103,6 +105,41 @@ const recordedWorld = (remote: Record<string, string>) =>
     });
     yield* write(w.folder, { "main.tex": scientMarks, "other.tex": "O, again" });
     return w;
+  });
+
+/** Scient's marks alone: too unlike any file's other text for Git to see a rename. */
+const SHORT_MARKS = "<<<<<<< Scient\nmine\n=======\ntheirs\n>>>>>>> Overleaf\n";
+
+/** Moves a file in the folder, over any file already at `to`. */
+const move = (w: World, from: string, to: string) =>
+  Effect.promise(() => NodeFSP.rename(NodePath.join(w.folder, from), NodePath.join(w.folder, to)));
+
+/**
+ * Rewrites the stored connection document as version 1 recorded it; `settled`
+ * paths no longer have marks recorded.
+ */
+const toVersion1 = (w: World, settled: ReadonlyArray<string> = []) =>
+  Effect.promise(async () => {
+    const file = NodePath.join(
+      w.stateRoot,
+      (await NodeFSP.readdir(w.stateRoot, { recursive: true })).find((path) =>
+        path.endsWith("connections/connection-1.json"),
+      )!,
+    );
+    const document = JSON.parse(await NodeFSP.readFile(file, "utf8"));
+    document.schemaVersion = 1;
+    document.markerPaths = document.markers
+      .map((record: { path: string }) => record.path)
+      .filter((path: string) => !settled.includes(path));
+    delete document.markers;
+    if (document.activeApply !== null) {
+      document.activeApply.priorMarkers = document.activeApply.priorMarkers.map(
+        (held: { path: string }) => held.path,
+      );
+      delete document.activeApply.markers;
+    }
+    for (const copy of document.retention.copies) delete copy.markerLinks;
+    await NodeFSP.writeFile(file, JSON.stringify(document));
   });
 
 /** The first sync's conflict, on main.tex, chosen up front. */
@@ -603,24 +640,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, holding back a file with confli
         expect(Exit.isFailure(yield* Effect.exit(syncChoosing(w.coordinator, "mine")))).toBe(true);
         crash = false;
         // The pending apply as version 1 recorded it: folder paths from before the apply.
-        yield* Effect.promise(async () => {
-          const file = NodePath.join(
-            w.stateRoot,
-            (await NodeFSP.readdir(w.stateRoot, { recursive: true })).find((path) =>
-              path.endsWith("connections/connection-1.json"),
-            )!,
-          );
-          const document = JSON.parse(await NodeFSP.readFile(file, "utf8"));
-          document.schemaVersion = 1;
-          document.markerPaths = document.markers.map((record: { path: string }) => record.path);
-          delete document.markers;
-          document.activeApply.priorMarkers = document.activeApply.priorMarkers.map(
-            (held: { path: string }) => held.path,
-          );
-          delete document.activeApply.markers;
-          for (const copy of document.retention.copies) delete copy.markerLinks;
-          await NodeFSP.writeFile(file, JSON.stringify(document));
-        });
+        yield* toVersion1(w);
         const restarted = yield* w.coordinatorWith(w.store);
         yield* restarted.recover({ connectionId: CONNECTION });
         expect(yield* marked(w, "new.tex")).toBe(true);
@@ -685,6 +705,176 @@ describe.skipIf(!canApply)("OverleafCoordinator, holding back a file with confli
           "new.tex": "theirs\n",
           "other.tex": "O2",
         });
+      }),
+    ),
+  );
+
+  it.live("keeps Overleaf's file at a recorded path a clean newcomer took over", () =>
+    run(
+      Effect.gen(function* () {
+        // Short files: Git sees no rename from main.tex to moved.tex.
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "theirs\n", "other.tex": "O" },
+          remote: { "main.tex": "theirs\n", "other.tex": "O" },
+          markerPaths: ["main.tex"],
+        });
+        yield* write(w.folder, { "main.tex": SHORT_MARKS, "other.tex": "O2" });
+        yield* move(w, "main.tex", "moved.tex");
+        yield* write(w.folder, { "main.tex": "a new unrelated document\n" });
+        const next = yield* syncChoosing(w.coordinator, "mine", { select: ["moved.tex"] });
+        expect(next.review.binding.heldPaths).toEqual(["main.tex", "moved.tex"]);
+        expect(next.review.outgoing).toEqual([{ kind: "modified", path: "other.tex" }]);
+        expect(next.result).toMatchObject({ publication: { _tag: "accepted" } });
+        expect((yield* w.overleafNow).contents).toEqual({
+          "main.tex": "theirs\n",
+          "other.tex": "O2",
+        });
+        // The marked file keeps Overleaf's name until its marks are gone.
+        expect((yield* w.connection).markers).toEqual([
+          { path: "moved.tex", folderPaths: [], overleafPaths: ["main.tex"] },
+        ]);
+      }),
+    ),
+  );
+
+  it.live("keeps the Overleaf file of a marked file moved over another marked file", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "a.tex": "A\n", "b.tex": "B\n", "other.tex": "O" },
+          remote: { "a.tex": "A\n", "b.tex": "B\n", "other.tex": "O" },
+          markerPaths: ["a.tex", "b.tex"],
+        });
+        yield* write(w.folder, { "a.tex": SHORT_MARKS, "b.tex": SHORT_MARKS, "other.tex": "O2" });
+        // a.tex's unresolved work replaces b.tex: nothing links it to a.tex.
+        yield* move(w, "a.tex", "b.tex");
+        const next = yield* syncChoosing(w.coordinator, "mine");
+        expect(next.review.binding.heldPaths).toEqual(["a.tex", "b.tex"]);
+        expect(next.review.outgoing).toEqual([{ kind: "modified", path: "other.tex" }]);
+        expect(next.result).toMatchObject({ publication: { _tag: "accepted" } });
+        expect((yield* w.overleafNow).contents).toEqual({
+          "a.tex": "A\n",
+          "b.tex": "B\n",
+          "other.tex": "O2",
+        });
+        expect((yield* w.connection).markers).toEqual([
+          { path: "b.tex", folderPaths: [], overleafPaths: ["a.tex", "b.tex"] },
+        ]);
+      }),
+    ),
+  );
+
+  it.live("holds a restored version 1 copy of conflict material at every Overleaf path", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "old.tex": "theirs\n", "other.tex": "O" },
+          remote: { "new.tex": "theirs\n", "other.tex": "O" },
+          markerPaths: ["old.tex"],
+        });
+        yield* write(w.folder, { "old.tex": SHORT_MARKS, "other.tex": "O2" });
+        // Overleaf's rename moves the marked file to new.tex; old.tex's bytes are kept.
+        yield* syncChoosing(w.coordinator, "mine");
+        // new.tex settled, and the document as version 1 wrote it: a kept copy knows
+        // no other path.
+        yield* write(w.folder, { "new.tex": "resolved\n" });
+        yield* toVersion1(w, ["new.tex"]);
+        const restarted = yield* w.coordinatorWith(w.store);
+        const copy = (yield* restarted.keptCopies({ connectionId: CONNECTION })).find(
+          (entry) => entry.relativePath === "old.tex",
+        )!;
+        expect((yield* w.connection).retention.copies).toContainEqual(
+          expect.objectContaining({ relativePath: "old.tex", markers: true, markerLinks: null }),
+        );
+        yield* restarted.restoreKept({
+          connectionId: CONNECTION,
+          requestId: "restore-1",
+          applyId: copy.applyId,
+          kept: copy.kept,
+          keptRevision: copy.keptRevision!,
+          currentRevision: copy.currentRevision,
+        });
+        expect((yield* w.connection).markers).toEqual([
+          { path: "old.tex", folderPaths: [], overleafPaths: ["new.tex", "old.tex", "other.tex"] },
+        ]);
+        yield* Effect.promise(() => NodeFSP.unlink(NodePath.join(w.folder, "new.tex")));
+        yield* write(w.folder, { "added.tex": "added" });
+        const next = yield* syncChoosing(restarted, "mine", {
+          requestId: "request-2",
+          select: ["added.tex"],
+        });
+        expect(next.review.binding.heldPaths).toEqual(["new.tex", "old.tex", "other.tex"]);
+        // Only what no Overleaf file could be goes out.
+        expect(next.review.outgoing).toEqual([{ kind: "added", path: "added.tex" }]);
+        expect((yield* w.overleafNow).contents).toEqual({
+          "added.tex": "added",
+          "new.tex": "theirs\n",
+          "other.tex": "O2",
+        });
+      }),
+    ),
+  );
+
+  it.live("holds a renamed marked file whose labels were edited away", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": doc("theirs"), "other.tex": "O" },
+          remote: { "other.tex": "O" },
+          markerPaths: ["main.tex"],
+        });
+        yield* write(w.folder, { "main.tex": scientMarks, "other.tex": "O2" });
+        yield* syncChoosing(w.coordinator, "mine", MAIN);
+        // The base has no main.tex, so Git sees no rename; no Scient label is left.
+        yield* move(w, "main.tex", "moved.tex");
+        const bare = scientMarks
+          .replace("<<<<<<< Scient", "<<<<<<<")
+          .replace(">>>>>>> Overleaf", ">>>>>>>");
+        yield* write(w.folder, { "moved.tex": bare, "other.tex": "O3" });
+        const next = yield* syncChoosing(w.coordinator, "mine", {
+          requestId: "request-2",
+          select: ["moved.tex"],
+        });
+        expect(next.review.binding.heldPaths).toEqual(["main.tex", "moved.tex"]);
+        expect(next.review.outgoing).toEqual([{ kind: "modified", path: "other.tex" }]);
+        expect(next.result).toMatchObject({ publication: { _tag: "accepted" } });
+        expect((yield* w.overleafNow).contents).toEqual({ "other.tex": "O3" });
+      }),
+    ),
+  );
+
+  it.live("sends a file whose marks are its content once released, and only then", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "same" },
+          remote: { "main.tex": "same" },
+        });
+        const guide =
+          "# How to resolve a conflict\n\n```text\n<<<<<<< Scient\nlocal text\n=======\nremote text\n>>>>>>> Overleaf\n```\n";
+        yield* write(w.folder, { "guide.md": guide, "main.tex": "edited" });
+        const held = yield* syncChoosing(w.coordinator, "mine", { select: ["guide.md"] });
+        // Held, and offered for release.
+        expect(held.review.unresolvedMarkers).toEqual(["guide.md"]);
+        expect(held.review.released).toEqual([]);
+        expect((yield* w.overleafNow).contents).toEqual({ "main.tex": "edited" });
+        const sent = yield* syncChoosing(w.coordinator, "mine", {
+          requestId: "request-2",
+          release: ["guide.md"],
+        });
+        expect(sent.review.released).toEqual(["guide.md"]);
+        expect(sent.review.binding.heldPaths).toEqual([]);
+        expect(sent.result).toMatchObject({ publication: { _tag: "accepted" } });
+        expect((yield* w.overleafNow).contents).toEqual({
+          "guide.md": guide,
+          "main.tex": "edited",
+        });
+        expect((yield* w.connection).markers).toEqual([]);
       }),
     ),
   );

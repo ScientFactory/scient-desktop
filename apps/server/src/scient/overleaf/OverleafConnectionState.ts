@@ -115,10 +115,18 @@ const MarkerRecords = Schema.Array(OverleafMarkerRecord).check(
   ),
 );
 
+/**
+ * A held file's other paths, in the folder and on Overleaf. Null where they were
+ * never recorded (version 1): the file may have come from any path Overleaf has.
+ */
+const MarkerLinks = Schema.NullOr(
+  Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+);
+
 /** A held file at its folder path before an apply, with every other path it is linked to. */
 const HeldFile = Schema.Struct({
   path: ManuscriptPath,
-  links: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  links: MarkerLinks,
 });
 
 /** The connection's pointer to an applier intent that may still need recovery. */
@@ -240,9 +248,11 @@ const RetainedCopy = Schema.Struct({
   ...retainedCopyFields,
   /**
    * For kept conflict material (`markers`), the file's other paths when kept, on
-   * Overleaf and in the folder: a restored copy is held at all of them again.
+   * Overleaf and in the folder: a restored copy is held at all of them again. Null
+   * for a copy kept before they were recorded: a restored one is held at every
+   * path Overleaf has.
    */
-  markerLinks: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
+  markerLinks: MarkerLinks,
 });
 type RetainedCopy = typeof RetainedCopy.Type;
 
@@ -367,8 +377,9 @@ const validateDocument = Schema.decodeUnknownExit(OverleafConnectionDocument);
 /**
  * Reads a stored document: the current version, or a version 1 document upgraded.
  * Version 1 tracked no renames, so each recorded path is its file's only known
- * path, in the folder and on Overleaf, and a kept copy of conflict material knows
- * no other path. A pending apply's recorded paths are where its files were before
+ * path, in the folder and on Overleaf. A kept copy of conflict material, and a
+ * pending apply's held file, have their other paths unknown (null): a restore
+ * holds such a copy at every path Overleaf has. A pending apply's recorded paths are where its files were before
  * it; adoption finds where the apply put them (`OverleafCoordinator`). The upgrade
  * is in memory; the next replacement writes the current version. Null when the
  * text is neither, or the upgrade breaks a document rule.
@@ -387,7 +398,7 @@ export function decodeOverleafConnectionDocument(text: string): OverleafConnecti
     markers: recordsOf(markerPaths),
     retention: {
       ...retention,
-      copies: retention.copies.map((copy) => ({ ...copy, markerLinks: [] })),
+      copies: retention.copies.map((copy) => ({ ...copy, markerLinks: null })),
     },
     activeApply:
       activeApply === null
@@ -396,7 +407,7 @@ export function decodeOverleafConnectionDocument(text: string): OverleafConnecti
             ...activeApply,
             priorMarkers: [...new Set(activeApply.priorMarkers)].map((path) => ({
               path,
-              links: [],
+              links: null,
             })),
             markers: recordsOf(activeApply.priorMarkers),
           },
@@ -577,7 +588,7 @@ export function overleafTransitionViolation(
       kept.retainedAtSyncCount !== copy.retainedAtSyncCount ||
       kept.kept !== copy.kept ||
       kept.markers !== copy.markers ||
-      kept.markerLinks.join("\0") !== copy.markerLinks.join("\0") ||
+      kept.markerLinks?.join("\0") !== copy.markerLinks?.join("\0") ||
       kept.stamp !== copy.stamp ||
       kept.versions.join("\0") !== copy.versions.join("\0") ||
       // A changed, ambiguous, interrupted or kept copy never becomes releasable again.

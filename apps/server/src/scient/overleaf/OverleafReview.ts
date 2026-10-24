@@ -41,6 +41,7 @@ import {
   conflictGroups,
   type FileTree,
   guardedPaths,
+  hasConflictBlock,
   hasConflictMarkers,
   hasScientConflictMarkers,
   type HeldFile,
@@ -126,6 +127,10 @@ export interface OverleafReviewBinding {
   readonly publicationTree: string;
   /** Every path of every file held back for its conflict marks (`heldFiles`). */
   readonly heldPaths: ReadonlyArray<string>;
+  /** Files with conflict marks the request asked to send as they are. */
+  readonly releaseMarked: ReadonlyArray<string>;
+  /** Those of them that are sent as they are: each would otherwise be held. */
+  readonly released: ReadonlyArray<string>;
   /** The records of recorded files still held, at their paths after this apply. */
   readonly carriedMarkers: ReadonlyArray<OverleafMarkerRecord>;
   readonly conflictKeys: ReadonlyArray<string>;
@@ -146,8 +151,15 @@ export interface OverleafReview {
   readonly outgoing: ReadonlyArray<TreeChange>;
   readonly conflicts: ReadonlyArray<OverleafReviewConflict>;
   readonly warnings: ReadonlyArray<OverleafReviewWarning>;
-  /** Recorded Scient conflict material still present; those files wait, the rest is sent. */
+  /**
+   * Files held back for marks already in the folder: recorded conflict material
+   * still present, and any other file with a conflict. Those files wait, the rest
+   * is sent. Each can be sent as it is instead, by listing it in `releaseMarked`;
+   * marks this review writes are never among them.
+   */
   readonly unresolvedMarkers: ReadonlyArray<string>;
+  /** Files with marks sent as they are in this review, as `releaseMarked` asked. */
+  readonly released: ReadonlyArray<string>;
   /** Every conflict has an allowed choice. */
   readonly confirmable: boolean;
   /** Nothing to change on either side. */
@@ -221,6 +233,8 @@ export interface OverleafReviewInput {
   readonly interrupted: ReadonlyArray<ReadonlyArray<string>>;
   /** Files where Scient wrote conflict material that has not been resolved yet. */
   readonly markers: ReadonlyArray<OverleafMarkerRecord>;
+  /** Folder paths of files with conflict marks to send as they are, by choice. */
+  readonly releaseMarked: ReadonlyArray<string>;
   readonly epochs: { readonly checkout: number; readonly credential: number };
   /** Private folder for staging captured bytes as blobs; cleared afterwards. */
   readonly scratch: string;
@@ -257,9 +271,9 @@ export const overleafConflictKey = (paths: ReadonlyArray<string>) =>
   sha256(sorted(paths).join("\0"));
 /** Editable on Overleaf means text; a NUL byte early on means it is stored as an upload. */
 const looksLikeText = (bytes: Uint8Array) => !bytes.subarray(0, 8_000).includes(0);
-/** The labelled lines Scient's merge writes, as bytes, to rule most files out quickly. */
-const SCIENT_OPENING = Buffer.from("<<<<<<< Scient");
-const SCIENT_CLOSING = Buffer.from(">>>>>>> Overleaf");
+/** A conflict's opening and closing marks, as bytes, to rule most files out quickly. */
+const OPENING_MARK = Buffer.from("<<<<<<<");
+const CLOSING_MARK = Buffer.from(">>>>>>>");
 /** LFS pointers are small by specification; larger blobs need no prefix check. */
 const LFS_POINTER_MAX_BYTES = 1024;
 
@@ -692,16 +706,19 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
       const text = textOf(path);
       return text !== null && hasConflictMarkers(text);
     },
-    labelled: (path) => {
-      // Every captured file is checked; most are ruled out by their bytes alone.
+    conflicted: (path) => {
+      // Every captured file is checked; most are ruled out by their bytes alone: a
+      // labelled line or a whole block needs an opening or a closing line.
       const bytes = inventory.captured.get(path)?.bytes;
       if (bytes === undefined) return false;
       const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      return (
-        (buffer.includes(SCIENT_OPENING) || buffer.includes(SCIENT_CLOSING)) &&
-        hasScientConflictMarkers(textOf(path)!)
-      );
+      const opening = buffer.includes(OPENING_MARK);
+      const closing = buffer.includes(CLOSING_MARK);
+      if (!opening && !closing) return false;
+      const text = textOf(path)!;
+      return hasScientConflictMarkers(text) || (opening && closing && hasConflictBlock(text));
     },
+    released: input.releaseMarked,
   });
   let publishedTree = candidateTree;
   if (held.paths.length > 0) {
@@ -797,6 +814,8 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     candidateTree,
     publicationTree: publishedTree,
     heldPaths: held.paths,
+    releaseMarked: sorted(new Set(input.releaseMarked)),
+    released: held.released,
     carriedMarkers: held.carried,
     conflictKeys: conflicts.map((conflict) => conflict.key),
     markerPaths,
@@ -814,6 +833,7 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     conflicts,
     warnings,
     unresolvedMarkers,
+    released: held.released,
     confirmable: conflicts.every((conflict) => conflict.chosen !== null),
     upToDate: incoming.length === 0 && outgoing.length === 0 && conflicts.length === 0,
     collisions: sorted(requested),

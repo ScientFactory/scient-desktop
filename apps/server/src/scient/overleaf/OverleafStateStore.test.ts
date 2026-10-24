@@ -464,11 +464,12 @@ describe("OverleafStateStore", () => {
               { path: "a.tex", folderPaths: [], overleafPaths: ["a.tex"] },
               { path: "b.tex", folderPaths: [], overleafPaths: ["b.tex"] },
             ],
-            retention: { ...document.retention, copies: [{ ...copy, markerLinks: [] }] },
+            // Version 1 never recorded a kept copy's other paths: unknown, not none.
+            retention: { ...document.retention, copies: [{ ...copy, markerLinks: null }] },
             // Where the apply put them is found at adoption, from its renames.
             activeApply: {
               ...link,
-              priorMarkers: [{ path: "b.tex", links: [] }],
+              priorMarkers: [{ path: "b.tex", links: null }],
               markers: [{ path: "b.tex", folderPaths: [], overleafPaths: ["b.tex"] }],
             },
           },
