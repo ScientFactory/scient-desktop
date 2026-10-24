@@ -1,5 +1,5 @@
 import { AuthFilesystemReadScope, type EnvironmentId } from "@t3tools/contracts";
-import { isAbsolutePath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
+import { isAbsolutePath, isNetworkPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { useContext } from "react";
 
 import { useEnvironmentScope } from "../state/session";
@@ -20,7 +20,9 @@ export function useFileMetadata(
   const absolute =
     isAbsolutePath(targetPath) || targetPath.startsWith("~/") || targetPath.startsWith("~\\");
   return useEnvironmentQuery(
-    environmentId && canRead && absolute && targetPath.length <= 512
+    // Servers stat what they are asked about, and a network path leaks the
+    // Windows user's NTLM credentials to its host before any chip is clicked.
+    environmentId && canRead && absolute && !isNetworkPath(targetPath) && targetPath.length <= 512
       ? projectEnvironment.fileMetadata({
           environmentId,
           input: {

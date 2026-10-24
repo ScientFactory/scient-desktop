@@ -124,9 +124,6 @@ vi.mock("../../native/StackHeader", () => ({
   NativeStackScreenOptions: () => null,
   nativeHeaderScrollEdgeEffects: () => undefined,
 }));
-vi.mock("../layout/native-mail-search-toolbar", () => ({
-  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED: false,
-}));
 vi.mock("./ChatGptSharingStatus", () => ({ ChatGptSharingStatus: () => null }));
 vi.mock("./ThreadSettingsRows", () => ({
   ModelRow: () => null,

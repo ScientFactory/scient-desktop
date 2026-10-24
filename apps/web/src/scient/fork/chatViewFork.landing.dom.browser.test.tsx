@@ -14,6 +14,12 @@ import {
   settleForkLanding,
 } from "~/components/scient-fork/forkLanding";
 import { useForkLanding, useForkLandingReveal } from "./chatViewFork";
+import {
+  peekRememberedThreadTimeline,
+  rememberReadyThreadTimeline,
+  resetHeldThreadTimeline,
+  resolveThreadSwitchTimeline,
+} from "~/components/ChatView.logic";
 
 const fork = "env:fork";
 const origin = "env:origin";
@@ -21,6 +27,7 @@ const origin = "env:origin";
 type Probed = {
   landing: ReturnType<typeof useForkLanding>;
   reveal: ReturnType<typeof useForkLandingReveal>;
+  timeline: ReturnType<typeof resolveThreadSwitchTimeline<readonly string[]>>;
 };
 
 function Probe({
@@ -29,22 +36,41 @@ function Probe({
 }: {
   routeThreadKey: string;
   detailLoaded: boolean;
-  displayedThreadKey: string | null;
 } & { _fixture: _Fixture }) {
   const landing = useForkLanding(props.routeThreadKey);
+  const timeline = resolveThreadSwitchTimeline({
+    loading: !props.detailLoaded,
+    activeThreadKey: props.routeThreadKey,
+    nextEntries: props.detailLoaded ? [`${props.routeThreadKey} row`] : [],
+  });
   const reveal = useForkLandingReveal({
     landing,
     threadKey: props.routeThreadKey,
     threadExists: true,
     threadDeleted: false,
     detailLoaded: props.detailLoaded,
-    displayedThreadKey: props.displayedThreadKey,
-    timelineEmpty: false,
+    displayedThreadKey: timeline.displayThreadKey,
+    timelineEmpty: timeline.entries.length === 0,
   });
   useLayoutEffect(() => {
-    _fixture.publishProbed({ landing, reveal });
+    if (props.detailLoaded) {
+      rememberReadyThreadTimeline({
+        threadKey: props.routeThreadKey,
+        entries: timeline.entries,
+      });
+    }
+    _fixture.publishProbed({ landing, reveal, timeline });
   });
-  return <div data-landing-surface inert={landing.pending} className={reveal.messagesClassName} />;
+  return (
+    <section>
+      <h1>{props.routeThreadKey}</h1>
+      <div data-landing-surface inert={landing.pending} className={reveal.messagesClassName}>
+        {timeline.entries.map((row) => (
+          <p key={row}>{row}</p>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 async function render(_fixture: _Fixture, props: Omit<Parameters<typeof Probe>[0], "_fixture">) {
@@ -52,6 +78,7 @@ async function render(_fixture: _Fixture, props: Omit<Parameters<typeof Probe>[0
 }
 
 async function _setupFixture0(_fixture: _Fixture) {
+  resetHeldThreadTimeline();
   _fixture.container = document.createElement("div");
   _fixture.root0 = _fixture.stack.use(
     await _fixtureRender(null, { container: _fixture.container, router: false }),
@@ -60,6 +87,7 @@ async function _setupFixture0(_fixture: _Fixture) {
 async function _cleanupFixture1(_fixture: _Fixture) {
   await act(async () => await _fixture.root0.unmount());
   settleForkLanding(fork);
+  resetHeldThreadTimeline();
   vi.unstubAllGlobals();
 }
 
@@ -72,10 +100,9 @@ describe("fork landing in the chat view", () => {
     await render(_fixture, {
       routeThreadKey: origin,
       detailLoaded: false,
-      displayedThreadKey: origin,
     });
     expect(_fixture.probed.landing).toMatchObject({ pending: false, landed: false });
-    expect(_fixture.probed.landing.heldTimeline).toBeUndefined();
+    expect(_fixture.probed.timeline).toEqual({ entries: [], displayThreadKey: origin });
     expect(_fixture.probed.reveal.messagesClassName).toBeUndefined();
     expect(_fixture.probed.reveal.onPositionedThreadKeyChange).toBeUndefined();
     expect(_fixture.probed.reveal.syncStatusHidden).toBe(false);
@@ -92,19 +119,21 @@ describe("fork landing in the chat view", () => {
     await render(_fixture, {
       routeThreadKey: origin,
       detailLoaded: true,
-      displayedThreadKey: origin,
     });
+    expect(peekRememberedThreadTimeline(origin)).toEqual([`${origin} row`]);
     markForkLanding(fork);
-    await render(_fixture, { routeThreadKey: fork, detailLoaded: false, displayedThreadKey: fork });
+    await render(_fixture, { routeThreadKey: fork, detailLoaded: false });
     expect(_fixture.probed.reveal.messagesClassName).toBe("opacity-0");
     expect(_fixture.probed.reveal.syncStatusHidden).toBe(true);
     expect(_fixture.container.querySelector("[data-landing-surface]")?.hasAttribute("inert")).toBe(
       true,
     );
     // Nothing from the origin is held under the fork's header.
-    expect(_fixture.probed.landing.heldTimeline).toEqual({ threadKey: null, entries: [] });
+    expect(_fixture.probed.timeline).toEqual({ entries: [], displayThreadKey: fork });
+    expect(_fixture.container.querySelector("h1")?.textContent).toBe(fork);
+    expect(_fixture.container.textContent).not.toContain(`${origin} row`);
 
-    await render(_fixture, { routeThreadKey: fork, detailLoaded: true, displayedThreadKey: fork });
+    await render(_fixture, { routeThreadKey: fork, detailLoaded: true });
     // Loaded but not yet positioned.
     expect(isForkLandingPending(fork)).toBe(true);
     await act(() => _fixture.probed.reveal.onPositionedThreadKeyChange?.(fork));
@@ -121,7 +150,6 @@ describe("fork landing in the chat view", () => {
     await render(_fixture, {
       routeThreadKey: origin,
       detailLoaded: true,
-      displayedThreadKey: origin,
     });
     expect(_fixture.probed.landing).toMatchObject({ pending: false, landed: false });
     expect(_fixture.probed.reveal.messagesClassName).toBeUndefined();
@@ -134,11 +162,12 @@ describe("fork landing in the chat view", () => {
 
     _fixture.stack.use(_fixtureFakeTimers());
     try {
+      await render(_fixture, { routeThreadKey: origin, detailLoaded: true });
+      expect(peekRememberedThreadTimeline(origin)).toEqual([`${origin} row`]);
       markForkLanding(fork, 100);
       await render(_fixture, {
         routeThreadKey: fork,
         detailLoaded: false,
-        displayedThreadKey: fork,
       });
       expect(_fixture.probed.reveal.messagesClassName).toBe("opacity-0");
       expect(
@@ -150,7 +179,9 @@ describe("fork landing in the chat view", () => {
         _fixture.container.querySelector("[data-landing-surface]")?.hasAttribute("inert"),
       ).toBe(false);
       expect(_fixture.probed.reveal.messagesClassName).not.toContain("opacity-0");
-      expect(_fixture.probed.landing.heldTimeline).toBeDefined();
+      expect(_fixture.probed.timeline).toEqual({ entries: [], displayThreadKey: fork });
+      expect(_fixture.container.querySelector("h1")?.textContent).toBe(fork);
+      expect(_fixture.container.textContent).not.toContain(`${origin} row`);
     } finally {
       vi.useRealTimers();
     }

@@ -49,6 +49,51 @@ afterEach(() => {
 });
 
 describe("openPreviewSession", () => {
+  it("rechecks the launch after saved defaults load, before opening a tab", async () => {
+    const saved = await browserDefaults.resolveBrowserDefaults();
+    const defaults = Promise.withResolvers<typeof saved>();
+    using _defaults = vi
+      .spyOn(browserDefaults, "resolveBrowserDefaults")
+      .mockImplementationOnce(() => defaults.promise);
+    let current = true;
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+    const opening = openPreviewSession({
+      threadRef,
+      openPreview,
+      assertCurrent: () => {
+        if (!current) throw new Error("Superseded launch");
+      },
+    });
+    current = false;
+    defaults.resolve(saved);
+    await expect(opening).rejects.toThrow("Superseded launch");
+    expect(openPreview).not.toHaveBeenCalled();
+    expect(readThreadPreviewState(threadRef).snapshot).toBeNull();
+  });
+
+  it("does not publish a late tab acknowledgement over a superseding launch", async () => {
+    const entered = Promise.withResolvers<void>();
+    const receipt =
+      Promise.withResolvers<ReturnType<typeof AsyncResult.success<PreviewSessionSnapshot>>>();
+    let current = true;
+    const opening = openPreviewSession({
+      threadRef,
+      openPreview: () => {
+        entered.resolve();
+        return receipt.promise;
+      },
+      assertCurrent: () => {
+        if (!current) throw new Error("Superseded launch");
+      },
+    });
+    await entered.promise;
+    current = false;
+    receipt.resolve(AsyncResult.success(snapshot));
+    await expect(opening).rejects.toThrow("Superseded launch");
+    expect(readThreadPreviewState(threadRef).snapshot).toBeNull();
+    expect(readThreadPreviewState(threadRef).recentlySeenUrls).toEqual([]);
+  });
+
   it.each(["session", "link"] as const)(
     "does not open a %s with unread settings and uses the saved profile on retry",
     async (entryPoint) => {

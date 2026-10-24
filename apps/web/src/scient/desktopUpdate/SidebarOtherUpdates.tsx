@@ -1,6 +1,7 @@
 import { ArrowUpIcon, CheckIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { flushSync } from "react-dom";
+import { Link } from "@tanstack/react-router";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import type { ServerUpdateTarget } from "~/components/ServerUpdateAction";
@@ -209,6 +210,12 @@ function OtherUpdateRowItem({
   onRetry,
 }: Omit<Parameters<typeof RowEnd>[0], "askId">) {
   const askId = useId();
+  const instanceId =
+    row.item.kind === "provider"
+      ? row.item.instanceId
+      : row.item.kind === "managed"
+        ? row.item.target.instanceId
+        : null;
   const secondary = [row.item.machine, otherUpdateVersionLabel(row.item)]
     .filter((part) => part !== null)
     .join(" · ");
@@ -216,16 +223,28 @@ function OtherUpdateRowItem({
     <li className="flex min-w-0 flex-col" data-other-update-row>
       <div className="flex min-h-5 items-center justify-between gap-3">
         <span className="min-w-0 truncate">{row.item.name}</span>
-        <RowEnd
-          askId={askId}
-          asking={asking}
-          busy={busy}
-          row={row}
-          stops={stops}
-          onAsk={onAsk}
-          onRetry={onRetry}
-          onUpdate={onUpdate}
-        />
+        <span className="flex shrink-0 items-center gap-2.5">
+          {instanceId !== null ? (
+            <Link
+              aria-label={`Open ${row.item.name} settings${row.item.machine ? ` on ${row.item.machine}` : ""}`}
+              className="text-foreground/80 underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current"
+              search={{ environmentId: row.item.environmentId, instanceId }}
+              to="/settings/providers"
+            >
+              Settings
+            </Link>
+          ) : null}
+          <RowEnd
+            askId={askId}
+            asking={asking}
+            busy={busy}
+            row={row}
+            stops={stops}
+            onAsk={onAsk}
+            onRetry={onRetry}
+            onUpdate={onUpdate}
+          />
+        </span>
       </div>
       {secondary ? (
         <span className="truncate text-muted-foreground tabular-nums">{secondary}</span>

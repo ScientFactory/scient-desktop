@@ -11,7 +11,7 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { randomUUID } from "~/lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
-import { useProject, useThread, useQuietThreadShell } from "../../state/entities";
+import { useProject, useQuietThreadProjection, useQuietThreadShell } from "../../state/entities";
 import { readEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
 import { useKnownTerminalSessions } from "../../state/terminalSessions";
@@ -45,9 +45,11 @@ export function useThreadTerminalActions(
     threadRef ? store.getDraftThreadByRef(threadRef) : null,
   );
   // SCIENT-FORK:START
-  const detailThread = useThread(options?.includeDetail === true ? threadRef : null, {
-    waitForShell: draftThread !== null,
-  });
+  const detailThread = useQuietThreadProjection(
+    options?.includeDetail === true && (draftThread === null || serverThread !== null)
+      ? threadRef
+      : null,
+  );
   const serverProjectId = detailThread?.projection.thread.projectId ?? serverThread?.projectId;
   const projectRef =
     threadRef && serverProjectId

@@ -5,6 +5,9 @@
  * native helper, so these run where that helper qualifies.
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeModule from "node:module";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { vi } from "vite-plus/test";
 import * as NodeDiagnosticsChannel from "node:diagnostics_channel";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -14,6 +17,7 @@ import * as Effect from "effect/Effect";
 
 import {
   filePublicationTestHelper,
+  filePublicationProbeHelper,
   nativePublicationHost,
 } from "../workspace/fileExchange.testkit.ts";
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
@@ -884,130 +888,181 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
   });
 
   describe("editor saves", () => {
-    it.live("checks an editor save's revision after an overlapping apply", () => {
-      let entered!: () => void, release!: () => void;
-      const started = new Promise<void>((resolve) => {
-          entered = resolve;
-        }),
-        hold = new Promise<void>((resolve) => {
-          release = resolve;
-        });
-      let once = false;
-      return fixture(
-        async (h) => {
-          await put(h.cwd, { "main.tex": "base" });
-          const applying = h.apply(
-            "locked",
-            plan({ "main.tex": "base" }, { "main.tex": "incoming" }),
-          );
-          let saving: Promise<unknown> | undefined;
-          try {
-            // An apply that fails before holding the lock ends the test at once.
-            await Promise.race([
-              started,
-              applying.then(() => {
-                throw new Error("The apply finished before holding the lock.");
-              }),
-            ]);
+    it.live(
+      "checks an editor save's lease contention and revision after an overlapping apply",
+      () => {
+        let entered!: () => void, release!: () => void;
+        const started = new Promise<void>((resolve) => {
+            entered = resolve;
+          }),
+          hold = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        let once = false;
+        return fixture(
+          async (h) => {
+            await put(h.cwd, { "main.tex": "base" });
             const helper = await filePublicationTestHelper();
-            if (!helper) throw new Error("The native publication helper is required.");
-            const root = await NodeFSP.stat(h.cwd, { bigint: true });
-            const expectedBinding = [
-              h.cwd,
-              ".",
-              String(root.dev),
-              String(root.ino),
-              String(root.dev),
-              String(root.ino),
-              "exclusive",
-            ];
-            const requested = Promise.withResolvers<void>();
-            using observer = new DisposableStack();
-            const onChild = (message: unknown) => {
-              if (
-                typeof message !== "object" ||
-                message === null ||
-                !("process" in message) ||
-                !(message.process instanceof NodeChildProcess.ChildProcess)
-              )
-                return;
-              const child = message.process;
-              // The diagnostics channel publishes before spawnfile/spawnargs are populated.
-              const onSpawn = () => {
-                const args = child.spawnargs;
-                if (child.spawnfile !== helper || args[1] !== "--lease=1" || args[2] !== "shared")
-                  return;
-                for (let offset = 3; offset + 6 < args.length; offset += 7) {
-                  if (!expectedBinding.every((value, index) => args[offset + index] === value))
-                    continue;
-                  requested.resolve();
-                  return;
-                }
-              };
-              const onError = (error: Error) => requested.reject(error);
-              child.once("spawn", onSpawn);
-              child.once("error", onError);
-              observer.defer(() => {
-                child.removeListener("spawn", onSpawn);
-                child.removeListener("error", onError);
-              });
-            };
-            NodeDiagnosticsChannel.subscribe("child_process", onChild);
-            observer.defer(() => {
-              NodeDiagnosticsChannel.unsubscribe("child_process", onChild);
-            });
-            const save = h.run(
-              Effect.result(
-                h.files.writeFile({
-                  cwd: h.cwd,
-                  relativePath: "main.tex",
-                  contents: "editor draft",
-                  expectedRevision: bytesRevision(bytes("base")),
-                }),
-              ),
+            const probe = await filePublicationProbeHelper();
+            if (!helper || !probe) throw new Error("Native publication helpers are required.");
+            const applying = h.apply(
+              "locked",
+              plan({ "main.tex": "base" }, { "main.tex": "incoming" }),
             );
-            saving = save;
-            // Lease requests are complete in argv. Observe the real request's successful
-            // spawn while the apply is held, then check the editor's revision after release.
-            await Promise.race([
-              requested.promise,
-              save.then(() => {
-                throw new Error("The editor save finished before its lease request was observed.");
-              }),
-            ]);
-            release();
-            await applying;
-            expect(await save).toMatchObject({
-              _tag: "Failure",
-              failure: { _tag: "WorkspaceFileRevisionConflictError" },
-            });
-          } finally {
-            release();
-            await Promise.allSettled(saving ? [applying, saving] : [applying]);
-          }
-          expect(await read(h.cwd, "main.tex")).toBe("incoming");
-          await h.run(
-            h.files.writeFile({
-              cwd: h.cwd,
-              relativePath: "main.tex",
-              contents: "editor after",
-              expectedRevision: bytesRevision(bytes("incoming")),
-            }),
-          );
-          expect(await read(h.cwd, "main.tex")).toBe("editor after");
-        },
-        {},
-        {
-          at: async (point) => {
-            if (point === "checked" && !once) {
-              once = true;
-              entered();
-              await hold;
+            let saving: Promise<unknown> | undefined;
+            try {
+              // An apply that fails before holding the lock ends the test at once.
+              await Promise.race([
+                started,
+                applying.then(() => {
+                  throw new Error("The apply finished before holding the lock.");
+                }),
+              ]);
+              const root = await NodeFSP.stat(h.cwd, { bigint: true });
+              const expectedBinding = [
+                h.cwd,
+                ".",
+                String(root.dev),
+                String(root.ino),
+                String(root.dev),
+                String(root.ino),
+                "exclusive",
+              ];
+              const blocked = Promise.withResolvers<void>();
+              const spawn = NodeChildProcess.spawn;
+              const mutableChildProcess = NodeModule.createRequire(import.meta.url)(
+                "node:child_process",
+              ) as typeof NodeChildProcess;
+              // Native ESM imports need resynchronizing after the disposable default-export spy restores.
+              using _nativeBindings = {
+                [Symbol.dispose]() {
+                  NodeModule.syncBuiltinESMExports();
+                },
+              };
+              using _helperProcesses = vi.spyOn(mutableChildProcess, "spawn").mockImplementation(((
+                command: string,
+                args?: ReadonlyArray<string> | NodeChildProcess.SpawnOptions,
+                options?: NodeChildProcess.SpawnOptions,
+              ) => {
+                if (command === helper && Array.isArray(args) && args[0] === "--lease=1") {
+                  const child = spawn(probe, args, {
+                    ...options,
+                    env: {
+                      ...(options?.env ?? HostProcess.Environment.defaultValue()),
+                      SCIENT_LEASE_CONTENTION_PROBE: "1",
+                    },
+                  });
+                  let receipt = "";
+                  for (
+                    let offset = 2;
+                    args[1] === "shared" && offset + 6 < args.length;
+                    offset += 7
+                  ) {
+                    if (!expectedBinding.every((value, index) => args[offset + index] === value))
+                      continue;
+                    child.stderr?.on("data", (chunk: Buffer | string) => {
+                      receipt += chunk.toString();
+                      if (receipt.includes("LEASE_BLOCKED\n")) blocked.resolve();
+                    });
+                    break;
+                  }
+                  return child;
+                }
+                return Array.isArray(args)
+                  ? spawn(command, args, options ?? {})
+                  : spawn(command, (args ?? {}) as NodeChildProcess.SpawnOptions);
+              }) as typeof NodeChildProcess.spawn);
+              NodeModule.syncBuiltinESMExports();
+              const requested = Promise.withResolvers<void>();
+              using observer = new DisposableStack();
+              const onChild = (message: unknown) => {
+                if (
+                  typeof message !== "object" ||
+                  message === null ||
+                  !("process" in message) ||
+                  !(message.process instanceof NodeChildProcess.ChildProcess)
+                )
+                  return;
+                const child = message.process;
+                // The diagnostics channel publishes before spawnfile/spawnargs are populated.
+                const onSpawn = () => {
+                  const args = child.spawnargs;
+                  if (child.spawnfile !== probe || args[1] !== "--lease=1" || args[2] !== "shared")
+                    return;
+                  for (let offset = 3; offset + 6 < args.length; offset += 7) {
+                    if (!expectedBinding.every((value, index) => args[offset + index] === value))
+                      continue;
+                    requested.resolve();
+                    return;
+                  }
+                };
+                const onError = (error: Error) => requested.reject(error);
+                child.once("spawn", onSpawn);
+                child.once("error", onError);
+                observer.defer(() => {
+                  child.removeListener("spawn", onSpawn);
+                  child.removeListener("error", onError);
+                });
+              };
+              NodeDiagnosticsChannel.subscribe("child_process", onChild);
+              observer.defer(() => {
+                NodeDiagnosticsChannel.unsubscribe("child_process", onChild);
+              });
+              const save = h.run(
+                Effect.result(
+                  h.files.writeFile({
+                    cwd: h.cwd,
+                    relativePath: "main.tex",
+                    contents: "editor draft",
+                    expectedRevision: bytesRevision(bytes("base")),
+                  }),
+                ),
+              );
+              saving = save;
+              // Require both the exact root binding and a native lock-refusal receipt
+              // before releasing the apply; spawning alone does not prove contention.
+              await Promise.race([
+                Promise.all([requested.promise, blocked.promise]),
+                save.then(() => {
+                  throw new Error(
+                    "The editor save finished before its lease request was observed.",
+                  );
+                }),
+              ]);
+              release();
+              await applying;
+              expect(await save).toMatchObject({
+                _tag: "Failure",
+                failure: { _tag: "WorkspaceFileRevisionConflictError" },
+              });
+            } finally {
+              release();
+              await Promise.allSettled(saving ? [applying, saving] : [applying]);
             }
+            expect(await read(h.cwd, "main.tex")).toBe("incoming");
+            await h.run(
+              h.files.writeFile({
+                cwd: h.cwd,
+                relativePath: "main.tex",
+                contents: "editor after",
+                expectedRevision: bytesRevision(bytes("incoming")),
+              }),
+            );
+            expect(await read(h.cwd, "main.tex")).toBe("editor after");
           },
-        },
-      );
-    });
+          {},
+          {
+            at: async (point) => {
+              if (point === "checked" && !once) {
+                once = true;
+                entered();
+                await hold;
+              }
+            },
+          },
+        );
+      },
+    );
 
     it.live("never overwrites an editor save completed just before apply", () => {
       let saveBefore = async () => {};

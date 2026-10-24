@@ -66,8 +66,8 @@ export function QueuedRunsControl({
   // SCIENT-FORK:END queue-head-send-rule
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
-  const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
+  const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
   const [busyId, setBusyId] = useState<string | null>(null);
   const busyRef = useRef(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -160,11 +160,28 @@ export function QueuedRunsControl({
       }),
     );
   };
+  // SCIENT-FORK:START — a stopped-thread shortcut obeys the held queue's per-run guard.
+  const sendNow = (runId: RunId) => {
+    if (!workflow?.canSendNow || (workflow.isHeld && !canSendRun(runId))) return;
+    void perform(runId, () =>
+      resume({
+        environmentId: props.environmentId,
+        input: { threadId: props.threadId, runId },
+      }),
+    );
+  };
+  // SCIENT-FORK:END
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const first = items[0];
-      if (!first || !workflow?.canPromoteToSteer) return false;
-      if (!repeat && !busyRef.current) steer(first.runId);
+      const canSendNow =
+        workflow?.canSendNow === true &&
+        (!workflow.isHeld || (first !== undefined && canSendRun(first.runId)));
+      if (!first || (!workflow?.canPromoteToSteer && !canSendNow)) return false;
+      if (!repeat && !busyRef.current) {
+        if (canSendNow) sendNow(first.runId);
+        else steer(first.runId);
+      }
       return true;
     },
     editLatest(repeat) {

@@ -117,7 +117,6 @@ import {
   workspaceFileHostPath,
 } from "./filePath";
 import type { ChatFileAttachment } from "~/types";
-import { isAbsolutePath } from "@t3tools/shared/path";
 import { isHostPath } from "@t3tools/shared/path";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -428,6 +427,7 @@ function WorkspaceVideoPreview(props: {
   readonly workspaceRoot: string;
   readonly relativePath: string;
   readonly name: string;
+  readonly workspaceMutationId: string | null;
   readonly refreshKey: number;
 }) {
   const reference = mediaFileReference(props.absolutePath, props.workspaceRoot);
@@ -436,10 +436,28 @@ function WorkspaceVideoPreview(props: {
   // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
-  // SCIENT-FORK:START — reload when the file's watcher reports a change
+  useWorkspaceMutationRefresh({
+    mutationId: props.workspaceMutationId,
+    resourceKey: JSON.stringify([props.environmentId, resource]),
+    refresh: () => {
+      void refreshAssetUrl().catch(() => undefined);
+    },
+  });
+  // SCIENT-FORK:START — native watcher changes refresh the media locator.
   useScientViewerRefreshKey(props.refreshKey, refreshAssetUrl);
-  const revisionSuffix = scientViewerRevisionSuffix(assetUrl, props.refreshKey);
   // SCIENT-FORK:END
+  const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
+  const revision =
+    fileRevision ??
+    // SCIENT-FORK:START — older servers omit native file revisions.
+    (props.workspaceMutationId === null && props.refreshKey === 0
+      ? null
+      : `${props.workspaceMutationId ?? ""}:${props.refreshKey}`);
+  // SCIENT-FORK:END
+  const revisionSuffix =
+    revision === null
+      ? ""
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
   const latestUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
 
   return (
@@ -448,7 +466,7 @@ function WorkspaceVideoPreview(props: {
         src={latestUrl}
         sourceFailed={assetUrl._tag === "Failure"}
         label={props.name}
-        revision={String(props.refreshKey)}
+        revision={revision}
         preload="metadata"
         className="flex h-full min-h-0 w-full max-w-5xl items-center justify-center"
         onRetry={refreshAssetUrl}
@@ -493,17 +511,21 @@ function WorkspaceAudioPreview(props: {
       void refreshAssetUrl().catch(() => undefined);
     },
   });
-  // SCIENT-FORK:START — reload when the file's watcher reports a change
+  // SCIENT-FORK:START — native watcher changes also clear a failed audio locator.
   useScientViewerRefreshKey(props.refreshKey, refreshAssetUrl, setFailedUrl);
   // SCIENT-FORK:END
+  const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
   const revision =
-    props.workspaceMutationId === null && props.refreshKey === 0
+    fileRevision ??
+    // SCIENT-FORK:START — older servers omit native file revisions.
+    (props.workspaceMutationId === null && props.refreshKey === 0
       ? null
-      : `${props.workspaceMutationId ?? ""}:${props.refreshKey}`;
+      : `${props.workspaceMutationId ?? ""}:${props.refreshKey}`);
+  // SCIENT-FORK:END
   const revisionSuffix =
     revision === null
       ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(revision)}`;
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
   const url = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
   if (assetUrl._tag === "Failure" || (url !== null && failedUrl === url)) {
     return (
@@ -518,7 +540,14 @@ function WorkspaceAudioPreview(props: {
     );
   }
   if (url === null) return <FileSurfaceLoading />;
-  return <AudioPreview src={url} name={props.name} onError={() => setFailedUrl(url)} />;
+  return (
+    <AudioPreview
+      src={url}
+      name={props.name}
+      revision={revision}
+      onError={() => setFailedUrl(url)}
+    />
+  );
 }
 
 function updateFileLinkReveal(fileContainer: HTMLElement, line: number | null): void {
@@ -2473,6 +2502,7 @@ export default function FilePreviewPanel({
               workspaceRoot={cwd}
               relativePath={relativePath}
               name={relativePath}
+              workspaceMutationId={workspaceMutationId}
               refreshKey={viewerRefreshKey}
             />
           ) : relativePath && isAudio && absolutePath ? (

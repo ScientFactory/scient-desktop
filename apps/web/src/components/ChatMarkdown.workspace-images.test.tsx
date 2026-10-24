@@ -185,7 +185,6 @@ describe("ChatMarkdown workspace images", () => {
         "![relative](.t3/workspace-image.svg)",
         `![absolute](${imagePath})`,
         `![file URL](file:///${imagePath})`,
-        "![UNC file URL](file://server/share/workspace-image.svg)",
       ].join("\n\n"),
     );
 
@@ -211,19 +210,43 @@ describe("ChatMarkdown workspace images", () => {
         threadId: threadRef.threadId,
         path: "C:\\Users\\shawn\\project\\.t3\\workspace-image.svg",
       },
+    ]);
+    expect(html.match(/<img[^>]+src="https:\/\/signed\.test\/workspace-image\.svg"/g)).toHaveLength(
+      3,
+    );
+    expect(html.match(/data-scient-inline-workspace-image="true"/g)).toHaveLength(3);
+    expect(
+      html.match(/<img[^>]+class="[^"]*max-h-\[32rem\] max-w-full object-contain/g),
+    ).toHaveLength(3);
+    expect(html.match(/data-scient-visual-card[^>]+class="[^"]*max-w-full/g)).toHaveLength(3);
+    expect(html).not.toContain("Image unavailable");
+  });
+
+  it("signs images on the workspace UNC share without contacting another share", () => {
+    const cwd = "\\\\server\\share";
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd={cwd}
+        threadRef={threadRef}
+        text={[
+          "![authorized](file://server/share/workspace-image.svg)",
+          "![different host](file://another-server/share/workspace-image.svg)",
+          "![different share](file://server/another-share/workspace-image.svg)",
+        ].join("\n\n")}
+      />,
+    );
+    expect(testState.resources).toEqual([
       {
-        _tag: "media-file",
+        _tag: "workspace-file",
+        cwd,
+        relativePath: "workspace-image.svg",
         threadId: threadRef.threadId,
         path: "\\\\server\\share\\workspace-image.svg",
       },
     ]);
     expect(html.match(/<img[^>]+src="https:\/\/signed\.test\/workspace-image\.svg"/g)).toHaveLength(
-      4,
+      1,
     );
-    expect(html.match(/data-scient-inline-workspace-image="true"/g)).toHaveLength(3);
-    expect(html).toContain("max-w-[min(100%,30rem)]");
-    expect(html).toContain("max-h-[32rem]");
-    expect(html).not.toContain("Image unavailable");
   });
 
   it("loads a POSIX absolute path and file URI through a signed asset URL", () => {

@@ -3,6 +3,7 @@ import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import rootPackageJson from "../../package.json" with { type: "json" };
 import packageJson from "./package.json" with { type: "json" };
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer.ts";
@@ -25,9 +26,43 @@ export { shouldBundleCliDependency };
 const repoEnv = loadRepoEnv();
 const cliBuildChannel = packageJson.version.includes("-beta.")
   ? "beta"
-  : packageJson.version.includes("-nightly.")
+  : /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version)
     ? "nightly"
     : "latest";
+
+// `build:exe` wraps the same bundle in a Node single-executable. tsdown's exe
+// step refuses multi-chunk output and counts the sourcemap as a chunk, and the
+// executable needs a host Node that supports `--build-sea` (25.7+), so this is
+// a separate mode rather than a second entry in the default build.
+const packExecutable = process.env.T3CODE_PACK_EXE === "1";
+const SEA_TARGETS = {
+  "darwin-arm64": { platform: "darwin", arch: "arm64" },
+  "darwin-x64": { platform: "darwin", arch: "x64" },
+  "linux-arm64": { platform: "linux", arch: "arm64" },
+  "linux-x64": { platform: "linux", arch: "x64" },
+  "win-arm64": { platform: "win", arch: "arm64" },
+  "win-x64": { platform: "win", arch: "x64" },
+} as const;
+const packExecutableTarget = process.env.T3CODE_PACK_EXE_TARGET?.trim();
+const cliNodeVersion = rootPackageJson.engines.node;
+if (packExecutable && !packExecutableTarget && process.versions.node !== cliNodeVersion) {
+  throw new Error(
+    `Native CLI executables must be built with Node ${cliNodeVersion}; running ${process.versions.node}.`,
+  );
+}
+if (packExecutableTarget && !Object.hasOwn(SEA_TARGETS, packExecutableTarget)) {
+  throw new Error(
+    `T3CODE_PACK_EXE_TARGET must be one of ${Object.keys(SEA_TARGETS).join(", ")}, got "${packExecutableTarget}".`,
+  );
+}
+const packExecutableTargets = packExecutableTarget
+  ? [
+      {
+        ...SEA_TARGETS[packExecutableTarget as keyof typeof SEA_TARGETS],
+        nodeVersion: cliNodeVersion,
+      },
+    ]
+  : undefined;
 
 // The root config's `projects` route repo-root runs to package configs,
 // including this one. Inheriting them would make this config a container.
@@ -54,16 +89,28 @@ export default mergeConfig(
     },
     pack: {
       alias: CLI_BUNDLE_ALIASES,
-      entry: [
-        "src/bin.ts",
-        "src/analytics-worker.ts",
-        "src/claude-history-worker.ts",
-        "src/pdf-validation-worker.ts",
-        "src/pdf.worker.ts",
-      ],
-      outDir: "dist",
-      sourcemap: true,
+      entry: packExecutable
+        ? ["src/bin.ts"]
+        : [
+            "src/bin.ts",
+            "src/analytics-worker.ts",
+            "src/claude-history-worker.ts",
+            "src/pdf-validation-worker.ts",
+            "src/pdf.worker.ts",
+          ],
+      outDir: packExecutable ? "dist-exe" : "dist",
+      sourcemap: !packExecutable,
       clean: true,
+      ...(packExecutable
+        ? {
+            exe: {
+              fileName: SCIENT_DESKTOP_IDENTITY.cliCommandName,
+              outDir: "dist-exe",
+              ...(packExecutableTargets ? { targets: packExecutableTargets } : {}),
+              seaConfig: { useCodeCache: false },
+            },
+          }
+        : {}),
       deps: {
         // `neverBundle` forces the native packages out: returning false from
         // `alwaysBundle` only means "no opinion", so a transitive dependency

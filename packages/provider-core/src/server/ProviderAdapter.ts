@@ -463,6 +463,8 @@ export interface ProviderAdapterV2InterruptInput {
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly providerTurnId: ProviderTurnId;
   readonly requestRuntimeRestart?: boolean;
+  /** Ingestion cleanup must not re-enter a captured session's existing retirement. */
+  readonly onlyIfActive?: boolean;
   /** SCIENT: private Droid admission token, consumed before interrupt mutates its native owner. */
   readonly droidSteerLease?: string;
 }

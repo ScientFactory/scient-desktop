@@ -978,12 +978,12 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const runtimeNote =
       [
         liveSession?.runtime
-          ? `${computeRuntimeDisplayLabel(liveSession.runtime, props.language.displayName)} — ${liveSession.runtime.executable}`
+          ? `${computeRuntimeDisplayLabel(liveSession.runtime, props.language.displayName)}: ${liveSession.runtime.executable}`
           : null,
         runtimeToolbar.kind === "status" ? runtimeToolbar.note : null,
       ]
         .filter(Boolean)
-        .join(" — ") || undefined;
+        .join(" · ") || undefined;
     const primaryRunTooltip = primaryRunBlocked
       ? (matlabFileCapability?.reason ?? "This definition is called from a script.")
       : primary.slice === null
@@ -1085,7 +1085,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 size="xs"
                 variant="ghost-muted"
                 className="min-w-0 max-w-full"
-                title={`${runtimeNote ?? ""} — Switch to the selected ${props.language.displayName} environment`}
+                title={`${runtimeNote ? `${runtimeNote}. ` : ""}Switch to the selected ${props.language.displayName} environment`}
                 aria-label={`Switch ${props.language.displayName} environment`}
                 disabled={switching || props.contextId === undefined}
                 onClick={requestRuntimeSwitch}

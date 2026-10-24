@@ -15,8 +15,8 @@ import {
  */
 export function modelUnavailableHint(driver: string | undefined): string {
   return driver === "droid"
-    ? " — use Check again to refresh Droid's list"
-    : " — check the model ID and limits in Edit";
+    ? ". Use Check again to refresh Droid's list"
+    : ". Check the model ID and limits in Edit";
 }
 
 /**
@@ -47,7 +47,7 @@ export function connectionKeyMissing(
 }
 
 /** A connection's saved key is gone or unusable; only re-entering it helps. */
-export const MISSING_KEY_STATUS = "Saved key missing — re-enter it";
+export const MISSING_KEY_STATUS = "Saved key missing. Re-enter it";
 
 export function modelConnectionStatus(
   provider:

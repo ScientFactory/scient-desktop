@@ -22,6 +22,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -70,6 +71,7 @@ import {
   OrchestrationV2ThreadLaunchError,
   type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
+  type ApplicationStoredEvent,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
@@ -144,6 +146,7 @@ import {
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
+  shouldPublishShellApplicationEvent,
   skipUnchangedThreadShells,
   toShellApplicationEvent,
   type ShellApplicationEvent,
@@ -255,6 +258,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
+import { isNetworkPath } from "@t3tools/shared/path";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
   sameUsageLimitCommandCoverage,
@@ -1030,6 +1034,9 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     const projects = yield* ProjectStore.ProjectStoreV2;
     const projectService = yield* ProjectService.ProjectService;
     const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+    let subagentThreadIds = new Set<string>();
+    const filterSubagentTranscript = (stored: ApplicationStoredEvent) =>
+      shouldPublishShellApplicationEvent(stored, subagentThreadIds);
 
     const enrichmentChanges = yield* projectEnrichment.subscribeChanges;
     const loadProjectMetadataSnapshot = Effect.fn("ws.orchestrationV2.loadProjectMetadataSnapshot")(
@@ -1055,6 +1062,11 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
           listProjects: projects.listShells(),
           latestSequence: applicationEvents.latestApplicationSequence,
         }),
+      );
+      subagentThreadIds = new Set(
+        base.threads
+          .filter((thread) => thread.lineage.relationshipToParent === "subagent")
+          .map((thread) => thread.id),
       );
       const enriched = yield* enrichProjectShells(base.projects);
       return {
@@ -1128,6 +1140,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
           applicationEvents.streamProjectedApplicationEvents({
             afterSequence,
             project: toShellApplicationEvent,
+            filter: filterSubagentTranscript,
           }),
         ),
       );
@@ -1218,16 +1231,25 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         });
       }
 
+      const currentShell = yield* threadManagement.getShellSnapshot({ location: "active" });
+      subagentThreadIds = new Set(
+        currentShell.threads
+          .filter((thread) => thread.lineage.relationshipToParent === "subagent")
+          .map((thread) => thread.id),
+      );
+
       const loaded = yield* loadProjectMetadataSnapshot(highWater);
       const replay = toShellStream(
-        applicationEvents.readApplicationEvents({
-          afterSequence: input.afterSequence,
-          throughSequence: highWater,
-          // A row a newer build wrote (e.g. after a downgrade) must not fail
-          // every shell resubscribe. The live tail below resumes from
-          // highWater, so a dropped row never hides later events.
-          skipUnknownEventTypes: true,
-        }),
+        applicationEvents
+          .readApplicationEvents({
+            afterSequence: input.afterSequence,
+            throughSequence: highWater,
+            // A row a newer build wrote (e.g. after a downgrade) must not fail
+            // every shell resubscribe. The live tail below resumes from
+            // highWater, so a dropped row never hides later events.
+            skipUnknownEventTypes: true,
+          })
+          .pipe(Stream.filter(filterSubagentTranscript)),
       );
       return composeShellStreamWithEnrichment({
         initial: initialEnrichmentItems(loaded),
@@ -2049,7 +2071,13 @@ export const layerWsRpc = (
               { analysis, compute, generatedDocuments },
             );
           }
-          if (input.resource._tag === "environment-file" || input.resource._tag === "media-file") {
+          const path = yield* Path.Path;
+          if (
+            input.resource._tag === "environment-file" ||
+            (input.resource._tag === "media-file" &&
+              path.isAbsolute(input.resource.path) &&
+              !isNetworkPath(input.resource.path))
+          ) {
             return yield* issueAssetUrl({ resource: input.resource });
           }
           if (
@@ -2094,7 +2122,11 @@ export const layerWsRpc = (
                 : {}),
             });
           }
-          if (input.resource.cwd !== undefined && input.resource.relativePath !== undefined) {
+          if (
+            input.resource._tag === "workspace-file" &&
+            input.resource.cwd !== undefined &&
+            input.resource.relativePath !== undefined
+          ) {
             return yield* issueAssetUrl({ resource: input.resource });
           }
           if (input.resource.threadId === undefined || input.resource.path === undefined) {
