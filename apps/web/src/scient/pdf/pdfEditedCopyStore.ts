@@ -6,10 +6,14 @@ const SavedCopy = Schema.Struct({
   source: PdfSourceDescriptor,
   sessionKey: Schema.String,
   showOriginal: Schema.Boolean,
+  /** The generated revision the copy was edited from; null for files that are not rebuilt. */
+  originalRevisionId: Schema.NullOr(Schema.String),
+  savedAt: Schema.Number,
 });
 export type SavedPdfEditedCopy = typeof SavedCopy.Type;
 const decode = Schema.decodeUnknownSync(Schema.fromJsonString(SavedCopy));
 const prefix = "scient.pdf-edited-copy.v1:";
+const MAX_REMEMBERED_COPIES = 100;
 const cache = new Map<string, SavedPdfEditedCopy | null>();
 const listeners = new Set<() => void>();
 
@@ -36,6 +40,21 @@ function subscribe(listener: () => void) {
   };
 }
 
+/** The generated revision a copy must have been edited from to still apply. */
+export function pdfEditedCopyOriginalRevision(source: PdfSourceDescriptor) {
+  return source._tag === "generated-pdf" ? source.revisionId : null;
+}
+
+/** A remembered copy applies only while the original is the revision it was edited from. */
+export function currentPdfEditedCopy(
+  remembered: SavedPdfEditedCopy | null,
+  original: PdfSourceDescriptor,
+) {
+  return remembered?.originalRevisionId === pdfEditedCopyOriginalRevision(original)
+    ? remembered
+    : null;
+}
+
 export function usePdfEditedCopy(key: string) {
   return useSyncExternalStore(
     subscribe,
@@ -44,11 +63,40 @@ export function usePdfEditedCopy(key: string) {
   );
 }
 
-export function rememberPdfEditedCopy(key: string, copy: SavedPdfEditedCopy) {
+/** Forgets the least recently saved copies once more than the limit are remembered. */
+function forgetOldCopies() {
+  const remembered: { key: string; savedAt: number }[] = [];
+  for (let index = 0; index < localStorage.length; index++) {
+    const key = localStorage.key(index);
+    if (!key?.startsWith(prefix)) continue;
+    let savedAt = 0;
+    try {
+      savedAt = decode(localStorage.getItem(key) ?? "").savedAt;
+    } catch {
+      // Damaged entries are the first to go.
+    }
+    remembered.push({ key, savedAt });
+  }
+  remembered.sort((left, right) => left.savedAt - right.savedAt);
+  for (const { key } of remembered.slice(
+    0,
+    Math.max(0, remembered.length - MAX_REMEMBERED_COPIES),
+  )) {
+    localStorage.removeItem(key);
+    cache.delete(key.slice(prefix.length));
+  }
+}
+
+export function rememberPdfEditedCopy(
+  key: string,
+  remembered: Omit<SavedPdfEditedCopy, "savedAt">,
+) {
+  const copy: SavedPdfEditedCopy = { ...remembered, savedAt: Date.now() };
   cache.set(key, copy);
   let durable = true;
   try {
     localStorage.setItem(prefix + key, JSON.stringify(copy));
+    forgetOldCopies();
   } catch {
     durable = false;
   }

@@ -218,14 +218,18 @@ history. The PDF reader retains its existing document identity and zoom state.
 The transport calls `PdfFileEdits.save`; the server owns all destination paths.
 Workspace/environment PDFs use the shared binary-file mutation boundary with
 a SHA-256 expected revision and a unique operation ID. A concurrent writer is
-never silently overwritten. Generated PDFs and environment PDFs outside known
-writable projects publish independent, validated revisions through
+never silently overwritten. Generated PDFs, Sources PDFs (a `source` origin, or any path inside a
+project's `.scient/sources`, whose content-addressed files are shared by every
+attachment with the same bytes) and environment PDFs outside known writable
+projects publish independent, validated revisions through
 `GeneratedDocumentStore`, under a PDF-editor-owned binding. Later saves check
 that binding's expected revision under a per-binding lease. The original PDF
 remains immutable; only registered workspace files use the workspace writer.
 The client remembers the edited-copy descriptor and view choice by reader scope
 in local storage, so the copy remains openable after closing or restarting the
-reader. Quote metadata follows the saved copy's identity.
+reader. Each record keeps the generated revision it was edited from; once a
+rebuild replaces that revision the record no longer applies. Only the 100 most
+recently saved records are kept. Quote metadata follows the saved copy's identity.
 Attachments retain the existing read-only experience.
 
 The worker rebuilds from the base PDF context, retaining the catalog, metadata,
@@ -233,7 +237,13 @@ attachments and original page references. Removed-page destinations are rebound
 to a surviving page. Copied pages rebind explicit and named internal links to
 inserted targets; external links and non-link annotations retain their objects.
 Inherited resources and page boxes are materialized before reparenting original
-page nodes. Page-label number trees are read before editing and rebuilt in output
+page nodes. Before serializing, objects the trailer no longer reaches are removed
+(pdf-lib otherwise writes every object it loaded), so deleted pages' content does
+not survive in the bytes. A tagged base PDF (one with a `StructTreeRoot`) must
+keep each original page exactly once, because its structure tree points at those
+pages; the session and worker both refuse delete and duplicate. Pages copied
+from a tagged PDF drop their `StructParents`/`StructParent` claims. A picked
+import that is cancelled is released from the worker's 50 MB source budget. Page-label number trees are read before editing and rebuilt in output
 order so Roman, alphabetic, prefixed and custom labels follow their source pages,
 including duplicates and imports. Unlabeled and blank pages use their physical
 position when mixed with custom labels; wholly unlabeled PDFs retain automatic

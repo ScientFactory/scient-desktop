@@ -1,8 +1,16 @@
 import { expect, it, vi } from "vite-plus/test";
-import { PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString, StandardFonts } from "pdf-lib";
+import {
+  PDFDict,
+  PDFDocument,
+  PDFHexString,
+  PDFName,
+  PDFNumber,
+  PDFString,
+  StandardFonts,
+} from "pdf-lib";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.mjs";
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
-import type { PdfEditWorkerRequest, PdfEditWorkerResponse } from "./pdfPageEdits";
+import type { PdfEditPage, PdfEditWorkerRequest, PdfEditWorkerResponse } from "./pdfPageEdits";
 
 function request(worker: Worker, input: PdfEditWorkerRequest) {
   return new Promise<PdfEditWorkerResponse>((resolve, reject) => {
@@ -213,4 +221,160 @@ it("rejects a label tree without an initial range before editing", async () => {
       bytes: await source.save(),
     }),
   ).rejects.toThrow("page labels could not be preserved");
+});
+
+async function markedPdf(markers: readonly string[]) {
+  const document = await PDFDocument.create();
+  const sharedFont = document.context.register(
+    document.context.obj({ Type: "Font", Subtype: "Type1", BaseFont: "Helvetica" }),
+  );
+  for (const marker of markers) {
+    const page = document.addPage([300, 300]);
+    page.node.set(
+      PDFName.of("Contents"),
+      document.context.register(
+        document.context.stream(`BT /F1 12 Tf 20 150 Td (${marker}) Tj ET`),
+      ),
+    );
+    page.node.set(PDFName.of("Resources"), document.context.obj({ Font: { F1: sharedFont } }));
+  }
+  return document.save();
+}
+
+const latin1 = (bytes: Uint8Array) => new TextDecoder("latin1").decode(bytes);
+
+it("removes a deleted page's content from the saved bytes while keeping shared resources", async () => {
+  using editor = editingWorker();
+  const loaded = await request(editor.worker, {
+    kind: "load",
+    id: 1,
+    sourceId: "marked",
+    bytes: await markedPdf(["KEPT_PAGE_TEXT", "DELETED_SECRET_TEXT", "LAST_PAGE_TEXT"]),
+  });
+  if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
+  const built = await request(editor.worker, {
+    kind: "build",
+    id: 2,
+    pages: [loaded.pages[0]!, loaded.pages[2]!],
+  });
+  if (built.kind !== "built") throw new Error("Expected the edited PDF.");
+  const text = latin1(built.bytes);
+  expect(text).toContain("KEPT_PAGE_TEXT");
+  expect(text).toContain("LAST_PAGE_TEXT");
+  expect(text).not.toContain("DELETED_SECRET_TEXT");
+  const saved = await PDFDocument.load(built.bytes);
+  expect(saved.getPageCount()).toBe(2);
+  for (const page of saved.getPages())
+    expect(page.node.Resources()?.lookup(PDFName.of("Font"))).toBeDefined();
+});
+
+async function taggedPdf() {
+  const document = await PDFDocument.create();
+  const pages = [document.addPage(), document.addPage()];
+  const root = document.context.register(document.context.obj({ Type: "StructTreeRoot" }));
+  const elements = pages.map((page, index) => {
+    page.node.set(PDFName.of("StructParents"), PDFNumber.of(index));
+    return document.context.register(
+      document.context.obj({ Type: "StructElem", S: "P", P: root, Pg: page.ref, K: 0 }),
+    );
+  });
+  const structRoot = document.context.lookup(root, PDFDict);
+  structRoot.set(PDFName.of("K"), document.context.obj(elements));
+  structRoot.set(
+    PDFName.of("ParentTree"),
+    document.context.obj({ Nums: [0, [elements[0]!], 1, [elements[1]!]] }),
+  );
+  document.catalog.set(PDFName.of("StructTreeRoot"), root);
+  return document.save();
+}
+
+it("keeps every page of a tagged PDF exactly once and allows moving and rotating", async () => {
+  using editor = editingWorker();
+  const loaded = await request(editor.worker, {
+    kind: "load",
+    id: 1,
+    sourceId: "tagged",
+    bytes: await taggedPdf(),
+  });
+  if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
+  expect(loaded.tagged).toBe(true);
+  const [first, second] = loaded.pages as [PdfEditPage, PdfEditPage];
+  await expect(request(editor.worker, { kind: "build", id: 2, pages: [first] })).rejects.toThrow(
+    "accessibility tags",
+  );
+  await expect(
+    request(editor.worker, {
+      kind: "build",
+      id: 3,
+      pages: [first, { ...first, id: "duplicate" }, second],
+    }),
+  ).rejects.toThrow("accessibility tags");
+  const built = await request(editor.worker, {
+    kind: "build",
+    id: 4,
+    pages: [{ ...second, rotation: 90 }, first],
+  });
+  if (built.kind !== "built") throw new Error("Expected the edited PDF.");
+  const saved = await PDFDocument.load(built.bytes);
+  expect(saved.catalog.has(PDFName.of("StructTreeRoot"))).toBe(true);
+  expect(saved.getPages().map((page) => page.node.get(PDFName.of("StructParents")))).toEqual([
+    PDFNumber.of(1),
+    PDFNumber.of(0),
+  ]);
+});
+
+it("inserts pages from a tagged PDF without their structure-tree claims", async () => {
+  using editor = editingWorker();
+  const base = await request(editor.worker, {
+    kind: "load",
+    id: 1,
+    sourceId: "base",
+    bytes: await markedPdf(["BASE_PAGE"]),
+  });
+  const imported = await request(editor.worker, {
+    kind: "load",
+    id: 2,
+    sourceId: "tagged-import",
+    bytes: await taggedPdf(),
+  });
+  if (base.kind !== "loaded" || imported.kind !== "loaded") throw new Error("Expected pages.");
+  expect(base.tagged).toBe(false);
+  const built = await request(editor.worker, {
+    kind: "build",
+    id: 3,
+    pages: [base.pages[0]!, ...imported.pages],
+  });
+  if (built.kind !== "built") throw new Error("Expected the edited PDF.");
+  const saved = await PDFDocument.load(built.bytes);
+  expect(saved.getPageCount()).toBe(3);
+  for (const page of saved.getPages())
+    expect(page.node.has(PDFName.of("StructParents"))).toBe(false);
+});
+
+it("forgets an imported PDF once it is released", async () => {
+  using editor = editingWorker();
+  const base = await request(editor.worker, {
+    kind: "load",
+    id: 1,
+    sourceId: "base",
+    bytes: await markedPdf(["BASE_PAGE"]),
+  });
+  const imported = await request(editor.worker, {
+    kind: "load",
+    id: 2,
+    sourceId: "imported",
+    bytes: await markedPdf(["IMPORTED_PAGE"]),
+  });
+  if (base.kind !== "loaded" || imported.kind !== "loaded") throw new Error("Expected pages.");
+  await request(editor.worker, { kind: "release", id: 3, sourceId: "imported" });
+  await expect(
+    request(editor.worker, {
+      kind: "build",
+      id: 4,
+      pages: [base.pages[0]!, imported.pages[0]!],
+    }),
+  ).rejects.toThrow("An inserted PDF is unavailable.");
+  await request(editor.worker, { kind: "release", id: 5, sourceId: "base" });
+  const built = await request(editor.worker, { kind: "build", id: 6, pages: base.pages });
+  expect(built.kind).toBe("built");
 });

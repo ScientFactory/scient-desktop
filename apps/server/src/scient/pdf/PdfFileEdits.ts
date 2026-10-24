@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
+import { SCIENT_SOURCES_DIRECTORY } from "@scientfactory/scient-sources/store";
 import { SCIENT_PDF_EDIT_MAX_BYTES, ScientPdfEditError } from "@t3tools/contracts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import { KnownWorkspaces } from "../../workspace/KnownWorkspaces.ts";
@@ -13,6 +14,18 @@ import { revisionForBytes } from "../workspace/WorkspaceFileMutations.ts";
 import { PDF_EDIT_PRODUCER, publishEditedPdfCopy } from "./EditedPdfCopy.ts";
 
 const isPdfEditError = Schema.is(ScientPdfEditError);
+const SOURCES_SEGMENTS = SCIENT_SOURCES_DIRECTORY.split("/");
+
+/**
+ * Sources keeps one content-addressed file per imported PDF, shared by every
+ * attachment with those bytes, so it is never edited in place.
+ */
+function isInsideSourcesStore(path: string) {
+  const segments = path.split(/[\\/]/u).map((segment) => segment.toLowerCase());
+  return segments.some((_, start) =>
+    SOURCES_SEGMENTS.every((segment, offset) => segments[start + offset] === segment),
+  );
+}
 
 export const savePdfFileEdit = Effect.fn("PdfFileEdits.save")(
   function* (input: {
@@ -54,24 +67,27 @@ export const savePdfFileEdit = Effect.fn("PdfFileEdits.save")(
         ...(edited ? { existingCopy: original.artifact } : {}),
       });
     }
+    // Files that must stay as they are get an independent edited copy instead.
+    const publishCopyOf = Effect.fn("PdfFileEdits.publishCopyOf")(function* (originalPath: string) {
+      const original = yield* fs.readFile(originalPath);
+      if (revisionForBytes(original) !== input.expectedRevision)
+        return yield* new ScientPdfEditError({
+          message: "The PDF changed. Reopen it before editing.",
+        });
+      if (!new TextDecoder().decode(original.subarray(0, 1024)).includes("%PDF-"))
+        return yield* new ScientPdfEditError({ message: "The destination is no longer a PDF." });
+      return yield* publishEditedPdfCopy({
+        operationId: input.operationId,
+        bytes: upload,
+        title: `${source.title} (edited)`,
+      });
+    });
     if (source._tag === "environment-pdf") {
       if (!NodePath.isAbsolute(source.path))
         return yield* new ScientPdfEditError({ message: "The PDF path must be absolute." });
       const known = yield* KnownWorkspaces;
-      if (!(yield* known.contains(yield* fs.realPath(source.path)))) {
-        const original = yield* fs.readFile(source.path);
-        if (revisionForBytes(original) !== input.expectedRevision)
-          return yield* new ScientPdfEditError({
-            message: "The PDF changed. Reopen it before editing.",
-          });
-        if (!new TextDecoder().decode(original.subarray(0, 1024)).includes("%PDF-"))
-          return yield* new ScientPdfEditError({ message: "The destination is no longer a PDF." });
-        return yield* publishEditedPdfCopy({
-          operationId: input.operationId,
-          bytes: upload,
-          title: `${source.title} (edited)`,
-        });
-      }
+      if (!(yield* known.contains(yield* fs.realPath(source.path))))
+        return yield* publishCopyOf(source.path);
     }
     const cwd =
       source._tag === "workspace-pdf" ? source.workspaceRoot : NodePath.dirname(source.path);
@@ -84,6 +100,11 @@ export const savePdfFileEdit = Effect.fn("PdfFileEdits.save")(
       });
     }
     const path = NodePath.resolve(cwd, target.canonicalRelativePath);
+    if (
+      (source._tag === "workspace-pdf" && source.origin !== undefined) ||
+      isInsideSourcesStore(path)
+    )
+      return yield* publishCopyOf(path);
     const header = (yield* Stream.runCollect(fs.stream(path, { bytesToRead: 1024 })))
       .map((chunk) => new TextDecoder().decode(chunk))
       .join("");

@@ -1,5 +1,7 @@
 export const PDF_EDIT_MAX_BYTES = 50 * 1024 * 1024;
 export const PDF_EDIT_MAX_PAGES = 5_000;
+export const PDF_EDIT_TAGGED_MESSAGE =
+  "This PDF has accessibility tags. You can rotate, move and insert pages, but not delete or duplicate them yet.";
 
 let nextId = 0;
 export const createPdfEditId = () => `pdf-edit-${++nextId}`;
@@ -25,12 +27,34 @@ export type PdfEditWorkerRequest =
       readonly sourceId: string;
       readonly bytes: Uint8Array;
     }
-  | { readonly id: number; readonly kind: "build"; readonly pages: readonly PdfEditPage[] };
+  | { readonly id: number; readonly kind: "build"; readonly pages: readonly PdfEditPage[] }
+  | { readonly id: number; readonly kind: "release"; readonly sourceId: string };
 
 export type PdfEditWorkerResponse =
-  | { readonly id: number; readonly kind: "loaded"; readonly pages: readonly PdfEditPage[] }
+  | {
+      readonly id: number;
+      readonly kind: "loaded";
+      readonly pages: readonly PdfEditPage[];
+      readonly tagged: boolean;
+    }
+  | { readonly id: number; readonly kind: "released" }
   | { readonly id: number; readonly kind: "built"; readonly bytes: Uint8Array }
   | { readonly id: number; readonly kind: "error"; readonly message: string };
+
+/**
+ * A tagged PDF's structure tree points at its pages, so every original page
+ * must stay exactly once: deleting leaves dangling entries, duplicating
+ * makes two pages claim the same ones.
+ */
+export function keepsEveryPageOnce(
+  pages: readonly PdfEditPage[],
+  sourceId: string,
+  pageCount: number,
+) {
+  const counts = Array.from({ length: pageCount }, () => 0);
+  for (const page of pages) if (page.sourceId === sourceId) counts[page.sourceIndex]! += 1;
+  return counts.every((count) => count === 1);
+}
 
 export function parsePdfPageRange(value: string, count: number): number[] {
   if (!value.trim()) throw new Error("Enter pages, for example 1, 3–5.");

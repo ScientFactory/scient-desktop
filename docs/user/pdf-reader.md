@@ -99,9 +99,11 @@ Text fields keep their own undo and selection shortcuts. History is kept in
 memory while the document's editing session remains open.
 
 Generated PDFs are immutable build outputs: their first page edit automatically
-creates a separate edited document. Files outside writable project folders also
-use an edited copy. Scient remembers the copy for this conversation and opens it
-when you return to the original document. Use Show original / Open edited copy
+creates a separate edited document. PDFs in Sources and files outside writable
+project folders also use an edited copy, so the original stays exactly as it was.
+Scient remembers the copy for this conversation and opens it when you return to
+the original document. After a LaTeX rebuild, the new build replaces the old
+edited copy in the reader. Use Show original / Open edited copy
 to switch between them, or Save copy to export the edited PDF as a local file.
 Subsequent edits save new revisions of the copy; LaTeX rebuilds own the original.
 Chat attachments remain read-only; save them to your project to edit their pages.
@@ -112,7 +114,9 @@ Use Reload PDF in the error notice to read the latest file and reset page histor
 
 Page edits support up to 5,000 pages and 50 MB of combined source PDFs.
 Encrypted PDFs and PDFs with form fields or certificate permissions stay
-read-only. Existing base-document outlines, internal destinations, metadata,
+read-only. In PDFs with accessibility tags, pages can be rotated, moved and
+inserted, but not deleted or duplicated yet. A deleted page's content is removed
+from the saved file, not just hidden. Existing base-document outlines, internal destinations, metadata,
 and attachments are retained; destinations to removed pages follow a surviving
 page. Imported internal links are retained when their target is also inserted.
 

@@ -52,7 +52,12 @@ import { PdfPageInsertion } from "./PdfPageInsertion";
 import { PdfMovePagesPopover } from "./PdfMovePagesPopover";
 import { savePdfEdits } from "./savePdfEdits";
 import { saveEditedPdfCopy } from "./saveEditedPdfCopy";
-import { rememberPdfEditedCopy, usePdfEditedCopy } from "./pdfEditedCopyStore";
+import {
+  currentPdfEditedCopy,
+  pdfEditedCopyOriginalRevision,
+  rememberPdfEditedCopy,
+  usePdfEditedCopy,
+} from "./pdfEditedCopyStore";
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
@@ -128,7 +133,8 @@ export function ScientPdfReader(props: {
   const resolver = props.resolver ?? webPdfSourceResolver;
   const legacyDocumentKey = pdfReaderSessionDocumentKey(props.source);
   const documentKey = pdfReaderSessionDocumentKey(props.source, props.readerScope);
-  const savedCopy = usePdfEditedCopy(documentKey);
+  // A rebuilt generated PDF replaces the revision the edited copy was made from.
+  const savedCopy = currentPdfEditedCopy(usePdfEditedCopy(documentKey), props.source);
   const originalReveal = usePdfRevealRequest(legacyDocumentKey);
   const forceOriginal = savedCopy !== null && originalReveal !== null;
   const showingCopy = savedCopy !== null && !savedCopy.showOriginal && !forceOriginal;
@@ -227,6 +233,7 @@ export function ScientPdfReader(props: {
           source: savedSource,
           sessionKey: editSessionKey,
           showOriginal: false,
+          originalRevisionId: pdfEditedCopyOriginalRevision(props.source),
         });
         if (!durable)
           toastManager.add({
@@ -430,6 +437,8 @@ function LoadedScientPdfReader(props: {
     const pageId = frame.pages[page - 1]?.id;
     if (!pageId) return;
     const target = frame.selection.includes(pageId) ? undefined : [pageId];
+    // A tagged PDF's structure tree must keep every original page exactly once.
+    const keepsPages = editSession.getSnapshot().tagged;
     const items: readonly ContextMenuItem<
       "rotate" | "left" | "right" | "move" | "duplicate" | "delete"
     >[] = [
@@ -446,13 +455,13 @@ function LoadedScientPdfReader(props: {
         label: "Move…",
         disabled: (target ?? frame.selection).length === frame.pages.length,
       },
-      { id: "duplicate", label: "Duplicate" },
+      { id: "duplicate", label: "Duplicate", disabled: keepsPages },
       {
         id: "delete",
         label: "Delete",
         destructive: true,
         separatorBefore: true,
-        disabled: (target ?? frame.selection).length === frame.pages.length,
+        disabled: keepsPages || (target ?? frame.selection).length === frame.pages.length,
       },
     ];
     const action = await ensureLocalApi().contextMenu.show(items, position);

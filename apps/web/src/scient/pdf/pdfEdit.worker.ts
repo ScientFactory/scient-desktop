@@ -16,15 +16,23 @@ import {
 import {
   PDF_EDIT_MAX_BYTES,
   PDF_EDIT_MAX_PAGES,
+  PDF_EDIT_TAGGED_MESSAGE,
+  keepsEveryPageOnce,
   type PdfEditPage,
   type PdfEditWorkerRequest,
   type PdfEditWorkerResponse,
 } from "./pdfPageEdits";
 import { readPdfPageLabels, writePdfPageLabels } from "./pdfPageLabels";
+import { removeUnreachableObjects } from "./pdfUnreachableObjects";
 
 const sources = new Map<
   string,
-  { document: PDFDocument; bytes: Uint8Array; labels: ReturnType<typeof readPdfPageLabels> }
+  {
+    document: PDFDocument;
+    bytes: Uint8Array;
+    labels: ReturnType<typeof readPdfPageLabels>;
+    tagged: boolean;
+  }
 >();
 let totalBytes = 0,
   baseSourceId: string | null = null;
@@ -121,9 +129,23 @@ function repairCopiedLinks(
   }
 }
 
+/** A copied page joins no structure tree, so it must not claim entries in one. */
+function detachCopiedStructure(output: PDFDocument, page: PDFPage) {
+  page.node.delete(name("StructParents"));
+  if (page.node.get(name("Tabs")) === name("S")) page.node.delete(name("Tabs"));
+  const annotations = lookup(output, page.node.get(name("Annots")));
+  if (!(annotations instanceof PDFArray)) return;
+  for (const entry of annotations.asArray()) {
+    const annotation = lookup(output, entry);
+    if (annotation instanceof PDFDict) annotation.delete(name("StructParent"));
+  }
+}
+
 async function build(entries: readonly PdfEditPage[]) {
   const base = baseSourceId ? sources.get(baseSourceId) : null;
   if (!base) throw new Error("Reopen the PDF before editing.");
+  if (base.tagged && !keepsEveryPageOnce(entries, baseSourceId!, base.document.getPageCount()))
+    throw new Error(PDF_EDIT_TAGGED_MESSAGE);
   const output = await PDFDocument.load(base.bytes, { updateMetadata: false });
   const originalPages = output.getPages(),
     used = new Set<number>();
@@ -156,6 +178,7 @@ async function build(entries: readonly PdfEditPage[]) {
       );
       round.forEach((index, i) => {
         prepared[index] = copies[i]!;
+        if (sources.get(sourceId)!.tagged) detachCopiedStructure(output, copies[i]!);
       });
       const done = new Set(round);
       pending = pending.filter((index) => !done.has(index));
@@ -241,6 +264,8 @@ async function build(entries: readonly PdfEditPage[]) {
       entry.sourceId ? (sources.get(entry.sourceId)!.labels?.[entry.sourceIndex] ?? null) : null,
     ),
   );
+  await output.flush();
+  removeUnreachableObjects(output);
   const bytes = await output.save({ addDefaultPage: false, updateFieldAppearances: false });
   if (bytes.byteLength > PDF_EDIT_MAX_BYTES)
     throw new Error("The PDF exceeds the 50 MB save limit.");
@@ -270,10 +295,19 @@ async function execute(request: PdfEditWorkerRequest): Promise<PdfEditWorkerResp
       rotation: page.getRotation().angle,
     }));
     const labels = readPdfPageLabels(document);
-    sources.set(request.sourceId, { document, bytes: request.bytes, labels });
+    const tagged = document.catalog.has(name("StructTreeRoot"));
+    sources.set(request.sourceId, { document, bytes: request.bytes, labels, tagged });
     baseSourceId ??= request.sourceId;
     totalBytes += request.bytes.byteLength;
-    return { id: request.id, kind: "loaded", pages };
+    return { id: request.id, kind: "loaded", pages, tagged };
+  }
+  if (request.kind === "release") {
+    const source = sources.get(request.sourceId);
+    if (source && request.sourceId !== baseSourceId) {
+      sources.delete(request.sourceId);
+      totalBytes -= source.bytes.byteLength;
+    }
+    return { id: request.id, kind: "released" };
   }
   if (!request.pages.length || request.pages.length > PDF_EDIT_MAX_PAGES)
     throw new Error("Keep between 1 and 5000 pages.");

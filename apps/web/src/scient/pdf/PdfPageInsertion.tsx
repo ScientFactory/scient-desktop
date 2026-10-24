@@ -23,6 +23,11 @@ export function PdfPageInsertion(props: {
   const [file, setFile] = useState<{ name: string; pages: readonly PdfEditPage[] } | null>(null);
   const [range, setRange] = useState(""),
     [all, setAll] = useState(true);
+  const cancel = () => {
+    const sourceId = file?.pages[0]?.sourceId;
+    if (sourceId) props.session.releaseFile(sourceId);
+    setFile(null);
+  };
   return (
     <div
       className="scient-pdf-page-insertion"
@@ -84,7 +89,7 @@ export function PdfPageInsertion(props: {
       <Popover
         open={file !== null}
         onOpenChange={(open) => {
-          if (!open) setFile(null);
+          if (!open) cancel();
         }}
       >
         <PopoverPopup anchor={anchor} side="right" align="start" width="sm" padding="comfortable">
@@ -135,7 +140,7 @@ export function PdfPageInsertion(props: {
                 />
               ) : null}
               <div className="scient-pdf-insert-actions">
-                <Button type="button" size="xs" variant="ghost" onClick={() => setFile(null)}>
+                <Button type="button" size="xs" variant="ghost" onClick={cancel}>
                   Cancel
                 </Button>
                 <Button type="submit" size="xs" variant="outline" disabled={props.disabled}>

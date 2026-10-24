@@ -3,7 +3,9 @@ import { randomUUID } from "~/lib/utils";
 import type { ScientPdfEditSaveResult } from "@t3tools/contracts";
 import {
   PDF_EDIT_MAX_BYTES,
+  PDF_EDIT_TAGGED_MESSAGE,
   createPdfEditId,
+  keepsEveryPageOnce,
   insertPdfPages,
   movePdfPages,
   pdfInsertionIndex,
@@ -16,7 +18,8 @@ import {
 
 type WorkerInput =
   | Omit<Extract<PdfEditWorkerRequest, { kind: "load" }>, "id">
-  | Omit<Extract<PdfEditWorkerRequest, { kind: "build" }>, "id">;
+  | Omit<Extract<PdfEditWorkerRequest, { kind: "build" }>, "id">
+  | Omit<Extract<PdfEditWorkerRequest, { kind: "release" }>, "id">;
 type HistoryEntry = { frame: PdfEditFrame; focus: string | null };
 type Persist = (
   bytes: Uint8Array,
@@ -48,6 +51,8 @@ export class PdfEditSession {
   private snapshot = {
     active: false,
     busy: false,
+    /** The PDF has a structure tree, so its original pages cannot be deleted or duplicated. */
+    tagged: false,
     error: null as string | null,
     frame: EMPTY_FRAME,
     url: null as string | null,
@@ -156,7 +161,12 @@ export class PdfEditSession {
       this.basePages = pages;
       this.revision = revisionForBytes(bytes);
       this.focusedId = pages[pageNumber - 1]?.id ?? pages[0]!.id;
-      this.update({ active: true, frame: { pages, selection: previous.selection }, bytes });
+      this.update({
+        active: true,
+        tagged: result.tagged,
+        frame: { pages, selection: previous.selection },
+        bytes,
+      });
     });
   focus(pageNumber: number) {
     this.focusedId = this.snapshot.frame.pages[pageNumber - 1]?.id ?? this.focusedId;
@@ -202,6 +212,13 @@ export class PdfEditSession {
         focus = this.focusedId;
       const next = transform(previous);
       if (next === previous) return;
+      const baseSourceId = this.basePages[0]?.sourceId;
+      if (
+        this.snapshot.tagged &&
+        baseSourceId &&
+        !keepsEveryPageOnce(next.pages, baseSourceId, this.basePages.length)
+      )
+        throw new Error(PDF_EDIT_TAGGED_MESSAGE);
       const bytes = await this.build(next);
       // History and the displayed document advance only after durable publication.
       await this.save(bytes);
@@ -312,6 +329,10 @@ export class PdfEditSession {
     if (result.kind !== "loaded") throw new Error(`Could not read ${file.name}.`);
     return result.pages;
   }
+  /** Frees an imported PDF that was never inserted, returning its share of the size limit. */
+  releaseFile(sourceId: string) {
+    if (this.worker) void this.request({ kind: "release", sourceId }).catch(() => undefined);
+  }
   insert = (pages: readonly PdfEditPage[], index: number) =>
     this.change((frame) =>
       insertPdfPages(
@@ -336,6 +357,7 @@ export class PdfEditSession {
     this.anchor = null;
     this.update({
       active: false,
+      tagged: false,
       frame: EMPTY_FRAME,
       url: null,
       bytes: null,
