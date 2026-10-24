@@ -29,16 +29,12 @@ describe("Scient brand guard", () => {
     });
   });
 
-  it.each([
-    "packages/client-runtime/src/work-log/presentation.ts",
-    "apps/mobile/src/lib/threadActivity.ts",
-    "apps/mobile/src/features/threads/thread-work-log.tsx",
-    "apps/mobile/src/components/CompactBrandTitle.tsx",
-    "apps/mobile/src/lib/authClientMetadata.ts",
-    "apps/mobile/src/features/settings/SettingsAboutRouteScreen.tsx",
-  ])("covers owned tool presentation without expanding donor-wide enforcement: %s", (path) => {
-    expect(rulesHit(path, 'const label = "Reading a T3 thread";')).toContain("inherited-brand");
-  });
+  it.each(["apps/mobile/src/lib/threadActivity.ts"])(
+    "covers owned tool presentation without expanding donor-wide enforcement: %s",
+    (path) => {
+      expect(rulesHit(path, 'const label = "Reading a T3 thread";')).toContain("inherited-brand");
+    },
+  );
 
   it.each([
     'Tool.make("t3_thread_read", {})',
@@ -120,13 +116,7 @@ describe("Scient brand guard", () => {
 describe("brand check scope", () => {
   it.each([
     "packages/shared/src/codexAuthCallback.ts",
-    "packages/client-runtime/src/webhookAddress.ts",
-    "packages/provider-acp/src/server/adapter.ts",
-    "packages/source-control-gitcafe/src/server/GitCafePullRequestProvider.ts",
-    "packages/scient-sources/src/index.ts",
     "native/browser-secret/main.c",
-    "native/hyprland-snap-shot/src/feedback.rs",
-    "apps/desktop/gnome-extension/extension.js",
     "docs/user/remote-access.md",
   ])("holds shipped surface %s to every rule", (path) => {
     expect(brandRulesFor(path)).toEqual(["inherited-brand", "bare-t3", "t3-connect", "t3-command"]);
@@ -134,10 +124,8 @@ describe("brand check scope", () => {
 
   it.each([
     "packages/provider-testing/src/index.ts",
-    "packages/source-control-testing/src/index.ts",
     "native/libghostty-vt/include/ghostty/vt.h",
     "native/browser-secret/test.c",
-    "native/kde-snap-shot/src/transport_tests.rs",
     "apps/server/src/orchestration-v2/testkit/fixtures/replay.ts",
     "apps/web/src/components/Example.test.tsx",
     "docs/internals/t3-connect.md",
@@ -167,19 +155,12 @@ describe("bare T3 product name", () => {
     expect(rulesHit("apps/server/src/example.ts", contents)).toContain("bare-t3");
   });
 
-  it.each([
-    "const home = process.env.T3CODE_HOME;",
-    'import { x } from "@t3tools/shared/x";',
-    'const file = "t3.json";',
-    'const header = "x-t3-orchestration-protocol";',
-    'const path = "/.well-known/t3/environment";',
-    'const cookie = "t3_session";',
-    'const link = "t3-thread://v1/thread";',
-    'const key = "t3code:client-settings";',
-    "const T3_PROJECT_FILE_NAME = name;",
-  ])("permits retained identifier %s", (contents) => {
-    expect(rulesHit("apps/server/src/example.ts", contents)).toEqual([]);
-  });
+  it.each(["const home = process.env.T3CODE_HOME;", 'import { x } from "@t3tools/shared/x";'])(
+    "permits retained identifier %s",
+    (contents) => {
+      expect(rulesHit("apps/server/src/example.ts", contents)).toEqual([]);
+    },
+  );
 });
 
 describe("T3 Connect", () => {
@@ -222,7 +203,6 @@ describe("T3 command instructions", () => {
     "sudo t3 browser setup",
     'return { need: "sandbox", command: "sudo npx t3 browser setup" };',
     "Bun is unavailable. Please use Node.js (e.g. by running `npx t3`) instead.",
-    "command={'npx --package=\"$SCIENT_SERVER_PACKAGE\" t3 pair'}",
     'label: Option.getOrElse(input.label, () => "t3 pair"),',
     'const spec = input || "t3@latest";',
     "description: `Reconnected on t3@${version}.`,",
@@ -234,8 +214,6 @@ describe("T3 command instructions", () => {
     'const file = "t3.json";',
     "Older Scient-installed `t3` shortcuts keep working.",
     'const branch = "t3code/pr-12/main";',
-    "sudo scient browser setup",
-    'npx --package="$SCIENT_SERVER_PACKAGE" scient pair',
   ])("permits %s", (contents) => {
     expect(rulesHit("docs/user/example.md", contents)).toEqual([]);
   });

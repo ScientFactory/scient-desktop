@@ -364,23 +364,8 @@ describe("managed provider runtime update workflow", () => {
       ),
     );
     // Discovery, artifact qualification and publication: the same for every provider.
-    expect(everyProvider).toEqual({
-      condition: undefined,
-      pathspecs: [
-        ".github/workflows/managed-provider-runtime-update-provider.yml",
-        "apps/server/src/scient/providerLifecycle/ManagedRuntimeCatalog.ts",
-        "apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json",
-        "packages/scient-provider-runtime",
-        "packages/shared",
-        "pnpm-lock.yaml",
-        "scripts/package.json",
-        "scripts/lib/managed-runtime-catalog.ts",
-        "scripts/lib/antigravity-acp-artifact.ts",
-        "scripts/promote-managed-runtime-catalog.ts",
-        "scripts/qualify-managed-runtime-catalog.ts",
-        "scripts/update-managed-runtime-catalog.ts",
-      ],
-    });
+    // What each guard must cover is proven by the import-closure table below.
+    expect(everyProvider?.condition).toBeUndefined();
     // Server code reaches every provider only through the families that run it.
     expect(everyProvider?.pathspecs).not.toContain("apps/server/src/provider/acp");
   });

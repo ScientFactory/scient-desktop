@@ -122,56 +122,60 @@ describe("upstream provenance merge-parent guard", () => {
     ]);
   });
 
-  describe.each([{ allowQueueMerges: true }, { allowOwnedHeadMerge: true }])(
-    "trusted integration batch %j",
+  // regression: fd3907ff8a fix(ci): accept batched merge-queue commits on main
+  // Both allowances open the same queue-chain branch, so only acceptance runs for each.
+  it.each([{ allowQueueMerges: true }, { allowOwnedHeadMerge: true }])(
+    "accepts every integration merge in a batch with %j",
     (allowance) => {
-      it("accepts every integration merge in a batch", () => {
-        expect(validateIntroducedMergeParents({ ...batch, ...allowance })).toEqual([]);
-      });
-
-      it("still rejects a donor merge nested in a PR history", () => {
-        expect(
-          validateIntroducedMergeParents({
-            ...batch,
-            ...allowance,
-            merges: [
-              ...batch.merges,
-              { commit: "first-pr-head", parents: ["owned-base", "unapproved-donor"] },
-            ],
-          }),
-        ).toEqual(["first-pr-head: non-official merge parent unapproved-donor"]);
-      });
-
-      it("preserves official, owned and exact historical ancestry inside a PR", () => {
-        expect(
-          validateIntroducedMergeParents({
-            ...batch,
-            ...allowance,
-            exceptions: [{ head: "historical-parent", importMerge: "historical-merge" }],
-            merges: [
-              ...batch.merges,
-              { commit: "first-pr-head", parents: ["owned-merge", "official-parent"] },
-              { commit: "owned-merge", parents: ["historical-merge", "owned-base"] },
-              { commit: "historical-merge", parents: ["owned-base", "historical-parent"] },
-            ],
-          }),
-        ).toEqual([]);
-      });
-
-      it.each([
-        { label: "missing base", parents: ["different-base", "first-pr-head"] },
-        { label: "cycle", parents: ["second-platform-merge", "first-pr-head"] },
-        { label: "single-parent gap", parents: ["owned-base"] },
-        { label: "octopus merge", parents: ["owned-base", "first-pr-head", "another-head"] },
-      ])("rejects a $label in the integration chain", ({ parents }) => {
-        const failures = validateIntroducedMergeParents({
-          ...batch,
-          ...allowance,
-          merges: [batch.merges[0], { commit: "first-platform-merge", parents }],
-        });
-        expect(failures).toHaveLength(1);
-        expect(failures[0]).toMatch(/^Unexpected merge queue topology at /);
-      });
+      expect(validateIntroducedMergeParents({ ...batch, ...allowance })).toEqual([]);
     },
   );
+
+  describe("trusted integration batch", () => {
+    const allowance = { allowQueueMerges: true };
+
+    it("still rejects a donor merge nested in a PR history", () => {
+      expect(
+        validateIntroducedMergeParents({
+          ...batch,
+          ...allowance,
+          merges: [
+            ...batch.merges,
+            { commit: "first-pr-head", parents: ["owned-base", "unapproved-donor"] },
+          ],
+        }),
+      ).toEqual(["first-pr-head: non-official merge parent unapproved-donor"]);
+    });
+
+    it("preserves official, owned and exact historical ancestry inside a PR", () => {
+      expect(
+        validateIntroducedMergeParents({
+          ...batch,
+          ...allowance,
+          exceptions: [{ head: "historical-parent", importMerge: "historical-merge" }],
+          merges: [
+            ...batch.merges,
+            { commit: "first-pr-head", parents: ["owned-merge", "official-parent"] },
+            { commit: "owned-merge", parents: ["historical-merge", "owned-base"] },
+            { commit: "historical-merge", parents: ["owned-base", "historical-parent"] },
+          ],
+        }),
+      ).toEqual([]);
+    });
+
+    it.each([
+      { label: "missing base", parents: ["different-base", "first-pr-head"] },
+      { label: "cycle", parents: ["second-platform-merge", "first-pr-head"] },
+      { label: "single-parent gap", parents: ["owned-base"] },
+      { label: "octopus merge", parents: ["owned-base", "first-pr-head", "another-head"] },
+    ])("rejects a $label in the integration chain", ({ parents }) => {
+      const failures = validateIntroducedMergeParents({
+        ...batch,
+        ...allowance,
+        merges: [batch.merges[0], { commit: "first-platform-merge", parents }],
+      });
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toMatch(/^Unexpected merge queue topology at /);
+    });
+  });
 });
