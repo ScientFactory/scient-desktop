@@ -656,10 +656,11 @@ export function ComputeVariablesView(props: {
                         {variable.typeName}
                       </td>
                       <td className="break-words px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
-                        {variable.shape ?? (variable.size === null ? "—" : String(variable.size))}
+                        {variable.shape ??
+                          (variable.size === null ? "Not available" : String(variable.size))}
                       </td>
                       <td className="break-words px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
-                        {variable.preview ?? "—"}
+                        {variable.preview ?? "Not available"}
                       </td>
                     </tr>
                   ))}

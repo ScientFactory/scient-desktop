@@ -12,6 +12,8 @@ import * as ServerConfig from "../config.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
 const factory = vi.hoisted(() => vi.fn());
+const executable = vi.hoisted(() => ({ active: false }));
+vi.mock("node:sea", () => ({ isSea: () => executable.active }));
 vi.mock("@scientfactory/analytics", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@scientfactory/analytics")>()),
   createAnalyticsRuntime: factory,
@@ -124,6 +126,27 @@ it.layer(NodeServices.layer)("AnalyticsService control recovery", (it) => {
       );
       assert.equal(active.recorded.length, afterDeletion + 1);
     }).pipe(Effect.provide(testLayer())),
+  );
+  it.effect("uses an executable sibling for the analytics worker without starting collection", () =>
+    Effect.gen(function* () {
+      executable.active = true;
+      factory.mockReset().mockImplementation(() => fakeRuntime().runtime);
+      yield* AnalyticsService.make;
+      const options = factory.mock.calls.findLast(([options]) => options.enabled)?.[0] as
+        | AnalyticsRuntimeOptions
+        | undefined;
+      assert.equal(
+        options?.workerUrl?.href,
+        new URL("./analytics-worker.mjs", import.meta.url).href,
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          executable.active = false;
+        }),
+      ),
+      Effect.provide(testLayer()),
+    ),
   );
   it.effect("does not inspect or record owner identities while product analytics is enabled", () =>
     Effect.gen(function* () {

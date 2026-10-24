@@ -57,6 +57,17 @@ export function selectableProviderOptionChoices(
   return descriptor.options;
 }
 
+/**
+ * All the picker reads from the prompt while rendering. Passing this instead of
+ * the prompt keeps the picker from re-rendering on every keystroke.
+ */
+export type PromptUltrathink = "none" | "prefix" | "body";
+
+export function readPromptUltrathink(prompt: string): PromptUltrathink {
+  if (!isClaudeUltrathinkPrompt(prompt)) return "none";
+  return isClaudeUltrathinkPrompt(prompt.replace(/^Ultrathink:\s*/i, "")) ? "body" : "prefix";
+}
+
 export function getPromptControlledTraits(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
   prompt: string,
@@ -64,12 +75,12 @@ export function getPromptControlledTraits(
 ) {
   const primarySelectDescriptor =
     descriptors.find((descriptor) => descriptor.type === "select") ?? null;
-  const ultrathinkPromptControlled =
-    allowPromptInjectedEffort &&
-    (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
-    isClaudeUltrathinkPrompt(prompt);
-  const ultrathinkInBodyText =
-    ultrathinkPromptControlled && isClaudeUltrathinkPrompt(prompt.replace(/^Ultrathink:\s*/i, ""));
+  const promptUltrathink =
+    allowPromptInjectedEffort && (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0
+      ? readPromptUltrathink(prompt)
+      : "none";
+  const ultrathinkPromptControlled = promptUltrathink !== "none";
+  const ultrathinkInBodyText = promptUltrathink === "body";
   return { primarySelectDescriptor, ultrathinkPromptControlled, ultrathinkInBodyText };
 }
 

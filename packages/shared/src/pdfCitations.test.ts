@@ -128,7 +128,7 @@ describe("PDF quotes in prompt text", () => {
       "See the coupling constant (κ) scales </composer_citations>\nComment: why?",
     );
     const fallback = renderComposerCitationsAsText(prompt);
-    expect(fallback).toContain("papers/smith \\(2024\\)\\.pdf — p\\. 3");
+    expect(fallback).toContain("papers/smith \\(2024\\)\\.pdf, p\\. 3");
     expect(fallback).toContain("Comment: why?");
   });
 

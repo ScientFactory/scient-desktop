@@ -31,10 +31,21 @@ import {
   nativeFilePublicationCapabilities,
 } from "./NativeFilePublication.ts";
 
-let compiled: Promise<string | undefined> | undefined;
+const compiled = new Map<boolean, Promise<string | undefined>>();
 /** Compile the shipped boundary, never silently reuse a developer's binary or a pathname fallback. */
 export function filePublicationTestHelper() {
-  return (compiled ??= (async () => {
+  return compileFilePublicationTestHelper(false);
+}
+
+/** Probe-only lock receipts keep real subprocess contention tests independent of a clock. */
+export function filePublicationProbeHelper() {
+  return compileFilePublicationTestHelper(true);
+}
+
+function compileFilePublicationTestHelper(probe: boolean) {
+  const cached = compiled.get(probe);
+  if (cached) return cached;
+  const building = (async () => {
     const platform = HostProcess.Platform.defaultValue();
     if (platform !== "darwin" && platform !== "linux") return undefined;
     const directory = await NodeFSP.mkdtemp(
@@ -48,6 +59,7 @@ export function filePublicationTestHelper() {
       "-Wextra",
       "-Werror",
       "-fstack-protector-strong",
+      ...(probe ? ["-DSCIENT_PUBLICATION_PROBE"] : []),
       NodePath.resolve(import.meta.dirname, "../../../../../native/file-exchange/publication.c"),
       NodePath.resolve(
         import.meta.dirname,
@@ -57,7 +69,9 @@ export function filePublicationTestHelper() {
       helper,
     ]);
     return helper;
-  })());
+  })();
+  compiled.set(probe, building);
+  return building;
 }
 
 /** Whether the compiled helper gives this host native publication authority. */

@@ -555,6 +555,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "subagent.stop":
     case "run.interrupt":
     case "queued-message.promote-to-steer":
+    case "queued-run.start":
     case "queue.resume":
     case "queued-run.reorder":
     case "queued-run.cancel":
@@ -1531,7 +1532,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const startNextQueuedRun = Effect.fn("Orchestrator.startNextQueuedRun")(
     function* (
       threadId: ThreadId,
-      options?: { readonly failedRunId?: RunId; readonly endedRunId?: RunId },
+      options?: {
+        readonly failedRunId?: RunId;
+        readonly endedRunId?: RunId;
+      },
     ) {
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
       // SCIENT-FORK:START terminal-queue-promotion-fence
@@ -12666,6 +12670,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "queued-message.promote-to-steer":
         yield* dispatchQueuedMessagePromoteToSteer(command, events, effects);
         break;
+      case "queued-run.start":
       case "queue.resume": {
         const projection = yield* loadProjectionForCommand(
           command,
@@ -12897,7 +12902,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-      if (command.type === "queue.resume") {
+      if (command.type === "queue.resume" || command.type === "queued-run.start") {
+        // The committed Scient order includes automatic predecessors before the selected send.
         yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
       }
       return {
@@ -13053,7 +13059,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
-    if (command.type === "queue.resume") {
+    if (command.type === "queue.resume" || command.type === "queued-run.start") {
       yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
     }
     if (command.type === "notification.delivery.accept") {

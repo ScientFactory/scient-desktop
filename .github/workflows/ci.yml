@@ -302,6 +302,9 @@ jobs:
       - name: Test preview artifact validation
         run: python3 -B .github/scripts/stage-preview-bundle.test.py
 
+      - name: Test deployment URL parsing
+        run: node --test .github/scripts/vercel-deployment-output.test.cjs
+
       - name: Test
         run: |
           set -o pipefail
@@ -419,7 +422,13 @@ jobs:
     if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Web ${{ matrix.shard }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # SCIENT-FORK:START — headroom over the slowest web shard (upstream: 10).
+    # The slowest shard now takes about 10 minutes, setup and cleanup included
+    # (October 2026: 9m50s to 10m18s). At a 10-minute cap a green shard was
+    # cancelled mid-cleanup and the merge queue ejected the PR. The cap keeps
+    # headroom over the slowest observed shard, as for the server shards.
+    timeout-minutes: 15
+    # SCIENT-FORK:END
     strategy:
       fail-fast: false
       matrix:

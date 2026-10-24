@@ -5,9 +5,9 @@ description: Assess whether a project or workspace contains enough grounded cont
 
 # Workspace Readiness Review
 
-The goal is to assess the workspace's readiness for a capable human or agent collaborator to understand its purpose, work in it safely, reproduce its work, and verify its results—and to identify meaningful improvements when needed.
+The goal is to assess the workspace's readiness for a capable human or agent collaborator to understand its purpose, work in it safely, reproduce its work, and verify its results, and to identify meaningful improvements when needed.
 
-Evaluate the workspace from evidence actually present. Judge it by its purpose—code, research, study, writing, or a mixture—not by a universal repository template.
+Evaluate the workspace from evidence actually present. Judge it by its purpose (code, research, study, writing, or a mixture) not by a universal repository template.
 
 Consider whether essential context is documented clearly enough and still agrees with the workspace. This includes agent instructions when specialized guidance matters, but no particular document is required if equivalent context is discoverable elsewhere.
 

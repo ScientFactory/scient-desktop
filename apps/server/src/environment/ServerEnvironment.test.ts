@@ -222,6 +222,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES,
       });
       expect(second.capabilities.pullRequests).toBe(true);
+      expect(second.capabilities.queuedRunStart).toBe(true);
       expect(second.capabilities.requiredWorktreeBootstrap).toBe(true);
       expect(second.capabilities.usagePriceOverrides).toBe(true);
       expect(second.capabilities.threadActiveReorder).toBe(true);

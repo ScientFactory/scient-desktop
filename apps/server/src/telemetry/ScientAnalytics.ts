@@ -12,6 +12,7 @@ import {
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
+import * as NodeSea from "node:sea";
 import * as Config from "effect/Config";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -113,7 +114,7 @@ function disabledRuntime(outboxPath: string): AnalyticsRuntime {
 function packagedAnalyticsWorkerUrl(): URL {
   const moduleUrl = new URL(import.meta.url);
   // Lazy CLI chunks and the entry bundle share the emitted worker's directory.
-  return moduleUrl.pathname.endsWith(".mjs")
+  return NodeSea.isSea() || moduleUrl.pathname.endsWith(".mjs")
     ? new URL("./analytics-worker.mjs", moduleUrl)
     : new URL("../../dist/analytics-worker.mjs", moduleUrl);
 }

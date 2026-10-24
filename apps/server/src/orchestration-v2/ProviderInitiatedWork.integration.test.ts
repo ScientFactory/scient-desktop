@@ -608,6 +608,53 @@ it.live(
     ),
 );
 
+it.live("repairs an abandoned predecessor without restarting a captured buffered generation", () =>
+  withInitiatedWork(({ orchestrator, emitWork, takeOffer, prompts, adopted, closes, waitFor }) =>
+    Effect.gen(function* () {
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const previous = before.runs[0]!;
+      const turn = before.providerTurns.find(
+        (candidate) => candidate.runAttemptId === previous.activeAttemptId,
+      )!;
+      assert.isDefined(turn);
+      const now = yield* DateTime.now;
+      yield* (yield* EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("buffered-generation:predecessor-failed"),
+            type: "run.updated",
+            threadId,
+            runId: previous.id,
+            occurredAt: now,
+            payload: { ...previous, status: "failed" },
+          },
+          {
+            id: EventId.make("buffered-generation:abandoned-turn"),
+            type: "provider-turn.updated",
+            threadId,
+            runId: previous.id,
+            nodeId: turn.nodeId,
+            occurredAt: now,
+            payload: { ...turn, status: "running", completedAt: null },
+          },
+        ],
+      });
+      yield* emitWork("buffered-after-abandoned");
+      const background = yield* takeOffer;
+      assert.deepEqual(adopted, ["buffered-after-abandoned"]);
+      assert.deepEqual(prompts, [expectedNativePrompt("First user message")]);
+      assert.equal(closes(), 0);
+      yield* background.finish;
+      const settled = yield* waitFor((projection) => projection.runs[1]?.status === "completed");
+      assert.equal(
+        settled.providerTurns.find((candidate) => candidate.id === turn.id)?.status,
+        "interrupted",
+      );
+      assert.equal(closes(), 0);
+    }),
+  ),
+);
+
 it.live.each([
   "foreign-driver",
   "foreign-session",

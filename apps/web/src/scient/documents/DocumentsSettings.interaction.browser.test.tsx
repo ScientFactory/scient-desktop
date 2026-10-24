@@ -298,7 +298,7 @@ describe("Settings ▸ Documents", () => {
     await choose(
       _fixture,
       "Default compiler for new documents",
-      "XeLaTeX — recommended for Hebrew",
+      "XeLaTeX (recommended for Hebrew)",
     );
     expect(stored("scient.newDocumentCompiler")).toBe("xelatex");
     await act(async () => await _fixture.root0.unmount());
@@ -307,7 +307,7 @@ describe("Settings ▸ Documents", () => {
     );
     await render(_fixture);
     expect(select(_fixture, "Default compiler for new documents").textContent).toBe(
-      "XeLaTeX — recommended for Hebrew",
+      "XeLaTeX (recommended for Hebrew)",
     );
     expect(mocks.readToolchain).not.toHaveBeenCalled();
   });
@@ -330,7 +330,7 @@ describe("Settings ▸ Documents", () => {
     const compiler = (name: string) =>
       rows.find((row) => row.querySelector("h3")?.textContent === name)!;
     expect(compiler("pdfLaTeX").textContent).toContain("Available");
-    expect(compiler("XeLaTeX — recommended for Hebrew").textContent).toContain("Available");
+    expect(compiler("XeLaTeX (recommended for Hebrew)").textContent).toContain("Available");
     expect(compiler("LuaLaTeX").textContent).toContain("Not installed");
     expect(details.textContent).toContain("/Library/TeX/texbin/latexmk");
     expect(details.textContent).toContain("4.85");
@@ -364,7 +364,7 @@ describe("Settings ▸ Documents", () => {
     await choose(
       _fixture,
       "Default compiler for new documents",
-      "XeLaTeX — recommended for Hebrew",
+      "XeLaTeX (recommended for Hebrew)",
     );
     expect(mocks.install).not.toHaveBeenCalled();
     await choose(_fixture, "Default compiler for new documents", "Automatic");

@@ -7,6 +7,7 @@ import {
   ThreadId,
   WS_METHODS,
   WsSubscribeServerConfigRpc,
+  WsWorkspaceRpcGroup,
   type OrchestrationV2StoredEvent,
   type OrchestrationProjectShell,
   type ServerConfig,
@@ -14,12 +15,15 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { Headers } from "effect/http";
-import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import { RpcClient, RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -101,6 +105,7 @@ import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntime
 import { ConversationExportService } from "./scient/conversationExport/ConversationExportService.ts";
 import { ConversationForkService } from "./orchestration-v2/scient-fork/ConversationForkService.ts";
 import * as DocumentHostBroker from "./scient/documents/DocumentHostBroker.ts";
+import { EditorFlush } from "./scient/editorFlush/EditorFlush.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as ExtensionsServices from "./scient/extensions/ExtensionsServices.ts";
 import { ExtensionsChangeFeed } from "./scient/extensions/ExtensionsRpcHandlers.ts";
@@ -119,6 +124,7 @@ import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+import { idleThreadProjection, liveThreadShell } from "./mcp/McpToolAccess.testkit.ts";
 import {
   layerWsRpc,
   subscribeOrchestrationV2Shell,
@@ -266,6 +272,7 @@ it.live.each(["thread", "shell"] as const)(
       const items = yield* subscription.pipe(
         Effect.provideService(ThreadManagement.ThreadManagementService, {
           ensureLegacyTranscript: () => Effect.void,
+          getShellSnapshot: () => Effect.succeed({ threads: [] }),
           streamStoredEventsFrom: (
             input: Parameters<
               ThreadManagement.ThreadManagementService["Service"]["streamStoredEventsFrom"]
@@ -311,6 +318,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ConversationExportService)({}),
   Layer.mock(ConversationForkService)({}),
   Layer.mock(DocumentHostBroker.DocumentHostBroker)({}),
+  Layer.mock(EditorFlush)({}),
   Layer.mock(GeneratedDocumentStore.GeneratedDocumentStore)({}),
   Layer.mock(ProviderConnectionManager.ProviderConnectionManager)({}),
   Layer.mock(ProviderRuntimeManager.ProviderRuntimeManager)({}),
@@ -400,6 +408,113 @@ const layerConfigSources = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(NodeServices.layer),
+);
+
+it.effect(
+  "resolves passive network media through its thread before filesystem access at the RPC boundary",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const threads: ThreadId[] = [];
+      const projects: ProjectId[] = [];
+      const files: string[] = [];
+      const recordingFileSystem: FileSystem.FileSystem = {
+        ...fs,
+        realPath: (filePath) => {
+          files.push(filePath);
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "FileSystem",
+              method: "realPath",
+              pathOrDescriptor: filePath,
+            }),
+          );
+        },
+      };
+      yield* Effect.gen(function* () {
+        const services = Layer.mergeAll(
+          layerUnusedConfigRpcServices,
+          Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+          Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+          Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+          Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/unused",
+          }),
+          Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+          Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadRecords: (threadId) =>
+              Effect.sync(() => {
+                threads.push(threadId);
+                return idleThreadProjection(liveThreadShell(threadId));
+              }),
+          }),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: (projectId) =>
+              Effect.sync(() => {
+                projects.push(projectId);
+                return Option.none();
+              }),
+          }),
+        );
+        const rpcs = WsWorkspaceRpcGroup;
+        let client!: Effect.Success<
+          ReturnType<typeof RpcClient.makeNoSerialization<RpcGroup.Rpcs<typeof rpcs>, never>>
+        >;
+        const server = yield* RpcServer.makeNoSerialization(rpcs, {
+          ...WS_RPC_SERVER_OPTIONS,
+          onFromServer: (response) => client.write(response),
+        }).pipe(
+          Effect.provide(
+            layerWsRpc(
+              {
+                sessionId: AuthSessionId.make("asset-test"),
+                subject: "asset-test",
+                method: "browser-session-cookie",
+                scopes: [],
+              },
+              {},
+              {},
+              yield* PreviewAutomationBroker.PreviewAutomationBroker,
+              yield* ServerBrowser.ServerBrowser,
+            ).pipe(Layer.provide(services)),
+          ),
+        );
+        client = yield* RpcClient.makeNoSerialization(rpcs, {
+          supportsAck: true,
+          onFromClient: ({ message }) => server.write(0, message),
+        });
+        const threadId = ThreadId.make("thread:asset-test");
+        const error = yield* client.client[WS_METHODS.assetsCreateUrl]({
+          resource: { _tag: "media-file", threadId, path: "//foreign.test/share/image.png" },
+        }).pipe(Effect.flip);
+        assert.equal(error._tag, "AssetWorkspaceContextNotFoundError");
+        assert.deepEqual(threads, [threadId]);
+        assert.deepEqual(projects, [ProjectId.make("project:mcp-test")]);
+        assert.deepEqual(files, []);
+
+        // An absolute local media capability still needs no thread/project lookup.
+        const localError = yield* client.client[WS_METHODS.assetsCreateUrl]({
+          resource: { _tag: "media-file", threadId, path: "/missing-local-asset.png" },
+        }).pipe(Effect.flip);
+        assert.equal(localError._tag, "AssetWorkspaceAssetNotFoundError");
+        assert.deepEqual(threads, [threadId]);
+        assert.deepEqual(projects, [ProjectId.make("project:mcp-test")]);
+        assert.deepEqual(files, ["/missing-local-asset.png"]);
+      }).pipe(Effect.provideService(FileSystem.FileSystem, recordingFileSystem));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+    ),
 );
 
 it.effect(

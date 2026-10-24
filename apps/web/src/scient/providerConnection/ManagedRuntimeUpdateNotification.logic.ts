@@ -6,11 +6,21 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
-import {
-  PROVIDER_UPDATE_SUCCESS_VISIBLE_MS,
-  type LocalEnvironmentUpdateGroup,
-  type ProviderUpdateToastView,
-} from "~/components/ProviderUpdateLaunchNotification.logic";
+import { PROVIDER_UPDATE_SUCCESS_VISIBLE_MS } from "~/components/ProviderUpdateLaunchNotification.logic";
+
+export interface ProviderEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}
+
+interface ManagedRuntimeUpdateNotice {
+  readonly phase: "running" | "succeeded" | "failed";
+  readonly type: "loading" | "success" | "error";
+  readonly title: string;
+  readonly description: string;
+  readonly dismissAfterVisibleMs?: number;
+}
 
 export interface ManagedRuntimeUpdateCandidate {
   readonly environmentId: EnvironmentId;
@@ -44,7 +54,7 @@ export function isManagedRuntimeUpdateCandidate(provider: ServerProvider): boole
 }
 
 export function collectManagedRuntimeUpdateCandidates(
-  groups: ReadonlyArray<Pick<LocalEnvironmentUpdateGroup, "environmentId" | "label" | "providers">>,
+  groups: ReadonlyArray<ProviderEnvironment>,
 ): ManagedRuntimeUpdateCandidate[] {
   return groups.flatMap((group) =>
     group.providers.flatMap((provider) => {
@@ -63,6 +73,7 @@ export function collectManagedRuntimeUpdateCandidates(
   );
 }
 
+/** Dismissal follows the advertised update, not the identity of an in-flight runtime operation. */
 export function managedRuntimeUpdateNotificationKey(
   candidates: ReadonlyArray<ManagedRuntimeUpdateCandidate>,
 ): string | null {
@@ -194,7 +205,7 @@ export interface ManagedRuntimeUpdateRun {
 /** Advances started runs from the latest per-environment provider snapshots. */
 export function settleManagedRuntimeUpdateRuns(
   runs: ReadonlyArray<ManagedRuntimeUpdateRun>,
-  groups: ReadonlyArray<Pick<LocalEnvironmentUpdateGroup, "environmentId" | "providers">>,
+  groups: ReadonlyArray<Pick<ProviderEnvironment, "environmentId" | "providers">>,
 ): ManagedRuntimeUpdateRun[] {
   return runs.map((run) => {
     if (run.operationId === null || run.outcome.status !== "pending") return run;
@@ -234,7 +245,7 @@ function formatManagedVersion(version: string | null): string {
 export function getManagedRuntimeUpdateWaitingToastView(
   targets: ReadonlyArray<ManagedRuntimeUpdateTarget>,
   message: string,
-): ProviderUpdateToastView {
+): ManagedRuntimeUpdateNotice {
   return {
     phase: "running",
     type: "loading",
@@ -245,7 +256,7 @@ export function getManagedRuntimeUpdateWaitingToastView(
 
 export function getManagedRuntimeUpdateRunningToastView(
   targets: ReadonlyArray<ManagedRuntimeUpdateTarget>,
-): ProviderUpdateToastView {
+): ManagedRuntimeUpdateNotice {
   const version = targets.length === 1 ? formatManagedVersion(targets[0]!.availableVersion) : "";
   return {
     phase: "running",
@@ -261,7 +272,7 @@ export function getManagedRuntimeUpdateResultToastView(
     readonly target: ManagedRuntimeUpdateTarget;
     readonly outcome: Exclude<ManagedRuntimeUpdateOutcome, { readonly status: "pending" }>;
   }>,
-): ProviderUpdateToastView | null {
+): ManagedRuntimeUpdateNotice | null {
   const results = settled.flatMap(({ target, outcome }) =>
     outcome.status === "cancelled" ? [] : [{ target, outcome }],
   );

@@ -4,6 +4,8 @@ import _sourceContract2 from "../../index.css?raw";
 import _sourceContract3 from "../../components/files/FileMarkdownPreview.tsx?raw";
 import _sourceContract4 from "../../components/ChatMarkdown.tsx?raw";
 import tableRendererSource from "../../components/chat/MarkdownTable.tsx?raw";
+import previewStyles from "../../index.css?inline";
+import editorStyles from "./scient-markdown-editor.css?inline";
 
 import { describe, expect, it } from "vite-plus/test";
 
@@ -66,7 +68,6 @@ describe("rich Markdown preview presentation parity", () => {
       "font-size: var(--scient-font-size-markdown-h2)",
       "margin: 0.65rem 0",
       "color: var(--info-foreground)",
-      "padding-left: 0.8rem",
       "font-size: var(--scient-font-size-markdown-secondary)",
     ]) {
       expect(previewCssSource).toContain(declaration);
@@ -94,6 +95,37 @@ describe("rich Markdown preview presentation parity", () => {
       /\.scient-markdown-image-render \{[^}]*max-height: min\(30rem, 70vh\)/su,
     );
   });
+
+  it.each(["ltr", "rtl"])(
+    "insets preview and editor quotes on the %s inline start",
+    async (dir) => {
+      await using fixture = _createFixture();
+      const styles = _ownDOM(fixture, document.createElement("style"));
+      styles.textContent = `${previewStyles}\n${editorStyles}`;
+      document.head.append(styles);
+      const host = _ownedBody(fixture);
+      const expectedInset =
+        0.8 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+      for (const className of ["chat-markdown", "scient-markdown-document"]) {
+        const documentView = document.createElement("div");
+        documentView.className = className;
+        documentView.dir = dir;
+        const quote = document.createElement("blockquote");
+        quote.textContent = "Quoted prose";
+        documentView.append(quote);
+        host.append(documentView);
+        const computed = getComputedStyle(quote);
+        expect(Number.parseFloat(computed.paddingInlineStart)).toBeCloseTo(expectedInset);
+        expect(Number.parseFloat(computed.paddingInlineEnd)).toBe(0);
+        expect(
+          Number.parseFloat(dir === "rtl" ? computed.paddingRight : computed.paddingLeft),
+        ).toBeCloseTo(expectedInset);
+        expect(
+          Number.parseFloat(dir === "rtl" ? computed.paddingLeft : computed.paddingRight),
+        ).toBe(0);
+      }
+    },
+  );
 
   it("uses the same interrupted row separators while retaining editor-only table affordances", async () => {
     await using _fixture = _createFixture();

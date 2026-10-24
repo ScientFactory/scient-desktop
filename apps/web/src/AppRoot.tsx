@@ -12,6 +12,9 @@ import { appAtomRegistry, AppAtomRegistryProvider } from "./rpc/atomRegistry";
 // SCIENT-FORK:START — the document lifecycle uses its independent host rail.
 import { HtmlPdfLifecycleHost } from "./scient/documentExport/HtmlPdfLifecycleHost";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — every window answers the server's editor flush requests.
+import { EditorFlushHosts } from "./scient/editorFlush/EditorFlushHosts";
+// SCIENT-FORK:END
 import type { AppRouter } from "./router";
 
 /**
@@ -34,6 +37,9 @@ export function AppRoot({ router }: { readonly router: AppRouter }) {
     <AppAtomRegistryProvider>
       <RouterProvider router={router} />
       <HtmlPdfLifecycleHost />
+      {/* SCIENT-FORK:START — every window answers the server's editor flush requests. */}
+      <EditorFlushHosts />
+      {/* SCIENT-FORK:END */}
       <ElectronBrowserHost />
       <BrowserProfileReporter />
       <QuitHoldOverlay />

@@ -24,7 +24,7 @@ vi.mock("./LatexMathField", () => ({
 vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
 }));
-import { LatexVisualEditor } from "./LatexVisualEditor";
+import { LatexVisualEditor, type LatexBackgroundCommit } from "./LatexVisualEditor";
 import {
   createLatexVisualTestOwner,
   readMountedLatexVisualTestEditor,
@@ -49,6 +49,17 @@ describe("pending fields across outside document changes", () => {
     acceptedReceipts.set(source, resolve);
     const dispose = () => {
       if (acceptedReceipts.get(source) === resolve) acceptedReceipts.delete(source);
+    };
+    _fixture.cleanup.defer(dispose);
+    return () => waitForTestReceipt(context.signal, promise, dispose);
+  };
+  const attemptedWrites = new Set<() => void>();
+  /** Resolves when the editor next asks to write, whether the write is accepted or refused. */
+  const nextWriteAttempt = (_fixture: _Fixture, context: TestContext) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    attemptedWrites.add(resolve);
+    const dispose = () => {
+      attemptedWrites.delete(resolve);
     };
     _fixture.cleanup.defer(dispose);
     return () => waitForTestReceipt(context.signal, promise, dispose);
@@ -92,8 +103,13 @@ describe("pending fields across outside document changes", () => {
         registerFinishEditing={(callback) => {
           _fixture.finish = callback;
         }}
+        registerBackgroundCommit={(callback) => {
+          _fixture.background = callback;
+        }}
         onEdit={(request) => {
           writes(request.edit.source, request.edit);
+          for (const resolve of attemptedWrites) resolve();
+          attemptedWrites.clear();
           const outcome = _fixture.owner.edit(
             request,
             _fixture.acceptWrites && request.edit.source === _fixture.shown,
@@ -325,7 +341,7 @@ describe("pending fields across outside document changes", () => {
     expect(readStoredRecovery(KEY)?.text).toBe("Local unfinished title");
   });
 
-  it("paints ordinary typing before publication and retains it if publication is refused", async () => {
+  it("paints ordinary typing before publication and retains it if publication is refused", async (context) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -335,12 +351,16 @@ describe("pending fields across outside document changes", () => {
     await act(() => editor(_fixture).commands.setTextSelection({ from: 2, to: 5 }));
     const source = _fixture.shown;
     _fixture.acceptWrites = false;
+    const attempted = nextWriteAttempt(_fixture, context);
     await act(() => editor(_fixture).commands.insertContent("Unavailable"));
     expect(editor(_fixture).state.doc.textContent).toContain("Unavailable");
     expect(writes).not.toHaveBeenCalled();
     expect(_fixture.shown).toBe(source);
     await advance(500);
-    await vi.waitFor(() => expect(writes).toHaveBeenCalled());
+    // Publication follows the conversion worker's reply, which takes real time; wait for
+    // the write itself, not a fixed second.
+    await attempted();
+    expect(writes).toHaveBeenCalledTimes(1);
     expect(_fixture.shown).toBe(source);
     expect(JSON.stringify(readTypingDraft(KEY)?.content)).toContain("Unavailable");
     expect(editor(_fixture).state.doc.textContent).toContain("Unavailable");
@@ -376,6 +396,55 @@ describe("pending fields across outside document changes", () => {
     expect(_fixture.shown).toContain("\\title{Keep title}");
     expect(writes).toHaveBeenCalledTimes(1);
     expect(_fixture.finish?.()).toBe(true);
+  });
+
+  it("commits typing in the background, keeping focus and selection", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    _fixture.shown = "\\documentclass{article}\n\\begin{document}\nBody text.\n\\end{document}";
+    await render(_fixture);
+    let position = 0;
+    editor(_fixture).state.doc.descendants((node, at) => {
+      if (node.type.name === "paragraph") position = at + 1;
+    });
+    await act(() => {
+      editor(_fixture).view.dom.focus();
+      editor(_fixture).commands.setTextSelection(position);
+      editor(_fixture).commands.insertContent("AB");
+    });
+    const selection = editor(_fixture).state.selection.toJSON();
+    expect(document.activeElement).toBe(editor(_fixture).view.dom);
+    expect(writes).not.toHaveBeenCalled();
+
+    await act(() => expect(_fixture.background?.commit()).toBe("clean"));
+
+    expect(writes).toHaveBeenCalled();
+    expect(_fixture.shown).toContain("ABBody text.");
+    expect(document.activeElement).toBe(editor(_fixture).view.dom);
+    expect(editor(_fixture).state.selection.toJSON()).toEqual(selection);
+    expect(_fixture.background?.inspect()).toBe("clean");
+  });
+
+  it("reports an open field's input instead of closing or blurring it", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await mount(_fixture);
+    await typeTitle(_fixture);
+    expect(document.activeElement).toBe(field(_fixture));
+    await act(() => expect(_fixture.background?.commit()).toBe("unconverted"));
+    expect(document.activeElement).toBe(field(_fixture));
+    expect(field(_fixture).value).toBe("Local unfinished title");
+
+    await act(() =>
+      field(_fixture).dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })),
+    );
+    expect(_fixture.background?.inspect()).toBe("composing");
+    await act(() => expect(_fixture.background?.commit()).toBe("composing"));
+    expect(document.activeElement).toBe(field(_fixture));
   });
 });
 
@@ -420,6 +489,7 @@ function _createFixture() {
     },
 
     restoreFonts: () => {},
+    background: null as LatexBackgroundCommit | null,
 
     container: undefined! as HTMLDivElement,
     stack,
