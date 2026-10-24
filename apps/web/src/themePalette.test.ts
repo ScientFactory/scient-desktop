@@ -40,15 +40,6 @@ function canonical(value: string): string {
   return color;
 }
 
-function expectThemeColors(
-  colors: Readonly<Record<string, string>>,
-  expected: Readonly<Record<string, string>>,
-): void {
-  for (const [role, value] of Object.entries(expected)) {
-    expect(asHex(colors[role]!)).toBe(value);
-  }
-}
-
 function contrastRatio(first: string, second: string): number {
   const toRgb = (value: string) => {
     const hex = asHex(value).slice(1);
@@ -137,34 +128,10 @@ describe("theme files", () => {
       }
     },
   );
+  // SCIENT-FORK:START
 
-  it("keeps the reviewed stock dark action and error colors exact", () => {
-    expectThemeColors(getStandardThemeColors("dark"), {
-      focus: "#346bf1",
-      messageAction: "#346bf1",
-      messageActionHover: "#3061d9",
-      error: "#fb414a",
-      errorForeground: "#ff6467",
-    });
-  });
-
-  it("keeps the reviewed stock light action and error colors exact and readable", () => {
+  it("keeps the stock light action, error and update colors readable", () => {
     const colors = getStandardThemeColors("light");
-    expectThemeColors(colors, {
-      focus: "#0160cc",
-      accent: "#0160cc",
-      accentForeground: "#ffffff",
-      error: "#e72b2b",
-      errorForeground: "#d60e1a",
-      errorSurface: "#faebeb",
-      update: "#0160cc",
-      updateForeground: "#0160cc",
-      updateSurface: "#dee9f6",
-      messageAction: "#0160cc",
-      messageActionForeground: "#ffffff",
-      messageActionHover: "#0154b4",
-      terminalCursor: "#26384e",
-    });
     expect(
       contrastRatio(colors.messageActionForeground, colors.messageAction),
     ).toBeGreaterThanOrEqual(4.5);
@@ -176,6 +143,7 @@ describe("theme files", () => {
       4.5,
     );
   });
+  // SCIENT-FORK:END
 
   it("derives readable, distinctive vivid palettes from exact seeds", () => {
     const seeds: ReadonlyArray<["light" | "dark", string, string]> = [

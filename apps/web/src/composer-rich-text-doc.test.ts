@@ -156,6 +156,7 @@ describe("editable math source", () => {
     const map = serializeEditorDoc(doc);
     expect(map.value).toBe(source);
     expect(map.runs.some((run) => run.kind === "token")).toBe(false);
+    // SCIENT-FORK:START
   });
 
   it("does not turn a formula's literal skill name into a chip after inventory refresh", () => {
@@ -164,6 +165,7 @@ describe("editable math source", () => {
     const doc = schema.nodeFromJSON(buildDocJson(source, known));
     expect(skillChipReplacements(doc, known)).toEqual([]);
     expect(serializeEditorDoc(doc).value).toBe(source);
+    // SCIENT-FORK:END
   });
 });
 

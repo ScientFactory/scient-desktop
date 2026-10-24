@@ -11,10 +11,13 @@ describe("pickWorkspaceBasenameMatch", () => {
     { path: "apps/web/src/components/ChatView.tsx", kind: "file" as const },
   ];
 
+  // SCIENT-FORK:START
   it("takes the exact filename match, not the closest fuzzy one", () => {
+    // SCIENT-FORK:END
     expect(pickWorkspaceBasenameMatch("ChatView.tsx", entries)).toBe(
       "apps/web/src/components/ChatView.tsx",
     );
+    // SCIENT-FORK:START
   });
 
   it("returns null rather than guessing between two files with the same name", () => {
@@ -24,6 +27,7 @@ describe("pickWorkspaceBasenameMatch", () => {
         { path: "reviews/b/notes.md", kind: "file" },
       ]),
     ).toBeNull();
+    // SCIENT-FORK:END
   });
 
   // regression: #6297 a bare filename resolves to a file, never a same-named directory

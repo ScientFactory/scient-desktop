@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  createComposerImageThumbnail,
   compressImageForStash,
   compressImageToByteLimit,
+  createComposerImageThumbnail,
   inheritComposerImageThumbnail,
   MAX_COMPRESSIBLE_SOURCE_BYTES,
   MAX_STASH_IMAGE_DATA_URL_CHARS,
@@ -141,6 +141,7 @@ afterEach(() => {
   globalThis.OffscreenCanvas = originalOffscreenCanvas;
 });
 
+// SCIENT-FORK:START
 describe("composer image thumbnails", () => {
   it.each([
     [3840, 2160, 796, 448],
@@ -198,6 +199,7 @@ describe("composer image thumbnails", () => {
   );
 });
 
+// SCIENT-FORK:END
 describe("compressImageForStash", () => {
   it("keeps the exact data URL budget boundary and original bytes", async () => {
     const original = makeFile(3);
@@ -304,6 +306,7 @@ describe("compressImageForStash", () => {
 });
 
 describe("composer image thumbnails", () => {
+  // SCIENT-FORK:START
   it.each(["square", "snapshot"] as const)(
     "inherits the %s thumbnail without decoding again",
     async (mode) => {
@@ -323,6 +326,7 @@ describe("composer image thumbnails", () => {
       expect(createImageBitmap).toHaveBeenCalledTimes(1);
     },
   );
+  // SCIENT-FORK:END
 });
 
 describe("HEIC attachment preparation", () => {

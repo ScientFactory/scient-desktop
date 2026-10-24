@@ -22,7 +22,9 @@ import {
   extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
   isCollapsedCursorAdjacentToInlineToken,
+  // SCIENT-FORK:START
   isStandaloneForkSlashCommand,
+  // SCIENT-FORK:END
   isPathSuggestionCurrent,
   replaceTextRange,
 } from "./composer-logic";
@@ -536,6 +538,7 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
   });
 });
 
+// SCIENT-FORK:START
 describe("isStandaloneForkSlashCommand", () => {
   it("recognizes a standalone /fork command", () => {
     expect(isStandaloneForkSlashCommand(" /FoRk ")).toBe(true);
@@ -546,6 +549,7 @@ describe("isStandaloneForkSlashCommand", () => {
   });
 });
 
+// SCIENT-FORK:END
 describe("literal editor answer cursor state", () => {
   const prefill = "- [X] done $my-skill ";
 

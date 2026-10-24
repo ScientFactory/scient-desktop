@@ -10,7 +10,9 @@ describe("resolvePlanFollowUpSubmission", () => {
       expect(resolvePlanFollowUpSubmission({ draftText, planMarkdown: "# Plan" })).toEqual({
         text: draftText,
         interactionMode: "plan",
+        // SCIENT-FORK:START
         selectedScientSkillNames: [],
+        // SCIENT-FORK:END
       });
     },
   );
@@ -18,6 +20,7 @@ describe("resolvePlanFollowUpSubmission", () => {
     expect(
       resolvePlanFollowUpSubmission({
         draftText: "   ",
+        // SCIENT-FORK:START
         planMarkdown: "## Ship it\n\n- use $contextskill\n",
       }),
     ).toEqual({
@@ -31,12 +34,15 @@ describe("resolvePlanFollowUpSubmission", () => {
     expect(
       resolvePlanFollowUpSubmission({
         draftText: "$requested refine step 2 first",
+        // SCIENT-FORK:END
         planMarkdown: "## Ship it\n\n- step 1\n",
       }),
     ).toEqual({
+      // SCIENT-FORK:START
       text: "$requested refine step 2 first",
       interactionMode: "plan",
       selectedScientSkillNames: ["requested"],
+      // SCIENT-FORK:END
     });
   });
 });
