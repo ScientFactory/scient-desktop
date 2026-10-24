@@ -665,6 +665,52 @@ describe("the LaTeX surface on a document session", () => {
     }
   });
 
+  it("names the Overleaf conflicts to settle instead of a failed build", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    build.snapshot = {
+      logicalDocumentKey: "latex:paper.tex",
+      rootRelativePath: "paper.tex",
+      state: "failed",
+      diagnostics: [],
+      descriptor: null,
+      failureSummary: "Compiler failed.",
+      startedAtEpochMs: null,
+      finishedAtEpochMs: null,
+      toolchain: null,
+      pendingRerun: false,
+      visualSourceRevisions: {},
+    };
+    build.toolchain = {
+      kind: "tectonic",
+      executable: "tectonic",
+      version: "test",
+      probedAtEpochMs: 1,
+    };
+    await mount(_fixture, "source");
+    const status = () => _fixture.container.querySelector(".scient-latex-status")!.textContent;
+    expect(status()).toContain("Build failed");
+
+    // A sync wrote both versions between Scient's marks: two blocks to settle.
+    const block = (n: number) =>
+      `<<<<<<< Scient\nMine ${n}.\n=======\nTheirs ${n}.\n>>>>>>> Overleaf\n`;
+    await act(async () => {
+      lease.change(typed(`${block(1)}${block(2)}`), lease.getSnapshot().editVersion);
+    });
+    await mount(_fixture, "source");
+    expect(status()).toContain("This file has 2 Overleaf conflicts to settle");
+    expect(status()).not.toContain("Build failed");
+
+    // Settled: the build's own state shows again.
+    await act(async () => {
+      lease.change(typed("Merged."), lease.getSnapshot().editVersion);
+    });
+    await mount(_fixture, "source");
+    expect(status()).toContain("Build failed");
+  });
+
   describe("explicit installation for the document compiler", () => {
     const source = `% !TeX program = lualatex\n${BASE}`;
     const report = (available: boolean): ScientLatexToolchainReport => ({
