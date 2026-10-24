@@ -340,11 +340,17 @@ it.for([
     await readyToHit(state.visual, () => wordPosition(state.visual.view.dom, word, false).box);
     const hit = wordPosition(state.visual.view.dom, word, false);
     state.visual.view.dom.dataset.testid = "active-visual-editor";
+    // Not jumping means the selected word keeps its place on screen. scrollTop alone
+    // also moves when the reading anchor holds the text still while a block above
+    // the reading line finishes its layout.
+    const wordTop = () => wordPosition(state.visual.view.dom, word, false).box.top;
     let before = scroll.scrollTop;
+    let beforeTop = wordTop();
     {
       using _clock = fakeTimers();
       const pointer = () => {
         before = scroll.scrollTop;
+        beforeTop = wordTop();
         _fixture.host.removeEventListener("pointerdown", pointer, true);
       };
       _fixture.host.addEventListener("pointerdown", pointer, true);
@@ -398,7 +404,7 @@ it.for([
           .dblClick({ position: hit.position });
       }
       const afterGesture = scroll.scrollTop;
-      expect(Math.abs(afterGesture - before), "native selection scroll").toBeLessThanOrEqual(2);
+      expect(Math.abs(wordTop() - beforeTop), "native selection scroll").toBeLessThanOrEqual(2);
       // Publish the gesture's queued source reveal without advancing recurring editor services.
       await act(() => vi.runOnlyPendingTimersAsync());
       await vi.waitFor(() => expect(state.reveals).toHaveLength(1));
@@ -411,11 +417,13 @@ it.for([
           : document.getSelection()?.toString().trim(),
       ).toBe(word);
       const afterPublish = scroll.scrollTop;
-      const scrollDelta = Math.abs(afterPublish - before);
+      const wordDelta = Math.abs(wordTop() - beforeTop);
       expect(
-        scrollDelta,
-        scrollDelta > 2
+        wordDelta,
+        wordDelta > 2
           ? JSON.stringify({
+              beforeTop,
+              afterTop: wordTop(),
               before,
               afterGesture,
               afterPublish,
