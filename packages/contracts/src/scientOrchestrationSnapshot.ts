@@ -88,8 +88,6 @@ export const OrchestrationForkBoundary = Schema.Struct({
   checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
 });
 export type OrchestrationForkBoundary = typeof OrchestrationForkBoundary.Type;
-export const isForkBaselineBoundary = (boundary: OrchestrationForkBoundary): boolean =>
-  boundary.conversationTurnCount === 0 && boundary.turnId !== null;
 
 // SCIENT-FORK:END
 
