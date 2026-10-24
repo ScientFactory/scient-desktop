@@ -291,7 +291,8 @@ const sendTense = (publication: ScientOverleafPublication): SendTense =>
 
 /**
  * What came in, as far as the apply's outcome establishes it. Only a complete apply
- * proves Overleaf's changes are in the folder; a replanned one wrote nothing; one
+ * proves Overleaf's changes are in the folder; a replanned one wrote nothing (which
+ * says neither why nor whether the folder already holds that content); one
  * that needs attention may have stopped partway.
  */
 const incomingLines = (result: Extract<ScientOverleafSyncResult, { _tag: "synced" }>): string[] => {
@@ -313,10 +314,10 @@ const incomingLines = (result: Extract<ScientOverleafSyncResult, { _tag: "synced
       return [
         incoming.length === 0
           ? lead(
-              "a file here changed while the sync was applying, so nothing was written to the folder. Sync again.",
+              "this apply wrote nothing to the folder, and a fresh review is needed. Sync again.",
             )
           : lead(
-              `Overleaf's changes to ${changes} were not brought in: a file here changed while the sync was applying them, so nothing was written. Sync again.`,
+              `the apply of Overleaf's changes to ${changes} wrote nothing to the folder, and a fresh review is needed. Sync again.`,
             ),
       ];
     default: {
@@ -438,7 +439,7 @@ export const recoveryLines = (
       return ["Finished an interrupted sync: what it was applying is now in the folder."];
     case "replan":
       return [
-        "Settled an interrupted sync without writing: a file here had changed, so what it was bringing in is not in the folder. Sync again to bring it in.",
+        "Recovered an interrupted sync without writing anything; a fresh review is needed. Sync again.",
       ];
     case "attention":
       return [

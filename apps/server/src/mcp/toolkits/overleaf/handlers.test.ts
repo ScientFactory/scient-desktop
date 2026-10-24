@@ -97,6 +97,15 @@ const encodeError = Schema.encodeSync(
   Schema.fromJsonString(ScientOverleafToolkit.tools.scient_overleaf_token.failureSchema),
 );
 
+/**
+ * `replan` says only that an apply wrote nothing: never why, and never that the
+ * folder lacks the content (it may already hold it).
+ */
+const infersFromReplan = (line: string) =>
+  /changed (here|meanwhile|while)|is not in the folder|not brought in|nothing was restored/iu.test(
+    line,
+  );
+
 describe("Overleaf tool handlers", () => {
   it.effect("a failed editor save stops every call that may write before anything changes", () =>
     Effect.gen(function* () {
@@ -616,9 +625,12 @@ describe("Overleaf tool handlers", () => {
       expect((yield* linesFor("complete"))[0]).toBe("1 file came in from Overleaf: main.tex.");
       const replanned = yield* linesFor("replan");
       expect(replanned.some((line) => line.includes("came in"))).toBe(false);
-      expect(replanned[0]).toContain("were not brought in: a file here changed");
+      expect(replanned[0]).toBe(
+        "The apply of Overleaf's changes to 1 file (main.tex) wrote nothing to the folder, and a fresh review is needed. Sync again.",
+      );
+      expect(replanned.some(infersFromReplan)).toBe(false);
       expect((yield* linesFor("replan", { incoming: [] }))[0]).toContain(
-        "nothing was written to the folder",
+        "This apply wrote nothing to the folder",
       );
       const interrupted = yield* linesFor("attention", { interrupted: [["main.tex"]] });
       expect(interrupted.some((line) => line.includes("came in"))).toBe(false);
@@ -777,8 +789,9 @@ describe("Overleaf tool handlers", () => {
       const replanned = yield* restoreWith("replan");
       expect(replanned.restored).toBe("not-restored");
       expect(replanned.lines[0]).toBe(
-        "Nothing was restored: main.tex changed here meanwhile, so nothing was written. List the copies again and retry.",
+        "The restore of main.tex wrote nothing. List the copies again and retry.",
       );
+      expect(replanned.lines.some(infersFromReplan)).toBe(false);
       const attention = yield* restoreWith("attention");
       expect(attention.restored).toBe("needs-attention");
       expect(attention.lines[0]).toContain("The restore of main.tex needs attention");
@@ -957,8 +970,9 @@ describe("Overleaf tool handlers", () => {
       expect(complete.result).toMatchObject({ recovered: true, outcome: "complete" });
       const replanned = yield* recoverWith(adopted("replan"));
       expect(replanned.lines[0]).toBe(
-        "Settled an interrupted sync without writing: a file here had changed, so what it was bringing in is not in the folder. Sync again to bring it in.",
+        "Recovered an interrupted sync without writing anything; a fresh review is needed. Sync again.",
       );
+      expect(replanned.lines.some(infersFromReplan)).toBe(false);
       expect(replanned.result).toMatchObject({ recovered: true, outcome: "replan" });
       const attention = yield* recoverWith(adopted("attention", [["main.tex"]]));
       expect(attention.lines[0]).toContain(
@@ -989,6 +1003,37 @@ describe("Overleaf tool handlers", () => {
         ),
       );
       expect(previewed.lines[0]).toContain("An interrupted earlier sync was settled first");
+    }),
+  );
+
+  it.effect("recovery from another worktree names the copy it changed", () =>
+    Effect.gen(function* () {
+      const recovered = yield* overleafManageForInvocation({
+        connectionId: "c-1",
+        action: "recover",
+      }).pipe(
+        provide(
+          fakeOverleaf({
+            list: () =>
+              Effect.succeed([{ ...summary, checkoutRoot: "/projects/main", linkedHere: false }]),
+            recover: () =>
+              Effect.succeed({
+                _tag: "recovered",
+                adopted: { outcome: "complete", interrupted: [], markerPaths: [] },
+                attempts: { accepted: [], unresolved: [] },
+              }) as never,
+          }),
+        ),
+      );
+      expect(recovered.link).toMatchObject({
+        checkoutRoot: "/projects/main",
+        folder: "paper",
+        linkedElsewhere: true,
+      });
+      expect(recovered.lines[0]).toContain("the copy of the project at /projects/main");
+      expect(recovered.lines[1]).toBe(
+        "Finished an interrupted sync: what it was applying is now in the folder.",
+      );
     }),
   );
 });

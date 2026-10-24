@@ -249,7 +249,7 @@ const ScientOverleafKeptCopiesTool = Tool.make("scient_overleaf_kept_copies", {
     restored: Schema.NullOr(
       Schema.Literals([
         "restored",
-        /** The file changed here meanwhile: nothing was written. */
+        /** The restore wrote nothing: list again and retry. */
         "not-restored",
         /** The restore may have stopped partway, or a file changed while it was written. */
         "needs-attention",
@@ -282,6 +282,8 @@ const ScientOverleafManageTool = Tool.make("scient_overleaf_manage", {
   }),
   success: Schema.Struct({
     lines: Lines,
+    /** For recover: the copy it ran in (another worktree's link acts on the linked copy). */
+    link: Schema.optional(LinkedCopy),
     result: Schema.Union([
       ScientOverleafManageResult,
       Schema.Struct({

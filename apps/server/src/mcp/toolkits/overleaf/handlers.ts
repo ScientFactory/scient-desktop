@@ -686,7 +686,8 @@ export const overleafKeptCopiesForInvocation = Effect.fn("ScientOverleafToolkit.
       );
       link = saved.link;
       const result = saved.value;
-      // Only a complete apply puts the copy back; a replanned one wrote nothing.
+      // Only a complete apply puts the copy back; a replanned one wrote nothing, which
+      // says neither why nor what the file holds now.
       restored =
         result._tag !== "restored"
           ? result._tag
@@ -699,7 +700,7 @@ export const overleafKeptCopiesForInvocation = Effect.fn("ScientOverleafToolkit.
         restored === "restored"
           ? `Restored ${path} from its kept copy; the version it replaced is kept as a copy. Sync to send it to Overleaf.`
           : restored === "not-restored"
-            ? `Nothing was restored: ${path} changed here meanwhile, so nothing was written. List the copies again and retry.`
+            ? `The restore of ${path} wrote nothing. List the copies again and retry.`
             : restored === "needs-attention"
               ? `The restore of ${path} needs attention: it may have stopped partway, or a file changed while it was written. Check the file and scient_overleaf_status before syncing.`
               : result._tag === "stale"
@@ -765,7 +766,7 @@ export const overleafManageForInvocation = Effect.fn("ScientOverleafToolkit.mana
       }
       case "recover": {
         // Recovery settles an interrupted apply, which may write the folder: editors first.
-        const { value: recovered } = yield* afterSavingEditors(
+        const { link, value: recovered } = yield* afterSavingEditors(
           overleaf,
           caller,
           connectionId,
@@ -792,7 +793,8 @@ export const overleafManageForInvocation = Effect.fn("ScientOverleafToolkit.mana
               `Sends ${result.unresolved!.map((n) => `#${n}`).join(", ")} still have no answer; Scient never sends them again.`,
             );
         }
-        return { lines, result };
+        // From another worktree this changed the linked copy: say which.
+        return { lines: withLinkLine(link, lines), link, result };
       }
       case "cancel": {
         const result = yield* mapErrors(overleaf.cancel({ caller, connectionId }));
