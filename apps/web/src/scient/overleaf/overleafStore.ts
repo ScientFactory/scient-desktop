@@ -329,13 +329,9 @@ export function loadOverleafWorkspace(
   return load;
 }
 
-/**
- * After an operation on a link, every workspace view of its environment lists
- * its links and reads their status again, not only the caller's: a link
- * connected or unlinked in one view, or a status read as busy while the
- * operation held the link, would otherwise stay stale in the others. Returns
- * the caller's own reload.
- */
+/** Reload every workspace view of the environment, not only the caller's, so a link changed
+ * or a busy status read in one view does not stay stale in the others. Returns the caller's
+ * own reload. */
 export function reloadOverleafWorkspaces(
   environmentId: EnvironmentId,
   workspaceRoot: string,
