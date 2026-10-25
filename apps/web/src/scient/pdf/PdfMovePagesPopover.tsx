@@ -1,30 +1,54 @@
 import { useId, useRef, useState, useSyncExternalStore } from "react";
-import { Button } from "~/components/ui/button";
-import {
-  NumberField,
-  NumberFieldDecrement,
-  NumberFieldGroup,
-  NumberFieldIncrement,
-  NumberFieldInput,
-} from "~/components/ui/number-field";
+import { NumberField, NumberFieldGroup, NumberFieldInput } from "~/components/ui/number-field";
 import { Popover, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
 import type { PdfEditSession } from "./pdfEditSession";
+import { pdfMoveDestinations } from "./pdfPageEdits";
 
+/**
+ * Opens where the page menu was and looks like its continuation: worded rows of the same
+ * height, then a To page row whose number box is focused, so Return moves the pages.
+ */
 export function PdfMovePagesPopover(props: {
   readonly session: PdfEditSession;
   readonly anchor: HTMLElement;
+  readonly point: { readonly x: number; readonly y: number };
   readonly pages: readonly string[];
-  readonly initialPage: number;
   readonly onClose: () => void;
 }) {
   const snapshot = useSyncExternalStore(props.session.subscribe, props.session.getSnapshot);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [before, setBefore] = useState<number | null>(props.initialPage);
+  const destinations = pdfMoveDestinations(snapshot.frame, props.pages);
+  const [page, setPage] = useState<number | null>(destinations.page);
   const [error, setError] = useState<string | null>(null);
   const fieldId = useId();
-  const pageCount = snapshot.frame.pages.length;
-  const valid =
-    before !== null && Number.isInteger(before) && before >= 1 && before <= pageCount + 1;
+  const { x, y } = props.point;
+  const point = {
+    getBoundingClientRect: () => DOMRect.fromRect({ x, y, width: 0, height: 0 }),
+  };
+  const boundary = page === null ? null : destinations.toPage(page);
+
+  const move = (to: number | null, close: boolean) => {
+    if (to === null || snapshot.busy) return;
+    const currentPages = new Set(snapshot.frame.pages.map((entry) => entry.id));
+    if (!props.pages.every((id) => currentPages.has(id))) {
+      setError("The pages changed. Close this and choose them again.");
+      return;
+    }
+    setError(null);
+    void props.session.move(to, props.pages).then(() => {
+      const failure = props.session.getSnapshot().error;
+      if (failure) setError(failure);
+      else if (close) props.onClose();
+      else setPage(pdfMoveDestinations(props.session.getSnapshot().frame, props.pages).page);
+    });
+  };
+  // Up and down keep the card open so they can be pressed again.
+  const steps = [
+    { label: "To start", to: destinations.start, close: true },
+    { label: "Up one page", to: destinations.up, close: false },
+    { label: "Down one page", to: destinations.down, close: false },
+    { label: "To end", to: destinations.end, close: true },
+  ];
 
   return (
     <Popover
@@ -34,88 +58,84 @@ export function PdfMovePagesPopover(props: {
       }}
     >
       <PopoverPopup
-        anchor={props.anchor}
-        side="right"
+        anchor={point}
+        side="bottom"
         align="start"
-        padding="comfortable"
+        sideOffset={0}
+        padding="none"
         initialFocus={inputRef}
         finalFocus={() =>
           props.anchor.querySelector<HTMLButtonElement>(".scient-reader-page-thumbnail")
         }
       >
-        <form
-          className="scient-pdf-insert-form scient-pdf-move-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!valid || before === null || snapshot.busy) return;
-            const currentPages = new Set(snapshot.frame.pages.map((page) => page.id));
-            if (!props.pages.every((id) => currentPages.has(id))) {
-              setError("The PDF pages changed. Close this menu and choose the pages again.");
-              return;
-            }
-            setError(null);
-            void props.session.move(before - 1, props.pages).then(() => {
-              const failure = props.session.getSnapshot().error;
-              if (failure) setError(failure);
-              else props.onClose();
-            });
-          }}
-        >
+        <div className="scient-pdf-move-form">
           <PopoverTitle size="compact">
-            {props.pages.length === 1 ? "Move page" : `Move ${props.pages.length} pages`}
+            {props.pages.length === 1
+              ? `Move page ${destinations.page}`
+              : `Move ${props.pages.length} pages`}
           </PopoverTitle>
-          <div className="scient-pdf-move-destination">
-            <label htmlFor={fieldId}>Before page</label>
+          {steps.map((step) => (
+            <button
+              key={step.label}
+              type="button"
+              className="scient-pdf-move-row"
+              disabled={step.to === null || snapshot.busy}
+              onClick={() => move(step.to, step.close)}
+            >
+              {step.label}
+            </button>
+          ))}
+          <div className="scient-pdf-move-separator" role="separator" />
+          {/* A click anywhere on the row goes to the page box. */}
+          <div
+            className="scient-pdf-move-row scient-pdf-move-page-row"
+            onMouseDown={(event) => {
+              if (event.target === inputRef.current) return;
+              event.preventDefault();
+              inputRef.current?.focus();
+              inputRef.current?.select();
+            }}
+          >
+            <label htmlFor={fieldId}>To page</label>
             <NumberField
               id={fieldId}
               size="sm"
               min={1}
-              max={pageCount + 1}
+              max={destinations.lastPage}
               step={1}
-              smallStep={1}
-              largeStep={1}
               allowOutOfRange
               required
-              value={before}
+              value={page}
               disabled={snapshot.busy}
               format={{ useGrouping: false }}
               onValueChange={(value) => {
-                setBefore(value);
+                setPage(value);
                 setError(null);
               }}
             >
               <NumberFieldGroup>
-                <NumberFieldDecrement aria-label="Previous destination" />
                 <NumberFieldInput
                   ref={inputRef}
-                  aria-invalid={!valid || undefined}
-                  aria-valuetext={before === pageCount + 1 ? "End of document" : undefined}
+                  enterKeyHint="go"
+                  aria-invalid={boundary === null || undefined}
                   onFocus={(event) => event.currentTarget.select()}
+                  // The card has no submit button, so Return is handled here.
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                    event.preventDefault();
+                    move(boundary, true);
+                  }}
                 />
-                <NumberFieldIncrement aria-label="Next destination" />
               </NumberFieldGroup>
             </NumberField>
+            <span className="scient-pdf-move-count">of {destinations.lastPage}</span>
           </div>
           {error ? (
-            <p role="alert" className="text-xs text-destructive">
+            <p role="alert" className="scient-pdf-move-error">
               {error}
             </p>
           ) : null}
-          <div className="scient-pdf-insert-actions">
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              disabled={snapshot.busy}
-              onClick={props.onClose}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" size="xs" variant="outline" disabled={!valid || snapshot.busy}>
-              {snapshot.busy ? "Moving…" : "Move"}
-            </Button>
-          </div>
-        </form>
+        </div>
       </PopoverPopup>
     </Popover>
   );

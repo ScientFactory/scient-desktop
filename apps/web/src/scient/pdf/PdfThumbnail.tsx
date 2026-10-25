@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ScientPdfRuntime } from "./pdfRuntime";
 import { ReaderPageThumbnail } from "../writing/ReaderPageThumbnail";
-import { setPdfPageDragImage } from "./pdfPageDragImage";
+import { startPdfPageDragFollow } from "./pdfPageDragImage";
 
 let stopDragScroll: (() => void) | null = null;
 function startDragScroll(container: HTMLElement) {
@@ -44,6 +44,26 @@ function startDragScroll(container: HTMLElement) {
   stopDragScroll = stop;
 }
 
+/**
+ * Reports the dragged pages once the drag has started, so they fade after the browser has
+ * begun it, and clears them when it ends: dropped here, elsewhere, or cancelled.
+ */
+function trackPageDrag(
+  pages: readonly string[],
+  report?: (pages: readonly string[] | null) => void,
+) {
+  if (!report) return;
+  const frame = requestAnimationFrame(() => report(pages));
+  const end = () => {
+    cancelAnimationFrame(frame);
+    document.removeEventListener("dragend", end, true);
+    document.removeEventListener("drop", end, true);
+    report(null);
+  };
+  document.addEventListener("dragend", end, true);
+  document.addEventListener("drop", end, true);
+}
+
 export function PdfThumbnail(props: {
   readonly active: boolean;
   readonly pageNumber: number;
@@ -61,6 +81,9 @@ export function PdfThumbnail(props: {
     anchor: HTMLElement,
   ) => void;
   readonly onMove: (boundary: number, pages: readonly string[]) => void;
+  /** True while this page is among the dragged ones; it stays in place, faded. */
+  readonly dragged?: boolean;
+  readonly onDragState?: (pages: readonly string[] | null) => void;
   readonly children?: React.ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -99,18 +122,29 @@ export function PdfThumbnail(props: {
           scale: (width / unscaled.width) * pixelRatio,
           rotation,
         });
-        canvas.width = Math.max(1, Math.floor(viewport.width));
-        canvas.height = Math.max(1, Math.floor(viewport.height));
-        canvas.style.width = width + "px";
-        canvas.style.height = Math.round(viewport.height / pixelRatio) + "px";
-        const context = canvas.getContext("2d", { alpha: false });
+        // Drawn off screen and copied in whole: resizing the shown canvas clears it to black
+        // until PDF.js finishes, which flashed every thumbnail after an edit.
+        const offscreen = document.createElement("canvas");
+        offscreen.width = Math.max(1, Math.floor(viewport.width));
+        offscreen.height = Math.max(1, Math.floor(viewport.height));
+        const context = offscreen.getContext("2d", { alpha: false });
         if (!context) return;
-        const task = page.render({ canvas, canvasContext: context, viewport });
+        const task = page.render({ canvas: offscreen, canvasContext: context, viewport });
         cancelRender = () => task.cancel();
-        return task.promise.catch((error: unknown) => {
-          if (!(error instanceof Error && error.name === "RenderingCancelledException"))
-            throw error;
-        });
+        return task.promise.then(
+          () => {
+            if (!current) return;
+            canvas.width = offscreen.width;
+            canvas.height = offscreen.height;
+            canvas.style.width = width + "px";
+            canvas.style.height = Math.round(viewport.height / pixelRatio) + "px";
+            canvas.getContext("2d", { alpha: false })?.drawImage(offscreen, 0, 0);
+          },
+          (error: unknown) => {
+            if (!(error instanceof Error && error.name === "RenderingCancelledException"))
+              throw error;
+          },
+        );
       })
       .catch(() => {
         if (current) setFailed(true);
@@ -128,6 +162,7 @@ export function PdfThumbnail(props: {
       className="scient-pdf-thumbnail-item"
       data-drop={dropSide ?? undefined}
       data-checked={props.selected || undefined}
+      data-dragged={props.dragged || undefined}
       onContextMenu={(event) => {
         if (props.editable === false) return;
         event.preventDefault();
@@ -201,10 +236,27 @@ export function PdfThumbnail(props: {
             "application/x-scient-pdf-page-ids",
             props.dragPages.join(","),
           );
-          if (props.dragPages.length > 1 && canvasRef.current)
-            setPdfPageDragImage(event.dataTransfer, canvasRef.current, props.dragPages.length);
           const container = event.currentTarget.closest<HTMLElement>(".scient-pdf-thumbnails");
+          const grabbed = canvasRef.current;
+          if (grabbed) {
+            // The other checked pages that are on screen join the grabbed one.
+            const others =
+              props.dragPages.length > 1 && container
+                ? [
+                    ...container.querySelectorAll<HTMLCanvasElement>(
+                      ".scient-pdf-thumbnail-item[data-checked] canvas",
+                    ),
+                  ].filter((canvas) => canvas !== grabbed)
+                : [];
+            startPdfPageDragFollow({
+              transfer: event.dataTransfer,
+              canvases: [grabbed, ...others],
+              count: props.dragPages.length,
+              pointer: { x: event.clientX, y: event.clientY },
+            });
+          }
           if (container) startDragScroll(container);
+          trackPageDrag(props.dragPages, props.onDragState);
         }}
         onDragEnd={() => {
           suppressClick.current = performance.now() + 250;

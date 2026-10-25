@@ -34,7 +34,8 @@ The reader supports:
 - responsive document search after each key, with previous/next result navigation;
 - internal document links and external links opened in a separate context;
 - existing PDF links, annotations, and form fields in read mode;
-- optional virtualized page thumbnails and the document outline;
+- optional virtualized page thumbnails and the document outline, switched by the
+  Pages and Outline icons at the top of the sidebar (hover for their names);
 - password-protected files, progress, invalid-file errors, and a scanned-page
   notice; and
 - saving a copy from the secondary actions menu. In the desktop app, Scient
@@ -70,11 +71,13 @@ is in the sidebar.
 
 Right-click opens the menu without changing the checked pages. Right-click a
 checked page to act on the checked group, or an unchecked page to target only
-that page. The menu offers Rotate (left/right 90°), Move…, Duplicate, and
-Delete, in that order. Move… opens a compact popover beside the thumbnail with
-one Before page number field. Type a number or adjust it with the minus/plus buttons
-or arrow keys. Page numbers refer to the current document. The highest value,
-one above the last page, moves the pages to the end.
+that page. The menu offers Rotate (left/right 90°), Move, Duplicate, and
+Delete, in that order. With several pages checked, each item names the count,
+such as Move 2 pages. Move opens a small card where the menu was: To start,
+Up one page, Down one page, To end, and To page. Up and down keep the card open
+so you can press them again; rows that would not change the order are greyed
+out. The To page box is already focused: type the page the pages should land on
+and press Return.
 Move saves immediately and supports undo. Copies appear after the last
 checked page. At least one page must remain. Rotation changes the saved PDF; the old view-only Rotate
 clockwise item is removed from More.

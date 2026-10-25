@@ -196,15 +196,17 @@ an unchecked page receive its ID as an explicit target; checked-page commands
 use the selected group.
 Drag data captures explicit page IDs at pickup: an unchecked page drags alone,
 while a checked page drags the checked group. Drop targets use those IDs without
-changing checkbox selection. Group drags use a canvas-backed stacked preview
-with a page-count badge.
-The context menu's Move… command captures explicit page IDs and opens a shared
-popover anchored to the thumbnail, using the insertion form's spacing and controls,
-with one shared NumberField for Before page. It supports typing and integer stepping;
-the maximum is page count plus one, without visible End helper text. The form is about 220px wide.
-It converts the current page number to an
-insertion boundary; page count + 1 means the end. It uses the same save and undo
-path as dragging. Gap menus only insert blank or imported pages.
+changing checkbox selection. `pdfPageDragImage.ts` replaces the browser's still
+drag image with copies of the dragged thumbnails on screen, which glide from their
+places to the pointer and follow it as a stack with a page-count badge; the
+originals stay in place, faded, until the drop. Thumbnails render off screen and
+are copied in whole, so a re-rendered sidebar never shows a cleared canvas.
+The context menu's Move item captures explicit page IDs and opens `PdfMovePagesPopover`
+at the menu's click point, with no slide or scale animation. `pdfMoveDestinations` gives
+the To start, Up, Down and To end boundaries (null, so disabled, when `movePdfPages` would
+keep the order) and `toPage(N)`, which puts the first moved page at page N, from 1 to
+page count minus moved pages plus one. Up and Down keep the card open; the others
+close it. It uses the same save and undo path as dragging. Gap menus only insert blank or imported pages.
 Checkboxes, the Rotate/Move/Duplicate/Delete context menu, page dragging and
 the zero-height gap insertion controls stay in the existing sidebar. No edit
 toolbar, mode, or additional thumbnail spacing is introduced.

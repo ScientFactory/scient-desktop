@@ -112,3 +112,30 @@ export function movePdfPages(
   const pages = [...remaining.slice(0, index), ...selected, ...remaining.slice(index)];
   return pages.every((page, i) => page.id === frame.pages[i]?.id) ? frame : { ...frame, pages };
 }
+
+/**
+ * Insertion boundaries for the Move card. Steps are null when the order would not change.
+ * `toPage(N)` puts the first moved page at page N of the result, from 1 to `lastPage`.
+ */
+export function pdfMoveDestinations(frame: PdfEditFrame, target: readonly string[]) {
+  const moving = new Set(target);
+  const indices = frame.pages.flatMap((page, index) => (moving.has(page.id) ? [index] : []));
+  const staying = frame.pages.flatMap((page, index) => (moving.has(page.id) ? [] : [index]));
+  const changes = (boundary: number) =>
+    movePdfPages(frame, boundary, target) === frame ? null : boundary;
+  return {
+    start: changes(0),
+    up: changes(Math.max(0, (indices[0] ?? 0) - 1)),
+    down: changes(Math.min(frame.pages.length, (indices.at(-1) ?? 0) + 2)),
+    end: changes(frame.pages.length),
+    /** The page number the first moved page has now. */
+    page: (indices[0] ?? 0) + 1,
+    lastPage: staying.length + 1,
+    toPage: (page: number) =>
+      Number.isInteger(page) && page >= 1 && page <= staying.length + 1
+        ? page === 1
+          ? 0
+          : staying[page - 2]! + 1
+        : null,
+  };
+}

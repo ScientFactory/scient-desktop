@@ -54,7 +54,7 @@
 
 .scient-pdf-sidebar {
   display: flex;
-  width: 176px;
+  width: 160px;
   min-height: 0;
   flex: none;
   flex-direction: column;
@@ -88,14 +88,14 @@
 }
 
 .scient-pdf-sidebar-tabs svg {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
 }
 
 .scient-pdf-sidebar-content {
   min-height: 0;
   flex: 1;
-  overflow: auto;
+  overflow: hidden auto;
 }
 
 .scient-pdf-thumbnails {
@@ -352,6 +352,11 @@
   background: color-mix(in srgb, var(--foreground) 6%, transparent);
   color: var(--foreground);
 }
+/* Tight around the 132px page canvas, so the sidebar adds little side space. */
+.scient-pdf-thumbnail-item .scient-reader-page-thumbnail {
+  width: 144px;
+  padding: 5px;
+}
 .scient-pdf-thumbnail-item[data-checked] .scient-reader-page-thumbnail {
   outline: 1px solid color-mix(in srgb, var(--foreground) 35%, transparent);
   outline-offset: -1px;
@@ -373,7 +378,7 @@
 }
 .scient-pdf-page-checkbox {
   position: absolute;
-  top: 22px;
+  top: 20px;
   left: calc(50% - 58px);
   z-index: 2;
   background: white;
@@ -414,57 +419,48 @@
   opacity: 0.4;
   cursor: default;
 }
-.scient-pdf-page-drag-preview {
+/* Copies of the dragged pages that follow the pointer (pdfPageDragImage.ts). */
+.scient-pdf-page-drag-layer {
   position: fixed;
+  inset: 0;
   z-index: 2147483647;
-  top: 0;
-  left: -10000px;
-  width: 116px;
-  padding: 8px 10px 16px;
+  overflow: hidden;
   pointer-events: none;
 }
-.scient-pdf-page-drag-preview::before,
-.scient-pdf-page-drag-preview::after {
-  content: "";
-  position: absolute;
-  inset: 12px 8px 12px 12px;
-  border: 1px solid #b5b5b5;
-  border-radius: 5px;
-  background: #ededed;
-  transform: rotate(5deg);
-}
-.scient-pdf-page-drag-preview::after {
-  inset: 10px 10px 14px;
-  transform: rotate(-4deg);
-}
 .scient-pdf-page-drag-card {
-  position: relative;
-  z-index: 1;
-  overflow: hidden;
-  border: 1px solid #b5b5b5;
-  border-radius: 5px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 1px solid #c4c4c4;
+  border-radius: 4px;
   background: white;
-  padding: 5px;
-  box-shadow: 0 3px 8px rgb(0 0 0 / 18%);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
+  transform-origin: 0 0;
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1);
+  will-change: transform;
 }
 .scient-pdf-page-drag-card canvas {
   display: block;
   width: 100%;
-  max-height: 130px;
-  object-fit: contain;
+  border-radius: 3px;
 }
 .scient-pdf-page-drag-count {
   position: absolute;
-  bottom: 3px;
-  right: 0;
-  z-index: 2;
-  border: 1px solid #777;
+  right: -10px;
+  bottom: -10px;
   border-radius: 999px;
   background: #555;
-  padding: 3px 8px;
+  padding: 3px 9px;
   color: white;
-  font: 600 11px/1.2 var(--font-sans);
-  box-shadow: 0 1px 4px rgb(0 0 0 / 15%);
+  font: 600 13px/1.2 var(--font-sans);
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 20%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .scient-pdf-page-drag-card {
+    transition: none;
+  }
 }
 .scient-pdf-page-insertion {
   position: absolute;
@@ -479,38 +475,79 @@
   top: auto;
   height: 14px;
 }
+/* The button fills the whole 12px gap between two thumbnails, so the plus shows
+   anywhere between them, not only over its own spot. */
 .scient-pdf-page-plus {
   position: absolute;
   top: 0;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 12px;
+  left: 0;
+  right: 0;
+  transform: translateY(-50%);
   height: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   color: var(--muted-foreground);
-  opacity: 0;
+  outline: none;
 }
 .scient-pdf-page-insertion[data-last] .scient-pdf-page-plus {
-  transform: translateX(-50%);
+  transform: none;
 }
 .scient-pdf-page-plus svg {
   width: 12px;
   height: 12px;
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 80ms;
 }
-.scient-pdf-page-plus:hover,
-.scient-pdf-page-plus:focus-visible,
-.scient-pdf-page-plus[aria-expanded="true"] {
+/* Thin lines either side of the plus, fading toward the edges. */
+.scient-pdf-page-plus::before,
+.scient-pdf-page-plus::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 52px;
+  height: 1px;
+  background: linear-gradient(to right, transparent, currentColor);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 80ms;
+}
+.scient-pdf-page-plus::before {
+  right: calc(50% + 10px);
+}
+.scient-pdf-page-plus::after {
+  left: calc(50% + 10px);
+  background: linear-gradient(to left, transparent, currentColor);
+}
+.scient-pdf-page-plus:hover svg,
+.scient-pdf-page-plus:focus-visible svg,
+.scient-pdf-page-plus[aria-expanded="true"] svg {
   opacity: 1;
+}
+.scient-pdf-page-plus:hover::before,
+.scient-pdf-page-plus:hover::after,
+.scient-pdf-page-plus:focus-visible::before,
+.scient-pdf-page-plus:focus-visible::after,
+.scient-pdf-page-plus[aria-expanded="true"]::before,
+.scient-pdf-page-plus[aria-expanded="true"]::after {
+  opacity: 0.7;
 }
 .scient-pdf-page-plus:disabled {
   cursor: default;
 }
-.scient-pdf-page-plus:focus-visible {
+.scient-pdf-page-plus:focus-visible svg {
   outline: 1px solid var(--muted-foreground);
   outline-offset: 2px;
+}
+/* While dragged, a page stays in its place, faded, until it is dropped. */
+.scient-pdf-thumbnail-item[data-dragged] .scient-reader-page-thumbnail-preview {
+  opacity: 0.35;
+  filter: grayscale(0.4);
+  transition:
+    opacity 150ms,
+    filter 150ms;
 }
 .scient-pdf-thumbnail-item[data-drop]::after {
   content: "";
@@ -540,15 +577,102 @@
   white-space: nowrap;
   color: var(--muted-foreground);
 }
-.scient-pdf-move-form {
-  width: 196px;
-  max-width: calc(100vw - 48px);
+/* The Move card opens where the page menu was, instantly and without sliding. */
+/* The card appears in place, without the popover's grow-in, so it doesn't jump. */
+[data-slot="popover-positioner"]:has(.scient-pdf-move-form) {
+  transition: none;
 }
-.scient-pdf-move-destination {
+[data-slot="popover-popup"]:has(.scient-pdf-move-form) {
+  transition: none;
+  opacity: 1;
+  scale: 1;
+}
+/* Matches the page menu it replaces: 4px inset, 28px worded rows, menu separators. */
+.scient-pdf-move-form {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 11rem;
+  padding: 4px;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+.scient-pdf-move-form > [data-slot="popover-title"] {
+  padding: 6px 8px 4px;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1rem;
+}
+.scient-pdf-move-row {
+  display: flex;
+  min-height: 1.75rem;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 4px 8px;
+  color: var(--foreground);
+  text-align: left;
+  cursor: default;
+}
+button.scient-pdf-move-row:hover,
+button.scient-pdf-move-row:focus-visible {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  outline: none;
+}
+button.scient-pdf-move-row:disabled {
+  color: var(--muted-foreground);
+  opacity: 0.64;
+}
+.scient-pdf-move-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}
+/* Hovering the To page row highlights it like the rows above and darkens the box. */
+.scient-pdf-move-page-row {
+  padding-block: 2px;
+  white-space: nowrap;
+  cursor: text;
+}
+.scient-pdf-move-page-row:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.scient-pdf-move-page-row label {
+  cursor: text;
+}
+/* The field's root stretches by default; here it hugs the box, so the row stays on one line. */
+.scient-pdf-move-page-row [data-slot="number-field"] {
+  width: auto;
+  flex: none;
+}
+.scient-pdf-move-page-row [data-slot="number-field-group"] {
+  width: 40px;
+  transition:
+    border-color 120ms,
+    box-shadow 120ms;
+}
+.scient-pdf-move-page-row:hover [data-slot="number-field-group"]:not(:focus-within) {
+  border-color: color-mix(in srgb, var(--foreground) 32%, transparent);
+}
+.scient-pdf-move-page-row input {
+  height: 22px;
+  line-height: 22px;
+  padding-inline: 3px;
+  font-size: 0.8125rem;
+  cursor: text;
+}
+.scient-pdf-move-count {
+  color: var(--muted-foreground);
+}
+.scient-pdf-move-error {
+  max-width: 13rem;
+  padding: 2px 8px 4px;
+  color: var(--destructive-foreground);
+  font-size: 0.75rem;
 }
 .scient-pdf-import-scope {
   display: flex;
@@ -576,7 +700,7 @@
   gap: 5px;
 }
 @media (hover: none) {
-  .scient-pdf-page-plus {
+  .scient-pdf-page-plus svg {
     opacity: 1;
   }
 }

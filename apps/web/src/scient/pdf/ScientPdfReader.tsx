@@ -50,6 +50,7 @@ import { usePdfRevealClaim, usePdfRevealRequest } from "./anchors/pdfRevealReque
 import { pdfEditSession } from "./pdfEditSession";
 import { PdfPageInsertion } from "./PdfPageInsertion";
 import { PdfMovePagesPopover } from "./PdfMovePagesPopover";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 import { savePdfEdits } from "./savePdfEdits";
 import { saveEditedPdfCopy } from "./saveEditedPdfCopy";
 import { pdfEditedCopyKey, rememberPdfEditedCopy, usePdfEditedCopy } from "./pdfEditedCopyStore";
@@ -378,8 +379,10 @@ function LoadedScientPdfReader(props: {
     sessionKey: string;
     anchor: HTMLElement;
     pages: readonly string[];
-    initialPage: number;
+    point: { x: number; y: number };
   } | null>(null);
+  // The pages being dragged, faded in the sidebar while the drag lasts.
+  const [draggedPages, setDraggedPages] = useState<readonly string[] | null>(null);
   useEffect(() => {
     if (!edit.copiedPath || copiedNotice.current === edit.copiedPath) return;
     copiedNotice.current = edit.copiedPath;
@@ -434,26 +437,25 @@ function LoadedScientPdfReader(props: {
     const target = frame.selection.includes(pageId) ? undefined : [pageId];
     // A tagged PDF's structure tree must keep every original page exactly once.
     const keepsPages = editSession.getSnapshot().tagged;
+    const moving = target ?? frame.selection;
+    // Several checked pages: say how many each action affects.
+    const pages = moving.length > 1 ? ` ${moving.length} pages` : "";
     const items: readonly ContextMenuItem<
       "rotate" | "left" | "right" | "move" | "duplicate" | "delete"
     >[] = [
       {
         id: "rotate",
-        label: "Rotate",
+        label: `Rotate${pages}`,
         children: [
           { id: "left", label: "Left 90°" },
           { id: "right", label: "Right 90°" },
         ],
       },
-      {
-        id: "move",
-        label: "Move…",
-        disabled: (target ?? frame.selection).length === frame.pages.length,
-      },
-      { id: "duplicate", label: "Duplicate", disabled: keepsPages },
+      { id: "move", label: `Move${pages}`, disabled: moving.length === frame.pages.length },
+      { id: "duplicate", label: `Duplicate${pages}`, disabled: keepsPages },
       {
         id: "delete",
-        label: "Delete",
+        label: `Delete${pages}`,
         destructive: true,
         separatorBefore: true,
         disabled: keepsPages || (target ?? frame.selection).length === frame.pages.length,
@@ -467,8 +469,8 @@ function LoadedScientPdfReader(props: {
       setMoveRequest({
         sessionKey: props.editSessionKey,
         anchor,
-        pages: [...(target ?? frame.selection)],
-        initialPage: page,
+        pages: [...moving],
+        point: position,
       });
     else if (action === "duplicate") await editSession.duplicate(target);
     else if (action === "delete") await editSession.delete(target);
@@ -617,7 +619,7 @@ function LoadedScientPdfReader(props: {
           session={editSession}
           anchor={moveRequest.anchor}
           pages={moveRequest.pages}
-          initialPage={moveRequest.initialPage}
+          point={moveRequest.point}
           onClose={() => setMoveRequest(null)}
         />
       ) : null}
@@ -745,20 +747,29 @@ function LoadedScientPdfReader(props: {
                   }}
                 />
               ) : null}
-              <button
-                type="button"
-                data-active={sidebar === "thumbnails" || undefined}
-                onClick={() => setSidebar("thumbnails")}
-              >
-                <FileText /> Pages
-              </button>
-              <button
-                type="button"
-                data-active={sidebar === "outline" || undefined}
-                onClick={() => setSidebar("outline")}
-              >
-                <ListTree /> Outline
-              </button>
+              {/* Icons with tooltips, like the toolbar, so the narrow sidebar stays calm. */}
+              <ScientTooltip content="Pages">
+                <button
+                  type="button"
+                  aria-label="Pages"
+                  aria-pressed={sidebar === "thumbnails"}
+                  data-active={sidebar === "thumbnails" || undefined}
+                  onClick={() => setSidebar("thumbnails")}
+                >
+                  <FileText />
+                </button>
+              </ScientTooltip>
+              <ScientTooltip content="Outline">
+                <button
+                  type="button"
+                  aria-label="Outline"
+                  aria-pressed={sidebar === "outline"}
+                  data-active={sidebar === "outline" || undefined}
+                  onClick={() => setSidebar("outline")}
+                >
+                  <ListTree />
+                </button>
+              </ScientTooltip>
             </div>
             <div className="scient-pdf-sidebar-content">
               {sidebar === "thumbnails" ? (
@@ -770,6 +781,7 @@ function LoadedScientPdfReader(props: {
                     currentPresentation,
                     runtime: reader.runtimeRef.current,
                     activePage: state.page,
+                    draggedPages,
                   }}
                   ListFooterComponent={
                     canEditPages ? (
@@ -802,6 +814,10 @@ function LoadedScientPdfReader(props: {
                           ? edit.frame.selection
                           : [edit.frame.pages[pageNumber - 1]?.id ?? `page-${pageNumber}`]
                       }
+                      dragged={
+                        draggedPages?.includes(edit.frame.pages[pageNumber - 1]?.id ?? "") ?? false
+                      }
+                      onDragState={setDraggedPages}
                       onSelect={reader.goToPage}
                       onToggle={(page, shift) => {
                         void togglePage(page, shift);
