@@ -321,7 +321,11 @@ describe("sign-in request ids", () => {
     expect(decodeStart(start).signInRequestId).toBeUndefined();
   });
 
-  it.each(["short", "x".repeat(65), "line\nbreak"])("rejects %j", (signInRequestId) => {
-    expect(() => decodeStart({ ...start, signInRequestId })).toThrow();
-  });
+  // regression: 80dff32bf5 feat(providers): carry the client's sign-in request id on its operation
+  it.each(["short", "x".repeat(65), "has spaces in it", "id/with/slashes", "line\nbreak"])(
+    "rejects %j",
+    (signInRequestId) => {
+      expect(() => decodeStart({ ...start, signInRequestId })).toThrow();
+    },
+  );
 });

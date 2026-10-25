@@ -23,6 +23,17 @@ describe("VoiceTranscriptionError", () => {
     expect(error.cause).toBe(cause);
   });
 
+  // regression: 16af25d9bd feat(voice): preserve Claude local voice prototype
+  it("leaves retryAfterMs undefined when not provided", () => {
+    const error = new VoiceTranscriptionError({
+      kind: "invalid-audio",
+      fallbackAllowed: false,
+      safeMessage: "Bad audio.",
+    });
+    expect(error.retryAfterMs).toBeUndefined();
+    expect(error.cause).toBeUndefined();
+  });
+
   it("reports fallback eligibility only for fallback-allowed errors", () => {
     expect(
       voiceTranscriptionFailureAllowsFallback(

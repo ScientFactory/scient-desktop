@@ -29,8 +29,7 @@ describe("Windows runtime filesystem recovery", () => {
     expect(f.pause).not.toHaveBeenCalled();
   });
   // regression: 7f68536737 fix(providers): restore managed update discovery and notifications (#254)
-  // One row per path: every code in the temporary-lock set takes the same branch.
-  it.each(["EBUSY"])(
+  it.each(["EPERM", "EACCES", "EBUSY"])(
     "retries a temporary %s move without replacing a destination",
     async (code) => {
       const f = fixture();
@@ -93,8 +92,7 @@ describe("Windows runtime filesystem recovery", () => {
     expect(f.rename).toHaveBeenCalledTimes(1);
   });
   // regression: 7f68536737 fix(providers): restore managed update discovery and notifications (#254)
-  // ENOTEMPTY is retried only for cleanup; the other codes share the move set.
-  it.each(["EPERM", "ENOTEMPTY"])(
+  it.each(["EPERM", "EACCES", "EBUSY", "ENOTEMPTY"])(
     "retries %s cleanup independently of move rules",
     async (code) => {
       const f = fixture();

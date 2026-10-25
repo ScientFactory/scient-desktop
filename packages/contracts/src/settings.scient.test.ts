@@ -76,7 +76,8 @@ describe("ClientSettings typography defaults", () => {
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("fontWeightInterface");
   });
 
-  it.each([500])("preserves interface weight %s", (fontWeightInterface) => {
+  // regression: 07dfb38be0 feat(web): add interface text weight preference
+  it.each([300, 400, 500])("preserves interface weight %s", (fontWeightInterface) => {
     expect(decodeClientSettings({ fontWeightInterface }).fontWeightInterface).toBe(
       fontWeightInterface,
     );
@@ -85,7 +86,8 @@ describe("ClientSettings typography defaults", () => {
     );
   });
 
-  it.each([350, "400", null])(
+  // regression: 07dfb38be0 feat(web): add interface text weight preference
+  it.each([0, 299, 350, 501, 700, 900, 400.5, "400", "bold", null, Number.NaN, Infinity])(
     "rejects unsupported interface weight %s at both boundaries",
     (fontWeightInterface) => {
       expect(() => decodeClientSettings({ fontWeightInterface })).toThrow();
@@ -107,7 +109,8 @@ describe("ClientSettings slash-menu skills", () => {
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("showSkillsInSlashMenu");
   });
 
-  it.each([true])("preserves the explicit preference %s", (showSkillsInSlashMenu) => {
+  // regression: 8ad1596483 fix(defaults): use 17px interface and opt-in slash skill aliases
+  it.each([true, false])("preserves the explicit preference %s", (showSkillsInSlashMenu) => {
     expect(decodeClientSettings({ showSkillsInSlashMenu }).showSkillsInSlashMenu).toBe(
       showSkillsInSlashMenu,
     );
@@ -147,7 +150,8 @@ describe("ClientSettings browser link target", () => {
     expect(decodeClientSettings({}).browserLinkTarget).toBe("app");
   });
 
-  it.each(["system"] as const)("preserves an explicit %s preference", (target) => {
+  // regression: 93022cea02 Sync T3 upstream through 223ff449 (#249)
+  it.each(["app", "system"] as const)("preserves an explicit %s preference", (target) => {
     expect(decodeClientSettings({ browserLinkTarget: target }).browserLinkTarget).toBe(target);
     expect(decodeClientSettingsPatch({ browserLinkTarget: target }).browserLinkTarget).toBe(target);
   });
@@ -169,7 +173,8 @@ describe("ClientSettings content direction", () => {
     expect(decodeClientSettings({}).contentDirection).toBe("auto");
   });
 
-  it.each(["rtl"] as const)("accepts %s", (contentDirection) => {
+  // regression: 86037f6f57 feat(web): add robust conversational RTL direction (#15)
+  it.each(["auto", "rtl", "ltr"] as const)("accepts %s", (contentDirection) => {
     expect(decodeClientSettings({ contentDirection }).contentDirection).toBe(contentDirection);
     expect(decodeClientSettingsPatch({ contentDirection }).contentDirection).toBe(contentDirection);
   });
@@ -192,7 +197,8 @@ describe("ClientSettings composer collapse", () => {
     }
   });
 
-  it.each([true])("preserves a saved scroll choice of %s", (composerCollapseOnScroll) => {
+  // regression: c482622f09 merge: align T3 through 349ce301 with Scient preservation
+  it.each([true, false])("preserves a saved scroll choice of %s", (composerCollapseOnScroll) => {
     expect(
       decodeClientSettings(encodeClientSettings(decodeClientSettings({ composerCollapseOnScroll })))
         .composerCollapseOnScroll,
@@ -395,21 +401,25 @@ describe("provider enabled defaults", () => {
     );
     expect(isUnconfiguredDefaultInstanceEnabled(ProviderInstanceId.make(driver))).toBe(enabled);
   });
-  it.each(["droid"])("preserves explicit %s enablement and disables", (kind) => {
-    const driver = ProviderDriverKind.make(kind);
-    expect(resolveProviderInstanceEnabled({ driver, enabled: true })).toBe(true);
-    expect(resolveProviderInstanceEnabled({ driver, enabled: false })).toBe(false);
-    expect(resolveProviderInstanceEnabled({ driver, config: { enabled: true } })).toBe(true);
-    expect(
-      resolveProviderInstanceEnabled({ driver, enabled: true, config: { enabled: false } }),
-    ).toBe(false);
-    expect(
-      resolveProviderInstanceEnabled({ driver, enabled: false, config: { enabled: true } }),
-    ).toBe(false);
-    expect(isUnconfiguredDefaultInstanceEnabled(ProviderInstanceId.make(`${kind}_work`))).toBe(
-      false,
-    );
-  });
+  // regression: 89974f96b6 fix(alignment): preserve Scient provider and lifecycle behavior
+  it.each(["droid", "omp", "scient", "antigravity"])(
+    "preserves explicit %s enablement and disables",
+    (kind) => {
+      const driver = ProviderDriverKind.make(kind);
+      expect(resolveProviderInstanceEnabled({ driver, enabled: true })).toBe(true);
+      expect(resolveProviderInstanceEnabled({ driver, enabled: false })).toBe(false);
+      expect(resolveProviderInstanceEnabled({ driver, config: { enabled: true } })).toBe(true);
+      expect(
+        resolveProviderInstanceEnabled({ driver, enabled: true, config: { enabled: false } }),
+      ).toBe(false);
+      expect(
+        resolveProviderInstanceEnabled({ driver, enabled: false, config: { enabled: true } }),
+      ).toBe(false);
+      expect(isUnconfiguredDefaultInstanceEnabled(ProviderInstanceId.make(`${kind}_work`))).toBe(
+        false,
+      );
+    },
+  );
 
   it("does not enable an unconfigured plugin instance by default", () => {
     expect(isUnconfiguredDefaultInstanceEnabled(ProviderInstanceId.make("ollama"))).toBe(false);

@@ -154,7 +154,8 @@ describe("descriptor helpers", () => {
     }
   });
 
-  it.each([undefined, "Reasoning unknown"])(
+  // regression: 16d1e4d030 feat(models): add shared model connections for Pi and Droid (#246)
+  it.each([undefined, "Reasoning unknown", "Reasoning unavailable"])(
     "uses the strict empty selection label %s without inventing a value",
     (emptySelectionLabel) => {
       for (const options of [[], [{ id: "medium", label: "Medium" }]]) {

@@ -1,3 +1,6 @@
+// SCIENT-FORK:START
+import { formatSubagentModelLabel, formatSubagentTokenCount } from "./subagentRuntime.ts";
+// SCIENT-FORK:END
 import { describe, expect, it } from "vite-plus/test";
 import {
   ProviderDriverKind,
@@ -263,3 +266,23 @@ describe("resolveWorkflowOpening", () => {
     expect(isWorkflowScriptMessage({ role: "assistant", text: SCRIPT })).toBe(false);
   });
 });
+
+// SCIENT-FORK:START
+// regression: a2ca89aa10 feat: native subagent & workflow observability (#5219)
+it("formats plain counters", () => {
+  expect(formatSubagentTokenCount(950)).toBe("950");
+  expect(formatSubagentTokenCount(41200)).toBe("41.2k");
+  expect(formatSubagentTokenCount(247000)).toBe("247k");
+  expect(formatSubagentTokenCount(1_400_000)).toBe("1.4M");
+});
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START
+// regression: a2ca89aa10 feat: native subagent & workflow observability (#5219)
+it("formatSubagentModelLabel compacts ids and appends effort", () => {
+  expect(formatSubagentModelLabel("claude-sonnet-5[1m]", "high")).toBe("sonnet-5[1m] · high");
+  expect(formatSubagentModelLabel("claude-opus-4-20250514", null)).toBe("opus-4");
+  expect(formatSubagentModelLabel("gpt-5.6-sol", "low")).toBe("gpt-5.6-sol · low");
+  expect(formatSubagentModelLabel(null, "high")).toBeNull();
+});
+// SCIENT-FORK:END

@@ -198,8 +198,10 @@ describe("custom model contracts", () => {
       decodePatch({ customModels: { revision: 42, connections: [connection] } }),
     ).not.toHaveProperty("customModels");
   });
+  // regression: 16d1e4d030 feat(models): add shared model connections for Pi and Droid (#246)
   it.each([
     "file:///tmp/model",
+    "ftp://host",
     "https://user:pass@host",
     "https://host/?key=abc",
     "https://host/#key",

@@ -126,9 +126,8 @@ describe("Scient source model", () => {
     );
   });
 
-  // One row per path: work-level schemes are one set; doi also takes the
-  // normalization branch.
-  it.each(["doi", "pmid"])(
+  // regression: 4e05b272c1 feat(sources): complete reference intake workflows
+  it.each(["doi", "pmid", "pmcid", "arxiv"])(
     "treats the work-level %s identifier as authoritative identity",
     (scheme) => {
       const identifiers = [{ scheme, value: `${scheme}-work-123` }];
@@ -146,8 +145,8 @@ describe("Scient source model", () => {
     },
   );
 
-  // Container-level and unknown schemes both fall outside the work-level set.
-  it.each(["issn"])(
+  // regression: 4e05b272c1 feat(sources): complete reference intake workflows
+  it.each(["issn", "isbn", "journal-id"])(
     "does not treat the container-level or unknown %s identifier as work identity",
     (scheme) => {
       const identifiers = [{ scheme, value: `${scheme}-shared-123` }];

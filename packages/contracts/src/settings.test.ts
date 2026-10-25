@@ -81,6 +81,15 @@ describe("storage cleanup settings", () => {
     });
   });
 
+  // SCIENT-FORK:START
+  // regression: f0a053954f Merge owned main bb0dcff and close canonical upstream API contracts
+  it("rejects unknown local-file retention policies", () => {
+    expect(() =>
+      decodeServerSettingsPatch({ storageCleanup: { worktreeKeepWhen: "unknown" } }),
+    ).toThrow();
+  });
+  // SCIENT-FORK:END
+
   it("decodes older custom rules with the default local-file policy", () => {
     const settings = decodeServerSettings({
       worktreeCleanup: {

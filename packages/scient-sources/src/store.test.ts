@@ -455,7 +455,8 @@ describe("Scient source store", () => {
     expect(await listScientSourceRecords(root)).toHaveLength(1);
   });
 
-  it.each(["issn"])("imports distinct works that share only a %s", async (scheme) => {
+  // regression: 4e05b272c1 feat(sources): complete reference intake workflows
+  it.each(["issn", "isbn"])("imports distinct works that share only a %s", async (scheme) => {
     const root = await fixture();
     await initializeScientProject({ root });
     const first = await importScientSource({

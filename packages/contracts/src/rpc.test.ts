@@ -1,9 +1,14 @@
+// SCIENT-FORK:START
+import { WsSubscribeServerConfigRpc } from "./rpc.ts";
+// SCIENT-FORK:END
 import { describe, expect, it } from "vite-plus/test";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS, WsRpcGroup } from "./rpc.ts";
+
+const decodeServerConfigPayload = Schema.decodeSync(WsSubscribeServerConfigRpc.payloadSchema);
 
 describe("WebSocket RPC contracts", () => {
   it("rejects server-internal commands sent to dispatchCommand", () => {
@@ -45,3 +50,13 @@ describe("WebSocket RPC contracts", () => {
     expect(Exit.isFailure(decode({ ...request, path: "/repo/.git/hooks" }))).toBe(true);
   });
 });
+
+// SCIENT-FORK:START
+// regression: c1c2d5401d feat: let an environment publish themes as a file (#8569)
+it("is carried by a server that declares it", () => {
+  const decoded = decodeServerConfigPayload({
+    environmentThemes: true,
+  });
+  expect(decoded).toEqual({ environmentThemes: true });
+});
+// SCIENT-FORK:END

@@ -28,7 +28,8 @@ describe("ManagedClaudeRuntime", () => {
     );
   });
 
-  it.each(["x64"] as const)(
+  // regression: a91381e446 feat(providers): add guided Claude setup and lifecycle
+  it.each(["x64", "arm64"] as const)(
     "runs the reviewed Windows %s artifact through download, checksum verification, smoke test, activation, restart, repair, and removal",
     async (arch) => {
       const artifact = resolveReviewedClaudeArtifact({ platform: "win32", arch });
@@ -107,4 +108,26 @@ describe("ManagedClaudeRuntime", () => {
       expect(await runtime.readState()).toBeUndefined();
     },
   );
+
+  // regression: a91381e446 feat(providers): add guided Claude setup and lifecycle
+  it("never activates a Windows artifact when checksum verification fails", async () => {
+    const artifact = resolveReviewedClaudeArtifact({ platform: "win32", arch: "x64" });
+    expect(artifact).toBeDefined();
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-claude-windows-"));
+    temporaryRoots.push(root);
+    const runtime = new ManagedClaudeRuntime(root, {
+      download: async ({ destination }) => {
+        await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+        await NodeFSP.writeFile(destination, "wrong-asset", { flag: "wx" });
+      },
+      verify: async () => {
+        throw new Error("checksum mismatch");
+      },
+    });
+
+    await expect(
+      runtime.install({ artifact: artifact!, signal: new AbortController().signal }),
+    ).rejects.toThrow("checksum mismatch");
+    expect((await runtime.status(artifact!)).installed).toBe(false);
+  });
 });

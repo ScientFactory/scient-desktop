@@ -23,7 +23,8 @@ describe("toolActivity", () => {
   });
 
   // SCIENT-FORK:START
-  it.each(["Edit", "Write", "multi_edit"])(
+  // regression: cac738b234 fix(timeline): refine trace symbols and thought typography
+  it.each(["Edit", "Write", "MultiEdit", "edit", "write", "multi_edit"])(
     "classifies native %s tools without edit-kind metadata",
     (toolName) => {
       expect(

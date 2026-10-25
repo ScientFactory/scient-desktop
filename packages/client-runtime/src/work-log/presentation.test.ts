@@ -214,7 +214,8 @@ describe("resolveWorkEntryToolPresentation", () => {
       resolveWorkEntryToolPresentation({ ...entry, toolLifecycleStatus: "completed" })?.displayName,
     ).toBe(completed);
   });
-  it.each(["inProgress", "stopped"] as const)(
+  // regression: a892edfa6b fix: brand owned agent tools as Scient
+  it.each(["inProgress", "completed", "failed", "declined", "stopped"] as const)(
     "preserves historical tool identity and lifecycle after the Scient cutover: %s",
     (toolLifecycleStatus) => {
       const entry = { label: "scient_thread_read", toolLifecycleStatus };

@@ -13,41 +13,41 @@ import {
 } from "./managedRuntimeArtifact.ts";
 import { materializeManagedRuntimeArtifact } from "./runtimeFiles.ts";
 
-// regression: aa7e503582 fix(provider-runtime): qualify Codex packages without patched zsh
-// One row per path: the reviewed file list varies only by platform (arch and libc
-// pick the same list), the patched zsh is required only below 0.163.0, and the main
-// and companion executables go through one completeness check.
-function packageFiles(platform: "darwin" | "linux" | "win32", version: string) {
-  const windows = platform === "win32";
-  const suffix = windows ? ".exe" : "";
-  return [
-    `bin/codex${suffix}`,
-    `bin/codex-code-mode-host${suffix}`,
-    `codex-path/rg${suffix}`,
-    ...(platform === "linux" ? ["codex-resources/bwrap"] : []),
-    ...(windows
-      ? [
-          "codex-resources/codex-command-runner.exe",
-          "codex-resources/codex-windows-sandbox-setup.exe",
-        ]
-      : version === "0.162.1"
-        ? ["codex-resources/zsh/bin/zsh"]
-        : []),
-  ];
-}
+const targets = [
+  { platform: "darwin", arch: "arm64" },
+  { platform: "darwin", arch: "x64" },
+  { platform: "linux", arch: "arm64", libc: "glibc" },
+  { platform: "linux", arch: "arm64", libc: "musl" },
+  { platform: "linux", arch: "x64", libc: "glibc" },
+  { platform: "linux", arch: "x64", libc: "musl" },
+  { platform: "win32", arch: "arm64" },
+  { platform: "win32", arch: "x64" },
+] as const;
 
-const darwin = { platform: "darwin", arch: "arm64" } as const;
-const linux = { platform: "linux", arch: "x64", libc: "glibc" } as const;
-const windows = { platform: "win32", arch: "x64" } as const;
-const cases = [
-  { target: darwin, version: "0.162.1", missing: undefined },
-  { target: darwin, version: "0.162.1", missing: "codex-resources/zsh/bin/zsh" },
-  { target: darwin, version: "0.163.0", missing: undefined },
-  { target: linux, version: "0.163.0", missing: undefined },
-  { target: linux, version: "0.163.0", missing: "codex-resources/bwrap" },
-  { target: windows, version: "0.163.0", missing: undefined },
-  { target: windows, version: "0.163.0", missing: "bin/codex.exe" },
-].map((row) => ({ ...row, files: packageFiles(row.target.platform, row.version) }));
+const cases = targets.flatMap((target) =>
+  ["0.162.1", "0.163.0"].flatMap((version) => {
+    const windows = target.platform === "win32";
+    const suffix = windows ? ".exe" : "";
+    const files = [
+      `bin/codex${suffix}`,
+      `bin/codex-code-mode-host${suffix}`,
+      `codex-path/rg${suffix}`,
+      ...(target.platform === "linux" ? ["codex-resources/bwrap"] : []),
+      ...(windows
+        ? [
+            "codex-resources/codex-command-runner.exe",
+            "codex-resources/codex-windows-sandbox-setup.exe",
+          ]
+        : version === "0.162.1"
+          ? ["codex-resources/zsh/bin/zsh"]
+          : []),
+    ];
+    return [
+      { target, version, files, missing: undefined },
+      ...files.map((missing) => ({ target, version, files, missing })),
+    ];
+  }),
+);
 
 const roots: string[] = [];
 afterEach(async () => {

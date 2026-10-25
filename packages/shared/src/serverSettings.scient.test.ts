@@ -10,9 +10,19 @@ import { createModelSelection, resolveProviderModelPreferences } from "./model.t
 import { applyServerSettingsPatch, isModelSelectionProviderEnabled } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
+  // regression: 89974f96b6 fix(alignment): preserve Scient provider and lifecycle behavior
   it.each([
+    ["codex", true],
+    ["claudeAgent", true],
     ["scient", true],
     ["droid", false],
+    ["omp", false],
+    ["pi", false],
+    ["cursor", false],
+    ["grok", false],
+    ["muse", false],
+    ["opencode", false],
+    ["antigravity", true],
   ] as const)("keeps fresh and configured %s selection eligibility consistent", (kind, enabled) => {
     const driver = ProviderDriverKind.make(kind);
     const instanceId = ProviderInstanceId.make(kind);
@@ -90,7 +100,8 @@ describe("atomic initialization of curated model preferences", () => {
   const unrelated = ProviderInstanceId.make("other-personal");
   const snapshot = { hiddenModels: ["curated-hidden"], modelOrder: ["first", "second"] };
 
-  it.each(["scient"])(
+  // regression: de8482724f chore(upstream): align Scient with T3 f23d0084b6
+  it.each(["pi", "omp", "scient"])(
     "preserves actual %s curation on the first visibility or order edit",
     (driver) => {
       const models = [
