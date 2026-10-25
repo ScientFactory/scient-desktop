@@ -519,16 +519,15 @@ it.layer(TestLayer)("OMP graceful Stop", (it) => {
           const warning = h.recorded.find(
             (event) =>
               event.type === "turn_item.updated" &&
-              event.turnItem.type === "dynamic_tool" &&
-              typeof event.turnItem.output === "string" &&
-              event.turnItem.output.includes("unused steer"),
+              event.turnItem.type === "system_notice" &&
+              event.turnItem.message.includes("unused steer"),
           );
           assert.ok(warning);
-          if (warning.type !== "turn_item.updated" || warning.turnItem.type !== "dynamic_tool")
+          if (warning.type !== "turn_item.updated" || warning.turnItem.type !== "system_notice")
             return;
-          assert.include(warning.turnItem.output, "unused follow-up");
-          assert.include(warning.turnItem.output, "omitted withdrawn images");
-          assert.include(warning.turnItem.output, "omitted some withdrawn messages");
+          assert.include(warning.turnItem.message, "unused follow-up");
+          assert.include(warning.turnItem.message, "omitted withdrawn images");
+          assert.include(warning.turnItem.message, "omitted some withdrawn messages");
           assert.equal(
             h.peer.state.prompts.filter((prompt) => prompt.frame.type === "prompt").length,
             1,
