@@ -398,14 +398,18 @@ it("reveals the latest message after very tall notes", async (context) => {
   // below the rendered window.
   await render(_fixture, key, [...entries, prompt, ...tallNotes], running);
   await advanceClock(_fixture, 192);
-  // Measured means Legend holds the first note at its rendered, very tall height (the
-  // later notes are estimated from it). Fake time does not lay out or measure.
+  // Measured means Legend knows the first note's very tall height (sizeAtIndex reads only
+  // measured sizes; the later notes are estimated from it). Fake time does not lay out or
+  // measure. The list is virtualized: the follow can scroll the note out of the rendered
+  // window, which keeps its measurement; while it is rendered, the measurement is its
+  // current height.
   await vi.waitFor(() => {
     const state = _fixture.listRef.current!.getState();
     const index = state.indexByKey(tallNotes[0]!.id)!;
     const size = state.sizeAtIndex(index) ?? 0;
     expect(size).toBeGreaterThan(node(_fixture).clientHeight * 2);
-    expect(size).toBeCloseTo(state.elementAtIndex(index)!.getBoundingClientRect().height, 0);
+    const rendered = state.elementAtIndex(index);
+    if (rendered?.isConnected) expect(size).toBeCloseTo(rendered.getBoundingClientRect().height, 0);
   });
   await render(_fixture, key, [...entries, prompt, ...tallNotes, latest], running);
   await advanceClock(_fixture, 16);
