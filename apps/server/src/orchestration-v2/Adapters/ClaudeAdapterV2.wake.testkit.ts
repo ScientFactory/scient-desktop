@@ -19,6 +19,20 @@ import {
 
 const WAKE_NATIVE_SESSION = "native-thread-claude-wake";
 
+// Background Bash ids and texts follow the claude_background_task_wake
+// recording, so the frames below have the shapes the CLI really sends.
+const WAKE_TASK_ID = "bdqirlcyw";
+
+const WAKE_TOOL_USE_ID = "toolu_01Rs6JNNf5SqHRxpq5DeJHrW";
+
+const WAKE_TASK_DESCRIPTION = "Background sleep test";
+
+const WAKE_SUMMARY = 'Background command "Background sleep test" completed (exit code 0)';
+
+const WAKE_ASSISTANT_TEXT = "WAKE_DONE";
+
+const WAKE_RESULT_TEXT = "WAKE_DONE";
+
 function claudeSdkFrame(frame: unknown): SDKMessage {
   if (
     typeof frame !== "object" ||
@@ -29,6 +43,18 @@ function claudeSdkFrame(frame: unknown): SDKMessage {
   }
   return frame as SDKMessage;
 }
+
+const wakeTaskStarted = claudeSdkFrame({
+  type: "system",
+  subtype: "task_started",
+  task_id: WAKE_TASK_ID,
+  tool_use_id: WAKE_TOOL_USE_ID,
+  description: WAKE_TASK_DESCRIPTION,
+  is_backgrounded: true,
+  task_type: "local_bash",
+  uuid: "00000000-0000-4000-8000-000000000101",
+  session_id: WAKE_NATIVE_SESSION,
+});
 
 const makeAssistantTextFrame = (input: { readonly uuid: string; readonly text: string }) =>
   claudeSdkFrame({
@@ -49,6 +75,34 @@ const makeAssistantTextFrame = (input: { readonly uuid: string; readonly text: s
       },
     },
     parent_tool_use_id: null,
+    uuid: input.uuid,
+    session_id: WAKE_NATIVE_SESSION,
+  });
+
+const makeAssistantErrorFrame = (input: {
+  readonly uuid: string;
+  readonly error: "authentication_failed" | "rate_limit" | "server_error" | undefined;
+  readonly parentToolUseId?: string | null;
+}) =>
+  claudeSdkFrame({
+    type: "assistant",
+    message: {
+      model: "claude-sonnet-4-6",
+      id: `msg_${input.uuid}`,
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: "Claude could not complete this request." }],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: {
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+    },
+    parent_tool_use_id: input.parentToolUseId ?? null,
+    ...(input.error === undefined ? {} : { error: input.error }),
     uuid: input.uuid,
     session_id: WAKE_NATIVE_SESSION,
   });
@@ -94,6 +148,46 @@ const makeResultFrame = (input: {
       ? {}
       : { terminal_reason: input.terminalReason ?? "completed" }),
   });
+
+const turnOneResult = makeResultFrame({
+  uuid: "00000000-0000-4000-8000-000000000102",
+  result: "Kicked off the build in the background.",
+});
+
+const wakeNotification = claudeSdkFrame({
+  type: "system",
+  subtype: "task_notification",
+  task_id: WAKE_TASK_ID,
+  tool_use_id: WAKE_TOOL_USE_ID,
+  status: "completed",
+  output_file: `/tmp/claude-replay/tasks/${WAKE_TASK_ID}.output`,
+  summary: WAKE_SUMMARY,
+  uuid: "00000000-0000-4000-8000-000000000103",
+  session_id: WAKE_NATIVE_SESSION,
+});
+
+const wakeAssistant = makeAssistantTextFrame({
+  uuid: "00000000-0000-4000-8000-000000000107",
+  text: WAKE_ASSISTANT_TEXT,
+});
+
+const wakeResult = makeResultFrame({
+  uuid: "00000000-0000-4000-8000-000000000104",
+  result: WAKE_RESULT_TEXT,
+  origin: { kind: "task-notification" },
+});
+
+const STALE_TASK_NOTIFICATION_RESULT_TEXT =
+  "Stale task-notification origin text that must not appear.";
+
+// Shape seen live after interrupt recovery: zero turns, no terminal_reason.
+const staleTaskNotificationResult = makeResultFrame({
+  uuid: "00000000-0000-4000-8000-000000000106",
+  result: STALE_TASK_NOTIFICATION_RESULT_TEXT,
+  numTurns: 0,
+  origin: { kind: "task-notification" },
+  terminalReason: null,
+});
 
 const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -310,6 +404,84 @@ const makeWakeHarnessWithOptions = (options?: {
 
 const makeWakeHarness = makeWakeHarnessWithOptions();
 
+const providerThreadRosterEvents = (events: ReadonlyArray<ProviderAdapterV2Event>) =>
+  events.filter(
+    (event): event is Extract<ProviderAdapterV2Event, { type: "provider_thread.updated" }> =>
+      event.type === "provider_thread.updated",
+  );
+
+// The CLI sends one frame per content block, each carrying the id of the
+// native message it belongs to.
+const makeSubagentAssistantFrames = (input: {
+  readonly parentToolUseId: string;
+  readonly uuid: string;
+  readonly messageId?: string;
+  readonly text?: string;
+  readonly bashToolUseId?: string;
+}): ReadonlyArray<SDKMessage> =>
+  [
+    ...(input.text === undefined ? [] : [{ type: "text", text: input.text }]),
+    ...(input.bashToolUseId === undefined
+      ? []
+      : [
+          {
+            type: "tool_use",
+            id: input.bashToolUseId,
+            name: "Bash",
+            input: { command: "git log -5" },
+          },
+        ]),
+  ].map((block, index) =>
+    claudeSdkFrame({
+      type: "assistant",
+      message: {
+        model: "claude-sonnet-4-6",
+        id: input.messageId ?? `msg_${input.uuid}`,
+        type: "message",
+        role: "assistant",
+        content: [block],
+      },
+      parent_tool_use_id: input.parentToolUseId,
+      uuid: index === 0 ? input.uuid : `${input.uuid}:${index}`,
+      session_id: WAKE_NATIVE_SESSION,
+    }),
+  );
+
+const makeSubagentToolResultFrame = (input: {
+  readonly parentToolUseId: string;
+  readonly uuid: string;
+  readonly toolUseId: string;
+}) =>
+  claudeSdkFrame({
+    type: "user",
+    message: {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: input.toolUseId, content: "ok" }],
+    },
+    parent_tool_use_id: input.parentToolUseId,
+    uuid: input.uuid,
+    session_id: WAKE_NATIVE_SESSION,
+  });
+
+const makeSubagentTaskStartedFrame = (input: {
+  readonly taskId: string;
+  readonly toolUseId: string;
+  readonly uuid: string;
+}) =>
+  claudeSdkFrame({
+    type: "system",
+    subtype: "task_started",
+    task_id: input.taskId,
+    tool_use_id: input.toolUseId,
+    description: "Audit recent commits",
+    subagent_type: "general-purpose",
+    is_backgrounded: true,
+    task_type: "local_agent",
+    prompt: "Audit the last five commits.",
+    uuid: input.uuid,
+    session_id: WAKE_NATIVE_SESSION,
+  });
+
 const makeSubagentNotificationFrame = (input: {
   readonly taskId: string;
   readonly toolUseId: string;
@@ -327,12 +499,58 @@ const makeSubagentNotificationFrame = (input: {
     uuid: input.uuid,
     session_id: WAKE_NATIVE_SESSION,
   });
+
+const subagentRouting = (
+  events: ReadonlyArray<ProviderAdapterV2Event>,
+  nativeToolIds: ReadonlyArray<string>,
+) => {
+  const childThreadId =
+    events.find((event) => event.type === "subagent.updated")?.subagent.childThreadId ?? undefined;
+  const toolThreadIds = new Map<string, Set<string>>();
+  for (const event of events) {
+    const nativeId =
+      event.type === "turn_item.updated" ? event.turnItem.nativeItemRef?.nativeId : undefined;
+    if (event.type === "turn_item.updated" && nativeId && nativeToolIds.includes(nativeId)) {
+      toolThreadIds.set(
+        nativeId,
+        (toolThreadIds.get(nativeId) ?? new Set()).add(event.turnItem.threadId),
+      );
+    }
+  }
+  const assistantTexts = (threadId: string | undefined) =>
+    events.flatMap((event) =>
+      event.type === "message.updated" &&
+      event.message.role === "assistant" &&
+      event.message.threadId === threadId
+        ? [event.message.text]
+        : [],
+    );
+  return { childThreadId, toolThreadIds, assistantTexts };
+};
 export { claudeSdkFrame, awaitUntil, makeResultFrame };
 
 export {
   makeWakeHarness,
   makeAssistantTextFrame,
   WAKE_NATIVE_SESSION,
+  wakeAssistant,
+  WAKE_ASSISTANT_TEXT,
   makeWakeHarnessWithOptions,
+  makeAssistantErrorFrame,
+  wakeTaskStarted,
+  turnOneResult,
+  providerThreadRosterEvents,
+  WAKE_TASK_ID,
+  wakeNotification,
+  wakeResult,
+  staleTaskNotificationResult,
+  STALE_TASK_NOTIFICATION_RESULT_TEXT,
+  WAKE_SUMMARY,
+  WAKE_RESULT_TEXT,
   makeSubagentNotificationFrame,
+  makeSubagentTaskStartedFrame,
+  WAKE_TASK_DESCRIPTION,
+  makeSubagentAssistantFrames,
+  makeSubagentToolResultFrame,
+  subagentRouting,
 };

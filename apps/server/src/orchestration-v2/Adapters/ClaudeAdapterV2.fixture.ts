@@ -26,6 +26,10 @@ const isStopQueryRunnerError = Schema.is(ClaudeAdapterV2.ClaudeAgentSdkQueryRunn
 
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 
+const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+  autoCompactWindow: "300000",
+});
+
 const CLAUDE_TEST_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
   model: "claude-sonnet-4-6",
@@ -115,4 +119,4 @@ export {
   encodeJsonString,
 };
 
-export { isStopInterruptError, isStopQueryRunnerError };
+export { AUTO_COMPACT_CLAUDE_SETTINGS, isStopInterruptError, isStopQueryRunnerError };
