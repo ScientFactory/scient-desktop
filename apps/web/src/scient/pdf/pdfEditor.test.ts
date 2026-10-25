@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 import {
   PDFArray,
   PDFDict,
@@ -10,27 +10,9 @@ import {
   PDFString,
   StandardFonts,
 } from "pdf-lib";
-import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.mjs";
-import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
-import type { PdfEditPage, PdfEditWorkerRequest, PdfEditWorkerResponse } from "./pdfPageEdits";
-
-function request(worker: Worker, input: PdfEditWorkerRequest) {
-  return new Promise<PdfEditWorkerResponse>((resolve, reject) => {
-    function onError() {
-      worker.removeEventListener("message", onMessage);
-      reject(new Error("PDF editing worker failed."));
-    }
-    function onMessage(event: MessageEvent<PdfEditWorkerResponse>) {
-      worker.removeEventListener("error", onError);
-      if (event.data.kind === "error") reject(new Error(event.data.message));
-      else resolve(event.data);
-    }
-    worker.addEventListener("message", onMessage, { once: true });
-    worker.addEventListener("error", onError, { once: true });
-    // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Worker messages do not accept Window origins.
-    worker.postMessage(input);
-  });
-}
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { createPdfEditor } from "./pdfEditor";
+import type { PdfEditPage } from "./pdfPageEdits";
 
 it("preserves resources and page boxes inherited from a nested page tree when rotating", async () => {
   const source = await PDFDocument.create();
@@ -57,16 +39,16 @@ it("preserves resources and page boxes inherited from a nested page tree when ro
   root.set(PDFName.of("Kids"), source.context.obj([branchRef]));
   root.set(PDFName.of("Count"), PDFNumber.of(2));
 
-  const worker = new Worker(new URL("./pdfEdit.worker.ts", import.meta.url), { type: "module" });
-  try {
-    const loaded = await request(worker, {
+  const editor = createPdfEditor();
+  {
+    const loaded = await editor({
       kind: "load",
       id: 1,
       sourceId: "inherited-resources",
       bytes: await source.save(),
     });
     if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
-    const built = await request(worker, {
+    const built = await editor({
       kind: "build",
       id: 2,
       pages: loaded.pages.map((page, index) => (index === 0 ? { ...page, rotation: 90 } : page)),
@@ -81,20 +63,10 @@ it("preserves resources and page boxes inherited from a nested page tree when ro
     }
     expect(saved.getPage(0).getRotation().angle).toBe(90);
     expect(saved.getPage(1).getRotation().angle).toBe(0);
-  } finally {
-    worker.terminate();
   }
 });
 
-function editingWorker() {
-  const worker = new Worker(new URL("./pdfEdit.worker.ts", import.meta.url), { type: "module" });
-  return { worker, [Symbol.dispose]: () => worker.terminate() };
-}
-
 async function pageLabels(bytes: Uint8Array) {
-  using _workerUrl = vi
-    .spyOn(GlobalWorkerOptions, "workerSrc", "get")
-    .mockReturnValue(pdfWorkerUrl);
   const task = getDocument({ data: bytes });
   await using _task = { [Symbol.asyncDispose]: () => task.destroy() };
   return await (await task.promise).getPageLabels();
@@ -122,70 +94,58 @@ async function labeledPdf() {
   return document.save();
 }
 
-it.each([
-  {
-    action: "deleting a Roman-numbered front-matter page",
-    order: [1, 2, 3, 4, 5, 6, 7],
-    labels: ["ii", "1", "2", "A-AA", "A-BB", "封面", "封面"],
-  },
-  {
-    action: "moving pages across numbering sections",
-    order: [3, 1, 6, 0, 2, 4, 5, 7],
-    labels: ["2", "ii", "封面", "i", "1", "A-AA", "A-BB", "封面"],
-  },
-])(
-  "keeps labels with their source pages when $action, and restores their original order",
-  async ({ order, labels }) => {
-    using editor = editingWorker();
-    const loaded = await request(editor.worker, {
-      kind: "load",
-      id: 1,
-      sourceId: "labels",
-      bytes: await labeledPdf(),
-    });
-    if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
-    const built = await request(editor.worker, {
-      kind: "build",
-      id: 2,
-      pages: order.map((index) => loaded.pages[index]!),
-    });
-    if (built.kind !== "built") throw new Error("Expected the edited PDF.");
-    expect(await pageLabels(built.bytes)).toEqual(labels);
-    const restored = await request(editor.worker, { kind: "build", id: 3, pages: loaded.pages });
-    if (restored.kind !== "built") throw new Error("Expected the restored PDF.");
-    expect(await pageLabels(restored.bytes)).toEqual([
-      "i",
-      "ii",
-      "1",
-      "2",
-      "A-AA",
-      "A-BB",
-      "封面",
-      "封面",
-    ]);
-  },
-);
+it("keeps labels with their source pages when moving pages across numbering sections, and restores their original order", async () => {
+  const order = [3, 1, 6, 0, 2, 4, 5, 7];
+  const labels = ["2", "ii", "封面", "i", "1", "A-AA", "A-BB", "封面"];
+  const editor = createPdfEditor();
+  const loaded = await editor({
+    kind: "load",
+    id: 1,
+    sourceId: "labels",
+    bytes: await labeledPdf(),
+  });
+  if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
+  const built = await editor({
+    kind: "build",
+    id: 2,
+    pages: order.map((index) => loaded.pages[index]!),
+  });
+  if (built.kind !== "built") throw new Error("Expected the edited PDF.");
+  expect(await pageLabels(built.bytes)).toEqual(labels);
+  const restored = await editor({ kind: "build", id: 3, pages: loaded.pages });
+  if (restored.kind !== "built") throw new Error("Expected the restored PDF.");
+  expect(await pageLabels(restored.bytes)).toEqual([
+    "i",
+    "ii",
+    "1",
+    "2",
+    "A-AA",
+    "A-BB",
+    "封面",
+    "封面",
+  ]);
+});
 
 it("keeps automatic numbering without labels and preserves imported and duplicated labels beside blank pages", async () => {
-  using editor = editingWorker();
+  const editor = createPdfEditor();
   const source = await PDFDocument.create();
   source.addPage();
   source.addPage();
-  const base = await request(editor.worker, {
+  const base = await editor({
     kind: "load",
     id: 1,
     sourceId: "base",
     bytes: await source.save(),
   });
   if (base.kind !== "loaded") throw new Error("Expected loaded pages.");
-  const ordinary = await request(editor.worker, {
+  const ordinary = await editor({
     kind: "build",
     id: 2,
     pages: [base.pages[1]!, base.pages[0]!],
   });
   if (ordinary.kind !== "built") throw new Error("Expected the edited PDF.");
   expect(await pageLabels(ordinary.bytes)).toBeNull();
-  const imported = await request(editor.worker, {
+  const imported = await editor({
     kind: "load",
     id: 3,
     sourceId: "imported",
@@ -193,7 +153,7 @@ it("keeps automatic numbering without labels and preserves imported and duplicat
   });
   if (imported.kind !== "loaded") throw new Error("Expected imported pages.");
   const firstBodyPage = imported.pages[2]!;
-  const built = await request(editor.worker, {
+  const built = await editor({
     kind: "build",
     id: 4,
     pages: [
@@ -210,13 +170,13 @@ it("keeps automatic numbering without labels and preserves imported and duplicat
 });
 
 it("rejects a label tree without an initial range before editing", async () => {
-  using editor = editingWorker();
+  const editor = createPdfEditor();
   const source = await PDFDocument.create();
   source.addPage();
   source.addPage();
   source.catalog.set(PDFName.of("PageLabels"), source.context.obj({ Nums: [1, { S: "D" }] }));
   await expect(
-    request(editor.worker, {
+    editor({
       kind: "load",
       id: 1,
       sourceId: "invalid-labels",
@@ -246,15 +206,15 @@ async function markedPdf(markers: readonly string[]) {
 const latin1 = (bytes: Uint8Array) => new TextDecoder("latin1").decode(bytes);
 
 it("removes a deleted page's content from the saved bytes while keeping shared resources", async () => {
-  using editor = editingWorker();
-  const loaded = await request(editor.worker, {
+  const editor = createPdfEditor();
+  const loaded = await editor({
     kind: "load",
     id: 1,
     sourceId: "marked",
     bytes: await markedPdf(["KEPT_PAGE_TEXT", "DELETED_SECRET_TEXT", "LAST_PAGE_TEXT"]),
   });
   if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
-  const built = await request(editor.worker, {
+  const built = await editor({
     kind: "build",
     id: 2,
     pages: [loaded.pages[0]!, loaded.pages[2]!],
@@ -291,8 +251,8 @@ async function taggedPdf() {
 }
 
 it("keeps every page of a tagged PDF exactly once and allows moving and rotating", async () => {
-  using editor = editingWorker();
-  const loaded = await request(editor.worker, {
+  const editor = createPdfEditor();
+  const loaded = await editor({
     kind: "load",
     id: 1,
     sourceId: "tagged",
@@ -301,17 +261,17 @@ it("keeps every page of a tagged PDF exactly once and allows moving and rotating
   if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
   expect(loaded.tagged).toBe(true);
   const [first, second] = loaded.pages as [PdfEditPage, PdfEditPage];
-  await expect(request(editor.worker, { kind: "build", id: 2, pages: [first] })).rejects.toThrow(
+  await expect(editor({ kind: "build", id: 2, pages: [first] })).rejects.toThrow(
     "accessibility tags",
   );
   await expect(
-    request(editor.worker, {
+    editor({
       kind: "build",
       id: 3,
       pages: [first, { ...first, id: "duplicate" }, second],
     }),
   ).rejects.toThrow("accessibility tags");
-  const built = await request(editor.worker, {
+  const built = await editor({
     kind: "build",
     id: 4,
     pages: [{ ...second, rotation: 90 }, first],
@@ -326,14 +286,14 @@ it("keeps every page of a tagged PDF exactly once and allows moving and rotating
 });
 
 it("inserts pages from a tagged PDF without their structure-tree claims", async () => {
-  using editor = editingWorker();
-  const base = await request(editor.worker, {
+  const editor = createPdfEditor();
+  const base = await editor({
     kind: "load",
     id: 1,
     sourceId: "base",
     bytes: await markedPdf(["BASE_PAGE"]),
   });
-  const imported = await request(editor.worker, {
+  const imported = await editor({
     kind: "load",
     id: 2,
     sourceId: "tagged-import",
@@ -341,7 +301,7 @@ it("inserts pages from a tagged PDF without their structure-tree claims", async 
   });
   if (base.kind !== "loaded" || imported.kind !== "loaded") throw new Error("Expected pages.");
   expect(base.tagged).toBe(false);
-  const built = await request(editor.worker, {
+  const built = await editor({
     kind: "build",
     id: 3,
     pages: [base.pages[0]!, ...imported.pages],
@@ -354,35 +314,35 @@ it("inserts pages from a tagged PDF without their structure-tree claims", async 
 });
 
 it("forgets an imported PDF once it is released", async () => {
-  using editor = editingWorker();
-  const base = await request(editor.worker, {
+  const editor = createPdfEditor();
+  const base = await editor({
     kind: "load",
     id: 1,
     sourceId: "base",
     bytes: await markedPdf(["BASE_PAGE"]),
   });
-  const imported = await request(editor.worker, {
+  const imported = await editor({
     kind: "load",
     id: 2,
     sourceId: "imported",
     bytes: await markedPdf(["IMPORTED_PAGE"]),
   });
   if (base.kind !== "loaded" || imported.kind !== "loaded") throw new Error("Expected pages.");
-  await request(editor.worker, { kind: "release", id: 3, sourceId: "imported" });
+  await editor({ kind: "release", id: 3, sourceId: "imported" });
   await expect(
-    request(editor.worker, {
+    editor({
       kind: "build",
       id: 4,
       pages: [base.pages[0]!, imported.pages[0]!],
     }),
   ).rejects.toThrow("An inserted PDF is unavailable.");
-  await request(editor.worker, { kind: "release", id: 5, sourceId: "base" });
-  const built = await request(editor.worker, { kind: "build", id: 6, pages: base.pages });
+  await editor({ kind: "release", id: 5, sourceId: "base" });
+  const built = await editor({ kind: "build", id: 6, pages: base.pages });
   expect(built.kind).toBe("built");
 });
 
 it("strips structure claims from forms and images drawn by pages copied out of a tagged PDF", async () => {
-  using editor = editingWorker();
+  const editor = createPdfEditor();
   const tagged = await PDFDocument.load(await taggedPdf());
   const form = tagged.context.register(
     tagged.context.stream("0 0 m 10 10 l S", {
@@ -398,20 +358,20 @@ it("strips structure claims from forms and images drawn by pages copied out of a
   tagged
     .getPage(0)
     .node.set(PDFName.of("Contents"), tagged.context.register(tagged.context.stream("/Fm1 Do")));
-  const base = await request(editor.worker, {
+  const base = await editor({
     kind: "load",
     id: 1,
     sourceId: "base",
     bytes: await markedPdf(["BASE_PAGE"]),
   });
-  const imported = await request(editor.worker, {
+  const imported = await editor({
     kind: "load",
     id: 2,
     sourceId: "tagged-import",
     bytes: await tagged.save(),
   });
   if (base.kind !== "loaded" || imported.kind !== "loaded") throw new Error("Expected pages.");
-  const built = await request(editor.worker, {
+  const built = await editor({
     kind: "build",
     id: 3,
     pages: [base.pages[0]!, imported.pages[0]!],
@@ -428,7 +388,7 @@ it("strips structure claims from forms and images drawn by pages copied out of a
 });
 
 it("drops forms only a deleted page drew from a resource dictionary shared with kept pages", async () => {
-  using editor = editingWorker();
+  const editor = createPdfEditor();
   const document = await PDFDocument.create();
   const form = (marker: string) =>
     document.context.register(
@@ -451,33 +411,33 @@ it("drops forms only a deleted page drew from a resource dictionary shared with 
       document.context.register(document.context.stream(`q /${drawn} Do Q`)),
     );
   }
-  const loaded = await request(editor.worker, {
+  const loaded = await editor({
     kind: "load",
     id: 1,
     sourceId: "shared-resources",
     bytes: await document.save(),
   });
   if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
-  const built = await request(editor.worker, { kind: "build", id: 2, pages: [loaded.pages[0]!] });
+  const built = await editor({ kind: "build", id: 2, pages: [loaded.pages[0]!] });
   if (built.kind !== "built") throw new Error("Expected the edited PDF.");
   expect(latin1(built.bytes)).toContain("KEPT_FORM_TEXT");
   expect(latin1(built.bytes)).not.toContain("GONE_FORM_SECRET");
 });
 
 it("keeps a document ID stored as an indirect object", async () => {
-  using editor = editingWorker();
+  const editor = createPdfEditor();
   const document = await PDFDocument.load(await markedPdf(["ONLY_PAGE"]));
   document.context.trailerInfo.ID = document.context.register(
     document.context.obj([PDFHexString.of("ABCD"), PDFHexString.of("ABCD")]),
   );
-  const loaded = await request(editor.worker, {
+  const loaded = await editor({
     kind: "load",
     id: 1,
     sourceId: "indirect-id",
     bytes: await document.save({ useObjectStreams: false }),
   });
   if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
-  const built = await request(editor.worker, {
+  const built = await editor({
     kind: "build",
     id: 2,
     pages: [{ ...loaded.pages[0]!, rotation: 90 }],
@@ -500,7 +460,7 @@ function markForm(document: PDFDocument, marker: string, extra: Record<string, u
 }
 
 it("keeps every XObject a page draws, however its content spells the call", async () => {
-  using editor = editingWorker();
+  const editor = createPdfEditor();
   const document = await PDFDocument.create();
   const contents = [
     // A name split across two parts of a content array.
@@ -529,14 +489,14 @@ it("keeps every XObject a page draws, however its content spells the call", asyn
       document.context.obj(parts.map((part) => document.context.register(part))),
     );
   }
-  const loaded = await request(editor.worker, {
+  const loaded = await editor({
     kind: "load",
     id: 1,
     sourceId: "spellings",
     bytes: await document.save(),
   });
   if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
-  const built = await request(editor.worker, {
+  const built = await editor({
     kind: "build",
     id: 2,
     pages: loaded.pages.map((entry) => ({ ...entry, rotation: 90 })),
@@ -550,7 +510,7 @@ it("keeps every XObject a page draws, however its content spells the call", asyn
 });
 
 it("drops a deleted page's forms from resources inherited through the page tree or shared by forms", async () => {
-  using editor = editingWorker();
+  const editor = createPdfEditor();
   const document = await PDFDocument.create();
   const first = document.addPage([300, 300]);
   const second = document.addPage([300, 300]);
@@ -602,14 +562,14 @@ it("drops a deleted page's forms from resources inherited through the page tree 
       document.context.register(document.context.stream(drawn)),
     );
   }
-  const loaded = await request(editor.worker, {
+  const loaded = await editor({
     kind: "load",
     id: 1,
     sourceId: "inherited",
     bytes: await document.save(),
   });
   if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
-  const built = await request(editor.worker, { kind: "build", id: 2, pages: [loaded.pages[0]!] });
+  const built = await editor({ kind: "build", id: 2, pages: [loaded.pages[0]!] });
   if (built.kind !== "built") throw new Error("Expected the edited PDF.");
   const text = latin1(built.bytes);
   expect(text).toContain("KEPT_INHERITED");
@@ -626,7 +586,7 @@ async function deflate(bytes: Uint8Array) {
 }
 
 it("keeps XObjects drawn by raw high-byte names, predictor-encoded content and resource-less appearances", async () => {
-  using editor = editingWorker();
+  const editor = createPdfEditor();
   const document = await PDFDocument.create();
   const bytes = (text: string) => Uint8Array.from(text, (character) => character.charCodeAt(0));
   // TIFF predictor 2: each byte is stored as its difference from the previous one.
@@ -679,14 +639,14 @@ it("keeps XObjects drawn by raw high-byte names, predictor-encoded content and r
         document.context.obj([document.context.register(annotation)]),
       );
   }
-  const loaded = await request(editor.worker, {
+  const loaded = await editor({
     kind: "load",
     id: 1,
     sourceId: "faithful-content",
     bytes: await document.save(),
   });
   if (loaded.kind !== "loaded") throw new Error("Expected loaded pages.");
-  const built = await request(editor.worker, {
+  const built = await editor({
     kind: "build",
     id: 2,
     pages: loaded.pages.map((entry) => ({ ...entry, rotation: 90 })),

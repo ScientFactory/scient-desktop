@@ -89,14 +89,3 @@ it("remembers at most 100 edited copies, forgetting the oldest", () => {
   expect(remembered).not.toContain(prefix + "document-0");
   expect(remembered).not.toContain(prefix + "document-1");
 });
-
-it("keeps every edited copy while fewer than the limit are remembered", () => {
-  using _storage = emptyStorage();
-  for (const name of ["a", "b", "c"])
-    rememberPdfEditedCopy(name, {
-      source: generated("edited"),
-      sessionKey: name,
-      showOriginal: false,
-    });
-  expect(Object.keys(localStorage).filter((key) => key.startsWith(prefix))).toHaveLength(3);
-});

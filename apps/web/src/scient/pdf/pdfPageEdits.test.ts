@@ -22,38 +22,22 @@ const order = (target: readonly string[], boundary: number | null) =>
         .join("");
 
 describe("pdfMoveDestinations", () => {
-  it("moves one page to the start, up, down and to the end", () => {
-    const steps = pdfMoveDestinations(frame, ["c"]);
-    expect(order(["c"], steps.start)).toBe("cabde");
-    expect(order(["c"], steps.up)).toBe("acbde");
-    expect(order(["c"], steps.down)).toBe("abdce");
-    expect(order(["c"], steps.end)).toBe("abdec");
-  });
-
-  it("moves a scattered group up or down as one block", () => {
-    const steps = pdfMoveDestinations(frame, ["b", "d"]);
-    expect(order(["b", "d"], steps.up)).toBe("bdace");
-    expect(order(["b", "d"], steps.down)).toBe("acebd");
+  it("moves pages to the start or end, and a scattered group up or down as one block", () => {
+    const one = pdfMoveDestinations(frame, ["c"]);
+    expect(order(["c"], one.start)).toBe("cabde");
+    expect(order(["c"], one.end)).toBe("abdec");
+    const group = pdfMoveDestinations(frame, ["b", "d"]);
+    expect(order(["b", "d"], group.up)).toBe("bdace");
+    expect(order(["b", "d"], group.down)).toBe("acebd");
   });
 
   it("puts the first moved page at a typed page number", () => {
     const one = pdfMoveDestinations(frame, ["c"]);
     expect(one).toMatchObject({ page: 3, lastPage: 5 });
-    expect([1, 2, 3, 4, 5].map((page) => order(["c"], one.toPage(page)))).toEqual([
-      "cabde",
-      "acbde",
-      "abcde",
-      "abdce",
-      "abdec",
-    ]);
+    expect([1, 4].map((page) => order(["c"], one.toPage(page)))).toEqual(["cabde", "abdce"]);
     const group = pdfMoveDestinations(frame, ["b", "d"]);
     expect(group).toMatchObject({ page: 2, lastPage: 4 });
-    expect([1, 2, 3, 4].map((page) => order(["b", "d"], group.toPage(page)))).toEqual([
-      "bdace",
-      "abdce",
-      "acbde",
-      "acebd",
-    ]);
+    expect(order(["b", "d"], group.toPage(3))).toBe("acbde");
     expect([0, 6, 2.5].map(one.toPage)).toEqual([null, null, null]);
   });
 

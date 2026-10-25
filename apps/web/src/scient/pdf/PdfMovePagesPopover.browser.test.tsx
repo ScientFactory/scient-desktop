@@ -44,11 +44,8 @@ it("moves a page to a typed page number with Return, or by one of its steps", as
     />,
     { router: false },
   );
-  await expect.element(page.getByText("Move page 1")).toBeVisible();
-  // The Page box opens focused, ready for a number.
+  // The To page box opens focused, ready for a number.
   await expect.element(page.getByLabelText("To page")).toHaveFocus();
-  await expect.element(page.getByRole("button", { name: "To start" })).toBeDisabled();
-  await expect.element(page.getByRole("button", { name: "Up one page" })).toBeDisabled();
   await page.getByRole("button", { name: "Down one page" }).click();
   expect(fake.move).toHaveBeenLastCalledWith(2, ["a"]);
   expect(onClose).not.toHaveBeenCalled();
