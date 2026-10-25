@@ -22,6 +22,9 @@ import { scientPdfAssets } from "./scripts/scientPdfAssets";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
 import { warmBundledDevPlugin } from "./vite/warmBundledDev";
+// SCIENT-FORK:START — balance CI's fixed three web shards using recorded file durations.
+import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — opt-in CI-like CPU throttle for local browser runs.
 import { applyCpuThrottle } from "./test/scientCpuThrottle";
 // SCIENT-FORK:END
@@ -421,6 +424,9 @@ export default defineConfig(({ mode }) => {
     },
     test: {
       projects: [defineProject(unitTestProject), defineProject(browserTestProject)],
+      // SCIENT-FORK:START — the root sequencer sees unit and browser files together.
+      sequence: { sequencer: WeightedShardSequencer },
+      // SCIENT-FORK:END
     },
   };
 });

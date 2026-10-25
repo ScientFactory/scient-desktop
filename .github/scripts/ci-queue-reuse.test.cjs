@@ -17,24 +17,7 @@ const TREE = "f".repeat(40);
 const OTHER = "9".repeat(40);
 const REPO = "ScientFactory/scient-desktop";
 const WORKFLOW = ".github/workflows/ci.yml";
-const JOBS = [
-  "check",
-  "test_workspaces",
-  "compute_changes",
-  "compute_native",
-  "windows_packaging_changes",
-  "windows_packaging",
-  "remote_server_packaging",
-  "linux_packaging",
-  "test",
-  "test_web",
-  "test_server",
-  "transfer-report",
-  "rust",
-  "mobile_native_changes",
-  "mobile_native_static_analysis",
-  "release_smoke",
-];
+const { JOBS } = require("./ci-check.cjs");
 const metricNames = [
   "totalWireBytes",
   "threadSnapshotWireBytes",
@@ -137,13 +120,13 @@ function fixture(t, event = "push") {
     add(`ci-${prefix}-qualification-attempt-${run.run_attempt}`, receipt);
     add("thread-transfer-results", structuredClone(TRANSFER));
     for (const suite of ["web", "server"])
-      for (const shard of [1, 2, 3])
+      for (let shard = 1; shard <= (suite === "web" ? 3 : 8); shard++)
         add(`vitest-${suite}-${shard}-attempt-${run.run_attempt}`, structuredClone(VITEST));
     artifacts.set(run.id, list);
     return run;
   }
   const receiptFor = (run, fields) => ({
-    schemaVersion: 2,
+    schemaVersion: 3,
     event: run.event,
     repository: REPO,
     workflow: WORKFLOW,
@@ -154,6 +137,7 @@ function fixture(t, event = "push") {
     baseSha: BASE,
     treeSha: TREE,
     reusedFrom: null,
+    reports: { web: true, server: true },
     ...fields,
   });
   const queueRun = (id, head) => ({
@@ -236,14 +220,14 @@ async function refused(f) {
   assert.equal(f.outputs.source_run_id, undefined);
 }
 
-test("a main push restores all seven reports only after exact queue evidence", async (t) => {
+test("a main push restores all twelve reports only after exact queue evidence", async (t) => {
   const f = fixture(t);
   await restore(f.args);
   reused(f);
   assert.equal(f.outputs.source_run_id, "10");
   assert.equal(f.outputs.source_url, `https://github.com/${REPO}/actions/runs/10`);
   const files = fs.readdirSync(path.join(f.temp, "ci-queue-reuse"));
-  assert.equal(files.length, 7);
+  assert.equal(files.length, 12);
   assert.deepEqual(
     JSON.parse(fs.readFileSync(path.join(f.temp, "ci-queue-reuse/thread-transfer-result.json"))),
     TRANSFER,
@@ -390,7 +374,7 @@ test("a queue entry reuses its PR run when that run tested this exact content an
   reused(f);
   assert.equal(f.outputs.source_run_id, "10");
   assert.equal(f.outputs.source_event, "pull_request");
-  assert.equal(fs.readdirSync(path.join(f.temp, "ci-queue-reuse")).length, 7);
+  assert.equal(fs.readdirSync(path.join(f.temp, "ci-queue-reuse")).length, 12);
 });
 
 const queueMismatches = [
@@ -438,6 +422,9 @@ function receiptFixture(t, event) {
     };
   }
   f.needs = Object.fromEntries(JOBS.map((job) => [job, { result: "success" }]));
+  f.needs.release_notes.outputs = {};
+  for (const reporter of ["test_web_reused", "test_server_reused"])
+    f.needs[reporter].result = "skipped";
   f.needs.queue_ci = { result: event === "merge_group" ? "success" : "skipped", outputs: {} };
   return f;
 }
@@ -447,27 +434,28 @@ const written = (f) =>
 test("queue receipt requires every lane, including non-required layout and mobile lint", async (t) => {
   const f = receiptFixture(t, "merge_group");
   for (const job of JOBS) {
+    const original = f.needs[job].result;
     f.needs[job].result = "failure";
-    await assert.rejects(writeReceipt(f), /CI job|qualification/);
-    f.needs[job].result = "success";
+    await assert.rejects(writeReceipt(f), /CI qualification/);
+    f.needs[job].result = original;
   }
   f.needs.mobile_native_static_analysis.result = "skipped";
   await assert.rejects(writeReceipt(f), /mobile_native/);
-  f.needs.mobile_native_changes.outputs = { changed: "false" };
+  f.needs.changes.outputs = { mobile_native: "false" };
   for (const [job, gate, output] of [
-    ["compute_native", "compute_changes", "changed"],
-    ["windows_packaging", "windows_packaging_changes", "changed"],
-    ["remote_server_packaging", "windows_packaging_changes", "changed"],
-    ["linux_packaging", "windows_packaging_changes", "linux_changed"],
+    ["compute_native", "changes", "compute_changed"],
+    ["windows_packaging", "changes", "windows_changed"],
+    ["remote_server_packaging", "changes", "windows_changed"],
+    ["linux_packaging", "changes", "linux_changed"],
   ]) {
     f.needs[job].result = "skipped";
     f.needs[gate].outputs = { ...f.needs[gate].outputs, [output]: "true" };
-    await assert.rejects(writeReceipt(f), /Native qualification/);
+    await assert.rejects(writeReceipt(f), /qualification/);
     f.needs[gate].outputs[output] = "false";
   }
   assert.equal(await writeReceipt(f), true);
   assert.deepEqual(written(f), {
-    schemaVersion: 2,
+    schemaVersion: 3,
     event: "merge_group",
     repository: REPO,
     workflow: WORKFLOW,
@@ -478,6 +466,7 @@ test("queue receipt requires every lane, including non-required layout and mobil
     baseSha: BASE,
     treeSha: TREE,
     reusedFrom: null,
+    reports: { web: true, server: true },
   });
   f.context.eventName = "push";
   await assert.rejects(writeReceipt(f), /pull request or the main merge queue/);
@@ -486,23 +475,29 @@ test("queue receipt requires every lane, including non-required layout and mobil
 test("a queue run that reused PR qualification records its source", async (t) => {
   const f = receiptFixture(t, "merge_group");
   for (const job of JOBS) f.needs[job].result = "skipped";
-  f.needs.test.result = "success";
-  f.needs["transfer-report"].result = "success";
-  f.needs.queue_ci.outputs = { reused: "true", source_run_id: "10" };
+  f.needs.release_notes.result = "success";
+  f.needs.queue_ci.result = "success";
+  for (const job of ["test_web_reused", "test_server_reused"]) f.needs[job].result = "success";
+  f.needs.queue_ci.outputs = {
+    reused: "true",
+    source_run_id: "10",
+    web_reports: "true",
+    server_reports: "true",
+  };
   assert.equal(await writeReceipt(f), true);
   assert.equal(written(f).reusedFrom, 10);
   f.needs.queue_ci.outputs.source_run_id = "";
   await assert.rejects(writeReceipt(f), /source is missing/);
   f.needs.queue_ci.outputs.source_run_id = "10";
   f.needs.test.result = "failure";
-  await assert.rejects(writeReceipt(f), /CI job/);
+  await assert.rejects(writeReceipt(f), /CI qualification/);
 });
 
 test("a same-repository PR receipt records the tested merge, its content and its base", async (t) => {
   const f = receiptFixture(t, "pull_request");
   assert.equal(await writeReceipt(f), true);
   assert.deepEqual(written(f), {
-    schemaVersion: 2,
+    schemaVersion: 3,
     event: "pull_request",
     repository: REPO,
     workflow: WORKFLOW,
@@ -513,6 +508,7 @@ test("a same-repository PR receipt records the tested merge, its content and its
     baseSha: BASE,
     treeSha: TREE,
     reusedFrom: null,
+    reports: { web: true, server: true },
   });
 });
 
@@ -568,7 +564,7 @@ test("archive reader accepts one exact JSON member and refuses paths, duplicates
   assert.equal(fs.readdirSync(f.temp).length, 0);
 });
 
-test("workflow preserves full fallback, complete evidence, required shard names, and reporting before the reuse marker", () => {
+test("workflow preserves complete evidence before reuse and a single always-running gate", () => {
   const workflow = fs.readFileSync(path.join(__dirname, "../workflows/ci.yml"), "utf8");
   const sections = new Map(
     [
@@ -577,91 +573,61 @@ test("workflow preserves full fallback, complete evidence, required shard names,
         .matchAll(/^  ([\w-]+):\n([\s\S]*?)(?=^  [\w-]+:\n|(?![\s\S]))/gm),
     ].map((match) => [match[1], match[2]]),
   );
-  const special = new Set([
-    "release_notes",
-    "queue_ci",
-    "qualification",
-    "test_web_reused",
-    "test_server_reused",
-  ]);
-  assert.deepEqual(
-    [...sections.keys()].filter((job) => !special.has(job)).sort(),
-    [...JOBS].sort(),
-    "Every CI job must participate in qualification and fallback",
-  );
-  for (const job of JOBS) {
-    assert.match(sections.get(job), /needs:[^\n]*queue_ci/, `${job} depends on the probe`);
-    if (!["test", "transfer-report"].includes(job))
-      assert.match(
-        sections.get(job),
-        /if:.*!cancelled\(\).*needs\.queue_ci\.outputs\.reused != 'true'/,
-        `${job} runs after skipped/failed probe`,
-      );
-  }
-  const receipt = sections.get("qualification");
-  for (const job of ["queue_ci", ...JOBS])
-    assert.match(receipt, new RegExp(`needs:.*(?:\\[|, )${job}(?:,|\\])`));
-  assert.match(receipt, /github.event_name == 'merge_group'/);
-  assert.match(
-    receipt,
-    /github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository/,
-  );
-  assert.match(receipt, /if: steps.receipt.outputs.result == 'true'/);
+  assert.deepEqual([...sections.keys()].sort(), [...JOBS, "check", "qualification"].sort());
+  const check = sections.get("check");
+  assert.match(check, /name: Check/);
+  assert.match(check, /if: \$\{\{ always\(\) \}\}/);
+  for (const job of [...JOBS, "qualification"])
+    assert.match(check, new RegExp(`needs:.*(?:\\[|, )${job}(?:,|\\])`));
   const probe = sections.get("queue_ci");
-  assert.match(probe, /github.event_name == 'push'.*refs\/heads\/main/);
+  assert.ok(!probe.includes("github.event_name == 'push'"), "main always runs fresh suites");
   assert.match(probe, /github.event_name == 'merge_group'/);
   assert.match(probe, /source_run_id: \$\{\{ steps.restore.outputs.source_run_id \}\}/);
-  assert.equal((probe.match(/uses: actions\/upload-artifact/g) ?? []).length, 7);
-  assert.equal((probe.match(/overwrite: true/g) ?? []).length, 7);
-  assert.ok(probe.lastIndexOf("uses: actions/upload-artifact") < probe.indexOf("id: complete"));
+  assert.ok(
+    probe.indexOf("uses: ./.github/actions/ci-queue-reporting") < probe.indexOf("id: complete"),
+  );
   assert.ok(!/always\(\)/.test(probe), "failed publication must prevent the reuse marker");
-  for (const job of ["test_web", "test_server"]) assert.match(sections.get(job), /overwrite: true/);
-  assert.match(sections.get("test_server"), /name: thread-transfer-results[\s\S]*overwrite: true/);
-  assert.match(sections.get("test"), /needs.queue_ci.outputs.reused == 'true'/);
-  assert.match(sections.get("transfer-report"), /needs.queue_ci.outputs.reused == 'true'/);
-  // Required shard checks keep their exact names when a queue entry reuses its PR run.
+  assert.match(
+    probe,
+    /if: steps.restore.outputs.candidate == 'true' && steps.preserve.outcome == 'success'/,
+  );
+  const reporting = fs.readFileSync(
+    path.join(__dirname, "../actions/ci-queue-reporting/action.yml"),
+    "utf8",
+  );
+  assert.equal((reporting.match(/uses: actions\/upload-artifact/g) ?? []).length, 12);
+  assert.equal((reporting.match(/overwrite: true/g) ?? []).length, 12);
   for (const job of ["test_web", "test_server"]) {
-    const real = sections.get(job);
+    assert.match(sections.get(job), /overwrite: true/);
     const stand = sections.get(`${job}_reused`);
-    const name = (section) => section.match(/^    name: (.+)$/m)[1];
-    const shards = (section) => section.match(/^ {8}shard: (.+)$/m)[1];
-    assert.equal(name(stand), name(real));
-    assert.equal(shards(stand), shards(real));
+    assert.ok(!/matrix:/.test(stand), "one reporting job per suite");
     assert.match(
       stand,
       /needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group'/,
     );
-    assert.ok(!/uses: |vp run/.test(stand), `${job}_reused only reports the reused shard`);
   }
-  // Reuse relies on every change gate comparing the event's base with the tested commit; a live
-  // PR file list can change during a run.
-  const mobile = sections.get("mobile_native_changes");
   assert.match(
-    mobile,
-    /BASE_SHA: \$\{\{ github.event.pull_request.base.sha \|\| github.event.merge_group.base_sha \|\| github.event.before \}\}/,
+    check,
+    /name: Require transfer measurements[\s\S]*needs.test_server.result == 'success' \|\| needs.queue_ci.outputs.server_reports == 'true'/,
   );
-  assert.match(mobile, /fetch-depth: 0/);
-  assert.ok(!/gh api|pulls\//.test(mobile), "the mobile gate never reads a live PR file list");
+  const changes = sections.get("changes");
+  assert.equal((changes.match(/uses: actions\/checkout/g) ?? []).length, 1);
+  assert.match(changes, /fetch-depth: 0/);
   for (const gate of ["compute-ci-gate.mjs", "windows-packaging-ci-gate.mjs"]) {
-    const source = fs.readFileSync(path.join(__dirname, gate), "utf8");
-    assert.match(
-      source,
-      /const base = event\.pull_request\?\.base\.sha \?\? event\.merge_group\?\.base_sha \?\? event\.before;\n\s*const head = process\.env\.GITHUB_SHA;/,
-      `${gate} compares the event base with the tested commit`,
-    );
+    assert.ok(changes.includes(`node .github/scripts/${gate} detect`));
+    assert.ok(check.includes(`node .github/scripts/${gate} check`));
   }
 });
 
 // The mobile gate's own script, as the workflow runs it.
 function mobileGateScript() {
-  const workflow = fs.readFileSync(path.join(__dirname, "../workflows/ci.yml"), "utf8");
-  const job = workflow.split(/^ {2}mobile_native_changes:\n/m)[1].split(/^ {2}[\w-]+:\n/m)[0];
-  const lines = [];
-  for (const line of job.split(/^ {8}run: \|\n/m)[1].split("\n")) {
-    if (line.trim() !== "" && !line.startsWith(" ".repeat(10))) break;
-    lines.push(line.slice(10));
-  }
-  return lines.join("\n");
+  const action = fs.readFileSync(path.join(__dirname, "../actions/ci-changes/action.yml"), "utf8");
+  return action
+    .split("      run: |\n")[1]
+    .split("\n")
+    .filter((line) => line.startsWith("        "))
+    .map((line) => line.slice(8))
+    .join("\n");
 }
 
 test("the mobile gate classifies the tested diff, including renames and unusual filenames", (t) => {
@@ -696,39 +662,59 @@ test("the mobile gate classifies the tested diff, including renames and unusual 
     return git(["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", "change"]);
   };
   const script = mobileGateScript();
+  const root = path.resolve(__dirname, "../..");
+  const scripts = path.join(temp, ".github/scripts");
+  fs.mkdirSync(scripts, { recursive: true });
+  fs.copyFileSync(
+    path.join(root, ".github/scripts/ci-changes.cjs"),
+    path.join(scripts, "ci-changes.cjs"),
+  );
+  fs.writeFileSync(path.join(temp, "pnpm-workspace.yaml"), "packages:\n");
   const gate = (base, head) => {
     const output = path.join(temp, "output");
     fs.writeFileSync(output, "");
     // Hosted runners use a UTF-8 locale; the gate must still match raw bytes.
     execFileSync("bash", ["-c", script], {
       cwd: temp,
-      env: { ...env, LC_ALL: "C.UTF-8", BASE_SHA: base, GITHUB_SHA: head, GITHUB_OUTPUT: output },
+      env: {
+        ...env,
+        LC_ALL: "C.UTF-8",
+        EVENT_NAME: "merge_group",
+        RUNNER_TEMP: temp,
+        BASE_SHA: base,
+        GITHUB_SHA: head,
+        GITHUB_OUTPUT: output,
+      },
       stdio: "pipe",
     });
-    return fs.readFileSync(output, "utf8").trim();
+    return fs
+      .readFileSync(output, "utf8")
+      .trim()
+      .split("\n")
+      .find((line) => line.startsWith("mobile_native="));
   };
   const base = commit(["docs/a.md", "samples/Foo.swift", "apps/mobile/Kept.kt"]);
   const after = (files) => commit(files, base);
   assert.equal(
     gate(base, after(["docs/a.md", "docs/b.md", "samples/Foo.swift", "apps/mobile/Kept.kt"])),
-    "changed=false",
+    "mobile_native=false",
   );
-  assert.equal(gate(base, base), "changed=false");
+  assert.equal(gate(base, base), "mobile_native=false");
   assert.equal(
     gate(
       base,
       after(["docs/a.md", "samples/Foo.swift", "apps/mobile/Kept.kt", "apps/mobile/Bar.swift"]),
     ),
-    "changed=true",
+    "mobile_native=true",
   );
   // Renamed into, or out of, the native paths.
   assert.equal(
     gate(base, after(["docs/a.md", "apps/mobile/Foo.swift", "apps/mobile/Kept.kt"])),
-    "changed=true",
+    "mobile_native=true",
   );
   assert.equal(
     gate(base, after(["docs/a.md", "samples/Foo.swift", "samples/Kept.kt"])),
-    "changed=true",
+    "mobile_native=true",
   );
   // A newline inside a filename must not split it into two unmatched lines.
   assert.equal(
@@ -741,7 +727,7 @@ test("the mobile gate classifies the tested diff, including renames and unusual 
         "apps/mobile/Foo\nBar.swift",
       ]),
     ),
-    "changed=true",
+    "mobile_native=true",
   );
   // Nor may a byte that is not valid UTF-8 hide it from the matcher.
   const invalid = Buffer.concat([
@@ -751,9 +737,74 @@ test("the mobile gate classifies the tested diff, including renames and unusual 
   ]);
   assert.equal(
     gate(base, after(["docs/a.md", "samples/Foo.swift", "apps/mobile/Kept.kt", invalid])),
-    "changed=true",
+    "mobile_native=true",
   );
   // Anything unresolvable runs the lint.
-  assert.equal(gate("not-a-commit", base), "changed=true");
-  assert.equal(gate("0".repeat(40), base), "changed=true");
+  assert.equal(gate("not-a-commit", base), "mobile_native=true");
+  assert.equal(gate("0".repeat(40), base), "mobile_native=true");
 });
+
+test("a web-only receipt restores three web reports without demanding skipped server evidence", async (t) => {
+  const f = fixture(t, "merge_group");
+  f.receipt.reports.server = false;
+  const list = f.artifacts.get(10);
+  f.artifacts.set(
+    10,
+    list.filter(
+      (artifact) =>
+        !artifact.name.includes("server") && artifact.name !== "thread-transfer-results",
+    ),
+  );
+  await restore(f);
+  reused(f);
+  assert.equal(f.outputs.web_reports, "true");
+  assert.equal(f.outputs.server_reports, "false");
+  assert.equal(fs.readdirSync(path.join(f.temp, "ci-queue-reuse")).length, 3);
+});
+
+test("a docs-only receipt can reuse without inventing reports from skipped matrices", async (t) => {
+  const f = fixture(t, "merge_group");
+  f.receipt.reports = { web: false, server: false };
+  f.artifacts.set(
+    10,
+    f.artifacts.get(10).filter((artifact) => artifact.name.startsWith("ci-pr-")),
+  );
+  await restore(f);
+  reused(f);
+  assert.deepEqual(fs.readdirSync(path.join(f.temp, "ci-queue-reuse")), []);
+});
+
+for (const [name, mutate] of [
+  [
+    "legacy receipt",
+    (f) => {
+      f.receipt.schemaVersion = 2;
+    },
+  ],
+  [
+    "missing report declaration",
+    (f) => {
+      delete f.receipt.reports;
+    },
+  ],
+  [
+    "nonboolean report declaration",
+    (f) => {
+      f.receipt.reports.server = "false";
+    },
+  ],
+  [
+    "missing eighth server shard",
+    (f) => {
+      f.artifacts.set(
+        10,
+        f.artifacts.get(10).filter((artifact) => artifact.name !== "vitest-server-8-attempt-1"),
+      );
+    },
+  ],
+])
+  test(`${name} cannot suppress queue CI`, async (t) => {
+    const f = fixture(t, "merge_group");
+    mutate(f);
+    await refused(f);
+  });

@@ -216,7 +216,73 @@ revision or working diff and reuse that evidence while the candidate is unchange
 can invalidate a result, rerun the affected check; broad shared-runtime, orchestration, packaging,
 or test-harness changes normally need wider requalification.
 See [ci.yml](../../.github/workflows/ci.yml) for hosted checks.
-The required `Test` check includes applicable native Compute suites. The selector
+
+<!-- SCIENT-FORK:START — hosted CI gate, selection and duration-balanced shards. -->
+
+### CI gate and shards
+
+Branch protection requires `Check` from [CI](../../.github/workflows/ci.yml), plus
+`Documentation` and `Verify upstream provenance` from their separate workflows. `Lint`
+is the formatting/lint lane; `Build and Typecheck` shares one dependency installation.
+`Check` uses `always()`, waits for every CI job (including the qualification receipt),
+and rejects failures, cancellations, missing jobs, and unexplained skips.
+
+Every PR and fresh merge group runs all workspace/package and scripts tests,
+all three web shards (unit and browser), all eight server shards, build, typecheck,
+and lint. Documentation can be a test input, so docs-only PRs run these lanes too.
+Release-note content keeps its additional catalog and rendering qualification;
+it does not suppress the full suites. Test selection never uses an import scan
+or a package subset.
+
+`Changes` uses the immutable event base and tested commit. It retains upstream's
+workspace ownership and production dependency graph for release smoke, plus the
+existing mobile native, Compute and packaging selectors. Their failed self-tests
+block `Check` while unknown outputs still run the native lanes. Rust runs for
+all three crate trees, Rust source files, Cargo manifests/lockfiles, Rust toolchain
+files, and `.cargo` configuration at any depth. Unknown paths and unresolvable
+diffs fail open. Main runs every lane fresh. The unchanged packaging selector
+selects Windows and remote-server packaging for web/server production source;
+test-only edits skip packaging.
+
+The merge queue can reuse a successful same-repository PR run into main only for the exact
+content and comparison base. Schema-3 receipts record which web/server suites actually
+ran; only their reports must be restored before reuse is confirmed. Missing, stale,
+legacy, or partial evidence falls back to ordinary CI. One reporting job per suite
+covers reused qualification; shard names are not required
+contexts. A successful workflow still needs transfer evidence whenever server tests ran.
+
+Server tests use eight sequential-file shards with 10-minute job timeouts. Web keeps
+three shards on standard GitHub-hosted 4-vCPU Ubuntu runners and a 15-minute ceiling.
+Both use longest-file-first allocation with package-relative path tie breaking and
+the lowest shard index on equal load. New files receive the sequencer's fallback
+weight (server 0.6 seconds; web 1 second). Weights schedule tests; they never select or
+exclude them. The shard-one performance suites retain their own measurements.
+
+Regenerate weights from every shard report of a representative successful CI run:
+
+```sh
+# Use a fresh directory and the selected run's attempt number.
+gh run download 40121165937 --repo ScientFactory/scient-desktop \
+  --pattern 'vitest-*-attempt-1' --dir /tmp/scient-shard-reports
+node .github/scripts/shard-weights.mjs --suite server \
+  /tmp/scient-shard-reports/vitest-server-*/*.json
+node .github/scripts/shard-weights.mjs --suite web \
+  /tmp/scient-shard-reports/vitest-web-*/*.json
+node .github/scripts/verify-ci-shards.mjs
+```
+
+The importer normalizes runner roots and takes per-file medians across multiple runs.
+It rejects failed reports, malformed paths, duplicates within a report, and invalid
+durations. Server weights include elapsed gaps between serial file results to capture
+imports/setup; overlapping web projects use individual file durations. Review both
+`apps/{server,web}/src/testUtils/shardWeights.json` files with their source run IDs.
+The verifier loads the actual Vitest configurations, discovers every test specification,
+and checks that the configured partitions cover each exactly once, independent of
+discovery order. Vitest's `list --filesOnly --shard` does not apply the sequencer.
+
+<!-- SCIENT-FORK:END -->
+
+The required `Check` gate includes applicable native Compute suites. The selector
 in `.github/scripts/compute-ci-gate.mjs` distinguishes these inputs:
 
 - Preview-scanner changes and the real-kernel integration test files run the

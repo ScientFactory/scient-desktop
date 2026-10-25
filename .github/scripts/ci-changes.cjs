@@ -2,7 +2,8 @@
 // $GITHUB_OUTPUT; a job runs unless its key is "false".
 //
 //   node ci-changes.cjs --paths <file>          gate by the listed paths
-//   node ci-changes.cjs --paths <file> --full   run every Linux job, gate only the macOS lint
+//   node ci-changes.cjs --paths0 <file>         gate by NUL-delimited Git paths
+//   node ci-changes.cjs --paths <file> --full   run every job (main backstop)
 //   node ci-changes.cjs                         changed paths unknown: run everything
 //
 // scripts/check-changed.ts requires the same decisions so local runs match CI.
@@ -15,7 +16,7 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "../..");
 
-// Never read by a build, typecheck, or test. Lint still formats them.
+// Inert for package ownership and release smoke. Tests still run for these paths.
 const INERT = [
   /^docs\//,
   /^\.(agents|cursor|vscode|devcontainer|macroscope|repos)\//,
@@ -42,20 +43,11 @@ const EXTRA_OWNERS = [
   [/^native\/libghostty-vt\//, ["@t3tools/web"]],
 ];
 const RUST = /^native\/(resource-monitor|kde-snap-shot|hyprland-snap-shot)\//;
+// SCIENT-FORK:START — Rust inputs outside the crates do not change release-smoke ownership.
+const RUST_INPUT =
+  /(?:^|\/)(?:[^/]+\.rs|Cargo\.(?:toml|lock)|rust-toolchain(?:\.toml)?)$|(?:^|\/)\.cargo\//;
+// SCIENT-FORK:END
 
-// Tests that read another package's files without declaring it. The scripts
-// tests read app manifests, assets, and sources (cursor-sdk-packaging,
-// third-party-licenses, brand-assets, build-desktop-artifact).
-const TEST_ONLY_DEPS = {
-  "@t3tools/provider-pi": ["@t3tools/client-runtime"],
-  "@t3tools/scripts": [
-    "@t3tools/desktop",
-    "@t3tools/mobile",
-    "@t3tools/web",
-    "t3",
-    "@t3tools/provider-cursor",
-  ],
-};
 // Declared dependencies that only feed a build step: the server bundles the
 // built web app (apps/server/vite.config.ts) but never imports it.
 const BUILD_ONLY_DEPS = { t3: ["@t3tools/web"] };
@@ -64,10 +56,7 @@ const BUILD_ONLY_DEPS = { t3: ["@t3tools/web"] };
 // configuration that decides how it lints them, plus the root package.json
 // that defines the lint:mobile command.
 const MOBILE_NATIVE =
-  /^apps\/mobile\/.*\.(swift|kt|kts)$|^apps\/mobile\/(\.swiftlint\.yml|detekt\.yml|\.editorconfig|Brewfile)$|^scripts\/mobile-native-static-check\.ts$|^package\.json$|^\.github\/workflows\/ci\.yml$|^\.github\/scripts\/ci-changes\.cjs$|^\.github\/actions\/ci-changes\//;
-
-// Jobs that test every package except these, which have jobs of their own.
-const OWN_TEST_JOB = new Set(["t3", "@t3tools/web", "@t3tools/monorepo"]);
+  /^apps\/mobile\/[\s\S]*\.(swift|kt|kts)$|^apps\/mobile\/(\.swiftlint\.yml|detekt\.yml|\.editorconfig|Brewfile)$|^scripts\/mobile-native-static-check\.ts$|^package\.json$|^\.github\/workflows\/ci\.yml$|^\.github\/scripts\/ci-changes\.cjs$|^\.github\/actions\/ci-changes\//;
 
 function readWorkspace() {
   const patterns = [];
@@ -133,7 +122,7 @@ function decide(files, packages, full) {
   let rust = false;
 
   for (const file of files ?? []) {
-    if (RUST.test(file)) rust = true;
+    if (RUST.test(file) || RUST_INPUT.test(file)) rust = true;
     const owners = ownersOf(file, packages);
     if (owners === null) {
       everything = true;
@@ -160,42 +149,41 @@ function decide(files, packages, full) {
       }
     }
     scriptsChanged = affected.has("@t3tools/scripts");
-    for (const [name, deps] of Object.entries(TEST_ONLY_DEPS)) {
-      if (deps.some((dep) => affected.has(dep))) affected.add(name);
-    }
   }
-
-  const tested = packages.filter(
-    (pkg) => pkg.hasTest && !OWN_TEST_JOB.has(pkg.name) && affected.has(pkg.name),
-  );
-  const has = (name) => affected.has(name);
 
   return {
     affected: [...affected].sort(),
     outputs: {
-      typecheck: affected.size > 0,
-      build: has("@t3tools/desktop") || has("t3") || has("@t3tools/web"),
-      test: tested.length > 0,
-      // Empty means every package the Test job covers.
-      test_packages: everything ? "" : tested.map((pkg) => pkg.name).join(" "),
-      test_web: has("@t3tools/web"),
-      test_server: has("t3"),
+      // SCIENT-FORK:START — test inputs extend beyond the package/import graph.
+      // Keep upstream outputs for local tooling, but never select a subset in CI.
+      typecheck: true,
+      build: true,
+      test: true,
+      test_packages: "",
+      test_web: true,
+      test_server: true,
+      // SCIENT-FORK:END
       rust: everything || rust,
       release_smoke: scriptsChanged,
-      mobile_native: files === null || files.some((file) => MOBILE_NATIVE.test(file)),
+      // SCIENT-FORK:START — main is the full backstop, including native static analysis.
+      mobile_native: full || files === null || files.some((file) => MOBILE_NATIVE.test(file)),
+      // SCIENT-FORK:END
     },
   };
 }
 
 function main() {
   const args = process.argv.slice(2);
-  const pathsIndex = args.indexOf("--paths");
+  // SCIENT-FORK:START — hosted detection preserves arbitrary Git filenames.
+  const nul = args.includes("--paths0");
+  const pathsIndex = args.indexOf(nul ? "--paths0" : "--paths");
+  // SCIENT-FORK:END
   const files =
     pathsIndex === -1
       ? null
       : fs
           .readFileSync(args[pathsIndex + 1], "utf8")
-          .split("\n")
+          .split(nul ? "\0" : "\n")
           .filter(Boolean);
   const { affected, outputs } = decide(files, readWorkspace(), args.includes("--full"));
 

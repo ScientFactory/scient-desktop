@@ -8,6 +8,7 @@
     "apps/server/src/provider/scient"
   ],
   "ownedFiles": [
+    "apps/web/src/testUtils/shardWeights.json",
     "packages/contracts/src/scient/providerSettings.ts",
     "apps/server/src/provider/testUtils/controlledOmpPeer.mjs",
     "apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.ts",
@@ -44,6 +45,11 @@
     "scripts/scient-alignment-checks.json"
   ],
   "upstreamMounts": [
+    {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "\"src/assets/AssetAccess.test.ts\":",
+      "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."
+    },
     {
       "path": "apps/server/src/testUtils/weightedShardSequencer.ts",
       "anchor": "recordedSeconds[key] ?? UNRECORDED_FILE_SECONDS",
