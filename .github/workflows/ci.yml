@@ -691,8 +691,11 @@ jobs:
 
       # SCIENT-FORK:END
 
+      # SCIENT-FORK:START — this job's sparse checkout lacks the workspace packages that
+      # `vp run` loads to build its task graph, so call the root `lint:mobile` script directly.
       - name: Lint mobile native sources
-        run: vp run lint:mobile
+        run: node scripts/mobile-native-static-check.ts
+      # SCIENT-FORK:END
 
   release_smoke:
     name: Release Smoke
