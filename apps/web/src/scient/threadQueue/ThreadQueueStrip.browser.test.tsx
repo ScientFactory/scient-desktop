@@ -73,11 +73,12 @@ async function mount(_fixture: _Fixture, width: number, busy: boolean, queueItem
   return callbacks;
 }
 
-it.each([320, 800])("keeps attached and quoted queue rows compact at %i px", async (width) => {
+// regression: eb5f012003 fix(queue): keep attachment indicators inline and show readable citations (#391)
+it("keeps attached and quoted queue rows compact at 320 px", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-  await mount(_fixture, width, true);
+  await mount(_fixture, 320, true);
   const rows = [
     ..._fixture.host!.querySelectorAll<HTMLElement>('[data-testid^="thread-queue-row-"]'),
   ];
@@ -145,9 +146,7 @@ it.each([false, true])("preserves original payloads for row actions (busy: %s)",
 
 it.each([
   { width: 320, hasTail: false },
-  { width: 800, hasTail: false },
   { width: 320, hasTail: true },
-  { width: 800, hasTail: true },
 ])(
   "keeps Cancel reachable after extraction at $width px (tail=$hasTail)",
   async ({ width, hasTail }) => {

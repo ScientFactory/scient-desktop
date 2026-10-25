@@ -53,6 +53,7 @@ describe("shouldBundleCliDependency", () => {
     }
   });
 
+  // regression: 7e01d33f0e perf(build): stop unpacking node_modules wholesale from the Windows asar (#5877)
   it("never bundles node: builtins", () => {
     assert.strictEqual(shouldBundleCliDependency("node:fs"), false);
   });

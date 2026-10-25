@@ -31,9 +31,9 @@ const baseState: DesktopUpdateState = {
 };
 
 describe("Scient update labels", () => {
-  it.each(["idle", "up-to-date", "checking", "disabled", "error"] as const)(
-    "keeps %s as the discovery icon",
-    (status) => expect(getScientDesktopUpdateLabel({ ...baseState, status })).toBeNull(),
+  // Every non-actionable status reaches the same "none" action; error is the one nearest Retry.
+  it.each(["idle", "error"] as const)("keeps %s as the discovery icon", (status) =>
+    expect(getScientDesktopUpdateLabel({ ...baseState, status })).toBeNull(),
   );
   it("offers download, restart, and recovery using the canonical action", () => {
     const available: DesktopUpdateState = {
@@ -172,7 +172,8 @@ describe("desktop update UI helpers", () => {
   });
 
   // SCIENT-FORK:START - preserve Scient main's platform-specific updater copy.
-  it.each(["Win32", "MacIntel", "Linux x86_64"])(
+  // Only Windows adds a note; one other platform covers the shared text.
+  it.each(["Win32", "MacIntel"])(
     "uses the Scient-branded install confirmation copy on %s",
     (platform) => {
       vi.stubGlobal("navigator", { platform });

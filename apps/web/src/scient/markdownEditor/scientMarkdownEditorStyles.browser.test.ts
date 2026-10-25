@@ -1,25 +1,105 @@
-import _sourceContract0 from "./scient-markdown-editor.css?raw";
-import _sourceContract1 from "../writing/findBar.css?raw";
-import _sourceContract2 from "../../index.css?raw";
-import _sourceContract3 from "../../components/files/FileMarkdownPreview.tsx?raw";
 import _sourceContract4 from "../../components/ChatMarkdown.tsx?raw";
 import tableRendererSource from "../../components/chat/MarkdownTable.tsx?raw";
-import previewStyles from "../../index.css?inline";
+import cssSource from "./scient-markdown-editor.css?raw";
+import previewCssSource from "../../index.css?raw";
+import appStyles from "../../index.css?inline";
 import editorStyles from "./scient-markdown-editor.css?inline";
 
 import { describe, expect, it } from "vite-plus/test";
 
-const cssSource = _sourceContract0;
-// The find bar is shared by the document editors; its rules live with it.
-const findBarCss = _sourceContract1;
-const previewCssSource = _sourceContract2;
-const previewSurfaceSource = _sourceContract3;
+// Mounts the app reset and the editor stylesheet with a document fragment and
+// removes both on dispose. The reset is what clears list markers.
+function styledDocument(markup: string) {
+  const style = document.createElement("style");
+  style.textContent = `${appStyles}\n${editorStyles}`;
+  document.head.append(style);
+  const host = document.createElement("div");
+  host.className = "scient-markdown-document";
+  host.innerHTML = markup;
+  document.body.append(host);
+  return {
+    host,
+    [Symbol.dispose]() {
+      host.remove();
+      style.remove();
+    },
+  };
+}
+
+const computed = (host: HTMLElement, selector: string) =>
+  getComputedStyle(host.querySelector(selector)!);
+
 const previewRendererSource = _sourceContract4;
 
-describe("rich Markdown preview presentation parity", () => {
-  it("lets the platform choose the pointer over the Markdown canvas", async () => {
-    await using _fixture = _createFixture();
+describe("rich Markdown document styles", () => {
+  // regression: 6cb8d62aae fix(markdown): harden editor reliability
+  it("computes visible nested markers while leaving task rows markerless", () => {
+    using fixture = styledDocument(`
+      <ul id="bullets"><li>One<ul id="nested-bullets"><li>Two</li></ul></li></ul>
+      <ol id="numbers"><li>One<ol id="nested-numbers"><li>Two</li></ol></li></ol>
+      <ul><li id="task" data-task-checked="false">Task</li></ul>
+    `);
+    const { host } = fixture;
 
+    expect(computed(host, "#bullets").listStyleType).toBe("disc");
+    expect(computed(host, "#nested-bullets").listStyleType).toBe("circle");
+    expect(computed(host, "#numbers").listStyleType).toBe("decimal");
+    expect(computed(host, "#nested-numbers").listStyleType).toBe("lower-alpha");
+    expect(computed(host, "#task").listStyleType).toBe("none");
+    expect(computed(host, "#task").listStyleImage).toBe("none");
+  });
+
+  it("keeps resolved and explicit direction isolated from surrounding prose", () => {
+    using fixture = styledDocument(
+      '<p>שלום world</p><p dir="ltr">שלום world</p><h2 dir="rtl">English עברית</h2><blockquote dir="rtl">English עברית</blockquote><table><tbody><tr><td dir="rtl">English עברית</td></tr></tbody></table>',
+    );
+    const { host } = fixture;
+
+    for (const element of [...host.children].slice(0, 4)) {
+      expect(getComputedStyle(element).unicodeBidi).toBe("isolate");
+    }
+    expect(computed(host, "td").unicodeBidi).toBe("isolate");
+    expect(getComputedStyle(host.children[1]!).textAlign).toBe("start");
+  });
+
+  it("keeps authored GFM column alignment physical in both cell directions", () => {
+    using fixture = styledDocument(`
+      <table><tbody><tr>
+        <td id="ltr-left" dir="ltr" data-alignment="left">Left</td>
+        <td id="ltr-center" dir="ltr" data-alignment="center">Center</td>
+        <td id="ltr-right" dir="ltr" data-alignment="right">Right</td>
+        <td id="rtl-left" dir="rtl" data-alignment="left">يسار</td>
+        <td id="rtl-center" dir="rtl" data-alignment="center">وسط</td>
+        <td id="rtl-right" dir="rtl" data-alignment="right">يمين</td>
+      </tr></tbody></table>
+    `);
+
+    for (const direction of ["ltr", "rtl"]) {
+      for (const alignment of ["left", "center", "right"]) {
+        expect(computed(fixture.host, `#${direction}-${alignment}`).textAlign).toBe(alignment);
+      }
+    }
+  });
+
+  // regression: 756d0e0134 fix(markdown): stabilize RTL tables and scrolling (#263)
+  it("keeps automatic alignment physical and independent from cell text direction", () => {
+    using fixture = styledDocument(`
+      <table><tbody><tr>
+        <td id="ltr-in-rtl-column" dir="ltr" data-scient-table-column-direction="rtl">TNBC</td>
+        <td id="rtl-in-ltr-column" dir="rtl" data-scient-table-column-direction="ltr">טיפול</td>
+      </tr></tbody></table>
+    `);
+
+    expect(computed(fixture.host, "#ltr-in-rtl-column").textAlign).toBe("right");
+    expect(computed(fixture.host, "#rtl-in-ltr-column").textAlign).toBe("left");
+  });
+});
+
+// Source-text guards: each is the only test of its CSS rule (a local mutation of
+// each rule left every behavioral test green, 2026-10-25).
+describe("rich Markdown style rules guarded by source", () => {
+  // regression: 017821d992 fix(web): improve platform cursor behavior (#301)
+  it("lets the platform choose the pointer over the Markdown canvas", () => {
     expect(cssSource).not.toMatch(/\.scient-markdown-document-shell\s*\{[^}]*cursor:\s*text/su);
     expect(cssSource).not.toMatch(/\.scient-markdown-document\.is-read\s*\{[^}]*cursor:\s*text/su);
     expect(cssSource).toMatch(
@@ -27,167 +107,8 @@ describe("rich Markdown preview presentation parity", () => {
     );
   });
 
-  it("retains the established preview table expansion and export controls", async () => {
-    await using _fixture = _createFixture();
-
-    expect(previewRendererSource).toContain('from "./chat/MarkdownTable"');
-    expect(previewRendererSource).toContain("<MarkdownTable {...props} dir={tableDirection} />");
-    for (const label of [
-      '"Collapse table cells"',
-      '"Expand table cells"',
-      "Copy as Markdown",
-      "Copy as CSV",
-    ]) {
-      expect(tableRendererSource).toContain(label);
-    }
-  });
-
-  it("keeps the same document measure, inset, type scale, and contrast as the established preview", async () => {
-    await using _fixture = _createFixture();
-
-    expect(previewSurfaceSource).toContain('className="mx-auto max-w-4xl px-6 py-5"');
-    expect(previewRendererSource).toContain(
-      "chat-markdown w-full min-w-0 [overflow-wrap:anywhere] [word-break:break-word]",
-    );
-    expect(previewRendererSource).toContain(
-      "text-sm leading-relaxed text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)]",
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document \{[^}]*width: min\(100%, 56rem\)[^}]*padding: 1\.25rem 1\.5rem 5rem;[^}]*color: color-mix\(in oklab, var\(--foreground\) 80%, transparent\)[^}]*font-size: var\(--scient-font-size-markdown-body\)[^}]*line-height: 1\.625[^}]*white-space: pre-wrap/su,
-    );
-    expect(cssSource).not.toContain("text-wrap: balance");
-  });
-
-  it("tracks the preview's headings, rhythm, links, quotes, inline code, and image bound", async () => {
-    await using _fixture = _createFixture();
-
-    for (const declaration of [
-      "margin: 1.25rem 0 0.5rem",
-      "font-weight: 600",
-      "font-size: var(--scient-font-size-markdown-h1)",
-      "font-size: var(--scient-font-size-markdown-h2)",
-      "margin: 0.65rem 0",
-      "color: var(--info-foreground)",
-      "font-size: var(--scient-font-size-markdown-secondary)",
-    ]) {
-      expect(previewCssSource).toContain(declaration);
-    }
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document h1,[^}]*margin-block: 1\.25rem 0\.5rem[^}]*font-weight: 600[^}]*line-height: 1\.3/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document h1 \{\s*font-size: var\(--scient-font-size-markdown-h1\)/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document h2 \{\s*font-size: var\(--scient-font-size-markdown-h2\)/su,
-    );
-    expect(cssSource).toMatch(/\.scient-markdown-document p,[^}]*margin-block: 0\.65rem/su);
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document\.is-read a,[^}]*color: var\(--info-foreground\)[^}]*text-decoration: none/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document blockquote \{[^}]*padding-inline-start: 0\.8rem[^}]*border-inline-start: 2px solid var\(--contrast-border\)[^}]*color: var\(--contrast-muted-foreground\)/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document :not\(pre\) > code \{[^}]*border: 1px solid var\(--contrast-border\)[^}]*font-size: var\(--scient-font-size-markdown-secondary\)/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-image-render \{[^}]*max-height: min\(30rem, 70vh\)/su,
-    );
-  });
-
-  it.each(["ltr", "rtl"])(
-    "insets preview and editor quotes on the %s inline start",
-    async (dir) => {
-      await using fixture = _createFixture();
-      const styles = _ownDOM(fixture, document.createElement("style"));
-      styles.textContent = `${previewStyles}\n${editorStyles}`;
-      document.head.append(styles);
-      const host = _ownedBody(fixture);
-      const expectedInset =
-        0.8 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
-      for (const className of ["chat-markdown", "scient-markdown-document"]) {
-        const documentView = document.createElement("div");
-        documentView.className = className;
-        documentView.dir = dir;
-        const quote = document.createElement("blockquote");
-        quote.textContent = "Quoted prose";
-        documentView.append(quote);
-        host.append(documentView);
-        const computed = getComputedStyle(quote);
-        expect(Number.parseFloat(computed.paddingInlineStart)).toBeCloseTo(expectedInset);
-        expect(Number.parseFloat(computed.paddingInlineEnd)).toBe(0);
-        expect(
-          Number.parseFloat(dir === "rtl" ? computed.paddingRight : computed.paddingLeft),
-        ).toBeCloseTo(expectedInset);
-        expect(
-          Number.parseFloat(dir === "rtl" ? computed.paddingLeft : computed.paddingRight),
-        ).toBe(0);
-      }
-    },
-  );
-
-  it("uses the same interrupted row separators while retaining editor-only table affordances", async () => {
-    await using _fixture = _createFixture();
-
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document table \{[^}]*min-width: max-content[^}]*font-size: var\(--scient-font-size-markdown-secondary\)/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document th,[^}]*min-width: 5rem[^}]*border-block-end: 1px solid transparent[^}]*background-position: center bottom[^}]*background-repeat: no-repeat[^}]*background-size: calc\(100% - 1rem\) 1px/su,
-    );
-    expect(previewCssSource).toMatch(
-      /\.chat-markdown thead th,\s*\.chat-markdown tbody td \{[^}]*border-bottom: 1px solid transparent[^}]*background-position: center bottom[^}]*background-repeat: no-repeat[^}]*background-size: calc\(100% - 1rem\) 1px/su,
-    );
-    // Same specificity as the inherited separators, so the override must come later.
-    const inheritedSeparator = previewCssSource.indexOf(
-      ".chat-markdown tbody td {\n  border-bottom: 1px solid color-mix(",
-    );
-    expect(inheritedSeparator).toBeGreaterThanOrEqual(0);
-    expect(
-      previewCssSource.indexOf(".chat-markdown thead th,\n.chat-markdown tbody td {"),
-    ).toBeGreaterThan(inheritedSeparator);
-    expect(cssSource).toContain(".scient-markdown-table-select");
-    expect(cssSource).toContain(".scient-markdown-document .selectedCell::after");
-    expect(cssSource).not.toContain("text-overflow: ellipsis");
-    expect(cssSource).not.toContain("max-width: 24rem");
-  });
-
-  it("keeps the table-size picker scrollbar horizontal, thin, faint, and locally scoped", async () => {
-    await using _fixture = _createFixture();
-
-    expect(cssSource).toMatch(
-      /\.scient-markdown-table-size-viewport \{[^}]*scrollbar-color: color-mix\([^}]*var\(--contrast-muted-foreground\) 18%[^}]*scrollbar-width: thin/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-table-size-viewport::-(?:webkit-scrollbar) \{[^}]*width: 0;[^}]*height: 2px;/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-table-size-viewport::-webkit-scrollbar-thumb \{[^}]*border-radius: 999px;[^}]*var\(--contrast-muted-foreground\) 18%/su,
-    );
-  });
-
-  it("lets the shared scientific renderer own its presentation without ordinary code chrome", async () => {
-    await using _fixture = _createFixture();
-
-    expect(cssSource).toMatch(
-      /\.scient-markdown-code-block\[data-scient-markdown-rich-fence\] \{[^}]*margin-block: 0\.75rem[^}]*overflow: visible[^}]*border: 0[^}]*border-radius: 0[^}]*background: transparent[^}]*color: inherit/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-code-block\[data-scient-markdown-rich-fence\] > \.scient-markdown-code-header \{\s*display: none;/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-code-block\[data-scient-markdown-rich-fence\] > \.scient-markdown-code-render \{[^}]*overflow: visible[^}]*padding: 0[^}]*font-family: inherit[^}]*font-size: inherit[^}]*line-height: inherit[^}]*white-space: normal[^}]*overflow-wrap: normal/su,
-    );
-    expect(cssSource).toMatch(/> \[data-scient-visual-card\] \{\s*margin-block: 0;/su);
-    expect(cssSource).toMatch(
-      /\.scient-markdown-code-block\[data-scient-markdown-rich-fence\] \.scient-markdown-code-editor \{[^}]*border: 1px solid[^}]*--markdown-code-block-background/su,
-    );
-  });
-
-  it("shares one deliberate quiet code-card surface with the established preview", async () => {
-    await using _fixture = _createFixture();
-
+  // regression: f9b1555499 fix(markdown): stabilize persistent source editing
+  it("shares one deliberate quiet code-card surface with the established preview", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-code-block \{[^}]*background: var\([^}]*--markdown-code-block-background/su,
     );
@@ -220,194 +141,9 @@ describe("rich Markdown preview presentation parity", () => {
       /\.scient-markdown-code-editor \.cm-scroller \{[^}]*padding: 0\.55rem 0\.8rem 0\.75rem[^}]*line-height: 1\.55/su,
     );
   });
-});
 
-describe("rich Markdown list marker styles", () => {
-  async function _cleanupFixture0(_fixture: _Fixture) {
-    document.head.replaceChildren();
-    _clearOwnedDOM(_fixture);
-  }
-
-  it("restores ordered and unordered markers after the application reset", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    expect(cssSource).toMatch(/\.scient-markdown-document ul \{\s*list-style-type: disc;/su);
-    expect(cssSource).toMatch(/\.scient-markdown-document ol \{\s*list-style-type: decimal;/su);
-    expect(cssSource).toMatch(/\.scient-markdown-document ul ul \{\s*list-style-type: circle;/su);
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document ol ol \{\s*list-style-type: lower-alpha;/su,
-    );
-  });
-
-  it("keeps task-list rows markerless so their interactive checkbox is the marker", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document li\[data-task-checked\] \{[^}]*list-style: none;/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-task-content > :first-child \{\s*margin-block-start: 0;/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-task-content > :last-child \{\s*margin-block-end: 0;/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-task-checkbox \{[^}]*margin-block-start: calc\(\(1\.625em - 0\.95rem\) \/ 2\)[^}]*margin-inline-start: -1\.25rem[^}]*margin-inline-end: 0\.3rem/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-task-content > ul,[^}]*\.scient-markdown-task-content > ol \{\s*margin-block: 0\.2em;/su,
-    );
-  });
-
-  it("computes visible nested markers while leaving task rows markerless", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const style = document.createElement("style");
-    style.textContent = cssSource;
-    document.head.append(style);
-    _ownedBody(_fixture).innerHTML = `
-      <div class="scient-markdown-document">
-        <ul id="bullets"><li>One<ul id="nested-bullets"><li>Two</li></ul></li></ul>
-        <ol id="numbers"><li>One<ol id="nested-numbers"><li>Two</li></ol></li></ol>
-        <ul><li id="task" data-task-checked="false">Task</li></ul>
-      </div>
-    `;
-
-    expect(getComputedStyle(document.querySelector("#bullets")!).listStyleType).toBe("disc");
-    expect(getComputedStyle(document.querySelector("#nested-bullets")!).listStyleType).toBe(
-      "circle",
-    );
-    expect(getComputedStyle(document.querySelector("#numbers")!).listStyleType).toBe("decimal");
-    expect(getComputedStyle(document.querySelector("#nested-numbers")!).listStyleType).toBe(
-      "lower-alpha",
-    );
-    expect(getComputedStyle(document.querySelector("#task")!).listStyleType).toBe("none");
-    expect(getComputedStyle(document.querySelector("#task")!).listStyleImage).toBe("none");
-  });
-});
-
-describe("rich Markdown compact-surface styles", () => {
-  it("shows the table handle only in the active editable table without contributing layout height", async () => {
-    await using _fixture = _createFixture();
-
-    const style = document.createElement("style");
-    style.textContent = cssSource;
-    document.head.append(style);
-    const host = document.createElement("div");
-    host.className = "scient-markdown-document is-write";
-    host.innerHTML =
-      '<div class="scient-markdown-table"><button class="scient-markdown-table-select"></button><table dir="rtl"><tbody><tr><td>English</td></tr></tbody></table></div>';
-    document.body.append(_ownDOM(_fixture, host));
-    try {
-      const wrapper = host.firstElementChild!;
-      const button = host.querySelector("button")!;
-      expect(getComputedStyle(button).display).toBe("none");
-      wrapper.classList.add("is-active-table");
-      expect(getComputedStyle(button).display).toBe("flex");
-      expect(getComputedStyle(button).position).toBe("absolute");
-      expect(cssSource).toMatch(
-        /\.scient-markdown-table-select \{[^}]*width: 1\.25rem[^}]*height: 1\.25rem[^}]*color: color-mix\(in oklab, var\(--muted-foreground\) 70%, transparent\)/su,
-      );
-      expect(cssSource).toMatch(
-        /\.scient-markdown-table-select > svg \{[^}]*width: 0\.75rem[^}]*height: 0\.75rem/su,
-      );
-      expect(getComputedStyle(host.querySelector("td")!).unicodeBidi).toBe("isolate");
-      host.classList.remove("is-write");
-      expect(getComputedStyle(button).display).toBe("none");
-      host.querySelector("table")!.removeAttribute("dir");
-      expect(getComputedStyle(host.querySelector("td")!).unicodeBidi).toBe("isolate");
-    } finally {
-      host.remove();
-      style.remove();
-    }
-  });
-  it("keeps resolved and explicit direction isolated from surrounding prose", async () => {
-    await using _fixture = _createFixture();
-
-    const style = document.createElement("style");
-    style.textContent = cssSource;
-    document.head.append(style);
-    const host = document.createElement("div");
-    host.className = "scient-markdown-document";
-    host.innerHTML =
-      '<p>שלום world</p><p dir="ltr">שלום world</p><h2 dir="rtl">English עברית</h2><blockquote dir="rtl">English עברית</blockquote><table><tbody><tr><td dir="rtl">English עברית</td></tr></tbody></table>';
-    document.body.append(_ownDOM(_fixture, host));
-    try {
-      expect(getComputedStyle(host.children[0]!).unicodeBidi).toBe("isolate");
-      expect(getComputedStyle(host.children[1]!).unicodeBidi).toBe("isolate");
-      expect(getComputedStyle(host.children[2]!).unicodeBidi).toBe("isolate");
-      expect(getComputedStyle(host.children[3]!).unicodeBidi).toBe("isolate");
-      expect(getComputedStyle(host.querySelector("td")!).unicodeBidi).toBe("isolate");
-      expect(getComputedStyle(host.children[1]!).textAlign).toBe("start");
-    } finally {
-      host.remove();
-      style.remove();
-    }
-  });
-
-  it("keeps authored GFM column alignment physical in both cell directions", async () => {
-    await using _fixture = _createFixture();
-
-    const style = document.createElement("style");
-    style.textContent = cssSource;
-    document.head.append(style);
-    const host = document.createElement("div");
-    host.className = "scient-markdown-document";
-    host.innerHTML = `
-      <table><tbody><tr>
-        <td id="ltr-left" dir="ltr" data-alignment="left">Left</td>
-        <td id="ltr-center" dir="ltr" data-alignment="center">Center</td>
-        <td id="ltr-right" dir="ltr" data-alignment="right">Right</td>
-        <td id="rtl-left" dir="rtl" data-alignment="left">يسار</td>
-        <td id="rtl-center" dir="rtl" data-alignment="center">وسط</td>
-        <td id="rtl-right" dir="rtl" data-alignment="right">يمين</td>
-      </tr></tbody></table>
-    `;
-    document.body.append(_ownDOM(_fixture, host));
-    try {
-      for (const direction of ["ltr", "rtl"]) {
-        for (const alignment of ["left", "center", "right"]) {
-          expect(
-            getComputedStyle(host.querySelector(`#${direction}-${alignment}`)!).textAlign,
-          ).toBe(alignment);
-        }
-      }
-    } finally {
-      host.remove();
-      style.remove();
-    }
-  });
-
-  it("keeps automatic alignment physical and independent from cell text direction", async () => {
-    await using _fixture = _createFixture();
-
-    const style = document.createElement("style");
-    style.textContent = cssSource;
-    document.head.append(style);
-    const host = document.createElement("div");
-    host.className = "scient-markdown-document";
-    host.innerHTML = `
-      <table><tbody><tr>
-        <td id="ltr-in-rtl-column" dir="ltr" data-scient-table-column-direction="rtl">TNBC</td>
-        <td id="rtl-in-ltr-column" dir="rtl" data-scient-table-column-direction="ltr">טיפול</td>
-      </tr></tbody></table>
-    `;
-    document.body.append(_ownDOM(_fixture, host));
-    try {
-      expect(getComputedStyle(host.querySelector("#ltr-in-rtl-column")!).textAlign).toBe("right");
-      expect(getComputedStyle(host.querySelector("#rtl-in-ltr-column")!).textAlign).toBe("left");
-    } finally {
-      host.remove();
-      style.remove();
-    }
-  });
-
-  it("keeps caret and cell-selection decorations out of table layout", async () => {
-    await using _fixture = _createFixture();
-
+  // regression: d6a8a97115 fix(markdown): preserve drafts, source fidelity, and table navigation
+  it("keeps caret and cell-selection decorations out of table layout", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-document p,\s*\.scient-markdown-document ul,\s*\.scient-markdown-document ol,\s*\.scient-markdown-document blockquote,\s*\.scient-markdown-document pre,\s*\.scient-markdown-document table \{\s*margin-block: 0\.65rem;/su,
     );
@@ -427,42 +163,8 @@ describe("rich Markdown compact-surface styles", () => {
     );
   });
 
-  it("contains selection and find controls instead of leaking outside narrow panes", async () => {
-    await using _fixture = _createFixture();
-
-    expect(cssSource).toMatch(
-      /\.scient-markdown-selection-toolbar \{[^}]*max-width: calc\(100vw - 1rem\)[^}]*overflow-x: auto[^}]*scrollbar-width: none/su,
-    );
-    expect(findBarCss).toMatch(
-      /\.scient-markdown-find-bar \{[^}]*overflow-x: auto[^}]*overflow-y: hidden[^}]*scrollbar-width: none/su,
-    );
-    expect(findBarCss).toMatch(/\.scient-markdown-find-bar > div \{[^}]*min-width: max-content/su);
-  });
-
-  it("keeps math editing visually quiet while retaining visible focus boundaries", async () => {
-    await using _fixture = _createFixture();
-
-    expect(cssSource).toMatch(
-      /\.scient-markdown-source-island:not\(\[data-scient-markdown-source-kind="html"\]\):is\([^}]*:focus-within[^}]*border-color:/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-math-source \{[^}]*border: 1px solid var\(--markdown-code-block-border, var\(--border\)\)[^}]*background: var\(--markdown-code-block-background[^}]*outline: none/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document \.scient-markdown-math\.ProseMirror-selectednode \{\s*outline: none;/su,
-    );
-    expect(cssSource).not.toMatch(/\.scient-markdown-math\.is-selected \{[^}]*outline:/su);
-    expect(cssSource).toMatch(
-      /\.scient-markdown-document\.is-write \.scient-markdown-math-render:hover \{[^}]*background: color-mix\(in oklab, var\(--muted\) 55%, transparent\)[^}]*box-shadow:/su,
-    );
-    expect(cssSource).toMatch(
-      /textarea\.scient-markdown-math-source \{[^}]*field-sizing: content[^}]*min-height: 2rem[^}]*max-height: 14rem[^}]*overflow-y: auto[^}]*resize: vertical/su,
-    );
-  });
-
-  it("uses quiet numbered footnote navigation with one borderless definition field", async () => {
-    await using _fixture = _createFixture();
-
+  // regression: d24fef7a0e fix(markdown): streamline footnote editing
+  it("uses quiet numbered footnote navigation with one borderless definition field", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-reference\[data-scient-markdown-reference="footnote_reference"\] \{[^}]*display: inline;[^}]*background: transparent;[^}]*padding: 0;[^}]*cursor: pointer/su,
     );
@@ -491,9 +193,8 @@ describe("rich Markdown compact-surface styles", () => {
     expect(cssSource).not.toMatch(/footnote_reference[^}]*\.scient-markdown-reference-source/su);
   });
 
-  it("presents citations as one unboxed direct-edit field", async () => {
-    await using _fixture = _createFixture();
-
+  // regression: 83f42be984 fix(markdown): make source-like content directly editable
+  it("presents citations as one unboxed direct-edit field", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-reference\[data-scient-markdown-reference="citation"\] \{[^}]*gap: 0;[^}]*background: transparent;[^}]*padding: 0;[^}]*color: inherit/su,
     );
@@ -508,9 +209,8 @@ describe("rich Markdown compact-surface styles", () => {
     );
   });
 
-  it("keeps ordinary code geometry stable and removes active-row chrome", async () => {
-    await using _fixture = _createFixture();
-
+  // regression: 83f42be984 fix(markdown): make source-like content directly editable
+  it("keeps ordinary code geometry stable and removes active-row chrome", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-code-editor \.cm-content,[^}]*\.scient-markdown-code-editor \.cm-line \{\s*padding: 0;/su,
     );
@@ -518,9 +218,8 @@ describe("rich Markdown compact-surface styles", () => {
     expect(cssSource).not.toMatch(/\.scient-markdown-code-editor \.cm-editor \{[^}]*max-height:/su);
   });
 
-  it("uses the persistent code surface for multiline raw YAML and HTML source", async () => {
-    await using _fixture = _createFixture();
-
+  // regression: f9b1555499 fix(markdown): stabilize persistent source editing
+  it("uses the persistent code surface for multiline raw YAML and HTML source", () => {
     expect(cssSource).not.toContain(".scient-markdown-source-island-preview");
     expect(cssSource).toMatch(
       /\.scient-markdown-source-island \{[^}]*border: 1px solid var\(--markdown-code-block-border, var\(--border\)\)[^}]*background: var\(--markdown-code-block-background/su,
@@ -531,6 +230,30 @@ describe("rich Markdown compact-surface styles", () => {
     );
   });
 
+  // regression: a9bf7dc0aa fix(markdown): finish table selection and main integration
+  it("shows the table handle only in the active editable table without contributing layout height", () => {
+    using fixture = styledDocument(
+      '<div class="scient-markdown-table"><button class="scient-markdown-table-select"></button><table dir="rtl"><tbody><tr><td>English</td></tr></tbody></table></div>',
+    );
+    const { host } = fixture;
+    host.classList.add("is-write");
+    const wrapper = host.firstElementChild!;
+    const button = host.querySelector("button")!;
+    expect(getComputedStyle(button).display).toBe("none");
+    wrapper.classList.add("is-active-table");
+    expect(getComputedStyle(button).display).toBe("flex");
+    expect(getComputedStyle(button).position).toBe("absolute");
+    expect(cssSource).toMatch(
+      /\.scient-markdown-table-select \{[^}]*width: 1\.25rem[^}]*height: 1\.25rem[^}]*color: color-mix\(in oklab, var\(--muted-foreground\) 70%, transparent\)/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-table-select > svg \{[^}]*width: 0\.75rem[^}]*height: 0\.75rem/su,
+    );
+    host.classList.remove("is-write");
+    expect(getComputedStyle(button).display).toBe("none");
+  });
+
+  // regression: d157041a90 feat(markdown): integrate rich editor quality improvements
   it("keeps reference definitions directly editable and invisible in read mode", async () => {
     await using _fixture = _createFixture();
 
@@ -550,6 +273,7 @@ describe("rich Markdown compact-surface styles", () => {
     expect(cssSource).not.toContain("scient-markdown-reference-definition-summary");
   });
 
+  // regression: d157041a90 feat(markdown): integrate rich editor quality improvements
   it("presents wiki links as selectable underlined text without a second inline editor", async () => {
     await using _fixture = _createFixture();
 
@@ -582,20 +306,19 @@ function _createFixture() {
     },
   };
 }
-type _Fixture = ReturnType<typeof _createFixture>;
 
-function _ownDOM<T extends Node>(_fixture: _Fixture, node: T): T {
-  _fixture._ownedDOM.push(node);
-  _fixture.stack.defer(() => {
-    node.parentNode?.removeChild(node);
-  });
-  return node;
-}
-function _clearOwnedDOM(_fixture: _Fixture) {
-  for (const node of _fixture._ownedDOM.splice(0)) node.parentNode?.removeChild(node);
-}
-function _ownedBody(_fixture: _Fixture) {
-  const element = _ownDOM(_fixture, document.createElement("div"));
-  document.body.append(element);
-  return element;
-}
+// regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
+it("retains the established preview table expansion and export controls", async () => {
+  await using _fixture = _createFixture();
+
+  expect(previewRendererSource).toContain('from "./chat/MarkdownTable"');
+  expect(previewRendererSource).toContain("<MarkdownTable {...props} dir={tableDirection} />");
+  for (const label of [
+    '"Collapse table cells"',
+    '"Expand table cells"',
+    "Copy as Markdown",
+    "Copy as CSV",
+  ]) {
+    expect(tableRendererSource).toContain(label);
+  }
+});

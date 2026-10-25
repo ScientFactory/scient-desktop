@@ -1,5 +1,6 @@
 import { expect, it } from "vite-plus/test";
 import { CaptureService, CLIENT_NAMES, isWaylandSession } from "./captureService.js";
+// SCIENT-FORK:START scient-capture-clients
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 it("authorizes exactly Scient's production and development capture clients", () => {
@@ -8,6 +9,7 @@ it("authorizes exactly Scient's production and development capture clients", () 
     SCIENT_DESKTOP_IDENTITY.linuxDevelopmentDesktopEntryName.replace(/\.desktop$/, ".SnapShot"),
   ]);
 });
+// SCIENT-FORK:END scient-capture-clients
 
 it("supports GNOME 50 without the removed X11 API, rejecting older X11 sessions", () => {
   expect(isWaylandSession({})).toBe(true);
@@ -31,7 +33,9 @@ function fixture(overrides = {}) {
 
 it("rejects other clients before looking at the active window", async () => {
   const { service, snapshots } = fixture();
+  // SCIENT-FORK:START scient-capture-clients
   await expect(service.capture(":1.99")).rejects.toThrow("Only Scient");
+  // SCIENT-FORK:END scient-capture-clients
   expect(snapshots()).toBe(0);
   expect(await service.capture(":1.23")).toBe("pixels");
 });
@@ -41,7 +45,9 @@ it("rechecks the name owner on each capture", async () => {
   const { service } = fixture({ getNameOwner: async () => owner });
   expect(await service.capture(owner)).toBe("pixels");
   owner = ":1.24";
+  // SCIENT-FORK:START scient-capture-clients
   await expect(service.capture(":1.23")).rejects.toThrow("Only Scient");
+  // SCIENT-FORK:END scient-capture-clients
 });
 
 it("rejects locked and non-Wayland sessions without taking a screenshot", async () => {
@@ -97,7 +103,9 @@ it("rejects concurrent requests and clears busy after a failed capture", async (
   await expect(service.capture(":1.23")).rejects.toThrow("already in progress");
   finish(new Error("gone"));
   await expect(first).rejects.toThrow("gone");
+  // SCIENT-FORK:START scient-capture-clients
   await expect(service.capture(":1.99")).rejects.toThrow("Only Scient");
+  // SCIENT-FORK:END scient-capture-clients
 });
 
 it("prepares focus/effects only after pixels and identity have been captured", async () => {

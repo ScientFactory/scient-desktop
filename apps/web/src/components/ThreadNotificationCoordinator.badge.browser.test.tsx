@@ -210,6 +210,7 @@ function setup() {
   };
 }
 
+// SCIENT-FORK:START — each notification gate suppresses visual alerts and the badge.
 it.each(["off", "sound", "focused", "denied", "archived"])(
   "does not show visual alerts when %s",
   async (condition) => {
@@ -232,6 +233,7 @@ it.each(["off", "sound", "focused", "denied", "archived"])(
     expect(state.badge.mock.calls.every(([count]) => count === 0)).toBe(true);
   },
 );
+// SCIENT-FORK:END
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "badges %s and clears when notifications are disabled",

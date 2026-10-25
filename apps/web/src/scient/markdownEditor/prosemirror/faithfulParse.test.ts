@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { makeFaithfulMarkdownParse } from "./faithfulParse";
 import { scientMarkdownOutlinePlugin, scientMarkdownOutlineState } from "./outline";
 import { createScientMarkdownProjection, serializeScientMarkdownProjection } from "./projection";
+import { scientMarkdownSchema, scientMarkdownSerializer } from "./schema";
 import { ScientProseMirrorSession } from "./session";
 import { EditorState } from "prosemirror-state";
 
@@ -166,15 +167,15 @@ describe("faithful Markdown projection", () => {
     expect(reopened.state.doc.eq(session.state.doc)).toBe(true);
   });
 
-  it("writes back a code block holding more fence-like lines than a call takes arguments", () => {
+  // regression: 337cca7d11 fix(markdown): size a code fence without spreading every run into one call
+  it("writes a fence around more fence-like lines than a call takes arguments", () => {
     const lines = "```\n".repeat(150_000);
-    const source = `\`\`\`\`\n${lines}\`\`\`\`\n`;
-    const session = new ScientProseMirrorSession({ source, revision: "r1", mode: "write" });
-    expect(session.state.doc.firstChild?.type.name).toBe("code_block");
+    const schema = scientMarkdownSchema;
+    const codeBlock = schema.nodes.code_block!.create({ params: "" }, schema.text(lines));
 
-    session.applyTransaction(session.state.tr.insertText("x", 1, 1), "user");
-
-    expect(session.session.draftSource).toBe(`\`\`\`\`\nx${lines}\`\`\`\`\n`);
+    expect(scientMarkdownSerializer.serialize(schema.node("doc", null, [codeBlock]))).toBe(
+      `\`\`\`\`\n${lines}\n\`\`\`\``,
+    );
   });
 
   it("names a heading with math by its TeX in the outline", () => {

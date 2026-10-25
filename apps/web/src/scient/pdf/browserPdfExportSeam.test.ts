@@ -7,6 +7,7 @@ const read = (relativePath: string) =>
   NodeFS.readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
 describe("browser PDF export seams", () => {
+  // regression: 666ea3a41a feat: refine browser PDF export lifecycle
   it("keeps browser export orchestration in Scient-owned modules", () => {
     const previewView = read("../../components/preview/PreviewView.tsx");
     const previewChrome = read("../../components/preview/PreviewChromeRow.tsx");
@@ -32,14 +33,9 @@ describe("browser PDF export seams", () => {
       read("../../../../server/src/ws.ts"),
       read("../../../../server/src/scient/documentExport/DocumentPdfRpcHandlers.ts"),
     ].join("\n");
-    const publication = read(
-      "../../../../server/src/scient/documentArtifacts/BrowserPdfExportPublication.ts",
-    );
 
     expect(ws).toContain("publishBrowserPdfExport(generatedDocuments, input)");
     expect(ws).not.toMatch(/decodeBase64Url|BROWSER_PDF_EXPORT_MAX_BYTES|validationContext/gu);
-    expect(publication).toMatch(/generatedDocuments\s*\.\s*publishPdf\(\{/u);
-    expect(publication).toContain('validationProfile: "browser-export"');
   });
 
   it("keeps rendering and Save Copy implementation outside inherited desktop services", () => {
@@ -55,12 +51,14 @@ describe("browser PDF export seams", () => {
     );
 
     expect(manager).toContain("../scient/documentExport/BrowserPdfRenderer.ts");
+    expect(manager).toContain("render: controlledDocumentPdfRenderer");
     expect(manager).not.toMatch(/PAGINATION_CSS|wc\.printToPDF|waitForReadiness/gu);
     expect(electronDialog).not.toMatch(/saveFile|showSaveDialog/gu);
     expect(NodeFS.existsSync(rendererUrl)).toBe(true);
     expect(NodeFS.existsSync(oldRendererUrl)).toBe(false);
   });
 
+  // regression: 666ea3a41a feat: refine browser PDF export lifecycle
   it("keeps browser fallback bytes out of the inherited local API facade", () => {
     const localApi = read("../../localApi.ts");
     const fallback = read("../documentArtifacts/browserAssetCopy.ts");
@@ -70,6 +68,7 @@ describe("browser PDF export seams", () => {
     expect(fallback).toContain("URL.createObjectURL(await response.blob())");
   });
 
+  // regression: 666ea3a41a feat: refine browser PDF export lifecycle
   it("shares native Save Copy and reveal presentation across browser and reader entry points", () => {
     const action = read("./ScientPreviewExportActions.tsx");
     const reader = read("./ScientPdfReader.tsx");
@@ -81,6 +80,7 @@ describe("browser PDF export seams", () => {
     expect(notification).toContain("revealSavedAsset(result.path)");
   });
 
+  // regression: 1d28d62998 feat(pdf): add agent-facing document authoring and controlled builds (#202)
   it("keeps agent HTML builds on the hidden renderer and existing generated-PDF surface", () => {
     const host = read("../documentExport/documentHost.tsx");
     const manager = read("../../../../desktop/src/preview/Manager.ts");

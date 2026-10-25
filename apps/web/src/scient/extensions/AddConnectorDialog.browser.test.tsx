@@ -95,35 +95,31 @@ describe("AddConnectorDialog validation", () => {
     await submit();
     expect(errorText("connector-url")).toBe("Enter the server URL.");
 
-    await userEvent.type(field<HTMLInputElement>("connector-url"), "mcp.example.com");
+    await userEvent.fill(field<HTMLInputElement>("connector-url"), "mcp.example.com");
     expect(errorText("connector-url")).toBe(
       "Enter a full URL, for example https://mcp.example.com/mcp.",
     );
-
-    await userEvent.clear(field<HTMLInputElement>("connector-url"));
-    await userEvent.type(field<HTMLInputElement>("connector-url"), "http://mcp.example.com/mcp");
+    await userEvent.fill(field<HTMLInputElement>("connector-url"), "http://mcp.example.com/mcp");
     expect(errorText("connector-url")).toBe(
       "Use an https:// URL. Plain http:// is allowed only for this computer.",
     );
     await submit();
     expect(state.add).not.toHaveBeenCalled();
-
-    await userEvent.clear(field<HTMLInputElement>("connector-url"));
-    await userEvent.type(field<HTMLInputElement>("connector-url"), "http://127.0.0.1:8080/mcp");
+    await userEvent.fill(field<HTMLInputElement>("connector-url"), "http://127.0.0.1:8080/mcp");
     expect(errorText("connector-url")).toBeNull();
   });
 
   it("requires a key, a valid header name and user:password for API keys", async () => {
     await using fixture = setup();
     await fixture.render();
-    await userEvent.type(field<HTMLInputElement>("connector-url"), "https://api.example.com/mcp");
+    await userEvent.fill(field<HTMLInputElement>("connector-url"), "https://api.example.com/mcp");
     await userEvent.selectOptions(field<HTMLSelectElement>("connector-auth"), "api-key");
     await userEvent.selectOptions(field<HTMLSelectElement>("connector-strategy"), "header");
     await submit();
     expect(errorText("connector-header-name")).toBe("Enter the header name.");
     expect(errorText("connector-key")).toBe("Enter the key.");
 
-    await userEvent.type(field<HTMLInputElement>("connector-header-name"), "X API Key");
+    await userEvent.fill(field<HTMLInputElement>("connector-header-name"), "X API Key");
     expect(errorText("connector-header-name")).toBe("Header names use letters, digits and dashes.");
 
     await userEvent.selectOptions(field<HTMLSelectElement>("connector-strategy"), "basic");
@@ -137,9 +133,9 @@ describe("AddConnectorDialog validation", () => {
   it("rejects a client secret without a client ID", async () => {
     await using fixture = setup();
     await fixture.render();
-    await userEvent.type(field<HTMLInputElement>("connector-url"), "https://mcp.example.com/mcp");
+    await userEvent.fill(field<HTMLInputElement>("connector-url"), "https://mcp.example.com/mcp");
     await press("Advanced");
-    await userEvent.type(field<HTMLInputElement>("connector-client-secret"), "shh");
+    await userEvent.fill(field<HTMLInputElement>("connector-client-secret"), "shh");
     await submit();
     expect(errorText("connector-client-id")).toBe("Enter the client ID to use a client secret.");
     expect(state.add).not.toHaveBeenCalled();
@@ -154,12 +150,12 @@ describe("AddConnectorDialog validation", () => {
       ),
     });
     await fixture.render();
-    await userEvent.type(field<HTMLInputElement>("connector-url"), " https://api.example.com/mcp ");
-    await userEvent.type(field<HTMLInputElement>("connector-name"), "Example");
+    await userEvent.fill(field<HTMLInputElement>("connector-url"), " https://api.example.com/mcp ");
+    await userEvent.fill(field<HTMLInputElement>("connector-name"), "Example");
     await userEvent.selectOptions(field<HTMLSelectElement>("connector-auth"), "api-key");
     await userEvent.selectOptions(field<HTMLSelectElement>("connector-strategy"), "header");
-    await userEvent.type(field<HTMLInputElement>("connector-header-name"), "X-API-Key");
-    await userEvent.type(field<HTMLInputElement>("connector-key"), " sk-123 ");
+    await userEvent.fill(field<HTMLInputElement>("connector-header-name"), "X-API-Key");
+    await userEvent.fill(field<HTMLInputElement>("connector-key"), " sk-123 ");
     await submit();
 
     expect(state.add).toHaveBeenCalledExactlyOnceWith({
@@ -184,9 +180,9 @@ describe("AddConnectorDialog validation", () => {
   });
 
   async function fillApiKey(key: string) {
-    await userEvent.type(field<HTMLInputElement>("connector-url"), "https://api.example.com/mcp");
+    await userEvent.fill(field<HTMLInputElement>("connector-url"), "https://api.example.com/mcp");
     await userEvent.selectOptions(field<HTMLSelectElement>("connector-auth"), "api-key");
-    await userEvent.type(field<HTMLInputElement>("connector-key"), key);
+    await userEvent.fill(field<HTMLInputElement>("connector-key"), key);
   }
 
   it("clears the key from the form while the request is pending", async () => {
@@ -225,7 +221,7 @@ describe("AddConnectorDialog validation", () => {
 
     await userEvent.selectOptions(field<HTMLSelectElement>("connector-auth"), "automatic");
     await press("Advanced");
-    await userEvent.type(field<HTMLInputElement>("connector-client-secret"), "client-secret");
+    await userEvent.fill(field<HTMLInputElement>("connector-client-secret"), "client-secret");
     await press("Advanced");
     await press("Advanced");
     expect(field<HTMLInputElement>("connector-client-secret").value).toBe("");
@@ -235,10 +231,11 @@ describe("AddConnectorDialog validation", () => {
     await using fixture = setup();
     state.add.mockResolvedValueOnce({ _tag: "Success", value: { connector, nextStep: "ready" } });
     await fixture.render();
-    await userEvent.type(field<HTMLInputElement>("connector-url"), "https://api.example.com/mcp");
+    await userEvent.fill(field<HTMLInputElement>("connector-url"), "https://api.example.com/mcp");
     await userEvent.selectOptions(field<HTMLSelectElement>("connector-auth"), "api-key");
     await userEvent.selectOptions(field<HTMLSelectElement>("connector-strategy"), "header");
-    await userEvent.type(field<HTMLInputElement>("connector-key"), "sk-keyboard{Enter}");
+    await userEvent.fill(field<HTMLInputElement>("connector-key"), "sk-keyboard");
+    await userEvent.keyboard("{Enter}");
 
     const headerName = field<HTMLInputElement>("connector-header-name");
     expect(state.add).not.toHaveBeenCalled();
@@ -248,7 +245,8 @@ describe("AddConnectorDialog validation", () => {
     expect(errorText("connector-header-name")).toBe("Enter the header name.");
     expect(field<HTMLInputElement>("connector-key").getAttribute("aria-invalid")).toBeNull();
 
-    await userEvent.type(headerName, "X-API-Key{Enter}");
+    await userEvent.fill(headerName, "X-API-Key");
+    await userEvent.keyboard("{Enter}");
     expect(state.add).toHaveBeenCalledOnce();
     expect(headerName.getAttribute("aria-describedby")).toBeNull();
   });
@@ -320,7 +318,7 @@ describe("AddConnectorDialog validation", () => {
       value: { connector, nextStep: "sign-in-required" },
     });
     await renderEntry();
-    await userEvent.type(field<HTMLInputElement>("connector-url"), "https://mcp.linear.app/mcp");
+    await userEvent.fill(field<HTMLInputElement>("connector-url"), "https://mcp.linear.app/mcp");
     await submit();
   }
 

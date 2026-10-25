@@ -1,7 +1,7 @@
 import type { ModelReasoningMetadata, ServerProviderModel } from "@t3tools/contracts";
 import { preferredReasoningLevel } from "@t3tools/shared/model";
 
-import type { PiThinkingLevel } from "./PiRpcSchema.ts";
+import type { PiThinkingLevel } from "@t3tools/provider-pi/server/rpcSchema";
 import {
   encodeAgentModelSlug,
   isValidModelSegment,

@@ -5,7 +5,7 @@ import { ControlledLatexPresentRequest } from "./latexPdfBuild.ts";
 import { ScientDocumentPageRenderRequest } from "./scientDocumentExport.ts";
 
 /** The controlled document renderer has no browser-tab or arbitrary-action capability. */
-export const SCIENT_DOCUMENT_HOST_OPERATIONS = [
+const SCIENT_DOCUMENT_HOST_OPERATIONS = [
   "documentPdfRender",
   "documentPagePdfRender",
   "documentPdfPresent",

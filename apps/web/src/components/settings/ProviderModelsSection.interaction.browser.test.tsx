@@ -55,26 +55,25 @@ describe("provider-native model catalogs", () => {
     );
     return { onChange, onFavoriteModelsChange, onToggleFavorite };
   }
-  it.each(["pi", "antigravity"])(
-    "keeps %s catalog curation without offering invented models",
-    async (driver) => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-      await _setupFixture0(_fixture);
+  // pi and antigravity share the supportsCustomModels: false branch.
+  it("keeps pi catalog curation without offering invented models", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
 
-      const callbacks = await render(_fixture, driver);
-      expect(_fixture.container.textContent).toContain("Local model");
-      expect(_fixture.container.textContent).not.toContain("Add custom model");
-      const favorite = _fixture.container.querySelector<HTMLButtonElement>(
-        'button[aria-label="Add Local model to favorites"]',
-      );
-      expect(favorite).not.toBeNull();
-      await act(() => favorite!.click());
-      expect(callbacks.onToggleFavorite).toHaveBeenCalledWith("local/model");
-      expect(callbacks.onFavoriteModelsChange).not.toHaveBeenCalled();
-      expect(callbacks.onChange).not.toHaveBeenCalled();
-    },
-  );
+    const callbacks = await render(_fixture, "pi");
+    expect(_fixture.container.textContent).toContain("Local model");
+    expect(_fixture.container.textContent).not.toContain("Add custom model");
+    const favorite = _fixture.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Add Local model to favorites"]',
+    );
+    expect(favorite).not.toBeNull();
+    await act(() => favorite!.click());
+    expect(callbacks.onToggleFavorite).toHaveBeenCalledWith("local/model");
+    expect(callbacks.onFavoriteModelsChange).not.toHaveBeenCalled();
+    expect(callbacks.onChange).not.toHaveBeenCalled();
+  });
+  // regression: 8b55e253a2 fix(models): exclude known unavailable models from selection
   it("keeps an unavailable model and its explanation on the provider page with picker visibility off", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

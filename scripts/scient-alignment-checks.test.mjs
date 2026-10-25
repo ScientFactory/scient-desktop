@@ -219,7 +219,7 @@ test("composer hosts include settings, Stop and queue consumers and existing cli
   ]).boundaries.find((row) => row.id === "stop");
   NodeAssert.ok(
     stop.checks["web-browser"].includes(
-      "src/components/chat/ComposerPrimaryActions.browser.test.tsx",
+      "src/components/chat/ComposerPrimaryActions.scient.browser.test.tsx",
     ),
   );
   const unknown = "apps/web/src/components/chat/NewComposerHost.tsx";

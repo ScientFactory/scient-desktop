@@ -77,6 +77,7 @@ describe("inline workspace image presentation", () => {
     });
   });
 
+  // regression: e34e687915 fix(chat): make rich media reliable and copyable
   it("keeps the same file and byte actions available while the image is expanded", () => {
     for (const label of [
       "Open image file",
@@ -122,6 +123,7 @@ describe("inline workspace image presentation", () => {
     expect(markup).not.toContain("/workspace/project/figures/result.svg");
   });
 
+  // regression: e34e687915 fix(chat): make rich media reliable and copyable
   it("requests actionable image bytes with CORS", () => {
     expect(imageCardSource).toContain('crossOrigin="anonymous"');
   });

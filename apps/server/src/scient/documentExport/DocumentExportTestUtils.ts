@@ -1,5 +1,5 @@
-import * as Base64Url from "effect/encoding/Base64Url";
 // @effect-diagnostics nodeBuiltinImport:off -- Test fixtures exercise the real project filesystem.
+import * as NodeBuffer from "node:buffer";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -174,7 +174,8 @@ export function renderResultFor(
       scrollHeight: 2_400,
     },
     blockedRequestCount: 0,
-    bytesBase64: Base64Url.encode(bytes),
+    // The same base64url text as effect/encoding/Base64Url, without its 4 s on 64 MiB.
+    bytesBase64: NodeBuffer.Buffer.from(bytes).toString("base64url"),
   };
 }
 

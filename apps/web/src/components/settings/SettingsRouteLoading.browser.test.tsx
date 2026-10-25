@@ -85,24 +85,20 @@ async function mount(_fixture: _Fixture, failLoad = false) {
   return { release, router, requests: () => requests };
 }
 
-it.each(["pointer", "keyboard"])(
-  "preloads on %s intent without changing the current page",
-  async (intent) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+// regression: 6a52b09f3a fix(settings): acknowledge navigation and avoid repeated setup
+// (every case in this file).
+it("preloads on pointer intent without changing the current page", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-    const fixture = await mount(_fixture);
-    const button = _fixture.host!.querySelectorAll("button")[1]!;
-    if (intent === "pointer")
-      await userEvent.hover(page.getByRole("button", { name: "Providers", exact: true }));
-    else button.focus();
-    await expect.poll(fixture.requests).toBe(1);
-    expect(_fixture.host!.querySelector("main")!.textContent).toBe("General controls");
-    fixture.release();
-    await userEvent.click(page.getByRole("button", { name: "Providers", exact: true }));
-    await expect.element(page.getByText("Provider controls")).toBeVisible();
-  },
-);
+  const fixture = await mount(_fixture);
+  await userEvent.hover(page.getByRole("button", { name: "Providers", exact: true }));
+  await expect.poll(fixture.requests).toBe(1);
+  expect(_fixture.host!.querySelector("main")!.textContent).toBe("General controls");
+  fixture.release();
+  await userEvent.click(page.getByRole("button", { name: "Providers", exact: true }));
+  await expect.element(page.getByText("Provider controls")).toBeVisible();
+});
 
 it("acknowledges direct keyboard navigation and ignores a late superseded destination", async () => {
   await using _fixture = _createFixture();

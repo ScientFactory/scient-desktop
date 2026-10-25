@@ -71,7 +71,9 @@ function installTestBrowser(url: string) {
   };
 
   vi.stubGlobal("window", testWindow);
+  // SCIENT-FORK:START
   vi.stubGlobal("document", { title: "Scient" });
+  // SCIENT-FORK:END
 
   return testWindow;
 }
@@ -120,8 +122,10 @@ describe("resolveInitialServerAuthGateState", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+    // SCIENT-FORK:START
     vi.stubEnv("VITE_HTTP_URL", "");
     vi.stubEnv("VITE_WS_URL", "");
+    // SCIENT-FORK:END
     installTestBrowser("http://localhost/");
   });
 

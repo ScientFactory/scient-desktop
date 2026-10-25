@@ -146,6 +146,7 @@ describe("Scient nested code editor", () => {
     expect(content.getAttribute("aria-label")).toBe("HTML source");
   });
 
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
   it.each([
     "plotly",
     "plotly.js",
@@ -243,6 +244,7 @@ describe("Scient nested code editor", () => {
     await vi.waitFor(() => expect(parent.querySelector(".cm-line span[style]")).toBeNull());
   });
 
+  // regression: 9e5513e5c3 fix(web): align shared math and code presentation
   it.each([
     ["light", "#d5512f", "#18a46c", "#636363"],
     ["dark", "#ff855e", "#60d199", "#636363"],

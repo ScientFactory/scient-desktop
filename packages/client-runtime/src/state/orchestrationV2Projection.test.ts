@@ -13,7 +13,9 @@ import {
   ProviderTurnId,
   RunId,
   ThreadId,
+  // SCIENT-FORK:START
   ThreadSectionId,
+  // SCIENT-FORK:END
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -41,7 +43,9 @@ const run = {
   contextHandoffId: null,
 } satisfies OrchestrationV2Run;
 
+// SCIENT-FORK:START
 function commandItem(id: string, output = "done", ordinal = 1) {
+  // SCIENT-FORK:END
   return {
     id: TurnItemId.make(id),
     threadId,
@@ -61,7 +65,9 @@ function commandItem(id: string, output = "done", ordinal = 1) {
     input: "pwd",
     output,
     exitCode: 0,
+    // SCIENT-FORK:START
   } satisfies OrchestrationV2TurnItem;
+  // SCIENT-FORK:END
 }
 const emptyProjection = {
   thread: {
@@ -174,6 +180,7 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.providerTurns[0]?.tokenUsage).toEqual(running.tokenUsage);
   });
 
+  // SCIENT-FORK:START
   it.each([ThreadSectionId.make("research"), null])(
     "files the native thread into section %s without activity and retains it on rename",
     (sectionId) => {
@@ -198,6 +205,7 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     },
   );
 
+  // SCIENT-FORK:END
   it("applies thread lifecycle payloads instead of leaving stale metadata", () => {
     const archivedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
     const event = {
@@ -284,6 +292,7 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems[1]).toBe(secondRow);
   });
 
+  // SCIENT-FORK:START
   it.each([
     {
       name: "same visible run",
@@ -455,6 +464,7 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems.some((row) => row.sourceItemId === incoming.id)).toBe(false);
   });
 
+  // SCIENT-FORK:END
   it("inserts live turn items by authoritative ordinal", () => {
     const queuedFuture = commandItem("item-queued-future", "queued", 300);
     const activeAssistant = commandItem("item-active-assistant", "done", 201);

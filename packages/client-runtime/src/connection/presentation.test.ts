@@ -111,6 +111,7 @@ describe("connection presentation", () => {
     ).toBe("https://tunnel.example.test/mcp");
   });
 
+  // SCIENT-FORK:START
   it("passes over a non-HTTP endpoint instead of advertising an unusable MCP transport", () => {
     const relay = new RelayConnectionTarget({
       environmentId: TARGET.environmentId,
@@ -133,6 +134,7 @@ describe("connection presentation", () => {
     ).toBeNull();
   });
 
+  // SCIENT-FORK:END
   it("distinguishes initial connection, reconnect, and retry errors", () => {
     expect(presentConnectionState(supervisorState({ phase: "connecting", attempt: 1 }))).toEqual({
       phase: "connecting",

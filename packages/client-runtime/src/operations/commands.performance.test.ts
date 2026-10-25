@@ -225,6 +225,7 @@ describe("routine command transport budget", () => {
       if (!("sequence" in receipt)) {
         throw new Error("Expected a dispatch receipt");
       }
+      // SCIENT-FORK:START
       // The recorded former command predates captured send modes as well as
       // server-resolved delivery. Keep its byte baseline tied to that wire shape.
       const {
@@ -233,6 +234,7 @@ describe("routine command transport budget", () => {
         interactionMode: _interactionMode,
         ...formerCommand
       } = command;
+      // SCIENT-FORK:END
 
       const historicalApplicationBytes =
         encodedBytes(projection) + encodedBytes(formerCommand) + encodedBytes(receipt);
@@ -275,8 +277,10 @@ describe("routine command transport budget", () => {
         type: "message.dispatch",
         deliveryIntent: "auto",
         dispatchMode: { type: "start_immediately" },
+        // SCIENT-FORK:START
         runtimeMode: "full-access",
         interactionMode: "default",
+        // SCIENT-FORK:END
       });
       expect(currentRpcJsonBytes).toBeLessThanOrEqual(MAX_CURRENT_SEND_RPC_JSON_BYTES);
       expect(currentRpcJsonBytes / formerRpcJsonBytes).toBeLessThanOrEqual(0.000_06);

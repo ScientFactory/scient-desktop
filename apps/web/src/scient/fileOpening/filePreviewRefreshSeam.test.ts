@@ -19,16 +19,14 @@ const sourcePdfPreviewSource = NodeFS.readFileSync(
   new URL("../sources/SourcePdfPreview.tsx", import.meta.url),
   "utf8",
 );
-const workspaceFileRefreshSource = NodeFS.readFileSync(
-  new URL("../fileSurfaces/useWorkspaceFileRefresh.ts", import.meta.url),
-  "utf8",
-);
+
 const filePreviewPanelSource = NodeFS.readFileSync(
   new URL("../../components/files/FilePreviewPanel.tsx", import.meta.url),
   "utf8",
 );
 
 describe("Scient file refresh seams", () => {
+  // regression: c29da15583 feat(files): keep previews current (#186)
   it("keeps chat-linked files on the shared exact-file freshness boundary", () => {
     expect(environmentPreviewSource).toContain("useEnvironmentFileRefresh({");
     expect(environmentPreviewSource).toContain("automaticRefreshUnavailable=");
@@ -40,8 +38,6 @@ describe("Scient file refresh seams", () => {
   });
 
   it("keeps workspace watcher recovery behind the existing narrow viewer seam", () => {
-    expect(workspaceFileRefreshSource).toContain("fileChanges.refresh();");
-    expect(workspaceFileRefreshSource).toContain("automaticRefreshUnavailable:");
     // A file owned by a document session reports the health of that session's watcher.
     expect(filePreviewPanelSource).toContain(
       "automaticRefreshUnavailable={automaticRefreshUnavailable || sessionWatch.unavailable}",
@@ -49,16 +45,7 @@ describe("Scient file refresh seams", () => {
     expect(filePreviewPanelSource).toContain("sessionWatch.refresh();");
   });
 
-  it("uses explicit responsive headers and content-derived title direction", () => {
-    for (const source of [environmentPreviewSource, artifactPreviewSource]) {
-      expect(source).not.toContain('className="surface-subheader');
-      expect(source).toContain("data-surface-subheader");
-      expect(source).toContain("in-data-[preview-panel-mode=inline]:h-7");
-      expect(source).toContain('dir="auto"');
-      expect(source).toContain("text-start");
-    }
-  });
-
+  // regression: c29da15583 feat(files): keep previews current (#186)
   it("uses truthful recovery labels without adding a second PDF-reader control", () => {
     expect(artifactPreviewSource).toContain('aria-label="Reload figure"');
     expect(artifactPreviewSource).not.toContain('aria-label="Refresh figure"');

@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Fiber from "effect/Fiber";
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
-import { PiRpcProtocolError } from "./PiRpcClient.ts";
+import { PiRpcProtocolError } from "@t3tools/provider-pi/server/rpcClient";
 import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";

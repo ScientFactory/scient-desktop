@@ -32,7 +32,9 @@ const clientSettings: ClientSettings = {
   confirmQuit: "double-click",
   confirmThreadArchive: true,
   confirmThreadDelete: false,
+  // SCIENT-FORK:START scient-desktop-settings
   contentDirection: "auto",
+  // SCIENT-FORK:END scient-desktop-settings
   confirmThreadUnpin: false,
   contextWindowMeterEnabled: false,
   composerCollapseOnScroll: true,
@@ -46,6 +48,7 @@ const clientSettings: ClientSettings = {
   fontFamilyComposer: "",
   fontFamilySans: "",
   fontFamilyTerminal: "",
+  // SCIENT-FORK:START scient-desktop-settings
   fontSizeCode: 15,
   fontSizeInterface: 18,
   fontWeightInterface: 500,
@@ -57,6 +60,7 @@ const clientSettings: ClientSettings = {
   panelAnimationDurationMs: 0,
   planModeEnabled: false,
   showSkillsInSlashMenu: true,
+  // SCIENT-FORK:END scient-desktop-settings
   proactivePanelsEnabled: true,
   providerModelPreferences: {},
   sidebarProjectGroupingMode: "repository_path",
@@ -72,8 +76,10 @@ const clientSettings: ClientSettings = {
   loadBalancingWeights: { "environment-1": 75, "environment-2": 0 },
   pullRequestMergeMethodOverrides: {},
   timestampFormat: "24-hour",
+  // SCIENT-FORK:START scient-desktop-settings
   voiceLanguagePreference: "auto",
   voiceTranscriptCorrectionEnabled: false,
+  // SCIENT-FORK:END scient-desktop-settings
   wordWrap: true,
 };
 
@@ -91,7 +97,9 @@ function layer(baseDir: string) {
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
+      // SCIENT-FORK:START scient-desktop-settings
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ SCIENT_NEXT_HOME: baseDir })),
+      // SCIENT-FORK:END scient-desktop-settings
     ),
   );
 
@@ -241,27 +249,6 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
-  it.effect("loads defaults from empty client settings documents", () =>
-    withClientSettings(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
-        yield* fileSystem.writeFileString(environment.clientSettingsPath, "{}\n");
-
-        const persisted = yield* settings.get;
-        assert.deepEqual(persisted, Option.some(yield* decodeClientSettingsJson("{}")));
-        assert.isTrue(Option.isSome(persisted));
-        if (Option.isSome(persisted)) {
-          assert.equal(persisted.value.appearanceContrast, 120);
-          assert.equal(persisted.value.fontSizeInterface, 17);
-          assert.equal(persisted.value.showSkillsInSlashMenu, false);
-        }
-      }),
-    ),
-  );
-
   it.effect.each([
     { label: "malformed JSON", contents: "{not-json" },
     { label: "invalid legacy settings", contents: '{"settings":{"fontSizeCode":"large"}}' },
@@ -286,4 +273,28 @@ describe("DesktopClientSettings", () => {
       }),
     ),
   );
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: aa219be713 port desktop app to Effect (#2546)
+  it.effect("loads defaults from empty client settings documents", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(environment.clientSettingsPath, "{}\n");
+
+        const persisted = yield* settings.get;
+        assert.deepEqual(persisted, Option.some(yield* decodeClientSettingsJson("{}")));
+        assert.isTrue(Option.isSome(persisted));
+        if (Option.isSome(persisted)) {
+          assert.equal(persisted.value.appearanceContrast, 120);
+          assert.equal(persisted.value.fontSizeInterface, 17);
+          assert.equal(persisted.value.showSkillsInSlashMenu, false);
+        }
+      }),
+    ),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
 });

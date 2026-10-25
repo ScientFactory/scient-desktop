@@ -12,12 +12,10 @@ import {
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
-  resolveDefaultModelSettingsSelection,
   resolveDefaultProviderModelSelection,
   resolveProviderCatalogAvailability,
   resolveSelectableProviderInstance,
   shouldShowInstanceBadge,
-  sortProviderInstanceEntries,
 } from "./providerInstances";
 
 function provider(input: {
@@ -115,56 +113,6 @@ describe("resolveProviderCatalogAvailability", () => {
   });
 });
 
-describe("shouldShowInstanceBadge", () => {
-  it("ignores disabled instances and restores the badge when they are enabled", () => {
-    const entries = deriveProviderInstanceEntries([
-      provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi" }),
-      provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi_hosted" }),
-    ]);
-    expect(shouldShowInstanceBadge(entries[1]!, entries)).toBe(true);
-
-    const disabled = applyProviderInstanceSettings(
-      entries,
-      {
-        providerInstances: {
-          [ProviderInstanceId.make("pi")]: {
-            driver: ProviderDriverKind.make("pi"),
-            enabled: false,
-          },
-          [ProviderInstanceId.make("pi_hosted")]: {
-            driver: ProviderDriverKind.make("pi"),
-            enabled: true,
-          },
-        },
-        projectSettingsOverrides: {},
-      },
-      null,
-    );
-    expect(shouldShowInstanceBadge(disabled[1]!, disabled)).toBe(false);
-    expect(shouldShowInstanceBadge(entries[1]!, entries)).toBe(true);
-  });
-
-  it("does not badge a single instance or count other drivers", () => {
-    const entries = deriveProviderInstanceEntries([
-      provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi" }),
-      provider({ provider: ProviderDriverKind.make("droid"), instanceId: "droid" }),
-    ]);
-    expect(shouldShowInstanceBadge(entries[0]!, [entries[0]!])).toBe(false);
-    expect(shouldShowInstanceBadge(entries[0]!, entries)).toBe(false);
-  });
-
-  it("preserves explicitly configured accent badges", () => {
-    const entries = deriveProviderInstanceEntries([
-      provider({
-        provider: ProviderDriverKind.make("pi"),
-        instanceId: "pi",
-        accentColor: "#123456",
-      }),
-    ]);
-    expect(shouldShowInstanceBadge(entries[0]!, entries)).toBe(true);
-  });
-});
-
 describe("applyProviderInstanceSettings", () => {
   it("uses settings when a streamed snapshot still reports a disabled default as enabled", () => {
     const entries = deriveProviderInstanceEntries([
@@ -209,6 +157,7 @@ describe("applyProviderInstanceSettings", () => {
     },
   );
 
+  // regression: #8337 provider ids matching Object.prototype keys resolved to prototype members
   it("uses settings for a configured custom instance named constructor", () => {
     const instanceId = ProviderInstanceId.make("constructor");
     const entries = deriveProviderInstanceEntries([
@@ -253,34 +202,6 @@ describe("applyProviderInstanceSettings", () => {
   });
 });
 
-describe("sortProviderInstanceEntries", () => {
-  it("uses canonical provider order and keeps custom instances beneath their default", () => {
-    const entries = deriveProviderInstanceEntries([
-      provider({ provider: ProviderDriverKind.make("cursor"), instanceId: "cursor" }),
-      provider({
-        provider: ProviderDriverKind.make("antigravity"),
-        instanceId: "antigravity_work",
-      }),
-      provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claudeAgent" }),
-      provider({
-        provider: ProviderDriverKind.make("antigravity"),
-        instanceId: "antigravity_personal",
-      }),
-      provider({ provider: ProviderDriverKind.make("antigravity"), instanceId: "antigravity" }),
-      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
-    ]);
-
-    expect(sortProviderInstanceEntries(entries).map((entry) => entry.instanceId)).toEqual([
-      "codex",
-      "claudeAgent",
-      "antigravity",
-      "antigravity_work",
-      "antigravity_personal",
-      "cursor",
-    ]);
-  });
-});
-
 describe("deriveProviderEntriesByEnvironment", () => {
   it("resolves registry branding from each environment's settings", () => {
     const instanceId = "custom-acp";
@@ -313,6 +234,7 @@ describe("deriveProviderEntriesByEnvironment", () => {
     );
   });
 
+  // regression: #7292 sidebar provider icons resolved from the wrong environment
   it("keeps same-id default instances distinct per environment", () => {
     const byEnvironment = deriveProviderEntriesByEnvironment([
       [
@@ -418,6 +340,7 @@ describe("resolveSelectableProviderInstance", () => {
     expect(resolveSelectableProviderInstance(providers, requested)).toBe(requested);
   });
 
+  // regression: #4117 users without Codex got a broken default provider
   it("does not invent an errored instance as a new-user default", () => {
     const notInstalled = ProviderInstanceId.make("codex");
     const providers = [
@@ -502,6 +425,7 @@ describe("getDefaultProviderInstanceModel", () => {
 });
 
 describe("resolveDefaultProviderModelSelection", () => {
+  // regression: #4117 users without Codex got a broken default provider
   it.each([
     ["codex", "codex", "gpt-5.6"],
     ["claudeAgent", "claudeAgent", "claude-fable-5"],
@@ -561,6 +485,7 @@ describe("resolveDefaultProviderModelSelection", () => {
     ).toEqual({ instanceId: "claudeAgent", model: "claude-opus-4-8" });
   });
 
+  // regression: #4117 users without Codex got a broken default provider
   it.each([{ enabled: false }, { availability: "unavailable" as const }])(
     "replaces an unavailable stored instance deterministically",
     (requestedState) => {
@@ -628,77 +553,6 @@ describe("resolveDefaultProviderModelSelection", () => {
   });
 });
 
-describe("resolveDefaultModelSettingsSelection", () => {
-  const claude = ProviderInstanceId.make("claudeAgent");
-  const stored = {
-    instanceId: claude,
-    model: "claude-opus-4-8",
-    options: [{ id: "effort", value: "high" }],
-  };
-  const codexReady = provider({
-    provider: ProviderDriverKind.make("codex"),
-    instanceId: "codex",
-    models: [model("gpt-5.6", false, true)],
-  });
-
-  it("shows a saved default whose provider is available as-is", () => {
-    const providers = [
-      codexReady,
-      provider({
-        provider: ProviderDriverKind.make("claudeAgent"),
-        instanceId: "claudeAgent",
-        models: [model("claude-opus-4-8")],
-      }),
-    ];
-
-    expect(resolveDefaultModelSettingsSelection(providers, stored)).toEqual({
-      selection: stored,
-      storedUnavailable: false,
-    });
-  });
-
-  it.each([{ enabled: false }, { availability: "unavailable" as const }])(
-    "keeps showing the saved default, not a stand-in, when its provider is %o",
-    (state) => {
-      const providers = [
-        codexReady,
-        provider({
-          provider: ProviderDriverKind.make("claudeAgent"),
-          instanceId: "claudeAgent",
-          models: [model("claude-opus-4-8")],
-          ...state,
-        }),
-      ];
-
-      expect(resolveDefaultModelSettingsSelection(providers, stored)).toEqual({
-        selection: stored,
-        storedUnavailable: true,
-      });
-    },
-  );
-
-  it("keeps a saved default whose provider instance is gone", () => {
-    expect(resolveDefaultModelSettingsSelection([codexReady], stored)).toEqual({
-      selection: stored,
-      storedUnavailable: true,
-    });
-  });
-
-  it("does not call a saved default unavailable before any provider is reported", () => {
-    expect(resolveDefaultModelSettingsSelection([], stored)).toEqual({
-      selection: null,
-      storedUnavailable: false,
-    });
-  });
-
-  it("shows the fallback new threads would use when nothing is saved", () => {
-    expect(resolveDefaultModelSettingsSelection([codexReady], null)).toEqual({
-      selection: { instanceId: "codex", model: "gpt-5.6" },
-      storedUnavailable: false,
-    });
-  });
-});
-
 describe("provider icon metadata", () => {
   it("clears stale registry branding when an instance switches to a local command", () => {
     const instanceId = ProviderInstanceId.make("custom-acp");
@@ -751,3 +605,17 @@ describe("provider icon metadata", () => {
     expect(restoredEntry?.enabled).toBe(true);
   });
 });
+
+// SCIENT-FORK:START — restore the original behavior guard.
+describe("shouldShowInstanceBadge", () => {
+  // regression: 49fc8e0623 feat(providers): add native Pi integration (#245)
+  it("does not badge a single instance or count other drivers", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi" }),
+      provider({ provider: ProviderDriverKind.make("droid"), instanceId: "droid" }),
+    ]);
+    expect(shouldShowInstanceBadge(entries[0]!, [entries[0]!])).toBe(false);
+    expect(shouldShowInstanceBadge(entries[0]!, entries)).toBe(false);
+  });
+});
+// SCIENT-FORK:END

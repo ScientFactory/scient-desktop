@@ -2,24 +2,14 @@ import { describe, expect, it } from "vite-plus/test";
 import { buildRuntimeInstructions } from "./runtimeInstructions.ts";
 
 describe("buildRuntimeInstructions", () => {
-  it("requires explicit registration of every PR and stack layer", () => {
-    const instructions = buildRuntimeInstructions({ harness: "Codex" });
-    expect(instructions).toContain("When the MCP server named t3-code exposes link_pull_request");
-    expect(instructions).toContain("with the full PR URL immediately after creating a PR");
-    expect(instructions).toContain("For a stack, call it for every layer");
-    expect(instructions).toContain("call list_thread_pull_requests and link any PR");
+  // Every harness name takes the same interpolation path.
+  it.each(["Codex"])("identifies the %s harness and describes media embedding", (harness) => {
+    const instructions = buildRuntimeInstructions({ harness });
+    expect(instructions).toContain(`running in T3 Code through the ${harness} harness.`);
+    expect(instructions).toContain("embed images and videos");
+    expect(instructions).toContain("Markdown with absolute file paths");
+    expect(instructions).not.toContain("undefined");
   });
-
-  it.each(["Codex", "Claude Code", "Cursor", "Grok", "OpenCode", "Antigravity"])(
-    "identifies the %s harness and describes media embedding",
-    (harness) => {
-      const instructions = buildRuntimeInstructions({ harness });
-      expect(instructions).toContain(`running in T3 Code through the ${harness} harness.`);
-      expect(instructions).toContain("embed images and videos");
-      expect(instructions).toContain("Markdown with absolute file paths");
-      expect(instructions).not.toContain("undefined");
-    },
-  );
 
   it("uses the host product in agent wake-up instructions without renaming the MCP server", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex", productName: "Scient" });

@@ -1,4 +1,6 @@
+// SCIENT-FORK:START
 import { toolGroupAction } from "./presentation.js";
+// SCIENT-FORK:END
 import { describe, expect, it } from "vite-plus/test";
 
 import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
@@ -79,6 +81,7 @@ describe("workEntryIndicatesToolFailure", () => {
     expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
   });
 
+  // SCIENT-FORK:START
   it("keeps explicitly stopped tools neutral even when partial output resembles an error", () => {
     const entry = {
       ...base,
@@ -92,6 +95,7 @@ describe("workEntryIndicatesToolFailure", () => {
     expect(workEntryIndicatesToolFailure({ ...entry, toolLifecycleStatus: "failed" })).toBe(true);
   });
 
+  // SCIENT-FORK:END
   it("does not treat error text in a command as rendered failure", () => {
     const entry = {
       ...base,
@@ -177,6 +181,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     ).toBe("Failed to click in the preview browser");
   });
 
+  // SCIENT-FORK:START
   it.each([
     ["preview_type", "Typing in the preview browser", "Typed in the preview browser"],
     [
@@ -209,6 +214,7 @@ describe("resolveWorkEntryToolPresentation", () => {
       resolveWorkEntryToolPresentation({ ...entry, toolLifecycleStatus: "completed" })?.displayName,
     ).toBe(completed);
   });
+  // regression: a892edfa6b fix: brand owned agent tools as Scient
   it.each(["inProgress", "completed", "failed", "declined", "stopped"] as const)(
     "preserves historical tool identity and lifecycle after the Scient cutover: %s",
     (toolLifecycleStatus) => {
@@ -228,6 +234,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     },
   );
 
+  // SCIENT-FORK:END
   it.each([
     ["https://github.com/acme/web/pull/7", "PR #7"],
     ["https://gitlab.com/acme/web/-/merge_requests/7", "MR #7"],
@@ -244,9 +251,11 @@ describe("resolveWorkEntryToolPresentation", () => {
   it("does not brand unknown tools or another server's matching tool name", () => {
     for (const label of [
       "mcp__github__preview_click",
+      // SCIENT-FORK:START
       "mcp__github__scient_thread_read",
       "scient.toString",
       "scient.unknown_tool",
+      // SCIENT-FORK:END
       "t3-code.unknown_tool",
       "t3-code.toString",
       "Search files",
@@ -261,6 +270,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     ).toBeNull();
   });
 });
+// SCIENT-FORK:START
 describe("toolGroupAction", () => {
   it.each(["Edit", "Write", "MultiEdit"])(
     "groups structured native %s calls as edits without changed-file metadata",
@@ -282,3 +292,4 @@ describe("toolGroupAction", () => {
     },
   );
 });
+// SCIENT-FORK:END

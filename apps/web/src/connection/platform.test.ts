@@ -158,10 +158,12 @@ describe("desktop SSH pairing", () => {
       const provisioned = yield* Fiber.join(retry);
 
       expect(provisioned.bearerToken).toBe("bearer-token");
+      // SCIENT-FORK:START
       expect(ensure).toHaveBeenCalledExactlyOnceWith(TARGET, {
         issuePairingToken: true,
         boundedWait: true,
       });
+      // SCIENT-FORK:END
       expect(exchange).toHaveBeenCalledExactlyOnceWith(
         SSH_BOOTSTRAP.httpBaseUrl,
         "abandoned-token",
@@ -276,10 +278,12 @@ describe("desktop SSH pairing", () => {
       });
 
       expect(prepared.bearerToken).toBe("saved-token");
+      // SCIENT-FORK:START
       expect(ensure).toHaveBeenCalledExactlyOnceWith(TARGET, {
         issuePairingToken: false,
         boundedWait: true,
       });
+      // SCIENT-FORK:END
       expect(calls).toEqual(["ensure", "descriptor", "session"]);
     }),
   );

@@ -1,21 +1,22 @@
+import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  ChatAttachment,
+  UploadChatAttachment,
+  SnapShotAccessibility,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+} from "./chatAttachment.ts";
+import { ProjectCreatePayload } from "./project.ts";
+import { SourceProposedPlanReference } from "./scientConversationView.ts";
+import { ChatImageAttachment } from "./chatAttachment.ts";
+import { OrchestrationGetFullThreadDiffInput } from "./checkpointDiff.ts";
+import { ThreadPullRequestKey, ThreadPullRequestLink } from "./threadPullRequest.ts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
-import { CommandId, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import {
-  ChatAttachment,
-  ChatImageAttachment,
-  UploadChatAttachment,
-  SnapShotAccessibility,
-  isProviderSendTurnSupportedImageMimeType,
-  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
-} from "./chatAttachment.ts";
-import {
-  OrchestrationGetFullThreadDiffInput,
-  OrchestrationGetTurnDiffInput,
-  ThreadTurnDiff,
-} from "./checkpointDiff.ts";
+import { CommandId, ProjectId } from "./baseSchemas.ts";
+import { isProviderSendTurnSupportedImageMimeType } from "./chatAttachment.ts";
+import { OrchestrationGetTurnDiffInput, ThreadTurnDiff } from "./checkpointDiff.ts";
 import {
   OrchestrationEvent,
   OrchestrationSession,
@@ -30,7 +31,6 @@ import { ModelSelection } from "./modelSelection.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 import {
-  ProjectCreatePayload,
   ProjectFaviconPath,
   ProjectIconOverride,
   ProjectUpdatePayload,
@@ -43,27 +43,33 @@ import {
   OrchestrationLatestTurn,
   OrchestrationMessage,
   OrchestrationProposedPlan,
-  SourceProposedPlanReference,
 } from "./scientConversationView.ts";
 import { OrchestrationThread, OrchestrationThreadShell } from "./scientOrchestrationSnapshot.ts";
-import {
-  ThreadLinkedPullRequest,
-  ThreadPullRequestKey,
-  ThreadPullRequestLink,
-} from "./threadPullRequest.ts";
-const decodeCommandId = Schema.decodeUnknownEffect(CommandId);
+import { ThreadLinkedPullRequest } from "./threadPullRequest.ts";
+
 const decodeProjectCreatePayload = Schema.decodeUnknownEffect(ProjectCreatePayload);
 const decodeTrimmedNonEmptyString = Schema.decodeUnknownEffect(TrimmedNonEmptyString);
 const decodeUploadChatAttachment = Schema.decodeUnknownEffect(UploadChatAttachment);
 const decodeChatAttachment = Schema.decodeUnknownEffect(ChatAttachment);
+const decodeSourceProposedPlanReference = Schema.decodeUnknownEffect(SourceProposedPlanReference);
+const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
+const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
+
+function getOptionValue(
+  options: ReadonlyArray<{ id: string; value: unknown }> | undefined,
+  id: string,
+): unknown {
+  return options?.find((option) => option.id === id)?.value;
+}
+
 const decodeChatImageAttachment = Schema.decodeUnknownEffect(ChatImageAttachment);
 const decodeThreadPullRequestLink = Schema.decodeUnknownEffect(ThreadPullRequestLink);
 const decodeThreadPullRequestKey = Schema.decodeUnknownEffect(ThreadPullRequestKey);
-const decodeSourceProposedPlanReference = Schema.decodeUnknownEffect(SourceProposedPlanReference);
-const decodeProjectFaviconPath = Schema.decodeUnknownEffect(ProjectFaviconPath);
-const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFullThreadDiffInput);
-const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
+const decodeModelSelection = Schema.decodeUnknownEffect(ModelSelection);
+const encodeModelSelection = Schema.encodeUnknownEffect(ModelSelection);
+const decodeCommandId = Schema.decodeUnknownEffect(CommandId);
+const decodeProjectFaviconPath = Schema.decodeUnknownEffect(ProjectFaviconPath);
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeOrchestrationMessage = Schema.decodeUnknownEffect(OrchestrationMessage);
@@ -76,105 +82,9 @@ const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(Orchestration
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeOrchestrationThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
-const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
-
-function getOptionValue(
-  options: ReadonlyArray<{ id: string; value: unknown }> | undefined,
-  id: string,
-): unknown {
-  return options?.find((option) => option.id === id)?.value;
-}
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
-const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
-const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
-
-it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
-  Effect.gen(function* () {
-    const error = yield* decodeDispatchCommandError({
-      _tag: "OrchestrationDispatchCommandError",
-      message: "Failed to create worktree.",
-      bootstrapThreadDisposition: "deleted",
-    });
-
-    assert.strictEqual(error.bootstrapThreadDisposition, "deleted");
-  }),
-);
-
-it.effect("decodes a dispatch error before its bootstrap thread was created", () =>
-  Effect.gen(function* () {
-    const error = yield* decodeDispatchCommandError({
-      _tag: "OrchestrationDispatchCommandError",
-      message: "A separate worktree requires a base commit.",
-      bootstrapThreadDisposition: "not-created",
-    });
-
-    assert.strictEqual(error.bootstrapThreadDisposition, "not-created");
-  }),
-);
-
-it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeTurnDiffInput({
-      threadId: "thread-1",
-      fromTurnCount: 1,
-      toTurnCount: 2,
-    });
-    assert.strictEqual(parsed.fromTurnCount, 1);
-    assert.strictEqual(parsed.toTurnCount, 2);
-  }),
-);
-
-it.effect("parses turn diff input with whitespace ignoring enabled", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeTurnDiffInput({
-      threadId: "thread-1",
-      fromTurnCount: 1,
-      toTurnCount: 2,
-      ignoreWhitespace: true,
-    });
-    assert.strictEqual(parsed.ignoreWhitespace, true);
-  }),
-);
-
-it.effect("parses full thread diff input with whitespace ignoring enabled", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeFullThreadDiffInput({
-      threadId: "thread-1",
-      toTurnCount: 2,
-      ignoreWhitespace: true,
-    });
-    assert.strictEqual(parsed.ignoreWhitespace, true);
-  }),
-);
-
-it.effect("rejects turn diff input when fromTurnCount > toTurnCount", () =>
-  Effect.gen(function* () {
-    const result = yield* Effect.exit(
-      decodeTurnDiffInput({
-        threadId: "thread-1",
-        fromTurnCount: 3,
-        toTurnCount: 2,
-      }),
-    );
-    assert.strictEqual(result._tag, "Failure");
-  }),
-);
-
-it.effect("rejects thread turn diff when fromTurnCount > toTurnCount", () =>
-  Effect.gen(function* () {
-    const result = yield* Effect.exit(
-      decodeThreadTurnDiff({
-        threadId: "thread-1",
-        fromTurnCount: 3,
-        toTurnCount: 2,
-        diff: "patch",
-      }),
-    );
-    assert.strictEqual(result._tag, "Failure");
-  }),
-);
 
 it.effect("trims branded ids and retained project fields at decode boundaries", () =>
   Effect.gen(function* () {
@@ -201,6 +111,7 @@ it.effect("trims branded ids and retained project fields at decode boundaries", 
   }),
 );
 
+// regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
 it.effect("decodes project creation with createWorkspaceRootIfMissing enabled", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectCreatePayload({
@@ -245,6 +156,7 @@ it.effect("decodes project.meta-updated payloads with explicit default provider"
   }),
 );
 
+// regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
 it.effect("rejects retained string fields that become empty after trim", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(decodeTrimmedNonEmptyString("  "));
@@ -252,6 +164,7 @@ it.effect("rejects retained string fields that become empty after trim", () =>
   }),
 );
 
+// regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
 it.effect("accepts inline uploads and persisted image and file attachments", () =>
   Effect.gen(function* () {
     const attachments = [
@@ -325,9 +238,7 @@ it.effect("tolerates attachment types from newer builds when decoding messages",
   }),
 );
 
-// The tolerant member must not catch malformed known attachments: a file over
-// the size cap or an image with a bad mime has to fail its own schema, not
-// slide through the open one with those constraints unchecked.
+// regression: 8f49132214 feat(server): accept PDF, ZIP, and other file uploads up to 50MB (#8235)
 it.effect("rejects malformed known attachment types instead of tolerating them", () =>
   Effect.gen(function* () {
     const base = {
@@ -359,6 +270,7 @@ it.effect("rejects malformed known attachment types instead of tolerating them",
   }),
 );
 
+// regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
 it.effect("preserves window capture metadata on a persisted image attachment", () =>
   Effect.gen(function* () {
     const attachment = yield* decodeChatImageAttachment({
@@ -428,6 +340,7 @@ it.effect("preserves window capture metadata on a persisted image attachment", (
   }),
 );
 
+// regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
 it.effect("rejects accessibility trees above the serialized payload limit", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(
@@ -598,6 +511,7 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
   }),
 );
 
+// regression: afb84898be feat(pull-requests): link multiple pull requests to threads (#10839)
 it.effect("decodes thread pull request links with snapshot and stack", () =>
   Effect.gen(function* () {
     const shell = yield* decodeOrchestrationThreadShell({
@@ -827,6 +741,7 @@ it.effect("decodes thread settled and unsettled events", () =>
   }),
 );
 
+// regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
 it.effect("accepts provider-scoped model options through their canonical owner", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeModelSelection({
@@ -875,6 +790,7 @@ it.effect("normalizes legacy object-shaped modelSelection.options on decode", ()
   }),
 );
 
+// regression: 8d1d699f88 Refactor provider model selections to option arrays (#2246)
 it.effect("normalizes legacy object-shaped defaultModelSelection.options on decode", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectCreatedPayload({
@@ -897,6 +813,7 @@ it.effect("normalizes legacy object-shaped defaultModelSelection.options on deco
   }),
 );
 
+// regression: 8d1d699f88 Refactor provider model selections to option arrays (#2246)
 it.effect(
   "normalizes legacy object-shaped options on decode and re-encodes as canonical array",
   () =>
@@ -967,6 +884,7 @@ it.effect("decodes historical project reassignment fields on thread.meta-updated
   }),
 );
 
+// regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
 it.effect("accepts pull request link metadata and unlink keys", () =>
   Effect.gen(function* () {
     const link = yield* decodeThreadPullRequestLink({
@@ -1025,6 +943,7 @@ it.effect("still decodes a persisted thread.meta-updated event carrying linkedPu
   }),
 );
 
+// regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
 it.effect("accepts a source proposed plan reference through its canonical owner", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeSourceProposedPlanReference({
@@ -1148,23 +1067,7 @@ it.effect("preserves proposed plan implementation metadata when present", () =>
   }),
 );
 
-// ── ModelSelection: instance-keyed wire shape + legacy decoder ────────
-//
-// `ModelSelection` is routing-keyed on `instanceId` — never a driver kind.
-// Persisted and in-flight payloads from pre-instance builds carry a
-// `provider` field whose value was a driver kind; those payloads are migrated
-// at the wire boundary by
-// promoting `provider` to the default instance id for that driver
-// (built-in drivers use the driver kind slug as their default instance id, so
-// the migration is a 1:1 rename).
-//
-// These tests pin the rollback/fork tolerance invariant: legacy payloads
-// decode cleanly for fork-provided drivers, and the decoded form uses
-// `instanceId` uniformly regardless of origin.
-
-const decodeModelSelection = Schema.decodeUnknownEffect(ModelSelection);
-const encodeModelSelection = Schema.encodeUnknownEffect(ModelSelection);
-
+// regression: 08e6d4cfbf feat: Multi-Provider support (#2277)
 it.effect("ModelSelection migrates legacy `provider` field to `instanceId`", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeModelSelection({
@@ -1178,6 +1081,7 @@ it.effect("ModelSelection migrates legacy `provider` field to `instanceId`", () 
   }),
 );
 
+// regression: 08e6d4cfbf feat: Multi-Provider support (#2277)
 it.effect("ModelSelection accepts an explicit instanceId routing key", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeModelSelection({
@@ -1188,6 +1092,7 @@ it.effect("ModelSelection accepts an explicit instanceId routing key", () =>
   }),
 );
 
+// regression: 08e6d4cfbf feat: Multi-Provider support (#2277)
 it.effect("ModelSelection prefers explicit instanceId over legacy provider", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeModelSelection({
@@ -1199,6 +1104,7 @@ it.effect("ModelSelection prefers explicit instanceId over legacy provider", () 
   }),
 );
 
+// regression: 08e6d4cfbf feat: Multi-Provider support (#2277)
 it.effect(
   "ModelSelection decodes unknown driver kinds via legacy provider (rollback / fork invariant)",
   () =>
@@ -1213,6 +1119,7 @@ it.effect(
     }),
 );
 
+// regression: 08e6d4cfbf feat: Multi-Provider support (#2277)
 it.effect("ModelSelection encodes to the canonical instanceId wire form", () =>
   Effect.gen(function* () {
     const decoded = yield* decodeModelSelection({
@@ -1229,18 +1136,6 @@ it.effect("ModelSelection encodes to the canonical instanceId wire form", () =>
   }),
 );
 
-it.effect("ModelSelection rejects malformed instance ids", () =>
-  Effect.gen(function* () {
-    const result = yield* Effect.exit(
-      decodeModelSelection({
-        instanceId: "1invalid", // must start with a letter
-        model: "x",
-      }),
-    );
-    assert.strictEqual(result._tag, "Failure");
-  }),
-);
-
 it.effect("project favicon overrides accept only supported image files", () =>
   Effect.gen(function* () {
     const valid = yield* decodeProjectFaviconPath("brand/icon.svg");
@@ -1250,6 +1145,7 @@ it.effect("project favicon overrides accept only supported image files", () =>
   }),
 );
 
+// regression: f6c04c552c feat(web): add customizable project icons (#9137)
 it.effect("project icon overrides accept Lucide icons, colors, and emoji", () =>
   Effect.gen(function* () {
     const lucide = yield* decodeProjectIcon({
@@ -1267,6 +1163,7 @@ it.effect("project icon overrides accept Lucide icons, colors, and emoji", () =>
   }),
 );
 
+// regression: 438465d6b7 feat: add customizable soft-tint project monograms (#11845)
 it.effect("project monograms validate text and palette colors", () =>
   Effect.gen(function* () {
     for (const text of ["A", "T3", "É", "文書", "कि", "किखि", "e\u0301"]) {
@@ -1291,6 +1188,7 @@ it.effect("project monograms validate text and palette colors", () =>
   }),
 );
 
+// regression: 34a12bc33f fix(web): reject unsupported composer image types at attach time (#6574)
 it("isProviderSendTurnSupportedImageMimeType accepts raster formats and rejects svg", () => {
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/png"), true);
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("IMAGE/JPEG"), true);
@@ -1402,5 +1300,116 @@ it.effect("recovers legacy monograms inside snapshots and writes their canonical
       assert.deepEqual(recovered.projectIcon, projectIcon);
       assert.deepEqual(yield* encodeProjectShell(recovered), shell);
     }
+  }),
+);
+
+const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
+const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
+const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
+const decodeRoutedModelSelection = Schema.decodeUnknownEffect(ModelSelection);
+
+// regression: 8824f8f24f fix(web): retry failed thread bootstraps with a fresh id (#7664)
+it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
+  Effect.gen(function* () {
+    const error = yield* decodeDispatchCommandError({
+      _tag: "OrchestrationDispatchCommandError",
+      message: "Failed to create worktree.",
+      bootstrapThreadDisposition: "deleted",
+    });
+
+    assert.strictEqual(error.bootstrapThreadDisposition, "deleted");
+  }),
+);
+
+// regression: 0150c6a53b feat(web): start new threads with multiple models in separate worktrees (#12179)
+it.effect("decodes a dispatch error before its bootstrap thread was created", () =>
+  Effect.gen(function* () {
+    const error = yield* decodeDispatchCommandError({
+      _tag: "OrchestrationDispatchCommandError",
+      message: "A separate worktree requires a base commit.",
+      bootstrapThreadDisposition: "not-created",
+    });
+
+    assert.strictEqual(error.bootstrapThreadDisposition, "not-created");
+  }),
+);
+
+// regression: c2b9680a5e buuuunch of cleanup
+it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeTurnDiffInput({
+      threadId: "thread-1",
+      fromTurnCount: 1,
+      toTurnCount: 2,
+    });
+    assert.strictEqual(parsed.fromTurnCount, 1);
+    assert.strictEqual(parsed.toTurnCount, 2);
+  }),
+);
+
+// regression: f7748a0d65 feat: add "hide whitespace changes" option for diffs (#2389)
+it.effect("parses turn diff input with whitespace ignoring enabled", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeTurnDiffInput({
+      threadId: "thread-1",
+      fromTurnCount: 1,
+      toTurnCount: 2,
+      ignoreWhitespace: true,
+    });
+    assert.strictEqual(parsed.ignoreWhitespace, true);
+  }),
+);
+
+// regression: f7748a0d65 feat: add "hide whitespace changes" option for diffs (#2389)
+it.effect("parses full thread diff input with whitespace ignoring enabled", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeFullThreadDiffInput({
+      threadId: "thread-1",
+      toTurnCount: 2,
+      ignoreWhitespace: true,
+    });
+    assert.strictEqual(parsed.ignoreWhitespace, true);
+  }),
+);
+
+// regression: c2b9680a5e buuuunch of cleanup
+it.effect("rejects turn diff input when fromTurnCount > toTurnCount", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeTurnDiffInput({
+        threadId: "thread-1",
+        fromTurnCount: 3,
+        toTurnCount: 2,
+      }),
+    );
+    assert.strictEqual(Exit.isFailure(result), true);
+  }),
+);
+
+// regression: c2b9680a5e buuuunch of cleanup
+it.effect("rejects thread turn diff when fromTurnCount > toTurnCount", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeThreadTurnDiff({
+        threadId: "thread-1",
+        fromTurnCount: 3,
+        toTurnCount: 2,
+        diff: "patch",
+      }),
+    );
+    assert.strictEqual(Exit.isFailure(result), true);
+  }),
+);
+
+// regression: 08e6d4cfbf feat: Multi-Provider support (#2277)
+it.effect("ModelSelection rejects malformed instance ids", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeRoutedModelSelection({
+        instanceId: "1invalid", // must start with a letter
+        model: "x",
+      }),
+    );
+    assert.strictEqual(Exit.isFailure(result), true);
   }),
 );

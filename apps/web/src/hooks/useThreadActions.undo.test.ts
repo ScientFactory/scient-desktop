@@ -1,3 +1,4 @@
+// SCIENT-FORK:START
 import {
   EnvironmentId,
   ThreadId,
@@ -6,6 +7,7 @@ import {
   type ScientCompletedAnswer,
   type OrchestrationV2RunStatus,
 } from "@t3tools/contracts";
+// SCIENT-FORK:END
 import * as Cause from "effect/Cause";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -23,7 +25,9 @@ const commands = vi.hoisted(() => ({
   unsettle: vi.fn(),
   snooze: vi.fn(),
   unsnooze: vi.fn(),
+  // SCIENT-FORK:START
   markUnread: vi.fn(),
+  // SCIENT-FORK:END
 }));
 const router = vi.hoisted(() => ({
   navigate: vi.fn(async () => {}),
@@ -45,6 +49,7 @@ vi.mock("./useSettings", () => ({ useClientSettings: () => false }));
 vi.mock("./useHandleNewThread", () => ({ useNewThreadHandler: () => vi.fn() }));
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => vi.fn() }));
 vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
+// SCIENT-FORK:START
 const attention = vi.hoisted(() => ({
   serverTracked: false,
   markUnread: vi.fn(),
@@ -59,6 +64,7 @@ vi.mock("../uiStateStore", () => ({
   ) =>
     selector({ markThreadUnread: attention.markUnread, markThreadVisited: attention.markVisited }),
 }));
+// SCIENT-FORK:END
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
 const threadShell = vi.hoisted(() => ({
   title: "Thread",
@@ -68,15 +74,19 @@ const threadShell = vi.hoisted(() => ({
   projectId: "project",
   environmentId: "undo-env",
   session: null,
+  // SCIENT-FORK:START
   latestCompletedAnswer: undefined as ScientCompletedAnswer | null | undefined,
   latestRun: {
     status: "completed" as OrchestrationV2RunStatus,
     completedAt: "2026-10-04T12:00:00.000Z",
   },
+  // SCIENT-FORK:END
 }));
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
+  // SCIENT-FORK:START
   readEnvironmentSupportsVisitedTracking: () => attention.serverTracked,
+  // SCIENT-FORK:END
   readEnvironmentSupportsPinning: () => true,
   readEnvironmentSupportsPinReorder: () => true,
   readEnvironmentSupportsSettlement: () => true,
@@ -86,8 +96,10 @@ vi.mock("../state/entities", async (original) => ({
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => {
     switch (command) {
+      // SCIENT-FORK:START
       case threadEnvironment.markUnread:
         return commands.markUnread;
+      // SCIENT-FORK:END
       case threadEnvironment.pin:
         return commands.pin;
       case threadEnvironment.unpin:
@@ -127,9 +139,11 @@ beforeEach(() => {
   }
   router.navigate.mockClear();
   router.state.matches[0]!.params = {};
+  // SCIENT-FORK:START
   attention.serverTracked = false;
   attention.markUnread.mockReset();
   threadShell.latestCompletedAnswer = undefined;
+  // SCIENT-FORK:END
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
 });
@@ -303,6 +317,7 @@ describe("settle and snooze Undo", () => {
   });
 });
 
+// SCIENT-FORK:START
 describe("local mark-unread canonical answer", () => {
   it("rewinds against the earlier completed answer, not a later answerless run", () => {
     threadShell.latestCompletedAnswer = {
@@ -332,3 +347,5 @@ describe("local mark-unread canonical answer", () => {
     expect(attention.markUnread).not.toHaveBeenCalled();
   });
 });
+
+// SCIENT-FORK:END

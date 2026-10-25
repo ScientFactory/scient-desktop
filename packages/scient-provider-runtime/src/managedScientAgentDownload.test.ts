@@ -3,12 +3,24 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import { hydrateManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import { ManagedScientAgentRuntime } from "./managedScientAgentRuntime.ts";
 import { resolveScientAgentArtifactPolicy } from "./scientAgentManifest.ts";
+
+vi.mock("node:timers/promises", { spy: true });
+// The transient-response backoff resolves at once but still honours cancellation.
+vi.mocked(NodeTimersPromises.setTimeout).mockImplementation((async (
+  _delay: number,
+  value: unknown,
+  options?: { signal?: AbortSignal },
+) => {
+  options?.signal?.throwIfAborted();
+  return value;
+}) as never);
 
 const roots: string[] = [];
 const bytes = Buffer.from("synthetic Scient executable");

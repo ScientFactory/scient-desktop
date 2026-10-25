@@ -163,7 +163,9 @@ function makeTestInstance(input: MakeInstanceInput) {
       handleControlForSource: () => Effect.void,
       removeControlSource: () => Effect.void,
       publishUpdateReport: () => Effect.void,
+      // SCIENT-FORK:START scient-backend-health
       publishHealth: () => Effect.void,
+      // SCIENT-FORK:END scient-backend-health
       updateRequests: Stream.empty,
       updateCommits: Stream.empty,
       updateCancellations: Stream.empty,

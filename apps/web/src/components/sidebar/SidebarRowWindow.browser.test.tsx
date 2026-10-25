@@ -77,7 +77,8 @@ async function mount(_fixture: _Fixture, { count = 1560, active = -1, fontSize =
   };
 }
 
-it.each([16, 20])(
+// One enlarged font covers both bounding and rem-scaled row geometry.
+it.each([20])(
   "bounds bodies in a 1560-row list and preserves scaled geometry at %ipx",
   async (fontSize) => {
     await using _fixture = _createFixture();

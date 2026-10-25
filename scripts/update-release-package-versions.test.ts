@@ -1,3 +1,9 @@
+// SCIENT-FORK:START
+import * as PlatformError from "effect/PlatformError";
+// SCIENT-FORK:END
+// SCIENT-FORK:START
+import { ReleasePackageManifestError } from "./update-release-package-versions.ts";
+// SCIENT-FORK:END
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -5,7 +11,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { Command } from "effect/cli";
 import * as TestConsole from "effect/testing/TestConsole";
@@ -13,7 +18,6 @@ import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 
 import {
   InvalidReleasePackageVersionError,
-  ReleasePackageManifestError,
   releasePackageFiles,
   updateReleasePackageVersions,
   updateReleasePackageVersionsCommand,
@@ -61,6 +65,7 @@ const readReleaseVersions = Effect.fn("readReleaseVersions")(function* (rootDir:
   return versions;
 });
 
+// regression: 8dba2d6484 Adopt Node-native TypeScript for desktop and server (#2098)
 it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
   it.effect("updates all release package versions under the provided root", () =>
     Effect.gen(function* () {
@@ -121,6 +126,8 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
     }),
   );
 
+  // SCIENT-FORK:START
+  // regression: 8c2d33abde [codex] Structure release package updater failures (#3468)
   it.effect("preserves manifest read context and the filesystem cause", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -141,7 +148,10 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       assert.equal(error.message, `Failed to read release package manifest '${filePath}'.`);
     }),
   );
+  // SCIENT-FORK:END
 
+  // SCIENT-FORK:START
+  // regression: 8c2d33abde [codex] Structure release package updater failures (#3468)
   it.effect("preserves manifest decode context and the schema cause", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -165,7 +175,10 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       assert.equal(error.message, `Failed to decode release package manifest '${filePath}'.`);
     }),
   );
+  // SCIENT-FORK:END
 
+  // SCIENT-FORK:START
+  // regression: 8c2d33abde [codex] Structure release package updater failures (#3468)
   it.effect("preserves manifest write context and the filesystem cause", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -189,6 +202,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       assert.equal(error.message, `Failed to write release package manifest '${filePath}'.`);
     }),
   );
+  // SCIENT-FORK:END
 
   it.effect("accepts flags before the version positional and appends changed output", () =>
     Effect.gen(function* () {

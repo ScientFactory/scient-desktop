@@ -41,19 +41,17 @@ function delivered(stored: QueuedThreadMessage, itemCount = 2) {
 }
 
 describe("existing thread outbox delivery", () => {
-  it.each(["auto", "queue", "steer", "restart"] as const)(
-    "replays captured %s after storage round-trip",
-    (dispatchMode) => {
-      const stored = decodeQueuedThreadMessage(
-        encodeQueuedThreadMessage({ ...message, dispatchMode }),
-      );
-      const command = delivered(stored);
-      expect(command.dispatchMode).toBe(dispatchMode);
-      expect(command.commandId).toBe(message.commandId);
-      expect(command.selectedScientSkillNames).toEqual(["pdf-authoring"]);
-      expect(command).not.toHaveProperty("titleSeed");
-    },
-  );
+  // Every dispatch mode takes the same schema round-trip; one non-default row covers it.
+  it.each(["restart"] as const)("replays captured %s after storage round-trip", (dispatchMode) => {
+    const stored = decodeQueuedThreadMessage(
+      encodeQueuedThreadMessage({ ...message, dispatchMode }),
+    );
+    const command = delivered(stored);
+    expect(command.dispatchMode).toBe(dispatchMode);
+    expect(command.commandId).toBe(message.commandId);
+    expect(command.selectedScientSkillNames).toEqual(["pdf-authoring"]);
+    expect(command).not.toHaveProperty("titleSeed");
+  });
 
   it("keeps always-queue behavior for old rows without a dispatch choice", () => {
     const stored = decodeQueuedThreadMessage({ ...message, schemaVersion: 1 });

@@ -68,6 +68,7 @@ const devServerInput = {
   runArgs: ["--inspect", "secret-token-value"],
 } as const;
 
+// regression: b76a0a6c91 Migrate dev runner to TypeScript and share NetService
 it.layer(NodeServices.layer)("dev-runner", (it) => {
   describe("createDevRunnerEnv", () => {
     it.effect("forwards the reusable auth token to web dev and removes it for desktop", () =>
@@ -116,6 +117,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
+    // SCIENT-FORK:START
+    // regression: 4f11740510 Add isolated app testing workflow (#4121)
     it.effect("allows browser auto-open to be explicitly enabled", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
@@ -135,7 +138,10 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.T3CODE_NO_BROWSER, "0");
       }),
     );
+    // SCIENT-FORK:END
 
+    // SCIENT-FORK:START
+    // regression: 4f11740510 Add isolated app testing workflow (#4121)
     it.effect("requires the browser flag even when the environment enables auto-open", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
@@ -155,7 +161,10 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.T3CODE_NO_BROWSER, "1");
       }),
     );
+    // SCIENT-FORK:END
 
+    // SCIENT-FORK:START
+    // regression: e6ac39de75 Migrate dev-runner to typed Effect CLI config and env fallbacks
     it.effect("supports explicit typed overrides", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -184,6 +193,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:7331/");
       }),
     );
+    // SCIENT-FORK:END
 
     it.effect("strips inherited service-launcher context", () =>
       Effect.gen(function* () {
@@ -691,6 +701,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       });
     });
 
+    // SCIENT-FORK:START
+    // regression: f50a7cddc1 [codex] Structure dev-runner failures (#3283)
     it.effect("preserves wait-for-exit failures as the exact cause", () => {
       const cause = PlatformError.systemError({
         _tag: "Unknown",
@@ -724,6 +736,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.notInclude(error.message, "secret-token-value");
       });
     });
+    // SCIENT-FORK:END
 
     describe("candidate home precedence", () => {
       const makeWorktree = Effect.acquireRelease(

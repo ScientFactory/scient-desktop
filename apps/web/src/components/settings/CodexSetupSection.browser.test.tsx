@@ -225,6 +225,8 @@ async function _cleanupFixture1(_fixture: _Fixture) {
   vi.unstubAllGlobals();
 }
 
+// regression: 89974f96b6 fix(alignment): preserve Scient provider and lifecycle behavior
+// (every case below).
 describe("CodexSetupSection provider-management scope", () => {
   it("does not auto-start installation or consume the request while read-only", async () => {
     await using _fixture = _createFixture();

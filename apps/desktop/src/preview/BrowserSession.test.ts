@@ -75,7 +75,9 @@ describe("BrowserSession", () => {
       const first = yield* browserSessions.getSession("scope-a");
       const second = yield* browserSessions.getSession("scope-a");
 
+      // SCIENT-FORK:START scient-branding
       assert.strictEqual(partition, "persist:scient-next-preview-f051bb2c68cb7b2fe969");
+      // SCIENT-FORK:END scient-branding
       assert.strictEqual(first, second);
       assert.strictEqual(fromPartition.mock.calls.length, 1);
     }).pipe(Effect.provide(layer)),
@@ -96,7 +98,9 @@ describe("BrowserSession", () => {
 
       assert.strictEqual(
         yield* browserSessions.getPartition("scope-a"),
+        // SCIENT-FORK:START scient-branding
         "persist:scient-next-preview-f051bb2c68cb7b2fe969",
+        // SCIENT-FORK:END scient-branding
       );
     }).pipe(Effect.provide(layer)),
   );
@@ -108,11 +112,13 @@ describe("BrowserSession", () => {
       const legacyDefault = yield* browserSessions.getPartition("a::b");
       const nondefaultProfile = yield* browserSessions.getPartition("a::b", true, "profile");
 
+      // SCIENT-FORK:START scient-branding
       assert.strictEqual(legacyDefault, "persist:scient-next-preview-78f0be89237d77f7a70e");
       assert.strictEqual(
         nondefaultProfile,
         "persist:scient-next-preview-profile-78f0be89237d77f7a70e",
       );
+      // SCIENT-FORK:END scient-branding
       assert.notStrictEqual(nondefaultProfile, legacyDefault);
       assert.isTrue(browserSessions.isPartition(legacyDefault));
       assert.isTrue(browserSessions.isPartition(nondefaultProfile));

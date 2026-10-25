@@ -4,7 +4,6 @@ import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
-
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -13,7 +12,6 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./TextGeneration.ts";
@@ -336,6 +334,7 @@ describe("TextGeneration.make", () => {
       ];
     }),
   )("$caseTitle", ({ run }) => run());
+  // regression: 7cafe52bb8 fix(server): keep thread titles tied to user intent (#10720)
   it.effect("retains supplied subject context in the provider prompt", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("codex");
@@ -370,6 +369,8 @@ describe("TextGeneration.make", () => {
       expect(prompt).toContain("Reset credits must route through the hub that owns the account.");
     }),
   );
+
+  // regression: 6d7fe2eeb7 Introduce pluggable VCS driver foundation (#2435)
 
   it.effect("delegates to the matching instance's textGeneration closure", () =>
     Effect.gen(function* () {
@@ -415,6 +416,8 @@ describe("TextGeneration.make", () => {
       expect(personalCalls).toEqual(["Refactor the routing layer"]);
     }),
   );
+
+  // regression: 6d7fe2eeb7 Introduce pluggable VCS driver foundation (#2435)
 
   it.effect("fails with TextGenerationError when the instance is unknown", () =>
     Effect.gen(function* () {

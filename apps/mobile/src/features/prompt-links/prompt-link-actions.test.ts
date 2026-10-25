@@ -22,25 +22,23 @@ beforeEach(() => {
     );
 });
 
-it.each(["t3code", "t3code-dev", "t3code-preview"])(
-  "copies an encoded draft for the registered %s binary, with no hosted prompt authority",
-  async (scheme) => {
-    native.scheme = scheme;
-    const prompt = "Review β & results = ready?\nRead before Send";
-    await copyPromptLink(prompt);
-    const link = native.copy.mock.calls[0]![0];
-    expect(link.startsWith(`${scheme}://new?`)).toBe(true);
-    expect(native.createURL).toHaveBeenCalledWith("new", { queryParams: { prompt } });
-    const params = Object.fromEntries(new URL(link).searchParams);
-    expect(parseScientNewThreadLink(promptLinkSearchFromParams(params)!)).toEqual({
-      ok: true,
-      value: {
-        kind: "new",
-        prompt: { text: prompt, hiddenCharacters: 0 },
-        repository: null,
-        provider: null,
-        model: null,
-      },
-    });
-  },
-);
+// Every registered binary takes this path; the scheme comes from expo-linking.
+it("copies an encoded draft for the registered binary, with no hosted prompt authority", async () => {
+  const scheme = "t3code-dev";
+  native.scheme = scheme;
+  const prompt = "Review β & results = ready?\nRead before Send";
+  await copyPromptLink(prompt);
+  const link = native.copy.mock.calls[0]![0];
+  expect(link.startsWith(`${scheme}://new?`)).toBe(true);
+  const params = Object.fromEntries(new URL(link).searchParams);
+  expect(parseScientNewThreadLink(promptLinkSearchFromParams(params)!)).toEqual({
+    ok: true,
+    value: {
+      kind: "new",
+      prompt: { text: prompt, hiddenCharacters: 0 },
+      repository: null,
+      provider: null,
+      model: null,
+    },
+  });
+});

@@ -20,6 +20,7 @@ const pythonSurfaceSource = NodeFS.readFileSync(
 );
 
 describe("Python active-cell editor seam", () => {
+  // regression: eed0733208 feat(compute): implement Phase 4 scientific workflow
   it("derives the active cell from the shared run-target model", () => {
     expect(pythonSurfaceSource).toContain(
       "computeActiveCell(props.contents, editorSelection, props.language.cellMarker)",
@@ -27,6 +28,7 @@ describe("Python active-cell editor seam", () => {
     expect(pythonSurfaceSource).toContain("activeLineRange={activeCellRange}");
   });
 
+  // regression: eed0733208 feat(compute): implement Phase 4 scientific workflow
   it("uses the editor's supported whole-line selection path without pointer hover", () => {
     expect(fileEditorSource).toContain('activeLineSide: "additions"');
     expect(fileEditorSource).toContain("FILE_ACTIVE_RANGE_ATTRIBUTE");
@@ -36,6 +38,7 @@ describe("Python active-cell editor seam", () => {
     );
   });
 
+  // regression: eed0733208 feat(compute): implement Phase 4 scientific workflow
   it("uses one Pierre gutter utility API for the run-cell action", () => {
     expect(fileEditorSource).toContain("renderEditorGutterAction === undefined");
     expect(fileEditorSource).toContain("{ onGutterUtilityClick: handleGutterUtilityClick }");

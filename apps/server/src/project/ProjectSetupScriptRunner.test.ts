@@ -12,12 +12,10 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectSetupScriptRunner from "./ProjectSetupScriptRunner.ts";
-
 const isProjectSetupScriptOperationError = Schema.is(
   ProjectSetupScriptRunner.ProjectSetupScriptOperationError,
 );
@@ -75,89 +73,8 @@ const testLayer = (
   );
 
 describe("ProjectSetupScriptRunner", () => {
-  it.effect("runs the inherited machine setup action in the checkout's worktree", () => {
-    const open = vi.fn(() =>
-      Effect.succeed({
-        threadId: "thread-1",
-        terminalId: "setup-default-setup",
-        cwd: "/repo/worktrees/a",
-        worktreePath: "/repo/worktrees/a",
-        status: "running" as const,
-        pid: 123,
-        history: "",
-        exitCode: null,
-        exitSignal: null,
-        label: "setup-default-setup",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      }),
-    );
-    const write = vi.fn(() => Effect.void);
-    return Effect.gen(function* () {
-      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-      const result = yield* runner.runForThread({
-        threadId: "thread-1",
-        projectId: "project-1",
-        worktreePath: "/repo/worktrees/a",
-      });
-      expect(result).toMatchObject({ status: "started", scriptId: "default-setup" });
-      expect(open).toHaveBeenCalledWith({
-        threadId: "thread-1",
-        terminalId: "setup-default-setup",
-        cwd: "/repo/worktrees/a",
-        worktreePath: "/repo/worktrees/a",
-        env: {
-          T3CODE_PROJECT_ROOT: "/repo/project",
-          T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
-          COLORTERM: "",
-          NO_COLOR: "1",
-          FORCE_COLOR: "0",
-        },
-      });
-      expect(write).toHaveBeenCalledWith({
-        threadId: "thread-1",
-        terminalId: "setup-default-setup",
-        data: " npm install\r",
-      });
-    }).pipe(
-      Effect.provide(
-        testLayer(
-          makeProject([]),
-          { open, write },
-          ServerSettings.layerTest({
-            defaultProjectScripts: [
-              {
-                id: "default-setup",
-                name: "Setup",
-                command: "npm install",
-                icon: "configure",
-                runOnWorktreeCreate: true,
-              },
-            ],
-          }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("returns no-script when no setup script exists", () => {
-    const open = vi.fn(() => Effect.die("unexpected open"));
-    const write = vi.fn(() => Effect.die("unexpected write"));
-    const project = makeProject([]);
-
-    return Effect.gen(function* () {
-      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-      const result = yield* runner.runForThread({
-        threadId: "thread-1",
-        projectId: "project-1",
-        worktreePath: "/repo/worktrees/a",
-      });
-
-      expect(result).toEqual({ status: "no-script" });
-      expect(open).not.toHaveBeenCalled();
-      expect(write).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(testLayer(project, { open, write })));
-  });
-
+  // regression: b92ebce0ad fix(terminal): keep project script commands out of shell history (#13903)
+  // (the leading space on the written command).
   it.effect(
     "opens the deterministic setup terminal with worktree env and writes the command",
     () => {
@@ -225,6 +142,162 @@ describe("ProjectSetupScriptRunner", () => {
       }).pipe(Effect.provide(testLayer(project, { open, write })));
     },
   );
+
+  // regression: 1a0c915c41 fix(terminal): settling a thread closes its idle shells (#13673)
+  it.effect("closes the idle setup shell after a clean exit", () => {
+    const open = vi.fn(() =>
+      Effect.succeed({
+        threadId: "thread-1",
+        terminalId: "setup-setup",
+        cwd: "/repo/worktrees/a",
+        worktreePath: "/repo/worktrees/a",
+        status: "running" as const,
+        pid: 123,
+        history: "",
+        exitCode: null,
+        exitSignal: null,
+        label: "setup-setup",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    let written = "";
+    const write = vi.fn((input: { data: string }) =>
+      Effect.sync(() => void (written = input.data)),
+    );
+    let listener: ((event: TerminalEvent) => Effect.Effect<void>) | null = null;
+    const subscribe = vi.fn((next: (event: TerminalEvent) => Effect.Effect<void>) => {
+      listener = next;
+      return Effect.succeed(() => {
+        listener = null;
+      });
+    });
+    const closeIdle = vi.fn(() => Effect.void);
+    const project = makeProject([
+      {
+        id: "setup",
+        name: "Setup",
+        command: "bun install",
+        icon: "configure",
+        runOnWorktreeCreate: true,
+      },
+    ]);
+
+    return Effect.gen(function* () {
+      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const result = yield* runner.runForThread({
+        threadId: "thread-1",
+        projectCwd: "/repo/project",
+        worktreePath: "/repo/worktrees/a",
+        observeCompletion: {},
+      });
+      if (result.status !== "started" || !result.completion) {
+        return yield* Effect.die("expected an observed setup run");
+      }
+      const sentinel = /__T3_SETUP_DONE___[0-9a-f]{32}:/.exec(written)?.[0];
+      yield* listener!({
+        threadId: "thread-1",
+        terminalId: "setup-setup",
+        type: "output",
+        data: `${sentinel}0\r\n$ `,
+      });
+
+      expect((yield* result.completion).exitCode).toBe(0);
+      expect(closeIdle).toHaveBeenCalledWith({ threadId: "thread-1", terminalId: "setup-setup" });
+    }).pipe(
+      Effect.provide(testLayer(project, { open, write, subscribe, closeIdle })),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Environment, { SHELL: "/bin/zsh" }),
+    );
+  });
+
+  // regression: 9f40b2f563 feat(settings): add shared project defaults and scoped overrides (#9754)
+
+  it.effect("runs the inherited machine setup action in the checkout's worktree", () => {
+    const open = vi.fn(() =>
+      Effect.succeed({
+        threadId: "thread-1",
+        terminalId: "setup-default-setup",
+        cwd: "/repo/worktrees/a",
+        worktreePath: "/repo/worktrees/a",
+        status: "running" as const,
+        pid: 123,
+        history: "",
+        exitCode: null,
+        exitSignal: null,
+        label: "setup-default-setup",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    const write = vi.fn(() => Effect.void);
+    return Effect.gen(function* () {
+      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const result = yield* runner.runForThread({
+        threadId: "thread-1",
+        projectId: "project-1",
+        worktreePath: "/repo/worktrees/a",
+      });
+      expect(result).toMatchObject({ status: "started", scriptId: "default-setup" });
+      expect(open).toHaveBeenCalledWith({
+        threadId: "thread-1",
+        terminalId: "setup-default-setup",
+        cwd: "/repo/worktrees/a",
+        worktreePath: "/repo/worktrees/a",
+        env: {
+          T3CODE_PROJECT_ROOT: "/repo/project",
+          T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
+          COLORTERM: "",
+          NO_COLOR: "1",
+          FORCE_COLOR: "0",
+        },
+      });
+      expect(write).toHaveBeenCalledWith({
+        threadId: "thread-1",
+        terminalId: "setup-default-setup",
+        data: " npm install\r",
+      });
+    }).pipe(
+      Effect.provide(
+        testLayer(
+          makeProject([]),
+          { open, write },
+          ServerSettings.layerTest({
+            defaultProjectScripts: [
+              {
+                id: "default-setup",
+                name: "Setup",
+                command: "npm install",
+                icon: "configure",
+                runOnWorktreeCreate: true,
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+  });
+
+  // regression: b0a3a50448 [codex] Refactor project and workspace Effect services (#3190)
+
+  it.effect("returns no-script when no setup script exists", () => {
+    const open = vi.fn(() => Effect.die("unexpected open"));
+    const write = vi.fn(() => Effect.die("unexpected write"));
+    const project = makeProject([]);
+
+    return Effect.gen(function* () {
+      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const result = yield* runner.runForThread({
+        threadId: "thread-1",
+        projectId: "project-1",
+        worktreePath: "/repo/worktrees/a",
+      });
+
+      expect(result).toEqual({ status: "no-script" });
+      expect(open).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(testLayer(project, { open, write })));
+  });
+
+  // regression: 73b206f4bf feat(web): show each worktree setup step and let users cancel it (#11372)
 
   it.effect(
     "wraps the command with a completion sentinel and resolves the exit code from terminal output",
@@ -333,71 +406,7 @@ describe("ProjectSetupScriptRunner", () => {
     },
   );
 
-  it.effect("closes the idle setup shell after a clean exit", () => {
-    const open = vi.fn(() =>
-      Effect.succeed({
-        threadId: "thread-1",
-        terminalId: "setup-setup",
-        cwd: "/repo/worktrees/a",
-        worktreePath: "/repo/worktrees/a",
-        status: "running" as const,
-        pid: 123,
-        history: "",
-        exitCode: null,
-        exitSignal: null,
-        label: "setup-setup",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      }),
-    );
-    let written = "";
-    const write = vi.fn((input: { data: string }) =>
-      Effect.sync(() => void (written = input.data)),
-    );
-    let listener: ((event: TerminalEvent) => Effect.Effect<void>) | null = null;
-    const subscribe = vi.fn((next: (event: TerminalEvent) => Effect.Effect<void>) => {
-      listener = next;
-      return Effect.succeed(() => {
-        listener = null;
-      });
-    });
-    const closeIdle = vi.fn(() => Effect.void);
-    const project = makeProject([
-      {
-        id: "setup",
-        name: "Setup",
-        command: "bun install",
-        icon: "configure",
-        runOnWorktreeCreate: true,
-      },
-    ]);
-
-    return Effect.gen(function* () {
-      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-      const result = yield* runner.runForThread({
-        threadId: "thread-1",
-        projectCwd: "/repo/project",
-        worktreePath: "/repo/worktrees/a",
-        observeCompletion: {},
-      });
-      if (result.status !== "started" || !result.completion) {
-        return yield* Effect.die("expected an observed setup run");
-      }
-      const sentinel = /__T3_SETUP_DONE___[0-9a-f]{32}:/.exec(written)?.[0];
-      yield* listener!({
-        threadId: "thread-1",
-        terminalId: "setup-setup",
-        type: "output",
-        data: `${sentinel}0\r\n$ `,
-      });
-
-      expect((yield* result.completion).exitCode).toBe(0);
-      expect(closeIdle).toHaveBeenCalledWith({ threadId: "thread-1", terminalId: "setup-setup" });
-    }).pipe(
-      Effect.provide(testLayer(project, { open, write, subscribe, closeIdle })),
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.Environment, { SHELL: "/bin/zsh" }),
-    );
-  });
+  // regression: 73b206f4bf feat(web): show each worktree setup step and let users cancel it (#11372)
 
   it.effect("unsubscribes from terminal output when the command cannot be written", () => {
     const open = vi.fn(() =>
@@ -446,6 +455,8 @@ describe("ProjectSetupScriptRunner", () => {
       expect(unsubscribe).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(testLayer(project, { open, write, subscribe })));
   });
+
+  // regression: 73b206f4bf feat(web): show each worktree setup step and let users cancel it (#11372)
 
   it.effect.each([
     {
@@ -502,6 +513,8 @@ describe("ProjectSetupScriptRunner", () => {
       Effect.provideService(HostProcess.Environment, { SHELL: shell }),
     );
   });
+
+  // regression: 833c8ab7c6 [codex] Remove project setup error constructor wrappers (#3329)
 
   it.effect("keeps terminal failures as the exact cause of a structured operation error", () => {
     const rootCause = new Error("stat failed");

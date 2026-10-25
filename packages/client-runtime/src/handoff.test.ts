@@ -2,17 +2,21 @@ import {
   ContextHandoffId,
   ProviderInstanceId,
   RunId,
+  // SCIENT-FORK:START
   OrchestrationV2ContextTransfer,
   OrchestrationV2TurnItem,
   ThreadId,
+  // SCIENT-FORK:END
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
+// SCIENT-FORK:START
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import {
   isForkInitializationHandoff,
+  // SCIENT-FORK:END
   resolveHandoffEndpoints,
   resolvePendingHandoff,
   type HandoffTimelineRun,
@@ -80,6 +84,7 @@ describe("handoff endpoints shared by web and mobile", () => {
   });
 });
 
+// SCIENT-FORK:START
 const decodeTransfer = Schema.decodeUnknownSync(OrchestrationV2ContextTransfer);
 const decodeItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const now = DateTime.makeUnsafe("2026-10-04T00:00:00Z");
@@ -227,6 +232,7 @@ describe("frozen fork initialization provenance", () => {
   });
 });
 
+// SCIENT-FORK:END
 const projection = {
   runs: [
     {

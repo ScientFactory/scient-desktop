@@ -45,8 +45,6 @@ const cases = [
   },
 ] as const;
 
-const appearances = ["light", "dark"] as const;
-
 function contentWidth(element: HTMLElement) {
   const style = getComputedStyle(element);
   return (
@@ -56,10 +54,14 @@ function contentWidth(element: HTMLElement) {
   );
 }
 
+// regression: 45ac324a1e fix(upstream): preserve diagram sizing and marketing build ownership
+// The sizing rule is theme-independent, so each case runs in one appearance.
+const theme = "light";
+
 describe("actual Pele inline sizing", () => {
-  it.each(cases.flatMap((fixture) => appearances.map((theme) => ({ ...fixture, theme }))))(
-    "preserves $name intrinsic size and shrinks to fit in $theme",
-    async ({ source, label, narrow, theme, name }) => {
+  it.each(cases)(
+    "preserves $name intrinsic size and shrinks to fit",
+    async ({ source, label, narrow, name }) => {
       const container = document.createElement("div");
       container.style.width = "800px";
       await using screen = await render(
@@ -107,67 +109,59 @@ describe("actual Pele inline sizing", () => {
     },
   );
 
-  it.each(appearances)(
-    "preserves actual-size zoom, MathML and intrinsic PNG export in %s",
-    async (theme) => {
-      const source = cases[3].source;
-      const container = document.createElement("div");
-      container.style.width = "240px";
-      await using screen = await render(
-        <MermaidDiagramCard
-          source={source}
-          language="mermaid"
-          title="Measured math"
-          theme={theme}
-        />,
-        { container, router: false },
-      );
-      await vi.waitFor(() =>
-        expect(screen.container.querySelector(".scient-mermaid-inline svg")).not.toBeNull(),
-      );
-      const inline = screen.container.querySelector<SVGSVGElement>(".scient-mermaid-inline svg")!;
-      const original = inline.outerHTML;
-      const natural = {
-        width: inline.viewBox.baseVal.width,
-        height: inline.viewBox.baseVal.height,
-      };
-      await screen.getByRole("button", { name: "Expand diagram", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Measured math" });
-      await expect.element(dialog).toBeVisible();
-      await dialog.getByRole("button", { name: "Actual size", exact: true }).click();
-      const expanded = document.querySelector<SVGSVGElement>(".scient-mermaid-dialog-diagram svg")!;
-      await vi.waitFor(() =>
-        expect(expanded.getBoundingClientRect().width).toBeCloseTo(natural.width, 0),
-      );
-      await dialog.getByRole("button", { name: "Zoom in", exact: true }).click();
-      await vi.waitFor(() =>
-        expect(expanded.getBoundingClientRect().width).toBeCloseTo(
-          Math.round(natural.width * 1.25),
-          0,
-        ),
-      );
-      expect(expanded.outerHTML).toBe(original);
-      expect(expanded.querySelector("math mfrac")).not.toBeNull();
-      await dialog.getByRole("button", { name: "Fit diagram to window", exact: true }).click();
-      const stage = document.querySelector<HTMLElement>(".scient-mermaid-dialog-stage")!;
-      await vi.waitFor(() =>
-        expect(expanded.getBoundingClientRect().width).toBeCloseTo(contentWidth(stage), 0),
-      );
+  it("preserves actual-size zoom, MathML and intrinsic PNG export", async () => {
+    const source = cases[3].source;
+    const container = document.createElement("div");
+    container.style.width = "240px";
+    await using screen = await render(
+      <MermaidDiagramCard source={source} language="mermaid" title="Measured math" theme={theme} />,
+      { container, router: false },
+    );
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector(".scient-mermaid-inline svg")).not.toBeNull(),
+    );
+    const inline = screen.container.querySelector<SVGSVGElement>(".scient-mermaid-inline svg")!;
+    const original = inline.outerHTML;
+    const natural = {
+      width: inline.viewBox.baseVal.width,
+      height: inline.viewBox.baseVal.height,
+    };
+    await screen.getByRole("button", { name: "Expand diagram", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Measured math" });
+    await expect.element(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Actual size", exact: true }).click();
+    const expanded = document.querySelector<SVGSVGElement>(".scient-mermaid-dialog-diagram svg")!;
+    await vi.waitFor(() =>
+      expect(expanded.getBoundingClientRect().width).toBeCloseTo(natural.width, 0),
+    );
+    await dialog.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await vi.waitFor(() =>
+      expect(expanded.getBoundingClientRect().width).toBeCloseTo(
+        Math.round(natural.width * 1.25),
+        0,
+      ),
+    );
+    expect(expanded.outerHTML).toBe(original);
+    expect(expanded.querySelector("math mfrac")).not.toBeNull();
+    await dialog.getByRole("button", { name: "Fit diagram to window", exact: true }).click();
+    const stage = document.querySelector<HTMLElement>(".scient-mermaid-dialog-stage")!;
+    await vi.waitFor(() =>
+      expect(expanded.getBoundingClientRect().width).toBeCloseTo(contentWidth(stage), 0),
+    );
 
-      const exported = new DOMParser().parseFromString(
-        prepareSvgForExport(original, theme),
-        "image/svg+xml",
-      );
-      expect(exported.querySelector("parsererror")).toBeNull();
-      expect(exported.documentElement.getAttribute("viewBox")).toBe(inline.getAttribute("viewBox"));
-      expect(exported.querySelector("math mfrac")).not.toBeNull();
-      const png = await mermaidSvgToPngBlob(original, theme);
-      const bytes = new Uint8Array(await png.arrayBuffer());
-      expect(Array.from(bytes.subarray(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
-      const header = new DataView(bytes.buffer);
-      expect(header.getUint32(16)).toBe(Math.round(natural.width * 2));
-      expect(header.getUint32(20)).toBe(Math.round(natural.height * 2));
-      expect(inline.outerHTML).toBe(original);
-    },
-  );
+    const exported = new DOMParser().parseFromString(
+      prepareSvgForExport(original, theme),
+      "image/svg+xml",
+    );
+    expect(exported.querySelector("parsererror")).toBeNull();
+    expect(exported.documentElement.getAttribute("viewBox")).toBe(inline.getAttribute("viewBox"));
+    expect(exported.querySelector("math mfrac")).not.toBeNull();
+    const png = await mermaidSvgToPngBlob(original, theme);
+    const bytes = new Uint8Array(await png.arrayBuffer());
+    expect(Array.from(bytes.subarray(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    const header = new DataView(bytes.buffer);
+    expect(header.getUint32(16)).toBe(Math.round(natural.width * 2));
+    expect(header.getUint32(20)).toBe(Math.round(natural.height * 2));
+    expect(inline.outerHTML).toBe(original);
+  });
 });

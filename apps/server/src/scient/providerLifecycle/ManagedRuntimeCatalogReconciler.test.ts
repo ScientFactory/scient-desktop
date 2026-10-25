@@ -191,6 +191,8 @@ describe("ManagedRuntimeCatalogReconciler", () => {
       }),
   );
 
+  // regression: 7f68536737 fix(providers): restore managed update discovery and notifications (#254)
+  // One row per driver: a driver-specific gap in the change filter fails only its own row.
   it.effect.each(
     MANAGED_RUNTIME_CATALOG_PROVIDERS.filter((provider) => provider !== "antigravityAcp").map(
       (driver) => ({

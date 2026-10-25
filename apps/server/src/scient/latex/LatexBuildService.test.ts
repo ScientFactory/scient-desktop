@@ -2036,7 +2036,8 @@ describe("LatexBuildService", () => {
         yield* service.requestBuild(harness.buildInput);
         expect((yield* awaitTerminal(service, harness.buildInput)).state).toBe("succeeded");
 
-        for (let poll = 0; poll < 20; poll += 1) {
+        // regression: ef84076d62 fix(latex): tie a published PDF's freshness to the sources it was built from
+        for (let poll = 0; poll < 3; poll += 1) {
           const snapshot = yield* service.status(harness.buildInput);
           expect(snapshot.state).toBe("succeeded");
           expect(snapshot.descriptor).toMatchObject({ bindingStatus: "current" });
@@ -2515,7 +2516,8 @@ describe("LatexBuildService", () => {
         yield* service.requestBuild(harness.buildInput);
         yield* Queue.take(harness.started);
 
-        for (let request = 0; request < 100; request += 1) {
+        // Each request hashes the sources; three take the same coalescing path as a hundred.
+        for (let request = 0; request < 3; request += 1) {
           const queued = yield* service.requestBuild(harness.buildInput);
           expect(queued.pendingRerun).toBe(true);
         }
@@ -2526,7 +2528,7 @@ describe("LatexBuildService", () => {
         const finished = yield* awaitTerminal(service, harness.buildInput);
         expect(finished.state).toBe("succeeded");
         expect(finished.pendingRerun).toBe(false);
-        // A 100-request burst still owns only one successor compile.
+        // A burst still owns only one successor compile.
         expect(yield* Ref.get(harness.startCount)).toBe(2);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

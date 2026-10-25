@@ -46,7 +46,9 @@ describe("isPreviewEditingShortcut", () => {
     ({
       type: "keyDown",
       key,
+      // SCIENT-FORK:START scient-preview
       code: /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : "",
+      // SCIENT-FORK:END scient-preview
       meta: platform === "darwin",
       control: platform !== "darwin",
       shift: false,
@@ -54,6 +56,8 @@ describe("isPreviewEditingShortcut", () => {
       ...overrides,
     }) as Electron.Input;
 
+  // SCIENT-FORK:START scient-preview - upstream's snap dropped this fix guard (modifiers and host shortcuts).
+  // regression: e0e0bcb115 fix(desktop): preserve browser editing shortcuts (#10621)
   it.each(["darwin", "linux", "win32"] as const)(
     "allows native editing chords on %s without allowing host shortcuts",
     (platform) => {
@@ -94,10 +98,12 @@ describe("isPreviewEditingShortcut", () => {
       ).toBe(false);
     },
   );
+  // SCIENT-FORK:END scient-preview
 
   it("recognizes macOS Paste and Match Style when Option changes the key to a symbol", () => {
     const pasteAndMatchStyle = input("darwin", "◊", { code: "KeyV", alt: true, shift: true });
     expect(PreviewManager.isPreviewEditingShortcut(pasteAndMatchStyle, "darwin")).toBe(true);
+    // SCIENT-FORK:START scient-preview
     for (const modifiers of [{ code: "KeyC" }, { shift: false }, { control: true }]) {
       expect(
         PreviewManager.isPreviewEditingShortcut({ ...pasteAndMatchStyle, ...modifiers }, "darwin"),
@@ -124,6 +130,7 @@ describe("isPreviewEditingShortcut", () => {
       ).toBe(false);
     },
   );
+  // SCIENT-FORK:END scient-preview
 });
 
 describe("previewWindowOpenAction", () => {
@@ -238,8 +245,10 @@ vi.mock("electron", () => ({
 const layerBrowserSession = Layer.succeed(
   BrowserSession.BrowserSession,
   BrowserSession.BrowserSession.of({
+    // SCIENT-FORK:START scient-preview
     getPartition: () => Effect.succeed("persist:scient-next-preview-test"),
     isPartition: (partition) => partition.startsWith("persist:scient-next-preview-"),
+    // SCIENT-FORK:END scient-preview
     getSession: () => Effect.succeed(previewSession as unknown as Electron.Session),
     clearCookies: () => Effect.void,
     clearCache: () => Effect.void,
@@ -304,6 +313,7 @@ const withManager = <A>(
     return yield* use(manager);
   }).pipe(Effect.provide(managerLayer(platform)), Effect.scoped);
 
+// SCIENT-FORK:START scient-preview
 const withManagerAndBrowserHost = <A>(
   use: (
     manager: PreviewManager.PreviewManager["Service"],
@@ -315,6 +325,7 @@ const withManagerAndBrowserHost = <A>(
     const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
     return yield* use(manager, browserHost);
   }).pipe(Effect.provide(managerLayer()), Effect.scoped);
+// SCIENT-FORK:END scient-preview
 
 interface TestCapturedPreviewImage {
   readonly toJPEG: () => Buffer;
@@ -669,6 +680,7 @@ describe("PreviewManager", () => {
       ),
   );
 
+  // SCIENT-FORK:START scient-preview
   effectIt.effect.each([
     ["darwin", true, false],
     ["linux", false, true],
@@ -852,6 +864,7 @@ describe("PreviewManager", () => {
       }),
     ),
   );
+  // SCIENT-FORK:END scient-preview
 
   effectIt.effect("keeps editing and forwarded shortcuts in whichever tab holds focus", () =>
     withManager((manager) =>
@@ -2818,6 +2831,7 @@ describe("PreviewManager", () => {
     ),
   );
 
+  // SCIENT-FORK:START scient-preview
   effectIt.effect("does not copy a CDP-attributed server download into local Downloads", () =>
     withManagerAndBrowserHost((manager, browserHost) =>
       Effect.gen(function* () {
@@ -2947,9 +2961,12 @@ describe("PreviewManager", () => {
       }),
     ),
   );
+  // SCIENT-FORK:END scient-preview
 });
 
+// SCIENT-FORK:START restored-behavior-guards
 describe("PreviewOperationError", () => {
+  // regression: 90bd5ee0c1 [codex] structure desktop preview failures (#3244)
   it("keeps timeline detail separate from its structured message", () => {
     const cause = new Error("CDP command failed with an invalid node id");
     const error = new PreviewManager.PreviewOperationError({
@@ -2963,3 +2980,4 @@ describe("PreviewOperationError", () => {
     expect(PreviewManager.PreviewOperationError.toTimelineMessage(error)).toBe(cause.message);
   });
 });
+// SCIENT-FORK:END restored-behavior-guards

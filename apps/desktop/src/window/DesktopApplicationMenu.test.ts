@@ -29,7 +29,9 @@ const environmentInput = {
 
 const layerElectronApp = Layer.succeed(ElectronApp.ElectronApp, {
   metadata: Effect.die("unexpected metadata read"),
+  // SCIENT-FORK:START scient-window
   name: Effect.succeed("Scient"),
+  // SCIENT-FORK:END scient-window
   systemLocale: Effect.succeed("en-US"),
   whenReady: Effect.void,
   requestSingleInstanceLock: Effect.succeed(true),
@@ -129,6 +131,7 @@ const configureMenu = (
   );
 
 describe("DesktopApplicationMenu", () => {
+  // SCIENT-FORK:START scient-window
   it.effect.each([
     { isPackaged: true, displayName: "Scient" },
     { isPackaged: false, displayName: "Scient (Dev)" },
@@ -167,62 +170,7 @@ describe("DesktopApplicationMenu", () => {
         );
       }),
   );
-
-  it.effect("installs the native menu and routes Settings through DesktopWindow", () =>
-    Effect.gen(function* () {
-      const selectedAction = yield* Deferred.make<string>();
-      const applicationMenuTemplate =
-        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
-
-      yield* configureMenu(selectedAction, applicationMenuTemplate);
-
-      const template = yield* Deferred.await(applicationMenuTemplate);
-      const fileMenu = template.find((item) => item.label === "File");
-      assert.isDefined(fileMenu);
-      if (!Array.isArray(fileMenu.submenu)) {
-        throw new Error("Expected File menu submenu to be an array.");
-      }
-      const settingsItem = fileMenu.submenu.find((item) => item.label === "Settings...");
-      assert.isDefined(settingsItem);
-      const settingsClick = settingsItem.click;
-      if (typeof settingsClick !== "function") {
-        throw new Error("Expected Settings menu item to have a click handler.");
-      }
-
-      settingsClick({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
-      assert.equal(yield* Deferred.await(selectedAction), "open-settings");
-    }),
-  );
-
-  it.effect("owns Paste as Text and routes it through the renderer", () =>
-    Effect.gen(function* () {
-      const selectedAction = yield* Deferred.make<string>();
-      const applicationMenuTemplate =
-        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
-
-      yield* configureMenu(selectedAction, applicationMenuTemplate);
-
-      const template = yield* Deferred.await(applicationMenuTemplate);
-      const editMenu = template.find((item) => item.label === "Edit");
-      assert.isDefined(editMenu);
-      if (!Array.isArray(editMenu.submenu)) {
-        throw new Error("Expected Edit menu submenu to be an array.");
-      }
-      const pasteAsTextItem = editMenu.submenu.find((item) => item.label === "Paste as Text");
-      assert.isDefined(pasteAsTextItem);
-      assert.equal(pasteAsTextItem.accelerator, "CmdOrCtrl+Shift+V");
-      if (typeof pasteAsTextItem.click !== "function") {
-        throw new Error("Expected Paste as Text menu item to have a click handler.");
-      }
-
-      pasteAsTextItem.click(
-        {} as Electron.MenuItem,
-        {} as Electron.BrowserWindow,
-        {} as KeyboardEvent,
-      );
-      assert.equal(yield* Deferred.await(selectedAction), "paste-as-text");
-    }),
-  );
+  // SCIENT-FORK:END scient-window
 
   it.effect("leaves the accelerator to Chromium instead of injecting a paste", () =>
     Effect.gen(function* () {
@@ -296,6 +244,7 @@ describe("DesktopApplicationMenu", () => {
 
   it.effect("reloads the main window even while a browser page has focus", () =>
     Effect.gen(function* () {
+      // SCIENT-FORK:START scient-window
       for (const [label, accelerator, action] of [
         ["Reload", "CmdOrCtrl+R", "main-reload"],
         ["Force Reload", "Shift+CmdOrCtrl+R", "main-forceReload"],
@@ -322,6 +271,69 @@ describe("DesktopApplicationMenu", () => {
         item.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
         assert.equal(yield* Deferred.await(selectedAction), action);
       }
+      // SCIENT-FORK:END scient-window
     }),
   );
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: 68c2277f50 feat(composer): fold large pastes into text attachments (#11442)
+  it.effect("owns Paste as Text and routes it through the renderer", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const editMenu = template.find((item) => item.label === "Edit");
+      assert.isDefined(editMenu);
+      if (!Array.isArray(editMenu.submenu)) {
+        throw new Error("Expected Edit menu submenu to be an array.");
+      }
+      const pasteAsTextItem = editMenu.submenu.find((item) => item.label === "Paste as Text");
+      assert.isDefined(pasteAsTextItem);
+      assert.equal(pasteAsTextItem.accelerator, "CmdOrCtrl+Shift+V");
+      if (typeof pasteAsTextItem.click !== "function") {
+        throw new Error("Expected Paste as Text menu item to have a click handler.");
+      }
+
+      pasteAsTextItem.click(
+        {} as Electron.MenuItem,
+        {} as Electron.BrowserWindow,
+        {} as KeyboardEvent,
+      );
+      assert.equal(yield* Deferred.await(selectedAction), "paste-as-text");
+    }),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: aa219be713 port desktop app to Effect (#2546)
+  it.effect("installs the native menu and routes Settings through DesktopWindow", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const fileMenu = template.find((item) => item.label === "File");
+      assert.isDefined(fileMenu);
+      if (!Array.isArray(fileMenu.submenu)) {
+        throw new Error("Expected File menu submenu to be an array.");
+      }
+      const settingsItem = fileMenu.submenu.find((item) => item.label === "Settings...");
+      assert.isDefined(settingsItem);
+      const settingsClick = settingsItem.click;
+      if (typeof settingsClick !== "function") {
+        throw new Error("Expected Settings menu item to have a click handler.");
+      }
+
+      settingsClick({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+      assert.equal(yield* Deferred.await(selectedAction), "open-settings");
+    }),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
 });

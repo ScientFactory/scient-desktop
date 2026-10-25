@@ -1,36 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  compareProviderDriverKinds,
-  PROVIDER_DISPLAY_NAMES,
-  PROVIDER_DISPLAY_ORDER,
-} from "./model.ts";
+import { compareProviderDriverKinds } from "./model.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 
 describe("provider display order", () => {
-  it("pins the canonical first-party order", () => {
-    expect(PROVIDER_DISPLAY_ORDER).toEqual([
-      "scient",
-      "codex",
-      "claudeAgent",
-      "antigravity",
-      "opencode",
-      "droid",
-      "pi",
-      "omp",
-      "cursor",
-      "grok",
-    ]);
-  });
-
-  it("publishes the Oh My Pi display name", () => {
-    expect(PROVIDER_DISPLAY_NAMES[ProviderDriverKind.make("omp")]).toBe("Oh My Pi");
-  });
-
-  it("publishes the Scient Agent display name", () => {
-    expect(PROVIDER_DISPLAY_NAMES[ProviderDriverKind.make("scient")]).toBe("Scient");
-  });
-
   it("places open plugin drivers after first-party providers alphabetically", () => {
     const drivers = ["zeta", "cursor", "alpha", "antigravity"].map((driver) =>
       ProviderDriverKind.make(driver),

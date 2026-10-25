@@ -11,6 +11,7 @@ import { makeDesktopVoiceBridge } from "./preloadBridge.ts";
 afterEach(() => vi.useRealTimers());
 
 describe("makeDesktopVoiceBridge", () => {
+  // regression: cb2164c119 fix(voice): restore first-run macOS microphone access (#319)
   it("requests native microphone access through its dedicated IPC method", async () => {
     const invoke = vi.fn().mockResolvedValue("granted");
     const bridge = makeDesktopVoiceBridge({ invoke });
@@ -19,6 +20,7 @@ describe("makeDesktopVoiceBridge", () => {
     expect(invoke).toHaveBeenCalledWith(VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL);
   });
 
+  // regression: f1fcd2382a fix(voice): harden lifecycle and model setup
   it("cancels model setup through its dedicated IPC method", async () => {
     const invoke = vi.fn().mockResolvedValue(undefined);
     const bridge = makeDesktopVoiceBridge({ invoke });
@@ -78,6 +80,7 @@ describe("makeDesktopVoiceBridge", () => {
   });
 });
 
+// regression: fa095e4714 fix(voice): preserve transcript formatting and scope cancellation (#392)
 it("carries the same transcription identity through both IPC operations", async () => {
   const invoke = vi.fn().mockResolvedValue(undefined);
   const bridge = makeDesktopVoiceBridge({ invoke });

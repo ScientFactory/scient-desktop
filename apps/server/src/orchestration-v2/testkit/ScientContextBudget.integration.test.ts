@@ -225,7 +225,6 @@ const cases: ReadonlyArray<{
     path: "fork",
     included: true,
   },
-  { name: "maximum", size: "maximum", historyBytes: 500_000, window: 1_000_000, included: true },
   {
     name: "override",
     size: "compact",

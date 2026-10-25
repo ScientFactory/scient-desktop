@@ -11,7 +11,9 @@ import {
   ComposerListExtensions,
 } from "./composer-rich-text-doc";
 import { composerTextDirections } from "./composer-text-direction";
+// SCIENT-FORK:START
 import type { ContentDirection } from "./scient/bidi/contentDirection";
+// SCIENT-FORK:END
 
 const schema = getSchemaByResolvedExtensions(
   resolveExtensions([
@@ -32,6 +34,7 @@ const schema = getSchemaByResolvedExtensions(
   ]),
 );
 
+// SCIENT-FORK:START — Scient passes the requested composer direction.
 function directions(value: string, requested: ContentDirection = "auto") {
   const doc = ProseMirrorNode.fromJSON(
     schema,
@@ -39,6 +42,7 @@ function directions(value: string, requested: ContentDirection = "auto") {
   );
   return composerTextDirections(doc, requested).blocks;
 }
+// SCIENT-FORK:END
 
 describe("composerTextDirections", () => {
   it("does not count inline code toward a line's direction", () => {
@@ -60,6 +64,7 @@ describe("composerTextDirections", () => {
       "rtl",
     ]);
   });
+  // SCIENT-FORK:START
 
   it("resolves ambiguous paragraphs against the whole draft and a list as one block", () => {
     expect(
@@ -79,4 +84,5 @@ describe("composerTextDirections", () => {
     expect(composerTextDirections(doc, "auto").blocks).toEqual(["ltr", "ltr"]);
     expect(composerTextDirections(doc, "rtl").blocks).toEqual(["rtl", "ltr"]);
   });
+  // SCIENT-FORK:END
 });

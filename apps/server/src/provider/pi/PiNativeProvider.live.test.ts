@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { makePiRpcClient } from "./PiRpcClient.ts";
+import { makePiRpcClient } from "@t3tools/provider-pi/server/rpcClient";
 import { PI_CUSTOM_MODELS_EXTENSION } from "./PiCustomModels.ts";
 import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 

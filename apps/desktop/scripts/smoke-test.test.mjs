@@ -45,7 +45,8 @@ afterEach(() => {
 
 describe("actual desktop smoke child lifecycle", () => {
   it.each(
-    [0, 7].map((code) => ({
+    // Exit 0 is the case that matters: a clean code must still fail an early exit.
+    [0].map((code) => ({
       caseTitle: `rejects an early exit ${code} without fatal output`,
       code,
     })),

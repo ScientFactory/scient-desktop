@@ -242,6 +242,7 @@ describe("toVoiceModelRequestError", () => {
     });
   });
 
+  // regression: f1fcd2382a fix(voice): harden lifecycle and model setup
   it("uses operation-specific safe messages", () => {
     expect(toVoiceModelRequestError(new Error("/private/model.bin"), "download")).toMatchObject({
       kind: "provider-error",

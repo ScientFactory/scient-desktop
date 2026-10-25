@@ -2302,7 +2302,7 @@ function attachCreatedThreadSummaries(
 }
 
 // SCIENT-FORK:START — exported for tests of the post-handoff setup row.
-export const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
+const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
 // SCIENT-FORK:END
 
 export type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRows>[0];

@@ -401,29 +401,24 @@ describe("Mermaid error recovery", () => {
     expect(codeBlock.getAttribute("data-wrap")).toBe(String(!wrapped));
   });
 
-  it.each(["light", "dark"] as const)(
-    "uses the normal language header and highlighting in %s appearance",
-    async (theme) => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-      await _setupFixture0(_fixture);
+  it("uses the normal language header and highlighting", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
 
-      await getSyntaxHighlighterPromise("mermaid");
-      const original = 'flowchart LR\nA["שלום <start> & end"\n';
-      await render(_fixture, original, theme);
-      const codeBlock = _fixture.container.querySelector(".chat-markdown-codeblock")!;
-      const header = codeBlock.querySelector(".chat-markdown-codeblock-header")!;
-      expect(
-        header.querySelector('[aria-label="Language: mermaid"]') ??
-          [...header.querySelectorAll("span")].find((node) => node.textContent === "mermaid"),
-      ).toBeTruthy();
-      expect(codeBlock.querySelector(".chat-markdown-shiki .shiki code")?.textContent).toBe(
-        original,
-      );
-      await act(() => button(_fixture, "Copy code").click());
-      expect(writeText).toHaveBeenCalledWith(original);
-    },
-  );
+    await getSyntaxHighlighterPromise("mermaid");
+    const original = 'flowchart LR\nA["שלום <start> & end"\n';
+    await render(_fixture, original, "light");
+    const codeBlock = _fixture.container.querySelector(".chat-markdown-codeblock")!;
+    const header = codeBlock.querySelector(".chat-markdown-codeblock-header")!;
+    expect(
+      header.querySelector('[aria-label="Language: mermaid"]') ??
+        [...header.querySelectorAll("span")].find((node) => node.textContent === "mermaid"),
+    ).toBeTruthy();
+    expect(codeBlock.querySelector(".chat-markdown-shiki .shiki code")?.textContent).toBe(original);
+    await act(() => button(_fixture, "Copy code").click());
+    expect(writeText).toHaveBeenCalledWith(original);
+  });
 
   it("preserves the successful diagram toolbar and source controls", async () => {
     await using _fixture = _createFixture();
@@ -450,6 +445,9 @@ describe("Mermaid error recovery", () => {
     expect(_fixture.container.textContent).toContain("A valid diagram");
   });
 
+  // sole guard: an inline SVG keeps its aspect ratio (`height: auto` in scient-diagrams.css);
+  // the sizing file passes with that rule broken.
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
   it.each([
     { name: "intrinsic", stageWidth: 720, intrinsicWidth: 180, intrinsicHeight: 90 },
     { name: "oversized", stageWidth: 320, intrinsicWidth: 1_200, intrinsicHeight: 600 },
@@ -489,6 +487,7 @@ describe("Mermaid error recovery", () => {
     },
   );
 
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
   it.each(["Copy source", "Download SVG", "Copy image", "Download PNG"] as const)(
     "executes %s from the expanded diagram through the export boundary",
     async (action) => {

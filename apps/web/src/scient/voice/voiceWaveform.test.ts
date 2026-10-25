@@ -16,10 +16,13 @@ describe("live waveform window", () => {
     expect(history).toHaveLength(33);
   });
 
-  it("keeps the newest audio visible through thousands of samples and width changes", () => {
-    let history: number[] = [];
-    for (let sample = 1; sample <= 4_500; sample += 1) {
-      history = [...history, sample].slice(-VOICE_WAVEFORM_LEVEL_COUNT);
+  // regression: 56f111fc99 fix(voice): center footer presentation and keep waveforms live
+  it("keeps the newest audio visible through long recordings and width changes", () => {
+    // The recorder keeps the last VOICE_WAVEFORM_LEVEL_COUNT samples; check
+    // each side of every visible width and of the history bound.
+    for (const sample of [1, 8, 9, 32, 33, 112, 113, 4_500]) {
+      const kept = Math.min(sample, VOICE_WAVEFORM_LEVEL_COUNT);
+      const history = Array.from({ length: kept }, (_, index) => sample - kept + 1 + index);
       const window = buildVoiceWaveformLevels(history);
       expect(window).toHaveLength(Math.min(sample, 112));
       for (const visibleBars of [1, 8, 32, 64, 96, 112]) {

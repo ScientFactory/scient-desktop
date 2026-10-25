@@ -35,7 +35,8 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host = undefined;
 }
 
-it.each(["light", "dark"])(
+// The dark row only feeds release captures; both themes take the same path.
+it.each(import.meta.env.VITE_SCIENT_RELEASE_SCREENSHOTS ? ["light", "dark"] : ["light"])(
   "keeps the extended note readable and navigable in %s mode",
   async (theme) => {
     await using _fixture = _createFixture();

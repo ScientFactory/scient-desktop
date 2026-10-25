@@ -1,14 +1,9 @@
 import {
   AuthProvidersManageScope,
-  DEFAULT_SERVER_SETTINGS,
   ProjectId,
-  ProviderDriverKind,
   ProviderInstanceId,
-  resolveProjectProviderInstanceEnabled,
   type ServerSettings,
 } from "@t3tools/contracts";
-import { hasProjectSettingsOverrides } from "@t3tools/shared/projectSettings";
-import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -72,29 +67,9 @@ describe("buildProviderInstanceOverridePatch", () => {
     });
   });
 
-  it("resets the only override back to the environment's enablement", () => {
-    const settings: ServerSettings = {
-      ...DEFAULT_SERVER_SETTINGS,
-      providerInstances: {
-        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
-      },
-      projectSettingsOverrides: {
-        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
-      },
-    };
-
-    const saved = applyServerSettingsPatch(settings, {
-      projectSettingsOverrides: buildProviderInstanceOverridePatch(
-        settings,
-        [projectId],
-        instanceId,
-        undefined,
-      ),
-    });
-
-    expect(resolveProjectProviderInstanceEnabled(saved, projectId, instanceId)).toBe(false);
-    expect(hasProjectSettingsOverrides(saved)).toBe(false);
-  });
+  // SCIENT-FORK:START — Scient sends `{}` rather than a `null` entry here; its reset case lives in
+  // ProviderSettingsPanel.logic.scient.test.ts.
+  // SCIENT-FORK:END
 
   it("sends providerInstances: {} explicitly when clearing the last instance override leaves other keys", () => {
     const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {

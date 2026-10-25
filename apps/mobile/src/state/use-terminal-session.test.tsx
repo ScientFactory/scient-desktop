@@ -55,6 +55,7 @@ afterEach(async () => {
 });
 
 describe("known terminal sessions", () => {
+  // regression: 5cb4bf7ba2 fix(client): stop open subscriptions from reporting pending forever
   it("settles to an empty session list once the open metadata subscription reports none", async () => {
     expect(latest).toMatchObject({ sessions: null, isPending: true });
 

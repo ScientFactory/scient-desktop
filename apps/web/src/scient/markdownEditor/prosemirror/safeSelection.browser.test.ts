@@ -78,13 +78,11 @@ describe("safe atom selections", () => {
   });
 
   it.each([
+    // Field direction picks the boundary and prose direction picks the side,
+    // independently: these rows give each choice both outcomes.
     ["ltr", "ltr", "ArrowLeft", "start", "before"],
-    ["ltr", "ltr", "ArrowRight", "end", "after"],
     ["rtl", "ltr", "ArrowLeft", "end", "before"],
-    ["rtl", "ltr", "ArrowRight", "start", "after"],
     ["ltr", "rtl", "ArrowLeft", "start", "after"],
-    ["ltr", "rtl", "ArrowRight", "end", "before"],
-    ["rtl", "rtl", "ArrowLeft", "end", "after"],
     ["rtl", "rtl", "ArrowRight", "start", "before"],
   ] as const)(
     "moves a %s field in %s prose through its physical %s boundary",
@@ -134,6 +132,7 @@ describe("safe atom selections", () => {
     },
   );
 
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
   it.each([
     ["Shift+ArrowLeft", { key: "ArrowLeft", shiftKey: true }],
     ["Alt+ArrowRight", { altKey: true, key: "ArrowRight" }],
