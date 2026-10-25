@@ -8,13 +8,9 @@ export type BrowserControlChipState = {
   readonly action: { readonly label: string; readonly kind: "take" | "release" } | null;
 } | null;
 
-/**
- * What the chip says, if anything. A page you browse on your own shows
- * nothing; the chip appears while an agent uses it, when nobody drives it
- * (Take control), when another window drives it, when this view cannot operate
- * it, and while you drive it with an agent around or another window watching
- * (so you can hand it back).
- */
+/** What the chip says, if anything: nothing while you browse alone; it appears while an
+ * agent or another window drives, when nobody drives (Take control), when this view cannot
+ * operate it, and while you drive with an agent around or another window watching. */
 export function browserControlChipState(
   control: PreviewStreamControl | null,
   agentSeen: boolean,
