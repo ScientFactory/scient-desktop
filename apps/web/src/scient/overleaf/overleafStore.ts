@@ -184,6 +184,10 @@ const listReads = new Map<string, number>();
 const staleWorkspaces = new Set<string>();
 let readCounter = 0;
 
+/** How long saves settle before the status is read again: a burst of saves reads once. */
+const SAVE_REFRESH_DELAY_MS = 400;
+const scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
+
 /** Reads one link's offline status again. */
 export async function refreshOverleafStatus(
   environmentId: EnvironmentId,
@@ -193,6 +197,12 @@ export async function refreshOverleafStatus(
   const key = keyOf(environmentId, workspaceRoot);
   const read = ++readCounter;
   const readKey = `${key}\u0000${connectionId}`;
+  // This read covers every save before it, so a refresh still waiting on one is dropped.
+  const scheduled = scheduledRefreshes.get(readKey);
+  if (scheduled !== undefined) {
+    clearTimeout(scheduled);
+    scheduledRefreshes.delete(readKey);
+  }
   statusReads.set(readKey, read);
   statusInflight.set(readKey, (statusInflight.get(readKey) ?? 0) + 1);
   try {
@@ -212,10 +222,6 @@ export async function refreshOverleafStatus(
     else statusInflight.delete(readKey);
   }
 }
-
-/** How long saves settle before the status is read again: a burst of saves reads once. */
-const SAVE_REFRESH_DELAY_MS = 400;
-const scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** Reads one link's status again shortly, once for any number of calls meanwhile. */
 function scheduleOverleafStatusRefresh(
