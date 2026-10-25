@@ -39,13 +39,8 @@ import { arrayElementsEqual, parseThreadKey, threadKey } from "./entities.ts";
 import { getProjectionArrayReplacementIndex } from "./orchestrationV2Projection.ts";
 
 /**
- * Combine detail-only collections with the shell's authoritative thread metadata.
- *
- * Shell and detail subscriptions are intentionally independent. A cached detail can
- * therefore briefly outlive a newer shell snapshot after reconnecting. Workspace
- * consumers must use the shell branch/worktree/project fields so they do not target
- * a stale checkout while retaining messages, activities, plans, and checkpoints
- * from the detail subscription.
+ * Shell/detail subscriptions can race after reconnect; cached detail may outlive newer shell metadata.
+ * Use shell branch/worktree/project authority to avoid targeting a stale checkout while retaining detail history.
  */
 export function mergeEnvironmentThread(
   detail: EnvironmentThread | null,

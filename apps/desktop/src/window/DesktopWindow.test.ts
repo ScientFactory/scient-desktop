@@ -830,8 +830,6 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  // Ctrl+wheel bypasses the menu accelerators, so it has to take the same
-  // zoom step, preview restore included, from the window's zoom-changed event.
   it.effect("zooms the app from Ctrl+wheel like the menu does", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
@@ -941,6 +939,7 @@ describe("DesktopWindow", () => {
   );
 
   // SCIENT-FORK:START scient-window-fix-guards - upstream's snap dropped this fix guard
+
   // regression: c1b2210411 fix(desktop): keep the sidebar brand and window buttons aligned (#11906)
   it.effect("keeps macOS window buttons centered when zooming and leaving fullscreen", () =>
     Effect.gen(function* () {
@@ -1298,6 +1297,7 @@ describe("DesktopWindow", () => {
   );
 
   // SCIENT-FORK:START scient-window-fix-guards - upstream's snap dropped this fix guard
+
   // regression: 2c199aacac fix(desktop): preserve main window bounds (#3851)
   it.effect("logs display lookup failures before falling back to the default size", () =>
     Effect.gen(function* () {
@@ -1349,6 +1349,7 @@ describe("DesktopWindow", () => {
   // SCIENT-FORK:END scient-window-fix-guards
 
   // SCIENT-FORK:START scient-window-fix-guards - upstream's snap dropped this fix guard
+
   // regression: 0418301de7 Fix macOS fullscreen titlebar spacing (#4019)
   it.effect("publishes native macOS fullscreen changes to the renderer", () =>
     Effect.gen(function* () {
@@ -1383,6 +1384,7 @@ describe("DesktopWindow", () => {
   // SCIENT-FORK:END scient-window-fix-guards
 
   // SCIENT-FORK:START scient-window-fix-guards - upstream's snap dropped this fix guard
+
   // regression: 15ca727b17 fix(desktop): reload the main renderer after it is killed (#20300)
   it.effect(
     "recovers killed renderers without reloading indefinitely or reviving closed windows",
@@ -1627,6 +1629,7 @@ describe("DesktopWindow", () => {
   );
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: ffae5410e8 Route preview automation through live owner streams (#3548)
   it.effect("recovers when the development renderer is temporarily unreachable", () =>
     Effect.gen(function* () {
@@ -1678,6 +1681,7 @@ describe("DesktopWindow", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: aa219be713 port desktop app to Effect (#2546)
   it.effect("does not open a development window until the backend is ready", () =>
     Effect.gen(function* () {

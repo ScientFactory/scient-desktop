@@ -804,7 +804,6 @@ it.effect.each(["darwin", "win32"] as const)(
 
         for (const finish of heldFlights) finish();
         yield* Fiber.join(landing);
-        // Landing releases the guard even before the first capture is acknowledged.
         yield* Effect.promise(fixture.trigger);
         assert.equal(fixture.state.snapshots, 2);
         assert.lengthOf(fixture.readyIds, 2);
@@ -2268,6 +2267,7 @@ it.effect("says when the macOS test capture command timed out", () => {
 // SCIENT-FORK:END scient-mac-test-capture
 
 // SCIENT-FORK:START restored-behavior-guards
+
 // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
 it.effect(
   "logs a GNOME activation failure and completes the shell flight before acknowledging the image",
@@ -2363,6 +2363,7 @@ it.effect(
 // SCIENT-FORK:END restored-behavior-guards
 
 // SCIENT-FORK:START restored-behavior-guards
+
 // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
 it.effect("rejects macOS test capture on other platforms", () =>
   Effect.scoped(

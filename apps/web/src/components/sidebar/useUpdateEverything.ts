@@ -58,15 +58,8 @@ const UPDATE_RESTART_DELAY_MS = 5_000;
 export type ReportLocalUpdateError = (title: string, description: string) => void;
 
 /**
- * The remote half of the sidebar update button: outdated providers on every
- * connected machine, and servers behind the version this client runs or is
- * about to install (`localUpdateVersion`). Remote desktop apps follow their own
- * feed. Exact server-package targets require owned availability proof. `run`
- * performs the whole pass, including this app's own download and install when
- * given. It updates quietly, tracks each machine in the run state, and reports
- * one summary toast at the end. This app relaunches once every server restarts
- * into its update, after a short countdown the user can postpone. The summary
- * then waits for the relaunch, and servers still restarting are followed after it.
+ * Remote desktops follow their own feeds; exact server-package targets need owned availability proof.
+ * Relaunch locally only after remote restarts, preserving unfinished restart tracking across relaunch.
  */
 export function useUpdateEverything(localUpdateVersion: string | null) {
   const targetVersion = localUpdateVersion ?? APP_VERSION;

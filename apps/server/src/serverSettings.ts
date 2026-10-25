@@ -1,13 +1,4 @@
-/**
- * ServerSettings - Server-authoritative settings service.
- *
- * Owns persistence, validation, and change notification of settings that affect
- * server-side behavior (binary paths, streaming mode, env mode, custom models,
- * text generation model selection).
- *
- * Follows the same pattern as `keybindings.ts`: JSON file + Cache + PubSub +
- * Semaphore + scoped directory watches for concurrency and external edit detection.
- *
+/** External settings edits require scoped directory watches and serialized persistence.
  * @module ServerSettings
  */
 import {
@@ -106,18 +97,13 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-/**
- * Old settings files can hold both flags with conflicting values; an explicit false on either
- * side wins so a user's disable is never silently undone.
- */
+// Conflicting flags resolve to false to preserve user disables.
 const foldProviderInstanceEnabledFlags = (settings: ServerSettings): ServerSettings => {
   let changed = false;
   const providerInstances: Record<string, ProviderInstanceConfig> = {};
   for (const [instanceId, instance] of Object.entries(settings.providerInstances)) {
     const config = instance.config;
-    // Only fold boolean flags: a malformed `enabled` (e.g. `"false"`) must
-    // stay in the blob so driver schema validation flags it instead of the
-    // fold silently repairing the config.
+    // Leave malformed flags for driver schema validation rather than silently repairing them.
     if (
       config === null ||
       typeof config !== "object" ||
@@ -254,10 +240,7 @@ export class ServerSettingsService extends Context.Service<
 
     readonly streamChanges: Stream.Stream<ServerSettings>;
 
-    /**
-     * Use this before reading a snapshot when changes between the snapshot and
-     * a lazily started stream must not be lost.
-     */
+    /** Subscribe before reading a snapshot to retain changes before lazy stream startup. */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
     // SCIENT-FORK:START — custom-model catalog methods
   } & CustomModelSettingsMethods
@@ -346,8 +329,7 @@ export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 export { customModelsTestMethods } from "./scientServerSettings.ts";
 // SCIENT-FORK:END
 
-// Migrate saved token delivery without accepting it in settings writes or
-// letting one retired value reset the rest of the environment's settings.
+// Accept retired token delivery only on load so one old value cannot reset all settings.
 const PersistedResponseStreamingMode = Schema.Union([
   ResponseStreamingMode,
   Schema.Literal("token"),
@@ -465,17 +447,9 @@ const HISTORY_RESTORED_DRIVERS: ReadonlySet<ProviderDriverKind> = new Set(
   ["cursor", "droid", "grok", "opencode"].map((driver) => ProviderDriverKind.make(driver)),
 );
 
-/**
- * Move each customized legacy `providers.<kind>` blob into the driver's
- * default `providerInstances` slot. An explicit instance already in that slot
- * wins. Blobs that match a fresh install (empty, or only an `enabled` flag
- * equal to the driver default) carry nothing and are dropped. Also retain the
- * previous history-based opt-in for default-off providers even after the old
- * map has already been removed.
- *
- * A default-off slot without an explicit `enabled` flag is enabled when
- * provider history shows it was used. An explicit disable always wins.
- */
+/** Explicit provider instances win over legacy blobs; drop blobs matching fresh defaults.
+ * Retain history opt-in for default-off providers after removing the legacy map.
+ * Prior use enables only slots without an explicit flag; explicit disables always win. */
 function migrateLegacyProviderSettings(
   settings: ServerSettings,
   legacyProviders: Readonly<Record<string, unknown>>,
@@ -687,9 +661,7 @@ interface LegacyProjectSettingsRow {
   readonly scripts: string;
 }
 
-/**
- * Marked with `projectSettingsFolded` so a later reset in the UI survives restarts.
- */
+// projectSettingsFolded prevents restarts from undoing later UI resets.
 function foldLegacyProjectSettings(
   settings: ServerSettings,
   rows: ReadonlyArray<LegacyProjectSettingsRow>,
@@ -722,8 +694,7 @@ function foldLegacyProjectSettings(
   for (const [projectId, value] of Object.entries(settings.projectAutoPullOverrides)) {
     set(projectId, "defaultAutoPull", value);
   }
-  // A stored null meant "reset to machine defaults", which is now plain
-  // inheritance; the project's own aggregate scripts must not resurface.
+  // A stored null resets to machine defaults, so the project's aggregate scripts must not resurface.
   const resetScripts = new Set<string>();
   for (const [projectId, value] of Object.entries(settings.projectScriptOverrides)) {
     if (value === null) resetScripts.add(projectId);
@@ -1389,9 +1360,7 @@ const make = Effect.gen(function* () {
     );
     // SCIENT-FORK:END
 
-    // A symlinked settings file is rewritten in its destination's directory,
-    // which a watch on the link's directory never sees. The link is resolved
-    // again whenever it changes, so repointing it moves the watch along.
+    // Watch symlink targets' directories for rewrites; re-resolve link changes to follow repointing.
     const watchLinkTarget = Effect.gen(function* () {
       const linkTargetPath = yield* resolveSymlinkTarget(settingsPath).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
@@ -1431,8 +1400,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-    // Editors emit multiple events per save (truncate, write, rename) and
-    // `fs.watch` can fire before the content has been flushed to disk.
+    // Saves emit multiple events; fs.watch may fire before content is flushed.
     // SCIENT-FORK:START — all hints and metadata changes share the existing debounce/read owner.
     const debouncedSettingsEvents = Stream.merge(
       Stream.merge(settingsFileEvents, linkTargetEvents),

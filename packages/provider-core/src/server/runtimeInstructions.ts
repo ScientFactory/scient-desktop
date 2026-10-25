@@ -18,9 +18,7 @@ export interface RuntimeInstructionsInput {
 }
 // SCIENT-FORK:END
 
-/**
- * Shared runtime context; omit model and effort when the harness manages them dynamically.
- */
+/** Omit model and effort when the harness manages them dynamically. */
 // SCIENT-FORK:START — accept the host-extensible input at the shared formatter signature.
 export function buildRuntimeInstructions(runtime: RuntimeInstructionsInput): string {
   // SCIENT-FORK:END

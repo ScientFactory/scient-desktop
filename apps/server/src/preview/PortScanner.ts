@@ -1,22 +1,6 @@
-/**
- * In-process PortScanner implementation.
- *
- * macOS/Linux: parses `lsof -iTCP -sTCP:LISTEN -P -n -F pcn` (-F output is a
- * stable line-prefixed field format; this is the only `lsof` flag set we rely
- * on).
- *
- * Linux without lsof: reads listening sockets from `/proc/net/tcp{,6}` and
- * finds their processes through `/proc/<pid>/fd`. This is passive metadata:
- * discovered listeners never authorize protocol probes on their own.
- *
- * Explicit web URLs are published only after a bounded, declared-protocol probe finds a
- * successful HTML document or a redirect to one.
- * Positive and negative results are cached briefly by candidate URL and listener identity,
- * limiting repeated requests without leaving stale classifications around.
- *
- * Polling is reference-counted via scoped `retain`. A single layer-scoped fiber
- * polls forever, but each tick is a no-op when the retain count is zero.
- */
+/** Listener metadata never authorizes protocol probes.
+ * Publish declared web URLs only after bounded HTML/redirect verification.
+ * Cache by URL and listener identity; poll only while retained. */
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   PREVIEW_URL_MAX_LENGTH,
@@ -389,7 +373,7 @@ const serversEqual = (
 const isCommandNotFound = (error: ProcessRunner.ProcessSpawnError): boolean =>
   PlatformError.isPlatformError(error.cause) && error.cause.reason._tag === "NotFound";
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* PortDiscoveryMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -463,9 +447,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const known = yield* Ref.get(socketOwnersRef);
     const knownMisses = yield* Ref.get(socketOwnerMissesRef);
     const inodes = new Set(listeners.map((listener) => listener.inode));
-    // Listeners rarely change, so the fd walk runs only for sockets without a
-    // confirmed owner, and gives up on one after a few walks miss it (another
-    // user's process, or one that exited mid-walk).
+    // Walk fds only for unowned sockets; stop after repeated misses for inaccessible or exited processes.
     const unseen = new Set(
       [...inodes].filter(
         (inode) => !known.has(inode) && (knownMisses.get(inode) ?? 0) < SOCKET_OWNER_ATTEMPTS,
@@ -655,8 +637,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return { configured } satisfies WebProbeSnapshot;
   });
 
-  // `tasklist` costs ~200-300ms per PID, so look up only visible servers, a few at a time, and
-  // reuse each name until its TTL expires.
+  // tasklist costs 200-300ms per PID; query visible servers with bounded concurrency and cache names.
   const withWindowsProcessNames = Effect.fn("PortDiscovery.withWindowsProcessNames")(function* (
     snapshot: WebProbeSnapshot,
   ) {
@@ -744,8 +725,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       const listeners = yield* Effect.all([runNetstat("tcp"), runNetstat("tcpv6")], {
         concurrency: 2,
       }).pipe(
-        // One failed query leaves a partial snapshot that could hide another process sharing a
-        // port across IPv4/IPv6, so fall back to configured URLs instead.
+        // Failed queries can hide other IPv4/IPv6 listeners on the port; fall back to configured URLs.
         Effect.map(([tcp4, tcp6]) =>
           exitedWithError(tcp4) || exitedWithError(tcp6)
             ? null

@@ -1,11 +1,5 @@
 /**
- * CursorDriver — `ProviderDriver` for the Cursor Agent SDK runtime.
- *
- * Provider status, model discovery, orchestration, and text generation use the
- * official Cursor SDK with an instance browser login or CURSOR_API_KEY. A host
- * may inject runtime resolution and instance composition without moving that
- * host's lifecycle policy into this package.
- *
+ * Host runtime resolution must not move host lifecycle policy into the generic Cursor SDK driver.
  * @module provider/Drivers/CursorDriver
  */
 import {
@@ -99,12 +93,8 @@ export interface CursorRuntimeResolverInput extends ProviderDriverCreateInput<Cu
 }
 
 /**
- * Host-owned runtime policy applied around the generic Cursor driver.
- *
- * `effectiveEnvironment` is used for status, skills, and text-generation
- * commands. The SDK adapter continues to receive the explicit instance
- * environment and effective config, so it does not inherit arbitrary host
- * resolver state.
+ * Host effectiveEnvironment governs status, skills and text generation.
+ * The SDK adapter receives explicit instance configuration to avoid inheriting arbitrary resolver state.
  */
 export interface CursorRuntimeResolution<Requirements = never, Extension extends object = {}> {
   readonly effectiveConfig: CursorSettings;

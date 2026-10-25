@@ -30,14 +30,8 @@ export interface ServerDerivedPaths {
   readonly environmentThemesDir: string;
   readonly providerStatusCacheDir: string;
   readonly analysisDir: string;
-  /**
-   * Where compute sessions keep their durable record.
-   *
-   * Separate from `analysisDir` because the two have different lifetimes: an
-   * analysis run is a finished artifact, while a compute session is a namespace
-   * a user may hold open for days and whose history has to survive the process
-   * that served it.
-   */
+  /** Compute history must outlive its server process and can stay open for days,
+   * independently of completed analysis artifacts. */
   readonly computeDir: string;
   readonly latexDir: string;
   readonly worktreesDir: string;

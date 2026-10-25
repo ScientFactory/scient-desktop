@@ -13,12 +13,8 @@ import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 
-// SCIENT-FORK:START pull-request-branch-deletion-gate — upstream also asserts the permission read
-// offers "delete-branch". Scient's gate neither advertises nor permits it (released clients cannot
-// decode it), so this asserts the offer stays gated while the deletion machinery, still runnable,
-// keeps every read and the write on the credential that passed the permission check. The service
-// refuses the action while the gate is closed (PullRequestService.test.ts, "runs branch deletion
-// only when the host and viewer support it").
+// SCIENT-FORK:START pull-request-branch-deletion-gate — released clients cannot decode delete-branch.
+// Keep the offer and service gated while retaining deletion credential continuity checks.
 it.effect(
   "keeps gated branch deletion on the credential that passed source repository permissions",
   () =>

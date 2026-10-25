@@ -45,10 +45,7 @@ const NATIVE_CLI_INSTANCE_ID = ProviderInstanceId.make("nativeCli");
 const OPENCODE_INSTANCE_ID = ProviderInstanceId.make("opencode");
 const encoder = new TextEncoder();
 
-// Pin a non-win32 platform so `resolveSpawnCommand` is a no-op and the raw
-// `{ command, args }` assertions below hold deterministically on any host
-// (including Windows). Windows-specific resolution is covered by the dedicated
-// win32 case at the end of this suite.
+// Pin Linux so raw command/args assertions bypass Windows shim resolution.
 const layerNonWindowsPlatform = Layer.succeed(HostProcess.Platform, "linux");
 
 function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabilities {
@@ -1174,7 +1171,7 @@ it.effect("never runs a native Oh My Pi updater, whatever the latest release is"
       instanceId,
       version: "18.2.8",
     });
-    // A standalone install on PATH, the shape #371 offered `omp update` for.
+    // A standalone installation on PATH can offer its own update command.
     const capabilities = yield* ompMaintenance
       .resolve({
         binaryPath: "omp",

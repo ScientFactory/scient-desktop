@@ -66,7 +66,8 @@ export type BuiltInUsageReadersEnv =
   | ProviderUsageReaderEnv<typeof PiDriver>
   | ProviderUsageReaderEnv<typeof MuseDriver>;
 
-/** Transcript readers precede scan readers; first duplicates win aggregation. */
+/** Order matters: aggregation keeps the first duplicate record. */
+// Transcript readers must precede scan readers.
 export const BUILT_IN_USAGE_DRIVERS: ReadonlyArray<
   AnyProviderDriver<BuiltInDriversEnv, BuiltInUsageReadersEnv>
 > = [

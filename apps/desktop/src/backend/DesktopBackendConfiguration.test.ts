@@ -351,6 +351,7 @@ describe("DesktopBackendConfiguration", () => {
   );
 
   // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped these; mutating the guarded bootstrap fields left every other desktop test green.
+
   // regression: 03bd839554 perf(desktop): reuse the prepared shell environment in the local backend (#17384) - sole guard
   it.effect("only the local primary bootstrap claims the prepared shell environment", () =>
     withHarness(
@@ -1454,6 +1455,7 @@ describe("DesktopBackendConfiguration", () => {
   });
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: a9b1190a11 Desktop: parallel WSL + Windows backends with mode picker (#2751)
   it.effect("resolvePrimaryLabel reports Windows when wsl-only but WSL is unavailable", () =>
     Effect.gen(function* () {
@@ -1489,6 +1491,7 @@ describe("DesktopBackendConfiguration", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: a9b1190a11 Desktop: parallel WSL + Windows backends with mode picker (#2751)
   it.effect("resolvePrimaryLabel reports the local environment on non-Windows platforms", () =>
     withHarness(
@@ -1502,6 +1505,7 @@ describe("DesktopBackendConfiguration", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: 49c0d96edf Reduce idle work and disk churn with native resource diagnostics (#2679)
   it.effect("prefers the release resource monitor when both development builds exist", () =>
     Effect.gen(function* () {
@@ -1550,6 +1554,7 @@ describe("DesktopBackendConfiguration", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: 53a477c2e9 [codex] Structure desktop backend settings read errors (#3379)
   it.effect("logs structured context when persisted observability settings cannot be read", () =>
     Effect.gen(function* () {
@@ -1614,6 +1619,7 @@ describe("DesktopBackendConfiguration", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: 3bb06ad910 feat(server): export log records over OTLP (#12493)
   it.effect("environment observability endpoints win over the persisted settings file", () =>
     Effect.gen(function* () {
@@ -1662,6 +1668,7 @@ describe("DesktopBackendConfiguration", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: 3bb06ad910 feat(server): export log records over OTLP (#12493)
   it.effect("resolveWsl carries environment-configured observability endpoints", () =>
     Effect.gen(function* () {
@@ -1706,6 +1713,7 @@ describe("DesktopBackendConfiguration", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: a9b1190a11 Desktop: parallel WSL + Windows backends with mode picker (#2751)
   it.effect("resolvePrimary omits backend observability endpoints when settings are missing", () =>
     withHarness(
@@ -1722,6 +1730,7 @@ describe("DesktopBackendConfiguration", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: a9b1190a11 Desktop: parallel WSL + Windows backends with mode picker (#2751)
   it.effect("resolveWsl reuses the primary's bootstrap token", () =>
     withHarness(

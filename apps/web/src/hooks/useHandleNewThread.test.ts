@@ -253,6 +253,7 @@ describe.each([
   ],
 ])("useNewThreadHandler with a %s draft", (_, draft) => {
   // SCIENT-FORK:START — restore the original behavior guard.
+
   // regression: e22040dfc1 feat(settings): edit any scopable setting as a project override (#10639)
   it.each([true, false])(
     "preserves an explicit start-from-origin choice of %s",
@@ -277,6 +278,7 @@ describe.each([
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START — restore the original behavior guard.
+
   // regression: cf1ba3d7da feat(settings): configure default permissions for new threads (#11346)
   it.each(["approval-required", "auto-accept-edits", "auto", "full-access"] as const)(
     "uses the target environment's %s permissions for new threads",
@@ -302,6 +304,7 @@ describe.each([
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START — restore the original behavior guard.
+
   // regression: e22040dfc1 feat(settings): edit any scopable setting as a project override (#10639)
   it.each([true, false])(
     "uses the target environment's start-from-origin default of %s",

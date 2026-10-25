@@ -661,9 +661,8 @@ function ChatViewContent(props: ChatViewProps) {
   })();
   // SCIENT-FORK:END
   const committedServerMessageIds = deriveCommittedServerUserMessageIds(serverVisibleTurnItems);
-  // Queued messages have no turn item until their run starts, so the
-  // turn-item-derived set alone can never retire their optimistic rows —
-  // cancelling such a run would leave a phantom "pending" queue row behind.
+  // Queued messages have no turn item until starting, so cancellation must retire their optimistic rows
+  // separately.
   const serverAcknowledgedUserMessageIds = (() => {
     const ids = new Set(committedServerMessageIds);
     for (const message of serverProjection?.messages ?? []) {
@@ -766,10 +765,7 @@ function ChatViewContent(props: ChatViewProps) {
   const citeAssistantTextStable = useStableCallback(citeAssistantText);
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<OptimisticUserMessage[]>([]);
-  // Set by "Work locally": the draft whose restored message should be resent
-  // once the cancelled dispatch has settled and the draft is in local mode.
-  // Keyed by draft id so a bootstrap rotating the thread id keeps it, while
-  // moving to another draft drops it without an effect.
+  // Draft ids survive promotion and expire on navigation, keeping the pending resend scoped correctly.
   const [workLocallyResendDraftId, setWorkLocallyResendDraftId] = useState<DraftId | null>(null);
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
@@ -862,7 +858,7 @@ function ChatViewContent(props: ChatViewProps) {
     ? null
     : ((draftId ? localDraftErrorsByDraftId[draftId]?.message : null) ?? null);
   const localServerError = localServerErrorsByThreadKey[routeThreadKey]?.message ?? null;
-  // A draft promoted to its server thread carries its pending error across.
+
   const promotedDraftError =
     serverThread && draftId ? localDraftErrorsByDraftId[draftId] : undefined;
   if (promotedDraftError !== undefined && draftId) {
@@ -947,8 +943,7 @@ function ChatViewContent(props: ChatViewProps) {
     return scopeThreadRef(parentSubagentEnvironmentId, parentSubagentThreadId);
   })();
   const parentSubagentThread = useQuietThreadShell(parentSubagentThreadRef);
-  // A workflow coordinator's thread opens with its script; the plan that replaces it lives on
-  // the parent's coordinator row, so the parent's detail loads only for such a thread.
+  // Workflow threads open with a script; their replacement plan lives on the parent's coordinator row.
   const workflowOpeningParentId =
     serverProjection === null
       ? null
@@ -1030,8 +1025,7 @@ function ChatViewContent(props: ChatViewProps) {
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
-  // Prefer the larger of turn-item-committed ids and projection messages so
-  // env lock does not unlock while turn items lag projection hydration.
+  // Turn items can lag projection hydration; keep the environment locked through that gap.
   const activeMessageCount = isServerThread
     ? Math.max(committedServerMessageIds.size, serverProjection?.messages.length ?? 0)
     : 0;
@@ -1112,10 +1106,8 @@ function ChatViewContent(props: ChatViewProps) {
   }
   // SCIENT-FORK:END
   const timelineAnchorMessageId = timelineAnchor.messageId;
-  // SCIENT-FORK:START — reserved room is released by the reader, Scroll to end or an unused
-  // anchor (MessagesTimeline's onReleaseUnusedAnchor), not when its run settles. The reading
-  // end is an unfinished turn's latest content, otherwise the latest answer's text; up to
-  // its last three lines may be hidden (chat/readerScrollPolicy.ts).
+  // SCIENT-FORK:START — only reader actions or unused anchors release reserved room, never run settlement.
+  // The reading end is unfinished-turn content or the latest answer; its last three lines may be hidden.
   // SCIENT-FORK:END
   const activeRightPanelKind = useRightPanelStore((state) =>
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
@@ -1669,8 +1661,7 @@ function ChatViewContent(props: ChatViewProps) {
     hasActionableProposedPlan: hasActionableProposedPlan(activeProposedPlan),
     hasComposerAttachments: composerHasAttachments,
   });
-  // A pending approval or question is part of the key: once it is answered,
-  // from this client or any other, the agent resumes and spends quota.
+  // Answering an approval or question on any client resumes quota spending, so include it in the key.
   const usageLimitsKey =
     activeProviderInstanceId === null || (isServerThread && activeThread === undefined)
       ? null
@@ -1888,8 +1879,7 @@ function ChatViewContent(props: ChatViewProps) {
     activityRun: activeActivityRun,
     localPreparing: isLocallyPreparingWorktree,
     sendQueuesBehindSetup,
-    // Counts the optimistic send too, so the row retires the moment the
-    // follow-up is on screen rather than when the server echoes it back.
+    // Include optimistic sends to retire the row before the server echo.
     followUpSent: timelineMessages.filter((message) => message.role === "user").length > 1,
   });
   // SCIENT-FORK:START — working state: a bootstrap still setting up and a fork being prepared
@@ -2133,13 +2123,11 @@ function ChatViewContent(props: ChatViewProps) {
     timelineEntries,
   });
   // SCIENT-FORK:END
-  // A provider-native subagent cannot take messages: a status bar replaces the
-  // composer and its strips. Its approvals and questions are asked on the
-  // top-level parent thread.
+  // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
   const composerMounted = !showProviderSubagentBar;
   const providerSubagentModels = selectedProviderEntry?.models ?? EMPTY_PROVIDER_MODELS;
-  // Providers can report a dated id or alias (claude-haiku-4-5-20251001).
+  // Providers can report dated model ids or aliases.
   const providerSubagentModelSlug = selectedProviderEntry
     ? resolveSelectableModel(
         selectedProviderEntry.driverKind,
@@ -2702,9 +2690,7 @@ function ChatViewContent(props: ChatViewProps) {
     let frame: number | null = null;
     const onWindowFocus = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
-      // The element that held focus receives it again after the window's own event, and the
-      // composer ignores that same frame so a restored focus does not lift a scroll-collapsed
-      // composer. Wait one more frame so this focus counts as a request to expand it.
+      // Wait an extra frame after window focus so the composer treats focus as an expansion request.
       frame = window.requestAnimationFrame(() => {
         frame = window.requestAnimationFrame(() => {
           frame = null;
@@ -2777,9 +2763,7 @@ function ChatViewContent(props: ChatViewProps) {
   }
   // SCIENT-FORK:END
 
-  // Keyed on the environment/thread, not the draft: a draft's promotion to its server
-  // route keeps this instance and drops `draftId`, and the send it is still
-  // dispatching must survive that swap.
+  // Promotion drops draftId while a send may still be dispatching, so key by thread.
   const [optimisticThreadKey, setOptimisticThreadKey] = useState(routeThreadKey);
   const [retiredOptimisticMessages, setRetiredOptimisticMessages] = useState<
     ReadonlyArray<ChatMessage>
@@ -2892,14 +2876,9 @@ function ChatViewContent(props: ChatViewProps) {
       composerTimelineInsetRef.current = nextInset;
       setComposerTimelineInset(nextInset);
     }
-    // The terminal drawer and the empty placeholder lay out against the
-    // expanded composer. The timeline inset already holds it through the
-    // desktop resting row; remembering it while the mobile strip is collapsed
-    // keeps both still when focus moves between the composer and the
-    // terminal, instead of re-clamping the drawer against each intermediate
-    // composer height. A collapsed strip can still grow (approvals, tasks), so
-    // the reservation follows it up. A hero composer's overlay fills the pane,
-    // so only its stack counts there.
+    // Reserve the expanded composer height for the terminal drawer and empty placeholder.
+    // Keep it while the mobile strip collapses, but allow growth from approvals or tasks.
+    // A hero overlay fills the pane, so reserve only its stack.
     const stack = composerOverlayElement?.querySelector<HTMLElement>(
       '[data-chat-composer-stack="true"]',
     );
@@ -2937,9 +2916,7 @@ function ChatViewContent(props: ChatViewProps) {
     setScrollToEndClearance(clearance);
   };
   const publishComposerOverlayHeightStable = useStableCallback(publishComposerOverlayHeight);
-  // The composer reports its resting flag from a layout effect, which runs
-  // before this component's own layout effects and before any resize
-  // observation, so every measurement below sees the flag for its layout.
+  // The composer's layout effect publishes this flag before parent layout effects or resize observations.
   const onComposerRestingChange = (resting: boolean) => {
     composerRestingRef.current = resting;
   };
@@ -3297,8 +3274,6 @@ function ChatViewContent(props: ChatViewProps) {
     ];
   })() as ComposerBannerStackItem[];
 
-  // A launch context only overrides the drawer's cwd until the thread's own
-  // location catches up, the drawer closes, or the thread changes.
   if (
     terminalUiLaunchContext !== null &&
     (terminalUiLaunchContext.threadId !== activeThreadId ||
@@ -3657,7 +3632,7 @@ function ChatViewContent(props: ChatViewProps) {
     serverProjection?.thread.guestShare?.messages.filter((message) => message.status === "pending")
       .length ?? 0;
   // SCIENT-FORK:END
-  // One-shot: the resend "Work locally" queued fires once, then the marker clears.
+
   const resendAfterWorkLocallyStable = useStableCallback(() => {
     setWorkLocallyResendDraftId(null);
     void onComposerSendStable();

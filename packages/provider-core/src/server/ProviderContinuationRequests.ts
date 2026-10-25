@@ -22,12 +22,9 @@ export interface ProviderContinuationRequest {
   readonly driver: ProviderDriverKind;
   readonly detail: string | null;
   /**
-   * Unsolicited work buffered by an idle native thread. The stable work ID
-   * deduplicates admission; startTurn adopts the buffer when its message has
-   * notification.source.kind=provider_work, without writing a native prompt.
-   * Stop invalidates dispatchIfCurrent and clears the buffer via clearIfCurrent.
-   * A busy predecessor defers admission without a command receipt. The worker
-   * retries this same generation through dispatchIfCurrent after a bounded delay.
+   * Stable work IDs deduplicate buffered native work; startTurn adopts it without a new prompt.
+   * Stop invalidates dispatchIfCurrent and clears the buffer. Busy predecessors defer without a receipt;
+   * the worker retries the same generation after a bounded delay.
    */
   readonly initiated?: {
     readonly providerInstanceId: ProviderInstanceId;
@@ -43,11 +40,7 @@ export interface ProviderContinuationRequest {
     readonly generation: number;
     readonly messageId: MessageId;
   };
-  /**
-   * `adapter_buffered` (default) is the provider-native wake: the adapter has already buffered the
-   * CLI's wake output, and the dispatched message only triggers ingestion. `message_text` is for
-   * app-owned work with no buffered provider output, such as a delegated child finishing.
-   */
+  /** adapter_buffered (default) ingests existing CLI output; message_text delivers app-owned wake text. */
   readonly delivery?: "adapter_buffered" | "message_text";
   readonly messageId?: MessageId;
   readonly dispatchIfCurrent?: <A, E, R>(
@@ -63,10 +56,7 @@ export type ProviderInitiatedWorkRequest = ProviderContinuationRequest & {
   readonly clearIfCurrent: NonNullable<ProviderContinuationRequest["clearIfCurrent"]>;
 };
 
-/**
- * The default reference drops requests, keeping adapter construction dependency-free in tests; the
- * live layer must be shared with the ProviderContinuationService worker that drains it.
- */
+/** The default drops requests; share the live layer with the worker that drains them. */
 export class ProviderContinuationRequests extends Context.Reference<{
   readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
   readonly take: Effect.Effect<ProviderContinuationRequest>;

@@ -17,9 +17,7 @@ import { isMacPlatform } from "../../lib/utils";
 import { conditionsOverlap, appKeysEqual } from "../../scient/keyboard/conflicts";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
 
-// Every usage.* command needs a rank. An unranked one falls back to the
-// alphabetical compare, which makes the comparator inconsistent and the order
-// depend on the input order.
+// Rank every usage command; mixing rank and alphabetical comparisons makes order input-dependent.
 const usageCommandOrder = new Map<KeybindingCommand, number>(
   [
     "usage.open" as const,
@@ -293,8 +291,6 @@ export function buildKeybindingRows(
   return rowsWithConflicts;
 }
 
-// Filtering keeps the row objects so rows that stay visible while the query
-// changes receive the same props and skip rendering.
 export function filterKeybindingRows(
   rows: ReadonlyArray<KeybindingRow>,
   query: string,

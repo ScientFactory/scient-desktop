@@ -380,11 +380,9 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     Option.getOrUndefined(
       resolveOptionPrecedence(
         explicitBaseDir,
-        // The inherited bootstrap field is private IPC, but it still carries
         // SCIENT-FORK:START — Scient-facing copy.
-        // a Scient-owned state path. Ignore it in Scient so a direct
+        // Ignore private bootstrap state paths so direct launches cannot enter legacy state.
         // SCIENT-FORK:END
-        // server launch cannot be redirected into legacy state.
         SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled
           ? Option.none()
           : Option.fromUndefinedOr(bootstrap?.t3Home),
@@ -558,10 +556,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     traceMaxBytes: env.traceMaxBytes,
     traceMaxFiles: env.traceMaxFiles,
     // SCIENT-FORK: Scient's fail-closed safety envelope stays authoritative
-    // and gates the endpoints upstream resolved. The resolution above already
-    // honors upstream's OpenTelemetry kill switch (OTEL_SDK_DISABLED /
-    // T3CODE_OTEL_SDK_DISABLED), per-signal Off, and the standard OTEL_*
-    // endpoint/header/protocol variables, so this only ever removes more.
+    // and can only remove endpoints after OTEL kill switches, per-signal Off,
+    // and standard environment-variable precedence have resolved.
     otlpTracesUrl:
       SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
         ? undefined

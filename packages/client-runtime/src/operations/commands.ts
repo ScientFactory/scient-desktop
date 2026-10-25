@@ -903,7 +903,7 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
     const projection = yield* getProjection(input.threadId);
     const subagent = projection.subagents.find((agent) => agent.id === input.subagentId);
     if (subagent?.origin === "app_owned" && subagent.childThreadId !== null) {
-      // The parent ends the task even when its child lost track of it (#19002). Older
+      // The parent ends the task even when its child lost track of it. Older
       // servers reject this for app-owned tasks, so the child stop below still runs.
       if (subagent.runId !== null) {
         yield* dispatch({
@@ -1168,12 +1168,8 @@ export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun"
   });
 });
 
-// SCIENT-FORK:START — dispatch the Scient conversation-fork command. thread.fork
-// carries no createdAt (the server stamps fork/lineage events with its own time).
-// The server resolves the selected assistant or user message to its internal
-// retained turn boundary.
-// Its default command id derives from the already-unique destination thread id,
-// so transport retries of the same fork request remain idempotent.
+// SCIENT-FORK:START — the server stamps fork events and resolves retained turn boundaries.
+// Destination-derived command IDs keep transport retries of the same fork idempotent.
 export const forkThread: (input: ForkThreadInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.forkThread",
 )(function* (input) {

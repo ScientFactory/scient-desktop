@@ -464,8 +464,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           [claudeId]: {
             driver: ProviderDriverKind.make("claudeAgent"),
             enabled: true,
-            // Packaged desktop builds start the server in $HOME, where some
-            // `claude` wrappers refuse to run.
+            // Packaged desktop starts in $HOME, where some claude wrappers refuse to run.
             environment: [{ name: "T3_CLAUDE_REQUIRED_CWD", value: stateDir, sensitive: false }],
             config: makeClaudeConfig({
               enabled: true,
@@ -1083,24 +1082,9 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
   );
 });
 
-/**
- * Enabled-resolution truth table for the registry.
- *
- * `resolveEntryEnabled` (private in ProviderInstanceRegistryLive) decides
- * the `enabled` value handed to a driver's `create`. Its contract is
- * most-restrictive-wins: an explicit `false` on the settings envelope or
- * inside the raw config blob must always win — old settings files can
- * carry both flags with conflicting values and a user's disable must
- * never be silently undone. Otherwise precedence runs envelope flag →
- * decoded-config flag (which carries the driver schema's decoding
- * default, e.g. Antigravity's `enabled: true`) → enabled by default.
- *
- * A recording stub driver observes exactly what the registry resolved,
- * so this suite pins the full truth table without booting any real
- * provider runtime. It also pins the Antigravity default: an envelope
- * with no flags at all resolves to `true` because the decoded
- * `AntigravitySettings` supports first-run onboarding by default.
- */
+/** Explicit disables in either the settings envelope or raw config always win.
+ * Otherwise prefer the envelope, decoded config (including driver defaults), then true.
+ * Antigravity's decoded default enables first-run onboarding. */
 describe("ProviderInstanceRegistryLive — enabled resolution", () => {
   const antigravityDriverKind = ProviderDriverKind.make("antigravity");
 
@@ -1207,17 +1191,6 @@ describe("ProviderInstanceRegistryLive — enabled resolution", () => {
   it.effect("resolves every envelope/config flag combination per most-restrictive-wins", () =>
     Effect.gen(function* () {
       const created: Array<{ readonly instanceId: string; readonly enabled: boolean }> = [];
-      // Cases keyed by expected resolution:
-      //   envelope-only true            -> true
-      //   envelope-only false           -> false
-      //   config-only true              -> true
-      //   config-only false             -> false
-      //   both true                     -> true
-      //   both false                    -> false
-      //   conflicting (envelope T/cfg F) -> false (user disable wins)
-      //   conflicting (envelope F/cfg T) -> false
-      //   no flags anywhere              -> true via Antigravity's
-      //                                     decoded default (enabled:true)
       const cases: ReadonlyArray<{
         readonly id: string;
         readonly envelope: boolean | undefined;

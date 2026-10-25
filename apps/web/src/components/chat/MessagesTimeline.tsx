@@ -239,7 +239,7 @@ interface MessagesTimelineProps {
     readonly threadId: ThreadId;
     readonly title: string;
   } | null;
-  /** Set on a workflow coordinator's thread: its script message renders as this opening. */
+
   workflowOpening?: WorkflowOpening | null;
   onForkFromRun?: (input: {
     readonly sourceThreadId: ThreadId;
@@ -435,8 +435,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   loadEarlier = null,
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
-  // The remembered position is a snapshot taken when the list identity changes;
-  // scrolling keeps rewriting the stored entry, which must not move the restore.
+  // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
   const [listState, setListState] = useState(() => timelineListStateFor(listIdentityKey));
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(
     () => listState.rememberedPosition?.disclosures?.runs ?? new Set(),
@@ -773,8 +772,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onFinished: onRevealFinished,
   });
   // SCIENT-FORK:END
-  // Run status/timestamps churn on every stream event; the shared row context
-  // must not change with them or every timeline row re-renders per event.
+  // Run status/timestamps change per stream event; keep them out of shared row context.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);
   const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
@@ -940,8 +938,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       composerInset: contentInsetEndAdjustment,
       anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
     });
-  // LegendList lays rows out from layout effects, so a read on the next frame
-  // sees the settled positions.
+  // Read next frame, after LegendList's layout effects settle row positions.
   const contentOverflowFrameRef = useRef<number | null>(null);
   const cancelContentOverflowFrame = () => {
     if (contentOverflowFrameRef.current !== null) {
@@ -1058,11 +1055,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const handleScroll = () => {
     const state = listRef.current?.getState?.();
-    // SCIENT-FORK:START — the per-frame reading bookkeeping: one writer for the reading
-    // position (Scient's saver records message identity and a follow still going, and skips
-    // while a placement is in flight; upstream's raw record would overwrite that), the unread
-    // count below, releasing reserved room, the reading-end report, where the reader rests
-    // at the end, and the reader's input (chat/readerScrolling.ts, readerScrollPolicy.ts).
+    // SCIENT-FORK:START — Scient's saver owns message identity and active-follow state; skip in-flight placements.
+    // An upstream raw save would overwrite it. Share reader input, end reports, unread counts and room release
+    // through readerScrolling and readerScrollPolicy.
     if (restoringThreadPosition || positionHistoryLoading || state?.data !== rows) return;
     saveReadingPosition();
     const viewport = listRef.current?.getScrollableNode();
@@ -1362,11 +1357,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     contentInsetEndAdjustment,
   });
 
-  // Each row carries its own provider. LegendList moves rows into their
-  // containers one commit after this component renders, so a provider around
-  // the list would re-render the outgoing thread's rows with the incoming
-  // thread's context just before they unmount. extraData hands a changed
-  // sharedState to the rows that stay.
+  // LegendList moves rows one commit late; per-row providers prevent thread context leaks.
   const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
     <TimelineRowCtx value={sharedState}>
       <div className="messages-timeline-row-frame">
@@ -1553,13 +1544,7 @@ function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
 }
 
-// LegendList estimates unmeasured rows from the running average size of their
-// type. One type for every assistant reply lets a few very long replies, or
-// one that is streaming, lift the estimate for short replies to thousands of
-// pixels. Rows then mount one at a time, each measurement shrinks the list
-// and mounts the next row in the same commit, and scrolling into unmeasured
-// history exceeds React's nested update limit. Doubling-length buckets keep
-// each average within about 2x of the rows it estimates.
+// LegendList averages by type; length buckets prevent inflated estimates and nested-update loops.
 function getItemType(item: MessagesTimelineRow) {
   if (item.kind !== "message") return item.kind;
   const lengthBucket = Math.max(0, Math.floor(Math.log2(item.message.text.length / 1000)));
