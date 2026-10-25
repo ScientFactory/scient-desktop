@@ -136,6 +136,28 @@ describe("CI workflow decisions", () => {
     expect(f.failures).toEqual([]);
   });
 
+  it.each(["pull_request", "merge_group"])(
+    "%s blocks the reported cross-package and documentation regressions",
+    (eventName) => {
+      for (const [file, consumerJob] of [
+        ["apps/mobile/src/features/review/reviewModel.ts", "test"],
+        ["packages/scient-analytics/src/wireContract.ts", "test_web"],
+        ["docs/fixtures/scient-chat-plotly.md", "test_web"],
+        ["packages/client-runtime/src/state/threads.ts", "test_server"],
+      ]) {
+        const f = simulate([file!], eventName);
+        expect(f.needs[consumerJob!]!.result, file).toBe("success");
+        if (file!.startsWith("apps/mobile"))
+          expect(f.needs.changes!.outputs.test_packages!.split(" ")).toContain("@t3tools/shared");
+        expect(f.failures, file).toEqual([]);
+        f.gateNeeds[consumerJob!]!.result = "failure";
+        expect(jobFailures(f.gateNeeds, { eventName, qualifyingPr: true })).toContain(
+          `${consumerJob}: failure`,
+        );
+      }
+    },
+  );
+
   it("has one required gate covering every job, eight server shards and three hosted web shards", () => {
     expect(workflow.jobs.check).toMatchObject({ name: "Check", if: "${{ always() }}" });
     expect([...(workflow.jobs.check!.needs as string[])].sort()).toEqual(
@@ -159,29 +181,45 @@ describe("CI workflow decisions", () => {
       "web test",
       ["apps/web/src/authBootstrap.test.ts"],
       "pull_request",
-      ["test_web", "build", "test", "windows_packaging", "remote_server_packaging"],
+      ["test_server", "test_web", "build", "test"],
       [
-        "test_server",
         "rust",
         "compute_native",
         "mobile_native_static_analysis",
         "release_smoke",
         "linux_packaging",
+        "windows_packaging",
+        "remote_server_packaging",
       ],
     ],
     [
       "server test",
       ["apps/server/src/git/GitManager.test.ts"],
       "pull_request",
-      ["test_server", "build", "test", "windows_packaging", "remote_server_packaging"],
+      ["test_web", "test_server", "build", "test"],
       [
-        "test_web",
         "rust",
         "compute_native",
         "mobile_native_static_analysis",
         "release_smoke",
         "linux_packaging",
+        "windows_packaging",
+        "remote_server_packaging",
       ],
+    ],
+    [
+      "web production",
+      ["apps/web/src/authBootstrap.ts"],
+      "pull_request",
+      ["test_server", "test_web", "build", "test", "windows_packaging", "remote_server_packaging"],
+      ["linux_packaging"],
+    ],
+    [
+      "server production",
+      ["apps/server/src/git/GitManager.ts"],
+      "pull_request",
+      ["test_web", "test_server", "build", "test", "windows_packaging", "remote_server_packaging"],
+      ["linux_packaging"],
     ],
     [
       "docs",
@@ -225,8 +263,8 @@ describe("CI workflow decisions", () => {
       "queue fallback",
       ["apps/web/src/authBootstrap.test.ts"],
       "merge_group",
-      ["queue_ci", "test_web", "test", "build"],
-      ["test_server", "rust", "compute_native"],
+      ["test_server", "queue_ci", "test_web", "test", "build"],
+      ["rust", "compute_native"],
     ],
     [
       "main backstop",
