@@ -492,6 +492,7 @@ describe("Overleaf tool handlers", () => {
       const secrets = SecretRequests.of({
         answer: () => Effect.die("unused"),
         savedRef: () => Effect.die("unused"),
+        saveToFile: () => Effect.die("unused"),
         consume: (input) =>
           Effect.suspend(() => {
             consumed.push(input);
