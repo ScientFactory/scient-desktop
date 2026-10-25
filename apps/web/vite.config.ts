@@ -25,6 +25,9 @@ import { warmBundledDevPlugin } from "./vite/warmBundledDev";
 // SCIENT-FORK:START — balance CI's fixed three web shards using recorded file durations.
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — opt-in CI-like CPU throttle for local browser runs.
+import { applyCpuThrottle } from "./test/scientCpuThrottle";
+// SCIENT-FORK:END
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
@@ -140,7 +143,12 @@ const browserTestProject = {
     // SCIENT-FORK:START — Cold document construction shares the native-input budget.
     testTimeout: 30_000,
     // SCIENT-FORK:END
-    setupFiles: ["./test/browserSetup.ts"],
+    // SCIENT-FORK:START — CI runners lay out 4-7x slower than a Mac; 1 s waits are too tight.
+    // test/scientBrowserSetup.ts gives vi.waitFor the same 5 s default and applies
+    // SCIENT_TEST_CPU_THROTTLE. A wait that checks responsiveness states its own timeout.
+    expect: { poll: { timeout: 5_000 } },
+    setupFiles: ["./test/browserSetup.ts", "./test/scientBrowserSetup.ts"],
+    // SCIENT-FORK:END
     api: { port: browserTestApiPort, strictPort: false },
     browser: {
       enabled: true,
@@ -154,6 +162,9 @@ const browserTestProject = {
         resetPointer: async ({ page }) => {
           await page.mouse.move(-1, -1);
         },
+        // SCIENT-FORK:START — SCIENT_TEST_CPU_THROTTLE (test/scientCpuThrottle.ts).
+        applyCpuThrottle,
+        // SCIENT-FORK:END
       },
     },
   },

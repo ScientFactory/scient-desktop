@@ -20,9 +20,34 @@ export interface PagedTableLayout {
   readonly offsets: readonly { row: number; left: number }[];
 }
 export const latexPagedKey = new PluginKey<Presentation>("scientPagedPresentation");
-export const pagedLayoutProgress = new WeakMap<EditorView, { pending: boolean }>();
+export interface PagedLayoutProgress {
+  pending: boolean;
+  /**
+   * The browser's last report for each content-visibility block (whether it skips the
+   * block's rendering), numbered by the reveals pagination had received at the time.
+   */
+  readonly visibility: WeakMap<Element, { readonly skipped: boolean; readonly reveal: number }>;
+  /** The reveals the last completed pass started after, so measured as rendered. */
+  laidOutReveals: number;
+}
+export const pagedLayoutProgress = new WeakMap<EditorView, PagedLayoutProgress>();
 export function pagedLayoutSettled(view: EditorView): boolean {
   return pagedLayoutProgress.get(view)?.pending === false;
+}
+/**
+ * A receipt that `block` (a content-visibility: auto block) is laid out as rendered: the
+ * browser reported it rendered, and a pass that began after that report has completed with
+ * nothing pending. A block the browser still skips, or has not reported since revealing it,
+ * keeps its estimated height and may move what follows once it is reported.
+ */
+export function pagedLayoutIncludesRendered(view: EditorView, block: Element): boolean {
+  const progress = pagedLayoutProgress.get(view);
+  const report = progress?.visibility.get(block);
+  return (
+    progress?.pending === false &&
+    report?.skipped === false &&
+    report.reveal <= progress.laidOutReveals
+  );
 }
 export function visualPageAt(state: EditorState, position: number): number | null {
   const geometry = latexPagedKey.getState(state)?.geometry;

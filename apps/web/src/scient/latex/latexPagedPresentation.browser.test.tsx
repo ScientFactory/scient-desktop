@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import type { Editor } from "@tiptap/core";
 import { undoDepth } from "@tiptap/pm/history";
 import { TextSelection } from "@tiptap/pm/state";
+import { GapCursor } from "@tiptap/pm/gapcursor";
 import { expect, it, vi, type TestContext } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
@@ -23,6 +24,7 @@ import template15 from "./fixtures/paging-long-table.tex?raw";
 import template26 from "./fixtures/paging-hebrew.tex?raw";
 import template28 from "./fixtures/paging-medical-article.tex?raw";
 import twoColumnArticle from "./fixtures/paging-two-column-article.tex?raw";
+import hebrewMathAndTables from "./fixtures/hebrew-math-and-tables.tex?raw";
 import "~/index.css";
 import "./scient-latex.css";
 
@@ -184,63 +186,78 @@ Third paragraph must return with the same source after showing the paper.
   },
 );
 
-it.for([
+const COMPILED_PAGE_COUNTS = [
   ["15", template15, 2],
   ["26", template26, 4],
   ["28", template28, 3],
-] as const)(
-  "template %s has the compiled PDF's page count and opens without source or undo changes",
-  async ([name, source, pages], context) => {
-    await using _fixture = _createFixture(context);
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+] as const;
+async function opensAtCompiledPageCount(
+  [name, source, pages]: (typeof COMPILED_PAGE_COUNTS)[number],
+  context: TestContext,
+) {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-    const editor = await mount(_fixture, source, name);
-    // Page counts match the PDF only with the document's own fonts. Template 26
-    // sets its Hebrew in Arial, which macOS and Windows ship and Linux runners
-    // do not; there a substitute with other metrics gives a different count.
-    if (name !== "26" || !/Linux/u.test(navigator.userAgent))
-      expect(latexPagedKey.getState(editor.state)?.plan?.pages).toBe(pages);
-    expect(published).toBe(source);
-    expect(undoDepth(editor.state)).toBe(0);
-    expect(_fixture.host.querySelectorAll(".scient-latex-page-sheet")).toHaveLength(
-      latexPagedKey.getState(editor.state)!.plan!.pages,
+  const editor = await mount(_fixture, source, name);
+  // Page counts match the PDF only with the document's own fonts. Template 26
+  // sets its Hebrew in Arial, which macOS and Windows ship and Linux runners
+  // do not; there a substitute with other metrics gives a different count.
+  if (name !== "26" || !/Linux/u.test(navigator.userAgent))
+    expect(latexPagedKey.getState(editor.state)?.plan?.pages).toBe(pages);
+  expect(published).toBe(source);
+  expect(undoDepth(editor.state)).toBe(0);
+  expect(_fixture.host.querySelectorAll(".scient-latex-page-sheet")).toHaveLength(
+    latexPagedKey.getState(editor.state)!.plan!.pages,
+  );
+  const screenshotDirectory = import.meta.env.VITE_SCIENT_PAGING_SCREENSHOTS;
+  if (screenshotDirectory) {
+    await page.viewport(1250, 1700);
+    _fixture.host.style.height = "1650px";
+    const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+    scroll.style.flex = "none";
+    scroll.style.height = `${_fixture.host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height + 20}px`;
+    const spacer = document.createElement("div");
+    spacer.style.height = "700px";
+    scroll.append(spacer);
+    await vi.waitFor(() =>
+      expect(scroll.clientHeight).toBeCloseTo(
+        _fixture.host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height +
+          20,
+        0,
+      ),
     );
-    const screenshotDirectory = import.meta.env.VITE_SCIENT_PAGING_SCREENSHOTS;
-    if (screenshotDirectory) {
-      await page.viewport(1250, 1700);
-      _fixture.host.style.height = "1650px";
-      const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
-      scroll.style.flex = "none";
-      scroll.style.height = `${_fixture.host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height + 20}px`;
-      const spacer = document.createElement("div");
-      spacer.style.height = "700px";
-      scroll.append(spacer);
+    for (let number = 1; number <= pages; number++) {
+      const sheet = _fixture.host.querySelector<HTMLElement>(
+        `.scient-latex-page-sheet[data-page="${number}"]`,
+      )!;
+      scroll.scrollTop +=
+        sheet.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 10;
       await vi.waitFor(() =>
-        expect(scroll.clientHeight).toBeCloseTo(
-          _fixture.host.querySelector(".scient-latex-page-sheet")!.getBoundingClientRect().height +
-            20,
-          0,
-        ),
+        expect(
+          Math.abs(sheet.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 10),
+        ).toBeLessThan(2),
       );
-      for (let number = 1; number <= pages; number++) {
-        const sheet = _fixture.host.querySelector<HTMLElement>(
-          `.scient-latex-page-sheet[data-page="${number}"]`,
-        )!;
-        scroll.scrollTop +=
-          sheet.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 10;
-        await vi.waitFor(() =>
-          expect(
-            Math.abs(sheet.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 10),
-          ).toBeLessThan(2),
-        );
-        await page.screenshot({
-          path: `${screenshotDirectory}/${name}-visual-${number}.png`,
-          element: scroll,
-        });
-      }
-      spacer.remove();
+      await page.screenshot({
+        path: `${screenshotDirectory}/${name}-visual-${number}.png`,
+        element: scroll,
+      });
     }
-  },
+    spacer.remove();
+  }
+}
+// Template 26 is this file's first opening of its fixture: each formula preview renders once,
+// through one worker (later openings reuse the shared preview cache). On a slow runner that
+// cold start alone uses most of the project's 30 s, so this case states its own budget.
+const COLD_START_BUDGET_MS = 90_000;
+it.for(COMPILED_PAGE_COUNTS.filter(([name]) => name !== "26"))(
+  "template %s has the compiled PDF's page count and opens without source or undo changes",
+  (testCase, context) => opensAtCompiledPageCount(testCase, context),
+);
+// oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- the fixture's cold start, stated above.
+it(
+  "template 26 has the compiled PDF's page count and opens without source or undo changes",
+  { timeout: COLD_START_BUDGET_MS },
+  (context) => opensAtCompiledPageCount(COMPILED_PAGE_COUNTS[1], context),
 );
 
 it("template 15 repeats furniture at the next printable origin and preserves every editable row", async (context) => {
@@ -708,6 +725,43 @@ ${han.repeat(240)}
   // fallback font metrics; short paragraphs can all end at column boundaries.
   expect(cutsInsideWord(editor)).toBe(true);
   expect(editor.view.dom.querySelectorAll(".scient-paged-hyphen")).toHaveLength(0);
+});
+
+it("lays out once around a gap cursor between blocks", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+  const editor = await mount(_fixture, hebrewMathAndTables, "gap-cursor");
+  // A gap cursor sits between two adjacent blocks that hold no text cursor.
+  let gap: number | null = null;
+  let previous: { isTextblock: boolean } | null = null;
+  editor.state.doc.forEach((node, offset) => {
+    if (gap === null && previous && !previous.isTextblock && !node.isTextblock) gap = offset;
+    previous = node;
+  });
+  expect(gap).not.toBeNull();
+  await act(() =>
+    editor.view.dispatch(
+      editor.state.tr.setSelection(new GapCursor(editor.state.doc.resolve(gap!))),
+    ),
+  );
+  const cursor = editor.view.dom.querySelector<HTMLElement>(".ProseMirror-gapcursor");
+  expect(cursor).toBeInstanceOf(HTMLElement);
+  cursor!.scrollIntoView({ block: "center" });
+  await waitForLatexVisualTestReadiness(_fixture.host, context, "gap cursor layout");
+  // Each pass redraws the cursor's widget; its first paint must not request the next pass.
+  // The defect is a loop the browser paces one rendering step at a time, with no state to
+  // wait on: only watching real frames shows it (4 extra passes in 10 frames before the fix).
+  let passes = 0;
+  const pass = () => passes++;
+  editor.view.dom.addEventListener("scient-latex-layout", pass);
+  _fixture.cleanup.defer(() => editor.view.dom.removeEventListener("scient-latex-layout", pass));
+  for (let frame = 0; frame < 10; frame++)
+    await waitForTestReceipt(
+      context.signal,
+      // oxlint-disable-next-line t3code/no-frame-waits-in-browser-tests -- observes a native-frame loop; see above.
+      new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+  expect(passes).toBe(0);
 });
 
 function _createFixture(context: TestContext) {

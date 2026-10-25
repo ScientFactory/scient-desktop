@@ -487,6 +487,11 @@ function makeDeterministicAdapter(input: {
   };
 }
 
+// SCIENT-FORK:START — offers/waits must not depend on CPU speed (CI flake fix)
+// Waits span child turns whose work scales with CPU contention: a 5 s deadline failed on
+// slow runners. This one only names the stalled milestone before the 120 s test limit.
+const MILESTONE_DEADLINE = "60 seconds";
+// SCIENT-FORK:END
 function waitForProjection(
   orchestrator: Orchestrator.OrchestratorV2Shape,
   threadId: ThreadId,
@@ -494,7 +499,9 @@ function waitForProjection(
   milestone?: string,
 ) {
   return waitForDurableProjection(orchestrator, threadId, predicate).pipe(
-    Effect.timeout("5 seconds"),
+    // SCIENT-FORK:START — offers/waits must not depend on CPU speed (CI flake fix)
+    Effect.timeout(MILESTONE_DEADLINE),
+    // SCIENT-FORK:END
     Effect.tapError((error) =>
       Effect.gen(function* () {
         const observed = yield* Effect.exit(orchestrator.getThreadProjection(threadId));
@@ -536,12 +543,15 @@ function waitForDurableProjection(
       orchestrator.streamStoredEventsFrom({ threadId, afterSequence: cursor }),
     );
     const initial = yield* orchestrator.getThreadProjection(threadId);
+    // SCIENT-FORK:START — offers/waits must not depend on CPU speed (CI flake fix)
+    // No inner deadline: callers that need one name their milestone (waitForProjection).
     const found = yield* Stream.concat(
       Stream.succeed(initial),
       Stream.fromPull(Effect.succeed(pull)).pipe(
         Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
       ),
-    ).pipe(Stream.filter(predicate), Stream.runHead, Effect.timeout("10 seconds"));
+    ).pipe(Stream.filter(predicate), Stream.runHead);
+    // SCIENT-FORK:END
     return Option.getOrThrow(found);
   }).pipe(Effect.scoped);
 }
@@ -780,7 +790,9 @@ describe("orchestrator MCP toolkit", () => {
                   Stream.mapEffect(() => Ref.get(continuationOffers)),
                   Stream.filter((offers) => offers.length >= count),
                   Stream.runHead,
-                  Effect.timeout("5 seconds"),
+                  // SCIENT-FORK:START — offers/waits must not depend on CPU speed (CI flake fix)
+                  Effect.timeout(MILESTONE_DEADLINE),
+                  // SCIENT-FORK:END
                 ),
               );
             }).pipe(
@@ -978,6 +990,33 @@ describe("orchestrator MCP toolkit", () => {
 
           yield* Effect.gen(function* () {
             const orchestrator = yield* Orchestrator.OrchestratorV2;
+            // SCIENT-FORK:START — offers/waits must not depend on CPU speed (CI flake fix)
+            // task_cancel stops a task's runs before it disposes the task's
+            // completion delivery (a failed stop must keep it). In between, the
+            // stopped run of an always-wake task can claim and offer a delivery,
+            // which the dispose then withdraws. The continuation consumer drops
+            // offers whose delivery is gone, so no live delivery may be offered;
+            // withdrawn offers are discarded.
+            const expectNoLiveOffers = (threadId: ThreadId) =>
+              Effect.gen(function* () {
+                yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+                const liveDeliveries = new Set(
+                  (yield* orchestrator.getThreadProjection(threadId)).runs.flatMap((run) =>
+                    run.delegatedCompletion?.delivery == null
+                      ? []
+                      : [run.delegatedCompletion.delivery.messageId],
+                  ),
+                );
+                expect(
+                  (yield* Ref.get(continuationOffers)).filter(
+                    (offer) =>
+                      offer.delegatedCompletion === undefined ||
+                      liveDeliveries.has(offer.delegatedCompletion.messageId),
+                  ),
+                ).toEqual([]);
+                yield* Ref.set(continuationOffers, []);
+              });
+            // SCIENT-FORK:END
             const server = yield* McpServer.McpServer;
             yield* orchestrator.dispatch({
               type: "thread.create",
@@ -3039,7 +3078,10 @@ describe("orchestrator MCP toolkit", () => {
                 (task) => task.id === cancellable.taskId,
               )?.completionDelivery,
             ).toMatchObject({ state: "disposed" });
-            yield* expectOffersToStay(0);
+            // SCIENT-FORK:START — offers/waits must not depend on CPU speed (CI flake fix)
+            // Withdrawn offers are tolerated; live ones are not.
+            yield* expectNoLiveOffers(parentThreadId);
+            // SCIENT-FORK:END
 
             const createInput = {
               clientRequestId: "create-thread-batch-1",
@@ -3941,7 +3983,10 @@ describe("orchestrator MCP toolkit", () => {
                 (task) => task.id === upgradedDelegated.taskId,
               )?.completionDelivery,
             ).toMatchObject({ state: "disposed" });
-            yield* expectOffersToStay(0);
+            // SCIENT-FORK:START — offers/waits must not depend on CPU speed (CI flake fix)
+            // Withdrawn offers are tolerated; live ones are not.
+            yield* expectNoLiveOffers(parentThreadId);
+            // SCIENT-FORK:END
 
             const questionWait = yield* invoke("delegate_task", {
               task: cancellationPrompt,
@@ -4059,7 +4104,10 @@ describe("orchestrator MCP toolkit", () => {
                 (task) => task.id === delegated.taskId,
               )?.completionWake,
             ).toBe("always");
-            yield* expectOffersToStay(0);
+            // SCIENT-FORK:START — offers/waits must not depend on CPU speed (CI flake fix)
+            // Withdrawn offers are tolerated; live ones are not.
+            yield* expectNoLiveOffers(parentThreadId);
+            // SCIENT-FORK:END
 
             const legacyDispatch = yield* orchestrator.dispatch({
               type: "delegated_task.request",

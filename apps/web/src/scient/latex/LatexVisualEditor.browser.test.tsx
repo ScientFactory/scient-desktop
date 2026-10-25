@@ -623,7 +623,7 @@ Body.
       await _fixture.root0.rerender(<Harness />);
       await expect.poll(editor).toBeTruthy();
       await readingViewReady(_fixture);
-      _fixture.cleanup.use(fakeTimers());
+      _fixture.stack.use(fakeTimers());
       const live = editor()!;
       live.commands.setTextSelection(1);
       live.view.focus();

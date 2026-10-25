@@ -102,7 +102,7 @@ it("keeps invalid manual limits in view instead of silently refusing to save", a
   await userEvent.fill(page.getByRole("textbox", { name: "Model ID" }), "local-model");
   const contextWindow = page.getByRole("spinbutton", { name: "Context window" });
   // Both limits are filled, but the context window is below the minimum (1024).
-  const clock = _fixture.cleanup.use(fakeTimers());
+  const clock = _fixture.stack.use(fakeTimers());
   await userEvent.fill(contextWindow, "512");
   await userEvent.fill(page.getByRole("spinbutton", { name: "Max output tokens" }), "4096");
   // Longer than the panel's collapse animation: Advanced must not close on the user.
