@@ -4,11 +4,8 @@ import * as NodeURL from "node:url";
 import { testGatePasses } from "./compute-ci-gate.mjs";
 
 /**
- * Trees that packaging copies or compiles wholesale rather than through the
- * bundlers' import graph: Vite's public dir (served from the server's
- * dist/client), desktop resources and the GNOME extension (electron-builder
- * buildResources/extraResources), dependency patches, and native crates and
- * helpers (Cargo include_str!, protocol XML copies). Every path in them counts.
+ * These trees bypass bundler import reachability through wholesale copying/compilation, so every
+ * path matters: public assets, desktop/GNOME resources, patches, and native sources/helpers.
  */
 const COPIED_PAYLOAD_PREFIXES = [
   "apps/web/public/",
@@ -20,13 +17,9 @@ const COPIED_PAYLOAD_PREFIXES = [
 ];
 
 /**
- * Elsewhere, tests, fixtures and docs never reach a packaged artifact: the
- * bundlers follow imports from the app entry points, staging copies only
- * built output, no production module imports these paths, and the web
- * Tailwind scan excludes them (`@source not` in apps/web/src/index.css; keep
- * both lists in sync). testUtils/ and testing/ stay relevant because build
- * configs and runtime packages import them (apps/server/vite.config.ts loads
- * src/testUtils/). License, notice and SKILL Markdown is product content.
+ * Keep test/fixture/docs exclusions synchronized with Tailwind's @source not list.
+ * testUtils/testing remain relevant through build/runtime imports; license, notice, and SKILL
+ * Markdown is shipped product content.
  */
 export function cannotAffectPackaging(path) {
   if (COPIED_PAYLOAD_PREFIXES.some((prefix) => path.startsWith(prefix))) return false;

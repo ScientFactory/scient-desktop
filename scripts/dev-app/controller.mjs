@@ -1,15 +1,6 @@
 #!/usr/bin/env node
-// The standing dev app ("Scient (Dev) Stable"): one installed app that can be
-// switched to any branch, pull request or commit for review.
-//
-//   pnpm dev:app:review <#123 | pr:123 | branch | commit:<sha>> [--fresh]
-//   pnpm dev:app:review --restore-previous
-//   pnpm dev:app:stable <install [--checkout <path>] | start | stop | status | logs | open | uninstall>
-//
-// `install` copies this controller out of the invoking checkout into
-// ~/.scient-next/scient-dev-stable/controller; every later command runs that
-// copy, so a switch never executes lifecycle code from the commit it is
-// replacing. See docs/operations/dev-app-review.md.
+// Install copies this controller to ~/.scient-next/scient-dev-stable/controller so later switches
+// never execute lifecycle code from the replaced commit. See docs/operations/dev-app-review.md.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
