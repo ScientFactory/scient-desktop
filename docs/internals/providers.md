@@ -645,6 +645,18 @@ reassembly, and imports no Scient orchestration types. The adapter's
 retains shutdown confirmation before releasing its session lock. This is distinct from logical
 turn settlement and does not establish universal physical-reader release.
 
+The shared adapter projects assistant usage and model capacity into the context meter and
+refreshes `get_session_stats` on settlement. Its reported cost includes the agent's billed
+cache refreshes; a billed `cache_warming_end` refreshes that total without adding usage twice.
+Scient leaves cache warming at the agent's default. Optional observations and unsupported
+statistics commands degrade without preventing ordinary turns on older agents.
+`/compact` uses the native compact command and shared compaction item. Notices, persistence
+errors, extension notifications, retry progress and fallback models use shared notice/error
+items; process loss includes the observed exit code and a bounded, redacted stderr tail.
+Native todo phases project to the shared read-only todo list. Select dialogs accept offered
+labels, editor dialogs retain their initial text, and the existing dialog text shows timeouts;
+the agent's cancellation closes expired dialogs. Plain confirms offer Yes/No only.
+
 - The executable is `omp` 18.2.8 or newer and below major 19; a newer major is refused until it is
   qualified. Launch arguments are `--mode rpc` and
   `--approval-mode yolo`. Scient does not call `login` during discovery. The desktop app can

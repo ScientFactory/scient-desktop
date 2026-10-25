@@ -61,6 +61,8 @@ export const scriptedOmpRpc = (input: {
   readonly environment?: Readonly<Record<string, string>>;
   readonly eventFilterError?: string;
   readonly commandError?: (frame: Frame) => string | undefined;
+  readonly responseData?: (frame: Frame) => unknown;
+  readonly todoPhases?: () => unknown;
   readonly readyDelay?: Effect.Effect<void>;
   readonly supportedProtocolVersions?: ReadonlyArray<number>;
   readonly switchCancelled?: boolean;
@@ -163,6 +165,8 @@ export const scriptedOmpRpc = (input: {
       state.frames.push(frame);
       const refused = input.commandError?.(frame);
       if (refused) return respond(frame, undefined, refused);
+      const supplied = input.responseData?.(frame);
+      if (supplied !== undefined) return respond(frame, supplied);
       if (
         frame.type !== "get_state" &&
         frame.type !== "negotiate_protocol" &&
@@ -195,6 +199,7 @@ export const scriptedOmpRpc = (input: {
           if (!NodeFS.existsSync(sessionFile)) NodeFS.writeFileSync(sessionFile, "{}\n");
           return respond(frame, {
             model: state.model,
+            ...(input.todoPhases === undefined ? {} : { todoPhases: input.todoPhases() }),
             ...(input.reportThinkingLevel?.() === false
               ? {}
               : { thinkingLevel: state.thinkingLevel }),
