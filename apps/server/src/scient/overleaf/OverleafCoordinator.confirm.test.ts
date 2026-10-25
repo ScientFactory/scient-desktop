@@ -39,27 +39,6 @@ const confirmAfter = (w: World, between: Effect.Effect<unknown>) =>
   });
 
 describe.skipIf(!canApply)("OverleafCoordinator, confirm", () => {
-  it.live("does not fetch again when Overleaf has not moved since the review", () =>
-    run(
-      Effect.gen(function* () {
-        const w = yield* world({
-          overleaf: "git",
-          synced: { "main.tex": "A" },
-          remote: { "main.tex": "B", "new.tex": "N" },
-        });
-        expect(yield* w.sync()).toMatchObject({
-          _tag: "applied",
-          adopted: { outcome: "complete" },
-          publication: { _tag: "none" },
-        });
-        // The review's fetch only: the confirm found the same head by a ref check.
-        expect(w.fetches.count).toBe(1);
-        expect(yield* read(w.folder, "new.tex")).toBe("N");
-        expect((yield* w.connection).base.commit).toBe((yield* w.overleafNow).commit);
-      }),
-    ),
-  );
-
   it.live("fetches when Overleaf moved since the review, and offers the new state", () =>
     run(
       Effect.gen(function* () {
@@ -94,7 +73,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, confirm", () => {
         const w = yield* world({
           overleaf: "git",
           synced: { "main.tex": "A", "other.tex": "O" },
-          remote: { "main.tex": "A", "other.tex": "O2" },
+          remote: { "main.tex": "A", "other.tex": "O2", "new.tex": "N" },
         });
         yield* write(w.folder, { "main.tex": "A, edited here", "fresh.tex": "F" });
         const counted = countingBuilds(confirmAfter(w, Effect.void));
@@ -104,11 +83,15 @@ describe.skipIf(!canApply)("OverleafCoordinator, confirm", () => {
           publication: { _tag: "accepted" },
         });
         expect(counted.built.count).toBe(1);
+        expect(w.fetches.count).toBe(1);
+        expect(yield* read(w.folder, "new.tex")).toBe("N");
         expect((yield* w.overleafNow).contents).toEqual({
           "main.tex": "A, edited here",
           "other.tex": "O2",
+          "new.tex": "N",
           "fresh.tex": "F",
         });
+        expect((yield* w.connection).base.commit).toBe((yield* w.overleafNow).commit);
       }),
     ),
   );
