@@ -3,6 +3,45 @@ import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 import { testGatePasses } from "./compute-ci-gate.mjs";
 
+/**
+ * Trees that packaging copies or compiles wholesale rather than through the
+ * bundlers' import graph: Vite's public dir (served from the server's
+ * dist/client), desktop resources and the GNOME extension (electron-builder
+ * buildResources/extraResources), dependency patches, and native crates and
+ * helpers (Cargo include_str!, protocol XML copies). Every path in them counts.
+ */
+const COPIED_PAYLOAD_PREFIXES = [
+  "apps/web/public/",
+  "apps/desktop/resources/",
+  "apps/desktop/prod-resources/",
+  "apps/desktop/gnome-extension/",
+  "patches/",
+  "native/",
+];
+
+/**
+ * Elsewhere, tests, fixtures and docs never reach a packaged artifact: the
+ * bundlers follow imports from the app entry points, staging copies only
+ * built output, no production module imports these paths, and the web
+ * Tailwind scan excludes them (`@source not` in apps/web/src/index.css; keep
+ * both lists in sync). testUtils/ and testing/ stay relevant because build
+ * configs and runtime packages import them (apps/server/vite.config.ts loads
+ * src/testUtils/). License, notice and SKILL Markdown is product content.
+ */
+export function cannotAffectPackaging(path) {
+  if (COPIED_PAYLOAD_PREFIXES.some((prefix) => path.startsWith(prefix))) return false;
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  // Case-sensitive like Tailwind's `@source not "../**/*.md"`: a `.MD` file is
+  // still scanned for classes, so it must still select packaging.
+  if (name.endsWith(".md"))
+    return !/^(?:licen[cs]e|copying|notice|third_party_notices|skill)\b/i.test(name);
+  return (
+    /\.(?:test|spec|testkit)\./.test(name) ||
+    /\.vitest\.config\./.test(name) ||
+    /(?:^|\/)(?:__tests__|test|tests|fixtures|testkit|docs)\//.test(path)
+  );
+}
+
 export function needsWindowsPackaging(paths) {
   const exact = new Set([
     ".github/workflows/ci.yml",
@@ -32,7 +71,9 @@ export function needsWindowsPackaging(paths) {
     "patches/",
   ];
   return paths.some(
-    (path) => exact.has(path) || prefixes.some((prefix) => path.startsWith(prefix)),
+    (path) =>
+      exact.has(path) ||
+      (prefixes.some((prefix) => path.startsWith(prefix)) && !cannotAffectPackaging(path)),
   );
 }
 
@@ -69,7 +110,7 @@ export function needsLinuxPackaging(paths) {
     (path) =>
       exact.has(path) ||
       path.endsWith("/package.json") ||
-      prefixes.some((prefix) => path.startsWith(prefix)),
+      (prefixes.some((prefix) => path.startsWith(prefix)) && !cannotAffectPackaging(path)),
   );
 }
 
