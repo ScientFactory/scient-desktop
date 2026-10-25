@@ -194,6 +194,10 @@ export interface NativeSession {
   readonly compact?: NativeSession["send"];
   readonly interrupt: Effect.Effect<void, NativeSessionOperationError>;
   readonly interruptBreaksSession?: boolean;
+  // SCIENT-FORK:START — bounded graceful Stop can still require destructive fallback.
+  /** Finish Stop and its receipts even if the requesting caller is cancelled. */
+  readonly completeInterruptOnCancellation?: boolean;
+  // SCIENT-FORK:END
   readonly respond: (
     nativeRequestId: string,
     input: ProviderAdapter.ProviderAdapterV2RuntimeRequestResponseInput,
@@ -960,10 +964,14 @@ export function makeNativeSessionAdapterV2(
                   const common = {
                     ...base,
                     title: null,
+                    // SCIENT-FORK:START — Stop owns content settlement as well as the turn.
                     status:
                       update.type === "text"
                         ? ("running" as const)
-                        : (update.status ?? "completed"),
+                        : running.interrupted
+                          ? ("interrupted" as const)
+                          : (update.status ?? "completed"),
+                    // SCIENT-FORK:END
                     completedAt: streaming ? null : now,
                     text,
                     streaming,
@@ -1727,10 +1735,14 @@ export function makeNativeSessionAdapterV2(
             (effect, request) =>
               effect.pipe(
                 (operation) =>
-                  completeDestructiveNativeInterrupt(
-                    operation,
-                    native.interruptBreaksSession === true,
-                  ),
+                  // SCIENT-FORK:START — retain Stop receipts across a conditional kill fallback.
+                  native.completeInterruptOnCancellation === true
+                    ? Effect.uninterruptible(operation)
+                    : completeDestructiveNativeInterrupt(
+                        operation,
+                        native.interruptBreaksSession === true,
+                      ),
+                // SCIENT-FORK:END
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapter.ProviderAdapterInterruptError({

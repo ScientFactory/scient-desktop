@@ -38,6 +38,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
+import { OmpRpcCommandError } from "effect-omp-rpc/errors";
 import type { OmpRpcNotification } from "effect-omp-rpc/client";
 import { OMP_KNOWN_EVENT_TYPES, type OmpRpcResponse } from "effect-omp-rpc/schema";
 import * as ServerConfig from "../../config.ts";
@@ -195,6 +196,12 @@ const harness = Effect.fnUntraced(function* (
             flushEvents: () => Queue.offer(notifications, { _tag: "Drain" }).pipe(Effect.asVoid),
             command: (body) =>
               Effect.gen(function* () {
+                // This legacy fixture exercises destructive Stop and lock ownership.
+                if (body.type === "abort_and_restore_queue")
+                  return yield* new OmpRpcCommandError({
+                    command: body.type,
+                    detail: "Abort is not scripted by this peer.",
+                  });
                 if (body.type === "new_session" && !behavior?.ignoreFreshWrite) {
                   freshSessions += 1;
                   sessionId = `fresh-${freshSessions}`;
@@ -539,6 +546,14 @@ const capturedTurn = Effect.fnUntraced(function* (name: OmpCaptureName, interrup
           return yield* Effect.die("Missing native capture session directory");
         let ordinal = 0;
         replay = yield* makeOmpCaptureReplay(name, (command) => {
+          if (command.type === "abort_and_restore_queue")
+            return {
+              id: command.id,
+              type: "response",
+              command: command.type,
+              success: false,
+              error: "Unknown command: abort_and_restore_queue",
+            };
           if (command.type === "new_session") ordinal++;
           if (command.type !== "get_state") return undefined;
           const sessionFile = path.join(options.sessionDir!, `capture-session-${ordinal}.jsonl`);

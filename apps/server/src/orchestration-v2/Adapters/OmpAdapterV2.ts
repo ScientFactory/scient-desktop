@@ -1254,6 +1254,51 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             });
           return { message: delivery.message, images };
         });
+        let interruptBreaksSession = false;
+        const interrupt = Effect.fn("OmpAdapterV2.interrupt")(function* () {
+          const graceful = Effect.gen(function* () {
+            const { settled } = yield* runtime.pause;
+            const result = yield* client.command({ type: "abort_and_restore_queue" });
+            const data = result.data;
+            if (isRecord(data)) {
+              const withdrawn = [data.steering, data.followUp].flatMap((queue) =>
+                Array.isArray(queue)
+                  ? queue.flatMap((entry) =>
+                      isRecord(entry) && typeof entry.text === "string" ? [entry.text] : [],
+                    )
+                  : [],
+              );
+              if (withdrawn.length > 0 || data.imagesDropped === true || data.truncated === true)
+                yield* applyUpdate({
+                  type: "warning",
+                  message: [
+                    "Stop withdrew unused queued input from the agent. Send it again if still wanted:",
+                    ...withdrawn,
+                    ...(data.imagesDropped === true
+                      ? ["The runtime omitted withdrawn images."]
+                      : []),
+                    ...(data.truncated === true
+                      ? ["The runtime omitted some withdrawn messages."]
+                      : []),
+                  ].join("\n\n"),
+                });
+            }
+            yield* settled;
+            yield* onUpdate({ type: "background", pending: false });
+          });
+          // Bound command acknowledgement and event settlement together. A hung RPC
+          // must take the same owned-process cleanup path as a failed abort.
+          yield* graceful.pipe(
+            Effect.timeout("3 seconds"),
+            Effect.catch(() =>
+              Effect.gen(function* () {
+                interruptBreaksSession = true;
+                yield* stopOwnedProcess;
+                yield* closeSession(Exit.void);
+              }).pipe(Effect.uninterruptible),
+            ),
+          );
+        });
         const native: NativeSession = {
           // SCIENT-FORK: older agents can reject compact without breaking the conversation.
           compact: Effect.fn("OmpAdapterV2.compact")(function* (_turnInput, nativeTurnId) {
@@ -1298,7 +1343,10 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             return cursor;
           },
           ensureFresh,
-          interruptBreaksSession: true,
+          completeInterruptOnCancellation: true,
+          get interruptBreaksSession() {
+            return interruptBreaksSession;
+          },
           send: Effect.fn("OmpAdapterV2.send")(
             function* (turnInput, nativeTurnId) {
               manualCompaction = false;
@@ -1549,10 +1597,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               effect.pipe(Effect.provideService(Scope.Scope, scope), Effect.mapError(safeFailure)),
           ),
           beforeOwnerClose: Effect.suspend(() => processLossPublished ?? Effect.void),
-          interrupt: stopOwnedProcess.pipe(
-            Effect.andThen(closeSession(Exit.void)),
-            Effect.mapError(safeFailure),
-          ),
+          interrupt: interrupt().pipe(Effect.mapError(safeFailure)),
           resume,
           respond: Effect.fn("OmpAdapterV2.respond")(
             function* (id, response) {
