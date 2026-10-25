@@ -95,6 +95,8 @@ NodeTest.test(
       "apps/server/src/testUtils/weightedShardSequencer.ts",
       "apps/server/src/scient/skills/built-ins/latex-authoring/SKILL.md",
       "apps/server/src/provider/pi/NOTICE.md",
+      "apps/web/src/components/GUIDE.MD",
+      "apps/web/src/components/Notes.Md",
     ])
       NodeAssert.equal(needsWindowsPackaging([...testOnly, ...docsOnly, path]), true, path);
     // Trees copied or compiled wholesale ship every file, whatever its name.

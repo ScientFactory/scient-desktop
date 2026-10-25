@@ -31,7 +31,9 @@ const COPIED_PAYLOAD_PREFIXES = [
 export function cannotAffectPackaging(path) {
   if (COPIED_PAYLOAD_PREFIXES.some((prefix) => path.startsWith(prefix))) return false;
   const name = path.slice(path.lastIndexOf("/") + 1);
-  if (/\.md$/i.test(name))
+  // Case-sensitive like Tailwind's `@source not "../**/*.md"`: a `.MD` file is
+  // still scanned for classes, so it must still select packaging.
+  if (name.endsWith(".md"))
     return !/^(?:licen[cs]e|copying|notice|third_party_notices|skill)\b/i.test(name);
   return (
     /\.(?:test|spec|testkit)\./.test(name) ||
