@@ -501,15 +501,14 @@
   opacity: 0;
   transition: opacity 80ms;
 }
-/* Thin lines either side of the plus, fading toward the edges. */
+/* Dashed lines either side of the plus, like a cut mark. */
 .scient-pdf-page-plus::before,
 .scient-pdf-page-plus::after {
   content: "";
   position: absolute;
   top: 50%;
-  width: 52px;
-  height: 1px;
-  background: linear-gradient(to right, transparent, currentColor);
+  width: 46px;
+  border-top: 1px dashed currentColor;
   opacity: 0;
   pointer-events: none;
   transition: opacity 80ms;
@@ -519,7 +518,6 @@
 }
 .scient-pdf-page-plus::after {
   left: calc(50% + 10px);
-  background: linear-gradient(to left, transparent, currentColor);
 }
 .scient-pdf-page-plus:hover svg,
 .scient-pdf-page-plus:focus-visible svg,
