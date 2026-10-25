@@ -409,11 +409,13 @@ it("reveals the latest message after very tall notes", async (context) => {
     const viewportHeight = node(_fixture).clientHeight;
     for (const note of tallNotes) {
       const index = state.indexByKey(note.id)!;
-      const rendered = state.elementAtIndex(index);
-      if (!rendered?.isConnected) continue;
+      // Every note must have a real measurement (never an estimate); only the on-screen
+      // height check needs the note to be rendered.
       const size = state.sizeAtIndex(index) ?? 0;
       expect(size, note.id).toBeGreaterThan(viewportHeight * 2);
-      expect(size, note.id).toBeCloseTo(rendered.getBoundingClientRect().height, 0);
+      const rendered = state.elementAtIndex(index);
+      if (rendered?.isConnected)
+        expect(size, note.id).toBeCloseTo(rendered.getBoundingClientRect().height, 0);
     }
     const last = state.indexByKey(tallNotes.at(-1)!.id)!;
     const landing = state.positionAtIndex(last) + (state.sizeAtIndex(last) ?? 0);
