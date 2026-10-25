@@ -382,14 +382,20 @@ it("drops the follow from the saved position when it ends, with nothing else to 
   expect(readTimelinePosition(key)?.followingPromptId).toBe("message-10");
   // Nothing but the follow's end may save the position again. Scrolls and
   // resizes save it too, and arrive in real rendering steps, at no fixed point
-  // among the fake frames: the answer is measured first, later scroll events
-  // are held back, and the finished turn's working header (which closes on
-  // real time) stays open.
+  // among the fake frames: a slow machine delivers the follow's own last
+  // scrolls after it has ended. So the answer is measured first, the finished
+  // turn's working header (which closes on real time) stays open, and the
+  // scrolls are held back from every reader: the timeline's own scroll capture
+  // (React's listener on the root, ahead of any listener the host could add),
+  // and Legend's `scroll` and `scrollend` listeners, each of which reports a
+  // scroll to the bookkeeping. Window capture runs before all of them.
   await waitForMeasuredRow(_fixture.listRef.current!, "entry-11", context.signal);
   const host = _fixture.host!;
   const holdScroll = (event: Event) => event.stopPropagation();
-  host.addEventListener("scroll", holdScroll, true);
-  _fixture.cleanup.defer(() => host.removeEventListener("scroll", holdScroll, true));
+  for (const type of ["scroll", "scrollend"]) {
+    window.addEventListener(type, holdScroll, true);
+    _fixture.cleanup.defer(() => window.removeEventListener(type, holdScroll, true));
+  }
   await render(_fixture, key, entries, [...runs, run("run-10", "message-10", "completed")]);
   for (const animation of host.getAnimations({ subtree: true })) animation.pause();
   await playUntil(_fixture, () => _fixture.chat.followPromptId === null);
