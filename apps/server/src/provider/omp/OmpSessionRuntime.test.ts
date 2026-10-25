@@ -1689,11 +1689,11 @@ describe("Oh My Pi session runtime compaction", () => {
         [
           "a successful compaction is reported",
           { type: "auto_compaction_end", result: { summary: "done" } },
-          [{ type: "compacted" }],
+          [{ type: "compacted", result: { summary: "done" } }],
         ],
       ] as const
     ).map(([label, frame, expected]) => ({ caseTitle: label, label, frame, expected })),
-  )("$caseTitle", ({ label, frame, expected }) =>
+  )("$caseTitle", ({ frame, expected }) =>
     Effect.gen(function* () {
       const h = yield* wireHarness();
       yield* h.wire.send(frame);

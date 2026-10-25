@@ -303,6 +303,10 @@ const degradedProjection = (
       ...pick(value, "messageId", isString),
       message: {
         ...pick(message, "role", isString),
+        // SCIENT-FORK: a drifted optional field must not discard valid usage.
+        ...(message.usage === undefined ? {} : { usage: message.usage }),
+        ...pick(message, "model", isString),
+        ...pick(message, "provider", isString),
         ...pick(message, "responseId", isString),
         ...pick(message, "timestamp", isFiniteNumber),
         ...(message.content === undefined ? {} : { content: message.content }),

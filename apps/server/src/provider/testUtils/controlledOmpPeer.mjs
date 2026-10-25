@@ -148,6 +148,9 @@ for await (const line of input) {
         isCompacting: false,
       });
       break;
+    case "get_session_stats":
+      response(command, { cost: 0 });
+      break;
     case "get_available_models":
       response(command, { models: [model] });
       break;

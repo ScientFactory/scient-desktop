@@ -6,6 +6,11 @@ import {
 } from "../scient-provider/NativeProducerLifecycle.ts";
 import {
   type ModelSelection,
+  type OrchestrationV2PlanStep,
+  type OrchestrationV2ProviderTurnTokenUsage,
+  type OrchestrationV2ProviderFailure,
+  type OrchestrationV2ProviderRetry,
+  type ThreadTokenUsageSnapshot,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
@@ -47,8 +52,35 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
 const encodeNativeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
+// SCIENT-FORK: native adapters reuse the shared presentation artifacts.
+type NativeSessionPresentation =
+  | { readonly type: "system_notice"; readonly message: string }
+  | {
+      readonly type: "error";
+      readonly failure: OrchestrationV2ProviderFailure;
+      readonly retry?: OrchestrationV2ProviderRetry;
+    }
+  | {
+      readonly type: "compaction";
+      readonly summary?: string;
+      readonly beforeTokenCount?: number;
+      readonly afterTokenCount?: number;
+    }
+  | { readonly type: "todo_list"; readonly steps: ReadonlyArray<OrchestrationV2PlanStep> };
+
 /** Native process events, before either orchestration version's presentation mapping. */
 export type NativeSessionUpdate =
+  | {
+      readonly type: "usage";
+      readonly tokenUsage?: Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">;
+      readonly contextUsage?: ThreadTokenUsageSnapshot;
+    }
+  | {
+      readonly type: "item";
+      readonly id: string;
+      readonly status: "running" | "completed" | "failed";
+      readonly item: NativeSessionPresentation;
+    }
   | { readonly type: "accepted"; readonly nativeTurnId: string }
   | { readonly type: "offered"; readonly nativeTurnId: string }
   | { readonly type: "rejected"; readonly nativeTurnId: string }
@@ -100,6 +132,9 @@ export type NativeSessionUpdate =
       readonly title: string;
       readonly message: string;
       readonly options: ReadonlyArray<{ label: string; description: string; value: string }>;
+      readonly allowCustomAnswer?: boolean;
+      readonly initialAnswer?: string;
+      readonly timeout?: number;
     }
   | { readonly type: "question-resolved"; readonly id: string }
   | { readonly type: "native-thread"; readonly id: string; readonly resumeCursor?: unknown }
@@ -155,6 +190,8 @@ export interface NativeSession {
     input: ProviderAdapter.ProviderAdapterV2SteerInput,
     validateOwner?: () => Effect.Effect<void, NativeSessionOperationError>,
   ) => Effect.Effect<void, NativeSessionOperationError>;
+  // SCIENT-FORK: compaction uses the same turn ownership and receipt path as send.
+  readonly compact?: NativeSession["send"];
   readonly interrupt: Effect.Effect<void, NativeSessionOperationError>;
   readonly interruptBreaksSession?: boolean;
   readonly respond: (
@@ -238,6 +275,12 @@ export function makeNativeSessionAdapterV2(
               interrupted: boolean;
             }
           | undefined;
+        let lastTurn: typeof active;
+        // Each item remembers how much wake output preceded it, to replay in order.
+        const pendingPresentation: {
+          readonly update: Extract<NativeSessionUpdate, { type: "item" }>;
+          readonly afterWake: number;
+        }[] = [];
         let backgroundPending = false;
         let wakeOffered = false;
         const wake: {
@@ -245,6 +288,7 @@ export function makeNativeSessionAdapterV2(
           readonly charge: NativeEventQueueCharge;
         }[] = [];
         const items = new Map<string, OrchestrationV2TurnItem>();
+        const presentationOwners = new Map<string, NonNullable<typeof active>>();
         const subagentOwners = new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>();
         const subagents = new Map<string, OrchestrationV2Subagent>();
         const nodes = new Map<string, OrchestrationV2ExecutionNode>();
@@ -283,6 +327,7 @@ export function makeNativeSessionAdapterV2(
             // is not an unexpected end of the adapter's event stream.
           }).pipe(Effect.forkIn(ownerScope), Effect.asVoid),
           Effect.sync(() => {
+            pendingPresentation.length = 0;
             for (const buffered of wake) buffered.charge.release();
             wake.length = 0;
             wakeOffered = false;
@@ -290,7 +335,10 @@ export function makeNativeSessionAdapterV2(
         );
         if (options.eventQueueStorage) yield* events.onDispose(Effect.sync(() => budget.release()));
         yield* Effect.addFinalizer(() =>
-          Effect.sync(() => (options.eventQueueStorage ? budget.seal() : budget.release())),
+          Effect.sync(() => {
+            pendingPresentation.length = 0;
+            return options.eventQueueStorage ? budget.seal() : budget.release();
+          }),
         );
         const emitBatch = Effect.fn("NativeSessionAdapterV2.emitBatch")(function* (
           frames: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
@@ -418,6 +466,7 @@ export function makeNativeSessionAdapterV2(
         ) {
           const running = active;
           if (!running || !thread) return;
+          lastTurn = running;
           active = undefined;
           const completedAt = yield* DateTime.now;
           const status = running.interrupted ? "interrupted" : update.status;
@@ -686,7 +735,46 @@ export function makeNativeSessionAdapterV2(
                   }
                   return;
                 }
+                // SCIENT-FORK: idle billing updates thread context without waking the agent.
+                if (update.type === "usage") {
+                  const now = yield* DateTime.now;
+                  if (thread && update.contextUsage) {
+                    thread = { ...thread, contextUsage: update.contextUsage, updatedAt: now };
+                    yield* emit({
+                      type: "provider_thread.updated",
+                      driver,
+                      providerThread: thread,
+                    });
+                  }
+                  if (active && update.tokenUsage) {
+                    active.turn = {
+                      ...active.turn,
+                      tokenUsage: {
+                        ...active.turn.tokenUsage,
+                        ...update.tokenUsage,
+                        updatedAt: DateTime.formatIso(now),
+                      },
+                    };
+                    turns.set(active.turn.id, active.turn);
+                    yield* emit({
+                      type: "provider_turn.updated",
+                      driver,
+                      threadId: active.input.threadId,
+                      providerTurn: active.turn,
+                    });
+                  }
+                  return;
+                }
                 let running = active;
+                // SCIENT-FORK: passive items never wake the agent; late retries keep their owner.
+                if (update.type === "item") {
+                  running = presentationOwners.get(update.id) ?? active ?? lastTurn;
+                  if (!running) {
+                    pendingPresentation.push({ update, afterWake: wake.length });
+                    if (pendingPresentation.length > 20) pendingPresentation.shift();
+                    return;
+                  }
+                }
                 if (
                   options.settleIdleSubagents &&
                   !running &&
@@ -774,6 +862,13 @@ export function makeNativeSessionAdapterV2(
                   update.type === "subagent"
                     ? `${running.input.providerThread.id}:subagent:${update.id}`
                     : `${running.turn.id}:${update.id}`;
+                if (
+                  update.type === "item" &&
+                  update.item.type === "error" &&
+                  update.item.retry &&
+                  update.status === "running"
+                )
+                  presentationOwners.set(update.id, running);
                 const previous = items.get(nativeId);
                 // Content completion settles an existing block; it cannot create
                 // a reply, allocate an ordinal, or reopen settled content.
@@ -897,6 +992,44 @@ export function makeNativeSessionAdapterV2(
                     messages.set(messageId, message);
                     yield* emit({ type: "message.updated", driver, message });
                   }
+                  // SCIENT-FORK: the presentation comes from the adapter; ownership stays here.
+                } else if (update.type === "item") {
+                  const content = update.item;
+                  const common = {
+                    ...base,
+                    status: update.status,
+                    title: null,
+                    completedAt: update.status === "running" ? null : now,
+                  };
+                  if (content.type === "todo_list") {
+                    const planId =
+                      previous?.type === "todo_list"
+                        ? previous.planId
+                        : yield* idAllocator.allocate.plan({
+                            threadId: owner.threadId,
+                            runId: owner.runId,
+                            driver,
+                          });
+                    const steps = [...content.steps];
+                    item = { ...common, type: "todo_list", planId, steps };
+                    yield* emit({
+                      type: "plan.updated",
+                      driver,
+                      plan: {
+                        id: planId,
+                        threadId: owner.threadId,
+                        runId: owner.runId,
+                        nodeId: base.nodeId,
+                        kind: "todo_list",
+                        status: steps.every((step) => step.status === "completed")
+                          ? "completed"
+                          : "active",
+                        steps,
+                      },
+                    });
+                  } else if (content.type === "compaction")
+                    item = { ...common, ...content, driver };
+                  else item = { ...common, ...content };
                 } else if (update.type === "tool") {
                   item = {
                     ...base,
@@ -1103,7 +1236,17 @@ export function makeNativeSessionAdapterV2(
                           status: "waiting",
                           requestId,
                           requestKind: "command",
-                          prompt: update.message,
+                          prompt: [
+                            update.title,
+                            update.message,
+                            ...(update.timeout === undefined
+                              ? []
+                              : [`Timeout: ${update.timeout / 1000} seconds.`]),
+                          ].join("\n\n"),
+                          options: [
+                            { decision: "decline", label: "No" },
+                            { decision: "accept", label: "Yes" },
+                          ],
                         }
                       : {
                           ...base,
@@ -1115,8 +1258,20 @@ export function makeNativeSessionAdapterV2(
                             {
                               id: update.id,
                               header: update.title,
-                              question: update.message,
-                              options: update.options,
+                              question:
+                                update.timeout === undefined
+                                  ? update.message
+                                  : `${update.message}\n\nTimeout: ${update.timeout / 1000} seconds.`,
+                              options: update.options.map((option) => ({
+                                ...option,
+                                description: option.description || option.label,
+                              })),
+                              ...(update.allowCustomAnswer === undefined
+                                ? {}
+                                : { allowCustomAnswer: update.allowCustomAnswer }),
+                              ...(update.initialAnswer === undefined
+                                ? {}
+                                : { initialAnswer: update.initialAnswer }),
                             },
                           ],
                         };
@@ -1138,17 +1293,23 @@ export function makeNativeSessionAdapterV2(
                   parentNodeId: owner.rootNodeId,
                   rootNodeId: owner.rootNodeId,
                   kind:
-                    item.type === "approval_request"
-                      ? "approval_request"
-                      : item.type === "user_input_request"
-                        ? "user_input_request"
-                        : item.type === "dynamic_tool"
-                          ? "tool_call"
-                          : item.type === "subagent"
-                            ? "subagent"
-                            : item.type === "reasoning"
-                              ? "reasoning"
-                              : "assistant_message",
+                    item.type === "todo_list"
+                      ? "todo_list"
+                      : item.type === "compaction" ||
+                          item.type === "error" ||
+                          item.type === "system_notice"
+                        ? "system"
+                        : item.type === "approval_request"
+                          ? "approval_request"
+                          : item.type === "user_input_request"
+                            ? "user_input_request"
+                            : item.type === "dynamic_tool"
+                              ? "tool_call"
+                              : item.type === "subagent"
+                                ? "subagent"
+                                : item.type === "reasoning"
+                                  ? "reasoning"
+                                  : "assistant_message",
                   status: item.status,
                   countsForRun: false,
                   providerThreadId: base.providerThreadId,
@@ -1164,6 +1325,8 @@ export function makeNativeSessionAdapterV2(
                 };
                 nodes.set(node.id, node);
                 yield* emit({ type: "node.updated", driver, node });
+                if (update.type === "item" && update.status !== "running")
+                  presentationOwners.delete(update.id);
               });
               yield* emitBatch(frames, control);
             }).pipe(
@@ -1246,6 +1409,120 @@ export function makeNativeSessionAdapterV2(
           return thread;
         });
         const steer = native.steer;
+        const compact = native.compact;
+        const startTurn = Effect.fn("NativeSessionAdapterV2.startTurn")(
+          function* (
+            request: ProviderAdapter.ProviderAdapterV2TurnInput,
+            send: NativeSession["send"],
+          ) {
+            if (
+              budget.closed ||
+              providerSession.status === "error" ||
+              providerSession.status === "stopped"
+            )
+              return yield* protocolError("The native session is no longer usable.");
+            if (active)
+              return yield* protocolError("The native session already has an active turn.");
+            if (
+              !thread ||
+              thread.id !== request.providerThread.id ||
+              request.threadId !== input.threadId ||
+              request.modelSelection.instanceId !== options.instanceId
+            )
+              return yield* protocolError("The native session does not own this provider thread.");
+            const startedAt = yield* DateTime.now;
+            thread = {
+              ...thread,
+              status: "active",
+              firstRunOrdinal: thread.firstRunOrdinal ?? request.runOrdinal,
+              lastRunOrdinal: request.runOrdinal,
+              updatedAt: startedAt,
+            };
+            yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
+            const nativeTurnId = `${thread.id}:${request.attemptId}`;
+            const turn: OrchestrationV2ProviderTurn = {
+              id: idAllocator.derive.providerTurn({ driver, nativeTurnId }),
+              providerThreadId: thread.id,
+              nodeId: request.rootNodeId,
+              runAttemptId: request.attemptId,
+              nativeTurnRef: { ...ref(nativeTurnId), strength: "weak" },
+              ordinal: request.providerTurnOrdinal,
+              status: "running",
+              nativeAcceptance:
+                request.message.createdBy === "agent" &&
+                request.message.creationSource === "provider"
+                  ? "unknown"
+                  : "pending",
+              startedAt,
+              completedAt: null,
+            };
+            active = {
+              input: request,
+              turn,
+              interrupted: false,
+              nextOrdinal: request.providerTurnOrdinal * 100 + 1,
+            };
+            turns.set(turn.id, turn);
+            yield* emit({
+              type: "provider_turn.updated",
+              driver,
+              threadId: request.threadId,
+              providerTurn: turn,
+            });
+            yield* updateSession("running");
+            const presentation = pendingPresentation.splice(0);
+            if (
+              request.message.createdBy === "agent" &&
+              request.message.creationSource === "provider"
+            ) {
+              wakeOffered = false;
+              const buffered = wake.splice(0);
+              for (const [index, event] of buffered.entries()) {
+                while (presentation[0] !== undefined && presentation[0].afterWake <= index) {
+                  const pending = presentation.shift();
+                  if (pending) yield* onUpdate(pending.update);
+                }
+                event.charge.release();
+                yield* onUpdate(event.update);
+              }
+              for (const pending of presentation) yield* onUpdate(pending.update);
+              if (active && !backgroundPending)
+                yield* finish({ type: "terminal", status: "completed" });
+            } else {
+              for (const pending of presentation) yield* onUpdate(pending.update);
+              yield* send(request, nativeTurnId).pipe(
+                Effect.catch((cause) => {
+                  const providerTurn = active?.turn ?? turn;
+                  return eventPermit
+                    .withPermit(
+                      finish({
+                        type: "terminal",
+                        status: "failed",
+                        detail: cause.message,
+                        broken: cause.breaksSession !== false,
+                      }),
+                    )
+                    .pipe(
+                      Effect.andThen(
+                        Effect.fail(
+                          new ProviderAdapter.ProviderAdapterTurnStartError({
+                            driver,
+                            threadId: request.threadId,
+                            runId: request.runId,
+                            providerThreadId: request.providerThread.id,
+                            providerTurn,
+                            cause,
+                          }),
+                        ),
+                      ),
+                    );
+                }),
+              );
+            }
+          },
+          (effect, request, _send) =>
+            effect.pipe(Effect.mapError(turnStartErrorKeepingReceipt(driver, request))),
+        );
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
           driver,
@@ -1342,111 +1619,13 @@ export function makeNativeSessionAdapterV2(
                 ),
               ),
           ),
-          startTurn: Effect.fn("NativeSessionAdapterV2.startTurn")(
-            function* (request) {
-              if (
-                budget.closed ||
-                providerSession.status === "error" ||
-                providerSession.status === "stopped"
-              )
-                return yield* protocolError("The native session is no longer usable.");
-              if (active)
-                return yield* protocolError("The native session already has an active turn.");
-              if (
-                !thread ||
-                thread.id !== request.providerThread.id ||
-                request.threadId !== input.threadId ||
-                request.modelSelection.instanceId !== options.instanceId
-              )
-                return yield* protocolError(
-                  "The native session does not own this provider thread.",
-                );
-              const startedAt = yield* DateTime.now;
-              thread = {
-                ...thread,
-                status: "active",
-                firstRunOrdinal: thread.firstRunOrdinal ?? request.runOrdinal,
-                lastRunOrdinal: request.runOrdinal,
-                updatedAt: startedAt,
-              };
-              yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
-              const nativeTurnId = `${thread.id}:${request.attemptId}`;
-              const turn: OrchestrationV2ProviderTurn = {
-                id: idAllocator.derive.providerTurn({ driver, nativeTurnId }),
-                providerThreadId: thread.id,
-                nodeId: request.rootNodeId,
-                runAttemptId: request.attemptId,
-                nativeTurnRef: { ...ref(nativeTurnId), strength: "weak" },
-                ordinal: request.providerTurnOrdinal,
-                status: "running",
-                nativeAcceptance:
-                  request.message.createdBy === "agent" &&
-                  request.message.creationSource === "provider"
-                    ? "unknown"
-                    : "pending",
-                startedAt,
-                completedAt: null,
-              };
-              active = {
-                input: request,
-                turn,
-                interrupted: false,
-                nextOrdinal: request.providerTurnOrdinal * 100 + 1,
-              };
-              turns.set(turn.id, turn);
-              yield* emit({
-                type: "provider_turn.updated",
-                driver,
-                threadId: request.threadId,
-                providerTurn: turn,
-              });
-              yield* updateSession("running");
-              if (
-                request.message.createdBy === "agent" &&
-                request.message.creationSource === "provider"
-              ) {
-                wakeOffered = false;
-                const buffered = wake.splice(0);
-                for (const event of buffered) {
-                  event.charge.release();
-                  yield* onUpdate(event.update);
-                }
-                if (active && !backgroundPending)
-                  yield* finish({ type: "terminal", status: "completed" });
-              } else {
-                yield* native.send(request, nativeTurnId).pipe(
-                  Effect.catch((cause) => {
-                    const providerTurn = active?.turn ?? turn;
-                    return eventPermit
-                      .withPermit(
-                        finish({
-                          type: "terminal",
-                          status: "failed",
-                          detail: cause.message,
-                          broken: cause.breaksSession !== false,
-                        }),
-                      )
-                      .pipe(
-                        Effect.andThen(
-                          Effect.fail(
-                            new ProviderAdapter.ProviderAdapterTurnStartError({
-                              driver,
-                              threadId: request.threadId,
-                              runId: request.runId,
-                              providerThreadId: request.providerThread.id,
-                              providerTurn,
-                              cause,
-                            }),
-                          ),
-                        ),
-                      );
-                  }),
-                );
-              }
-            },
-            (effect, request) =>
-              effect.pipe(Effect.mapError(turnStartErrorKeepingReceipt(driver, request))),
-          ),
+          startTurn: (request) => startTurn(request, native.send),
+          ...(compact === undefined
+            ? {}
+            : {
+                compactThread: (request: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+                  startTurn(request, compact),
+              }),
           steerTurn: (request) =>
             steer
               ? Effect.gen(function* () {
