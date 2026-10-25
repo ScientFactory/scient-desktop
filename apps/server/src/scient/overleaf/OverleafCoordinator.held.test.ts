@@ -168,11 +168,18 @@ describe.skipIf(!canApply)("OverleafCoordinator, holding back a file with confli
   it.live("sends everything but the marked file, across syncs, until its marks are gone", () =>
     run(
       Effect.gen(function* () {
-        const w = yield* heldWorld();
+        const heading = "Results\n=======\n\nAll good.\n";
+        const updatedHeading = "Results\n=======\n\nUpdated.\n";
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": doc("one"), "notes.md": "Notes\n" },
+          remote: { "main.tex": doc("theirs"), "notes.md": "Notes\n" },
+        });
+        yield* write(w.folder, { "main.tex": doc("mine"), "notes.md": heading });
         const first = yield* syncChoosing(w.coordinator, "markers", MAIN);
         expect(first.review.binding.markerPaths).toEqual(["main.tex"]);
         expect(first.review.binding.heldPaths).toEqual(["main.tex"]);
-        expect(first.review.outgoing).toEqual([{ kind: "modified", path: "other.tex" }]);
+        expect(first.review.outgoing).toEqual([{ kind: "modified", path: "notes.md" }]);
         expect(first.result).toMatchObject({
           _tag: "applied",
           adopted: { outcome: "attention", markerPaths: ["main.tex"] },
@@ -182,7 +189,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, holding back a file with confli
         let overleaf = yield* w.overleafNow;
         expect(overleaf.contents).toEqual({
           "main.tex": doc("theirs"),
-          "other.tex": "O, edited here",
+          "notes.md": heading,
         });
         let connection = yield* w.connection;
         expect(connection.markers).toEqual([
@@ -199,20 +206,20 @@ describe.skipIf(!canApply)("OverleafCoordinator, holding back a file with confli
         // another file comes in, and an edit goes out.
         yield* w.collaborate({
           "main.tex": doc("theirs"),
-          "other.tex": "O, edited here",
+          "notes.md": heading,
           "new.tex": "N",
         });
-        yield* write(w.folder, { "other.tex": "O, edited twice" });
+        yield* write(w.folder, { "notes.md": updatedHeading });
         const carried = yield* syncChoosing(w.coordinator, "mine", { requestId: "request-2" });
         expect(carried.review.unresolvedMarkers).toEqual(["main.tex"]);
-        expect(carried.review.outgoing).toEqual([{ kind: "modified", path: "other.tex" }]);
+        expect(carried.review.outgoing).toEqual([{ kind: "modified", path: "notes.md" }]);
         expect(carried.result).toMatchObject({
           adopted: { outcome: "complete" },
           publication: { _tag: "accepted", attemptNumber: 2 },
         });
         expect((yield* w.overleafNow).contents).toEqual({
           "main.tex": doc("theirs"),
-          "other.tex": "O, edited twice",
+          "notes.md": updatedHeading,
           "new.tex": "N",
         });
         expect(yield* read(w.folder, "new.tex")).toBe("N");
@@ -231,31 +238,6 @@ describe.skipIf(!canApply)("OverleafCoordinator, holding back a file with confli
         expect(connection.markers).toEqual([]);
         expect(connection.base.tree).toBe(overleaf.tree);
         expect(w.pushes).toHaveLength(3);
-      }),
-    ),
-  );
-
-  it.live("sends a Markdown file with ======= lines beside a held file", () =>
-    run(
-      Effect.gen(function* () {
-        const w = yield* world({
-          overleaf: "git",
-          synced: { "main.tex": doc("one"), "notes.md": "Notes\n" },
-          remote: { "main.tex": doc("theirs"), "notes.md": "Notes\n" },
-        });
-        const heading = "Results\n=======\n\nAll good.\n";
-        yield* write(w.folder, { "main.tex": doc("mine"), "notes.md": heading });
-        const first = yield* syncChoosing(w.coordinator, "markers", MAIN);
-        expect(first.review.binding.heldPaths).toEqual(["main.tex"]);
-        expect(first.result).toMatchObject({ publication: { _tag: "accepted" } });
-        expect((yield* w.overleafNow).contents).toEqual({
-          "main.tex": doc("theirs"),
-          "notes.md": heading,
-        });
-        // Only the file Scient wrote marks into is recorded.
-        expect((yield* w.connection).markers).toEqual([
-          { path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] },
-        ]);
       }),
     ),
   );
