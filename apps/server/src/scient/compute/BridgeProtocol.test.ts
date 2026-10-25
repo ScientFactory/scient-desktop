@@ -26,7 +26,11 @@ import {
   ExecutePayload,
   DisplayPayload,
   HelloAckPayload,
+  HelloPayload,
+  InterruptResultPayload,
   KernelPortsPayload,
+  KernelReadyPayload,
+  RestartedPayload,
   StreamPayload,
   StartKernelPayload,
   VariablesPayload,
@@ -61,6 +65,7 @@ const loadFixture = (name: string): string =>
   NodeFS.readFileSync(NodePath.join(here, "fixtures", "bridge", name), "utf-8");
 
 // Compiled once: `decodeUnknownSync` rebuilds the decoder on every call.
+const decodeHello = Schema.decodeUnknownSync(HelloPayload);
 const decodeHelloAck = Schema.decodeUnknownSync(HelloAckPayload);
 const decodeKernelPorts = Schema.decodeUnknownSync(KernelPortsPayload);
 const decodeStartKernel = Schema.decodeUnknownSync(StartKernelPayload);
@@ -69,9 +74,34 @@ const decodeStream = Schema.decodeUnknownSync(StreamPayload);
 const decodeDisplay = Schema.decodeUnknownSync(DisplayPayload);
 const decodeError = Schema.decodeUnknownSync(ErrorPayload);
 const decodeWarning = Schema.decodeUnknownSync(WarningPayload);
+const decodeKernelReady = Schema.decodeUnknownSync(KernelReadyPayload);
+const decodeInterruptResult = Schema.decodeUnknownSync(InterruptResultPayload);
+const decodeRestarted = Schema.decodeUnknownSync(RestartedPayload);
 const decodeVariables = Schema.decodeUnknownSync(VariablesPayload);
 
 describe("bridge protocol payload schemas", () => {
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("accepts a valid hello payload", () => {
+    const payload = decodeHello({
+      buildId: "build-1",
+      frameLimit: 16 * 1024 * 1024,
+      requiredCapabilities: ["execute", "interrupt", "restart", "shutdown"],
+      ownerToken: "token-abc",
+    });
+    expect(payload.buildId).toBe("build-1");
+  });
+
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("accepts a valid hello-ack payload", () => {
+    const payload = decodeHelloAck({
+      ownerToken: "token-abc",
+      pid: 12345,
+      platform: "darwin",
+      capabilities: ["execute", "interrupt", "restart", "shutdown"],
+    });
+    expect(payload.pid).toBe(12345);
+  });
+
   it("rejects a hello-ack with non-positive pid", () => {
     expect(() =>
       decodeHelloAck({
@@ -121,6 +151,16 @@ describe("bridge protocol payload schemas", () => {
         control: 41_005,
       }),
     ).toThrow();
+  });
+
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("accepts a valid execute payload", () => {
+    const payload = decodeExecute({
+      code: "print('hello')\n",
+      silent: false,
+      storeHistory: true,
+    });
+    expect(payload.code).toBe("print('hello')\n");
   });
 
   it("accepts optional source facts without changing the submitted code", () => {
@@ -190,6 +230,15 @@ describe("bridge protocol payload schemas", () => {
     ).toThrow();
   });
 
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("accepts a valid stream payload", () => {
+    const payload = decodeStream({
+      stream: "stdout",
+      text: "output line\n",
+    });
+    expect(payload.stream).toBe("stdout");
+  });
+
   it("rejects a stream payload with oversized text", () => {
     expect(() =>
       decodeStream({
@@ -199,6 +248,24 @@ describe("bridge protocol payload schemas", () => {
     ).toThrow();
   });
 
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("accepts a valid PNG display payload", () => {
+    const payload = decodeDisplay({
+      mediaType: "image/png",
+      data: "iVBORw0KGgo=",
+    });
+    expect("mediaType" in payload && payload.mediaType).toBe("image/png");
+  });
+
+  // regression: eed0733208 feat(compute): implement Phase 4 scientific workflow
+  it("accepts a valid SVG display payload", () => {
+    const payload = decodeDisplay({
+      mediaType: "image/svg+xml",
+      data: '<svg xmlns="http://www.w3.org/2000/svg"><circle r="2"/></svg>',
+    });
+    expect("mediaType" in payload && payload.mediaType).toBe("image/svg+xml");
+  });
+
   it("bounds SVG display payloads by UTF-8 bytes", () => {
     expect(() =>
       decodeDisplay({
@@ -206,6 +273,15 @@ describe("bridge protocol payload schemas", () => {
         data: `<svg>${"é".repeat(4 * 1024 * 1024 + 1)}</svg>`,
       }),
     ).toThrow();
+  });
+
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("accepts a valid text display payload", () => {
+    const payload = decodeDisplay({
+      mediaType: "text/plain",
+      text: "<Figure size 640x480>",
+    });
+    expect("mediaType" in payload && payload.mediaType).toBe("text/plain");
   });
 
   it("rejects a display payload with unknown media type", () => {
@@ -268,6 +344,16 @@ describe("bridge protocol payload schemas", () => {
     ).toThrow();
   });
 
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("accepts a valid error payload", () => {
+    const payload = decodeError({
+      name: "ValueError",
+      value: "bad value",
+      traceback: ["line 1", "line 2"],
+    });
+    expect(payload.name).toBe("ValueError");
+  });
+
   it("rejects an error payload with too many traceback lines", () => {
     expect(() =>
       decodeError({
@@ -278,6 +364,15 @@ describe("bridge protocol payload schemas", () => {
     ).toThrow();
   });
 
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("accepts a valid warning payload", () => {
+    const payload = decodeWarning({
+      code: "output-truncated",
+      detail: "Stream text exceeded 256 KiB.",
+    });
+    expect(payload.code).toBe("output-truncated");
+  });
+
   it("rejects a warning payload with unknown code", () => {
     expect(() =>
       decodeWarning({
@@ -285,6 +380,32 @@ describe("bridge protocol payload schemas", () => {
         detail: null,
       }),
     ).toThrow();
+  });
+
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("accepts a valid kernel-ready payload", () => {
+    const payload = decodeKernelReady({
+      kernelPid: 99999,
+      languageId: "python",
+      languageVersion: "3.12.0",
+      protocolVersion: 1,
+      capabilities: ["execute", "interrupt", "restart", "shutdown"],
+    });
+    expect(payload.kernelPid).toBe(99999);
+  });
+
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("accepts a valid interrupt-result payload", () => {
+    const payload = decodeInterruptResult({
+      result: "interrupted",
+    });
+    expect(payload.result).toBe("interrupted");
+  });
+
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("accepts a valid restarted payload", () => {
+    const payload = decodeRestarted({ kernelPid: 88888 });
+    expect(payload.kernelPid).toBe(88888);
   });
 
   it("accepts bounded variable summaries and rejects oversized snapshots", () => {
@@ -467,6 +588,16 @@ describe("bridge protocol sequence tracking", () => {
       const tracker = makeBridgeSequenceTracker("bridge-to-server");
       yield* validateBridgeSequence(tracker, msg("hello-ack", 0, {}));
       const error = yield* Effect.flip(validateBridgeSequence(tracker, msg("kernel-ready", 2, {})));
+      expect(error.message).toContain("Expected sequence 1");
+    }),
+  );
+
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it.effect("rejects a duplicate sequence", () =>
+    Effect.gen(function* () {
+      const tracker = makeBridgeSequenceTracker("bridge-to-server");
+      yield* validateBridgeSequence(tracker, msg("hello-ack", 0, {}));
+      const error = yield* Effect.flip(validateBridgeSequence(tracker, msg("kernel-ready", 0, {})));
       expect(error.message).toContain("Expected sequence 1");
     }),
   );

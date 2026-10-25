@@ -217,13 +217,19 @@ describe("evaluateLatexEngineGate", () => {
       expect(evaluateLatexEngineGate({ rootText: source })).toEqual({ supported: true });
     });
 
-    it.each(["\\ifPDFTeX", "\\ifxetex", "\\ifluatex", "\\iftutex"])(
-      "suppresses the package-load refusal on %s alone",
-      (conditional) => {
-        const source = [conditional, "\\usepackage{fontspec}", "\\fi"].join("\n");
-        expect(evaluateLatexEngineGate({ rootText: source })).toEqual({ supported: true });
-      },
-    );
+    // regression: 78c4bb1678 fix(latex): let engine-conditional documents past the engine gate
+    it.each([
+      "\\ifPDFTeX",
+      "\\ifpdftex",
+      "\\ifxetex",
+      "\\ifXeTeX",
+      "\\ifluatex",
+      "\\ifLuaTeX",
+      "\\iftutex",
+    ])("suppresses the package-load refusal on %s alone", (conditional) => {
+      const source = [conditional, "\\usepackage{fontspec}", "\\fi"].join("\n");
+      expect(evaluateLatexEngineGate({ rootText: source })).toEqual({ supported: true });
+    });
 
     it.each(["iftex", "ifxetex", "ifluatex"])(
       "suppresses the package-load refusal on \\usepackage{%s} alone",
@@ -426,7 +432,8 @@ describe("compiler resolution", () => {
     ).toEqual({ engine: "pdflatex", error: null });
   });
 
-  it.each(["context", "xelatex-custom", "pdftexish"])(
+  // regression: c8699e134b feat(documents): add visual LaTeX authoring and reusable templates
+  it.each(["context", "latex", "xelatex-custom", "xelatex2", "lualatex-dev", "pdftexish"])(
     "does not interpret the unsupported full declaration %s as a supported compiler",
     (declaration) => {
       expect(
@@ -494,8 +501,11 @@ describe("compiler resolution", () => {
     },
   );
 
+  // regression: c8699e134b feat(documents): add visual LaTeX authoring and reusable templates
   it.each([
     { declaration: "pdflatex", engine: "pdflatex" },
+    { declaration: "pdftex", engine: "pdflatex" },
+    { declaration: "lualatex", engine: "lualatex" },
     { declaration: "luatex", engine: "lualatex" },
   ] as const)(
     "rejects rather than silently replaces Tectonic's incompatible $declaration request",

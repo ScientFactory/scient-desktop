@@ -1,3 +1,6 @@
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import { rejectCodexSubscriptionSharing } from "./codexSubscriptionSharingPolicy.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CodexSettings,
@@ -58,4 +61,23 @@ describe("deferred Codex subscription sharing", () => {
       newlyRequestedCodexSubscriptionSharing(DEFAULT_SERVER_SETTINGS, DEFAULT_SERVER_SETTINGS),
     ).toBeUndefined();
   });
+
+  // regression: e434651620 merge(upstream): align T3 through 468ade3049
+  it.effect.each(
+    [
+      "import",
+      "export",
+      "handoff",
+      "callback",
+      "install",
+      "cancel-install",
+      "remove-install",
+      "observe-install",
+    ].map((operation) => ({ caseTitle: `rejects ${operation} before any side effect`, operation })),
+  )("$caseTitle", ({ operation }) =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(rejectCodexSubscriptionSharing(id, operation));
+      expect(Exit.isFailure(exit)).toBe(true);
+    }),
+  );
 });

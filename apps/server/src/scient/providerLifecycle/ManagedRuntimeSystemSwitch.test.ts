@@ -544,9 +544,35 @@ describe("switching from a system runtime to the Scient-managed one", () => {
       ),
   );
 
+  // regression: e2fc205c51 feat(droid): custom models and setup say what will happen, and document it
+  it.effect.each(providers)(
+    "offers $name the switch beside a newer system runtime, as a decision that names both releases",
+    (provider) =>
+      Effect.gen(function* () {
+        const newer = relative(provider, "newer");
+        const { input } = yield* systemRuntime(provider.binary, provider.versionOutput(newer));
+        const resolution = yield* provider.resolve(input);
+
+        expect(resolution.summary).toMatchObject({ source: "system", actions: ["install"] });
+        const plan = yield* resolution.actions.plan("install");
+        expect(plan).toMatchObject({
+          action: "install",
+          version: managedVersion(provider),
+          systemVersion: newer,
+          olderThanSystem: true,
+          message: olderSwitch(provider, newer),
+        });
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, target.platform),
+        Effect.provideService(HostProcess.Architecture, target.arch),
+        Effect.provide(NodeServices.layer),
+      ),
+  );
+
   // The older-switch decision is shared; each provider's resolution and version
   // parsing run in the "asks again" table above. Claude, plus Cursor's date scheme.
-  it.effect.each(providers.filter(({ name }) => name === "Claude" || name === "Cursor"))(
+  // regression: e2fc205c51 feat(droid): custom models and setup say what will happen, and document it
+  it.effect.each(providers)(
     "names both versions before $name switches from an older system runtime",
     (provider) =>
       Effect.gen(function* () {

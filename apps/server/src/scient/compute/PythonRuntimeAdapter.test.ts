@@ -687,6 +687,43 @@ describe("python runtime adapter", () => {
     }),
   );
 
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it.effect("builds a launch plan through prepareLaunch", () =>
+    Effect.gen(function* () {
+      const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
+      const plan = yield* adapter.prepareLaunch({
+        profile,
+        cwd: "/project",
+        environment: { PYTHONUTF8: "1" },
+      });
+      expect(plan.args).toEqual(["-I", "-u", "/app/bridge.py"]);
+    }),
+  );
+
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("normalizes diagnostics through the adapter", () => {
+    const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
+    const diagnostics = adapter.normalizeDiagnostic(
+      {
+        name: "ValueError",
+        value: "bad value",
+        traceback: ["line 1", "line 2"],
+      },
+      { projectRoot: "/project", submittedSource: null },
+    );
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]!.errorName).toBe("ValueError");
+  });
+
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it.effect("computes a fingerprint through the adapter", () =>
+    Effect.gen(function* () {
+      const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
+      const fp = yield* adapter.fingerprintEnvironment(profile);
+      expect(fp.hash).toMatch(/^sha256:/);
+    }),
+  );
+
   it.effect("fails rather than dies when a probe cannot be parsed", () =>
     Effect.gen(function* () {
       // A wrapper script, a stray banner, a Python that prints nothing useful.

@@ -21,6 +21,11 @@ describe("compute environment policy", () => {
     it("rejects a non-canonical path with traversal segments", () => {
       expect(() => validateProjectRoot("/project/../root")).toThrow("canonical");
     });
+
+    // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+    it("rejects a non-canonical path with dot segments", () => {
+      expect(() => validateProjectRoot("/project/./root")).toThrow("canonical");
+    });
   });
 
   describe("sanitization", () => {

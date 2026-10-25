@@ -130,7 +130,7 @@ const NULLABLE_REQUEST_ID_TYPES: ReadonlySet<BridgeMessageType> = new Set([
 const Label = Schema.String.check(Schema.isMaxLength(256));
 const ShortText = Schema.String.check(Schema.isMaxLength(MaxDetailLength));
 
-const HelloPayload = Schema.Struct({
+export const HelloPayload = Schema.Struct({
   buildId: Label,
   frameLimit: Schema.Int.check(Schema.isGreaterThan(0)),
   requiredCapabilities: Schema.Array(ComputeCapability),
@@ -201,7 +201,7 @@ export const ExecuteSourceContext = Schema.Struct({
 });
 export type ExecuteSourceContext = typeof ExecuteSourceContext.Type;
 
-const KernelReadyPayload = Schema.Struct({
+export const KernelReadyPayload = Schema.Struct({
   kernelPid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   languageId: ComputeLanguageId,
   languageVersion: Label,
@@ -338,7 +338,7 @@ export type ExecutionCompletePayload = typeof ExecutionCompletePayload.Type;
 export const InterruptPayload = Schema.Struct({});
 export type InterruptPayload = typeof InterruptPayload.Type;
 
-const InterruptResultPayload = Schema.Struct({
+export const InterruptResultPayload = Schema.Struct({
   result: Schema.Literals(["interrupted", "terminal", "rejected", "timeout"]),
 });
 
@@ -365,7 +365,7 @@ export type RestartPayload = typeof RestartPayload.Type;
  * could disagree with it, and there would be no principled way to say which one
  * the session is actually at.
  */
-const RestartedPayload = Schema.Struct({
+export const RestartedPayload = Schema.Struct({
   kernelPid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
 });
 
