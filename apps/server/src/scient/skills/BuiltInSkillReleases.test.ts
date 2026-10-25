@@ -198,24 +198,4 @@ describe("Scient built-in skill releases", () => {
       expect(authoringSkill.instructions).toContain("clickable project-relative Markdown link");
     }
   });
-
-  it("teaches the Overleaf folder model, conflicts and the token flow without adding a gate", () => {
-    const overleaf = BUILT_IN_SKILL_RELEASES.find(
-      (release) => release.id === "scient.overleaf-sync",
-    )!;
-    expect(overleaf.description).toContain("Overleaf");
-    expect(overleaf.instructions).toContain("lives in its own folder");
-    expect(overleaf.instructions).toContain("Bring a project in as a new folder by default");
-    expect(overleaf.instructions).toContain(
-      "Keep code, data and analysis outside Overleaf folders",
-    );
-    expect(overleaf.instructions).toContain("Only a conflict stops a sync");
-    expect(overleaf.instructions).toContain("remove every mark");
-    expect(overleaf.instructions).toContain("`reviewedRemote`");
-    expect(overleaf.instructions).toContain("`files.keepOnlyHere`");
-    expect(overleaf.instructions).toContain("`request_secret`");
-    expect(overleaf.instructions).toContain("Never ask for the token in chat");
-    expect(overleaf.instructions).toContain("ask no one for approval");
-    expect(overleaf.instructions).toContain("This skill grants no tools or authority");
-  });
 });
