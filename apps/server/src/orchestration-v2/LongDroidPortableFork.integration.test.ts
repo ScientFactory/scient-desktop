@@ -416,7 +416,10 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
             const began = yield* Clock.currentTimeMillis;
             yield* TestClock.adjust("121 seconds");
             assert.equal((yield* Clock.currentTimeMillis) - began, 121000);
-            assert.deepEqual(yield* orchestrator.dispatch(command), sendReceipt);
+            assert.deepEqual(yield* orchestrator.dispatch(command), {
+              ...sendReceipt,
+              replayed: true,
+            });
             assert.deepEqual(yield* forkService.dispatch(forkCommand), receipt);
             yield* worker.drain(24);
             const held = yield* store.getThreadProjection(targetId);

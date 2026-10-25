@@ -4,7 +4,6 @@ import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/files
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { mergeEffectiveProviderSkills } from "@t3tools/client-runtime/providerSkills";
 
 import type {
   EnvironmentId,
@@ -52,7 +51,6 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
-import { scientSkillsInventory } from "../../state/scientSkills";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   appendComposerDraftAttachments,
@@ -168,6 +166,7 @@ export function branchBadgeLabel(input: {
 }
 
 type NewTaskFlowContextValue = {
+  readonly activeNewTask: { readonly pendingKey: string | null } | null;
   readonly projectScopes: ReadonlyArray<HomeProjectScope>;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
@@ -288,11 +287,9 @@ export function NewTaskFlowProvider(
   );
   const selectedEnvironmentId =
     selectedEnvironmentIdOverride !== null &&
-    savedConnectionsById[selectedEnvironmentIdOverride] !== undefined
+    projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
       ? selectedEnvironmentIdOverride
-      : (projects[0]?.environmentId ??
-        (Object.keys(savedConnectionsById)[0] as EnvironmentId | undefined) ??
-        null);
+      : (projects[0]?.environmentId ?? null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [activeDraftKey, setActiveDraftKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -609,30 +606,10 @@ export function NewTaskFlowProvider(
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
-  const selectedProviderStatusFromServer =
+  const selectedProviderStatus =
     selectedEnvironmentServerConfig?.providers.find(
       (provider) => provider.instanceId === selectedModel?.instanceId,
     ) ?? null;
-  // SCIENT-FORK:START - native provider skills include the Scient inventory.
-  const scientSkills = useEnvironmentQuery(
-    selectedProject
-      ? scientSkillsInventory({
-          environmentId: selectedProject.environmentId,
-          input: { projectId: selectedProject.id },
-        })
-      : null,
-  ).data;
-  const selectedProviderStatus = selectedProviderStatusFromServer
-    ? {
-        ...selectedProviderStatusFromServer,
-        skills: mergeEffectiveProviderSkills({
-          provider: selectedProviderStatusFromServer.driver,
-          providerSkills: selectedProviderStatusFromServer.skills,
-          inventory: scientSkills,
-        }),
-      }
-    : null;
-  // SCIENT-FORK:END
   const planModeEnabled =
     legacyPlanModeEnabled && selectedProviderStatus?.showInteractionModeToggle !== false;
   const interactionMode = planModeEnabled
@@ -1195,6 +1172,7 @@ export function NewTaskFlowProvider(
   );
 
   const value = {
+    activeNewTask,
     projectScopes,
     selectedEnvironmentId,
     selectedProjectKey,

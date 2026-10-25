@@ -198,8 +198,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
   }
   const selectedThreadCreation = creationUnchanged ? previousCreation : resolvedCreation;
   const selectedProjectRef: ScopedProjectRef | null =
-    // SCIENT-FORK: legacy projectless records have no project reference.
-    selectedThread === null || selectedThread.projectId === null
+    selectedThread === null
       ? null
       : {
           environmentId: selectedThread.environmentId,

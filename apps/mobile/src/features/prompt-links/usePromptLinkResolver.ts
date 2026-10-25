@@ -13,13 +13,11 @@ import {
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
+  parseNewThreadLink,
   type LinkedPrompt,
   type PromptLinkPullRequest,
   type PromptLinkRepository,
 } from "@t3tools/shared/promptLinks";
-// SCIENT-FORK:START — registered app identity and local draft-link policy.
-import { parseScientNewThreadLink as parseNewThreadLink } from "@t3tools/shared/scientPromptLinks";
-// SCIENT-FORK:END
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { scopedThreadKey } from "../../lib/scopedEntities";

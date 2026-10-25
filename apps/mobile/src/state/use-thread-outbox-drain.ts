@@ -7,6 +7,8 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { threadFamilyRead, type ThreadFamilyRead } from "@t3tools/client-runtime/state/threads";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   AuthOrchestrationOperateScope,
   CommandId,
@@ -23,7 +25,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createDebugLogger } from "../lib/debugLog";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
-import { buildExistingThreadOutboxStartTurnInput } from "./thread-outbox-start-turn";
 import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
 import { randomHex } from "../lib/uuid";
@@ -55,7 +56,6 @@ import {
 import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import {
   isQueuedThreadCreationSendable,
-  modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
   resolveThreadOutboxFailureAction,
@@ -67,7 +67,7 @@ import {
   type ThreadOutboxCommandStage,
   type ThreadOutboxFailureAction,
 } from "./thread-outbox-model";
-import { environmentThreadShells, threadEnvironment } from "./threads";
+import { environmentThreadShells, threadEnvironment, threadFamilies } from "./threads";
 import {
   appendComposerDraftAttachments,
   composerDraftsAtom,
@@ -588,11 +588,6 @@ async function preserveUploadedAttachmentsForEditor(
 
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
-  // SCIENT-FORK:START queued-model-selection
-  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
-    reportFailure: false,
-  });
-  // SCIENT-FORK:END queued-model-selection
   const preparePullRequest = useAtomCommand(gitEnvironment.preparePullRequestThread, {
     reportFailure: false,
   });
@@ -620,6 +615,16 @@ export function useThreadOutboxDrain(): void {
   const retryNotBeforeRef = useRef(new Map<MessageId, number>());
   const retryTimersRef = useRef(new Map<MessageId, ReturnType<typeof setTimeout>>());
   const acknowledgedExistingThreadMessageIdsRef = useRef(new Set<MessageId>());
+  // Targets the shell may have left out hold their thread family until they leave the queue, so
+  // the row stays readable through dispatch.
+  const familyMountsRef = useRef(new Map<MessageId, () => void>());
+  useEffect(
+    () => () => {
+      for (const release of familyMountsRef.current.values()) release();
+      familyMountsRef.current.clear();
+    },
+    [],
+  );
   const blockedRecoverySubscriptionsRef = useRef(
     new Map<
       MessageId,
@@ -759,21 +764,6 @@ export function useThreadOutboxDrain(): void {
       }
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);
 
-      if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
-        const updateResult = await updateThreadMetadata({
-          environmentId: queuedMessage.environmentId,
-          input: {
-            commandId: settingsCommandId(queuedMessage, "model-selection"),
-            threadId: queuedMessage.threadId,
-            modelSelection: settings.modelSelection,
-          },
-        });
-        if (AsyncResult.isFailure(updateResult)) {
-          reportFailure(updateResult, "settings-sync");
-          return false;
-        }
-      }
-
       if (settings.runtimeMode !== thread.runtimeMode) {
         if (!hasAccess()) return true;
         const runtimeResult = await setThreadRuntimeMode({
@@ -864,12 +854,34 @@ export function useThreadOutboxDrain(): void {
       if (!hasAccess()) return true;
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
-        input: buildExistingThreadOutboxStartTurnInput({
-          message: queuedMessage,
-          settings: sendSettings,
-          attachments: prepared.attachments,
-          itemCount: thread.itemCount,
-        }),
+        input: {
+          commandId: queuedMessage.commandId,
+          creationSource: "mobile",
+          threadId: queuedMessage.threadId,
+          message: {
+            messageId: queuedMessage.messageId,
+            role: "user",
+            ...serializeComposerMessageForServer(
+              queuedMessage.text,
+              uploadedComposerContext(
+                queuedMessage.context,
+                queuedMessage.attachments,
+                prepared.attachments,
+              ),
+              currentConfig.environment.capabilities.inlineMessageContext === true,
+            ),
+            attachments: prepared.attachments,
+          },
+          modelSelection: sendSettings.modelSelection,
+          titleSeed: deriveThreadTitleSeed({
+            text: queuedMessage.text,
+            attachments: queuedMessage.attachments,
+          }),
+          runtimeMode: sendSettings.runtimeMode,
+          interactionMode: sendSettings.interactionMode,
+          createdAt: queuedMessage.createdAt,
+          dispatchMode: queuedMessage.dispatchMode ?? "start",
+        },
       });
       if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
       const failure = reportFailure(deliveryResult, "start-turn");
@@ -892,7 +904,6 @@ export function useThreadOutboxDrain(): void {
       setThreadInteractionMode,
       setThreadRuntimeMode,
       startTurn,
-      updateThreadMetadata,
       restoreQueuedMessage,
     ],
   );
@@ -1033,6 +1044,7 @@ export function useThreadOutboxDrain(): void {
               queuedMessage.attachments,
               prepared.attachments,
             ),
+            currentConfig.environment.capabilities.inlineMessageContext === true,
           ),
           uploadedAttachments: prepared.attachments,
           modelSelection: sendSettings.modelSelection,
@@ -1075,8 +1087,6 @@ export function useThreadOutboxDrain(): void {
         threads.some(
           (thread) =>
             scopedThreadKey(thread.environmentId, thread.id) === threadKey &&
-            // V1's session "error" | "stopped" | "interrupted" are the V2
-            // runtime's non-success terminal statuses.
             (thread.latestRun !== null ||
               thread.runtime?.status === "failed" ||
               thread.runtime?.status === "cancelled" ||
@@ -1101,6 +1111,12 @@ export function useThreadOutboxDrain(): void {
     for (const messageId of acknowledgedExistingThreadMessageIdsRef.current) {
       if (!queuedMessageIds.has(messageId)) {
         acknowledgedExistingThreadMessageIdsRef.current.delete(messageId);
+      }
+    }
+    for (const [messageId, release] of familyMountsRef.current) {
+      if (!queuedMessageIds.has(messageId)) {
+        release();
+        familyMountsRef.current.delete(messageId);
       }
     }
 
@@ -1154,7 +1170,7 @@ export function useThreadOutboxDrain(): void {
         continue;
       }
 
-      const thread = findThread(threads, nextQueuedMessage);
+      let thread = findThread(threads, nextQueuedMessage);
       if (thread && scopedThreadKey(thread.environmentId, thread.id) !== threadKey) {
         continue;
       }
@@ -1164,17 +1180,66 @@ export function useThreadOutboxDrain(): void {
         (candidate) => candidate.environmentId === nextQueuedMessage.environmentId,
       );
       const shellStatus = shellStatuses.get(nextQueuedMessage.environmentId) ?? "empty";
+      const serverConfig = serverConfigs.get(nextQueuedMessage.environmentId);
+      let familyRead: ThreadFamilyRead | undefined;
+      if (
+        thread === undefined &&
+        creation === undefined &&
+        serverConfig?.shellThreadFamilies === true
+      ) {
+        // The family keeps the row readable through dispatch once it loads; the current shell
+        // generation's read decides whether the thread is gone.
+        if (!familyMountsRef.current.has(nextQueuedMessage.messageId)) {
+          familyMountsRef.current.set(
+            nextQueuedMessage.messageId,
+            threadFamilies.mount(
+              appAtomRegistry,
+              nextQueuedMessage.environmentId,
+              nextQueuedMessage.threadId,
+            ),
+          );
+        }
+        familyRead = threadFamilyRead(
+          appAtomRegistry.get(
+            threadFamilies.familyAtom(nextQueuedMessage.environmentId, nextQueuedMessage.threadId),
+          ),
+        );
+        if (familyRead === "settled") {
+          // The rows from this render can lag the family that just settled; decide from the
+          // merged rows as they are now.
+          thread = findThread(
+            appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+            nextQueuedMessage,
+          );
+        } else if (familyRead === "failed") {
+          threadFamilies.refresh(
+            appAtomRegistry,
+            nextQueuedMessage.environmentId,
+            nextQueuedMessage.threadId,
+          );
+        }
+      }
       const deliveryAction = resolveThreadOutboxDeliveryAction({
         isCreation: creation !== undefined,
         threadExists: thread !== undefined,
         shellStatus,
         environmentConnected: environment?.connectionState === "connected",
-        threadBusy: threadRuntimeIsActive(thread?.runtime ?? null),
+        threadBusy: threadRuntimeIsActive(thread?.runtime),
+        ...(familyRead === undefined ? {} : { familyRead }),
       });
+      if (
+        deliveryAction === "wait" &&
+        shellStatus === "live" &&
+        familyRead !== undefined &&
+        familyRead !== "settled"
+      ) {
+        // An empty family read changes no merged row, so nothing else would wake the drain.
+        scheduleQueuedMessageRetry(nextQueuedMessage.messageId);
+        continue;
+      }
       if (deliveryAction === "send" && !operableEnvironments.has(nextQueuedMessage.environmentId)) {
         continue;
       }
-      const serverConfig = serverConfigs.get(nextQueuedMessage.environmentId);
       const dispatchStep = resolveThreadOutboxDispatchStep({
         deliveryAction,
         fileAttachments: nextQueuedMessage.attachments.filter(
@@ -1263,7 +1328,7 @@ export function useThreadOutboxDrain(): void {
             appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
             nextQueuedMessage,
           );
-          const liveThreadBusy = threadRuntimeIsActive(liveThread?.runtime ?? null);
+          const liveThreadBusy = threadRuntimeIsActive(liveThread?.runtime);
           const liveDeliveryAction = resolveThreadOutboxDeliveryAction({
             isCreation: creation !== undefined,
             threadExists: liveThread !== undefined,

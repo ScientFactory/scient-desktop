@@ -75,7 +75,6 @@ import {
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import {
   useRemoteConnections,
-  useRemoteConnectionStatus,
   useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
 import { useNewTaskFlow } from "./new-task-flow-provider";
@@ -179,17 +178,11 @@ export function NewTaskDraftScreen(props: {
     return scope?.title ?? selectedProject.title;
   })();
   const { onReconnectEnvironment } = useRemoteConnections();
-  const { connectedEnvironments } = useRemoteConnectionStatus();
-  const environmentIdForRuntime =
-    flow.selectedEnvironmentId ?? selectedProject?.environmentId ?? null;
-  const environmentRuntime = useRemoteEnvironmentRuntime(environmentIdForRuntime);
-  const connectionState =
-    environmentRuntime?.connectionState ??
-    connectedEnvironments.find(
-      (environment) => environment.environmentId === environmentIdForRuntime,
-    )?.connectionState ??
-    "offline";
-  const selectedEnvironmentServerConfig = useEnvironmentServerConfig(environmentIdForRuntime);
+  const environmentRuntime = useRemoteEnvironmentRuntime(selectedProject?.environmentId ?? null);
+  const connectionState = environmentRuntime?.connectionState ?? "offline";
+  const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
+    selectedProject?.environmentId ?? null,
+  );
   const environmentConnected = connectionState === "connected";
   const canOperate = useEnvironmentScope(
     selectedProject?.environmentId ?? null,
@@ -825,12 +818,9 @@ export function NewTaskDraftScreen(props: {
 
   async function handleStart(): Promise<import("@t3tools/contracts").MessageId | null> {
     const selectedProject = flow.selectedProject;
-    const selectedEnvironmentId =
-      flow.selectedEnvironmentId ?? selectedProject?.environmentId ?? null;
     const draftKey = flow.draftKey;
     if (
       !selectedProject ||
-      !selectedEnvironmentId ||
       !draftKey ||
       cloneBlocksStart ||
       !isIncomingShareReady ||
@@ -979,7 +969,6 @@ export function NewTaskDraftScreen(props: {
   // an empty loading surface here flashes between two already-cached threads.
   if (!selectedProject) return null;
 
-  const targetTitle = selectedProjectLabel ?? selectedProject.title;
   const setupBlockReason =
     isIncomingShareReady && !isImportingShare
       ? cloneBlocksStart
@@ -1044,7 +1033,7 @@ export function NewTaskDraftScreen(props: {
           <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
           <Pressable
             accessibilityHint="Opens the project picker"
-            accessibilityLabel={targetTitle}
+            accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
             accessibilityRole="button"
             disabled={isComposerInteractionLocked}
             onPress={chooseProject}
@@ -1054,7 +1043,7 @@ export function NewTaskDraftScreen(props: {
               className="text-2xl font-t3-medium tracking-tight text-foreground"
               numberOfLines={1}
             >
-              {targetTitle}
+              {selectedProjectLabel ?? selectedProject.title}
             </Text>
           </Pressable>
           <Text className="text-2xl font-t3-medium tracking-tight text-foreground">?</Text>
@@ -1156,12 +1145,7 @@ export function NewTaskDraftScreen(props: {
           <ComposerEditor
             draftKey={flow.draftKey}
             value={flow.prompt}
-            // SCIENT-FORK:START - a model-less draft still belongs to the share importer.
-            editable={!isComposerInteractionLocked}
-            onChangeText={(text) => {
-              if (!isComposerInteractionLocked) flow.setPrompt(text);
-            }}
-            // SCIENT-FORK:END
+            onChangeText={flow.setPrompt}
             placeholder="Ask the repo agent, or run a command…"
             multiline
             style={{ minHeight: 64 }}

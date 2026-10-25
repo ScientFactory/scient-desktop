@@ -174,6 +174,7 @@ const createMenu = () =>
     projectCwd: "/project",
     onStartRename: () => recordEffect("rename"),
     onRequestNewSection: () => {},
+    canShareWithGuest: false,
   });
 
 beforeEach(() => {

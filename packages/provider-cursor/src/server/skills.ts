@@ -129,7 +129,7 @@ function parseSkillFrontmatter(contents: string): CursorSkillFrontmatter | undef
 
 const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (input: {
   readonly directory: string;
-  readonly scope: "app" | "user" | "project";
+  readonly scope: "user" | "project" | "system";
   readonly budget: CursorSkillScanBudget;
   /** Real paths of the roots already walked in this scan. */
   readonly scannedRoots: Set<string>;
@@ -248,10 +248,8 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   const roots = [
     ...(cwd ? rootsBelow(cwd, "project") : []),
     ...rootsBelow(userHome, "user"),
-    // Cursor owns and updates this installed-runtime catalog. Keep it after
-    // project and personal roots so provider defaults never replace a
-    // same-name skill the user can inspect and edit.
-    { directory: path.join(userHome, ".cursor", "skills-cursor"), scope: "app" as const },
+    // Cursor syncs its built-in skills here; same-named user and project skills win.
+    { directory: path.join(userHome, ".cursor", "skills-cursor"), scope: "system" as const },
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();

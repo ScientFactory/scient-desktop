@@ -260,6 +260,7 @@ import {
 } from "../previewMiniPlayerStore";
 import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
+import { GuestPendingMessages } from "./chat/GuestShareControls";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
@@ -317,8 +318,7 @@ import {
   primaryServerKeybindingsAtom,
   serverEnvironment,
 } from "../state/server";
-import { threadEnvironment } from "../state/threads";
-
+import { threadEnvironment, useThreadFamily } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import {
   type EnvironmentPresentation,
@@ -582,6 +582,14 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const serverThreadProjection = useQuietThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  // Subagent rows, an open child's own row and its ancestors come from the family when the shell
+  // leaves idle children out. Every source agrees on the root, so the key never flips.
+  useThreadFamily(
+    routeKind === "server" ? environmentId : null,
+    serverThreadShell?.lineage.rootThreadId ??
+      serverProjection?.thread.lineage.rootThreadId ??
+      null,
+  );
   // Only the shell-less fallback needs these; with a shell, the shell carries them.
   const fallbackDetailRef = serverThreadShell === null ? routeThreadDetailRef : null;
   const fallbackUpdatedAt = useThreadUpdatedAt(fallbackDetailRef);
@@ -3644,6 +3652,11 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const onComposerResumeStable = useStableCallback(onResume);
   const onComposerCompactContextStable = useStableCallback(onCompactContext);
+  // SCIENT-FORK:START — the reading end owns scrolling; pending guest messages do not follow.
+  const pendingGuestMessageCount =
+    serverProjection?.thread.guestShare?.messages.filter((message) => message.status === "pending")
+      .length ?? 0;
+  // SCIENT-FORK:END
   // One-shot: the resend "Work locally" queued fires once, then the marker clears.
   const resendAfterWorkLocallyStable = useStableCallback(() => {
     setWorkLocallyResendDraftId(null);
@@ -4049,18 +4062,28 @@ function ChatViewContent(props: ChatViewProps) {
                 {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
                 footer={
-                  paintOnlyDisplayedTimeline ? null : pendingHandoff === null ? (
-                    threadStatusLine
-                  ) : (
+                  paintOnlyDisplayedTimeline ||
+                  (pendingHandoff === null &&
+                    pendingGuestMessageCount === 0 &&
+                    threadStatusLine === null) ? null : (
                     <>
-                      <div className="chat-content-lane">
-                        <HandoffRow
-                          environmentId={environmentId}
-                          endpoints={pendingHandoff}
-                          providers={providerStatuses}
-                          pending
+                      {pendingHandoff === null ? null : (
+                        <div className="chat-content-lane">
+                          <HandoffRow
+                            environmentId={environmentId}
+                            endpoints={pendingHandoff}
+                            providers={providerStatuses}
+                            pending
+                          />
+                        </div>
+                      )}
+                      {pendingGuestMessageCount > 0 && isServerThread && activeThread ? (
+                        <GuestPendingMessages
+                          threadRef={scopeThreadRef(activeThread.environmentId, activeThread.id)}
+                          onImageExpand={onExpandTimelineImageStable}
+                          onFileOpen={openFileAttachmentStable}
                         />
-                      </div>
+                      ) : null}
                       {threadStatusLine}
                     </>
                   )

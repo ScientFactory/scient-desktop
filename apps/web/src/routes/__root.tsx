@@ -30,6 +30,7 @@ import { ProviderSignInPageCoordinator } from "../scient/providerConnection/Prov
 import { BrowserProviderUpdateNotification } from "../scient/providerConnection/BrowserProviderUpdateNotification";
 // SCIENT-FORK:END
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
+import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
@@ -82,6 +83,7 @@ import {
   isPrimaryEnvironmentRequestError,
   isTransientBootstrapError,
 } from "../environments/primary/auth";
+import { GUEST_PAGE_PATH } from "../guestPage";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { useHostedPromptLinkLanding } from "../components/promptLinks/HostedPromptLinkLanding";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
@@ -104,6 +106,16 @@ import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
+    // Guest links open on the owner's tunnel host in a browser with no T3 session, and must
+    // not trigger pairing or an environment connection.
+    if (location.pathname === GUEST_PAGE_PATH) {
+      return {
+        authGateState: {
+          status: "guest",
+        } as const,
+      };
+    }
+
     if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
       return {
         authGateState: {
@@ -168,6 +180,8 @@ function RootRouteView() {
     authGateState.status === "hosted-static",
   );
 
+  if (pathname === GUEST_PAGE_PATH) return <Outlet />;
+
   if (pathname === "/pair" || pathname === "/connect" || pathname === "/connect-agent") {
     return (
       <>
@@ -207,6 +221,7 @@ function RootRouteView() {
           {/* SCIENT-FORK:START — app-level sign-in page opener. */}
           <ProviderSignInPageCoordinator />
           {/* SCIENT-FORK:END */}
+          <GuestShareDialogHost />
           <CommandPalette>
             <AppSidebarLayout>
               <Outlet />
@@ -266,6 +281,7 @@ function RootRouteView() {
           {/* SCIENT-FORK:START — app-level sign-in page opener. */}
           <ProviderSignInPageCoordinator />
           {/* SCIENT-FORK:END */}
+          <GuestShareDialogHost />
           <SlowRpcRequestToastCoordinator />
           <HostFreezeToastCoordinator />
           <PermissionUpdateNotice />

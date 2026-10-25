@@ -23,9 +23,6 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
-  // SCIENT-FORK:START unread-completion-tick
-  TurnId,
-  // SCIENT-FORK:END unread-completion-tick
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -103,12 +100,25 @@ describe("resolveThreadListV2Status", () => {
     );
   });
 
+  it("shows a waiting guest message as Request, after the agent's own requests", () => {
+    const thread = presentThreadShell(
+      environmentId,
+      decodeThreadShell(makeRawThreadShell({ status: "running" })),
+    );
+    const guest = { ...thread, pendingGuestMessageCount: 1 };
+
+    expect(resolveThreadListV2Status(guest)).toBe("request");
+    expect(resolveThreadListV2Status({ ...guest, hasPendingUserInput: true })).toBe("input");
+    expect(resolveThreadListV2Status({ ...guest, hasPendingApprovals: true })).toBe("approval");
+  });
+
   it.each([
-    { kind: "command", status: "ready" },
-    { kind: "monitor", status: "waiting" },
+    { roster: "dev server", task: { kind: "command" }, status: "ready" },
+    { roster: "dev server watchdog", task: { kind: "monitor" }, status: "ready" },
+    { roster: "awaited command", task: { kind: "command", awaited: true }, status: "waiting" },
   ] as const)(
-    "presents an unseen completion with a $kind roster as $status",
-    ({ kind, status }) => {
+    "presents an unseen completion with a $roster roster as $status",
+    ({ task, status }) => {
       const thread = presentThreadShell(
         environmentId,
         makeRawThreadShell({
@@ -116,7 +126,7 @@ describe("resolveThreadListV2Status", () => {
           status: "completed",
           latestRunCompletedAt: DateTime.makeUnsafe(NOW),
           lastVisitedAt: DateTime.makeUnsafe("2026-06-01T23:59:00.000Z"),
-          pendingBackgroundTasks: [{ taskId: "background-work", kind }],
+          pendingBackgroundTasks: [{ taskId: "background-work", ...task }],
         }),
       );
 
@@ -1618,32 +1628,3 @@ describe("Working section beta", () => {
     ]);
   });
 });
-
-// SCIENT-FORK:START unread-completion-tick
-// regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
-it("keeps unread completion labels stable across a minute tick", () => {
-  const unread = makeThread({
-    id: ThreadId.make("tick-unread"),
-    title: "Unread completion",
-    latestCompletedAnswer: {
-      turnId: TurnId.make("tick-unread-run"),
-      messageId: MessageId.make("tick-unread-answer"),
-      completedAt: isoAt(BASE_MS - 5 * MINUTE_MS),
-    },
-    lastVisitedAt: isoAt(BASE_MS - 10 * MINUTE_MS),
-    latestRun: {
-      runId: RunId.make("tick-unread-run"),
-      status: "completed",
-      requestedAt: isoAt(BASE_MS - 6 * MINUTE_MS),
-      startedAt: isoAt(BASE_MS - 6 * MINUTE_MS),
-      completedAt: isoAt(BASE_MS - 5 * MINUTE_MS),
-      assistantMessageId: null,
-    },
-  });
-  const options = { snoozeEnvironmentIds: new Set<EnvironmentId>() };
-  const first = buildTickList([unread], BASE_MS, [], options)[0]!;
-  const next = buildTickList([unread], BASE_MS + MINUTE_MS, [], options)[0]!;
-  expect(first.type === "v2-thread" && first.timeLabel).toBe("");
-  expect(threadListV2ListItemsAreEqual(first, next)).toBe(true);
-});
-// SCIENT-FORK:END unread-completion-tick

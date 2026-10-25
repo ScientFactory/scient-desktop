@@ -1,4 +1,3 @@
-import { collapseAbsoluteFilePath } from "@t3tools/shared/path";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
   isWorkspaceAudioPreviewPath,
@@ -106,46 +105,6 @@ export function resolveWorkspaceRelativeFilePath(
     return null;
   }
   return normalizeRelativePath(relativePath);
-}
-
-/**
- * The absolute host path a file link names when it is not a workspace file:
- * an absolute path as written, or a relative path that climbs above the
- * workspace root. Such a file opens read-only in the file screen, like any
- * other host file. Returns null when the link cannot be placed on the host.
- */
-export function resolveHostFilePath(
-  workspaceRoot: string | null | undefined,
-  targetPath: string,
-): string | null {
-  if (isAbsolutePath(targetPath)) return collapseAbsoluteFilePath(targetPath);
-  if (!workspaceRoot || targetPath.startsWith("~/") || targetPath.startsWith("~\\")) {
-    return null;
-  }
-  return collapseAbsoluteFilePath(resolveWorkspaceFilePath(workspaceRoot, targetPath));
-}
-
-/**
- * Where a file link opens: the workspace file it names (editable), or the host
- * file it names when it lies outside the workspace (read-only). A path that
- * leaves and re-enters the workspace is a workspace file. Null when the link
- * cannot be placed on the remote host, such as a home link without a known root.
- */
-export function resolveFileLinkTarget(
-  workspaceRoot: string | null | undefined,
-  targetPath: string,
-): { readonly kind: "workspace" | "host"; readonly path: string } | null {
-  // SCIENT-FORK:START — expand inherited home links without losing host traversal.
-  targetPath = resolveFileLinkPath(workspaceRoot, targetPath) ?? targetPath;
-  // SCIENT-FORK:END
-  const workspacePath = resolveWorkspaceRelativeFilePath(workspaceRoot, targetPath);
-  if (workspacePath !== null) return { kind: "workspace", path: workspacePath };
-  const hostPath = resolveHostFilePath(workspaceRoot, targetPath);
-  if (hostPath === null) return null;
-  const reentered = resolveWorkspaceRelativeFilePath(workspaceRoot, hostPath);
-  return reentered !== null
-    ? { kind: "workspace", path: reentered }
-    : { kind: "host", path: hostPath };
 }
 
 export function isVideoPreviewFile(path: string): boolean {

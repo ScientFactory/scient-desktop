@@ -1578,6 +1578,7 @@ export function useComposerSend(input: ComposerSendInput) {
                     role: "user",
                     text: "/compact",
                     attachments: [],
+                    idleCompaction: "onReturn",
                   },
                   modelSelection: ctxSelectedModelSelection,
                   runtimeMode,

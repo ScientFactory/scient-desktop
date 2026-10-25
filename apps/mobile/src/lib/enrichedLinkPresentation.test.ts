@@ -95,23 +95,4 @@ describe("Enriched link presentation", () => {
     ]);
     expect(threadChipTargets(here, "No links here.")).toEqual([]);
   });
-
-  // SCIENT-FORK:START — stored environment-qualified thread links.
-  it("presents a stored environment-qualified link as a chip of its recorded thread", () => {
-    const href = "t3-thread://v1/studio%20mac/mcp%3A%281%29%2F2";
-    const chip = enrichedThreadLinkPresentation("t3-thread://v1/thread_a");
-    expect(chip).toBeDefined();
-    expect(enrichedThreadLinkPresentation(href)).toEqual(chip);
-    const markdown = `[A](t3-thread://v1/thread_a) and [Q](${href})`;
-    expect(threadChipTargets("env-here" as EnvironmentId, markdown)).toEqual([
-      {
-        href: "t3-thread://v1/thread_a",
-        environmentId: "env-here",
-        threadId: "thread_a",
-        link: true,
-      },
-      { href, environmentId: "studio mac", threadId: "mcp:(1)/2", link: false },
-    ]);
-  });
-  // SCIENT-FORK:END
 });

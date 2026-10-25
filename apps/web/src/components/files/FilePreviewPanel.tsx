@@ -379,11 +379,9 @@ function WorkspaceBrowserPreview(props: {
   readonly refreshKey: number;
 }) {
   // SCIENT-FORK:START — preserve rooted file and HTML document semantics for persisted threads.
-  const insideWorkspace =
-    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined;
   const resource = workspaceViewerAssetResource(
     props,
-    insideWorkspace ? "workspace-file" : "media-file",
+    "workspace-file",
     !isPdfPreviewFile(props.absolutePath),
   );
   // SCIENT-FORK:END

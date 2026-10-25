@@ -2,25 +2,8 @@ import type { Root, RootContent } from "mdast";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
-// SCIENT-FORK:START — native projection retains the existing parser and generic source tools.
-import { remarkKeepWindowsPathDestinations } from "@t3tools/shared/markdownPipeline";
-import { createScientNativeMarkdownProjection } from "../native/ScientMarkdownProjection";
-// SCIENT-FORK:END
 
-const parser = unified()
-  .use(remarkParse)
-  .use(remarkGfm)
-  // SCIENT-FORK:START
-  .use(remarkKeepWindowsPathDestinations);
-// SCIENT-FORK:END
-// SCIENT-FORK:START — bind one projection to the same module-level parser and hoisted helpers.
-export const nativeMarkdownProjection = createScientNativeMarkdownProjection({
-  parse: (source) => parser.parse(source),
-  // md4c needs a blank line before a table that interrupts a paragraph.
-  withHtml: (source) => markdownWithTableBreaks(markdownWithHtml(source)),
-  decodeEntities: decodeHtmlEntities,
-});
-// SCIENT-FORK:END
+const parser = unified().use(remarkParse).use(remarkGfm);
 export type MarkdownNode = Root | RootContent;
 
 function decodeCodePoint(codePoint: number, entity: string): string {

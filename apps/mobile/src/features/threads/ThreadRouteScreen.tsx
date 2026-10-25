@@ -77,7 +77,7 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
-import { threadEnvironment } from "../../state/threads";
+import { threadEnvironment, useThreadFamily } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
@@ -97,6 +97,7 @@ import {
   useAndroidWorkspaceBack,
   useWorkspaceBackNavigation,
 } from "../workspace/useAndroidWorkspaceNavigation";
+import { openSettings } from "../settings/settings-navigation";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -204,6 +205,12 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   const connectionsReady = useConnectionsReady();
   const { connectionState } = useRemoteConnectionStatus();
   const { selectedThread } = useThreadSelection();
+  // Subagent rows, the open child's own row and its ancestors come from the family when the
+  // shell leaves idle children out.
+  useThreadFamily(
+    selectedThread?.environmentId ?? null,
+    selectedThread?.lineage.rootThreadId ?? null,
+  );
   const params = props.route.params ?? {};
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const threadIdRaw = firstRouteParam(params.threadId);
@@ -256,10 +263,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
           onReconnectEnvironment(environmentId);
           return;
         }
-        navigation.navigate("SettingsSheet", {
-          screen: "SettingsContent",
-          params: { screen: "SettingsEnvironments" },
-        });
+        openSettings(navigation, "SettingsEnvironments");
       }}
     />
   );
@@ -447,7 +451,7 @@ function ThreadRouteContent(
     .filter(Boolean)
     .join(" · ");
   const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadProject !== null && selectedThreadCwd !== null
+    selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
           input: { cwd: selectedThreadCwd },
@@ -460,7 +464,7 @@ function ThreadRouteContent(
   });
   const terminalMenuSessions = buildTerminalMenuSessions({
     knownSessions: knownTerminalSessions ?? [],
-    workspaceRoot: selectedThreadCwd,
+    workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
   });
   const selectedThreadDetailWorktreePath = selectedThreadDetail?.thread.worktreePath ?? null;
   const handleReconnectEnvironment = () => {
@@ -595,12 +599,12 @@ function ThreadRouteContent(
     terminalDebugLog("terminal-menu:open-existing", {
       terminalId: nextTerminalId ?? null,
       hasThread: Boolean(selectedThread),
-      hasWorkspaceRoot: Boolean(selectedThreadCwd),
+      hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
     });
 
     if (
       !selectedThread ||
-      !selectedThreadCwd ||
+      !selectedThreadProject?.workspaceRoot ||
       (!readEnvironmentScope(selectedThread.environmentId, AuthTerminalReadScope) &&
         !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope))
     ) {
@@ -617,13 +621,13 @@ function ThreadRouteContent(
   const handleOpenNewTerminal = () => {
     terminalDebugLog("terminal-menu:open-new", {
       hasThread: Boolean(selectedThread),
-      hasWorkspaceRoot: Boolean(selectedThreadCwd),
+      hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
       listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
     });
 
     if (
       !selectedThread ||
-      !selectedThreadCwd ||
+      !selectedThreadProject?.workspaceRoot ||
       !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
     ) {
       return;
@@ -731,10 +735,10 @@ function ThreadRouteContent(
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal: Boolean(selectedThreadCwd) && (canReadTerminal || canOperateTerminal),
+    canOpenTerminal:
+      Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),
     canOperateTerminal,
-    canOpenFiles: Boolean(selectedThreadCwd),
-    canOpenGit: selectedThreadProject !== null,
+    canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
     projectScripts: selectedThreadProject
       ? resolveProjectScripts(
           routeEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,

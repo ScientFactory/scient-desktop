@@ -70,9 +70,6 @@ export function DraftThreadHeader(props: {
         canOpenTerminal: false,
         canOperateTerminal: false,
         canOpenFiles: canReadFiles && props.cwd !== null,
-        // SCIENT-FORK:START - the shared header exposes Git only for an available workspace.
-        canOpenGit: props.cwd !== null,
-        // SCIENT-FORK:END
         projectScripts: [],
         terminalSessions: [],
         onOpenFilesInspector: openFiles,

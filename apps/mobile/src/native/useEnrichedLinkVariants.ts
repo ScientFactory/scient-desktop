@@ -1,13 +1,6 @@
 import { useMemo } from "react";
-// SCIENT-FORK:START — authored descriptions belong to each link occurrence.
-import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
-// SCIENT-FORK:END
 import { Image } from "react-native";
-import type {
-  LinkPillContent,
-  MarkdownDocumentAsset,
-  MarkdownStyle,
-} from "react-native-enriched-markdown";
+import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markdown";
 import type { ComposerContextRecord } from "@t3tools/contracts";
 import { contextChipAccent, contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
@@ -97,41 +90,20 @@ function presentation(
 }
 
 export function useEnrichedLinkVariants(
-  assets: ReadonlyArray<MarkdownDocumentAsset>,
+  urls: ReadonlyArray<string>,
   props: SelectableMarkdownTextProps,
 ) {
   const { linkCustomization, skills, textStyle } = props;
   const theme = useUniwindTheme();
   const links = useMemo(() => {
-    const byUrl = new Map<
-      string,
-      NonNullable<ReturnType<typeof presentation>> & {
-        preserveAuthoredContent?: boolean;
-      }
-    >();
-    for (const asset of assets) {
-      if (asset.kind !== "link" || byUrl.has(asset.url)) continue;
-      const value = presentation(asset.url, { linkCustomization, skills, textStyle });
-      // SCIENT-FORK:START — a URL-wide pill label must not overwrite distinct descriptions.
-      const hasAuthoredDescription =
-        resolveMarkdownLinkPresentation(asset.url).kind === "file" &&
-        assets.some(
-          (candidate) =>
-            candidate.kind === "link" &&
-            candidate.url === asset.url &&
-            !isMarkdownFileLinkLabel(candidate.altText, candidate.url),
-        );
-      if (value)
-        byUrl.set(
-          asset.url,
-          hasAuthoredDescription
-            ? { ...value, label: undefined, preserveAuthoredContent: true }
-            : value,
-        );
-      // SCIENT-FORK:END
+    const byUrl = new Map<string, MarkdownLinkCustomization>();
+    for (const url of urls) {
+      if (byUrl.has(url)) continue;
+      const value = presentation(url, { linkCustomization, skills, textStyle });
+      if (value) byUrl.set(url, value);
     }
     return byUrl;
-  }, [assets, linkCustomization, skills, textStyle]);
+  }, [urls, linkCustomization, skills, textStyle]);
   const chipForegrounds = useMemo(
     () =>
       new Map(
@@ -147,27 +119,25 @@ export function useEnrichedLinkVariants(
   const linkVariants = useMemo<MarkdownStyle["linkVariants"]>(
     () =>
       Object.fromEntries(
-        [...links]
-          .filter(([, link]) => !link.preserveAuthoredContent)
-          .map(([url, link]) => {
-            const chipForeground = chipForegrounds.get(url);
-            return [
-              enrichedLinkVariantPattern(url),
-              {
-                pill: {
-                  borderColor: "transparent",
-                  borderWidth: 0,
-                  borderRadius: 6,
-                  paddingHorizontal: 5,
-                  paddingVertical: 2,
-                },
-                fontFamily: chipForeground ? FONT_FAMILIES.medium : textStyle.fontFamily,
-                color: chipForeground ?? link.color ?? textStyle.fileTextColor,
-                underline: false,
-                backgroundColor: "transparent",
+        [...links].map(([url, link]) => {
+          const chipForeground = chipForegrounds.get(url);
+          return [
+            enrichedLinkVariantPattern(url),
+            {
+              pill: {
+                borderColor: "transparent",
+                borderWidth: 0,
+                borderRadius: 6,
+                paddingHorizontal: 5,
+                paddingVertical: 2,
               },
-            ];
-          }),
+              fontFamily: chipForeground ? FONT_FAMILIES.medium : textStyle.fontFamily,
+              color: chipForeground ?? link.color ?? textStyle.fileTextColor,
+              underline: false,
+              backgroundColor: "transparent",
+            },
+          ];
+        }),
       ),
     [chipForegrounds, links, textStyle],
   );

@@ -1,7 +1,3 @@
-// SCIENT-FORK:START restored-behavior-guards
-import { deriveThreadTitleFromPrompt } from "./projectThreadStartTurn";
-// SCIENT-FORK:END restored-behavior-guards
-
 import { ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -37,9 +33,7 @@ describe("project thread title", () => {
     },
   ])("titles a $type-only message without changing its data", ({ text, title, ...attachment }) => {
     const uploadedAttachments = [{ ...attachment, id: "prepared-attachment", sizeBytes: 3 }];
-    // SCIENT-FORK:START — Scient hosts take native context only, so there is no legacy flag.
-    const wire = serializeComposerMessageForServer(text, undefined);
-    // SCIENT-FORK:END
+    const wire = serializeComposerMessageForServer(text, undefined, true);
     const spec = {
       projectId: ProjectId.make("project"),
       projectCwd: "/workspace",
@@ -75,12 +69,4 @@ describe("project thread title", () => {
     expect(relaunched.message.text).toBe(wire.text);
     expect(relaunched.message.attachments).toEqual(uploadedAttachments);
   });
-
-  // SCIENT-FORK:START restored-behavior-guards
-  // regression: e7deb2aaf4 feat(web): cite assistant responses with inline citations (#9146)
-  it("keeps ordinary titles and the empty-prompt fallback", () => {
-    expect(deriveThreadTitleFromPrompt("  Fix\n the parser  ")).toBe("Fix the parser");
-    expect(deriveThreadTitleFromPrompt(" \n ")).toBe("New thread");
-  });
-  // SCIENT-FORK:END restored-behavior-guards
 });

@@ -106,7 +106,6 @@ import { useAssetUrl } from "../../state/assets";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
 const SCIENT_TOOL_SYMBOL = require("../../../../web/src/assets/scient-symbol.svg");
-const SCIENT_TOOL_ICON_STYLE = { width: 14, height: 14 };
 
 const SHIMMER_WIDTH = 72;
 const SHIMMER_SWEEP_MS = 1_350;
@@ -135,7 +134,7 @@ function WorkLogIcon(props: {
     return (
       <Image
         source={SCIENT_TOOL_SYMBOL}
-        style={SCIENT_TOOL_ICON_STYLE}
+        style={{ width: 14, height: 14 }}
         accessibilityLabel="Scient"
       />
     );
@@ -410,7 +409,7 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): WorkContentIcon {
     case "alert":
       return { ios: "exclamationmark.triangle", android: "error" };
     case "browser":
-      return { ios: "globe", android: "public" };
+      return { ios: "safari", android: "public" };
     case "check":
       return { ios: "checkmark", android: "check" };
     case "command":

@@ -184,6 +184,8 @@ import {
   threadCreated as transferV2ThreadCreated,
   turnEvents as transferV2TurnEvents,
   THREAD_ID as transferV2ThreadId,
+  LONG_TURN_THREAD_ID as TRANSFER_V2_LONG_TURN_THREAD_ID,
+  longTurnThreadBatches as transferV2LongTurnThreadBatches,
 } from "../integration/TransferBudgetV2Fixture.integration.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
@@ -10271,10 +10273,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             ).pipe(Effect.result);
 
             assert.equal(failed._tag, "Failure");
-            assert.deepEqual(effects, [
-              "analytics:client.connected",
-              "launch:cmd-thread-create-failed",
-            ]);
+            assert.deepEqual(effects, ["launch:cmd-thread-create-failed"]);
 
             const succeeded = yield* client[ORCHESTRATION_V2_WS_METHODS.launchThread](
               createThreadCommand(
@@ -10292,12 +10291,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.deepEqual(effects, [
-        "analytics:client.connected",
         "launch:cmd-thread-create-failed",
         "launch:cmd-thread-create-succeeded",
         "analytics:client.thread.started",
-        // Inherited feature usage; Scient's analytics contract drops this name.
-        "analytics:feature.used",
       ]);
       assert.deepEqual(analyticsProperties, [
         {
@@ -10312,21 +10308,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           deviceModel: "iPhone 15 Pro",
           clientDeviceModel: "iPhone 15 Pro",
           connectionMethod: "relay",
+          workspaceStrategy: "root",
         },
-        {
-          surface: "mobile",
-          appVersion: "1.2.3",
-          clientAppVersion: "1.2.3",
-          clientOs: "iOS",
-          os: "iOS",
-          clientDeviceType: "phone",
-          osMajorVersion: 18,
-          clientOsMajorVersion: 18,
-          deviceModel: "iPhone 15 Pro",
-          clientDeviceModel: "iPhone 15 Pro",
-          connectionMethod: "relay",
-        },
-        { feature: "thread.launch", variant: "root", surface: "mobile" },
       ]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
@@ -10423,18 +10406,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("ignores invalid client telemetry without rejecting the connection", () =>
     Effect.gen(function* () {
-      const connectedProperties: Array<Readonly<Record<string, unknown>> | undefined> = [];
-
-      yield* buildAppUnderTest({
-        layers: {
-          analyticsService: {
-            record: (event, properties) =>
-              event === "client.connected"
-                ? Effect.sync(() => connectedProperties.push(properties))
-                : Effect.void,
-          },
-        },
-      });
+      yield* buildAppUnderTest();
 
       const invalidUrl = yield* getWsServerUrl(
         "/ws?clientSurface=watch&clientDeviceType=television&clientOs=Plan9&clientWebDeployment=cdn&clientBrowser=&clientOsMajorVersion=-1&connectionMethod=teleport",
@@ -10442,8 +10414,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Effect.scoped(
         withWsRpcClient(invalidUrl, (client) => client[WS_METHODS.serverGetSettings]({})),
       );
-
-      assert.deepEqual(connectedProperties, [{}]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
@@ -14935,6 +14905,37 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   TRANSFER_HISTORY_TURN_COUNT + 1,
                 );
 
+                // A long agent turn opens with a bounded first page (553203c57b).
+                for (const events of transferV2LongTurnThreadBatches(provider))
+                  yield* app.v2.eventSink.write({ events });
+                const longTurnColdOpen = yield* measureHttpGet({
+                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_V2_LONG_TURN_THREAD_ID}/bounded`,
+                  headers: {
+                    cookie,
+                    [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+                    [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT,
+                  },
+                });
+                assert.equal(longTurnColdOpen.status, 200);
+                const longTurnOpen = yield* decodeTransferThreadSnapshot(
+                  Buffer.from(longTurnColdOpen.decodedBody).toString("utf8"),
+                );
+                const longTurnCursor = longTurnOpen.historyCursor;
+                if (longTurnCursor === null)
+                  return yield* Effect.die("Expected older long-turn history");
+                const longTurnHistoryPage = yield* measureHttpGet({
+                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_V2_LONG_TURN_THREAD_ID}/history?cursor=${encodeURIComponent(longTurnCursor)}`,
+                  headers: {
+                    cookie,
+                    [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+                  },
+                });
+                assert.equal(longTurnHistoryPage.status, 200);
+                const longTurnPage = yield* decodeTransferHistoryPage(
+                  Buffer.from(longTurnHistoryPage.decodedBody).toString("utf8"),
+                );
+                assert.isTrue(longTurnPage.hasMoreHistory);
+
                 return {
                   provider,
                   startupTransport: "bounded-compact-http-with-live-cursor",
@@ -14953,6 +14954,14 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   },
                   measuredTurnSqlStatements,
                   reconnectSqlStatements,
+                  longTurnColdOpen: {
+                    http: longTurnColdOpen,
+                    rows: longTurnOpen.projection.visibleTurnItems.length,
+                  },
+                  longTurnHistoryPage: {
+                    http: longTurnHistoryPage,
+                    rows: longTurnPage.items.length,
+                  },
                 } satisfies TransferBudgetRun;
               }),
             );

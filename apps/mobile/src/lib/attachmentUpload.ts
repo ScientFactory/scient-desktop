@@ -8,14 +8,12 @@ import {
 } from "@t3tools/client-runtime/state/attachments";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
-  ChatAttachment,
   ChatFileAttachment,
   ChatImageAttachment,
   EnvironmentId,
   UploadChatImageAttachment,
 } from "@t3tools/contracts";
 import {
-  getProviderAttachmentLimitError,
   AuthOrchestrationOperateScope,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
 } from "@t3tools/contracts";
@@ -281,21 +279,6 @@ async function uploadFileBytes(
   }
 }
 
-/** Validate the current owner's whole selection before any local read or upload. */
-export function composerAttachmentLimitError(input: {
-  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
-  readonly retainedAttachments?: ReadonlyArray<ChatAttachment>;
-}): string | undefined {
-  return getProviderAttachmentLimitError([
-    ...(input.retainedAttachments ?? []),
-    ...input.attachments.map((attachment) => ({
-      type: isComposerImageAttachment(attachment) ? ("image" as const) : attachment.type,
-      mimeType: composerAttachmentWireMimeType(attachment),
-      sizeBytes: attachment.sizeBytes,
-    })),
-  ]);
-}
-
 /**
  * `persistUploadedReferences` runs once the bytes are on the server and only when new ids appeared.
  * It must write the annotated attachments into the owner (queued message or draft) so a retry after
@@ -304,8 +287,6 @@ export function composerAttachmentLimitError(input: {
 export async function prepareTurnAttachments(input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
-  /** Server-owned queued references that remain beside the new draft attachments. */
-  readonly retainedAttachments?: ReadonlyArray<ChatAttachment>;
   readonly supportsImageUploads?: boolean;
   readonly signal?: AbortSignal;
   readonly onUploadProgress?: (attachmentId: string, progress: number) => void;
@@ -315,8 +296,6 @@ export async function prepareTurnAttachments(input: {
 }): Promise<PrepareTurnAttachmentsResult> {
   const { environmentId } = input;
   if (input.signal?.aborted) return { status: "abandoned" };
-  const limitError = composerAttachmentLimitError(input);
-  if (limitError) throw new Error(limitError);
   const files = input.attachments.filter((attachment) => attachment.type === "file");
   const ready = (
     attachments: ReadonlyArray<UploadedMobileAttachment>,

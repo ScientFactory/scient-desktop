@@ -30,18 +30,16 @@ export function WorkspaceToolbar(props: {
   const compactTabs = useCompactWorkspaceTabs();
   const duoSearch = NATIVE_LIQUID_GLASS_SUPPORTED && isDuoDevice(deviceType);
   const bottomSearch = duoSearch && sidebarTabs !== "picker";
+  // On the Duo, compose belongs to the threads tab, in the detail column's bar when unfolded.
+  const nativeToolbarCompose =
+    Platform.OS === "ios" &&
+    deviceType === "duo-folded" &&
+    workspace.state.selectedTab === "threads" &&
+    activeNewTask === null;
   const { isTabActive } = workspace;
   const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
   const focused = useIsFocused();
-  const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
-  // SCIENT-FORK:START compact-ipad-compose
-  // Compact iPad has neither the compose tab nor the split empty-detail action.
-  const nativeToolbarCompose =
-    Platform.OS === "ios" &&
-    (deviceType === "duo-folded" || (deviceType === "pad" && !layout.usesSplitView)) &&
-    workspace.state.selectedTab === "threads" &&
-    activeNewTask === null;
-  // SCIENT-FORK:END compact-ipad-compose
+  const { panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const searchRef = useRef<SearchBarCommands>(null);
   const tab = workspace.state.tabs[workspace.state.selectedTab];
   const selectedTab = workspace.state.selectedTab;

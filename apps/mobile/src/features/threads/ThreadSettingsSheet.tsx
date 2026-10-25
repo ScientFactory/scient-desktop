@@ -5,8 +5,6 @@ import {
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
-import { ANTIGRAVITY_REASONING_CONTROL } from "@t3tools/client-runtime/antigravity-model-presentation";
-import { groupModelOptionsForDisplay, modelOptionReasoningControl } from "../../lib/modelOptions";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import {
@@ -30,7 +28,6 @@ import {
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
-  resolveProviderModelPreferences,
 } from "@t3tools/shared/model";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { type NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -92,7 +89,7 @@ import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
 import {
-  RUNTIME_MODE_CHOICES,
+  compatibleRuntimeModeForChoices,
   runtimeModeChoicesForSupportedModes,
   selectableChoices,
 } from "./thread-settings-options";
@@ -307,7 +304,6 @@ export function useExistingThreadSettingsRoutePresentation() {
 }
 
 type ThreadSettingsSessionValue = {
-  readonly supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined;
   readonly environmentId: EnvironmentId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
@@ -475,15 +471,6 @@ function ThreadSettingsSessionProvider(
       pendingHidden.current.has(option.key)
     )
       return;
-    const provider = config?.providers.find(
-      (entry) => entry.instanceId === option.selection.instanceId,
-    );
-    if (!provider) return;
-    const initialPreferences = resolveProviderModelPreferences(
-      provider.driver,
-      provider.models,
-      settings.providerModelPreferences?.[option.selection.instanceId],
-    );
     pendingHidden.current.add(option.key);
     setPendingHiddenKeys(new Set(pendingHidden.current));
     void Haptics.selectionAsync();
@@ -496,7 +483,6 @@ function ThreadSettingsSessionProvider(
               provider: option.selection.instanceId,
               model: option.selection.model,
               hidden: !option.isHidden,
-              initialPreferences,
             },
           ],
         },
@@ -522,20 +508,14 @@ function ThreadSettingsSessionProvider(
   const isDisplayed = (option: ModelOption) =>
     pendingModel ? option.key === pendingModel.key : isApplied(option);
 
-  // SCIENT-FORK:START - Antigravity reasoning choices select native models.
-  const displayedOption = props.providerGroups.flatMap((group) => group.models).find(isDisplayed);
-  const nativeModelControl = modelOptionReasoningControl(displayedOption);
-  // SCIENT-FORK:END
-  const displayedDescriptors = nativeModelControl
-    ? [nativeModelControl]
-    : pendingModel
-      ? pendingModel.capabilities
-        ? getProviderOptionDescriptors({
-            caps: pendingModel.capabilities,
-            selections: pendingModel.selection.options,
-          })
-        : []
-      : props.optionDescriptors;
+  const displayedDescriptors = pendingModel
+    ? pendingModel.capabilities
+      ? getProviderOptionDescriptors({
+          caps: pendingModel.capabilities,
+          selections: pendingModel.selection.options,
+        })
+      : []
+    : props.optionDescriptors;
   const promptTraits = getPromptControlledTraits(displayedDescriptors, displayedPrompt);
   const displayedModel =
     pendingModel ??
@@ -543,6 +523,10 @@ function ThreadSettingsSessionProvider(
     null;
   const runtimeModeChoices = runtimeModeChoicesForSupportedModes(
     displayedModel?.supportedRuntimeModes,
+  );
+  const compatibleRuntimeMode = compatibleRuntimeModeForChoices(
+    props.runtimeMode,
+    runtimeModeChoices,
   );
 
   const hasLegacyModels = props.providerGroups.some((group) =>
@@ -567,18 +551,6 @@ function ThreadSettingsSessionProvider(
   };
 
   const applyOptionChange = (id: string, value: string | boolean) => {
-    // SCIENT-FORK:START
-    if (id === ANTIGRAVITY_REASONING_CONTROL && nativeModelControl) {
-      if (!nativeModelControl.options.some((option) => option.id === value)) return;
-      const nextModel = props.providerGroups
-        .find((group) => group.providerKey === displayedOption?.providerKey)
-        ?.models.find((option) => !option.isUnavailable && option.selection.model === value);
-      if (!nextModel) return;
-      if (pendingModel) setPendingModel(nextModel);
-      else props.onSelectModel(nextModel);
-      return;
-    }
-    // SCIENT-FORK:END
     const descriptor = displayedDescriptors.find((entry) => entry.id === id);
     const change =
       descriptor?.type === "select" && typeof value === "string"
@@ -644,7 +616,6 @@ function ThreadSettingsSessionProvider(
   };
 
   const value = {
-    supportedRuntimeModes: displayedModel?.supportedRuntimeModes,
     environmentId: props.environmentId,
     providerInstanceId: props.providerInstanceId,
     providerGroups,
@@ -652,7 +623,7 @@ function ThreadSettingsSessionProvider(
     setManageHidden,
     toggleHidden,
     pendingHiddenKeys,
-    runtimeMode: props.runtimeMode,
+    runtimeMode: compatibleRuntimeMode,
     runtimeModeChoices,
     onUpdateRuntimeMode: props.onUpdateRuntimeMode,
     displayedDescriptors,
@@ -800,7 +771,7 @@ function buildThreadSettingsCatalogItems(
             (model) =>
               !model.isLegacy || session.isDisplayed(model) || session.favoriteKeys.has(model.key),
           );
-    const matchingModels = favoritesFirst(
+    const visibleModels = favoritesFirst(
       catalogModels.filter(
         (model) =>
           (session.providerFilter !== FAVORITES_PROVIDER_FILTER ||
@@ -812,10 +783,6 @@ function buildThreadSettingsCatalogItems(
           }),
       ),
       session.favoriteKeys,
-    );
-    const visibleModels = groupModelOptionsForDisplay(
-      matchingModels,
-      group.models.find(session.isDisplayed)?.selection.model,
     );
     const updateRequiredNotice =
       group.updateRequired && session.providerFilter !== FAVORITES_PROVIDER_FILTER
@@ -940,10 +907,8 @@ function ThreadSettingsOptionsItem(props: {
             isLast
             label="Runtime"
             value={
-              session.supportedRuntimeModes?.length &&
-              !session.supportedRuntimeModes.includes(session.runtimeMode)
-                ? "Choose access"
-                : RUNTIME_MODE_CHOICES.find((choice) => choice.mode === session.runtimeMode)?.label
+              session.runtimeModeChoices.find((choice) => choice.mode === session.runtimeMode)
+                ?.label
             }
             onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
           />

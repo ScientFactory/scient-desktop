@@ -21,8 +21,9 @@ describe("Scient provider instruction composition", () => {
     assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "call `delegate_task` again");
     assert.include(
       SCIENT_ORCHESTRATION_INSTRUCTIONS,
-      "Do not use `scient_thread_send` on `childThreadId`",
+      "For a follow-up that needs the same child's conversation, use `scient_thread_send` on its `childThreadId`.",
     );
+    assert.notInclude(SCIENT_ORCHESTRATION_INSTRUCTIONS, "Do not use `scient_thread_send`");
     assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "structured object, never as JSON text");
     assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, '"everyMs":3600000');
     assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "bindToCurrentThread=false");

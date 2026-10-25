@@ -1,5 +1,6 @@
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
@@ -256,14 +257,17 @@ export function reidentifyComposerContext(
 }
 
 /**
- * Keep queued records canonical through the supported native V2 dispatch boundary.
+ * Keep queued records canonical; choose the wire format against the host at dispatch time.
  */
 export function serializeComposerMessageForServer(
   composerText: string,
   context: OrchestrationMessageContext | undefined,
+  supportsInlineMessageContext: boolean,
 ): { text: string; context?: OrchestrationMessageContext } {
   const text = isImageReferencesOnly(composerText)
     ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT
     : composerText;
-  return { text, ...(context ? { context } : {}) };
+  return supportsInlineMessageContext
+    ? { text, ...(context ? { context } : {}) }
+    : { text: serializeLegacyContextMessage({ text, records: context?.records ?? [] }) };
 }

@@ -139,6 +139,7 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
               onOpenTurnDiff={ctx.onOpenTurnDiff}
               onRollbackCheckpoint={ctx.onRollbackCheckpoint}
               onImageExpand={ctx.onImageExpand}
+              source={ctx.turnItemSource}
             />
           </div>
         </div>
@@ -214,6 +215,7 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
               onOpenTurnDiff={ctx.onOpenTurnDiff}
               onRollbackCheckpoint={ctx.onRollbackCheckpoint}
               onImageExpand={ctx.onImageExpand}
+              source={ctx.turnItemSource}
             />
           </div>
         </div>

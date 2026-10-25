@@ -51,7 +51,9 @@ export function currentLiveActivityRowId(
     if (
       row.kind === "thinking" ||
       (row.kind === "work-live" && row.active) ||
-      (row.kind === "context-compaction" && row.active)
+      (row.kind === "context-compaction" && row.active) ||
+      // A running compaction that owns the working row has no divider of its own yet.
+      (row.kind === "working" && row.compacting !== undefined)
     )
       return row.id;
   }

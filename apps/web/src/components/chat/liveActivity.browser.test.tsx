@@ -130,7 +130,8 @@ it("lets the header's own label sweep while compacting before the compaction row
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
-  await render(_fixture, "live:compacting", [entry(1, "/compact")], {
+  // A bare `/compact` prompt is its own compaction row from the start; a compaction inside a turn is not.
+  await render(_fixture, "live:compacting", [entry(1, "Continue the analysis")], {
     ...working,
     isCompacting: true,
   });
