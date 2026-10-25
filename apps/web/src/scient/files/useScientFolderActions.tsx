@@ -13,13 +13,9 @@ const NEW_DOCUMENT_CHOICES: Readonly<Record<string, NewDocumentFormat>> = {
   "new-document:latex": "latex",
 };
 
-/**
- * What the Files bar and a folder's right-click menu start in a folder: a new
- * document, opened straight in its editor (LaTeX in Visual), or a connection to
- * Overleaf. The Files bar's New and Connect act on the last selected folder, or
- * the folder of the last selected file. A host folder is read-only, so it offers
- * none of these.
- */
+/** Folder actions for the Files bar and folder menus: a new document (opened in its editor,
+ * LaTeX in Visual) or an Overleaf connection. They act on the last selected folder, else the
+ * last selected file's folder; a read-only host folder offers none. */
 export function useScientFolderActions(input: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
