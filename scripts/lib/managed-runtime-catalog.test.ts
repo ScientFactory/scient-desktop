@@ -124,17 +124,19 @@ describe("Scient Agent first managed release", () => {
     ).toBe(promoted);
   });
 
-  // The version range itself is tabled in scientAgentManifest.test.ts
-  // ("refuses incompatible or nonstable version %s"); this proves refresh applies it.
-  it("rejects unsupported stable pointer 1.0.0", async () => {
-    await expect(
-      refreshManagedRuntimeProvider(
-        currentCatalog,
-        "scient",
-        scientFetch({ release: scientRelease("1.0.0") }),
-      ),
-    ).rejects.toThrow(/supported stable version/u);
-  });
+  // regression: 8f4842a96b feat(scient-agent): add managed runtime installation and maintenance
+  it.each(["0.0.9", "1.0.0", "0.1.0-beta.1", "0.1.0+build", "latest"])(
+    "rejects unsupported stable pointer %s",
+    async (version) => {
+      await expect(
+        refreshManagedRuntimeProvider(
+          currentCatalog,
+          "scient",
+          scientFetch({ release: scientRelease(version) }),
+        ),
+      ).rejects.toThrow(/supported stable version/u);
+    },
+  );
 
   it.each(["draft", "prerelease"] as const)("does not expose a %s release", async (flag) => {
     await expect(
@@ -464,11 +466,12 @@ describe("managed runtime policy transitions", () => {
     ).toThrow(/every app-approved target/u);
   });
 
-  it("rejects unknown Codex contract 5", () => {
+  // regression: aa7e503582 fix(provider-runtime): qualify Codex packages without patched zsh
+  it.each([0, 5, 999])("rejects unknown Codex contract %s", (contractRevision) => {
     expect(() =>
       validateManagedRuntimeCatalog({
         ...currentCatalog,
-        providers: { codex: { ...currentCatalog.providers.codex!, contractRevision: 5 } },
+        providers: { codex: { ...currentCatalog.providers.codex!, contractRevision } },
       }),
     ).toThrow(/unsupported managed runtime contract/u);
   });

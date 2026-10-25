@@ -189,15 +189,19 @@ function runGuards(provider: string, changed: string) {
 describe("publication guards", () => {
   // One voiding row per guard (shared, Pi, Droid, Oh My Pi, Muse), plus rows proving
   // the Pi and Oh My Pi guards stay scoped to their own provider's inputs.
+  // regression: 118e3242bb ci(provider-runtime): void Pi, Oh My Pi and Muse publication on relevant main changes
   it.each([
     ["claudeAgent", "scripts/qualify-managed-runtime-catalog.ts", true],
+    ["pi", "apps/server/src/provider/pi/PiRpcClient.ts", true],
     ["pi", "vite.config.ts", true],
     ["droid", "vite.config.ts", true],
     ["pi", "apps/server/src/provider/omp/OmpTarget.ts", false],
     ["omp", "apps/server/src/provider/omp/OmpTarget.ts", true],
-    // regression: 0446a4e608 narrow the Oh My Pi guard (a Codex-only change no longer voids it)
+    ["omp", "apps/server/src/provider/pi/PiRpcClient.ts", false],
+    ["omp", "apps/server/src/scient/providerLifecycle/MuseManagedRuntimeQualification.ts", false],
     ["omp", "apps/server/src/codexModelOptions.ts", false],
     ["muse", "packages/provider-muse/src/index.ts", true],
+    ["muse", "apps/server/src/provider/omp/OmpTarget.ts", false],
   ] as const)("%s, after %s changed on main: voided %s", (provider, changed, voided) => {
     const result = runGuards(provider, changed);
     expect(result.status, result.stderr).toBe(voided ? 1 : 0);

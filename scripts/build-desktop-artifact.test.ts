@@ -1,3 +1,28 @@
+// SCIENT-FORK:START
+import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START
+import {
+  resolveDesktopBuildIconAssets,
+  resolveDesktopWebAssetBrand,
+} from "./build-desktop-artifact.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START
+import {
+  createStagePatchedDependencies,
+  resolveFffNativeDependencies,
+  resolveClerkPasskeyNativeArtifacts,
+  InvalidMockUpdateServerPortError,
+  resolveDesktopRuntimeDependencies,
+  resolveResourceMonitorRustTargets,
+  resourceMonitorExecutableName,
+  resolveGitHubPublishConfig,
+  resolveMockUpdateServerPort,
+  resolveMockUpdateServerUrl,
+  stageResourceMonitor,
+  stageLinuxCaptureHelper,
+} from "./build-desktop-artifact.ts";
+// SCIENT-FORK:END
 // @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -315,6 +340,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
 
 const isCursorSdkPlatformPackagesMissingError = Schema.is(CursorSdkPlatformPackagesMissingError);
 
+// regression: 3405a64dd8 bump effect to latest beta (#1866)
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it.effect("rejects overlapping builds from another process until restoration finishes", () =>
     Effect.gen(function* () {
@@ -577,6 +603,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  // SCIENT-FORK:START
+  // regression: daac13c872 feat(desktop): add isolated Beta release channel
+  it("resolves the dedicated nightly updater channel from nightly versions", () => {
+    assert.equal(resolveDesktopUpdateChannel("0.0.17-nightly.20260413.42"), "nightly");
+    assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
+  });
+  // SCIENT-FORK:END
+
   it.effect("packages real Beta with the isolated feed and the existing app identity", () =>
     Effect.gen(function* () {
       const version = "0.6.23-beta.20261010.1";
@@ -629,6 +663,31 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "Scient");
   });
 
+  // SCIENT-FORK:START
+  // regression: 409ff90a14 Nightly release channel (#2012)
+  it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
+    assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
+      macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
+      linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
+      windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
+    });
+
+    assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17-nightly.20260413.42"), {
+      macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
+      linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
+      windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
+    });
+  });
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START
+  // regression: 20117b09c1 fix(release): use Bash for version alignment on all platforms (#44)
+  it("switches the bundled splash and favicon branding for nightly versions", () => {
+    assert.equal(resolveDesktopWebAssetBrand("0.0.17"), "production");
+    assert.equal(resolveDesktopWebAssetBrand("0.0.17-nightly.20260413.42"), "nightly");
+  });
+  // SCIENT-FORK:END
+
   it.effect("accepts matching stable and nightly package versions", () =>
     Effect.gen(function* () {
       for (const version of ["0.6.0", "0.6.1-nightly.20260810.42"]) {
@@ -675,6 +734,50 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }
     }),
   );
+
+  // SCIENT-FORK:START
+  // regression: 477795697d refactor: resolve host process state through Effect (#2959)
+  it.effect("resolves GitHub desktop publish config from Effect config", () =>
+    Effect.gen(function* () {
+      const latestConfig = yield* resolveGitHubPublishConfig("latest").pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                T3CODE_DESKTOP_UPDATE_REPOSITORY: "pingdotgg/t3code",
+              },
+            }),
+          ),
+        ),
+      );
+      const nightlyConfig = yield* resolveGitHubPublishConfig("nightly").pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                GITHUB_REPOSITORY: "pingdotgg/t3code",
+              },
+            }),
+          ),
+        ),
+      );
+
+      assert.deepStrictEqual(latestConfig, {
+        provider: "github",
+        owner: "pingdotgg",
+        repo: "t3code",
+        releaseType: "release",
+      });
+      assert.deepStrictEqual(nightlyConfig, {
+        provider: "github",
+        owner: "pingdotgg",
+        repo: "t3code",
+        releaseType: "prerelease",
+        channel: "nightly",
+      });
+    }),
+  );
+  // SCIENT-FORK:END
 
   it.effect("omits update feeds for pull request preview builds", () =>
     Effect.gen(function* () {
@@ -726,6 +829,63 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  // SCIENT-FORK:START
+  // regression: 37a08d3121 fix(desktop): local desktop builds no longer crash when a GitHub token is in the shell (#19277)
+  it.effect("disables electron-builder publish detection for local builds", () =>
+    Effect.gen(function* () {
+      const local = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.isNull(local.publish);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START
+  // regression: 683aa87096 build(desktop): bundle the main process and stage only its native externals (#11410)
+  it("stages only the desktop main-process externals", () => {
+    assert.deepStrictEqual(
+      resolveDesktopRuntimeDependencies(
+        {
+          "@clerk/electron": "catalog:",
+          "@clerk/electron-passkeys": "catalog:",
+          "@crowecawcaw/xa11y": "0.13.0",
+          "@effect/platform-node": "catalog:",
+          "@napi-rs/keyring": "^1.3.0",
+          "@t3tools/contracts": "workspace:*",
+          "@t3tools/shared": "workspace:*",
+          "dbus-next": "0.10.2",
+          effect: "catalog:",
+          electron: "41.5.0",
+          "electron-updater": "^6.6.2",
+          "ffi-rs": "1.3.2",
+          "playwright-core": "1.60.0",
+        },
+        {
+          "@clerk/electron": "0.0.37",
+          "@clerk/electron-passkeys": "0.0.3",
+          "@effect/platform-node": "4.0.0-beta.59",
+          effect: "4.0.0-beta.59",
+        },
+      ),
+      {
+        "@clerk/electron-passkeys": "0.0.3",
+        "@crowecawcaw/xa11y": "0.13.0",
+        "@napi-rs/keyring": "^1.3.0",
+        "ffi-rs": "1.3.2",
+        "playwright-core": "1.60.0",
+      },
+    );
+  });
+  // SCIENT-FORK:END
+
   it("omits bundled workspace packages from staged server dependencies", () => {
     assert.deepStrictEqual(
       resolveServerRuntimeDependencies(
@@ -747,6 +907,43 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       },
     );
   });
+
+  // SCIENT-FORK:START
+  // regression: a6edad1974 [codex] Filter staged desktop patched dependencies (#2945)
+  it("carries only staged dependency patch metadata into staged desktop installs", () => {
+    assert.deepStrictEqual(
+      createStagePatchedDependencies(
+        {
+          "@expo/metro-config@56.0.13": "patches/@expo%2Fmetro-config@56.0.13.patch",
+          "@ff-labs/fff-node@0.10.3": "patches/@ff-labs__fff-node@0.10.3.patch",
+          "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
+          "alchemy@2.0.0-beta.49": "patches/alchemy@2.0.0-beta.49.patch",
+          "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
+        },
+        {
+          "@ff-labs/fff-node": "0.10.3",
+          "@pierre/diffs": "1.1.20",
+          effect: "4.0.0-beta.73",
+        },
+      ),
+      {
+        "@ff-labs/fff-node@0.10.3": "patches/@ff-labs__fff-node@0.10.3.patch",
+        "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
+        "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
+      },
+    );
+
+    assert.deepStrictEqual(
+      createStagePatchedDependencies(
+        {
+          "@expo/metro-config@56.0.13": "patches/@expo%2Fmetro-config@56.0.13.patch",
+        },
+        { effect: "4.0.0-beta.73" },
+      ),
+      {},
+    );
+  });
+  // SCIENT-FORK:END
 
   it("installs optional native dependencies for the target desktop architecture", () => {
     assert.deepStrictEqual(STAGE_INSTALL_ARGS, ["install", "--prod"]);
@@ -1409,6 +1606,37 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // SCIENT-FORK:START
+  // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
+  it("unpacks native binaries while keeping their JavaScript and metadata archived", () => {
+    for (const file of [
+      "node_modules/@napi-rs/keyring/keyring.win32-x64-msvc.node",
+      "node_modules/@clerk/electron-passkeys/electron-passkeys.win32-x64-msvc.node",
+      "node_modules/@ff-labs/fff-bin-win32-x64/fff_c.dll",
+      "node_modules/node-pty/prebuilds/win32-x64/conpty/OpenConsole.exe",
+      "node_modules/native/addon.so",
+      "node_modules/native/addon.so.1",
+      "node_modules/native/addon.dylib",
+    ]) {
+      assert.isTrue(
+        NodePath.matchesGlob(file, WINDOWS_NATIVE_ASAR_UNPACK_GLOB),
+        `${file} must be available as a real file`,
+      );
+    }
+
+    for (const file of [
+      "node_modules/@napi-rs/keyring/index.js",
+      "node_modules/@napi-rs/keyring/keytar.js",
+      "node_modules/@clerk/electron-passkeys/index.js",
+    ]) {
+      assert.isFalse(
+        NodePath.matchesGlob(file, WINDOWS_NATIVE_ASAR_UNPACK_GLOB),
+        `${file} should remain inside the archive`,
+      );
+    }
+  });
+  // SCIENT-FORK:END
+
   it("stages only the externals of both bundles in merged packages", () => {
     assert.deepStrictEqual(
       resolveMergedStageDependencies({
@@ -1854,6 +2082,51 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ),
   );
 
+  // SCIENT-FORK:START
+  // regression: 25dcee00a6 perf(ci): speed up release builds and Windows packaging (#7975)
+  it.effect("stages a cached resource monitor without invoking Cargo", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repoRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-resource-monitor-cache-test-",
+        });
+        const binaryPath = path.join(
+          repoRoot,
+          "native/resource-monitor/target/x86_64-unknown-linux-gnu/release/scient-resource-monitor",
+        );
+        const stageResourcesDir = path.join(repoRoot, "stage");
+        yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
+        yield* fs.writeFileString(binaryPath, "cached monitor");
+
+        yield* stageResourceMonitor({
+          repoRoot,
+          stageResourcesDir,
+          platform: "linux",
+          arch: "x64",
+          verbose: false,
+        }).pipe(
+          Effect.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: { T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true" },
+              }),
+            ),
+          ),
+        );
+
+        assert.equal(
+          yield* fs.readFileString(
+            path.join(stageResourcesDir, "resource-monitor/scient-resource-monitor"),
+          ),
+          "cached monitor",
+        );
+      }),
+    ),
+  );
+  // SCIENT-FORK:END
+
   it.effect("reports missing Windows toolchain capabilities before building", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1984,6 +2257,78 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }),
     ),
   );
+
+  // SCIENT-FORK:START
+  // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
+  it.effect("builds and stages native capture helpers for each Linux architecture", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-kde-stage-test-" });
+        const protocols = path.join(repoRoot, "native/hyprland-snap-shot/protocols");
+        yield* fs.makeDirectory(protocols, { recursive: true });
+        yield* fs.writeFileString(path.join(protocols, "capture.xml"), "BSD protocol notice");
+        for (const backend of ["kde", "hyprland"] as const) {
+          for (const [arch, target] of [
+            ["x64", "x86_64-unknown-linux-gnu"],
+            ["arm64", "aarch64-unknown-linux-gnu"],
+          ] as const) {
+            const binary = path.join(
+              repoRoot,
+              `native/${backend}-snap-shot/target`,
+              target,
+              `release/scient-${backend}-snap-shot`,
+            );
+            const stageResourcesDir = path.join(repoRoot, "stage", backend, arch);
+            const spawner = Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make((command) =>
+                Effect.gen(function* () {
+                  assert.equal(command._tag, "StandardCommand");
+                  if (command._tag !== "StandardCommand") return mockProcess(1);
+                  assert.equal(command.command, "cargo");
+                  assert.deepEqual(command.args, [
+                    "build",
+                    "--locked",
+                    "--release",
+                    "--manifest-path",
+                    path.join(repoRoot, `native/${backend}-snap-shot/Cargo.toml`),
+                    "--target",
+                    target,
+                  ]);
+                  yield* fs.makeDirectory(path.dirname(binary), { recursive: true });
+                  yield* fs.writeFileString(binary, `helper-${arch}`);
+                  return mockProcess(0);
+                }),
+              ),
+            );
+            yield* stageLinuxCaptureHelper({
+              backend,
+              repoRoot,
+              stageResourcesDir,
+              arch,
+              verbose: false,
+            }).pipe(Effect.provide(spawner));
+            const installed = path.join(
+              stageResourcesDir,
+              `${backend}-capture/scient-${backend}-snap-shot`,
+            );
+            assert.equal(yield* fs.readFileString(installed), `helper-${arch}`);
+            assert.equal((yield* fs.stat(installed)).mode & 0o777, 0o755);
+            if (backend === "hyprland")
+              assert.equal(
+                yield* fs.readFileString(
+                  path.join(stageResourcesDir, "hyprland-capture/protocols/capture.xml"),
+                ),
+                "BSD protocol notice",
+              );
+          }
+        }
+      }),
+    ),
+  );
+  // SCIENT-FORK:END
 
   // The fixture's t3code.exe is a text placeholder, not an executable. These
   // cases reach the native-load probe, so pin only that host-platform check to
@@ -2869,6 +3214,28 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  // SCIENT-FORK:START
+  // regression: ad117235b5 feat(desktop): add signal macOS DMG installer background (#6201)
+  it.effect("uses the nightly DMG background for nightly macOS builds", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3-nightly.20260815.1",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.equal(
+        (config.dmg as Record<string, unknown>).background,
+        "dmg/dmg-background-nightly.png",
+      );
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+  // SCIENT-FORK:END
+
   // regression: fa9f936ef5 fix(desktop): sign Windows native addons (#8206)
   it.effect("configures Windows executable metadata and native signing extensions", () =>
     Effect.gen(function* () {
@@ -2889,6 +3256,24 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.notProperty(win, "azureSignOptions");
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
+
+  // SCIENT-FORK:START
+  // regression: 49c0d96edf Reduce idle work and disk churn with native resource diagnostics (#2679)
+  it("stages the resource monitor as an external executable resource", () => {
+    assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+    ]);
+    assert.deepStrictEqual(resolveResourceMonitorRustTargets("linux", "x64"), [
+      "x86_64-unknown-linux-gnu",
+    ]);
+    assert.deepStrictEqual(resolveResourceMonitorRustTargets("win", "arm64"), [
+      "aarch64-pc-windows-msvc",
+    ]);
+    assert.equal(resourceMonitorExecutableName("mac"), "scient-resource-monitor");
+    assert.equal(resourceMonitorExecutableName("win"), "scient-resource-monitor.exe");
+  });
+  // SCIENT-FORK:END
 
   it.effect.each(["valid", "digest", "arch", "source", "missing", "inventory", "PE"] as const)(
     "stages exact-source Windows publication and voice prerequisites: %s",
@@ -3297,12 +3682,159 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  // SCIENT-FORK:START
+  // regression: 85fe62d402 Stage fff native binaries in desktop builds (#3109)
+  it("promotes target fff binaries to direct staged dependencies", () => {
+    assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.10.3"), {
+      "@ff-labs/fff-bin-darwin-arm64": "0.10.3",
+    });
+    assert.deepStrictEqual(resolveFffNativeDependencies("mac", "universal", "0.10.3"), {
+      "@ff-labs/fff-bin-darwin-arm64": "0.10.3",
+      "@ff-labs/fff-bin-darwin-x64": "0.10.3",
+    });
+    assert.deepStrictEqual(resolveFffNativeDependencies("win", "x64", "0.10.3"), {
+      "@ff-labs/fff-bin-win32-x64": "0.10.3",
+    });
+    assert.deepStrictEqual(resolveFffNativeDependencies("linux", "x64", "0.10.3"), {
+      "@ff-labs/fff-bin-linux-x64-gnu": "0.10.3",
+      "@ff-labs/fff-bin-linux-x64-musl": "0.10.3",
+    });
+    assert.deepStrictEqual(resolveFffNativeDependencies("linux", "arm64", "0.10.3"), {
+      "@ff-labs/fff-bin-linux-arm64-gnu": "0.10.3",
+      "@ff-labs/fff-bin-linux-arm64-musl": "0.10.3",
+    });
+  });
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START
+  // regression: 3e01c4bc57 Migrate desktop auth to Clerk bridge (#3092)
+  it("resolves target Clerk passkey native artifacts", () => {
+    assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("mac", "universal"), [
+      {
+        packageName: "@clerk/electron-passkeys-darwin-arm64",
+        binaryFileName: "electron-passkeys.darwin-arm64.node",
+      },
+      {
+        packageName: "@clerk/electron-passkeys-darwin-x64",
+        binaryFileName: "electron-passkeys.darwin-x64.node",
+      },
+    ]);
+    assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("win", "x64"), [
+      {
+        packageName: "@clerk/electron-passkeys-win32-x64-msvc",
+        binaryFileName: "electron-passkeys.win32-x64-msvc.node",
+      },
+    ]);
+    assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("linux", "x64"), []);
+  });
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START
+  // regression: 409ff90a14 Nightly release channel (#2012)
+  it("falls back to the default mock update port when the configured port is blank", () => {
+    assert.equal(resolveMockUpdateServerUrl(undefined), "http://localhost:3000");
+    assert.equal(resolveMockUpdateServerUrl(4123), "http://localhost:4123");
+  });
+  // SCIENT-FORK:END
+
   // regression: 18a41388eb Fix desktop native optional dependency packaging (#3816)
   it("derives the electron-builder package manager user agent from packageManager", () => {
     assert.equal(resolvePackageManagerUserAgent("pnpm@11.10.0"), "pnpm/11.10.0");
     assert.equal(resolvePackageManagerUserAgent(" yarn@4.9.2 "), "yarn/4.9.2");
     assert.equal(resolvePackageManagerUserAgent("pnpm"), "pnpm");
   });
+
+  // SCIENT-FORK:START
+  // regression: 409ff90a14 Nightly release channel (#2012)
+  it.effect("normalizes mock update server ports from env-style strings", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* resolveMockUpdateServerPort(undefined), undefined);
+      assert.equal(yield* resolveMockUpdateServerPort(""), undefined);
+      assert.equal(yield* resolveMockUpdateServerPort("   "), undefined);
+      assert.equal(yield* resolveMockUpdateServerPort("4123"), 4123);
+    }),
+  );
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START
+  // regression: 409ff90a14 Nightly release channel (#2012)
+  it.effect("rejects non-numeric or out-of-range mock update ports", () =>
+    Effect.gen(function* () {
+      const invalidPorts = ["abc", "12.5", "0", "65536"];
+      for (const port of invalidPorts) {
+        const exit = yield* Effect.exit(resolveMockUpdateServerPort(port));
+        assert.equal(exit._tag, "Failure");
+      }
+    }),
+  );
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START
+  // regression: 60dc4af916 [codex] Structure desktop build script failures (#3452)
+  it("classifies invalid configured ports with the decoder's number grammar", () => {
+    const cause = new Error("invalid configured port");
+
+    assert.equal(
+      InvalidMockUpdateServerPortError.fromConfigValue("0x10", cause).reason,
+      "not-numeric",
+    );
+    assert.equal(
+      InvalidMockUpdateServerPortError.fromConfigValue("12.5", cause).reason,
+      "not-integer",
+    );
+    assert.equal(
+      InvalidMockUpdateServerPortError.fromConfigValue("65536", cause).reason,
+      "out-of-range",
+    );
+    assert.strictEqual(
+      InvalidMockUpdateServerPortError.fromConfigValue("0x10", cause).cause,
+      cause,
+    );
+  });
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START
+  // regression: 477795697d refactor: resolve host process state through Effect (#2959)
+  it.effect("resolves default platform and architecture from host references", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveBuildOptions({
+        platform: Option.none(),
+        target: Option.none(),
+        arch: Option.none(),
+        buildVersion: Option.none(),
+        outputDir: Option.none(),
+        skipBuild: Option.none(),
+        keepStage: Option.none(),
+        signed: Option.none(),
+        verbose: Option.none(),
+        mockUpdates: Option.none(),
+        mockUpdateServerPort: Option.none(),
+        wslPrebuild: Option.none(),
+        syncTexRuntime: Option.none(),
+        wslSyncTexRuntime: Option.none(),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(HostProcess.Platform, "win32"),
+            Layer.succeed(HostProcess.Architecture, "x64"),
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  PROCESSOR_ARCHITECTURE: "AMD64",
+                  PROCESSOR_ARCHITEW6432: "ARM64",
+                },
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.equal(resolved.platform, "win");
+      assert.equal(resolved.target, "nsis");
+      assert.equal(resolved.arch, "arm64");
+    }),
+  );
+  // SCIENT-FORK:END
 
   it.effect("rejects universal builds on Linux and Windows before staging binaries", () =>
     Effect.gen(function* () {

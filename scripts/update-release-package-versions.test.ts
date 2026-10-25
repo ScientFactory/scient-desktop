@@ -1,3 +1,9 @@
+// SCIENT-FORK:START
+import * as PlatformError from "effect/PlatformError";
+// SCIENT-FORK:END
+// SCIENT-FORK:START
+import { ReleasePackageManifestError } from "./update-release-package-versions.ts";
+// SCIENT-FORK:END
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -59,6 +65,7 @@ const readReleaseVersions = Effect.fn("readReleaseVersions")(function* (rootDir:
   return versions;
 });
 
+// regression: 8dba2d6484 Adopt Node-native TypeScript for desktop and server (#2098)
 it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
   it.effect("updates all release package versions under the provided root", () =>
     Effect.gen(function* () {
@@ -118,6 +125,84 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       }
     }),
   );
+
+  // SCIENT-FORK:START
+  // regression: 8c2d33abde [codex] Structure release package updater failures (#3468)
+  it.effect("preserves manifest read context and the filesystem cause", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "update-release-package-versions-read-error-",
+      });
+      const filePath = path.join(baseDir, releasePackageFiles[0]);
+
+      const error = yield* updateReleasePackageVersions("1.2.3", {
+        rootDir: baseDir,
+      }).pipe(Effect.flip);
+
+      assert.instanceOf(error, ReleasePackageManifestError);
+      assert.equal(error.operation, "read");
+      assert.equal(error.filePath, filePath);
+      assert.instanceOf(error.cause, PlatformError.PlatformError);
+      assert.equal(error.message, `Failed to read release package manifest '${filePath}'.`);
+    }),
+  );
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START
+  // regression: 8c2d33abde [codex] Structure release package updater failures (#3468)
+  it.effect("preserves manifest decode context and the schema cause", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "update-release-package-versions-decode-error-",
+      });
+      const filePath = path.join(baseDir, releasePackageFiles[0]);
+
+      yield* writePackageJsonFixtures(baseDir, "0.0.1");
+      yield* fs.writeFileString(filePath, "not json");
+
+      const error = yield* updateReleasePackageVersions("1.2.3", {
+        rootDir: baseDir,
+      }).pipe(Effect.flip);
+
+      assert.instanceOf(error, ReleasePackageManifestError);
+      assert.equal(error.operation, "decode");
+      assert.equal(error.filePath, filePath);
+      assert.isTrue(Schema.isSchemaError(error.cause));
+      assert.equal(error.message, `Failed to decode release package manifest '${filePath}'.`);
+    }),
+  );
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START
+  // regression: 8c2d33abde [codex] Structure release package updater failures (#3468)
+  it.effect("preserves manifest write context and the filesystem cause", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "update-release-package-versions-write-error-",
+      });
+      const filePath = path.join(baseDir, releasePackageFiles[0]);
+
+      yield* writePackageJsonFixtures(baseDir, "0.0.1");
+      yield* fs.chmod(filePath, 0o400);
+
+      const error = yield* updateReleasePackageVersions("1.2.3", {
+        rootDir: baseDir,
+      }).pipe(Effect.flip, Effect.ensuring(fs.chmod(filePath, 0o600).pipe(Effect.orDie)));
+
+      assert.instanceOf(error, ReleasePackageManifestError);
+      assert.equal(error.operation, "write");
+      assert.equal(error.filePath, filePath);
+      assert.instanceOf(error.cause, PlatformError.PlatformError);
+      assert.equal(error.message, `Failed to write release package manifest '${filePath}'.`);
+    }),
+  );
+  // SCIENT-FORK:END
 
   it.effect("accepts flags before the version positional and appends changed output", () =>
     Effect.gen(function* () {
