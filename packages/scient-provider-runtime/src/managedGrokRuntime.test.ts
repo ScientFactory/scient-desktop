@@ -2,12 +2,18 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { resolveReviewedGrokArtifact } from "./grokManifest.ts";
 import { ManagedGrokRuntime } from "./managedGrokRuntime.ts";
 
 const temporaryRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
+  );
+});
 
 describe("ManagedGrokRuntime conformance", () => {
   it("keeps Grok in its own provider-private runtime root", () => {
