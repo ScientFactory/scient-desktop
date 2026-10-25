@@ -569,8 +569,6 @@ describe("switching from a system runtime to the Scient-managed one", () => {
       ),
   );
 
-  // The older-switch decision is shared; each provider's resolution and version
-  // parsing run in the "asks again" table above. Claude, plus Cursor's date scheme.
   // regression: e2fc205c51 feat(droid): custom models and setup say what will happen, and document it
   it.effect.each(providers)(
     "names both versions before $name switches from an older system runtime",

@@ -1303,8 +1303,6 @@ it.effect("recovers legacy monograms inside snapshots and writes their canonical
   }),
 );
 
-// Upstream deleted the cases below in its Oct 20 cut (#22557). No other test
-// fails when the validation or literal they cover is removed, so they stay.
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
@@ -1374,6 +1372,7 @@ it.effect("parses full thread diff input with whitespace ignoring enabled", () =
   }),
 );
 
+// regression: c2b9680a5e buuuunch of cleanup
 it.effect("rejects turn diff input when fromTurnCount > toTurnCount", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(
@@ -1387,6 +1386,7 @@ it.effect("rejects turn diff input when fromTurnCount > toTurnCount", () =>
   }),
 );
 
+// regression: c2b9680a5e buuuunch of cleanup
 it.effect("rejects thread turn diff when fromTurnCount > toTurnCount", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(
@@ -1401,6 +1401,7 @@ it.effect("rejects thread turn diff when fromTurnCount > toTurnCount", () =>
   }),
 );
 
+// regression: 08e6d4cfbf feat: Multi-Provider support (#2277)
 it.effect("ModelSelection rejects malformed instance ids", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(

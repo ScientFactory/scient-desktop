@@ -34,7 +34,6 @@ it("reproduces the real 109-file release failure and admits the corrected invent
 });
 
 // regression: 175444cee1 fix(desktop): validate Windows payload components and native targets
-// Every required file takes the same check; one per component covers it.
 it.each(componentFiles)("rejects a missing required component file: %s", (missing) => {
   const result = analyzeWindowsPayloadInventory({
     files: componentFiles.filter((file) => file !== missing),
