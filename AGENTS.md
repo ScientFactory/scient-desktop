@@ -205,6 +205,27 @@ unmounts (above). A render helper that waits or interacts must own its screen in
 an `AsyncDisposableStack` until it returns successfully. Give `rerender` a fresh
 element. The router is enabled by default; explain any `router: false` fixture.
 
+#### What earns a test
+
+A test stays only if it guards something that matters and nothing else guards it:
+a user-visible behavior, a data or safety guarantee, a protocol or persistence
+contract, or a fixed bug.
+
+- Do not add tests that restate copy, markup, class names, constants, callback
+  wiring or mock calls, or that check a visual nit. Visual fixes are proven with
+  before/after captures.
+- Keep one table row per code path. Read the implementation to find the
+  branches; rows that differ only by a literal on the same path add nothing.
+- Put pure logic in a Node test. Use a browser test only for DOM and React
+  behavior.
+- Keep a test that a `fix(...)` commit added, and say why with
+  `// regression: <sha> <subject>` when its title does not.
+- Before deleting a test that asserts behavior, break the logic it covered and
+  confirm a kept test fails. "Another test covers it", "same code path" and
+  "upstream deleted it" are guesses until that check passes.
+- Scient cases that extend an upstream test file go in a `.scient.` sibling
+  file, so the upstream file stays identical to upstream.
+
 Match verification to the claim: markup assertions do not establish native
 interaction, and mocked providers do not establish real-provider compatibility.
 Keep automated verification and the user's visual acceptance distinct.
