@@ -14,6 +14,7 @@ import {
   describeVoiceRecorderError,
   formatVoiceTimer,
 } from "./ScientVoiceComposerControl.tsx";
+import { MAX_RECORDING_MS } from "./useVoiceRecorder.ts";
 
 function stubVoiceBridge(): void {
   const voice = {
@@ -89,6 +90,11 @@ describe("ScientVoiceComposerControl rendering", () => {
 });
 
 describe("formatVoiceTimer", () => {
+  // regression: 577a5a3f79 feat(voice): add multilingual turbo transcription
+  it("allows three-minute composer recordings", () => {
+    expect(MAX_RECORDING_MS).toBe(180_000);
+  });
+
   it("formats sub-minute durations as mm:ss", () => {
     expect(formatVoiceTimer(0)).toBe("00:00");
     expect(formatVoiceTimer(5_000)).toBe("00:05");

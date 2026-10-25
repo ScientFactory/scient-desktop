@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   formatAboutVersionLabel,
+  getChangedBrowserSettingLabels,
   getChangedTypographySettingLabels,
   shouldShowDesktopUpdateChannelSelector,
 } from "./SettingsPanels.logic";
@@ -56,5 +57,36 @@ describe("typography settings restore", () => {
         fontFamilyCode: "Fira Code",
       }),
     ).toEqual(["Interface font", "Code font"]);
+  });
+});
+
+describe("getChangedBrowserSettingLabels", () => {
+  // regression: 949feb61e4 feat(web): configurable browser defaults in Settings → Integrations (#7082)
+  // Sole guard: these labels also decide whether Restore defaults is offered for each browser default.
+  it("labels each browser default that differs", () => {
+    expect(
+      getChangedBrowserSettingLabels({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        browserDefaultViewport: { _tag: "freeform", width: 900, height: 600 },
+        browserDefaultZoomFactor: 1.5,
+        browserDefaultAppearance: "dark",
+        browserRecordingFrameRate: 60,
+        browserRecordingShowKeyPresses: true,
+        browserRecordingShowMousePresses: true,
+        browserLinkTarget: "system",
+        browserAutoShowFloatingPreview: !DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
+        pullRequestLinksOpenInApp: false,
+      }),
+    ).toEqual([
+      "Browser viewport",
+      "Browser zoom",
+      "Browser appearance",
+      "Recording frame rate",
+      "Recording key presses",
+      "Recording mouse presses",
+      "Open links in",
+      "Floating preview",
+      "Open pull requests in Scient",
+    ]);
   });
 });

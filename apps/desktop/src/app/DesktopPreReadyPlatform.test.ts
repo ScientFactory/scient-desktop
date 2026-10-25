@@ -254,4 +254,41 @@ describe("DesktopPreReadyPlatform", () => {
         assert.equal(setDesktopNameMock.mock.calls.length, 0);
       }),
   );
+  // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+  // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103) - sole guard: letting a desktop-entry write failure escape passed every other desktop test
+  it.effect("keeps startup available when the early desktop entry cannot be written", () => {
+    getSwitchValueMock.mockReturnValue("");
+    mkdirSyncMock.mockImplementation(() => {
+      throw new Error("read-only filesystem");
+    });
+
+    return DesktopPreReadyPlatform.make.pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.HomeDirectory, "/home/me"),
+      Effect.asVoid,
+    );
+  });
+  // SCIENT-FORK:END restored-sole-guards
+
+  // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+  // regression: 181e45110f test(desktop): cover password store through startup (#10287) - sole guard: overriding an explicit --password-store switch passed every other desktop test
+  it.effect("preserves an explicit Linux password-store switch", () => {
+    hasSwitchMock.mockImplementation((switchName) => switchName === "password-store");
+    getSwitchValueMock.mockReturnValue(" basic ");
+
+    return Effect.gen(function* () {
+      const options = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
+
+      assert.equal(options.linuxPasswordStoreCommandLine, "basic");
+      assert.isFalse(appendSwitchMock.mock.calls.some(([name]) => name === "password-store"));
+    }).pipe(
+      Effect.provide(
+        DesktopPreReadyPlatform.layer.pipe(
+          Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+          Layer.provide(Layer.succeed(HostProcess.HomeDirectory, "/home/me")),
+        ),
+      ),
+    );
+  });
+  // SCIENT-FORK:END restored-sole-guards
 });

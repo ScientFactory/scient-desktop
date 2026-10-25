@@ -26,3 +26,18 @@ describe("Scient settings search", () => {
     expect(SETTINGS_SEARCH_ITEMS.map((item) => item.id)).not.toContain("telemetry-export");
   });
 });
+
+describe("searchSettings ranking", () => {
+  // regression: 71d12d8c4a feat(web): make keybindings searchable from settings search (#12175)
+  // Sole guard of the secondary-item ordering: upstream dropped this row in its snap, and no
+  // other test fails when keybinding commands outrank ordinary settings.
+  it("ranks keybinding commands after other settings", () => {
+    const ids = searchSettings("model").map((item) => item.id);
+    const commandIndex = ids.indexOf("keybinding-modelPicker.toggle");
+    expect(commandIndex).toBeGreaterThan(-1);
+    for (const id of ["custom-models", "default-model", "text-generation-model"]) {
+      expect(ids.indexOf(id)).toBeGreaterThan(-1);
+      expect(commandIndex).toBeGreaterThan(ids.indexOf(id));
+    }
+  });
+});

@@ -1,3 +1,7 @@
+// SCIENT-FORK:START restored-behavior-guards
+import * as Logger from "effect/Logger";
+// SCIENT-FORK:END restored-behavior-guards
+
 import * as MacPermissions from "../permissions/MacPermissions.ts";
 import { assert, it } from "@effect/vitest";
 import {
@@ -2262,3 +2266,112 @@ it.effect("says when the macOS test capture command timed out", () => {
   ).pipe(Effect.provide(macTestCaptureLayer));
 });
 // SCIENT-FORK:END scient-mac-test-capture
+
+// SCIENT-FORK:START restored-behavior-guards
+// regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
+it.effect(
+  "logs a GNOME activation failure and completes the shell flight before acknowledging the image",
+  () => {
+    vi.stubEnv("XDG_SESSION_TYPE", "wayland");
+    const order: string[] = [];
+    const activationFailure = new Error("Activation failed");
+    const logs: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => logs.push(message));
+    const feedback = {
+      animationStarted: true,
+      activate: async () => {
+        order.push("activate");
+        throw activationFailure;
+      },
+      animateTo: async () => {
+        order.push("land");
+      },
+      complete: async () => {
+        order.push("complete");
+      },
+      close: () => {
+        order.push("close");
+      },
+    };
+    linuxCaptureMock.mockImplementationOnce(async () => {
+      order.push("snapshot");
+      return { png: Buffer.from([1, 2, 3]), feedback };
+    });
+    focusedWindowMock.mockReturnValue(undefined);
+    const destination = {
+      getBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+      getTitle: () => "T3 Code",
+      isDestroyed: () => false,
+      isVisible: () => true,
+      isMinimized: () => false,
+    };
+    allWindowsMock.mockReturnValue([destination]);
+    let saved = "";
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* DesktopSnapShot.make;
+        yield* service.configure(enabledSettings());
+        yield* service.capture;
+        assert.deepEqual(order, ["snapshot", "activate"]);
+        const warning = logs.find(
+          (message) =>
+            Array.isArray(message) &&
+            message[0] === "The compositor could not activate Scient after the snapshot",
+        );
+        assert.strictEqual(Array.isArray(warning) ? warning[1] : undefined, activationFailure);
+        const pending = yield* decodePendingMetadata(saved);
+        yield* service.setAnimationDestination(pending.id, {
+          frame: { x: 0, y: 0, width: 10, height: 10 },
+          relativeFrame: { x: 0.1, y: 0.8, width: 0.2, height: 0.1 },
+          backgroundColor: "white",
+          borderColor: "black",
+          borderWidth: 1,
+          cornerRadius: 8,
+          scaleFactor: 1,
+        });
+        yield* service.acknowledge(pending.id);
+        assert.deepEqual(order, ["snapshot", "activate", "land", "complete", "delete", "delete"]);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerTest("linux", {
+            makeDirectory: () => Effect.void,
+            rename: () => Effect.void,
+            writeFile: () => Effect.void,
+            writeFileString: (_, value) =>
+              Effect.sync(() => {
+                saved = value;
+              }),
+            remove: () =>
+              Effect.sync(() => {
+                order.push("delete");
+              }),
+          }),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          allWindowsMock.mockReturnValue([]);
+          vi.unstubAllEnvs();
+        }),
+      ),
+    );
+  },
+);
+// SCIENT-FORK:END restored-behavior-guards
+
+// SCIENT-FORK:START restored-behavior-guards
+// regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
+it.effect("rejects macOS test capture on other platforms", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
+      assert.equal(error.reason, "unsupported-session");
+      assert.equal(error.message, "Test capture requires macOS.");
+    }),
+  ).pipe(Effect.provide(layerTest("win32"))),
+);
+// SCIENT-FORK:END restored-behavior-guards

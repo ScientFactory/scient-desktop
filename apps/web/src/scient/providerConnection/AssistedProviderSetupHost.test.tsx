@@ -105,27 +105,31 @@ describe("AssistedProviderSetupHost", () => {
     enableState.enable.mockResolvedValue();
   });
 
-  // ComposerProviderSetupParity renders every other assisted provider's real
-  // composer setup through this host; Muse is the one it leaves out.
-  it.each([["muse", "Muse Code"]] as const)(
-    "routes the %s composer surface through one controller",
-    (driver, name) => {
-      const value = provider(driver, name);
-      const markup = renderToStaticMarkup(
-        <AssistedProviderSetupHost
-          displayName={name}
-          environmentId={EnvironmentId.make("local")}
-          provider={value}
-          surface="composer"
-        />,
-      );
+  // regression: 8025530a58 refactor(provider-lifecycle): unify assisted frontend setup
+  it.each([
+    ["codex", "Codex"],
+    ["claudeAgent", "Claude"],
+    ["antigravity", "Antigravity"],
+    ["cursor", "Cursor"],
+    ["droid", "Droid"],
+    ["grok", "Grok"],
+    ["muse", "Muse Code"],
+  ] as const)("routes the %s composer surface through one controller", (driver, name) => {
+    const value = provider(driver, name);
+    const markup = renderToStaticMarkup(
+      <AssistedProviderSetupHost
+        displayName={name}
+        environmentId={EnvironmentId.make("local")}
+        provider={value}
+        surface="composer"
+      />,
+    );
 
-      expect(markup).toContain(`${name} setup`);
-      expect(markup).not.toContain("shared runtime");
-      expect(markup).not.toContain("Sign out");
-      expect(controllerFactory).toHaveBeenCalledOnce();
-    },
-  );
+    expect(markup).toContain(`${name} setup`);
+    expect(markup).not.toContain("shared runtime");
+    expect(markup).not.toContain("Sign out");
+    expect(controllerFactory).toHaveBeenCalledOnce();
+  });
 
   it.each([
     ["codex", "Codex"],

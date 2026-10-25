@@ -795,4 +795,121 @@ describe("DesktopSettings", () => {
     ),
   );
   // SCIENT-FORK:END scient-desktop-settings
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: a9b1190a11 Desktop: parallel WSL + Windows backends with mode picker (#2751)
+  it.effect("drops invalid persisted wsl distro values on load", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          wslBackendEnabled: true,
+          wslDistro: "bad/name",
+        });
+        const loaded = yield* settings.load;
+        assert.equal(loaded.wslBackendEnabled, true);
+        assert.equal(loaded.wslDistro, null);
+      }),
+    ),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: aa219be713 port desktop app to Effect (#2546)
+  it.effect("normalizes invalid persisted Tailscale Serve ports", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          tailscaleServeEnabled: true,
+          tailscaleServePort: 0,
+        });
+
+        assert.deepEqual(yield* settings.load, {
+          linuxPasswordStore: "auto",
+          localEnvironmentEnabled: true,
+          mainWindowBounds: null,
+          mainWindowMaximized: false,
+          mainWindowSizeIncreaseApplied: false,
+          mainWindowNearFullSizeApplied: false,
+          serverExposureMode: "local-only",
+          tailscaleServeEnabled: true,
+          tailscaleServePort: 443,
+          updateChannel: "latest",
+          updateChannelConfiguredByUser: false,
+          wslBackendEnabled: false,
+          wslOnly: false,
+          wslDistro: null,
+          voiceSelectedModelId: null,
+        } satisfies DesktopAppSettings.DesktopSettings);
+      }),
+    ),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: aa219be713 port desktop app to Effect (#2546)
+  it.effect("does not persist no-op semantic updates", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        const exposure = yield* settings.setServerExposureMode("local-only");
+        assert.isFalse(exposure.changed);
+
+        const tailscale = yield* settings.setTailscaleServe({
+          enabled: false,
+          port: Option.none(),
+        });
+        assert.isFalse(tailscale.changed);
+
+        const updateChannel = yield* settings.setUpdateChannel("latest");
+        assert.isFalse(updateChannel.changed);
+        assert.equal(updateChannel.settings.updateChannelConfiguredByUser, false);
+
+        const nightly = yield* settings.setUpdateChannel("nightly");
+        assert.isFalse(nightly.changed);
+        assert.equal(nightly.settings.updateChannel, "latest");
+        assert.equal(nightly.settings.updateChannelConfiguredByUser, false);
+      }),
+    ),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: 65385c0281 [codex] Refactor desktop settings Effect services (#3188)
+  it.effect("reports the failed desktop settings write operation and path", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* fileSystem.makeDirectory(environment.desktopSettingsPath, { recursive: true });
+
+        const error = yield* settings.setServerExposureMode("network-accessible").pipe(Effect.flip);
+        assert.instanceOf(error, DesktopAppSettings.DesktopSettingsWriteError);
+        assert.equal(error.operation, "replace-settings-file");
+        assert.equal(error.path, environment.desktopSettingsPath);
+        assert.exists(error.cause);
+        assert.equal(
+          error.message,
+          `Desktop settings write failed during replace-settings-file at ${environment.desktopSettingsPath}.`,
+        );
+      }),
+    ),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: aa219be713 port desktop app to Effect (#2546)
+  it.effect("loads defaults when no settings file exists", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        assert.deepEqual(yield* settings.load, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
+        assert.deepEqual(yield* settings.get, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
+      }),
+    ),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
 });

@@ -72,6 +72,27 @@ it.each(["mod++", "alt+m +", "alt+plus"])(
     ).toHaveLength(1);
   },
 );
+// regression: 929cfb6bb4 feat: unify contextual shortcuts and math input (#332) (sole guard: no kept test notices a truncated shortcut list)
+it.each(["MacIntel", "Linux"])("renders the complete default catalog on %s", async (platform) => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const descriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
+  Object.defineProperty(navigator, "platform", { configurable: true, value: platform });
+  try {
+    await act(
+      async () => await _fixture.root0.rerender(<AuthoringKeybindingsSettings scope="math" />),
+    );
+    expect(_fixture.host.querySelectorAll('[data-slot="settings-row"]').length).toBeGreaterThan(
+      160,
+    );
+    expect(buttonStartingWith(_fixture, "Edit math.symbol.pm")).toBeTruthy();
+  } finally {
+    if (descriptor) Object.defineProperty(navigator, "platform", descriptor);
+    else Reflect.deleteProperty(navigator, "platform");
+  }
+});
 it("keeps the document sections isolated", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

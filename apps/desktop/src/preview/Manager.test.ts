@@ -2963,3 +2963,21 @@ describe("PreviewManager", () => {
   );
   // SCIENT-FORK:END scient-preview
 });
+
+// SCIENT-FORK:START restored-behavior-guards
+describe("PreviewOperationError", () => {
+  // regression: 90bd5ee0c1 [codex] structure desktop preview failures (#3244)
+  it("keeps timeline detail separate from its structured message", () => {
+    const cause = new Error("CDP command failed with an invalid node id");
+    const error = new PreviewManager.PreviewOperationError({
+      operation: "click.DOM.resolveNode",
+      tabId: "tab_1",
+      webContentsId: 42,
+      cause,
+    });
+
+    expect(error.message).not.toContain(cause.message);
+    expect(PreviewManager.PreviewOperationError.toTimelineMessage(error)).toBe(cause.message);
+  });
+});
+// SCIENT-FORK:END restored-behavior-guards

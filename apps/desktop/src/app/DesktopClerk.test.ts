@@ -212,6 +212,43 @@ describe("DesktopClerk", () => {
     },
   );
 
+  // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+  // regression: 3e01c4bc57 Migrate desktop auth to Clerk bridge (#3092) - sole guard: skipping bridge.cleanup() on release passed every other desktop test
+  it.effect("acquires and releases the SDK bridge with the layer", () => {
+    const cleanup = vi.fn();
+    const events: string[] = [];
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockImplementation(() => {
+      events.push("createClerkBridge");
+      return { cleanup, isPrimaryInstance: true };
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.scoped(Layer.build(layerDesktopClerk(true, events)));
+
+      assert.deepEqual(createClerkBridgeMock.mock.calls, [
+        [
+          {
+            storage: storageAdapter,
+            manageSingleInstanceLock: false,
+            passkeys: true,
+            renderer: { scheme: "scient-next-dev", host: "app" },
+          },
+        ],
+      ]);
+      assert.equal(cleanup.mock.calls.length, 1);
+      assert.deepEqual(events, [
+        "setPath:userData:/tmp/t3-state/electron-userdata",
+        "requestSingleInstanceLock",
+        "on:second-instance",
+        "createClerkBridge",
+      ]);
+      storageMock.mockClear();
+      createClerkBridgeMock.mockClear();
+    });
+  });
+  // SCIENT-FORK:END restored-sole-guards
+
   it.effect("delivers queued startup links and later links once in arrival order", () => {
     storageMock.mockReturnValue(storageAdapter);
     createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });

@@ -1,3 +1,7 @@
+// SCIENT-FORK:START restored-behavior-guards
+import { workEntryRowLabel } from "./threadActivity";
+// SCIENT-FORK:END restored-behavior-guards
+
 import {
   MessageId,
   CheckpointId,
@@ -162,95 +166,105 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 // The visibility decision itself is tabled in packages/client-runtime/src/handoff.test.ts;
 // these rows cover the feed's cache refresh when transfers arrive and a later real switch.
 describe("fork initialization context in the native feed", () => {
-  it.each(["fork", "proven-inherited"] as const)(
-    "removes only the exact local initialization; %s remains truthful",
-    (kind) => {
-      const now = DateTime.makeUnsafe("2026-10-04T00:00:00Z");
-      const handoff = decodeBoundaryItem({
-        ...base("fork-initialization-context", "2026-10-04T00:00:00Z", 2),
-        runId: "fork-first-run",
-        type: "handoff",
-        title: "Fork context",
-        contextHandoffId: "context-1",
-        ...(kind === "proven-inherited"
-          ? {
-              runId: null,
-              nodeId: null,
-              providerThreadId: null,
-              inheritedFrom: {
-                threadId: "child",
-                itemId: "original-handoff",
-                runId: "child-first-run",
-                status: "completed",
-              },
-              forkInitialization: {
-                transferId: "old-fork-transfer",
-                contextHandoffId: "context-1",
-                threadId: "child",
-                runId: "child-first-run",
-              },
-            }
-          : {}),
-        fromProviderThreadIds: [],
-        toProviderThreadId: "provider-1",
-        fromProviderInstanceIds: [],
-        toProviderInstanceId: "codex",
-        strategy: "full_thread_summary",
+  // regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
+  it.each([
+    "fork",
+    "provider_handoff",
+    "merge_back",
+    "missing",
+    "later-run",
+    "inherited",
+    "proven-inherited",
+  ] as const)("removes only the exact local initialization; %s remains truthful", (kind) => {
+    const now = DateTime.makeUnsafe("2026-10-04T00:00:00Z");
+    const handoff = decodeBoundaryItem({
+      ...base("fork-initialization-context", "2026-10-04T00:00:00Z", 2),
+      runId: "fork-first-run",
+      type: "handoff",
+      title: "Fork context",
+      contextHandoffId: "context-1",
+      ...(kind === "proven-inherited"
+        ? {
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            inheritedFrom: {
+              threadId: "child",
+              itemId: "original-handoff",
+              runId: "child-first-run",
+              status: "completed",
+            },
+            forkInitialization: {
+              transferId: "old-fork-transfer",
+              contextHandoffId: "context-1",
+              threadId: "child",
+              runId: "child-first-run",
+            },
+          }
+        : {}),
+      fromProviderThreadIds: [],
+      toProviderThreadId: "provider-1",
+      fromProviderInstanceIds: [],
+      toProviderInstanceId: "codex",
+      strategy: "full_thread_summary",
+    });
+    const transfer = decodeFeedTransfer({
+      id: "transfer-1",
+      type: kind === "provider_handoff" || kind === "merge_back" ? kind : "fork",
+      sourceThreadId: "source",
+      targetThreadId: threadId,
+      sourcePoint: { threadId: "source" },
+      basePoint: null,
+      sourceProviderInstanceId: "codex",
+      targetProviderInstanceId: "codex",
+      targetRunId: kind === "later-run" ? "later-run" : "fork-first-run",
+      status: "consumed",
+      resolution: { strategy: "portable_context", contextHandoffId: "context-1" },
+      createdBy: "user",
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+      consumedAt: now,
+    });
+    const row = projected(
+      handoff,
+      2,
+      kind === "inherited" || kind === "proven-inherited" ? "inherited" : "local",
+    );
+    const cache = createThreadFeedCache();
+    const initial = buildThreadFeed([row], { cache });
+    expect(initial).toHaveLength(kind === "proven-inherited" ? 0 : 1);
+    const reloaded = buildThreadFeed([row], {
+      contextTransfers: kind === "missing" ? undefined : [transfer],
+      cache,
+    });
+    expect(reloaded).toHaveLength(kind === "fork" || kind === "proven-inherited" ? 0 : 1);
+    expect(buildThreadFeed([row], { cache })).toHaveLength(kind === "proven-inherited" ? 0 : 1);
+    expect(row.item).toBe(handoff);
+    if (kind === "proven-inherited") {
+      const later = decodeBoundaryItem({
+        ...handoff,
+        id: "later-real-switch",
+        ordinal: 3,
+        contextHandoffId: "later-provider-context",
+        forkInitialization: undefined,
+        title: "Provider handoff",
+        toProviderInstanceId: "claudeAgent",
+        inheritedFrom: {
+          threadId: "child",
+          itemId: "later-real-switch",
+          runId: "child-second-run",
+          status: "completed",
+        },
       });
-      const transfer = decodeFeedTransfer({
-        id: "transfer-1",
-        type: "fork",
-        sourceThreadId: "source",
-        targetThreadId: threadId,
-        sourcePoint: { threadId: "source" },
-        basePoint: null,
-        sourceProviderInstanceId: "codex",
-        targetProviderInstanceId: "codex",
-        targetRunId: "fork-first-run",
-        status: "consumed",
-        resolution: { strategy: "portable_context", contextHandoffId: "context-1" },
-        createdBy: "user",
-        error: null,
-        createdAt: now,
-        updatedAt: now,
-        consumedAt: now,
+      const feed = buildThreadFeed([row, projected(later, 3, "inherited")]);
+      expect(feed).toHaveLength(1);
+      expect(feed[0]).toMatchObject({
+        type: "activity-group",
+        activities: [{ projectedItem: { item: later } }],
       });
-      const row = projected(handoff, 2, kind === "proven-inherited" ? "inherited" : "local");
-      const cache = createThreadFeedCache();
-      const initial = buildThreadFeed([row], { cache });
-      expect(initial).toHaveLength(kind === "proven-inherited" ? 0 : 1);
-      const reloaded = buildThreadFeed([row], {
-        contextTransfers: [transfer],
-        cache,
-      });
-      expect(reloaded).toHaveLength(0);
-      expect(buildThreadFeed([row], { cache })).toHaveLength(kind === "proven-inherited" ? 0 : 1);
-      expect(row.item).toBe(handoff);
-      if (kind === "proven-inherited") {
-        const later = decodeBoundaryItem({
-          ...handoff,
-          id: "later-real-switch",
-          ordinal: 3,
-          contextHandoffId: "later-provider-context",
-          forkInitialization: undefined,
-          title: "Provider handoff",
-          toProviderInstanceId: "claudeAgent",
-          inheritedFrom: {
-            threadId: "child",
-            itemId: "later-real-switch",
-            runId: "child-second-run",
-            status: "completed",
-          },
-        });
-        const feed = buildThreadFeed([row, projected(later, 3, "inherited")]);
-        expect(feed).toHaveLength(1);
-        expect(feed[0]).toMatchObject({
-          type: "activity-group",
-          activities: [{ projectedItem: { item: later } }],
-        });
-      }
-    },
-  );
+    }
+  });
 });
 
 // SCIENT-FORK:END
@@ -680,13 +694,21 @@ describe("buildThreadFeed", () => {
   });
 
   // SCIENT-FORK:START — a fork's destination-owned boundary between inherited and local turns.
-  it("keeps one destination-owned fork boundary between inherited and local messages", () => {
-    const source = {
-      type: "message" as const,
-      threadId: sourceThreadId,
-      messageId: MessageId.make("historical-answer"),
-      position: "after" as const,
-    };
+  // regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
+  it.each(
+    [
+      { type: "run" as const, threadId: sourceThreadId, runId },
+      {
+        type: "message" as const,
+        threadId: sourceThreadId,
+        messageId: MessageId.make("historical-answer"),
+        position: "after" as const,
+      },
+    ].map((source) => ({
+      caseTitle: `keeps one destination-owned ${source.type} fork boundary between inherited and local messages`,
+      source,
+    })),
+  )("$caseTitle", ({ source }) => {
     const { providerThreadId: _providerThreadId, ...forkBase } = base(
       "local-fork-boundary",
       "2026-06-20T00:00:03.000Z",
@@ -1379,6 +1401,151 @@ describe("buildThreadFeed", () => {
     });
   });
   // SCIENT-FORK:END restored-sole-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
+  it("presents project calls and summarizes successful clones through the mobile feed", () => {
+    const items: OrchestrationV2TurnItem[] = [
+      {
+        ...base("list", "2026-09-19T00:00:01.000Z", 1),
+        type: "dynamic_tool",
+        title: "Custom provider title",
+        toolName: "T3-code.t3_project_list",
+        input: {},
+        output: { projects: [] },
+      },
+      {
+        ...base("clone", "2026-09-19T00:00:02.000Z", 2),
+        type: "dynamic_tool",
+        title: "Custom provider title",
+        toolName: "mcp__t3_code__t3_project_clone",
+        input: {},
+        output: { cwd: "/tmp/repo" },
+      },
+      {
+        ...base("failed-clone", "2026-09-19T00:00:03.000Z", 3),
+        type: "dynamic_tool",
+        title: "Custom provider title",
+        toolName: "t3_project_clone",
+        input: {},
+        output: { isError: true },
+      },
+    ];
+    const feed = buildThreadFeed(items.map((item, position) => projected(item, position)));
+    const activities = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(workEntryRowLabel(activities[0]!.workEntry)).toBe("Listed projects");
+    expect(workEntryRowLabel(activities[1]!.workEntry)).toBe("Cloned a repository");
+    expect(workEntryRowLabel(activities[2]!.workEntry)).toBe("Failed to clone a repository");
+    expect(activities.every((activity) => activity.logo === "scient")).toBe(true);
+    const presented = deriveThreadFeedPresentation(
+      feed,
+      { runId, status: "running", startedAt: null, completedAt: null },
+      new Set(),
+    );
+    expect(presented.find((entry) => entry.type === "work-toggle")).toMatchObject({
+      summary: "Listed projects 1 time and cloned 1 repository",
+      hasFailure: true,
+    });
+  });
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
+  it("uses canonical T3 orchestration summaries in compact work groups", () => {
+    const rows = [
+      projected(command("2026-06-20T00:00:01.000Z"), 0),
+      ...["mcp__t3-code__t3_thread_send", "t3_code.t3_thread_send", "t3_thread_send"].map(
+        (toolName, index) =>
+          projected(
+            {
+              ...base(`item-send-${index}`, `2026-06-20T00:00:0${index + 2}.000Z`, index + 2),
+              type: "dynamic_tool" as const,
+              toolName,
+              input: { threadId: `thread-${index}`, message: "Continue" },
+              output: { threadId: `thread-${index}`, messageId: `message-${index}` },
+            },
+            index + 1,
+          ),
+      ),
+      projected(
+        {
+          ...command("2026-06-20T00:00:06.000Z"),
+          id: TurnItemId.make("item-command-2"),
+          ordinal: 6,
+        },
+        4,
+      ),
+    ];
+
+    const presented = deriveThreadFeedPresentation(
+      buildThreadFeed(rows),
+      { runId, status: "running", startedAt: null, completedAt: null },
+      new Set(),
+    );
+
+    expect(presented).toMatchObject([
+      {
+        type: "work-toggle",
+        summary: "Ran 2 commands and sent messages to 3 threads",
+        hiddenCount: 5,
+        hasFailure: false,
+      },
+    ]);
+  });
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
+  it("pretty prints T3 MCP dynamic tool activities and attaches the product logo", () => {
+    const toolItem: OrchestrationV2TurnItem = {
+      ...base("item-t3-tool", "2026-06-20T00:00:04.000Z", 3),
+      type: "dynamic_tool",
+      toolName: "mcp__t3-code__t3_thread_read",
+      input: { threadId: "thread-child" },
+      output: { messages: [] },
+    };
+
+    const feed = buildThreadFeed([projected(toolItem, 0)]);
+    const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
+
+    expect(activity?.summary).toBe("Read a Scient thread");
+    expect(activity?.logo).toBe("scient");
+    expect(activity?.getCopyText().split("\n")[0]).toBe("Read a Scient thread");
+  });
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
+  it("retains Claude Read image previews without tool output", () => {
+    const item = {
+      ...base("image-read", "2026-06-20T00:00:04.000Z", 3),
+      type: "dynamic_tool" as const,
+      toolName: "Read",
+      input: { file_path: "/workspace/reference.png" },
+      viewedImagePath: "/workspace/reference.png",
+    } satisfies OrchestrationV2TurnItem;
+    const feed = buildThreadFeed([projected(item, 0)]);
+    const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
+    expect(activity?.workEntry.viewedImagePath).toBe("/workspace/reference.png");
+  });
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
+  it("uses a stable Thinking row while work has started without a projected item", () => {
+    const startedAt = "2026-04-01T00:00:01.000Z";
+    const presented = deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt);
+
+    expect(presented).toEqual([
+      { type: "thinking", id: "live-activity-row", createdAt: startedAt, runId: null },
+    ]);
+    expect(deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt)[0]).toBe(
+      presented[0],
+    );
+  });
+  // SCIENT-FORK:END restored-behavior-guards
 });
 
 describe("retained v2 feed presentation", () => {

@@ -1625,4 +1625,91 @@ describe("DesktopWindow", () => {
       }).pipe(Effect.provide(layer));
     }),
   );
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: ffae5410e8 Route preview automation through live owner streams (#3548)
+  it.effect("recovers when the development renderer is temporarily unreachable", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const didFailLoad = fakeWindow.webContentsListeners.get("did-fail-load");
+        const didFinishLoad = fakeWindow.webContentsListeners.get("did-finish-load");
+        if (!didFailLoad || !didFinishLoad) {
+          return yield* Effect.die("renderer load listeners were not registered");
+        }
+
+        didFailLoad({}, -9, "ERR_UNEXPECTED", "scient-next-dev://app/", true);
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 1);
+
+        yield* TestClock.adjust(100);
+        assert.deepEqual(fakeWindow.loadURL.mock.calls, [
+          ["scient-next-dev://app/"],
+          ["scient-next-dev://app/"],
+        ]);
+        assert.equal(fakeWindow.reload.mock.calls.length, 0);
+
+        didFailLoad({}, -9, "ERR_UNEXPECTED", "scient-next-dev://app/", true);
+        didFinishLoad();
+        yield* TestClock.adjust(250);
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 2);
+        assert.equal(fakeWindow.reload.mock.calls.length, 0);
+
+        didFailLoad({}, -3, "ERR_ABORTED", "scient-next-dev://app/", true);
+        didFailLoad({}, -102, "ERR_CONNECTION_REFUSED", "https://example.com/", true);
+        yield* TestClock.adjust(250);
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 2);
+        didFailLoad({}, -102, "ERR_CONNECTION_REFUSED", "scient-next-dev://app/", true);
+        yield* TestClock.adjust(250);
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 3);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: aa219be713 port desktop app to Effect (#2546)
+  it.effect("does not open a development window until the backend is ready", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.activate;
+        assert.equal(yield* Ref.get(createCount), 0);
+
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.equal(createdWindowOptions[0]?.width, 1904);
+        assert.equal(createdWindowOptions[0]?.height, 1024);
+        assert.isUndefined(createdWindowOptions[0]?.x);
+        assert.isUndefined(createdWindowOptions[0]?.y);
+        assert.isTrue(createdWindowOptions[0]?.disableAutoHideCursor);
+        assert.isFalse(createdWindowOptions[0]?.webPreferences?.backgroundThrottling);
+        assert.deepEqual(fakeWindow.setAutoHideCursor.mock.calls, [[false]]);
+        assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["scient-next-dev://app/"]);
+        assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
 });

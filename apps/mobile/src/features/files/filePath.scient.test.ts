@@ -1,3 +1,5 @@
+import { fileHeaderSubtitle, isSvgImagePreviewFile } from "./filePath";
+
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveFileLinkTarget, resolveHostFilePath } from "./filePath";
@@ -47,5 +49,32 @@ describe("resolveFileLinkTarget", () => {
       path: "src/file.ts",
     });
     expect(resolveFileLinkTarget(undefined, "~/notes.md")).toBeNull();
+  });
+});
+
+describe("fileHeaderSubtitle", () => {
+  // regression: 4fed6cfb35 feat: add inline file previews and attachment chips across surfaces (#11265)
+  it("places a workspace file under its project", () => {
+    expect(
+      fileHeaderSubtitle("t3code", "apps/mobile/src/features/threads/fileChipMenu.test.ts"),
+    ).toBe("t3code · apps/mobile/src/features/threads");
+  });
+
+  // regression: 4fed6cfb35 feat: add inline file previews and attachment chips across surfaces (#11265)
+  it("shows only the directory for a host file outside the workspace", () => {
+    expect(fileHeaderSubtitle("t3code", "/tmp/report.md")).toBe("/tmp");
+  });
+
+  // regression: 4fed6cfb35 feat: add inline file previews and attachment chips across surfaces (#11265)
+  it("shows only the project for a file at the workspace root", () => {
+    expect(fileHeaderSubtitle("t3code", "README.md")).toBe("t3code");
+  });
+});
+
+describe("file preview types", () => {
+  // regression: 30034ecedc Add archived threads and mobile file viewer (#3155)
+  it("identifies SVG images that need web rendering", () => {
+    expect(isSvgImagePreviewFile("assets/diagram.svg#icon")).toBe(true);
+    expect(isSvgImagePreviewFile("assets/photo.png")).toBe(false);
   });
 });

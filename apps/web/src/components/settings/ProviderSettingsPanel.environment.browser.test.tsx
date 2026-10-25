@@ -328,6 +328,52 @@ describe("EnvironmentProviderSettings routing", () => {
   );
   // SCIENT-FORK:END
 
+  // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped these; mutating the
+  // refresh input, update instance and favorite instance left every other test green.
+  // regression: 133f57a832 test(web): provider, usage and relationship tests run in a real browser (#20914) (sole guard)
+  const refreshButton = () => page.getByRole("button", { name: /^Refresh provider status/ });
+  it("routes refresh and provider update commands to the selected environment", async () => {
+    await setup();
+    await setProviders([provider()]);
+    await using _screen = await render(panel());
+
+    await userEvent.click(refreshButton());
+    expect(state.refresh).toHaveBeenCalledWith({
+      environmentId,
+      input: { refreshModels: true, refreshManagedRuntimeCatalog: true },
+    });
+
+    await userEvent.click(page.getByRole("button", { name: /view details/ }).last());
+    await userEvent.click(button("Update now"));
+    expect(state.updateProvider).toHaveBeenCalledWith({
+      environmentId,
+      input: { provider: ProviderDriverKind.make("codex"), instanceId: codexId },
+    });
+  });
+  // regression: 133f57a832 test(web): provider, usage and relationship tests run in a real browser (#20914) (sole guard)
+  it("saves model favorites and visibility on the selected environment", async () => {
+    await setup();
+    await setProviders([provider()]);
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
+
+    await userEvent.click(button("Add Chosen to favorites"));
+    expect(state.toggleFavorite).toHaveBeenCalledExactlyOnceWith(codexId, "chosen");
+
+    await userEvent.click(page.getByRole("switch", { name: "Show Chosen in the model picker" }));
+    expect(state.updateModelPreferences).toHaveBeenCalledExactlyOnceWith({
+      setModelsHidden: [
+        {
+          provider: codexId,
+          model: "chosen",
+          hidden: true,
+          initialPreferences: { hiddenModels: [], modelOrder: [] },
+        },
+      ],
+    });
+    expect(state.updateSettings).not.toHaveBeenCalled();
+  });
+  // SCIENT-FORK:END restored-sole-guards
+
   it("does not substitute another account when the requested instance was removed", async () => {
     await setup();
     await setProviders([provider()]);

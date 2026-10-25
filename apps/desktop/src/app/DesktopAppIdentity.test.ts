@@ -113,6 +113,7 @@ const withIdentity = <A, E, R>(
     readonly pngIconPath?: Option.Option<string>;
     // SCIENT-FORK:START desktop-state-isolation — records probes so tests can prove
     // Scient never inspects legacy userData paths.
+    readonly legacyPathExists?: boolean;
     readonly existsCalls?: string[];
     // SCIENT-FORK:END desktop-state-isolation
   } = {},
@@ -131,7 +132,9 @@ const withIdentity = <A, E, R>(
             // SCIENT-FORK:START desktop-state-isolation
             exists: (path) => {
               input.existsCalls?.push(path);
-              return Effect.succeed(false);
+              return Effect.succeed(
+                input.legacyPathExists === true && path.includes("Scient (Alpha)"),
+              );
             },
             // SCIENT-FORK:END desktop-state-isolation
             readFileString: () =>
@@ -218,4 +221,51 @@ describe("DesktopAppIdentity", () => {
       { calls, environment },
     );
   });
+  // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+  // regression: aa219be713 port desktop app to Effect (#2546) - sole guard: ignoring the commit-hash override or its 12-character trim passed every other desktop test
+  it.effect("configures app identity from the environment commit override", () => {
+    const calls: ElectronAppCalls = {
+      setAboutPanelOptions: [],
+      setDockIcon: [],
+      setName: [],
+    };
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.configure;
+
+        assert.deepEqual(calls.setName, ["Scient"]);
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "Scient");
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
+        assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
+        assert.deepEqual(calls.setDockIcon, []);
+      }),
+      {
+        calls,
+        environment: {
+          env: {
+            T3CODE_COMMIT_HASH: "0123456789abcdef",
+          },
+        },
+        pngIconPath: Option.some("/icon.png"),
+      },
+    );
+  });
+  // SCIENT-FORK:END restored-sole-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: 3e8f7bc0e1 chore: bootstrap Scient Next D4 candidate
+  it.effect("never adopts a legacy userData path during D4", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const userDataPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/scient-next");
+      }),
+      { legacyPathExists: true },
+    ),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
 });

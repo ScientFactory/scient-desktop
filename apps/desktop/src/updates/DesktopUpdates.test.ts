@@ -1,3 +1,7 @@
+// SCIENT-FORK:START restored-behavior-guards
+import * as Duration from "effect/Duration";
+// SCIENT-FORK:END restored-behavior-guards
+
 import { assert, describe, it } from "@effect/vitest";
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -1000,6 +1004,155 @@ describe("DesktopUpdates", () => {
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
   );
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: 9f7861aadd [codex] Structure desktop update persistence errors (#3261)
+  it.effect("preserves settings failure context when an update channel cannot be persisted", () => {
+    const diskFailure = new Error("disk exploded");
+    const settingsFailure = new DesktopAppSettings.DesktopSettingsWriteError({
+      operation: "replace-settings-file",
+      path: "/tmp/settings.json",
+      cause: diskFailure,
+    });
+    const harness = makeHarness({ setUpdateChannelError: settingsFailure });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        const error = yield* updates.setChannel("beta").pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopUpdates.DesktopUpdateChannelPersistenceError);
+        assert.equal(error.channel, "beta");
+        assert.strictEqual(error.cause, settingsFailure);
+        assert.strictEqual(error.cause.cause, diskFailure);
+        assert.equal(error.message, "Failed to persist the beta desktop update channel.");
+        assert.notInclude(error.message, diskFailure.message);
+
+        const checkResult = yield* updates.check("manual");
+        assert.isTrue(checkResult.checked);
+        assert.equal(harness.checkCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: aa219be713 port desktop app to Effect (#2546)
+  it.effect("fails channel changes with a typed error while a check is in progress", () =>
+    Effect.gen(function* () {
+      const checkStarted = yield* Deferred.make<void>();
+      const releaseCheck = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        checkForUpdates: Deferred.succeed(checkStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseCheck)),
+        ),
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+
+          const checkFiber = yield* updates.check("manual").pipe(Effect.forkScoped);
+          yield* Deferred.await(checkStarted);
+
+          const exit = yield* Effect.exit(updates.setChannel("beta"));
+          assert.equal(exit._tag, "Failure");
+          if (exit._tag === "Failure") {
+            const error = Cause.squash(exit.cause);
+            assert.instanceOf(error, DesktopUpdates.DesktopUpdateActionInProgressError);
+            assert.equal(error.action, "check");
+            assert.equal(error.requestedChannel, "beta");
+          }
+
+          yield* Deferred.succeed(releaseCheck, undefined);
+          yield* Fiber.join(checkFiber);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: aa219be713 port desktop app to Effect (#2546)
+  it.effect("updates and broadcasts state from updater events", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const state = yield* updates.getState;
+        assert.equal(state.status, "available");
+        assert.equal(state.availableVersion, "1.2.4");
+        assert.isNotNull(state.checkedAt);
+        assert.equal(harness.sentStates.at(-1)?.status, "available");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: b2f25d390a feat(desktop): update the desktop app on remote Macs from the Update button (#6554)
+  it.effect("subscribe delivers the latest state plus subsequent changes", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        const { latest, changes } = yield* updates.subscribe;
+        assert.equal(latest.status, "idle");
+
+        const nextState = yield* Stream.runHead(changes).pipe(Effect.forkChild);
+        yield* flushCallbacks;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const observed = yield* Fiber.join(nextState);
+        assert.equal(Option.getOrThrow(observed).status, "available");
+        assert.equal(Option.getOrThrow(observed).availableVersion, "1.2.4");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: aa219be713 port desktop app to Effect (#2546)
+  it.effect("configures the updater and runs startup checks on the test clock", () => {
+    const harness = makeHarness();
+
+    return Effect.gen(function* () {
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+
+          const state = yield* updates.getState;
+          assert.equal(state.enabled, true);
+          assert.equal(state.status, "idle");
+          assert.deepEqual(harness.feedUrls(), [
+            { provider: "generic", url: "http://localhost:4141" },
+          ]);
+          assert.equal(harness.listenerCount(), 6);
+          assert.equal(harness.checkCount(), 0);
+
+          yield* TestClock.adjust(Duration.millis(15_000));
+          assert.equal(harness.checkCount(), 1);
+        }),
+      );
+
+      assert.equal(harness.listenerCount(), 0);
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+  // SCIENT-FORK:END restored-behavior-guards
 });
 
 describe("describeUpdateErrorCause", () => {

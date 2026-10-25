@@ -97,6 +97,17 @@ describe("ready voice control for citation comments", () => {
     expect(_fixture.container.innerHTML).toBe("");
   });
 
+  // regression: 5efa7360c1 feat(web): improve Ask in chat citations (#294) (sole guard: the only test that the control applies the ready-model gate)
+  it("renders nothing until the selected model is installed and ready", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    state.client = { getModelsState: vi.fn().mockResolvedValue(snapshot("missing")) };
+    await render(_fixture);
+    expect(_fixture.container.innerHTML).toBe("");
+  });
+
   it("renders compact dictation without exposing model setup for a ready selection", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

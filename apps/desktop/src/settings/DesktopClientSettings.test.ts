@@ -273,4 +273,28 @@ describe("DesktopClientSettings", () => {
       }),
     ),
   );
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: aa219be713 port desktop app to Effect (#2546)
+  it.effect("loads defaults from empty client settings documents", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(environment.clientSettingsPath, "{}\n");
+
+        const persisted = yield* settings.get;
+        assert.deepEqual(persisted, Option.some(yield* decodeClientSettingsJson("{}")));
+        assert.isTrue(Option.isSome(persisted));
+        if (Option.isSome(persisted)) {
+          assert.equal(persisted.value.appearanceContrast, 120);
+          assert.equal(persisted.value.fontSizeInterface, 17);
+          assert.equal(persisted.value.showSkillsInSlashMenu, false);
+        }
+      }),
+    ),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
 });

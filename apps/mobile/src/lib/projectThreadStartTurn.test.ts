@@ -1,3 +1,7 @@
+// SCIENT-FORK:START restored-behavior-guards
+import { deriveThreadTitleFromPrompt } from "./projectThreadStartTurn";
+// SCIENT-FORK:END restored-behavior-guards
+
 import { ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -71,4 +75,12 @@ describe("project thread title", () => {
     expect(relaunched.message.text).toBe(wire.text);
     expect(relaunched.message.attachments).toEqual(uploadedAttachments);
   });
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: e7deb2aaf4 feat(web): cite assistant responses with inline citations (#9146)
+  it("keeps ordinary titles and the empty-prompt fallback", () => {
+    expect(deriveThreadTitleFromPrompt("  Fix\n the parser  ")).toBe("Fix the parser");
+    expect(deriveThreadTitleFromPrompt(" \n ")).toBe("New thread");
+  });
+  // SCIENT-FORK:END restored-behavior-guards
 });
