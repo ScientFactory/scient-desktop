@@ -3,17 +3,19 @@
  * How long one sync takes, stage by stage: 1, 10, 50 and 300 files coming
  * from Overleaf, and 1, 10 and 50 going to it, against a real local bare
  * repository with the real applier. The 300 case puts every file in one folder,
- * past the 256 folders one native lease can bind. Skipped unless asked for; run it from `apps/server`:
+ * past the 256 folders one native lease can bind. Run it in the explicit
+ * benchmark lane from `apps/server`:
  *
- *   SCIENT_OVERLEAF_BENCH=1 node_modules/.bin/vp test run src/scient/overleaf/OverleafSync.bench.test.ts --testTimeout=0
+ *   pnpm exec vp test bench --run --fileParallelism=false --maxWorkers=1 src/scient/overleaf/OverleafSync.bench.ts
  *
  * It prints one table. The numbers are wall-clock times on this machine; only
  * their comparison before and after a change means anything.
  */
-import { describe, expect, it } from "@effect/vitest";
+import { afterAll, describe, expect, it, type TestContext } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Tracer from "effect/Tracer";
 
+import { measureEffectBenchmark } from "../../testUtils/benchmark.testkit.ts";
 import { canApply, run, world, write } from "./OverleafCoordinator.testkit.ts";
 
 /** Spans worth a column: the sync's stages and the work inside them. */
@@ -60,7 +62,7 @@ const files = (count: number, prefix: string) =>
     ]),
   );
 
-const measure = (direction: "incoming" | "outgoing", count: number) =>
+const measure = (direction: "incoming" | "outgoing", count: number, bench: TestContext["bench"]) =>
   run(
     Effect.gen(function* () {
       const synced = { "main.tex": "\\documentclass{article}\n" };
@@ -71,9 +73,11 @@ const measure = (direction: "incoming" | "outgoing", count: number) =>
       });
       if (direction === "outgoing") yield* write(w.folder, files(count, "from-here"));
       const { tracer, totals } = timing();
-      const result = yield* w
-        .sync()
-        .pipe(Effect.withSpan("OverleafSyncBench.sync"), Effect.withTracer(tracer));
+      const [result] = yield* measureEffectBenchmark(
+        bench,
+        `${direction} ${count}`,
+        w.sync().pipe(Effect.withSpan("OverleafSyncBench.sync"), Effect.withTracer(tracer)),
+      );
       const total = totals.get("OverleafSyncBench.sync")?.ms;
       expect(result).toMatchObject({
         _tag: "applied",
@@ -97,25 +101,16 @@ const measure = (direction: "incoming" | "outgoing", count: number) =>
     }),
   );
 
-describe.skipIf(!canApply || process.env.SCIENT_OVERLEAF_BENCH !== "1")(
-  "Overleaf sync timing",
-  () => {
-    it.live.each(
-      (["incoming", "outgoing"] as const).flatMap((direction) =>
-        (direction === "incoming" ? [1, 10, 50, 300] : [1, 10, 50]).map((count) => ({
-          direction,
-          count,
-        })),
-      ),
-    )("$direction $count", ({ direction, count }) => measure(direction, count));
+describe.skipIf(!canApply)("Overleaf sync timing", () => {
+  for (const direction of ["incoming", "outgoing"] as const)
+    for (const count of direction === "incoming" ? [1, 10, 50, 300] : [1, 10, 50])
+      it(`${direction} ${count}`, ({ bench }) =>
+        Effect.runPromise(measure(direction, count, bench)));
 
-    it("prints the table", () => {
-      const header = ["sync", "total s", ...STAGES.map(([label]) => label), "git runs"];
-      // Straight to the terminal: the runner keeps console output of passing tests to itself.
-      process.stdout.write(
-        `\n${[header.join(" | "), header.map(() => "---").join(" | "), ...rows].join("\n")}\n\n`,
-      );
-      expect(rows.length).toBeGreaterThan(0);
-    });
-  },
-);
+  afterAll(() => {
+    const header = ["sync", "total s", ...STAGES.map(([label]) => label), "git runs"];
+    process.stdout.write(
+      `\n${[header.join(" | "), header.map(() => "---").join(" | "), ...rows].join("\n")}\n\n`,
+    );
+  });
+});
