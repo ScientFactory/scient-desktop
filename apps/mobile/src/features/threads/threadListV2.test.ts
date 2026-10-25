@@ -23,6 +23,9 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  // SCIENT-FORK:START unread-completion-tick
+  TurnId,
+  // SCIENT-FORK:END unread-completion-tick
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -1615,3 +1618,32 @@ describe("Working section beta", () => {
     ]);
   });
 });
+
+// SCIENT-FORK:START unread-completion-tick
+// regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
+it("keeps unread completion labels stable across a minute tick", () => {
+  const unread = makeThread({
+    id: ThreadId.make("tick-unread"),
+    title: "Unread completion",
+    latestCompletedAnswer: {
+      turnId: TurnId.make("tick-unread-run"),
+      messageId: MessageId.make("tick-unread-answer"),
+      completedAt: isoAt(BASE_MS - 5 * MINUTE_MS),
+    },
+    lastVisitedAt: isoAt(BASE_MS - 10 * MINUTE_MS),
+    latestRun: {
+      runId: RunId.make("tick-unread-run"),
+      status: "completed",
+      requestedAt: isoAt(BASE_MS - 6 * MINUTE_MS),
+      startedAt: isoAt(BASE_MS - 6 * MINUTE_MS),
+      completedAt: isoAt(BASE_MS - 5 * MINUTE_MS),
+      assistantMessageId: null,
+    },
+  });
+  const options = { snoozeEnvironmentIds: new Set<EnvironmentId>() };
+  const first = buildTickList([unread], BASE_MS, [], options)[0]!;
+  const next = buildTickList([unread], BASE_MS + MINUTE_MS, [], options)[0]!;
+  expect(first.type === "v2-thread" && first.timeLabel).toBe("");
+  expect(threadListV2ListItemsAreEqual(first, next)).toBe(true);
+});
+// SCIENT-FORK:END unread-completion-tick

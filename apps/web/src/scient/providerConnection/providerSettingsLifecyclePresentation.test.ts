@@ -559,6 +559,8 @@ describe("provider settings lifecycle presentation", () => {
 
   // One row per guard: floor, upper clamp, missing either side, zero total, non-finite.
   it.each([
+    // regression: 4f8a2ef99e fix(providers): install and update directly with quiet settings progress
+    [0, 100, 0],
     [42, 100, 42],
     [999, 1000, 99],
     [110, 100, 100],

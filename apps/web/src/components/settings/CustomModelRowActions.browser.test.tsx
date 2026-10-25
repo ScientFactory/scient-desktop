@@ -6,7 +6,11 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
-import { CustomModelRowActions, type CustomModelTestNotice } from "./CustomModelRowActions";
+import {
+  CustomModelRowActions,
+  CustomModelTestGuidance,
+  type CustomModelTestNotice,
+} from "./CustomModelRowActions";
 
 async function _cleanupFixture0(_fixture: _Fixture) {
   await _fixture.root0?.unmount();
@@ -77,6 +81,30 @@ it("offers Re-enter key when the key is missing and the agent reporting it is si
   expect(onReenterKey).toHaveBeenCalledOnce();
   await userEvent.click(page.getByRole("button", { name: "Check again" }));
   expect(onCheckAgain).toHaveBeenCalledOnce();
+});
+
+// regression: e2fc205c51 feat(droid): custom models and setup say what will happen, and document it
+it("says how to make the model testable when no enabled agent can run a Test", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  _fixture.host = document.createElement("div");
+  document.body.append(_fixture.host);
+  _fixture.root0 = _fixture.stack.use(
+    await _fixtureRender(null, { container: _fixture.host, router: false }),
+  );
+  await _fixture.root0.rerender(<CustomModelTestGuidance testAgents={[]} agents={[pi, droid]} />);
+  await expect
+    .element(
+      page.getByText(
+        "To test this model, select an enabled agent under Use with (Edit): Pi or Droid.",
+      ),
+    )
+    .toBeVisible();
+  await _fixture.root0.rerender(
+    <CustomModelTestGuidance testAgents={[droid]} agents={[pi, droid]} />,
+  );
+  await expect.poll(() => _fixture.host?.textContent).toBe("");
 });
 
 it("keeps the agent choice after a failed Test", async () => {

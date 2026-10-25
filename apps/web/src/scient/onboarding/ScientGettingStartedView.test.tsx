@@ -73,6 +73,18 @@ describe("GettingStartedPreferencesStep", () => {
 });
 
 describe("GettingStartedStartStep", () => {
+  // regression: 4269279672 Merge T3 upstream through 272d6d747e with Scient preservation
+  it("offers optional import alongside the unchanged Add project action", () => {
+    const markup = renderToStaticMarkup(
+      <GettingStartedStartStep
+        onAddProject={() => undefined}
+        importAction={<button>Import projects and conversations</button>}
+      />,
+    );
+    expect(markup).toContain("Add project");
+    expect(markup).toContain("Import projects and conversations");
+    expect(markup).not.toContain("required");
+  });
   it("requires a project before starting work", () => {
     const markup = renderToStaticMarkup(<GettingStartedStartStep onAddProject={() => undefined} />);
 

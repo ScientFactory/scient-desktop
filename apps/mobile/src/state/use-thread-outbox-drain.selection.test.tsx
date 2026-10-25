@@ -370,6 +370,11 @@ it.each([
   },
 );
 it.each([
+  // regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
+  {
+    current: baseSelection,
+    captured: { ...baseSelection, instanceId: ProviderInstanceId.make("codex-second") },
+  },
   { current: baseSelection, captured: { ...baseSelection, model: "model-b" } },
   {
     current: { ...baseSelection, options: [{ id: "search", value: true }] },

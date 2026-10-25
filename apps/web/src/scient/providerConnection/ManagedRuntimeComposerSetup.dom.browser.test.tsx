@@ -107,6 +107,24 @@ describe("Pi composer setup", () => {
     expect(buttons(markup)).toEqual([{ variant: "ghost-primary", label: "Connect models" }]);
   });
 
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
+  it("offers installation, or explains when this computer cannot install it", async () => {
+    await using _fixture = _createFixture();
+
+    const missing = withRuntime(
+      { ...base, installed: false, version: null, status: "warning", models: [] },
+      { source: "missing", actions: ["install"], managedVersion: null },
+    );
+    const markup = await render(_fixture, missing);
+    expect(markup).toContain(`Install ${name}`);
+    expect(markup).toContain(`${name} is not installed on this Mac.`);
+    expect(buttons(markup)).toEqual([{ variant: "ghost-primary", label: "Install" }]);
+
+    const unsupported = await render(_fixture, withRuntime(missing, { actions: [] }));
+    expect(unsupported).toContain(`existing ${name} installation`);
+    expect(buttons(unsupported)).toEqual([]);
+  });
+
   it("puts Connect models inside the frame when no model is available", async () => {
     await using _fixture = _createFixture();
 

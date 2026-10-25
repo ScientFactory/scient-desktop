@@ -195,6 +195,22 @@ describe("DesktopLinuxUrlHandler", () => {
     assert.include(entry, "Icon=/home/al ice/icons/T3\\\\x.png");
   });
 
+  // regression: 29d46101f3 Linux URL handler quotes the Exec path only when it must (#16670)
+  it.each([
+    {
+      execTarget: "/opt/t3%20code/t3code.AppImage",
+      execLine: "Exec=/opt/t3%%20code/t3code.AppImage %U",
+    },
+  ])("renders the handler Exec line for $execTarget", ({ execTarget, execLine }) => {
+    const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+      displayName: "T3 Code",
+      execTarget,
+      scheme: "t3code",
+    });
+
+    assert.include(entry.split("\n"), execLine);
+  });
+
   // regression: 69dfb7f09a fix(desktop): claim the t3code:// scheme default on Linux at startup (#5054)
   it("carries structured context on registration errors", () => {
     const writeError = new DesktopLinuxUrlHandler.DesktopLinuxUrlHandlerRegistrationError({

@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
@@ -65,7 +66,7 @@ const readWithLogs = (fileSystemLayer: Layer.Layer<FileSystem.FileSystem>) => {
 };
 
 describe("DesktopClientSettings diagnostics", () => {
-  // regression: ad2cb1dd57 [codex] Diagnose desktop client settings read failures (#3432) - sole guard: treating a missing file as a read failure passed every other desktop test
+  // regression: ad2cb1dd57 [codex] Diagnose desktop client settings read failures (#3432)
   it.effect("treats a missing settings file as expected without warning", () =>
     Effect.gen(function* () {
       const result = yield* readWithLogs(FileSystem.layerNoop({}));
@@ -73,6 +74,67 @@ describe("DesktopClientSettings diagnostics", () => {
       if (result.result._tag !== "Success") return assert.fail("expected a successful read");
       assert.isTrue(Option.isNone(result.result.success));
       assert.deepEqual(result.records, []);
+    }),
+  );
+
+  // regression: ad2cb1dd57 [codex] Diagnose desktop client settings read failures (#3432)
+  it.effect("reports non-missing filesystem failures and logs the settings path", () => {
+    const permissionError = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "readFileString",
+      pathOrDescriptor: `${baseDir}/userdata/client-settings.json`,
+    });
+
+    return Effect.gen(function* () {
+      const result = yield* readWithLogs(
+        FileSystem.layerNoop({
+          readFileString: () => Effect.fail(permissionError),
+        }),
+      );
+
+      if (result.result._tag !== "Failure") return assert.fail("expected a read failure");
+      assert.instanceOf(
+        result.result.failure,
+        DesktopClientSettings.DesktopClientSettingsReadError,
+      );
+      assert.strictEqual(result.result.failure.cause, permissionError);
+      assert.equal(result.records.length, 1);
+      assert.deepEqual(result.records[0]?.message, [
+        "Could not read desktop client settings.",
+        permissionError,
+      ]);
+      assert.equal(result.records[0]?.annotations.settingsPath, result.settingsPath);
+    });
+  });
+
+  // regression: ad2cb1dd57 [codex] Diagnose desktop client settings read failures (#3432)
+  it.effect("reports malformed settings documents and logs the settings path", () =>
+    Effect.gen(function* () {
+      const result = yield* readWithLogs(
+        FileSystem.layerNoop({
+          readFileString: () => Effect.succeed("{not-json"),
+        }),
+      );
+
+      if (result.result._tag !== "Failure") return assert.fail("expected a decode failure");
+      assert.instanceOf(
+        result.result.failure,
+        DesktopClientSettings.DesktopClientSettingsReadError,
+      );
+      assert.equal(result.result.failure.operation, "decode-document");
+      assert.equal(result.records.length, 1);
+      const message = result.records[0]?.message;
+      if (!Array.isArray(message)) {
+        return assert.fail("expected structured warning arguments");
+      }
+      assert.equal(message[0], "Could not decode desktop client settings.");
+      const schemaError = message[1];
+      if (schemaError === null || typeof schemaError !== "object") {
+        return assert.fail("expected the schema error in the warning");
+      }
+      assert.equal("_tag" in schemaError ? schemaError._tag : undefined, "SchemaError");
+      assert.equal(result.records[0]?.annotations.settingsPath, result.settingsPath);
     }),
   );
 });
