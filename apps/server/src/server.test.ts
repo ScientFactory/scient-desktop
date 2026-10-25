@@ -1,11 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - HTTP router integration uses native transport boundaries.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import * as NodeHttp from "node:http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-
 import { VcsExecutableUnavailableError, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as PlatformError from "effect/PlatformError";
 import {
@@ -36,7 +35,9 @@ import {
   ThreadSectionId,
   GitCommandError,
   VcsCheckpointUnavailableError,
+  KeybindingRule,
   MessageId,
+  ExternalLauncherCommandNotFoundError,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2HttpThreadBoundedSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
@@ -46,6 +47,7 @@ import {
   COMPACT_THREAD_SNAPSHOT_FORMAT,
   THREAD_SNAPSHOT_FORMAT_HEADER,
   OrchestrationV2ThreadHistoryPage,
+  TerminalNotRunningError,
   TextGenerationError,
   OrchestrationDispatchCommandError,
   ScientThreadQueueOperationError,
@@ -60,6 +62,7 @@ import {
   ProviderSessionId,
   type ProviderInstallState,
   ProviderSetupError,
+  ResolvedKeybindingRule,
   type ServerProvider,
   type ServerLifecycleStreamEvent,
   ThreadId,
@@ -69,6 +72,7 @@ import {
   WS_METHODS,
   WsRpcGroup,
   type WorktreeSetupSnapshot,
+  EditorId,
 } from "@t3tools/contracts";
 import {
   computeDpopAccessTokenHash,
@@ -124,90 +128,14 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as Socket from "effect/socket/Socket";
 import * as SqlClient from "effect/sql/SqlClient";
 import { afterAll, beforeAll, vi } from "vite-plus/test";
-
 import {
   nativeFilePublicationCapabilities,
   resolveNativeFilePublicationHelperPath,
 } from "./scient/workspace/NativeFilePublication.ts";
-// SCIENT-FORK:START — ignored-file RPC races exercise the shipped native boundary.
 import {
   filePublicationTestHelper,
   nativePublicationHost,
 } from "./scient/workspace/fileExchange.testkit.ts";
-const ignoredReadHelper = await filePublicationTestHelper();
-const ignoredReadNative = await nativePublicationHost();
-// SCIENT-FORK:END
-
-const decodeWorkflowSubagent = Schema.decodeUnknownSync(OrchestrationV2SubagentJson);
-const encodeWorkflowSubagent = Schema.encodeSync(OrchestrationV2SubagentJson);
-const decodeWorkflowTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
-const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
-// Retained history exists only where the resolved helper grants native publication authority.
-const nativePublicationServer = await (async () => {
-  const helper = await resolveNativeFilePublicationHelperPath();
-  if (helper === undefined) return false;
-  const capabilities = await nativeFilePublicationCapabilities(helper);
-  return (
-    capabilities.strictCurrentRoot &&
-    capabilities.publicationLease &&
-    capabilities.sharedPublicationLease &&
-    capabilities.exclusiveMove &&
-    capabilities.exclusiveLink
-  );
-})();
-const SUCCESSFUL_GIT_EXECUTION = {
-  exitCode: ChildProcessSpawner.ExitCode(0),
-  stdout: "",
-  stderr: "",
-  stdoutTruncated: false,
-  stderrTruncated: false,
-};
-const decodeTransferThreadSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2HttpThreadBoundedSnapshot)),
-);
-const decodeLegacyThreadBoundedSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
-);
-const encodeTurnItemJson = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem));
-const decodeQueueOperationError = Schema.decodeUnknownEffect(ScientThreadQueueOperationError);
-const decodeQueueSnapshot = Schema.decodeUnknownEffect(ScientThreadQueueSnapshot);
-const decodeSnapshotWireAssertions = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      snapshotFormat: Schema.optionalKey(Schema.String),
-      projection: Schema.Struct({
-        turnItems: Schema.Array(Schema.Unknown),
-        visibleTurnItems: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
-      }),
-    }),
-  ),
-);
-const decodeTransferHistoryPage = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage)),
-);
-const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellSnapshot)),
-);
-const encodeTestJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
-
-// The server-router suite exercises the inherited cloud protocol directly.
-// Opt this test file into the otherwise-disabled D4 routes and restore the
-// caller's environment when the file completes; this test-only switch does
-// not make public cloud configuration appear in the route builder.
-const previousScientNextCloudRouteTest = process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST;
-const previousNodeEnv = process.env.NODE_ENV;
-beforeAll(() => {
-  process.env.NODE_ENV = "test";
-  process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST = "true";
-});
-afterAll(() => {
-  if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
-  else process.env.NODE_ENV = previousNodeEnv;
-  if (previousScientNextCloudRouteTest === undefined)
-    delete process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST;
-  else process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST = previousScientNextCloudRouteTest;
-});
-
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import type { DroidAcpRuntime } from "./provider/acp/DroidAcpSupport.ts";
@@ -215,9 +143,7 @@ import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
 import { makeDroidTextGeneration } from "./textGeneration/DroidTextGeneration.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, layerMakeRoutes } from "./server.ts";
-// SCIENT-FORK:START — the real extensions owners, as the server composes them.
 import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.ts";
-// SCIENT-FORK:END
 import {
   coalesceProviderStatusUpdates,
   resolveAvailableEditorsForConfig,
@@ -345,7 +271,6 @@ import * as Data from "effect/Data";
 import { registerAnalysisRpcTests } from "./scient/analysis/AnalysisRpcServerTests.ts";
 import { registerComputeRpcTests } from "./scient/compute/ComputeRpcServerTests.ts";
 import { registerMarkdownTransportTests } from "./scient/markdown/MarkdownTransportServerTests.ts";
-
 import {
   measureHttpGet,
   attributeSnapshotTransfer,
@@ -375,6 +300,86 @@ import {
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { DEFAULT_SIGNAL_EXPORT, layerOtlpSerialization } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+
+// @effect-diagnostics nodeBuiltinImport:off
+
+// SCIENT-FORK:START — ignored-file RPC races exercise the shipped native boundary.
+const ignoredReadHelper = await filePublicationTestHelper();
+const ignoredReadNative = await nativePublicationHost();
+// SCIENT-FORK:END
+
+const decodeWorkflowSubagent = Schema.decodeUnknownSync(OrchestrationV2SubagentJson);
+const encodeWorkflowSubagent = Schema.encodeSync(OrchestrationV2SubagentJson);
+const decodeWorkflowTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
+const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+// Retained history exists only where the resolved helper grants native publication authority.
+const nativePublicationServer = await (async () => {
+  const helper = await resolveNativeFilePublicationHelperPath();
+  if (helper === undefined) return false;
+  const capabilities = await nativeFilePublicationCapabilities(helper);
+  return (
+    capabilities.strictCurrentRoot &&
+    capabilities.publicationLease &&
+    capabilities.sharedPublicationLease &&
+    capabilities.exclusiveMove &&
+    capabilities.exclusiveLink
+  );
+})();
+const SUCCESSFUL_GIT_EXECUTION = {
+  exitCode: ChildProcessSpawner.ExitCode(0),
+  stdout: "",
+  stderr: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+};
+const decodeTransferThreadSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2HttpThreadBoundedSnapshot)),
+);
+const decodeLegacyThreadBoundedSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
+);
+const encodeTurnItemJson = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem));
+const decodeQueueOperationError = Schema.decodeUnknownEffect(ScientThreadQueueOperationError);
+const decodeQueueSnapshot = Schema.decodeUnknownEffect(ScientThreadQueueSnapshot);
+const decodeSnapshotWireAssertions = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      snapshotFormat: Schema.optionalKey(Schema.String),
+      projection: Schema.Struct({
+        turnItems: Schema.Array(Schema.Unknown),
+        visibleTurnItems: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+      }),
+    }),
+  ),
+);
+const decodeTransferHistoryPage = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage)),
+);
+const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellSnapshot)),
+);
+const encodeTestJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+// The server-router suite exercises the inherited cloud protocol directly.
+// Opt this test file into the otherwise-disabled D4 routes and restore the
+// caller's environment when the file completes; this test-only switch does
+// not make public cloud configuration appear in the route builder.
+const previousScientNextCloudRouteTest = process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST;
+const previousNodeEnv = process.env.NODE_ENV;
+beforeAll(() => {
+  process.env.NODE_ENV = "test";
+  process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST = "true";
+});
+afterAll(() => {
+  if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = previousNodeEnv;
+  if (previousScientNextCloudRouteTest === undefined)
+    delete process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST;
+  else process.env.SCIENT_NEXT_CLOUD_ROUTE_TEST = previousScientNextCloudRouteTest;
+});
+
+// SCIENT-FORK:START — the real extensions owners, as the server composes them.
+// SCIENT-FORK:END
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -13872,6 +13877,784 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(failed.messages.length, 1);
         assert.equal(failed.runs[0]?.status, "failed");
       }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: 27e6cc27fe perf(server): cache and stream static web assets (#9669)
+
+  it.effect("binds static metadata and bytes to one file across atomic replacement", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-replace-" });
+      const beforeOpenPath = path.join(staticDir, "before-open.txt");
+      const afterOpenPath = path.join(staticDir, "after-open.txt");
+      const afterOpenSnapshotPath = path.join(staticDir, "after-open-snapshot.txt");
+      const windowsHost = HostProcess.Platform.defaultValue() === "win32";
+      const original = "original bytes";
+      const replacement = "replacement bytes with a different size";
+      for (const filePath of [beforeOpenPath, afterOpenPath]) {
+        yield* fileSystem.writeFileString(filePath, original);
+        yield* fileSystem.writeFileString(`${filePath}.next`, replacement);
+      }
+      if (windowsHost) {
+        // Windows cannot replace an open destination, so model the race with its original handle.
+        yield* fileSystem.writeFileString(afterOpenSnapshotPath, original);
+      }
+      const replaced = new Set<string>();
+      const replaceOnce = Effect.fnUntraced(function* (filePath: string) {
+        if (replaced.has(filePath)) return;
+        replaced.add(filePath);
+        yield* fileSystem.rename(`${filePath}.next`, filePath);
+      });
+      const replacingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        stat: (filePath) =>
+          fileSystem
+            .stat(filePath)
+            .pipe(
+              Effect.tap(() => (filePath === beforeOpenPath ? replaceOnce(filePath) : Effect.void)),
+            ),
+        open: (filePath, options) =>
+          fileSystem
+            .open(
+              filePath === afterOpenPath && windowsHost ? afterOpenSnapshotPath : filePath,
+              options,
+            )
+            .pipe(
+              Effect.tap(() => (filePath === afterOpenPath ? replaceOnce(filePath) : Effect.void)),
+            ),
+      });
+      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
+        Effect.provideService(FileSystem.FileSystem, replacingFileSystem),
+      );
+
+      for (const [name, expected] of [
+        ["before-open.txt", replacement],
+        ["after-open.txt", original],
+      ] as const) {
+        const response = yield* HttpClient.get(`/${name}`, {
+          headers: { "accept-encoding": "identity" },
+        });
+        assert.equal(response.status, 200);
+        assert.equal(response.headers["content-length"], String(expected.length));
+        assert.isTrue(response.headers.etag?.startsWith(`W/"${expected.length.toString(16)}-`));
+        assert.equal(yield* response.text, expected);
+        assert.isTrue(replaced.has(path.join(staticDir, name)));
+        assert.equal(yield* fileSystem.readFileString(path.join(staticDir, name)), replacement);
+      }
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: 27e6cc27fe perf(server): cache and stream static web assets (#9669)
+
+  it.effect("closes static file handles after GET, HEAD, 304, and request cancellation", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-close-" });
+      const filePath = path.join(staticDir, "app.txt");
+      const body = "file content\n".repeat(1024);
+      yield* fileSystem.writeFileString(filePath, body);
+      const closed = yield* Queue.unbounded<FileSystem.File>();
+      const blocked = yield* Deferred.make<void>();
+      const active = new Set<FileSystem.File>();
+      let blockAfterOpen = false;
+      let bodyReads = 0;
+      const trackedFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        open: (candidate, options) =>
+          Effect.gen(function* () {
+            if (candidate !== filePath) return yield* fileSystem.open(candidate, options);
+            let opened: FileSystem.File | undefined;
+            // Registered first, so this signal runs after the real descriptor-close finalizer.
+            yield* Effect.addFinalizer(() =>
+              Effect.gen(function* () {
+                if (opened === undefined) return;
+                active.delete(opened);
+                yield* Queue.offer(closed, opened);
+              }),
+            );
+            const file = yield* fileSystem.open(candidate, options);
+            opened = file;
+            active.add(file);
+            if (blockAfterOpen) {
+              yield* Deferred.succeed(blocked, undefined);
+              return yield* Effect.never;
+            }
+            return new Proxy(file, {
+              get(target, key) {
+                if (key === "readAlloc") {
+                  return (size: number) => {
+                    bodyReads += 1;
+                    return target.readAlloc(size);
+                  };
+                }
+                return Reflect.get(target, key, target);
+              },
+            });
+          }),
+      });
+      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
+        Effect.provideService(FileSystem.FileSystem, trackedFileSystem),
+      );
+
+      const get = yield* HttpClient.get("/app.txt");
+      assert.equal(yield* get.text, body);
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+      assert.isAbove(bodyReads, 0);
+      const readsAfterGet = bodyReads;
+
+      const head = yield* HttpClient.head("/app.txt", { headers: { "accept-encoding": "gzip" } });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers["content-encoding"], "gzip");
+      assert.equal(yield* head.text, "");
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+      assert.equal(bodyReads, readsAfterGet);
+
+      const unchanged = yield* HttpClient.get("/app.txt", {
+        headers: { "if-none-match": get.headers.etag! },
+      });
+      assert.equal(unchanged.status, 304);
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+      assert.equal(bodyReads, readsAfterGet);
+
+      blockAfterOpen = true;
+      const cancelled = yield* HttpClient.get("/app.txt").pipe(Effect.forkChild);
+      yield* Deferred.await(blocked);
+      assert.equal(active.size, 1);
+      yield* Fiber.interrupt(cancelled);
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
+  it.effect("routes websocket rpc server.upsertKeybinding", () =>
+    Effect.gen(function* () {
+      const rule: KeybindingRule = {
+        command: "terminal.toggle",
+        key: "ctrl+k",
+      };
+      const resolved: ResolvedKeybindingRule = {
+        command: "terminal.toggle",
+        shortcut: {
+          key: "k",
+          metaKey: false,
+          ctrlKey: true,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          keybindings: {
+            upsertKeybindingRule: () => Effect.succeed([resolved]),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverUpsertKeybinding](rule)),
+      );
+
+      assert.deepEqual(response.issues, []);
+      assert.deepEqual(response.keybindings, [resolved]);
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: 0e38870647 Add keybindings settings editor (#2533)
+
+  it.effect("routes websocket rpc server.removeKeybinding", () =>
+    Effect.gen(function* () {
+      const rule: KeybindingRule = {
+        command: "terminal.toggle",
+        key: "ctrl+k",
+      };
+      const resolved: ResolvedKeybindingRule = {
+        command: "terminal.toggle",
+        shortcut: {
+          key: "j",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          keybindings: {
+            removeKeybindingRule: () => Effect.succeed([resolved]),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverRemoveKeybinding](rule)),
+      );
+
+      assert.deepEqual(response.issues, []);
+      assert.deepEqual(response.keybindings, [resolved]);
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
+  it.effect("routes websocket rpc projects.searchEntries", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-search-" });
+      yield* fs.writeFileString(
+        path.join(workspaceDir, "needle-file.ts"),
+        "export const needle = 1;",
+      );
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsSearchEntries]({
+            cwd: workspaceDir,
+            query: "needle",
+            limit: 10,
+          }),
+        ),
+      );
+
+      assert.isAtLeast(response.entries.length, 1);
+      assert.isTrue(response.entries.some((entry) => entry.path === "needle-file.ts"));
+      assert.equal(response.truncated, false);
+    }).pipe(Effect.provide(NodeHttpServerTest), TestClock.withLive),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
+  it.effect("routes websocket rpc shell.openInEditor", () =>
+    Effect.gen(function* () {
+      let openedInput: { cwd: string; editor: EditorId } | null = null;
+      yield* buildAppUnderTest({
+        layers: {
+          externalLauncher: {
+            launchEditor: (input) =>
+              Effect.sync(() => {
+                openedInput = input;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.shellOpenInEditor]({
+            cwd: "/tmp/project",
+            editor: "cursor",
+          }),
+        ),
+      );
+
+      assert.deepEqual(openedInput, { cwd: "/tmp/project", editor: "cursor" });
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
+  it.effect("routes websocket rpc shell.openInEditor errors", () =>
+    Effect.gen(function* () {
+      const externalLauncherError = new ExternalLauncherCommandNotFoundError({
+        editor: "cursor",
+        command: "cursor",
+      });
+      yield* buildAppUnderTest({
+        layers: {
+          externalLauncher: {
+            launchEditor: () => Effect.fail(externalLauncherError),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.shellOpenInEditor]({
+            cwd: "/tmp/project",
+            editor: "cursor",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertFailure(result, externalLauncherError);
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
+  it.effect("routes websocket rpc git methods", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          cwd: "/tmp/repo",
+        },
+        layers: {
+          vcsDriver: {
+            isInsideWorkTree: () => Effect.succeed(true),
+          },
+          gitManager: {
+            createWorktree: () =>
+              Effect.succeed({
+                worktree: { path: "/tmp/wt", refName: "feature/demo" },
+              }),
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+            invalidateStatus: () => Effect.void,
+            localStatus: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: true,
+                refName: "main",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+              }),
+            remoteStatus: () =>
+              Effect.succeed({
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                pr: null,
+              }),
+            status: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: true,
+                refName: "main",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                pr: null,
+              }),
+            runStackedAction: (input, options) =>
+              Effect.gen(function* () {
+                const result = {
+                  action: "commit" as const,
+                  branch: { status: "skipped_not_requested" as const },
+                  commit: {
+                    status: "created" as const,
+                    commitSha: "abc123",
+                    subject: "feat: demo",
+                  },
+                  push: { status: "skipped_not_requested" as const },
+                  pr: { status: "skipped_not_requested" as const },
+                  toast: {
+                    title: "Committed abc123",
+                    description: "feat: demo",
+                    cta: {
+                      kind: "run_action" as const,
+                      label: "Push",
+                      action: {
+                        kind: "push" as const,
+                      },
+                    },
+                  },
+                };
+
+                yield* (
+                  options?.progressReporter?.publish({
+                    actionId: options.actionId ?? input.actionId,
+                    cwd: input.cwd,
+                    action: input.action,
+                    kind: "phase_started",
+                    phase: "commit",
+                    label: "Committing...",
+                  }) ?? Effect.void
+                );
+
+                yield* (
+                  options?.progressReporter?.publish({
+                    actionId: options.actionId ?? input.actionId,
+                    cwd: input.cwd,
+                    action: input.action,
+                    kind: "action_finished",
+                    result,
+                  }) ?? Effect.void
+                );
+
+                return result;
+              }),
+            resolvePullRequest: () =>
+              Effect.succeed({
+                pullRequest: {
+                  number: 1,
+                  title: "Demo PR",
+                  url: "https://example.com/pr/1",
+                  baseBranch: "main",
+                  headBranch: "feature/demo",
+                  state: "open",
+                },
+              }),
+            preparePullRequestThread: () =>
+              Effect.succeed({
+                pullRequest: {
+                  number: 1,
+                  title: "Demo PR",
+                  url: "https://example.com/pr/1",
+                  baseBranch: "main",
+                  headBranch: "feature/demo",
+                  state: "open",
+                },
+                branch: "feature/demo",
+                worktreePath: null,
+                isOnPullRequestHead: true,
+              }),
+          },
+          gitVcsDriver: {
+            pullCurrentBranch: () =>
+              Effect.succeed({
+                status: "pulled",
+                refName: "main",
+                upstreamRef: "origin/main",
+              }),
+            listRefs: () =>
+              Effect.succeed({
+                refs: [
+                  {
+                    name: "main",
+                    current: true,
+                    isDefault: true,
+                    worktreePath: null,
+                  },
+                ],
+                isRepo: true,
+                hasPrimaryRemote: true,
+                nextCursor: null,
+                totalCount: 1,
+              }),
+            removeWorktree: () => Effect.void,
+            createRef: (input) => Effect.succeed({ refName: input.refName }),
+            switchRef: (input) => Effect.succeed({ refName: input.refName }),
+          },
+          vcsStatusBroadcaster: {
+            refreshStatus: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: true,
+                refName: "main",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                pr: null,
+              }),
+          },
+          reviewService: {
+            getDiffPreview: (input) =>
+              Effect.succeed({
+                cwd: input.cwd,
+                generatedAt: DateTime.nowUnsafe(),
+                sources: [
+                  {
+                    id: "working-tree",
+                    kind: "working-tree",
+                    title: "Dirty worktree",
+                    baseRef: "HEAD",
+                    headRef: null,
+                    diff: "dirty-diff",
+                    diffHash: "hash-dirty",
+                    truncated: false,
+                  },
+                  {
+                    id: "branch-range",
+                    kind: "branch-range",
+                    title: "Against main",
+                    baseRef: "main",
+                    headRef: "feature/demo",
+                    diff: "base-diff",
+                    diffHash: "hash-base",
+                    truncated: false,
+                  },
+                ],
+              }),
+            getDiffFileContents: () =>
+              Effect.succeed({
+                oldContents: "before\n",
+                newContents: "after\n",
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+
+      const pull = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.vcsPull]({ cwd: "/tmp/repo" })),
+      );
+      assert.equal(pull.status, "pulled");
+
+      const refreshedStatus = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsRefreshStatus]({ cwd: "/tmp/repo" }),
+        ),
+      );
+      assert.equal(refreshedStatus.isRepo, true);
+
+      const stackedEvents = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitRunStackedAction]({
+            actionId: "action-1",
+            cwd: "/tmp/repo",
+            action: "commit",
+          }).pipe(
+            Stream.runCollect,
+            Effect.map((events) => Array.from(events)),
+          ),
+        ),
+      );
+      const lastStackedEvent = stackedEvents.at(-1);
+      assert.equal(lastStackedEvent?.kind, "action_finished");
+      if (lastStackedEvent?.kind === "action_finished") {
+        assert.equal(lastStackedEvent.result.action, "commit");
+      }
+
+      const resolvedPr = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitResolvePullRequest]({
+            cwd: "/tmp/repo",
+            reference: "1",
+          }),
+        ),
+      );
+      assert.equal(resolvedPr.pullRequest.number, 1);
+
+      const prepared = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.gitPreparePullRequestThread]({
+            cwd: "/tmp/repo",
+            reference: "1",
+            mode: "local",
+          }),
+        ),
+      );
+      assert.equal(prepared.branch, "feature/demo");
+
+      const refs = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.vcsListRefs]({ cwd: "/tmp/repo" })),
+      );
+      assert.equal(refs.refs[0]?.name, "main");
+
+      const worktree = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsCreateWorktree]({
+            cwd: "/tmp/repo",
+            refName: "main",
+            path: null,
+          }),
+        ),
+      );
+      assert.equal(worktree.worktree.refName, "feature/demo");
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsRemoveWorktree]({
+            cwd: "/tmp/repo",
+            path: "/tmp/wt",
+          }),
+        ),
+      );
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsCreateRef]({
+            cwd: "/tmp/repo",
+            refName: "feature/new",
+          }),
+        ),
+      );
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsSwitchRef]({
+            cwd: "/tmp/repo",
+            refName: "main",
+          }),
+        ),
+      );
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsInit]({
+            cwd: "/tmp/repo",
+          }),
+        ),
+      );
+
+      const diffPreview = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.reviewGetDiffPreview]({ cwd: "/tmp/repo" }),
+        ),
+      );
+      assert.equal(diffPreview.sources[0]?.diff, "dirty-diff");
+
+      const diffFileContents = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.reviewGetDiffFileContents]({
+            cwd: "/tmp/repo",
+            sourceKind: "working-tree",
+            changeType: "change",
+            baseRef: "HEAD",
+            headRef: null,
+            oldPath: "README.md",
+            newPath: "README.md",
+          }),
+        ),
+      );
+      assert.equal(diffFileContents.oldContents, "before\n");
+      assert.equal(diffFileContents.newContents, "after\n");
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
+  it.effect("routes websocket rpc terminal methods", () =>
+    Effect.gen(function* () {
+      const snapshot = {
+        threadId: "thread-1",
+        terminalId: "default",
+        cwd: "/tmp/project",
+        worktreePath: null,
+        status: "running" as const,
+        pid: 1234,
+        history: "",
+        exitCode: null,
+        exitSignal: null,
+        label: "Primary",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          terminalManager: {
+            open: () => Effect.succeed(snapshot),
+            write: () => Effect.void,
+            resize: () => Effect.void,
+            clear: () => Effect.void,
+            restart: () => Effect.succeed(snapshot),
+            close: () => Effect.void,
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+
+      const opened = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.terminalOpen]({
+            threadId: "thread-1",
+            terminalId: "default",
+            cwd: "/tmp/project",
+          }),
+        ),
+      );
+      assert.equal(opened.terminalId, "default");
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.terminalWrite]({
+            threadId: "thread-1",
+            terminalId: "default",
+            data: "echo hi\n",
+          }),
+        ),
+      );
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.terminalResize]({
+            threadId: "thread-1",
+            terminalId: "default",
+            cols: 120,
+            rows: 40,
+          }),
+        ),
+      );
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.terminalClear]({
+            threadId: "thread-1",
+            terminalId: "default",
+          }),
+        ),
+      );
+
+      const restarted = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.terminalRestart]({
+            threadId: "thread-1",
+            terminalId: "default",
+            cwd: "/tmp/project",
+            cols: 120,
+            rows: 40,
+          }),
+        ),
+      );
+      assert.equal(restarted.terminalId, "default");
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.terminalClose]({
+            threadId: "thread-1",
+            terminalId: "default",
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  // regression: d8aa2f85df chore: effect rpc and layer based startup (#929)
+
+  it.effect("routes websocket rpc terminal.write errors", () =>
+    Effect.gen(function* () {
+      const terminalError = new TerminalNotRunningError({
+        threadId: "thread-1",
+        terminalId: "default",
+      });
+      yield* buildAppUnderTest({
+        layers: {
+          terminalManager: {
+            write: () => Effect.fail(terminalError),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.terminalWrite]({
+            threadId: "thread-1",
+            terminalId: "default",
+            data: "echo fail\n",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertFailure(result, terminalError);
+    }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 });
 
