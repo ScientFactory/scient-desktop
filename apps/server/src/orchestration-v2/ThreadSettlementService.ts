@@ -579,6 +579,7 @@ export const make = Effect.gen(function* () {
       if (thread.settledOverride !== "settled") return;
       const settledAtMs = toMillis(thread.settledAt);
       if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
+      // SCIENT-FORK:START settle-command admission: lock, lifecycle recheck, once-only receipt.
       settleActionRunAt.set(threadId, settledAtMs);
       // The command starts after the shell is ready, so a refused or failed start returns the receipt.
       const releaseReceipt = Effect.sync(() => {
@@ -606,13 +607,15 @@ export const make = Effect.gen(function* () {
                   current.value.worktreePath !== worktreePath
                 )
                   return yield* releaseReceipt.pipe(Effect.as(false));
-                yield* write;
+                // The write runs after runForThread returns, outside its error handler.
+                yield* write.pipe(Effect.onError(() => releaseReceipt));
                 return true;
               }),
             ),
           observeCompletion: {},
         })
         .pipe(Effect.onError(() => releaseReceipt));
+      // SCIENT-FORK:END
       if (run.status === "started" && run.completion) {
         yield* run.completion.pipe(Effect.forkDetach);
       }
