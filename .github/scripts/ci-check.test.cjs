@@ -49,24 +49,38 @@ test("every conditional lane needs explicit false outputs from a successful Chan
   }
 });
 
-test("focused qualification and queue reuse require their successful source and reporters", () => {
-  for (const mode of ["focused", "reused"]) {
-    const f = normal(mode === "focused" ? "pull_request" : "merge_group");
-    for (const job of ["changes", "lint", ...Object.keys(GATED)]) f.needs[job].result = "skipped";
-    if (mode === "focused") {
+test("only exact queue reuse can suppress unconditional suites and requires reporters", () => {
+  const f = normal("merge_group");
+  for (const job of [
+    "changes",
+    "lint",
+    "build",
+    "test",
+    "test_web",
+    "test_server",
+    ...Object.keys(GATED),
+  ])
+    f.needs[job].result = "skipped";
+  f.needs.queue_ci.outputs = { reused: "true", web_reports: "true", server_reports: "true" };
+  for (const job of ["test_web_reused", "test_server_reused"]) f.needs[job].result = "success";
+  assert.deepEqual(failures(f), []);
+  f.needs.test_web_reused.result = "skipped";
+  assert.ok(failures(f).some((error) => error.includes("test_web_reused")));
+  f.needs.test_web_reused.result = "success";
+  f.needs.queue_ci.result = "failure";
+  assert.ok(failures(f).some((error) => error.includes("lint: skipped")));
+});
+
+test("false change outputs and focused release notes cannot excuse missing test/build lanes", () => {
+  for (const event of ["pull_request", "merge_group", "push"]) {
+    for (const job of ["build", "test", "test_web", "test_server"]) {
+      const f = normal(event);
       f.needs.release_notes.outputs.qualified = "true";
-      f.needs.qualification.result = "skipped";
-    } else {
-      f.needs.queue_ci.outputs = { reused: "true", web_reports: "true", server_reports: "false" };
+      for (const key of ["typecheck", "build", "test", "test_web", "test_server"])
+        f.needs.changes.outputs[key] = "false";
+      f.needs[job].result = "skipped";
+      assert.ok(failures(f).includes(`${job}: skipped without a reason`), `${event}: ${job}`);
     }
-    for (const job of ["test_web_reused", "test_server_reused"]) f.needs[job].result = "success";
-    assert.deepEqual(failures(f), []);
-    f.needs.test_web_reused.result = "skipped";
-    assert.ok(failures(f).some((error) => error.includes("test_web_reused")));
-    f.needs.test_web_reused.result = "success";
-    const source = mode === "focused" ? "release_notes" : "queue_ci";
-    f.needs[source].result = "failure";
-    assert.ok(failures(f).some((error) => error.includes("lint: skipped")));
   }
 });
 

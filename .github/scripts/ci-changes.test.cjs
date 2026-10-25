@@ -1,196 +1,114 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { execFileSync } = require("node:child_process");
 const { decide, readWorkspace } = require("./ci-changes.cjs");
 const packages = readWorkspace();
-const { scan } = require("./scan-test-dependencies.cjs");
-const inventory = require("./ci-test-dependencies.json");
 
-test("every scanned test dependency is current and covered by CI selection", () => {
-  const discovered = scan(packages);
-  assert.deepEqual(
-    discovered,
-    inventory,
-    "Run node .github/scripts/scan-test-dependencies.cjs --write",
-  );
-  for (const [consumer, dependencies] of Object.entries(discovered.dependencies)) {
-    for (const dependency of dependencies) {
-      const pkg = packages.find((item) => item.name === dependency);
-      assert.ok(pkg, dependency);
-      const selected = decide([`${pkg.dir}/src/changed.ts`], packages, false);
-      assert.ok(selected.affected.includes(consumer), `${dependency} must select ${consumer}`);
-      const consumerPackage = packages.find((item) => item.name === consumer);
-      if (consumer === "@t3tools/web") assert.equal(selected.outputs.test_web, true);
-      else if (consumer === "t3") assert.equal(selected.outputs.test_server, true);
-      else if (consumerPackage.hasTest) {
-        assert.equal(selected.outputs.test, true);
-        assert.ok(selected.outputs.test_packages.split(" ").includes(consumer));
-      }
-    }
-  }
-  for (const [input, consumers] of Object.entries(discovered.inputs)) {
-    const selected = decide(
-      [input.endsWith("/") ? `${input}new-fixture.md` : input],
-      packages,
-      false,
-    );
-    for (const consumer of consumers)
-      assert.ok(selected.affected.includes(consumer), `${input} must select ${consumer}`);
+test("every diff runs all test lanes, build and typecheck without a package subset", () => {
+  for (const files of [
+    [],
+    null,
+    ["docs/operations/development.md"],
+    ["docs/fixtures/scient-chat-plotly.md"],
+    ["apps/mobile/src/features/review/reviewModel.ts"],
+    ["packages/scient-analytics/src/wireContract.ts"],
+    ["apps/web/src/authBootstrap.test.ts"],
+    ["apps/server/src/git/GitManager.test.ts"],
+    ["packages/contracts/src/setup.ts"],
+    ["packages/shared/src/__snapshots__/cross-package.snap"],
+    [".github/workflows/ci.yml"],
+    ["unknown-root-file"],
+  ]) {
+    const { outputs } = decide(files, packages, false);
+    for (const key of ["typecheck", "build", "test", "test_web", "test_server"])
+      assert.equal(outputs[key], true, `${files}: ${key}`);
+    assert.equal(outputs.test_packages, "", `${files}: all workspace test tasks`);
   }
 });
 
-test("scanner follows helpers, workspace exports, raw imports, fs paths and glob directories", (t) => {
-  const fs = require("node:fs");
-  const path = require("node:path");
-  const repo = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "ci-test-inputs-"));
-  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
-  const write = (file, content) => {
-    fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
-    fs.writeFileSync(path.join(repo, file), content);
-  };
-  const fixturePackages = ["a", "b", "c", "raw", "fs", "glob"].map((name) => ({
-    name: `@fixture/${name}`,
-    dir: `packages/${name}`,
-    deps: [],
-    hasTest: true,
-  }));
-  for (const pkg of fixturePackages)
-    write(
-      `${pkg.dir}/package.json`,
-      JSON.stringify({ name: pkg.name, exports: { ".": "./src/index.ts" } }),
-    );
-  write("packages/a/src/a.test.ts", 'import "./helper";');
-  write(
-    "packages/a/src/helper.ts",
-    `
-    import { readFileSync as readSource } from "node:fs";
-    readSource("../../../docs/alias.md");
-    import "../../b/src/index.ts";
-    import "@fixture/c";
-    import raw from "../../raw/src/input.txt?raw";
-    readFileSync(new URL("../../fs/src/input.txt", import.meta.url));
-    globSync(new URL("../../glob/src/*.txt", import.meta.url).pathname);
-    const root = new URL("../../../", import.meta.url);
-    readFileSync(new URL("../../../docs/read.md", import.meta.url));
-    readFile(path.join(fileURLToPath(root), "docs", "async.md"));
-    globSync(new URL("../../../docs/corpus/*.md", import.meta.url).pathname);
-  `,
-  );
-  write("packages/b/src/index.ts", 'export * from "./nested.js";');
-  write("packages/b/src/nested.ts", 'import "../../c/src/index";');
-  for (const name of ["raw", "fs", "glob"]) write(`packages/${name}/src/input.txt`, "fixture");
-  write("packages/a/src/test_paths.py", "import helper_py\n");
-  write(
-    "packages/a/src/helper_py.py",
-    'from pathlib import Path\n(Path(__file__).resolve().parents[3] / "docs" / "python.md").read_text()\n',
-  );
-  write("docs/python.md", "fixture");
-  write("docs/alias.md", "fixture");
-  write(
-    "packages/c/src/index.ts",
-    'readFile(new URL("../../../docs/from-workspace-helper.md", import.meta.url));',
-  );
-  for (const file of ["read.md", "async.md", "from-workspace-helper.md", "corpus/old.md"])
-    write(`docs/${file}`, "fixture");
-  const result = scan(fixturePackages, repo);
-  assert.deepEqual(result.dependencies["@fixture/a"], [
-    "@fixture/b",
-    "@fixture/c",
-    "@fixture/fs",
-    "@fixture/glob",
-    "@fixture/raw",
-  ]);
-  assert.ok(result.inputs["docs/python.md"]?.includes("@fixture/a"));
-  assert.ok(result.inputs["docs/alias.md"]?.includes("@fixture/a"));
-  for (const input of [
-    "docs/read.md",
-    "docs/async.md",
-    "docs/from-workspace-helper.md",
-    "docs/corpus/",
-  ])
-    assert.ok(result.inputs[input]?.includes("@fixture/a"), input);
-});
-
-test("cross-client parity, analytics contract and server/client-runtime regressions select their consumers", () => {
-  const mobile = decide(["apps/mobile/src/features/review/reviewModel.ts"], packages, false);
-  assert.ok(mobile.outputs.test_packages.split(" ").includes("@t3tools/shared"));
-  const web = decide(["apps/web/src/lib/diffRendering.ts"], packages, false);
-  assert.ok(web.outputs.test_packages.split(" ").includes("@t3tools/shared"));
-  assert.equal(
-    decide(["packages/scient-analytics/src/wireContract.ts"], packages, false).outputs.test_web,
-    true,
-  );
-  const client = decide(["packages/client-runtime/src/state/threads.ts"], packages, false);
-  assert.equal(client.outputs.test_server, true);
-  assert.ok(inventory.dependencies.t3.includes("@t3tools/client-runtime"));
-});
-
-test("consumed documentation selects tests before the inert-docs rule", () => {
-  assert.equal(
-    decide(["docs/fixtures/scient-chat-plotly.md"], packages, false).outputs.test_web,
-    true,
-  );
-  assert.ok(
-    decide(["docs/fixtures/scient-chat-diagrams.md"], packages, false)
-      .outputs.test_packages.split(" ")
-      .includes("@t3tools/desktop"),
-  );
-  assert.equal(
-    decide(["docs/internals/t3-connect-troubleshooting.md"], packages, false).outputs.test_server,
-    true,
-  );
-});
-
-test("web and server changes select cross-package tests without native lanes", () => {
-  const web = decide(["apps/web/src/authBootstrap.test.ts"], packages, false).outputs;
-  const server = decide(["apps/server/src/git/GitManager.test.ts"], packages, false).outputs;
-  assert.equal(web.test_web, true);
-  // Server citation tests import web session logic; web tests also load server
-  // helpers through their reachable imports. These are real test dependencies.
-  assert.equal(web.test_server, true);
-  assert.equal(server.test_web, true);
-  assert.equal(server.test_server, true);
-  assert.equal(web.rust, false);
-  assert.equal(server.mobile_native, false);
-  // Scripts tests inspect app sources; they must still qualify alongside either app.
-  assert.equal(web.test, true);
-  assert.equal(server.test, true);
-});
-
-test("docs skip product work while unknown paths and missing diffs fail open", () => {
-  const docs = decide(["docs/operations/development.md"], packages, false).outputs;
-  assert.ok(
-    Object.entries(docs).every(([key, value]) => key === "test_packages" || value === false),
-  );
-  for (const files of [null, ["unknown-root-file"], [".github/workflows/ci.yml"]]) {
-    const outputs = decide(files, packages, false).outputs;
-    for (const key of [
-      "typecheck",
-      "build",
-      "test",
-      "test_web",
-      "test_server",
-      "rust",
-      "release_smoke",
-    ])
-      assert.equal(outputs[key], true, key);
+test("docs and app changes still skip native and release lanes by their exact gates", () => {
+  for (const file of ["docs/a.md", "apps/web/src/a.test.ts", "apps/server/src/a.ts"]) {
+    const { outputs } = decide([file], packages, false);
+    for (const key of ["rust", "mobile_native", "release_smoke"])
+      assert.equal(outputs[key], false, `${file}: ${key}`);
   }
-  assert.equal(decide(null, packages, false).outputs.mobile_native, true);
+  assert.equal(decide(["scripts/release-smoke.ts"], packages, false).outputs.release_smoke, true);
+  assert.equal(decide(["packages/shared/src/a.ts"], packages, false).outputs.release_smoke, true);
 });
 
-test("main's full mode selects all work including native lint, even for a docs push", () => {
-  const outputs = decide(["docs/a.md"], packages, true).outputs;
-  assert.ok(
-    Object.entries(outputs).every(([key, value]) => key === "test_packages" || value === true),
-  );
-});
-
-test("shared contracts select their consumers and arbitrary native filenames remain visible", () => {
-  const outputs = decide(
-    ["packages/contracts/src/orchestrationV2.test.ts"],
-    packages,
+test("Rust covers every tracked crate input, and Rust/toolchain/config files at any depth", () => {
+  const tracked = execFileSync(
+    "git",
+    [
+      "ls-files",
+      "-z",
+      "native/resource-monitor",
+      "native/kde-snap-shot",
+      "native/hyprland-snap-shot",
+    ],
+    { encoding: "utf8" },
+  )
+    .split("\0")
+    .filter(Boolean);
+  assert.ok(tracked.length > 0);
+  // Rust-only metadata must not expand the production ownership graph used by release smoke.
+  assert.equal(
+    decide(["apps/mobile/module/Cargo.toml"], packages, false).outputs.release_smoke,
     false,
-  ).outputs;
-  assert.equal(outputs.test_web, true);
-  assert.equal(outputs.test_server, true);
-  assert.equal(decide(["apps/mobile/Foo\nBar.swift"], packages, false).outputs.mobile_native, true);
+  );
+  for (const file of [
+    ...tracked,
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    ".cargo/config.toml",
+    "apps/mobile/module/src/main.rs",
+    "apps/mobile/module/Cargo.toml",
+    "apps/mobile/module/Cargo.lock",
+    "apps/mobile/module/rust-toolchain",
+    "apps/mobile/module/rust-toolchain.toml",
+    "apps/mobile/module/.cargo/config.toml",
+    "docs/new-helper.rs",
+    "apps/web/src/new\nhelper.rs",
+  ])
+    assert.equal(decide([file], packages, false).outputs.rust, true, file);
+  for (const file of [
+    "docs/a.md",
+    "apps/web/src/a.ts",
+    "apps/mobile/Cargo.toml.md",
+    "apps/mobile/rust-toolchain.md",
+  ])
+    assert.equal(decide([file], packages, false).outputs.rust, false, file);
+});
+
+test("unknown paths and missing diffs fail open; main runs every lane", () => {
+  for (const [files, full] of [
+    [null, false],
+    [["unknown-root-file"], false],
+    [[".github/workflows/ci.yml"], false],
+    [["docs/a.md"], true],
+  ]) {
+    const { outputs } = decide(files, packages, full);
+    for (const [key, value] of Object.entries(outputs)) {
+      if (key !== "test_packages" && key !== "mobile_native") assert.equal(value, true, key);
+    }
+    if (files === null || full || files[0] === ".github/workflows/ci.yml")
+      assert.equal(outputs.mobile_native, true);
+  }
+});
+
+test("the mobile native gate preserves arbitrary filenames and its configuration inputs", () => {
+  for (const file of [
+    "apps/mobile/Foo\nBar.swift",
+    "apps/mobile/src/Module.kt",
+    "apps/mobile/build.gradle.kts",
+    "apps/mobile/Brewfile",
+    "scripts/mobile-native-static-check.ts",
+    "package.json",
+    ".github/workflows/ci.yml",
+  ])
+    assert.equal(decide([file], packages, false).outputs.mobile_native, true, file);
+  for (const file of ["docs/a.md", "samples/Foo.swift", "apps/mobile/src/a.ts"])
+    assert.equal(decide([file], packages, false).outputs.mobile_native, false, file);
 });

@@ -28,13 +28,6 @@ function setup() {
     ".github/scripts/ci-changes.cjs",
     NodeFS.readFileSync(new URL("../.github/scripts/ci-changes.cjs", import.meta.url), "utf8"),
   );
-  write(
-    ".github/scripts/ci-test-dependencies.json",
-    NodeFS.readFileSync(
-      new URL("../.github/scripts/ci-test-dependencies.json", import.meta.url),
-      "utf8",
-    ),
-  );
   write("pnpm-workspace.yaml", "packages:\n");
   write("package.json", '{"type":"module","scripts":{"knip:check":"knip --include files"}}\n');
   NodeFS.mkdirSync(NodePath.join(root, "node_modules"), { recursive: true });
@@ -45,7 +38,7 @@ function setup() {
   );
   write(
     ".git/info/exclude",
-    "/scripts/\n/node_modules/\n/pnpm-workspace.yaml\n/package.json\n/preload.mjs\n/calls.jsonl\n/.github/scripts/ci-changes.cjs\n/.github/scripts/ci-test-dependencies.json\n",
+    "/scripts/\n/node_modules/\n/pnpm-workspace.yaml\n/package.json\n/preload.mjs\n/calls.jsonl\n/.github/scripts/ci-changes.cjs\n",
   );
   // Only the base lookup and expensive vp gates are replaced. Path output comes
   // from real Git; Node-runner tests execute in a real child process.

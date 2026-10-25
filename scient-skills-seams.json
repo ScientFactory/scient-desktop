@@ -8,7 +8,6 @@
     "packages/scient-skills"
   ],
   "ownedFiles": [
-    ".github/scripts/ci-test-dependencies.json",
     "apps/mobile/src/state/scientSkills.ts",
     "apps/server/src/mcp/ScientMcpInvocation.ts",
     "apps/server/src/mcp/ScientOperationCatalog.ts",

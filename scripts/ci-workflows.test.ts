@@ -31,10 +31,11 @@ const { jobFailures } = require("../.github/scripts/ci-check.cjs") as {
 };
 type JobResult = { result: string; outputs: Record<string, string> };
 type Job = {
-  steps?: Array<{ name?: string; env?: Record<string, string> }>;
+  steps?: Array<{ name?: string; uses?: string; run?: string; env?: Record<string, string> }>;
   if?: string;
   needs?: string | string[];
-  strategy?: { matrix: { shard: number[] } };
+  strategy?: { matrix: Record<string, unknown[]> };
+  with?: Record<string, string>;
   name?: string;
   uses?: string;
   "runs-on"?: string;
@@ -96,7 +97,7 @@ function simulate(
         needs[id].outputs = {
           reused: String(reused),
           web_reports: "true",
-          server_reports: "false",
+          server_reports: "true",
         };
       if (run && id === "changes") needs[id].outputs = gates;
       pending.delete(id);
@@ -123,6 +124,37 @@ function simulate(
   };
 }
 
+// Expand reusable workflows as well as the web/server matrices. This checks runner
+// counts against the YAML instead of treating a reusable call as one machine.
+function runnerCount(needs: Record<string, JobResult>) {
+  const matrixSize = (job: Job) => {
+    const matrix = job.strategy?.matrix;
+    if (!matrix) return 1;
+    if (matrix.include) return matrix.include.length;
+    return Object.values(matrix).reduce((count, values) => count * values.length, 1);
+  };
+  return Object.entries(workflow.jobs).reduce((total, [id, job]) => {
+    if (needs[id]!.result !== "success") return total;
+    if (!job.uses) return total + matrixSize(job);
+    const inputs = Object.fromEntries(
+      Object.entries(job.with ?? {}).map(([key, expression]) => [
+        key,
+        NodeVM.runInNewContext(expression.slice(3, -2), { needs }),
+      ]),
+    );
+    const called = YAML.parse(
+      NodeFS.readFileSync(new URL(`../${job.uses}`, import.meta.url), "utf8"),
+    ) as { jobs: Record<string, Job> };
+    return (
+      total +
+      Object.values(called.jobs).reduce((count, child) => {
+        const run = !child.if || NodeVM.runInNewContext(child.if.slice(3, -2), { inputs });
+        return count + (run ? matrixSize(child) : 0);
+      }, 0)
+    );
+  }, 0);
+}
+
 describe("CI workflow decisions", () => {
   it("qualifies feature-base PRs without creating a main-only reuse receipt", () => {
     const f = simulate(
@@ -147,8 +179,7 @@ describe("CI workflow decisions", () => {
       ]) {
         const f = simulate([file!], eventName);
         expect(f.needs[consumerJob!]!.result, file).toBe("success");
-        if (file!.startsWith("apps/mobile"))
-          expect(f.needs.changes!.outputs.test_packages!.split(" ")).toContain("@t3tools/shared");
+        expect(f.needs.changes!.outputs.test_packages).toBe("");
         expect(f.failures, file).toEqual([]);
         f.gateNeeds[consumerJob!]!.result = "failure";
         expect(jobFailures(f.gateNeeds, { eventName, qualifyingPr: true })).toContain(
@@ -225,12 +256,8 @@ describe("CI workflow decisions", () => {
       "docs",
       ["docs/operations/development.md"],
       "pull_request",
-      ["lint"],
+      ["lint", "test_web", "test_server", "test", "build"],
       [
-        "test_web",
-        "test_server",
-        "test",
-        "build",
         "compute_native",
         "windows_packaging",
         "remote_server_packaging",
@@ -298,17 +325,70 @@ describe("CI workflow decisions", () => {
     );
   });
 
-  it("reused and focused paths still report and qualify without running unaffected suites", () => {
-    for (const [event, reused, focused] of [
-      ["merge_group", true, false],
-      ["pull_request", false, true],
-    ] as const) {
-      const f = simulate(["apps/web/src/authBootstrap.test.ts"], event, reused, focused);
-      expect(f.failures).toEqual([]);
-      for (const id of ["lint", "test_web", "test_server", "changes"])
-        expect(f.needs[id]!.result).toBe("skipped");
+  it("exact queue reuse requires reporters while release notes still run every test lane", () => {
+    const reused = simulate(["apps/web/src/authBootstrap.test.ts"], "merge_group", true);
+    expect(reused.failures).toEqual([]);
+    for (const id of ["lint", "build", "test", "test_web", "test_server", "changes"])
+      expect(reused.needs[id]!.result).toBe("skipped");
+    for (const id of ["test_web_reused", "test_server_reused"])
+      expect(reused.needs[id]!.result).toBe("success");
+    for (const event of ["pull_request", "merge_group"]) {
+      const focused = simulate(["apps/web/src/scient/releaseNotes/catalog.ts"], event, false, true);
+      expect(focused.failures).toEqual([]);
+      for (const id of [
+        "lint",
+        "build",
+        "test",
+        "test_web",
+        "test_server",
+        "changes",
+        "qualification",
+      ])
+        expect(focused.needs[id]!.result).toBe("success");
       for (const id of ["test_web_reused", "test_server_reused"])
-        expect(f.needs[id]!.result).toBe("success");
+        expect(focused.needs[id]!.result).toBe("skipped");
     }
+  });
+
+  it.each([
+    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 18],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 24],
+    ["docs PR", "docs/operations/development.md", "pull_request", false, 18],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 36],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 27],
+    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 19],
+    ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 6],
+    ["main push", "docs/operations/development.md", "push", false, 35],
+  ] as const)(
+    "%s expands to the expected runners with a passing Check",
+    (_label, file, event, reused, count) => {
+      const f = simulate([file], event, reused);
+      expect(f.failures).toEqual([]);
+      expect(runnerCount(f.needs)).toBe(count);
+      if (!reused) {
+        for (const id of ["test", "test_web", "test_server"]) {
+          f.gateNeeds[id]!.result = "cancelled";
+          expect(jobFailures(f.gateNeeds, { eventName: event, qualifyingPr: true })).toContain(
+            `${id}: cancelled`,
+          );
+          f.gateNeeds[id]!.result = "success";
+        }
+      }
+    },
+  );
+
+  it("installs CI-script dependencies before Node tests and always tests every workspace", () => {
+    const steps = workflow.jobs.lint!.steps!;
+    const install = steps.findIndex((step) => step.uses === "./.github/actions/setup-ci-deps");
+    const nodeTests = steps.findIndex((step) => step.run?.includes("node --test"));
+    expect(install).toBeGreaterThan(-1);
+    expect(nodeTests).toBeGreaterThan(install);
+    const test = workflow.jobs.test!.steps!.find((step) => step.name === "Test")!;
+    expect(test.env).toBeUndefined();
+    expect(test.run).toBe(
+      "vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test",
+    );
+    for (const id of ["build", "test", "test_web", "test_server"])
+      expect(workflow.jobs[id]!.if).not.toContain("needs.changes.outputs");
   });
 });

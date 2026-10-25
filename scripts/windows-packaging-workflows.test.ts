@@ -16,7 +16,7 @@ it("requires applicable Windows qualification through the single Check gate", ()
     },
     windows_packaging: {
       needs: ["queue_ci", "release_notes", "changes"],
-      if: "${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.windows_changed != 'false' }}",
+      if: "${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.windows_changed != 'false' }}",
       uses: "./.github/workflows/windows-packaging.yml",
     },
     check: {

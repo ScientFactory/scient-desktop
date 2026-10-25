@@ -1,9 +1,5 @@
 // SCIENT-FORK:START — one required gate covers upstream lanes and Scient qualification.
 const GATED = {
-  build: ["build", "typecheck"],
-  test: ["test"],
-  test_web: ["test_web"],
-  test_server: ["test_server"],
   rust: ["rust"],
   release_smoke: ["release_smoke"],
   mobile_native_static_analysis: ["mobile_native"],
@@ -13,14 +9,11 @@ const GATED = {
   linux_packaging: ["linux_changed"],
 };
 const REPORTERS = ["test_web_reused", "test_server_reused"];
-const JOBS = ["release_notes", "queue_ci", "changes", "lint", ...Object.keys(GATED), ...REPORTERS];
+const ALWAYS = ["changes", "lint", "build", "test", "test_web", "test_server"];
+const JOBS = ["release_notes", "queue_ci", ...ALWAYS, ...Object.keys(GATED), ...REPORTERS];
 
 function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }) {
   const expected = receipt ? JOBS : [...JOBS, "qualification"];
-  const focused =
-    eventName !== "push" &&
-    needs.release_notes?.result === "success" &&
-    needs.release_notes.outputs?.qualified === "true";
   const reused =
     eventName === "merge_group" &&
     needs.queue_ci?.result === "success" &&
@@ -42,14 +35,13 @@ function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }
   for (const job of expected) {
     const result = needs[job]?.result;
     const reporting = REPORTERS.includes(job);
-    const qualify =
-      !focused && (eventName === "merge_group" || (eventName === "pull_request" && qualifyingPr));
+    const qualify = eventName === "merge_group" || (eventName === "pull_request" && qualifyingPr);
     let skip = false;
-    if (job === "queue_ci") skip = focused || eventName !== "merge_group";
+    if (job === "queue_ci") skip = eventName !== "merge_group";
     else if (job === "qualification") skip = !qualify;
-    else if (reporting) skip = !focused && !reused;
+    else if (reporting) skip = !reused;
     else if (job !== "release_notes") {
-      skip = focused || reused || (GATED[job]?.every((key) => gates[key] === "false") ?? false);
+      skip = reused || (GATED[job]?.every((key) => gates[key] === "false") ?? false);
     }
     // Active reporters and receipts must finish; every actual failure/cancellation blocks.
     if (result === "success" || (result === "skipped" && skip)) continue;
