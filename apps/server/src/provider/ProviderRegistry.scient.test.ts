@@ -1478,3 +1478,110 @@ describe("Restored ProviderRegistry.test.ts", () => {
     },
   );
 });
+
+// regression: logout clears stale OpenCode models, commands, and skills.
+it("classifies pending, logout, uninstall, and reconnect OpenCode inventories", () => {
+  const previousProvider = {
+    instanceId: ProviderInstanceId.make("opencode"),
+    driver: ProviderDriverKind.make("opencode"),
+    status: "ready",
+    enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
+    checkedAt: "2026-07-17T00:00:00.000Z",
+    version: "1.0.0",
+    models: [
+      {
+        slug: "github/gpt-5",
+        name: "GPT-5",
+        subProvider: "GitHub",
+        isCustom: false,
+        capabilities: null,
+      },
+      {
+        slug: "removed-plugin/model",
+        name: "Removed Plugin Model",
+        subProvider: "Removed Plugin",
+        isCustom: false,
+        capabilities: null,
+      },
+    ],
+    slashCommands: [{ name: "review", description: "Review changes" }],
+    skills: [
+      {
+        name: "typescript",
+        description: "TypeScript help",
+        path: "/skills/typescript/SKILL.md",
+        enabled: true,
+      },
+    ],
+  } as const satisfies ServerProvider;
+  const loggedOutProvider = {
+    ...previousProvider,
+    status: "warning",
+    auth: { status: "unknown" },
+    checkedAt: "2026-07-17T00:02:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    message: "OpenCode is available, but it did not report any connected upstream providers.",
+  } satisfies ServerProvider;
+  assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, loggedOutProvider).models, []);
+  assert.deepStrictEqual(
+    mergeProviderSnapshot(previousProvider, loggedOutProvider).slashCommands,
+    [],
+  );
+  assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, loggedOutProvider).skills, []);
+});
+
+// regression: authenticated warning refreshes authoritatively remove unavailable models.
+describe("Antigravity model inventories", () => {
+  const previousProvider = {
+    instanceId: ProviderInstanceId.make("antigravity-personal"),
+    driver: ProviderDriverKind.make("antigravity"),
+    status: "ready",
+    enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
+    checkedAt: "2026-09-02T00:00:00.000Z",
+    version: "0.1.3",
+    models: [
+      {
+        slug: "gemini-3.1-pro-high",
+        name: "Gemini 3.1 Pro High",
+        isCustom: false,
+        capabilities: null,
+      },
+      {
+        slug: "gemini-3-flash",
+        name: "Gemini 3 Flash",
+        isCustom: false,
+        capabilities: null,
+      },
+    ],
+    slashCommands: [],
+    skills: [],
+  } as const satisfies ServerProvider;
+
+  it("removes unavailable models after a successful refresh", () => {
+    for (const status of ["warning"] as const) {
+      const refreshedProvider = {
+        ...previousProvider,
+        status,
+        checkedAt: "2026-09-02T00:01:00.000Z",
+        models: [previousProvider.models[1]],
+      } satisfies ServerProvider;
+      const afterRefresh = mergeProviderSnapshot(previousProvider, refreshedProvider);
+
+      assert.deepStrictEqual(afterRefresh.models, refreshedProvider.models);
+
+      const afterFailure = mergeProviderSnapshot(afterRefresh, {
+        ...refreshedProvider,
+        status: "error",
+        auth: { status: "unknown" },
+        models: [],
+      });
+      assert.deepStrictEqual(afterFailure.models, refreshedProvider.models);
+    }
+  });
+});

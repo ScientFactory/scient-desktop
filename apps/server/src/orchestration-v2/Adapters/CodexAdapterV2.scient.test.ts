@@ -5522,5 +5522,451 @@ describe("Codex restored Subagents", () => {
         ),
       ),
     );
+    // regression: child lifecycle and metadata must survive native protocol updates.
+    it.effect.each(["thread/settings/updated"])(
+      "keeps %s child metadata when an older lookup finishes later",
+      (method) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const releaseMetadata = yield* Deferred.make<void>();
+            const observed = yield* Deferred.make<void>();
+            const model = "gpt-5.6-sol";
+            const notification: CodexReplay.CodexAppServerReplayEntry = {
+              type: "emit_inbound",
+              frame: {
+                method,
+                params:
+                  method === "model/rerouted"
+                    ? {
+                        threadId: RESUME_CHILD_THREAD,
+                        turnId: RESUME_CHILD_TURN_1,
+                        fromModel: "gpt-6-astra",
+                        toModel: model,
+                        reason: "highRiskCyberActivity",
+                      }
+                    : {
+                        threadId: RESUME_CHILD_THREAD,
+                        threadSettings: {
+                          model,
+                          modelProvider: "openai",
+                          cwd: "/workspace",
+                          approvalPolicy: "never",
+                          approvalsReviewer: "auto_review",
+                          collaborationMode: { mode: "default", settings: { model } },
+                          sandboxPolicy: { type: "dangerFullAccess" },
+                        },
+                      },
+              },
+            };
+            const harness = yield* makeCodexReplayHarness(
+              {
+                ...resumeSubagentTranscript,
+                entries: resumeSubagentTranscript.entries.flatMap((entry) =>
+                  entry.type === "emit_inbound" && entry.label === "turn/completed/root"
+                    ? [entry, notification]
+                    : [entry],
+                ),
+              },
+              (event) =>
+                event.type === "subagent.updated" && event.subagent.model === model
+                  ? Deferred.succeed(observed, undefined)
+                  : Effect.void,
+              undefined,
+              (threadId) =>
+                Deferred.await(releaseMetadata).pipe(
+                  Effect.as({ thread: { id: threadId }, model: "gpt-6-astra" }),
+                ),
+            );
+            yield* harness.runtime.startTurn(
+              makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make("attempt-child-model-update"),
+                text: RESUME_PROMPT,
+              }),
+            );
+            yield* TestClock.adjust("100 millis");
+            yield* Deferred.await(observed);
+            assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "completed");
+            yield* Deferred.succeed(releaseMetadata, undefined);
+            yield* TestClock.adjust("30 seconds");
+            assert.equal(harness.subagentUpdates().at(-1)?.subagent.model, model);
+          }).pipe(
+            Effect.provide(
+              Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+            ),
+          ),
+        ),
+    );
+
+    // regression: child lifecycle and metadata must survive native protocol updates.
+    it.effect.each(
+      (
+        [
+          ["pendingInit", "pending"],
+          ["running", "running"],
+          ["interrupted", "interrupted"],
+          ["notFound", "failed"],
+          ["errored", "failed"],
+        ] satisfies ReadonlyArray<readonly [string, string]>
+      ).map(([nativeStatus, expectedStatus]) => ({
+        caseTitle: `normalizes subagent ${nativeStatus} without losing its lifecycle`,
+        nativeStatus,
+        expectedStatus,
+      })),
+    )("$caseTitle", ({ nativeStatus, expectedStatus }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const marker = yield* Deferred.make<void>();
+          const firstCompletion = yield* Deferred.make<void>();
+          const stateEntry = (
+            status: string,
+            id: string,
+          ): Extract<CodexReplay.CodexAppServerReplayEntry, { type: "emit_inbound" }> => ({
+            type: "emit_inbound",
+            label: id,
+            frame: {
+              method: "item/completed",
+              params: {
+                threadId: RESUME_NATIVE_THREAD,
+                turnId: RESUME_NATIVE_TURN,
+                item: {
+                  type: "collabAgentToolCall",
+                  id,
+                  tool: "listAgents",
+                  status: "completed",
+                  senderThreadId: RESUME_NATIVE_THREAD,
+                  receiverThreadIds: [RESUME_CHILD_THREAD],
+                  agentsStates: { [RESUME_CHILD_THREAD]: { status, message: null } },
+                },
+              },
+            },
+          });
+          const entries: Array<CodexReplay.CodexAppServerReplayEntry> = [
+            ...codexReplayPreamble({
+              nativeThreadId: RESUME_NATIVE_THREAD,
+              nativeTurnId: RESUME_NATIVE_TURN,
+              prompt: RESUME_PROMPT,
+            }),
+            resumeSubagentTranscript.entries.find(
+              (e) =>
+                e.type === "emit_inbound" && e.label === "item/completed/subAgentActivity-started",
+            )!,
+          ];
+          if (nativeStatus === "late-activity-completed") {
+            entries.push(
+              resumeSubagentTranscript.entries.find(
+                (e) => e.type === "emit_inbound" && e.label === "turn/completed/root",
+              )!,
+            );
+          }
+          if (nativeStatus === "activity-completed" || nativeStatus === "late-activity-completed") {
+            entries.push({
+              type: "emit_inbound",
+              label: "activity-done",
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: RESUME_NATIVE_THREAD,
+                  turnId: RESUME_NATIVE_TURN,
+                  item: {
+                    type: "subAgentActivity",
+                    id: "activity-done",
+                    kind: "completed",
+                    agentThreadId: RESUME_CHILD_THREAD,
+                    agentPath: "/root/resume_agent",
+                  },
+                },
+              },
+            });
+          } else if (nativeStatus === "stale-running" || nativeStatus === "duplicate-completed") {
+            entries.push(stateEntry("completed", "child-completed"), {
+              ...stateEntry(
+                nativeStatus === "stale-running" ? "running" : "completed",
+                "trailing-snapshot",
+              ),
+              afterMs: 100,
+            });
+          } else {
+            entries.push(stateEntry(nativeStatus, "status-update"));
+          }
+          // A known child's turn provides a receipt even after the parent context is released.
+          if (nativeStatus === "late-activity-completed") {
+            entries.push({
+              type: "emit_inbound",
+              label: "late-marker",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: RESUME_CHILD_THREAD,
+                  turn: makeCodexReplayTurn({ id: RESUME_CHILD_TURN_1, status: "inProgress" }),
+                },
+              },
+            });
+          } else {
+            entries.push({
+              type: "emit_inbound",
+              label: "marker",
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: RESUME_NATIVE_THREAD,
+                  turnId: RESUME_NATIVE_TURN,
+                  item: {
+                    type: "agentMessage",
+                    id: "marker",
+                    text: "LIFECYCLE_MARKER",
+                    phase: "final_answer",
+                    memoryCitation: null,
+                  },
+                },
+              },
+            });
+          }
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({ scenario: `subagent-${nativeStatus}`, entries }),
+            (event) =>
+              (event.type === "message.updated" && event.message.text === "LIFECYCLE_MARKER") ||
+              (nativeStatus === "late-activity-completed" &&
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.nativeTurnRef?.nativeId === RESUME_CHILD_TURN_1)
+                ? Deferred.succeed(marker, undefined)
+                : event.type === "subagent.updated" && event.subagent.status === "completed"
+                  ? Deferred.succeed(firstCompletion, undefined)
+                  : Effect.void,
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`subagent-${nativeStatus}`),
+              text: RESUME_PROMPT,
+            }),
+          );
+          if (nativeStatus === "stale-running" || nativeStatus === "duplicate-completed") {
+            yield* Deferred.await(firstCompletion);
+            yield* TestClock.adjust("100 millis");
+          }
+          yield* Deferred.await(marker);
+          const latest = harness.subagentUpdates().at(-1)!.subagent;
+          assert.equal(latest.status, expectedStatus);
+          if (nativeStatus === "duplicate-completed") {
+            const first = harness.subagentUpdates().find((e) => e.subagent.status === "completed")!;
+            assert.equal(
+              DateTime.toEpochMillis(latest.completedAt!),
+              DateTime.toEpochMillis(first.subagent.completedAt!),
+            );
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
+      ),
+    );
   });
 });
+
+// regression: rateLimitExceeded retains usage-limit and reusable-thread semantics.
+it.effect.each(
+  [
+    {
+      name: "rate",
+      code: "rateLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+  ].map((scenario) => ({
+    caseTitle: `classifies Codex terminal failures from ${scenario.name} evidence`,
+    scenario,
+  })),
+)("$caseTitle", ({ scenario }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const nativeThreadId = `native-limit-${scenario.name}`;
+      const nativeTurnId = `turn-limit-${scenario.name}`;
+      const message = "Provider stopped this request.";
+      const resetAt = "2033-05-19T07:20:00.000Z";
+      const snapshot = {
+        type: "emit_inbound" as const,
+        label: "account/rateLimits/updated",
+        frame: {
+          method: "account/rateLimits/updated",
+          params: {
+            rateLimits: {
+              limitId: "codex",
+              primary: { usedPercent: 100, resetsAt: 2000100000, windowDurationMins: 300 },
+            },
+          },
+        },
+      };
+      const transcript = makeCodexReplayTranscript({
+        scenario: `codex-limit-${scenario.name}`,
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+          ...(scenario.name === "known-reset" || scenario.name === "deferred-reset"
+            ? [snapshot]
+            : []),
+          ...(scenario.name === "deferred-reset"
+            ? [
+                {
+                  type: "emit_inbound" as const,
+                  label: "item/completed/subAgentActivity-started",
+                  frame: {
+                    method: "item/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turnId: nativeTurnId,
+                      item: {
+                        type: "subAgentActivity",
+                        id: "limit-child-spawn",
+                        kind: "started",
+                        agentThreadId: "native-limit-child",
+                        agentPath: "/root/limit_child",
+                      },
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound" as const,
+                  label: "turn/started/child",
+                  frame: {
+                    method: "turn/started",
+                    params: {
+                      threadId: "native-limit-child",
+                      turn: makeCodexReplayTurn({
+                        id: "limit-child-turn",
+                        status: "inProgress",
+                      }),
+                    },
+                  },
+                },
+              ]
+            : []),
+          ...(scenario.notification
+            ? [
+                {
+                  type: "emit_inbound" as const,
+                  label: "error",
+                  frame: {
+                    method: "error",
+                    params: {
+                      threadId: nativeThreadId,
+                      turnId: nativeTurnId,
+                      willRetry: scenario.name === "retry",
+                      error: {
+                        message,
+                        codexErrorInfo: scenario.code,
+                        additionalDetails:
+                          scenario.name === "matching-details"
+                            ? "Detailed provider allowance explanation."
+                            : null,
+                      },
+                    },
+                  },
+                },
+              ]
+            : []),
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: {
+                  ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                  error: {
+                    message: scenario.name === "replacement" ? "A different failure." : message,
+                    ...(scenario.notification && scenario.name !== "matching-details"
+                      ? {}
+                      : { codexErrorInfo: scenario.code }),
+                  },
+                },
+              },
+            },
+          },
+          ...(scenario.name === "late-reset" ? [snapshot] : []),
+          ...(scenario.name === "deferred-reset"
+            ? [
+                {
+                  ...snapshot,
+                  frame: {
+                    method: "account/rateLimits/updated",
+                    params: {
+                      rateLimits: {
+                        limitId: "codex",
+                        primary: {
+                          usedPercent: 100,
+                          resetsAt: 2000200000,
+                          windowDurationMins: 300,
+                        },
+                      },
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound" as const,
+                  label: "turn/completed/child",
+                  frame: {
+                    method: "turn/completed",
+                    params: {
+                      threadId: "native-limit-child",
+                      turn: makeCodexReplayTurn({
+                        id: "limit-child-turn",
+                        status: "completed",
+                      }),
+                    },
+                  },
+                },
+              ]
+            : []),
+        ],
+      });
+      const resetReceipt = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "error" &&
+        event.turnItem.failure.resetAt === resetAt
+          ? Deferred.succeed(resetReceipt, undefined)
+          : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          text: "Continue.",
+          attemptId: RunAttemptId.make(`attempt-limit-${scenario.name}`),
+        }),
+      );
+      yield* harness.firstTerminal;
+      const terminal = harness.terminalEvents()[0];
+      assert.equal(terminal?.status, "failed");
+      if (terminal?.status !== "failed") return;
+      assert.equal(terminal.failure.class, scenario.expectedClass);
+      assert.equal(terminal.threadDisposition, "reusable");
+      if (scenario.name === "known-reset" || scenario.name === "deferred-reset")
+        assert.equal(terminal.failure.resetAt, resetAt);
+      if (scenario.name === "matching-details")
+        assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
+      if (scenario.name === "late-reset") {
+        yield* Deferred.await(resetReceipt);
+        const item = harness.events.find(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.failure.resetAt === resetAt,
+        );
+        assert.isDefined(item);
+      }
+      if (scenario.name === "retry") assert.equal(terminal.retry?.attempt, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
+  ),
+);

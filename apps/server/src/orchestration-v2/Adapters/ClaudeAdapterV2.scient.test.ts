@@ -5046,3 +5046,71 @@ describe("Restored ClaudeAdapterV2.Mcp.test.ts", () => {
     });
   });
 });
+
+// regression: success-shaped provider failures must not become assistant answers.
+const successShapedClaudeFailureReasons: ReadonlyArray<
+  NonNullable<Parameters<typeof makeResultFrame>[0]["terminalReason"]> | "overloaded_status"
+> = [
+  "malformed_tool_use_exhausted",
+  "budget_exhausted",
+  "structured_output_retry_exhausted",
+  "tool_deferred_unavailable",
+  "turn_setup_failed",
+  "rapid_refill_breaker",
+  "image_error",
+  "model_error",
+];
+it.effect.each(
+  successShapedClaudeFailureReasons.map((terminalReason) => ({
+    caseTitle: `fails a success-shaped Claude result with ${terminalReason}`,
+    terminalReason,
+  })),
+)("$caseTitle", ({ terminalReason }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-structured-terminal-failure"),
+          text: "Complete the task.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000205",
+          result: "Provider failure details.",
+          isError: false,
+          ...(terminalReason === "overloaded_status"
+            ? { apiErrorStatus: 529 }
+            : { terminalReason }),
+        }),
+      );
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.isNotEmpty(terminal.failure.message);
+      // Without rate-limit evidence a blocking limit is not a usage limit (upstream #19848).
+      assert.equal(terminal.failure.class, "provider_error");
+      assert.isFalse(
+        harness.events.some(
+          (event) =>
+            event.type === "message.updated" && event.message.text === "Provider failure details.",
+        ),
+      );
+      assert.equal(
+        terminal.failure.code,
+        terminalReason === "overloaded_status" ? "api_error_529" : terminalReason,
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
+  ),
+);
