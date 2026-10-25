@@ -72,7 +72,12 @@ function scan(packages, repo = root) {
       true,
     );
     const bindings = new Map();
+    const aliases = new Map();
     function declarations(node) {
+      if (ts.isImportSpecifier(node))
+        aliases.set(node.name.text, node.propertyName?.text ?? node.name.text);
+      if (ts.isBindingElement(node) && ts.isIdentifier(node.name))
+        aliases.set(node.name.text, node.propertyName?.getText(source) ?? node.name.text);
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
         const entries = bindings.get(node.name.text) ?? [];
         entries.push(node.initializer);
@@ -127,7 +132,8 @@ function scan(packages, repo = root) {
       if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken)
         return combine(values(node.left, seen), values(node.right, seen), (a, b) => a + b);
       if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-        const name = node.expression.getText(source).split(".").at(-1);
+        const localName = node.expression.getText(source).split(".").at(-1);
+        const name = aliases.get(localName) ?? localName;
         const args = node.arguments ?? [];
         if (name === "cwd") return [absolute(owner(file)?.dir ?? "")];
         if (["fileURLToPath", "pathToFileURL"].includes(name)) return values(args[0], seen);
@@ -204,7 +210,8 @@ function scan(packages, repo = root) {
         // Repository-anchored expressions also cover custom read helpers. Bare
         // strings in assertions describe synthetic workspaces, not this repo.
         for (const value of values(node)) record(value, false);
-        const name = node.expression.getText(source).split(".").at(-1);
+        const localName = node.expression.getText(source).split(".").at(-1);
+        const name = aliases.get(localName) ?? localName;
         if (
           /^(?:readFile(?:Sync|String)?|readDirectory|readdir(?:Sync)?|glob(?:Sync)?)$/.test(name)
         ) {
@@ -224,7 +231,10 @@ function scan(packages, repo = root) {
         const manifest = JSON.parse(fs.readFileSync(absolute(`${pkg.dir}/package.json`), "utf8"));
         const key = clean === pkg.name ? "." : "." + clean.slice(pkg.name.length);
         const exports = manifest.exports ?? {};
-        const targets = typeof exports === "string" ? [exports] : [exports[key], exports["./*"]];
+        const targets =
+          typeof exports === "string" || !Object.keys(exports).some((name) => name.startsWith("."))
+            ? [exports]
+            : [exports[key], exports["./*"]];
         const strings = (value) =>
           typeof value === "string"
             ? [value]

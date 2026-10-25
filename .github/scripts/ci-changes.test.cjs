@@ -62,6 +62,8 @@ test("scanner follows helpers, workspace exports, raw imports, fs paths and glob
   write(
     "packages/a/src/helper.ts",
     `
+    import { readFileSync as readSource } from "node:fs";
+    readSource("../../../docs/alias.md");
     import "../../b/src/index.ts";
     import "@fixture/c";
     import raw from "../../raw/src/input.txt?raw";
@@ -82,6 +84,7 @@ test("scanner follows helpers, workspace exports, raw imports, fs paths and glob
     'from pathlib import Path\n(Path(__file__).resolve().parents[3] / "docs" / "python.md").read_text()\n',
   );
   write("docs/python.md", "fixture");
+  write("docs/alias.md", "fixture");
   write(
     "packages/c/src/index.ts",
     'readFile(new URL("../../../docs/from-workspace-helper.md", import.meta.url));',
@@ -97,6 +100,7 @@ test("scanner follows helpers, workspace exports, raw imports, fs paths and glob
     "@fixture/raw",
   ]);
   assert.ok(result.inputs["docs/python.md"]?.includes("@fixture/a"));
+  assert.ok(result.inputs["docs/alias.md"]?.includes("@fixture/a"));
   for (const input of [
     "docs/read.md",
     "docs/async.md",

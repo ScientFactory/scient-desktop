@@ -62,7 +62,10 @@ def inspect(file):
         if isinstance(node, ast.Import):
             modules = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
-            modules = [node.module or ""]
+            modules = [node.module or ""] + [
+                ".".join(part for part in (node.module, alias.name) if part)
+                for alias in node.names if alias.name != "*"
+            ]
         for module in modules:
             base = file.parent
             if isinstance(node, ast.ImportFrom):
