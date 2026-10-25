@@ -1,8 +1,6 @@
-// SCIENT-OWNED: the Overleaf tab's per-file decisions. New files go to Overleaf
-// by default; one can be kept only on this computer, and a file the rule
-// skips, or one kept only here, can be sent anyway. A file waiting for its
-// conflict marks can be sent as it is ("Send it anyway"), for a file whose marks
-// are its content. A decision waits for the tab's next Sync, which carries it.
+// SCIENT-OWNED: the Overleaf tab's per-file decisions. New files send by default; one can be
+// kept only here, and a skipped, local-only or conflict-marked file can be sent anyway. A
+// decision waits for the tab's next Sync, which carries it.
 import type { ScientOverleafReview } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 
