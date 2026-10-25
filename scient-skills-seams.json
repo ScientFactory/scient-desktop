@@ -8,7 +8,6 @@
     "packages/scient-skills"
   ],
   "ownedFiles": [
-    "apps/mobile/src/state/scientSkills.ts",
     "apps/server/src/mcp/ScientMcpInvocation.ts",
     "apps/server/src/mcp/ScientOperationCatalog.ts",
     "apps/server/src/provider/ScientAwareness.ts",
@@ -55,16 +54,6 @@
       "purpose": "Assign every discovered server test to one shard, including Scient tests absent from the retained official scheduling estimates. The timing table controls balance, not test inclusion or correctness evidence."
     },
     {
-      "path": "apps/mobile/src/lib/projectThreadStartTurn.ts",
-      "anchor": "selectedScientSkillNames",
-      "purpose": "Preserve explicit Scient skill selection when starting a mobile project thread."
-    },
-    {
-      "path": "apps/mobile/src/state/use-thread-outbox-drain.ts",
-      "anchor": "buildExistingThreadOutboxStartTurnInput",
-      "purpose": "Deliver the captured mobile outbox payload through the shared selected-skill and dispatch helper (thread-outbox-start-turn.test.ts)."
-    },
-    {
       "path": "apps/web/src/proposedPlan.ts",
       "anchor": "selectedScientSkillNames",
       "purpose": "Collect explicit Scient skill selections in plan feedback submissions."
@@ -78,26 +67,6 @@
       "path": "packages/shared/src/composerInlineTokens.ts",
       "anchor": "collectSelectedScientSkillNames",
       "purpose": "Extract real skill tokens while excluding context-chip labels from explicit skill selection."
-    },
-    {
-      "path": "apps/mobile/src/features/threads/composerSlashSkillSearch.ts",
-      "anchor": "isGlobalProviderSkill",
-      "purpose": "Keep project-native skills out of the mobile global skill picker."
-    },
-    {
-      "path": "apps/mobile/src/features/threads/ThreadComposer.tsx",
-      "anchor": "mergeEffectiveProviderSkills",
-      "purpose": "Merge the exact current thread project skill inventory into mobile composer selection."
-    },
-    {
-      "path": "apps/mobile/src/features/threads/ThreadDetailScreen.tsx",
-      "anchor": "scientSkillsInventory",
-      "purpose": "Keep mobile thread rendering aware of its contextual Scient skill inventory."
-    },
-    {
-      "path": "apps/mobile/src/features/threads/new-task-flow-provider.tsx",
-      "anchor": "scientSkillsInventory",
-      "purpose": "Merge project skills into the mobile new-task composer before a thread exists."
     },
     {
       "path": "apps/server/package.json",
@@ -290,11 +259,6 @@
       "purpose": "Summarize collapsed groups of Scient's own tools by family (scientMcpToolPresentation.test.ts)."
     },
     {
-      "path": "apps/mobile/src/state/use-thread-composer-state.ts",
-      "anchor": "collectSelectedScientSkillNames",
-      "purpose": "Capture exact composer skill tokens in the persisted mobile outbox snapshot; qualify via thread-outbox-start-turn.test.ts."
-    },
-    {
       "path": "apps/server/src/orchestration-v2/ThreadLaunchService.ts",
       "anchor": "input.initialMessage.selectedScientSkillNames",
       "purpose": "Carry captured initial skill selection into native bootstrap admission; qualify via ThreadLaunchService.test.ts and SelectedScientSkillNames.test.ts."
@@ -325,11 +289,6 @@
       "path": "apps/web/src/scient/presentation/traceIcons.ts",
       "anchor": "isScientSkillTool",
       "purpose": "Give Scient skill tool rows the skill trace icon in the conversation timeline (traceIcons.test.ts)."
-    },
-    {
-      "path": "apps/mobile/src/state/thread-outbox-start-turn.ts",
-      "anchor": "selectedScientSkillNames",
-      "purpose": "Build mobile outbox commands with captured skill selections, dispatch and first-message title (thread-outbox-start-turn.test.ts)."
     },
     {
       "path": "packages/contracts/src/legacy/orchestrationEvent.ts",
