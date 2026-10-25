@@ -65,8 +65,8 @@ const firstText = (...values: ReadonlyArray<string | undefined>) =>
  * The terminal outcome of a turn. The first matching rule wins:
  *
  * 1. no confirmed terminal (drain unconfirmed, process exit) → unknown
- * 2. aborted → failed, `stopReason: "abort"`. Scient's Stop closes the
- *    process instead of aborting, so an abort always came from elsewhere.
+ * 2. aborted → failed, `stopReason: "abort"`. The adapter's Stop owner maps
+ *    user-requested aborts to interruption; otherwise the abort is a failure.
  * 3. a model error → failed, `stopReason: "error"`, detail from the retry's
  *    final error, then the message's error, then the prompt result's
  * 4. a session retry gave up → failed, as above

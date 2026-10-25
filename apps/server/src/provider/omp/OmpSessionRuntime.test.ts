@@ -2098,3 +2098,47 @@ it.effect.each(
     yield* Scope.close(h.scope, Exit.void);
   }).pipe(Effect.scoped),
 );
+
+it.effect(
+  "logs paused diagnostics without publishing and restores warnings on the next begin",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* runtimeHarness();
+      yield* h.runtime.begin("stopped");
+      yield* h.runtime.accepted("stopped-prompt", true);
+      const pause = yield* h.runtime.pause;
+      for (const event of [
+        { type: "agent_start" },
+        { type: "agent_end", messages: [], isTerminal: true },
+        { type: "prompt_result", id: "stopped-prompt", agentInvoked: true, status: "aborted" },
+      ])
+        yield* Queue.offer(h.events, { _tag: "Event", event });
+      yield* pause.settled;
+      for (const event of [
+        { type: "extension_error", error: "Stopped extension failed late" },
+        { type: "session_settled" },
+      ])
+        yield* Queue.offer(h.events, { _tag: "Event", event });
+      const observed: OmpSessionUpdate[] = [];
+      for (;;) {
+        const update = yield* takeUpdate(h.updates);
+        observed.push(update);
+        if (update.type === "session-settled") break;
+      }
+      expect(observed.filter((update) => update.type === "warning")).toEqual([]);
+      expect(observed.filter((update) => update.type === "turn-started")).toEqual([
+        { type: "turn-started", turnId: "stopped" },
+      ]);
+      yield* h.runtime.begin("next");
+      expect(yield* takeUpdate(h.updates)).toEqual({ type: "turn-started", turnId: "next" });
+      yield* Queue.offer(h.events, {
+        _tag: "Event",
+        event: { type: "extension_error", error: "Current extension failed" },
+      });
+      expect(yield* takeUpdate(h.updates)).toEqual({
+        type: "warning",
+        message: "Current extension failed",
+      });
+      yield* Scope.close(h.scope, Exit.void);
+    }),
+);

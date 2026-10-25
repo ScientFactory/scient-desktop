@@ -69,6 +69,7 @@ export const scriptedOmpRpc = (input: {
   /** A switch takes effect and then reports this error, as a failure after the session changed. */
   readonly switchErrorAfterChange?: string;
   readonly promptError?: string;
+  readonly abortResponse?: unknown;
   readonly modelsError?: string;
   readonly modelsResponse?: unknown;
   readonly reportThinkingLevel?: () => boolean;
@@ -265,6 +266,12 @@ export const scriptedOmpRpc = (input: {
             input.clamp?.[`${state.model.provider}/${state.model.id}`]?.[level] ?? level;
           return respond(frame);
         }
+        case "abort_and_restore_queue":
+          return respond(
+            frame,
+            input.abortResponse,
+            input.abortResponse === undefined ? "Abort is not scripted by this peer." : undefined,
+          );
         case "prompt":
         case "steer":
           state.prompts.push({ frame, bytes });

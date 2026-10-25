@@ -170,6 +170,10 @@ export interface OmpSessionRuntime {
   /** The open turn's prompt command was rejected before OMP accepted it. */
   readonly commandFailed: (turnId?: string) => Effect.Effect<void>;
   readonly requestProcessExit: () => Effect.Effect<void>;
+  /** Fence autonomous wake-ups before abort; the returned receipt waits for this turn to settle. */
+  readonly pause: Effect.Effect<{
+    readonly settled: Effect.Effect<void>;
+  }>;
 }
 
 const text = (value: unknown): string | undefined =>
@@ -384,8 +388,8 @@ const lastAssistantMessage = (messages: unknown): Record<string, unknown> | unde
 };
 
 /**
- * Item status of a finished assistant message: a failed model request fails
- * its item. Scient's Stop closes the process, so an abort came from elsewhere.
+ * A failed model request fails its item. The adapter's Stop owner overrides
+ * content status when the abort was requested by the user.
  */
 const assistantItemStatus = (message: unknown): "completed" | "failed" => {
   if (!isRecord(message)) return "completed";
@@ -410,6 +414,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   let catalog = emptyOmpCommandCatalog();
   let turn = initialOmpTurnState;
   let activeTurnId: string | undefined;
+  let paused = false;
+  let pauseSettled: Deferred.Deferred<void> | undefined;
   let continuationSequence = 0;
   let autonomousTurn = false;
   let assistantMessageSequence = 0;
@@ -518,7 +524,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   const scientSubagents = new Map<string, ScientSubagentObservation>();
   const cancelledHostTools = new Set<string>();
   const cancelledHostUris = new Set<string>();
-  const publish = (update: OmpSessionUpdate) => input.onUpdate(update);
+  // Late diagnostics must not offer a continuation after Stop settled the turn.
+  // Their text is unredacted here, so only the fact is logged.
+  const publish = (update: OmpSessionUpdate) =>
+    update.type === "warning" && paused && !turnIsOpen(turn)
+      ? Effect.logDebug("Dropped an agent warning that arrived after Stop")
+      : input.onUpdate(update);
   /**
    * Events of an aborted run may still arrive after its turn settled, and
    * after the next turn began.
@@ -621,12 +632,15 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     rememberSettledPrompt(requestId);
     pendingOutcomes = [];
     abandonedRunId = openRunId;
-    yield* publish({
-      type: "turn-outcome",
-      ...turnOutcome(outcome, signal),
-      ...(requestId ? { requestId } : {}),
-    });
+    // Stop owns the terminal receipt until its RPC reply (including withdrawn input) is handled.
+    if (!pauseSettled)
+      yield* publish({
+        type: "turn-outcome",
+        ...turnOutcome(outcome, signal),
+        ...(requestId ? { requestId } : {}),
+      });
     activeTurnId = undefined;
+    if (pauseSettled && outcome !== "unknown") yield* Deferred.succeed(pauseSettled, undefined);
   });
 
   const applySignal = Effect.fn("OmpSessionRuntime.applySignal")(function* (signal: OmpTurnSignal) {
@@ -639,6 +653,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     turnId: string,
     autonomous: boolean,
   ) {
+    pauseSettled = undefined;
     activeTurnId = turnId;
     autonomousTurn = autonomous;
     assistantMessageSequence = 0;
@@ -882,6 +897,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       // they were interactive questions.
       return;
     }
+    // After Stop no continuation will show an unowned question, so release the
+    // extension's waiting promise. Otherwise the adapter buffers it as before.
+    if (paused && !turnIsOpen(turn)) {
+      yield* cancelStaleQuestion(event);
+      return;
+    }
     const options = Array.isArray(event.options)
       ? event.options.filter(
           (option): option is string => typeof option === "string" && option.length > 0,
@@ -936,6 +957,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       // protocol failure ends the process instead.
       if (
         !turnIsOpen(turn) &&
+        !paused &&
         !protocolFailed &&
         (turn.phase === "terminal" || turn.phase === "failed" || turn.phase === "unknown")
       ) {
@@ -1461,6 +1483,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
 
   const consume = Effect.fn("OmpSessionRuntime.consume")(function* (item: InboxItem) {
     if (item.type === "begin" && item.turnId && item.admission) {
+      paused = false;
+      pauseSettled = undefined;
       if (turnIsOpen(turn) && activeTurnId) {
         yield* Deferred.succeed(item.admission, { turnId: activeTurnId, steering: true });
       } else {
@@ -1566,6 +1590,17 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }),
     commandFailed: (turnId) =>
       offer({ type: "command-failed", ...(turnId === undefined ? {} : { turnId }) }),
+    pause: Effect.gen(function* () {
+      const settled = yield* Deferred.make<void>();
+      // Do not queue Stop behind an actor waiting for an RPC state reply. Fence
+      // publication now; only the actor settles the open turn and its receipt.
+      paused = true;
+      pauseSettled = settled;
+      if (!turnIsOpen(turn)) yield* Deferred.succeed(settled, undefined);
+      return {
+        settled: Deferred.await(settled),
+      };
+    }),
     requestProcessExit: Effect.fn("OmpSessionRuntime.requestProcessExit")(function* () {
       const done = yield* Deferred.make<void>();
       yield* offer({ type: "process-exit", done });
