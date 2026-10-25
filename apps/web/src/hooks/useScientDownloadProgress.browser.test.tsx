@@ -63,6 +63,41 @@ async function _cleanupFixture1(_fixture: _Fixture) {
   vi.unstubAllGlobals();
 }
 
+// regression: 8ddf71cb60 feat(desktop): clarify update actions and smooth confirmed progress (#270)
+it("holds zero until a real reading, then smoothly catches up and stops", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  expect(_fixture.result).toBe(0);
+  expect(frames.size).toBe(0);
+  await update(_fixture, { percent: 30 });
+  await step(_fixture);
+  expect(_fixture.result).toBeGreaterThan(0);
+  expect(_fixture.result).toBeLessThan(1);
+  for (let i = 0; i < 300; i++) await step(_fixture);
+  expect(_fixture.result).toBe(30);
+  expect(frames.size).toBe(0);
+});
+
+// regression: 8ddf71cb60 feat(desktop): clarify update actions and smooth confirmed progress (#270)
+it.each(["available", "downloaded", "error"])(
+  "cancels animation immediately on %s",
+  async (status) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await update(_fixture, { percent: 60 });
+    await step(_fixture);
+    await update(_fixture, { status, percent: status === "downloaded" ? 100 : null });
+    expect(_fixture.result).toBe(_fixture.props.percent);
+    expect(frames.size).toBe(0);
+    await update(_fixture, { status: "downloading", percent: 0 });
+    expect(_fixture.result).toBe(0);
+  },
+);
+
 it("retargets without snapping and honors downward corrections", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

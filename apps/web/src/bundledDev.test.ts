@@ -8,9 +8,72 @@ import * as NodeUtil from "node:util";
 
 import react from "@vitejs/plugin-react";
 import { createServer } from "vite-plus";
-import { expect, it } from "vite-plus/test";
+// SCIENT-FORK:START — fixtures for restored behavior guards.
+import { expect, it, vi } from "vite-plus/test";
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — fixtures for restored behavior guards.
+import { warmBundledDevPlugin } from "../vite/warmBundledDev";
+// SCIENT-FORK:END
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
+
+// SCIENT-FORK:START — restore the original behavior guard.
+// regression: 72bdf1e658 perf(web): pre-bundle startup chunks when a shared dev server starts (#22210)
+it("warms the wanted lazy chunk chain and nothing else", async () => {
+  const root = "/synthetic-startup";
+  const main = `${root}/src/main.tsx?rolldown-lazy`;
+  const route = `${root}/src/routes/_chat.tsx?rolldown-lazy`;
+  const unrelated = `${root}/src/rare.ts?rolldown-lazy`;
+  const warmed: string[] = [];
+  let listening: (() => void) | undefined;
+  const removeClient = vi.fn(async () => undefined);
+  const plugin = warmBundledDevPlugin();
+  const configure = plugin.configureServer;
+  if (typeof configure !== "function") throw new Error("Expected a configureServer hook");
+  Reflect.apply(configure, {}, [
+    {
+      config: {
+        root,
+        experimental: { bundledDev: true },
+        logger: { info: vi.fn(), warn: vi.fn() },
+      },
+      httpServer: {
+        once: (_event: string, callback: () => void) => {
+          listening = callback;
+        },
+      },
+      environments: {
+        client: {
+          bundledDev: {
+            waitForInitialBuildFinish: async () => undefined,
+            triggerLazyBundling: async (id: string) => {
+              warmed.push(id);
+              return { filename: id };
+            },
+            markPayloadDelivered: vi.fn(),
+            devEngine: {
+              removeClient,
+              moduleGraph: {
+                getModuleIds: () => ["bootstrap", ...(warmed.includes(main) ? ["main"] : [])],
+                getModuleInfo: (id: string) => ({
+                  dynamicallyImportedIds: id === "bootstrap" ? [main, unrelated] : [route],
+                }),
+              },
+            },
+          },
+        },
+      },
+    },
+  ]);
+  expect(warmed).toEqual([]);
+  expect(listening).toBeDefined();
+  listening!();
+  await vi.waitFor(() => expect(removeClient).toHaveBeenCalledOnce());
+  expect(warmed).toEqual([main, route]);
+  expect(removeClient).toHaveBeenCalledWith("t3code-startup-warmup");
+});
+// SCIENT-FORK:END
 
 it("initializes React refresh before a shared UI chunk runs in bundled dev", async () => {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-bootstrap-"));

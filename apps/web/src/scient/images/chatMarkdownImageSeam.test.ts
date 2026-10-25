@@ -15,15 +15,6 @@ const imageCardSource = NodeFS.readFileSync(
 
 describe("ChatMarkdown workspace-image seam", () => {
   // regression: e34e687915 fix(chat): make rich media reliable and copyable
-  it("mounts one of each Scient-owned image component", () => {
-    expect(chatMarkdownSource).toContain("ScientInlineWorkspaceImage,");
-    expect(chatMarkdownSource).toContain("ScientPendingWorkspaceImage,");
-    expect(chatMarkdownSource.match(/<ScientInlineWorkspaceImage/gu)).toHaveLength(1);
-    expect(chatMarkdownSource.match(/<ScientPendingWorkspaceImage/gu)).toHaveLength(1);
-    expect(chatMarkdownSource.match(/<ScientRemoteImageReference/gu)).toHaveLength(1);
-  });
-
-  // regression: e34e687915 fix(chat): make rich media reliable and copyable
   it("uses a stable local-image card while streaming and preserves ordinary images", () => {
     expect(chatMarkdownSource).toContain(
       "resolveInlineWorkspaceImage({ alt, cwd, src: imageSource.path })",
@@ -36,6 +27,15 @@ describe("ChatMarkdown workspace-image seam", () => {
     expect(chatMarkdownSource).toContain("<ChatMarkdownImageFallback");
   });
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
+  it("gates web images through one Scient-owned link card", () => {
+    expect(chatMarkdownSource.match(/<ScientRemoteImageReference/gu)).toHaveLength(1);
+    expect(chatMarkdownSource).toContain(
+      "if (remoteImageReference !== null) return remoteImageReference;",
+    );
+    expect(chatMarkdownSource).toContain("failureFallback={remoteImageReference ?? undefined}");
+  });
+
   // regression: e34e687915 fix(chat): make rich media reliable and copyable
   it("uses authorized asset URLs and never executes SVG as document markup", () => {
     expect(imageCardSource).toContain("useAssetUrlState(props.threadRef.environmentId, resource)");
@@ -43,4 +43,13 @@ describe("ChatMarkdown workspace-image seam", () => {
     expect(imageCardSource).not.toContain("dangerouslySetInnerHTML");
     expect(imageCardSource).not.toContain("<iframe");
   });
+});
+
+// regression: e34e687915 fix(chat): make rich media reliable and copyable
+it("mounts one of each Scient-owned image component", () => {
+  expect(chatMarkdownSource).toContain("ScientInlineWorkspaceImage,");
+  expect(chatMarkdownSource).toContain("ScientPendingWorkspaceImage,");
+  expect(chatMarkdownSource.match(/<ScientInlineWorkspaceImage/gu)).toHaveLength(1);
+  expect(chatMarkdownSource.match(/<ScientPendingWorkspaceImage/gu)).toHaveLength(1);
+  expect(chatMarkdownSource.match(/<ScientRemoteImageReference/gu)).toHaveLength(1);
 });

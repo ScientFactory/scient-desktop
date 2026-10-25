@@ -3,6 +3,8 @@ import { RegistryContext } from "@effect/atom-react";
 import {
   AuthFilesystemReadScope,
   AssetAccessError,
+  AssetWorkspaceAssetNotFoundError,
+  AssetPreviewTypeValidationError,
   type AssetCreateUrlResult,
   EnvironmentId,
   EnvironmentFilePath,
@@ -117,6 +119,7 @@ vi.mock(import("../remoteOpen"), async (original) => ({
 }));
 
 import ChatMarkdown from "./ChatMarkdown";
+import { toastManager } from "./ui/toast";
 import { assetEnvironment } from "../state/assets";
 import { useRightPanelStore } from "../rightPanelStore";
 
@@ -161,10 +164,111 @@ async function renderInRegistry(registry: AtomRegistry.AtomRegistry, ui: ReactNo
   return Object.assign(screen, { update: (node: ReactNode) => screen.rerender(wrap(node)) });
 }
 
+// regression: da7c4f234d test(web): chat markdown and timeline tests run in a real browser (#20905)
+it("opens host media through server authorization before the client grant loads", async () => {
+  using env = setup();
+  access.ready = false;
+  mint.mockResolvedValue({ relativeUrl: "/api/assets/image.png", expiresAt: 1 });
+  const expanded = deferred<unknown>();
+  const onImageExpand = vi.fn(expanded.resolve);
+  await using screen = await renderInRegistry(
+    env.registry,
+    <ChatMarkdown
+      cwd="/repo"
+      threadRef={{
+        environmentId: EnvironmentId.make("media-environment"),
+        threadId: ThreadId.make("media-thread"),
+      }}
+      text="[Open image](/tmp/image.png)"
+      onImageExpand={onImageExpand}
+    />,
+  );
+  const link = screen.container.querySelector<HTMLAnchorElement>('a[href="/tmp/image.png"]');
+  expect(link).not.toBeNull();
+  await act(async () => link!.click());
+  expect(await expanded.promise).toMatchObject({
+    images: [expect.objectContaining({ src: "https://host.test/api/assets/image.png" })],
+  });
+});
+
 const threadRef = {
   environmentId: EnvironmentId.make("media-environment"),
   threadId: ThreadId.make("media-thread"),
 };
+
+// regression: 826ef55b74 fix(web): name the remote host and checked path when media is not found (#19677)
+it.each([
+  {
+    name: "a remote lookup whose host resolves while it is pending",
+    checkedPath: "/home/remote/Downloads/image.png",
+    description: "The file was not found on settled-host at /home/remote/Downloads/image.png.",
+  },
+  {
+    name: "an older remote server without a checked path",
+    description: "The file was not found on settled-host at ~/Downloads/image.png.",
+  },
+  {
+    name: "a missing file on this device",
+    local: true,
+    checkedPath: "/home/local/Downloads/image.png",
+    description: "Media file was not found.",
+  },
+  {
+    name: "a different remote failure",
+    unsupported: true,
+    description: "Only images, videos, audio, HTML, and PDF files can be previewed.",
+  },
+])("reports the media failure for $name", async (scenario) => {
+  using env = setup();
+  const lookup = deferred<AssetCreateUrlResult>();
+  const started = deferred<void>();
+  const reported = deferred<Parameters<typeof toastManager.add>[0]>();
+  mint.mockImplementation(() => {
+    started.resolve();
+    return lookup.promise;
+  });
+  using _toast = vi.spyOn(toastManager, "add").mockImplementation((toast) => {
+    reported.resolve(toast);
+    return "media-toast";
+  });
+  remoteOpen.isResolved = false;
+  const content = (
+    <ChatMarkdown cwd="/repo" threadRef={threadRef} text="[Open image](~/Downloads/image.png)" />
+  );
+  await using screen = await renderInRegistry(env.registry, content);
+  const link = screen.container.querySelector<HTMLAnchorElement>('a[href="~/Downloads/image.png"]');
+  expect(link).not.toBeNull();
+  await act(async () => {
+    link!.click();
+    await started.promise;
+  });
+
+  remoteOpen.isResolved = true;
+  remoteOpen.state.mode = scenario.local ? "local-exec" : "remote-unavailable";
+  remoteOpen.httpBaseUrl = scenario.local ? "http://localhost:3773" : "https://host.test";
+  remoteOpen.label = "settled-host";
+  await screen.update(content);
+  const resource = {
+    _tag: "media-file" as const,
+    path: "~/Downloads/image.png",
+    threadId: threadRef.threadId,
+  };
+  await act(async () => {
+    lookup.reject(
+      scenario.unsupported
+        ? new AssetPreviewTypeValidationError({ resource })
+        : new AssetWorkspaceAssetNotFoundError({
+            resource,
+            ...(scenario.checkedPath ? { checkedPath: scenario.checkedPath } : {}),
+          }),
+    );
+    await reported.promise;
+  });
+  expect(await reported.promise).toMatchObject({
+    title: "Media unavailable",
+    description: scenario.description,
+  });
+});
 
 const imageLayouts = ["standalone", "inline", "file"] as const;
 type ImageLayout = (typeof imageLayouts)[number];
@@ -207,8 +311,6 @@ it.each(imageLayouts)(
 );
 
 // regression: 479dfd46d1 fix(upstream): compose workspace image refresh with Scient cards
-// Each layout renders through its own component and both cached outcomes share one policy,
-// so every layout and every outcome keeps one row.
 it.each([
   { layout: "standalone", cached: "URL" },
   { layout: "inline", cached: "failure" },

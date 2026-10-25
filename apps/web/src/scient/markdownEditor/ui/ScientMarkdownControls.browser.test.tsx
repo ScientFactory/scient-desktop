@@ -114,44 +114,50 @@ describe("formatting menu focus", () => {
   });
 
   // The caret shortcut opens the same editor in "restores the correct focus target after Escape".
-  it("opens exactly one link editor from the selection shortcut and restores editor focus", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+  // regression: 845778d210 feat(markdown): add scoped editor shortcuts
+  it.each(["caret", "selection"] as const)(
+    "opens exactly one link editor from the %s shortcut and restores editor focus",
+    async (kind) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-    const { view } = await fixture(_fixture, "Link these words.\n");
-    await act(() => {
-      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
-    });
+      const { view } = await fixture(_fixture, "Link these words.\n");
+      if (kind === "selection") {
+        await act(() => {
+          view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
+        });
+      }
 
-    const event = new KeyboardEvent(
-      "keydown",
-      nativeShortcut({
-        key: "k",
-        code: "KeyK",
-        bubbles: true,
-        cancelable: true,
-        ctrlKey: true,
-      }),
-    );
-    await act(() => view.dom.dispatchEvent(event));
-    expect(event.defaultPrevented).toBe(true);
-    await vi.waitFor(() => {
-      const inputs = document.body.querySelectorAll<HTMLInputElement>(
-        'input[aria-label="Link destination"]',
+      const event = new KeyboardEvent(
+        "keydown",
+        nativeShortcut({
+          key: "k",
+          code: "KeyK",
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+        }),
       );
-      expect(inputs).toHaveLength(1);
-      expect(document.activeElement).toBe(inputs[0]);
-    });
+      await act(() => view.dom.dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(true);
+      await vi.waitFor(() => {
+        const inputs = document.body.querySelectorAll<HTMLInputElement>(
+          'input[aria-label="Link destination"]',
+        );
+        expect(inputs).toHaveLength(1);
+        expect(document.activeElement).toBe(inputs[0]);
+      });
 
-    const cancel = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>("[data-slot='popover-popup'] button"),
-    ).find((button) => button.textContent === "Cancel")!;
-    await act(() => cancel.click());
-    await vi.waitFor(() => {
-      expect(document.body.querySelector('input[aria-label="Link destination"]')).toBeNull();
-      expect(view.hasFocus()).toBe(true);
-    });
-  });
+      const cancel = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>("[data-slot='popover-popup'] button"),
+      ).find((button) => button.textContent === "Cancel")!;
+      await act(() => cancel.click());
+      await vi.waitFor(() => {
+        expect(document.body.querySelector('input[aria-label="Link destination"]')).toBeNull();
+        expect(view.hasFocus()).toBe(true);
+      });
+    },
+  );
 
   it("uses one stable link popup while switching between detached triggers", async () => {
     await using _fixture = _createFixture();

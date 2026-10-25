@@ -203,6 +203,55 @@ async function mountFooter(_fixture: _Fixture, width: number, state: DesktopUpda
   await expect.poll(() => _fixture.host!.querySelectorAll("button").length).toBeGreaterThan(3);
 }
 
+// regression: ebcf7ec294 feat(web): show other machines' and providers' updates in a sidebar circle
+it("lists other updates with text actions and updates them without a confirmation", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  fixture.everything = everythingFixture();
+  await mountFooter(_fixture, 216, idleUpdateState);
+  await page.getByRole("button", { name: "Other updates available" }).click();
+  const updateAll = page.getByRole("button", { name: "Update all" });
+  await expect.element(updateAll).toBeVisible();
+  const row = document.querySelector<HTMLElement>("[data-other-update-row]")!;
+  expect(row.textContent).toContain("alvin server");
+  expect(row.textContent).toContain("0.6.20 → 0.6.21");
+
+  const rowUpdate = page.getByRole("button", { name: "Update", exact: true });
+  for (const action of [rowUpdate, updateAll]) {
+    const style = getComputedStyle(action.element());
+    expect(style.borderTopWidth).toBe("0px");
+    expect(style.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(style.textDecorationLine).toBe("underline");
+  }
+  expect(Number(getComputedStyle(updateAll.element()).fontWeight)).toBeGreaterThanOrEqual(600);
+  expect(Number(getComputedStyle(rowUpdate.element()).fontWeight)).toBeLessThan(600);
+  // Hover is visible on the light card, and still subtle.
+  await userEvent.hover(updateAll);
+  await expect
+    .poll(() => getComputedStyle(updateAll.element()).backgroundColor)
+    .not.toBe("rgba(0, 0, 0, 0)");
+  if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
+    await page.screenshot({
+      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/other-updates-card.png`,
+    });
+  }
+
+  await updateAll.click();
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  const updating = page.getByRole("button", { name: "Other updates in progress" });
+  await expect.element(updating).toBeVisible();
+  const bounds = (updating.element() as HTMLElement).getBoundingClientRect();
+  expect([bounds.width, bounds.height]).toEqual([20, 20]);
+  // The ring spins, so measure its drawn size rather than its rotated bounding box.
+  const ring = (updating.element() as HTMLElement).querySelector("svg")!;
+  expect(getComputedStyle(ring).width).toBe("24px");
+  const app = page.getByRole("button", { name: /^Check for updates/ }).element();
+  expect(bounds.left + bounds.width / 2 + 12).toBeLessThan(app.getBoundingClientRect().left);
+  await expect.poll(() => row.isConnected && row.textContent).toContain("queued");
+  expectFooterInOrder(_fixture);
+});
+
 // regression: 4b9f781edc fix(sidebar): keep update controls within narrow layouts
 it.each(["downloading", "downloaded"] as const)(
   "keeps %s updates inside the minimum sidebar and preserves overflow actions",
@@ -657,3 +706,22 @@ function _createFixture() {
   };
 }
 type _Fixture = ReturnType<typeof _createFixture>;
+
+function expectFooterInOrder(_fixture: _Fixture) {
+  const footer = _fixture
+    .host!.querySelector<HTMLElement>('[data-sidebar="footer"]')!
+    .getBoundingClientRect();
+  let previousRight = footer.left;
+  for (const visible of [..._fixture.host!.querySelectorAll("button")].filter(
+    (candidate) => candidate.getClientRects().length,
+  )) {
+    const bounds = visible.getBoundingClientRect();
+    expect(bounds.left).toBeGreaterThanOrEqual(previousRight);
+    expect(bounds.right).toBeLessThanOrEqual(footer.right);
+    // Labels never truncate; the circle's progress ring is drawn around it on purpose.
+    if (!visible.matches("[data-other-updates]")) {
+      expect(visible.scrollWidth).toBeLessThanOrEqual(visible.clientWidth);
+    }
+    previousRight = bounds.right;
+  }
+}

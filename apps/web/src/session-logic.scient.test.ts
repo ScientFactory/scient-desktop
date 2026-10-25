@@ -1,5 +1,6 @@
 import {
   RunId,
+  MessageId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
@@ -10,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   deriveActiveWorkStartedAt,
+  createMessageAttachmentPreviewProjector,
   deriveTimelineEntriesFromVisibleTurnItems,
   isLatestRunSettled,
   workEntrySignalsSevereFailure,
@@ -185,6 +187,26 @@ describe("isLatestRunSettled", () => {
     completedAt: "2026-02-27T21:10:06.000Z",
   } as const;
 
+  // regression: b8fbae4ffa merge(upstream): compose orchestration v2 through ca7df394ed
+  it("returns true once the session is idle and no run is active", () => {
+    expect(
+      isLatestRunSettled(latestRun, {
+        status: "idle",
+        activeRunId: null,
+      }),
+    ).toBe(true);
+  });
+
+  // regression: b8fbae4ffa merge(upstream): compose orchestration v2 through ca7df394ed
+  it("returns true once the runtime owns a different run than the latest settled one", () => {
+    expect(
+      isLatestRunSettled(latestRun, {
+        status: "running",
+        activeRunId: RunId.make("run-2"),
+      }),
+    ).toBe(true);
+  });
+
   it("returns false while the same run is still active in a running session", () => {
     expect(
       isLatestRunSettled(latestRun, {
@@ -235,6 +257,35 @@ describe("deriveActiveWorkStartedAt", () => {
     startedAt: "2026-02-27T21:10:00.000Z",
     completedAt: "2026-02-27T21:10:06.000Z",
   } as const;
+
+  // regression: b8fbae4ffa merge(upstream): compose orchestration v2 through ca7df394ed
+  it("suppresses the local send clock once the runtime owns an active run", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        completedRun,
+        {
+          status: "running",
+          activeRunId: RunId.make("run-2"),
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBeNull();
+  });
+
+  // regression: b8fbae4ffa merge(upstream): compose orchestration v2 through ca7df394ed
+  it("prefers the runtime activity clock over any run timestamp", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        completedRun,
+        {
+          status: "running",
+          activeRunId: RunId.make("run-2"),
+          activityStartedAt: "2026-02-27T21:12:00.000Z",
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:12:00.000Z");
+  });
 
   it("prefers the in-flight run start while the runtime still owns that run", () => {
     expect(
@@ -291,5 +342,97 @@ describe("deriveActiveWorkStartedAt", () => {
     expect(deriveActiveWorkStartedAt(null, null, "2026-02-27T21:11:00.000Z")).toBe(
       "2026-02-27T21:11:00.000Z",
     );
+  });
+});
+
+describe("message attachment previews", () => {
+  const streamingMessage = {
+    id: MessageId.make("streaming-message"),
+    role: "assistant" as const,
+    text: "",
+    runId: RunId.make("streaming-run"),
+    createdAt: "2026-02-23T00:00:03.000Z",
+    updatedAt: "2026-02-23T00:00:03.000Z",
+    streaming: true,
+  };
+
+  // regression: 19c1710a88 perf(web): reuse timeline rows while text streams (#9725)
+  it("reuses preview objects while preserving URL and attachment metadata changes", () => {
+    const image = {
+      type: "image" as const,
+      id: "image",
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 42,
+    };
+    const file = {
+      type: "file" as const,
+      id: "file",
+      name: "file.txt",
+      mimeType: "text/plain",
+      sizeBytes: 8,
+    };
+    const message = { ...streamingMessage, attachments: Object.freeze([image, file]) };
+    const project = createMessageAttachmentPreviewProjector();
+    const urls = new Map([[image.id, "https://first.test/image"]]);
+    const first = project(message, (attachment) => urls.get(attachment.id));
+    Object.freeze(first.attachments);
+    expect(project(message, (attachment) => new Map(urls).get(attachment.id))).toBe(first);
+    const streamed = project({ ...message, text: "Next" }, (attachment) => urls.get(attachment.id));
+    expect(streamed.attachments).toBe(first.attachments);
+    expect(streamed.text).toBe("Next");
+    expect(first.text).toBe("");
+    expect(first.attachments?.[1]).toBe(file);
+
+    urls.set(image.id, "https://second.test/image");
+    const renewed = project(message, (attachment) => urls.get(attachment.id));
+    expect(renewed.attachments?.[0]).toMatchObject({ previewUrl: "https://second.test/image" });
+    expect(first.attachments?.[0]).toMatchObject({ previewUrl: "https://first.test/image" });
+    const renamed = project(
+      { ...message, attachments: [{ ...image, name: "renamed.png" }, file] },
+      (attachment) => urls.get(attachment.id),
+    );
+    expect(renamed.attachments?.[0]).toMatchObject({
+      name: "renamed.png",
+      previewUrl: "https://second.test/image",
+    });
+    expect(project(message, () => undefined)).toBe(message);
+  });
+
+  // regression: 19c1710a88 perf(web): reuse timeline rows while text streams (#9725)
+  it("keeps pending preview handoffs stable and restores the current server URL", () => {
+    const message = {
+      ...streamingMessage,
+      role: "user" as const,
+      streaming: false,
+      attachments: [
+        {
+          type: "image" as const,
+          id: "image",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 42,
+        },
+      ],
+    };
+    const server = createMessageAttachmentPreviewProjector();
+    const handoff = createMessageAttachmentPreviewProjector();
+    const first = handoff(
+      server(message, () => undefined),
+      () => "blob:handoff",
+    );
+    expect(
+      handoff(
+        server(message, () => undefined),
+        () => "blob:handoff",
+      ),
+    ).toBe(first);
+    const ready = server(message, () => "https://server.test/image");
+    expect(handoff(ready, () => "blob:handoff").attachments?.[0]).toMatchObject({
+      previewUrl: "blob:handoff",
+    });
+    expect(handoff(ready, () => undefined)).toBe(ready);
+    expect(ready.attachments?.[0]).toMatchObject({ previewUrl: "https://server.test/image" });
+    expect(first.attachments?.[0]).toMatchObject({ previewUrl: "blob:handoff" });
   });
 });

@@ -7,7 +7,8 @@ const readSource = (relativePath: string) =>
   NodeFS.readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
 describe("analysis preview mini-player seam", () => {
-  it("keeps the shared floating preview free of Scient analysis code", () => {
+  // regression: c4d6bf2ec4 feat(analysis): complete the MATLAB runtime workflow
+  it("keeps the shared floating preview generic while preserving its reusable chrome", () => {
     // The inherited player and the Scient parts its marked lines call.
     const componentSource = [
       readSource("../../components/preview/ThreadPreviewMiniPlayer.tsx"),
@@ -36,5 +37,16 @@ describe("analysis preview mini-player seam", () => {
     expect(sharedSources).not.toMatch(
       /~\/scient\/|@scientfactory\/analysis|matlab|AnalysisArtifact|figure-\d/iu,
     );
+    expect(componentSource.match(/<BrowserSurfaceSlot/gu)).toHaveLength(1);
+    expect(componentSource.match(/<StaticAssetImageSurface/gu)).toHaveLength(1);
+    expect(componentSource.match(/aria-label="Open preview in right panel"/gu)).toHaveLength(1);
+    expect(componentSource).toContain("createPortal(player, document.body)");
+    expect(componentSource).toContain("resolvePreviewMiniPlayerFrame");
+    expect(componentSource).toContain("resizePreviewMiniPlayerRect");
+    expect(componentSource.match(/<PictureInPicture2/gu)).toHaveLength(1);
+    expect(storeSource).toContain('kind: "browser"');
+    expect(storeSource).toContain('kind: "static-artifact"');
+    expect(componentSource).toContain('content.kind === "static-artifact"');
+    expect(layoutSource).toContain("PreviewMiniPlayerResizeDirection");
   });
 });

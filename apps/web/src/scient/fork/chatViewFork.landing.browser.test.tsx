@@ -114,6 +114,21 @@ it("measures pending rows but blocks pointer/focus until their own landing settl
   expect(onAction).toHaveBeenCalledTimes(2);
 });
 
+// regression: b75327a435 chore: merge main and preserve frozen fork history readers
+it("releases inertness at expiry even when the fork never finishes loading", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const onAction = vi.fn();
+  markForkLanding(fork, 1_000);
+  await render(_fixture, { threadKey: fork, detailLoaded: false, onAction });
+  const surface = _fixture.host!.querySelector<HTMLElement>("[data-landing-surface]")!;
+  await expect.poll(() => surface.inert).toBe(true);
+  await expect.poll(() => surface.inert, { timeout: 3_000 }).toBe(false);
+  await userEvent.click(_fixture.host!.querySelector<HTMLButtonElement>("[data-action]")!);
+  expect(onAction).toHaveBeenCalledTimes(1);
+});
+
 function _createFixture() {
   let _published_reveal = undefined! as ReturnType<typeof useForkLandingReveal>;
 

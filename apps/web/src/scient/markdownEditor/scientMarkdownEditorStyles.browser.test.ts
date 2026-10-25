@@ -91,8 +91,8 @@ describe("rich Markdown document styles", () => {
   });
 });
 
-// Source-text guards: each is the only test of a fix(...) commit's CSS rule (a
-// local mutation of each rule left every behavioral test green, 2026-10-25).
+// Source-text guards: each is the only test of its CSS rule (a local mutation of
+// each rule left every behavioral test green, 2026-10-25).
 describe("rich Markdown style rules guarded by source", () => {
   // regression: 017821d992 fix(web): improve platform cursor behavior (#301)
   it("lets the platform choose the pointer over the Markdown canvas", () => {
@@ -248,4 +248,57 @@ describe("rich Markdown style rules guarded by source", () => {
     host.classList.remove("is-write");
     expect(getComputedStyle(button).display).toBe("none");
   });
+
+  // regression: d157041a90 feat(markdown): integrate rich editor quality improvements
+  it("keeps reference definitions directly editable and invisible in read mode", async () => {
+    await using _fixture = _createFixture();
+
+    expect(cssSource).toMatch(
+      /\.scient-markdown-source-island\[data-scient-markdown-source-kind="definition"\] \{[^}]*display: grid[^}]*grid-template-columns: auto minmax\(0, 1fr\)[^}]*border-block-start: 1px solid var\(--border\)[^}]*background: transparent[^}]*padding: 0\.35rem 0\.5rem/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-document\.is-read\s+\.scient-markdown-source-island\[data-scient-markdown-source-kind="definition"\] \{[^}]*display: none/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-source-island\[data-scient-markdown-source-kind="definition"\][^}]*\.scient-markdown-source-island-editor \{[^}]*min-height: 1\.75rem[^}]*max-height: 10rem[^}]*padding: 0\.15rem 0\.25rem/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-document\.is-write[^}]*\.scient-markdown-source-island\[data-scient-markdown-source-kind="definition"\][^}]*\.scient-markdown-source-island-editor:not\(\[readonly\]\) \{\s*resize: none/su,
+    );
+    expect(cssSource).not.toContain("scient-markdown-reference-definition-toggle");
+    expect(cssSource).not.toContain("scient-markdown-reference-definition-summary");
+  });
+
+  // regression: d157041a90 feat(markdown): integrate rich editor quality improvements
+  it("presents wiki links as selectable underlined text without a second inline editor", async () => {
+    await using _fixture = _createFixture();
+
+    expect(cssSource).toMatch(
+      /\.scient-markdown-wiki-link \{[^}]*user-select: text[^}]*vertical-align: baseline/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-wiki-link-label \{[^}]*text-decoration-line: underline[^}]*text-underline-offset: 0\.16em/su,
+    );
+    expect(cssSource).not.toMatch(/\.scient-markdown-wiki-link:hover/su);
+    expect(cssSource).not.toContain(".scient-markdown-wiki-link.is-selected");
+    expect(cssSource).not.toContain(".scient-markdown-wiki-link-source");
+  });
 });
+
+function _createFixture() {
+  const stack = new AsyncDisposableStack();
+  const cleanup = new AsyncDisposableStack();
+  return {
+    _ownedDOM: [] as Node[],
+
+    stack,
+    cleanup,
+    async [Symbol.asyncDispose]() {
+      try {
+        await cleanup.disposeAsync();
+      } finally {
+        await stack.disposeAsync();
+      }
+    },
+  };
+}

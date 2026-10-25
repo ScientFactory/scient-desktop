@@ -206,6 +206,21 @@ const reconnect = (_fixture: _Fixture) =>
   );
 
 // Restored from the upstream-deleted DeviceStreamView.browser.test.tsx.
+// regression: dca7b59bea feat(devices): add simulator and emulator support (#10677)
+it("removes MJPEG requests while hidden and reconnects when shown", async () => {
+  await using _fixture = _createFixture();
+
+  await using stream = await setup(_fixture);
+  const { images, show } = stream;
+  expect(images[0]!.src).toContain("stream.mjpeg");
+  await show(false);
+  expect(_fixture.container.querySelectorAll("img")).toHaveLength(0);
+  expect(images[0]!.src).toBe("");
+  expect(vi.getTimerCount()).toBe(0);
+  await show(true);
+  expect(images.at(-1)!.src).toContain("stream.mjpeg");
+});
+
 // regression: 9f73ca3677 fix(devices): recover simulator streams after failures (#12639)
 it("offers Reconnect after the shared timeout and receives a frame after retry with unchanged access", async () => {
   await using _fixture = _createFixture();

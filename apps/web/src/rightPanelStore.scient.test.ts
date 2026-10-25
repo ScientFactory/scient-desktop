@@ -828,3 +828,17 @@ describe("Scient right panel surfaces", () => {
     },
   );
 });
+
+describe("rightPanelStore", () => {
+  // regression: 23ed68096e feat(sources): add project-owned reference library
+  it("keeps Sources as one generic Scient-owned module surface", () => {
+    useRightPanelStore.getState().openScient(refA, scientSourcesSurface());
+    useRightPanelStore.getState().openScient(refA, scientSourcesSurface());
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "scient:sources",
+      surfaces: [{ id: "scient:sources", kind: "scient", module: "sources" }],
+    });
+  });
+});

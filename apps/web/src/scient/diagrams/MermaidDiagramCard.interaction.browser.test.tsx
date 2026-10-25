@@ -445,6 +445,48 @@ describe("Mermaid error recovery", () => {
     expect(_fixture.container.textContent).toContain("A valid diagram");
   });
 
+  // sole guard: an inline SVG keeps its aspect ratio (`height: auto` in scient-diagrams.css);
+  // the sizing file passes with that rule broken.
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
+  it.each([
+    { name: "intrinsic", stageWidth: 720, intrinsicWidth: 180, intrinsicHeight: 90 },
+    { name: "oversized", stageWidth: 320, intrinsicWidth: 1_200, intrinsicHeight: 600 },
+  ])(
+    "sizes an $name inline SVG proportionally inside the padded stage",
+    async ({ stageWidth, intrinsicWidth, intrinsicHeight }) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+
+      _fixture.container.style.width = `${stageWidth}px`;
+      vi.mocked(renderMermaidDiagram).mockResolvedValueOnce({
+        svg: `<svg xmlns="http://www.w3.org/2000/svg" width="100%" style="max-width:${intrinsicWidth}px" viewBox="0 0 ${intrinsicWidth} ${intrinsicHeight}"><rect width="${intrinsicWidth}" height="${intrinsicHeight}" fill="blue"/></svg>`,
+        diagramType: "flowchart",
+      });
+      await render(_fixture, `flowchart LR\nSized${intrinsicWidth} --> Diagram`);
+      const stage = _fixture.container.querySelector<HTMLElement>(".scient-mermaid-inline")!;
+      const svg = stage.querySelector("svg")!;
+      await vi.waitFor(() => expect(svg.getBoundingClientRect().width).toBeGreaterThan(0));
+      const style = getComputedStyle(stage);
+      const contentWidth =
+        stage.clientWidth -
+        Number.parseFloat(style.paddingLeft) -
+        Number.parseFloat(style.paddingRight);
+      const expectedWidth = Math.min(intrinsicWidth, contentWidth);
+      const bounds = svg.getBoundingClientRect();
+      expect(contentWidth).toBeGreaterThan(0);
+      expect(bounds.width).toBeCloseTo(expectedWidth, 0);
+      expect(bounds.height).toBeCloseTo((expectedWidth * intrinsicHeight) / intrinsicWidth, 0);
+      expect(bounds.width / bounds.height).toBeCloseTo(intrinsicWidth / intrinsicHeight, 2);
+      expect(stage.scrollWidth).toBeLessThanOrEqual(stage.clientWidth + 1);
+      if (intrinsicWidth < contentWidth) {
+        expect(bounds.width).toBeLessThan(contentWidth);
+      } else {
+        expect(bounds.width).toBeLessThan(intrinsicWidth);
+      }
+    },
+  );
+
   it.each(["Download SVG", "Copy image", "Download PNG"] as const)(
     "executes %s from the expanded diagram through the export boundary",
     async (action) => {

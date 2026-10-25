@@ -88,6 +88,27 @@ describe("resolveDefaultModelSettingsSelection", () => {
     models: [model("gpt-5.6", false, true)],
   });
 
+  // regression: 67ab5e432f fix(settings): keep the default model's reasoning effort as chosen (#394)
+  it.each([{ enabled: false }, { availability: "unavailable" as const }])(
+    "keeps showing the saved default, not a stand-in, when its provider is %o",
+    (state) => {
+      const providers = [
+        codexReady,
+        provider({
+          provider: ProviderDriverKind.make("claudeAgent"),
+          instanceId: "claudeAgent",
+          models: [model("claude-opus-4-8")],
+          ...state,
+        }),
+      ];
+
+      expect(resolveDefaultModelSettingsSelection(providers, stored)).toEqual({
+        selection: stored,
+        storedUnavailable: true,
+      });
+    },
+  );
+
   it("shows a saved default whose provider is available as-is", () => {
     const providers = [
       codexReady,

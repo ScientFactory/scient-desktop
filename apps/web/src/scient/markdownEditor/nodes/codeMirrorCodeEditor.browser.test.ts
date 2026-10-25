@@ -146,7 +146,6 @@ describe("Scient nested code editor", () => {
     expect(content.getAttribute("aria-label")).toBe("HTML source");
   });
 
-  // One alias per family: every alias takes the same regular-expression branch.
   it.each(["plotly-json", "vega-lite"])(
     "highlights %s source as JSON without changing its source language",
     async (language) => {
@@ -239,6 +238,52 @@ describe("Scient nested code editor", () => {
     _fixture.editor.replaceExternalCode("plain source", "text");
     await vi.waitFor(() => expect(parent.querySelector(".cm-line span[style]")).toBeNull());
   });
+
+  // regression: 9e5513e5c3 fix(web): align shared math and code presentation
+  it.each([
+    ["light", "#d5512f", "#18a46c", "#636363"],
+    ["dark", "#ff855e", "#60d199", "#636363"],
+  ])(
+    "highlights HTML tags, attributes, and punctuation in %s mode",
+    async (mode, tag, attribute, punctuation) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+      document.documentElement.classList.toggle("dark", mode === "dark");
+      const parent = document.createElement("div");
+      document.body.append(_ownDOM(_fixture, parent));
+      const onUserCodeChange = vi.fn();
+      _fixture.editor = createScientNestedCodeEditor({
+        parent,
+        code: '<div class="note">Hello &amp; welcome</div>',
+        editable: true,
+        language: "html",
+        onEscape: vi.fn(),
+        onUserCodeChange,
+      });
+      const surface = parent.querySelector<HTMLElement>(".cm-editor")!;
+      const colorOf = (text: string) => {
+        const token = [...parent.querySelectorAll(".cm-line span")].find(
+          (span) => span.textContent === text,
+        );
+        return token ? getComputedStyle(token).color : null;
+      };
+      await vi.waitFor(() => {
+        expect(colorOf("div")).toBe(nativeColor(tag!));
+        expect(colorOf("class")).toBe(nativeColor(attribute!));
+        expect(colorOf("<")).toBe(nativeColor(punctuation!));
+      });
+
+      // Editing and a language change retain the same code surface and palette.
+      _fixture.editor.replaceExternalCode("const value = Math.max(1, 2);", "javascript");
+      await vi.waitFor(() => {
+        expect(colorOf("=")).toBe(nativeColor(punctuation!));
+        expect(colorOf(".")).toBe(nativeColor(punctuation!));
+      });
+      expect(parent.querySelector(".cm-editor")).toBe(surface);
+      expect(onUserCodeChange).not.toHaveBeenCalled();
+    },
+  );
 });
 
 function _createFixture() {
@@ -270,4 +315,10 @@ function _ownDOM<T extends Node>(_fixture: _Fixture, node: T): T {
 }
 function _clearOwnedDOM(_fixture: _Fixture) {
   for (const node of _fixture._ownedDOM.splice(0)) node.parentNode?.removeChild(node);
+}
+
+function nativeColor(value: string) {
+  const style = document.createElement("span").style;
+  style.color = value;
+  return style.color;
 }

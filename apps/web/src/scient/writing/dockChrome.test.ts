@@ -59,6 +59,14 @@ describe("collapseDockGroups", () => {
     { id: "direction", priority: 10, width: 44 },
   ];
 
+  // regression: bf3afafe53 feat(markdown): collapse dock groups by priority into a unified overflow menu
+  it("cascades insert, history, then lists as width shrinks, keeping style and format", () => {
+    const hidden = collapseDockGroups({ availableWidth: 300, reservedWidth: 80, groups });
+    expect([...hidden].sort()).toEqual(["direction", "history", "insert", "lists"].sort());
+    expect(hidden.has("style")).toBe(false);
+    expect(hidden.has("format")).toBe(false);
+  });
+
   it("keeps every group when they all fit", () => {
     const hidden = collapseDockGroups({ availableWidth: 500, reservedWidth: 80, groups });
     expect([...hidden]).toEqual([]);

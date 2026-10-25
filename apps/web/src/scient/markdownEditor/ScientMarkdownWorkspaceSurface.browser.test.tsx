@@ -163,6 +163,93 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     return { root, controller, coordinator };
   }
 
+  // regression: a7d709c066 feat(markdown): harden rich editor interactions
+  it("uses compact icon controls for common table actions", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const host = document.createElement("div");
+    document.body.append(_ownDOM(_fixture, host));
+    const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
+    _fixture.root0.push(root);
+
+    await act(
+      async () =>
+        await root.rerender(
+          <ScientMarkdownWorkspaceSurface
+            source={"| A | B |\n| --- | --- |\n| 1 | 2 |\n"}
+            revision="r0"
+            ariaLabel="Table fixture"
+            persist={vi.fn(async () => ({ revision: "r1" }))}
+            onPendingChange={vi.fn()}
+            onSaveConfirmed={vi.fn()}
+            onSaveFailure={vi.fn()}
+            onExternalConflict={vi.fn()}
+          />,
+        ),
+    );
+
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (candidate) => candidate.view?.dom.isConnected,
+    );
+    expect(controller).not.toBeUndefined();
+    let cellTextPosition: number | null = null;
+    controller!.view!.state.doc.descendants((node, position) => {
+      if (
+        cellTextPosition === null &&
+        (node.type.spec.tableRole === "cell" || node.type.spec.tableRole === "header_cell")
+      ) {
+        cellTextPosition = position + 1;
+      }
+    });
+    expect(cellTextPosition).not.toBeNull();
+
+    await act(() => {
+      const view = controller!.view!;
+      view.dispatch(
+        view.state.tr.setSelection(TextSelection.create(view.state.doc, cellTextPosition!)),
+      );
+    });
+
+    // A table's tools are in the footer; the bar does not change inside a table.
+    const toolbar = host.querySelector("[aria-label='Table actions']");
+    expect(toolbar?.closest(".scient-document-footer")).not.toBeNull();
+    expect(toolbar?.closest("[aria-label='Document actions']") ?? null).toBeNull();
+    expect(host.querySelector(".scient-markdown-table-toolbar")).toBeNull();
+    const addRow = toolbar?.querySelector("[aria-label='Add row below']");
+    const addColumn = toolbar?.querySelector("[aria-label='Add column after']");
+    expect(addRow?.querySelector(".lucide-between-horizontal-end")).not.toBeNull();
+    expect(addColumn?.querySelector(".lucide-between-vertical-end")).not.toBeNull();
+    expect(toolbar?.textContent).not.toContain("Table:");
+    expect(toolbar?.querySelector("[aria-label='Delete row']")).toBeNull();
+    expect(toolbar?.querySelector("[aria-label='Delete column']")).toBeNull();
+    expect(toolbar?.querySelector("[aria-label='More table actions']")).toBeNull();
+    // Entering a table no longer opens the bar: it stays as the writer left it.
+    expect(host.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
+    expect(host.querySelectorAll("[aria-label='Document']")).toHaveLength(0);
+    const moreActions = host.querySelector<HTMLButtonElement>(
+      ".scient-document-footer [aria-label='More table actions']",
+    );
+    expect(moreActions).not.toBeNull();
+    await act(() => moreActions!.click());
+    const menuItems = Array.from(
+      document.body.querySelectorAll<HTMLElement>("[data-slot='menu-item']"),
+      (item) => item.textContent?.trim(),
+    );
+    expect(menuItems).toEqual(
+      expect.arrayContaining([
+        "Add row above",
+        "Add row below",
+        "Add column before",
+        "Add column after",
+        "Align column left",
+        "Align column center",
+        "Align column right",
+      ]),
+    );
+  });
+
   it("keeps refused input visible and restores it from its file owner after a rich surface remount", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));

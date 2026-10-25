@@ -74,6 +74,25 @@ function find(_fixture: _Fixture, open: boolean, previewX = 1548) {
   );
 }
 // regression: f92afe79c9 fix(web): find bar and thread details panel stop covering each other (#17858)
+it.each([16, 24])(
+  "keeps a preview below Find and releases its space on close at a %spx root font",
+  async (size) => {
+    await using _fixture = _createFixture();
+    using _layout = layoutFont(size);
+    await using screen = await render(find(_fixture, false));
+    expect(_fixture.canvas?.layout.frame?.y).toBe(12);
+    await screen.rerender(find(_fixture, true));
+    expect(_fixture.canvas?.detailsCardTopInset).toBe(3 * size);
+    expect(_fixture.canvas?.layout.frame?.y).toBe(3 * size + 12);
+    await screen.rerender(find(_fixture, false));
+    expect(_fixture.canvas?.detailsCardTopInset).toBe(0);
+    expect(_fixture.canvas?.layout.frame?.y).toBe(12);
+    await screen.rerender(find(_fixture, true));
+    expect(_fixture.canvas?.layout.frame?.y).toBe(3 * size + 12);
+  },
+);
+
+// regression: f92afe79c9 fix(web): find bar and thread details panel stop covering each other (#17858)
 it("remeasures the open bar when its font size changes without resizing the canvas", async () => {
   await using _fixture = _createFixture();
   using _layout = layoutFont();

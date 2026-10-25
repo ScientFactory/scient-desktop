@@ -14,6 +14,21 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain("PdfSourceResolver");
   });
 
+  // regression: 473e44a01d feat: add browser HTML to PDF export
+  it("routes Save Copy through the typed host capability instead of navigation", () => {
+    const readerSource = NodeFS.readFileSync(
+      new URL("./ScientPdfReader.tsx", import.meta.url),
+      "utf8",
+    );
+    const sourceActions = NodeFS.readFileSync(new URL("./pdfSource.ts", import.meta.url), "utf8");
+
+    expect(sourceActions).toContain("documents.saveAssetCopy({");
+    expect(sourceActions).not.toContain('document.createElement("a")');
+    expect(readerSource).toContain("await observePdfCopy(");
+    expect(readerSource).toContain("props.actions.saveCopy(");
+    expect(readerSource).toContain("disabled={savingCopy}");
+  });
+
   // regression: 62abb32e7f fix: preserve PDF reader state across remounts
   it("keeps the persisted viewport lifecycle wired to PDF.js view events", () => {
     const source = NodeFS.readFileSync(new URL("./useScientPdfReader.ts", import.meta.url), "utf8");
@@ -23,6 +38,27 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain("viewportSession.completeRestore()");
     expect(source).toContain("viewportSession.snapshot(");
     expect(source).toContain("viewportSession.flush()");
+  });
+
+  // regression: c8699e134b feat(documents): add visual LaTeX authoring and reusable templates
+  it("binds source actions and navigation to the actually presented revision during staged updates", () => {
+    const readerSource = NodeFS.readFileSync(
+      new URL("./ScientPdfReader.tsx", import.meta.url),
+      "utf8",
+    );
+
+    const bundleSource = NodeFS.readFileSync(
+      new URL("./usePresentedPdfSourceBundle.ts", import.meta.url),
+      "utf8",
+    );
+    expect(readerSource).toContain("const presentedSource = usePresentedPdfSourceBundle({");
+    expect(readerSource).toContain("presentation: reader.presentation,");
+    expect(readerSource).toContain("reader.presentation?.revisionId === requestedRevisionId");
+    expect(readerSource).toContain("reader.presentation.sourceUrl === props.sourceAsset.url");
+    expect(readerSource).toContain("if (!currentPresentation) return;");
+    expect(bundleSource).toContain("bundle.documentKey === presentation.documentKey");
+    expect(bundleSource).toContain("bundle.revisionId === presentation.revisionId");
+    expect(bundleSource).toContain("bundle.resolved.url === presentation.sourceUrl");
   });
 
   // regression: 739ac30aaa fix(web): stabilize responsive PDF reader
@@ -76,6 +112,42 @@ describe("Scient PDF reader source seam", () => {
       /\.scient-pdf-viewer-container \.pdfViewer \.canvasWrapper \.selection \{[^}]*background:/su,
     );
     expect(styles).not.toMatch(/\.textLayer\s+::selection\s*\{/u);
+  });
+
+  // regression: c8699e134b feat(documents): add visual LaTeX authoring and reusable templates
+  it("routes double-click source sync without intercepting editable controls", () => {
+    const source = NodeFS.readFileSync(new URL("./ScientPdfReader.tsx", import.meta.url), "utf8");
+    expect(source).toContain("onDoubleClick={(event) => {");
+    expect(source).toContain("if (!currentPresentation) return;");
+    expect(source).toContain("const onInverseSearch = props.syncNavigation?.onInverseSearch;");
+    expect(source).toContain("if (onInverseSearch === undefined) return;");
+    expect(source).toContain(
+      `target.closest("a,button,input,select,textarea,[contenteditable='true']")`,
+    );
+    expect(source).toContain(
+      "onInverseSearch(point, pageElement.ownerDocument.getSelection()?.toString())",
+    );
+    expect(source).not.toContain("onMouseMove={");
+  });
+
+  // regression: 37ff60dca0 feat(latex): ship verified SyncTeX navigation runtime
+  it("reports the current page and marks a successful forward-sync point", () => {
+    const readerSource = NodeFS.readFileSync(
+      new URL("./ScientPdfReader.tsx", import.meta.url),
+      "utf8",
+    );
+    const hookSource = NodeFS.readFileSync(
+      new URL("./useScientPdfReader.ts", import.meta.url),
+      "utf8",
+    );
+    const styles = NodeFS.readFileSync(new URL("./scientPdfReader.css", import.meta.url), "utf8");
+
+    expect(readerSource).toContain("onSyncPageChange?.(state.page)");
+    expect(hookSource).toContain('marker.className = "scient-pdf-sync-marker"');
+    expect(hookSource).toContain("pageView.viewport.convertToViewportPoint(");
+    expect(styles).toMatch(
+      /\.scient-pdf-sync-marker \{[^}]*position: absolute;[^}]*pointer-events: none;/su,
+    );
   });
 
   // regression: 739ac30aaa fix(web): stabilize responsive PDF reader

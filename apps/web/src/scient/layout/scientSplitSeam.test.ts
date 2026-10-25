@@ -67,4 +67,29 @@ describe("Scient split seams", () => {
     expect(surface).not.toContain("RightPanelResizeHandle");
     expect(surface).not.toContain("scient-latex-divider");
   });
+
+  // regression: eed0733208 feat(compute): implement Phase 4 scientific workflow
+  it("shares fractional behavior between Python and LaTeX without sharing their storage", () => {
+    const python = readSource("../compute/ScientComputeFileSurface.tsx");
+    const latex = readSource("../latex/ScientLatexSurface.tsx");
+
+    expect(python).toContain("useScientSplit");
+    expect(latex).toContain("useScientSplit");
+    expect(python).toContain("COMPUTE_FILE_SPLIT_STORAGE_KEY");
+    expect(latex).toContain("LATEX_SPLIT_RATIO_STORAGE_KEY");
+    expect(python).not.toContain("RightPanelResizeHandle");
+    expect(latex).not.toContain("scient-latex-divider");
+  });
+
+  // regression: 3af6b42581 feat(compute): add stacked results layout
+  it("wires the Python stacked layout through the shared split behavior", () => {
+    const python = readSource("../compute/ScientComputeFileSurface.tsx");
+
+    expect(python).toContain('splitLayout === "stacked" ? "y" : "x"');
+    expect(python).toContain('isStacked ? "flex-col" : "flex-row"');
+    expect(python).toContain('orientation={isStacked ? "horizontal" : "vertical"}');
+    expect(python).toContain('isStacked ? "border-t border-border" : "border-l border-border"');
+    expect(python).toContain('isStacked ? "inset-x-0 -top-1" : "inset-y-0 -left-1"');
+    expect(python).toContain("COMPUTE_FILE_SPLIT_LAYOUT_STORAGE_KEY");
+  });
 });

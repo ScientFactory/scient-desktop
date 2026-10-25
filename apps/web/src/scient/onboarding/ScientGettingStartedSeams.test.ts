@@ -17,9 +17,31 @@ describe("Scient getting-started host seams", () => {
     expect(indexRoute).toContain("fallback={<IndexDraftLanding />}");
   });
 
-  it("mounts replay in the inherited Settings through one Scient-owned row", () => {
+  // regression: f46b1a4711 feat(web): add compact getting started flow (#136)
+  it("keeps replay additive and contained to a Scient-owned route", () => {
     const settings = read("../../components/settings/SettingsPanels.tsx");
+    const route = read("../../routes/_chat.getting-started.tsx");
+    const settingsRow = read("./ScientGettingStartedSettingsRow.tsx");
 
     expect(settings).toContain("<ScientGettingStartedSettingsRow />");
+    expect(route).toContain('<ScientGettingStartedFlow mode="manual" />');
+    expect(settingsRow.indexOf("<Link")).toBeLessThan(settingsRow.indexOf("<SettingsRow"));
+    expect(settingsRow).toContain('to="/getting-started"');
+    expect(settingsRow).toContain("-mb-3");
+    expect(settingsRow).not.toContain('className="pb-0"');
+    expect(settingsRow).not.toContain("ScientProjectImportAction");
+    expect(settingsRow).not.toContain("<Button");
+  });
+
+  // regression: f46b1a4711 feat(web): add compact getting started flow (#136)
+  it("reuses canonical provider setup and avoids card or progress primitives", () => {
+    const view = read("./ScientGettingStartedView.tsx");
+    const flow = read("./ScientGettingStartedFlow.tsx");
+
+    expect(view).toContain("ProviderLifecycleSetupSurface");
+    expect(flow).toContain("deriveProviderInstanceEntries");
+    expect(flow).toContain("isProviderInstancePickerReady");
+    expect(view).not.toMatch(/\bCard(?:Content|Header|Title)?\b/);
+    expect(view).not.toMatch(/\bProgress\b/);
   });
 });

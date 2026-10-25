@@ -87,7 +87,8 @@ async function details(_fixture: _Fixture) {
 }
 
 describe("analytics sharing controls", () => {
-  it("uses a non-modal deletion confirmation and does nothing on cancel", async () => {
+  // regression: 982a529350 feat(analytics): simplify sharing controls and prepare gated notice
+  it("uses a compact, non-modal deletion confirmation and does nothing on cancel", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -99,9 +100,13 @@ describe("analytics sharing controls", () => {
       ),
     );
     const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.classList.contains("max-w-sm")).toBe(true);
     expect(dialog?.getAttribute("aria-modal")).not.toBe("true");
     expect(document.querySelector('[data-slot="dialog-backdrop"]')).toBeNull();
     expect(dialog?.textContent).toContain("Delete analytics data?");
+    expect(
+      dialog?.querySelector('[data-slot="dialog-footer"]')?.classList.contains("border-t"),
+    ).toBe(false);
     expect(mocks.deleteData).not.toHaveBeenCalled();
     await click(
       [...dialog!.querySelectorAll("button")].find((button) => button.textContent === "Cancel"),

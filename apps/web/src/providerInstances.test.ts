@@ -605,3 +605,17 @@ describe("provider icon metadata", () => {
     expect(restoredEntry?.enabled).toBe(true);
   });
 });
+
+// SCIENT-FORK:START — restore the original behavior guard.
+describe("shouldShowInstanceBadge", () => {
+  // regression: 49fc8e0623 feat(providers): add native Pi integration (#245)
+  it("does not badge a single instance or count other drivers", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi" }),
+      provider({ provider: ProviderDriverKind.make("droid"), instanceId: "droid" }),
+    ]);
+    expect(shouldShowInstanceBadge(entries[0]!, [entries[0]!])).toBe(false);
+    expect(shouldShowInstanceBadge(entries[0]!, entries)).toBe(false);
+  });
+});
+// SCIENT-FORK:END

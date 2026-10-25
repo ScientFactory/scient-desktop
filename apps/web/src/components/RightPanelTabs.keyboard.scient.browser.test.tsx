@@ -1,7 +1,11 @@
 // Restored fix cases from the upstream-deleted RightPanelTabs.keyboard.browser.test.tsx.
 import type { ComponentProps } from "react";
+import { userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import {
+  compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
+} from "@t3tools/shared/keybindings";
 
 import { act, fakeTimers, render, stubGlobal } from "../../test/render";
 import { RightPanelTabs } from "./RightPanelTabs";
@@ -110,7 +114,41 @@ async function press(key: string, options: KeyboardEventInit = {}) {
   return event;
 }
 
+async function pressNative(keys: string) {
+  await userEvent.keyboard(keys);
+  await settle();
+}
+
 describe("right panel new-tab shortcut", () => {
+  // regression: 7202ba6660 feat(web): open right panel tab menu with Mod+T (#15686)
+  it.each(["MacIntel", "Win32", "Linux x86_64"])(
+    "opens the menu on %s and chooses a tab",
+    async (platform) => {
+      await using screen = await renderPanel({}, platform);
+      const event = await press(
+        "t",
+        platform === "MacIntel" ? { metaKey: true } : { ctrlKey: true },
+      );
+      expect(event.defaultPrevented).toBe(true);
+      expect(document.querySelector('[role="menu"]')?.textContent).toContain(
+        "Linked pull requests",
+      );
+      expect(document.activeElement?.closest('[role="menu"]')).not.toBeNull();
+      expect(
+        (
+          await press("t", {
+            metaKey: platform === "MacIntel",
+            ctrlKey: platform !== "MacIntel",
+            repeat: true,
+          })
+        ).defaultPrevented,
+      ).toBe(true);
+      await press("f");
+      expect(screen.addFiles).toHaveBeenCalledOnce();
+      expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
+    },
+  );
+
   // regression: b3a1334950 fix(web): right-panel launcher letters work while a closed menu stays mounted (#18132)
   it("opens Files while a closed popup remains mounted", async () => {
     await using screen = await renderPanel();
@@ -133,6 +171,85 @@ describe("right panel new-tab shortcut", () => {
 
     expect((await press("t", { metaKey: true })).defaultPrevented).toBe(true);
     expect(document.querySelector('[role="menu"]:not([data-closed])')).not.toBeNull();
+  });
+
+  // regression: 7202ba6660 feat(web): open right panel tab menu with Mod+T (#15686)
+  it("leaves the shortcut alone while the mounted panel is closed", async () => {
+    await using _screen = await renderPanel({ open: false });
+    expect((await press("t", { metaKey: true })).defaultPrevented).toBe(false);
+    expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
+  });
+
+  // regression: 7202ba6660 feat(web): open right panel tab menu with Mod+T (#15686)
+  it.each(["Win32", "Linux x86_64"])(
+    "leaves Ctrl+T for the focused terminal on %s",
+    async (platform) => {
+      await using screen = await renderPanel(
+        {
+          getShortcutContext: () => ({
+            terminalFocus: true,
+            terminalOpen: true,
+            previewFocus: false,
+            previewOpen: false,
+            isWeb: true,
+            isDesktop: false,
+          }),
+        },
+        platform,
+      );
+      const terminal = document.createElement("textarea");
+      const onKeyDown = vi.fn();
+      terminal.addEventListener("keydown", onKeyDown);
+      screen.container.append(terminal);
+      await act(() => terminal.focus());
+      const event = await press("t", { ctrlKey: true });
+      expect(event.defaultPrevented).toBe(false);
+      expect(onKeyDown).toHaveBeenCalledWith(event);
+      expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
+    },
+  );
+
+  // regression: 7202ba6660 feat(web): open right panel tab menu with Mod+T (#15686)
+  it("uses a custom binding from a text field and closes on Escape", async () => {
+    // Closing must restore focus without waiting for Base UI's shared frame scheduler.
+    using _animations = stubGlobal("BASE_UI_ANIMATIONS_DISABLED", true);
+    const input = document.createElement("input");
+    await using screen = await renderPanel({
+      keybindings: compileResolvedKeybindingsConfig([{ key: "mod+y", command: "rightPanel.new" }]),
+    });
+    document.body.append(input);
+    using _input = { [Symbol.dispose]: () => input.remove() };
+    await userEvent.click(input);
+    expect(document.hasFocus()).toBe(true);
+    expect(document.activeElement).toBe(input);
+    expect((await press("t", { metaKey: true })).defaultPrevented).toBe(false);
+    await pressNative("{Meta>}y{/Meta}");
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    expect(document.activeElement?.closest('[role="menu"]')).not.toBeNull();
+    await pressNative("{Escape}");
+    expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
+    const trigger = screen.container.querySelector('[aria-label="Add panel surface"]');
+    expect(trigger).not.toBeNull();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  // regression: 7202ba6660 feat(web): open right panel tab menu with Mod+T (#15686)
+  it("does not open over another popup or during text composition", async () => {
+    await using screen = await renderPanel();
+    expect((await press("t", { metaKey: true, isComposing: true })).defaultPrevented).toBe(false);
+    const dialog = document.createElement("div");
+    dialog.dataset.slot = "dialog-popup";
+    dialog.dataset.open = "";
+    screen.container.append(dialog);
+    for (const state of ["data-open", "data-ending-style"]) {
+      dialog.setAttribute(state, "");
+      expect((await press("f")).defaultPrevented, state).toBe(false);
+      expect(screen.addFiles, state).not.toHaveBeenCalled();
+      expect((await press("t", { metaKey: true })).defaultPrevented, state).toBe(false);
+      expect(document.querySelector('[role="menu"]'), state).toBeNull();
+      dialog.removeAttribute(state);
+    }
   });
 
   // regression: a8dec0e76f fix(web): Mod+T opens the tab menu while a pull request tab is open (#19065)
@@ -163,6 +280,34 @@ describe("right panel new-tab shortcut", () => {
     expect((await press("t", { metaKey: true })).defaultPrevented).toBe(true);
     expect(document.querySelector('[role="menu"]')?.textContent).toContain("Files");
     expect(document.activeElement?.closest('[role="menu"]')).not.toBeNull();
+  });
+
+  // regression: 7202ba6660 feat(web): open right panel tab menu with Mod+T (#15686)
+  it("supports arrow keys with an existing tab in sheet mode and clears the menu on close", async () => {
+    const panel = {
+      mode: "sheet" as const,
+      surfaces: [{ id: "files" as const, kind: "files" as const }],
+    };
+    await using screen = await renderPanel(panel);
+    await pressNative("{Meta>}t{/Meta}");
+    for (
+      let index = 0;
+      index < 12 &&
+      (document.activeElement?.getAttribute("role") !== "menuitem" ||
+        !document.activeElement?.textContent?.includes("Files"));
+      index++
+    ) {
+      await pressNative("{ArrowDown}");
+    }
+    expect(document.activeElement?.getAttribute("role")).toBe("menuitem");
+    expect(document.activeElement?.textContent).toContain("Files");
+    await pressNative("{Enter}");
+    expect(screen.addFiles).toHaveBeenCalledOnce();
+    await pressNative("{Meta>}t{/Meta}");
+    await screen.rerender({ ...panel, open: false });
+    expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
+    await screen.rerender(panel);
+    expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
   });
 });
 

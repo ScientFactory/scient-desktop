@@ -2,6 +2,7 @@ import {
   render as _fixtureRender,
   type Screen,
   stubGlobal as _fixtureStubGlobal,
+  fakeTimers as _fixtureFakeTimers,
   act,
 } from "../../../test/render";
 import { userEvent } from "vite-plus/test/browser";
@@ -258,6 +259,41 @@ describe("ConversationExportDialog", () => {
     ]);
     expect(document.body.textContent).not.toContain(INCLUDE_CAUTION);
     expect(prepareConversationExport).toHaveBeenCalledTimes(2);
+  });
+
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
+  it("moves the caution to the next activated switch and dismisses it four seconds later", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    prepareConversationExport.mockResolvedValue(preparation);
+    await renderHost(_fixture);
+    await open();
+
+    _fixture.stack.use(_fixtureFakeTimers());
+    try {
+      await pressKey(switches()[0]!, " ");
+      const caution = document.querySelector<HTMLElement>("#export-work-log-caution");
+      expect(caution?.getAttribute("role")).toBe("status");
+      expect(caution?.textContent).toContain(INCLUDE_CAUTION);
+
+      await act(async () => vi.advanceTimersByTime(3_999));
+      expect(document.querySelector("#export-work-log-caution")).not.toBeNull();
+      await pressKey(switches()[1]!, "Enter");
+      expect(document.querySelector("#export-work-log-caution")).toBeNull();
+      expect(document.querySelector("#export-reasoning-caution")).not.toBeNull();
+      await act(async () => vi.advanceTimersByTime(3_999));
+      expect(document.querySelector("#export-reasoning-caution")).not.toBeNull();
+      await act(async () => vi.advanceTimersByTime(1));
+      expect(document.querySelector("#export-reasoning-caution")).toBeNull();
+      expect(switches().map((element) => element.getAttribute("aria-checked"))).toEqual([
+        "true",
+        "true",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("announces preparing and exporting progress", async () => {

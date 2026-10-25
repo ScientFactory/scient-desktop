@@ -215,6 +215,22 @@ describe("ScientPreviewExportActions", () => {
     });
   });
 
+  // regression: 666ea3a41a feat: refine browser PDF export lifecycle
+  it("keeps the chrome action disabled when the browser surface is unavailable", () => {
+    const markup = renderToStaticMarkup(
+      <ScientPreviewExportActions
+        disabled
+        pageUrl="http://example.com/report"
+        tabId="tab-1"
+        runtimeTabId="runtime-tab-1"
+        threadRef={threadRef}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Export PDF"');
+    expect(markup).toContain("disabled");
+  });
+
   it("reports renderer failures without opening a document surface", async () => {
     mocks.exportPdf.mockRejectedValue(new Error("Chromium could not print the page."));
 
