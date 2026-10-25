@@ -111,7 +111,7 @@ NodeTest.test("focused qualification gates every full lane and preserves require
   for (const [id, body] of jobs) {
     if (["pull_request", "merge_group", "push", "release_notes"].includes(id)) continue;
     NodeAssert.match(body, /needs:.*release_notes/, id);
-    if (!["test", "test_web_reused", "test_server_reused"].includes(id))
+    if (!["check", "test_web_reused", "test_server_reused"].includes(id))
       NodeAssert.match(body, /if:.*needs.release_notes.outputs.qualified != 'true'/, id);
   }
   for (const id of ["test_web_reused", "test_server_reused"])
@@ -128,7 +128,7 @@ NodeTest.test("focused qualification gates every full lane and preserves require
     NodeAssert.ok(focused.indexOf(command) < focused.indexOf('echo "qualified=true"'), command);
   NodeAssert.ok(!focused.includes("continue-on-error") && !focused.includes("always()"));
   NodeAssert.match(
-    jobs.get("test"),
+    jobs.get("check"),
     /if: needs.queue_ci.outputs.reused != 'true' && needs.release_notes.outputs.qualified != 'true'/,
   );
 });

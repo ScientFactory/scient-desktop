@@ -2,7 +2,8 @@
 // $GITHUB_OUTPUT; a job runs unless its key is "false".
 //
 //   node ci-changes.cjs --paths <file>          gate by the listed paths
-//   node ci-changes.cjs --paths <file> --full   run every Linux job, gate only the macOS lint
+//   node ci-changes.cjs --paths0 <file>         gate by NUL-delimited Git paths
+//   node ci-changes.cjs --paths <file> --full   run every job (main backstop)
 //   node ci-changes.cjs                         changed paths unknown: run everything
 //
 // scripts/check-changed.ts requires the same decisions so local runs match CI.
@@ -64,7 +65,7 @@ const BUILD_ONLY_DEPS = { t3: ["@t3tools/web"] };
 // configuration that decides how it lints them, plus the root package.json
 // that defines the lint:mobile command.
 const MOBILE_NATIVE =
-  /^apps\/mobile\/.*\.(swift|kt|kts)$|^apps\/mobile\/(\.swiftlint\.yml|detekt\.yml|\.editorconfig|Brewfile)$|^scripts\/mobile-native-static-check\.ts$|^package\.json$|^\.github\/workflows\/ci\.yml$|^\.github\/scripts\/ci-changes\.cjs$|^\.github\/actions\/ci-changes\//;
+  /^apps\/mobile\/[\s\S]*\.(swift|kt|kts)$|^apps\/mobile\/(\.swiftlint\.yml|detekt\.yml|\.editorconfig|Brewfile)$|^scripts\/mobile-native-static-check\.ts$|^package\.json$|^\.github\/workflows\/ci\.yml$|^\.github\/scripts\/ci-changes\.cjs$|^\.github\/actions\/ci-changes\//;
 
 // Jobs that test every package except these, which have jobs of their own.
 const OWN_TEST_JOB = new Set(["t3", "@t3tools/web", "@t3tools/monorepo"]);
@@ -182,20 +183,25 @@ function decide(files, packages, full) {
       test_server: has("t3"),
       rust: everything || rust,
       release_smoke: scriptsChanged,
-      mobile_native: files === null || files.some((file) => MOBILE_NATIVE.test(file)),
+      // SCIENT-FORK:START — main is the full backstop, including native static analysis.
+      mobile_native: full || files === null || files.some((file) => MOBILE_NATIVE.test(file)),
+      // SCIENT-FORK:END
     },
   };
 }
 
 function main() {
   const args = process.argv.slice(2);
-  const pathsIndex = args.indexOf("--paths");
+  // SCIENT-FORK:START — hosted detection preserves arbitrary Git filenames.
+  const nul = args.includes("--paths0");
+  const pathsIndex = args.indexOf(nul ? "--paths0" : "--paths");
+  // SCIENT-FORK:END
   const files =
     pathsIndex === -1
       ? null
       : fs
           .readFileSync(args[pathsIndex + 1], "utf8")
-          .split("\n")
+          .split(nul ? "\0" : "\n")
           .filter(Boolean);
   const { affected, outputs } = decide(files, readWorkspace(), args.includes("--full"));
 

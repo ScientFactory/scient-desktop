@@ -2,8 +2,10 @@ name: CI
 
 on:
   pull_request:
+  # SCIENT-FORK:START — native GitHub merge queue.
   merge_group:
     types: [checks_requested]
+  # SCIENT-FORK:END
   push:
     branches:
       - main
@@ -16,6 +18,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # SCIENT-FORK:START — hosted runners throughout; no paid Blacksmith fleet.
+  # Release-note content can qualify through the existing focused lane.
   release_notes:
     name: Release notes qualification
     runs-on: ubuntu-24.04
@@ -29,6 +33,7 @@ jobs:
           sparse-checkout: .github/scripts
       - name: Classify immutable release-note diff
         id: detect
+        if: github.event_name != 'push'
         run: node .github/scripts/release-notes-ci-gate.mjs
       - name: Checkout focused test inputs
         if: steps.detect.outputs.only == 'true'
@@ -70,12 +75,12 @@ jobs:
           echo "qualified=true" >> "$GITHUB_OUTPUT"
           echo 'Release-note content passed catalog validation, web types, formatting, lint, and Chromium rendering tests. Unrelated product suites are not applicable.' >> "$GITHUB_STEP_SUMMARY"
 
-  # Reuse is an optimization only: an absent/failed probe must run normal CI. A queue entry
-  # reuses its PR run, and a main push its queue runs, only for the exact same content and base.
+  # Reuse is an optimization only: unavailable evidence runs normal CI. A queue entry
+  # reuses its PR run only for the exact same content and base; main always runs fresh.
   queue_ci:
     needs: release_notes
     name: Reuse exact CI
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'merge_group') }}
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && github.event_name == 'merge_group' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     continue-on-error: true
@@ -84,110 +89,136 @@ jobs:
       actions: read
     outputs:
       reused: ${{ steps.complete.outputs.reused }}
+      web_reports: ${{ steps.restore.outputs.web_reports }}
+      server_reports: ${{ steps.restore.outputs.server_reports }}
       source_run_id: ${{ steps.restore.outputs.source_run_id }}
       source_url: ${{ steps.restore.outputs.source_url }}
     steps:
       - uses: actions/checkout@v6
         with:
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/actions/ci-queue-reporting
       - name: Verify qualification and restore reports
         id: restore
         uses: actions/github-script@v8
         with:
           script: |
             await require('./.github/scripts/ci-queue-reuse.cjs').restore({ github, context, core });
-      - name: Preserve transfer report
+      - name: Preserve applicable reports
+        id: preserve
+        continue-on-error: true
         if: steps.restore.outputs.candidate == 'true'
-        uses: actions/upload-artifact@v7
+        uses: ./.github/actions/ci-queue-reporting
         with:
-          name: thread-transfer-results
-          path: ${{ runner.temp }}/ci-queue-reuse/thread-transfer-result.json
-          if-no-files-found: error
-          retention-days: 30
-          overwrite: true
-      - name: Preserve web_1 report
-        if: steps.restore.outputs.candidate == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: vitest-web-1-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-1.json
-          if-no-files-found: error
-          retention-days: 14
-          overwrite: true
-      - name: Preserve web_2 report
-        if: steps.restore.outputs.candidate == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: vitest-web-2-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-2.json
-          if-no-files-found: error
-          retention-days: 14
-          overwrite: true
-      - name: Preserve web_3 report
-        if: steps.restore.outputs.candidate == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: vitest-web-3-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-3.json
-          if-no-files-found: error
-          retention-days: 14
-          overwrite: true
-      - name: Preserve server_1 report
-        if: steps.restore.outputs.candidate == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: vitest-server-1-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-1.json
-          if-no-files-found: error
-          retention-days: 14
-          overwrite: true
-      - name: Preserve server_2 report
-        if: steps.restore.outputs.candidate == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: vitest-server-2-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-2.json
-          if-no-files-found: error
-          retention-days: 14
-          overwrite: true
-      - name: Preserve server_3 report
-        if: steps.restore.outputs.candidate == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: vitest-server-3-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-3.json
-          if-no-files-found: error
-          retention-days: 14
-          overwrite: true
+          web_reports: ${{ steps.restore.outputs.web_reports }}
+          server_reports: ${{ steps.restore.outputs.server_reports }}
       # This is deliberately last: partial publication never suppresses CI.
       - name: Confirm reuse
-        if: steps.restore.outputs.candidate == 'true'
+        if: steps.restore.outputs.candidate == 'true' && steps.preserve.outcome == 'success'
         id: complete
         env:
           SOURCE_URL: ${{ steps.restore.outputs.source_url }}
         run: |
           echo "reused=true" >> "$GITHUB_OUTPUT"
-          printf 'Reused successful [CI](%s) of this exact content and comparison base. All seven reporting artifacts were preserved.\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Reused successful [CI](%s) of this exact content and comparison base. All applicable reporting artifacts were preserved.\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
 
-  check:
+  # SCIENT-FORK:END
+
+  # Skips jobs a pull request cannot affect: a web change does not run the
+  # server shards, a server change does not run the mobile tests, and the macOS
+  # lint (~6.7x a Linux minute) runs only for native mobile sources.
+  # .github/scripts/ci-changes.cjs maps changed files to workspace packages and
+  # their dependents. Pushes to main still run every Linux job. Detection fails
+  # open: if the diff cannot be resolved, everything runs.
+  changes:
     needs: [queue_ci, release_notes]
     if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' }}
-    name: Check
+    name: Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      typecheck: ${{ steps.detect.outputs.typecheck }}
+      build: ${{ steps.detect.outputs.build }}
+      test: ${{ steps.detect.outputs.test }}
+      test_packages: ${{ steps.detect.outputs.test_packages }}
+      test_web: ${{ steps.detect.outputs.test_web }}
+      test_server: ${{ steps.detect.outputs.test_server }}
+      rust: ${{ steps.detect.outputs.rust }}
+      release_smoke: ${{ steps.detect.outputs.release_smoke }}
+      mobile_native: ${{ steps.detect.outputs.mobile_native }}
+      # SCIENT-FORK:START — native selectors share this immutable-diff checkout.
+      compute_changed: ${{ github.event_name == 'push' && 'true' || steps.compute.outputs.changed }}
+      real_kernel: ${{ github.event_name == 'push' && 'true' || steps.compute.outputs.real_kernel }}
+      managed_python: ${{ github.event_name == 'push' && 'true' || steps.compute.outputs.managed_python }}
+      windows_changed: ${{ github.event_name == 'push' && 'true' || steps.packaging.outputs.changed }}
+      linux_changed: ${{ github.event_name == 'push' && 'true' || steps.packaging.outputs.linux_changed }}
+      # SCIENT-FORK:END
+    steps:
+      # Only the package manifests the script reads to build the dependency graph.
+      # SCIENT-FORK: retain the immutable event base even if main has since advanced.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /pnpm-workspace.yaml
+            /.github/scripts/
+            /.github/actions/ci-changes/
+            /*/package.json
+            /*/*/package.json
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Detect affected jobs
+        id: detect
+        uses: ./.github/actions/ci-changes
+
+  # SCIENT-FORK:START — preserve packaging/Compute classifiers and their tests.
+      # Each gate runs independently after another gate fails. A gate whose
+      # tests fail leaves its outputs unknown, retaining fail-open execution.
+      - name: Test Compute qualification gate
+        id: compute_gate
+        if: ${{ !cancelled() }}
+        run: node --test .github/scripts/compute-ci-gate.test.mjs
+      - name: Detect Compute changes
+        id: compute
+        if: ${{ !cancelled() && steps.compute_gate.outcome == 'success' }}
+        run: node .github/scripts/compute-ci-gate.mjs detect
+      - name: Test desktop packaging qualification gate
+        id: packaging_gate
+        if: ${{ !cancelled() }}
+        run: node --test .github/scripts/windows-packaging-ci-gate.test.mjs
+      - name: Detect desktop packaging changes
+        id: packaging
+        if: ${{ !cancelled() && steps.packaging_gate.outcome == 'success' }}
+        run: node .github/scripts/windows-packaging-ci-gate.mjs detect
+  # SCIENT-FORK:END
+
+  # Lint and the desktop build each get a runner so they run side by side.
+  # Typecheck shares the build's install. Lint always runs: it formats every
+  # file, docs included. The `Check` job at the end of this file passes only
+  # when every other job passes or was skipped by `changes`.
+  lint:
+    needs: [queue_ci, release_notes]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' }}
+    name: Lint
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
           sparse-checkout: |
             /*
             !/.repos/
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
+      # SCIENT-FORK:START — exercise the fork gates and reporting contracts.
       - name: Test CI selection and workflow coverage
-        run: node --test .github/scripts/ci-queue-reuse.test.cjs .github/scripts/release-notes-ci-gate.test.mjs
+        run: node --test .github/scripts/*.test.cjs .github/scripts/*.test.mjs
+      # SCIENT-FORK:END
 
       - name: Reject repository-owned PR assets
         run: |
@@ -224,37 +255,17 @@ jobs:
       - name: Check
         run: vp check
 
+      # SCIENT-FORK:START — product identity stays part of lint qualification.
       - name: Verify Scient product identity
         run: vp run brand:check
-      - name: Typecheck
-        run: vpr typecheck
+      # SCIENT-FORK:END
 
-      - uses: ./.github/actions/setup-apt-mirrors
-
-      - name: Install browser secret helper build libraries
-        run: |
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
-          sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
-
-      - name: Build desktop pipeline
-        run: vp run build:desktop
-
-      - name: Verify preload bundle output
-        run: node apps/desktop/scripts/verify-preload-bundle.mjs
-
-  # Everything except `t3` (apps/server) and `@t3tools/web`, which have their
-  # own sharded jobs below. `--parallel` drops the package dependency ordering
-  # that `vp run` applies by default: these `test` tasks declare no `dependsOn`
-  # and resolve workspace deps from source, so ordering only bought us idle
-  # runners between dependency layers. The concurrency limit stays at the
-  # default 4 so peak load per runner is unchanged.
-  test_workspaces:
-    needs: [queue_ci, release_notes]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' }}
-    name: Test Workspaces
+  build:
+    name: Build and Typecheck
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && (needs.changes.outputs.build != 'false' || needs.changes.outputs.typecheck != 'false') }}
     runs-on: ubuntu-24.04
-    # Preserve the existing ceiling while measuring the web suite split.
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -265,7 +276,79 @@ jobs:
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
-      # Blacksmith boots GitHub's Ubuntu runner image (gcc is usually present),
+      - uses: ./.github/actions/setup-apt-mirrors
+        if: needs.changes.outputs.build != 'false'
+
+      # Runs in the background while Vite+ installs; the step before the build waits for it.
+      - name: Start installing browser secret helper build libraries
+        if: needs.changes.outputs.build != 'false'
+        run: |
+          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+          (
+            set +e
+            sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+            echo "$?" > "$RUNNER_TEMP/apt-status"
+          ) > "$RUNNER_TEMP/apt.log" 2>&1 < /dev/null &
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+
+      # electron's install.js (run by ensure:electron) reads this cache before it
+      # downloads from GitHub. The key changes only with the Electron version.
+      - name: Cache Electron download
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
+
+      - name: Ensure Electron runtime is installed
+        id: electron
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      # SCIENT-FORK:START — keep build/typecheck memory within a hosted 4-vCPU runner.
+      - name: Typecheck
+        if: needs.changes.outputs.typecheck != 'false'
+        run: vpr typecheck
+      # SCIENT-FORK:END
+
+      - name: Finish installing browser secret helper build libraries
+        id: apt
+        if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
+        timeout-minutes: 5
+        run: |
+          until test -s "$RUNNER_TEMP/apt-status"; do sleep 1; done
+          cat "$RUNNER_TEMP/apt.log"
+          exit "$(cat "$RUNNER_TEMP/apt-status")"
+
+      - name: Build desktop pipeline
+        id: build
+        if: ${{ !cancelled() && steps.electron.outcome == 'success' && steps.apt.outcome == 'success' && needs.changes.outputs.build != 'false' }}
+        run: vp run build:desktop
+
+      - name: Verify preload bundle output
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node apps/desktop/scripts/verify-preload-bundle.mjs
+
+
+  test:
+    name: Test
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.test != 'false' }}
+    runs-on: ubuntu-24.04
+    # SCIENT-FORK:START — retain the measured standard-runner workspace ceiling.
+    timeout-minutes: 20
+    # SCIENT-FORK:END
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      # The Ubuntu runner image usually includes gcc,
       # but ACP process-tree live tests compile a small pthread fixture with `cc`
       # and soft-skip when it is missing. Install build-essential so that path
       # always runs in CI instead of silently no-oping.
@@ -274,6 +357,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential
           command -v cc
+
+      - uses: ./.github/actions/setup-apt-mirrors
+
+      # The desktop tests compile the browser secret helper. The install runs in
+      # the background while Vite+ installs; the step before the tests waits for it.
+      - name: Start installing browser secret helper build libraries
+        run: |
+          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+          (
+            set +e
+            sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+            echo "$?" > "$RUNNER_TEMP/apt-status"
+          ) > "$RUNNER_TEMP/apt.log" 2>&1 < /dev/null &
 
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
@@ -289,144 +385,47 @@ jobs:
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
+      # SCIENT-FORK:START — verify exports with the actual installed Electron runtime.
       - name: Verify SVG and PNG exports in Chromium
         run: xvfb-run --auto-servernum node apps/desktop/scripts/svg-export-smoke.mjs
-
-      - uses: ./.github/actions/setup-apt-mirrors
-
-      - name: Install browser secret helper build libraries
-        run: |
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
-          sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+      # SCIENT-FORK:END
 
       - name: Test preview artifact validation
         run: python3 -B .github/scripts/stage-preview-bundle.test.py
 
-      - name: Test deployment URL parsing
-        run: node --test .github/scripts/vercel-deployment-output.test.cjs
+      - name: Test release checks
+        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs
 
+      - name: Finish installing browser secret helper build libraries
+        timeout-minutes: 5
+        run: |
+          until test -s "$RUNNER_TEMP/apt-status"; do sleep 1; done
+          cat "$RUNNER_TEMP/apt.log"
+          exit "$(cat "$RUNNER_TEMP/apt-status")"
+
+      # `changes` lists the affected packages, or nothing when all of them are.
       - name: Test
-        run: |
-          set -o pipefail
-          vp run --parallel --concurrency-limit 4 --verbose --log grouped \
-            --filter '!t3' --filter '!@t3tools/web' --filter '!@t3tools/monorepo' test \
-            2>&1 | tee "${{ runner.temp }}/workspace-tests.log"
-
-  compute_changes:
-    needs: [queue_ci, release_notes]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' }}
-    name: Compute Changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      changed: ${{ steps.detect.outputs.changed }}
-      real_kernel: ${{ steps.detect.outputs.real_kernel }}
-      managed_python: ${{ steps.detect.outputs.managed_python }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          sparse-checkout: .github/scripts
-      - name: Test qualification gate
-        run: node --test .github/scripts/compute-ci-gate.test.mjs
-      - name: Detect Compute changes
-        id: detect
-        run: node .github/scripts/compute-ci-gate.mjs detect
-
-  compute_native:
-    needs: [queue_ci, release_notes, compute_changes]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.compute_changes.outputs.changed != 'false' }}
-    uses: ./.github/workflows/scient-compute-python-kernel.yml
-    with:
-      real_kernel: ${{ needs.compute_changes.outputs.real_kernel != 'false' }}
-      managed_python: ${{ needs.compute_changes.outputs.managed_python != 'false' }}
-
-  windows_packaging_changes:
-    needs: [queue_ci, release_notes]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' }}
-    name: Windows Packaging Changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      changed: ${{ steps.detect.outputs.changed }}
-      linux_changed: ${{ steps.detect.outputs.linux_changed }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          sparse-checkout: .github/scripts
-      - name: Test desktop packaging qualification gate
-        run: node --test .github/scripts/windows-packaging-ci-gate.test.mjs
-      - name: Detect desktop packaging changes
-        id: detect
-        run: node .github/scripts/windows-packaging-ci-gate.mjs detect
-
-  windows_packaging:
-    needs: [queue_ci, release_notes, windows_packaging_changes]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.windows_packaging_changes.outputs.changed != 'false' }}
-    uses: ./.github/workflows/windows-packaging.yml
-
-  remote_server_packaging:
-    needs: [queue_ci, release_notes, windows_packaging_changes]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.windows_packaging_changes.outputs.changed != 'false' }}
-    uses: ./.github/workflows/remote-server-packaging.yml
-
-  linux_packaging:
-    needs: [queue_ci, release_notes, windows_packaging_changes]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.windows_packaging_changes.outputs.linux_changed != 'false' }}
-    uses: ./.github/workflows/linux-packaging.yml
-
-  # Keep the already-required check name. Native failures must block it, while
-  # unrelated PRs may skip native qualification only after a successful diff.
-  test:
-    name: Test
-    needs: [queue_ci, release_notes, test_workspaces, compute_changes, compute_native, windows_packaging_changes, windows_packaging, remote_server_packaging, linux_packaging]
-    if: ${{ always() }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: .github/scripts
-      - name: Report reused qualification
-        if: needs.queue_ci.outputs.reused == 'true'
         env:
-          SOURCE_URL: ${{ needs.queue_ci.outputs.source_url }}
-        run: printf 'Test suites passed in [exact-content CI](%s). Reporting artifacts are attached to this run.\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
-      - name: Report focused release-note qualification
-        if: needs.release_notes.outputs.qualified == 'true'
-        run: echo 'Focused release-note qualification passed; workspace and native packaging tests are not applicable.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Require applicable test suites
-        if: needs.queue_ci.outputs.reused != 'true' && needs.release_notes.outputs.qualified != 'true'
-        env:
-          WORKSPACE_RESULT: ${{ needs.test_workspaces.result }}
-          DETECTION_RESULT: ${{ needs.compute_changes.result }}
-          COMPUTE_CHANGED: ${{ needs.compute_changes.outputs.changed }}
-          NATIVE_RESULT: ${{ needs.compute_native.result }}
-          WINDOWS_DETECTION_RESULT: ${{ needs.windows_packaging_changes.result }}
-          WINDOWS_CHANGED: ${{ needs.windows_packaging_changes.outputs.changed }}
-          WINDOWS_NATIVE_RESULT: ${{ needs.windows_packaging.result }}
-          REMOTE_SERVER_RESULT: ${{ needs.remote_server_packaging.result }}
-          LINUX_CHANGED: ${{ needs.windows_packaging_changes.outputs.linux_changed }}
-          LINUX_NATIVE_RESULT: ${{ needs.linux_packaging.result }}
+          TEST_PACKAGES: ${{ needs.changes.outputs.test_packages }}
         run: |
-          node .github/scripts/compute-ci-gate.mjs check
-          node .github/scripts/windows-packaging-ci-gate.mjs check
+          filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web')
+          if [[ -n "$TEST_PACKAGES" ]]; then
+            filters=()
+            for package in $TEST_PACKAGES; do filters+=(--filter "$package"); done
+          fi
+          vp run --parallel --concurrency-limit 4 "${filters[@]}" test
 
-  # Split the web unit suite across runners so it does not compete with
-  # other packages in `test`. Measure the speedup in CI; sharding does not
-  # replace deterministic synchronization in tests. These unit tests need
-  # neither the Electron binary nor libsecret.
+  # The web suite is the largest outside the server. In the shared Test job it
+  # started last and ran alone for about 40s after everything else finished.
+  # release.yml mirrors this test, test_web, and test_server split.
+  # SCIENT-FORK:START — duration-balanced hosted shards, JSON reports and performance suites.
   test_web:
-    needs: [queue_ci, release_notes]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' }}
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.test_web != 'false' }}
     name: Test Web ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     # SCIENT-FORK:START — headroom over the slowest web shard (upstream: 10).
-    # The slowest shard now takes about 10 minutes, setup and cleanup included
-    # (October 2026: 9m50s to 10m18s). At a 10-minute cap a green shard was
-    # cancelled mid-cleanup and the merge queue ejected the PR. The cap keeps
-    # headroom over the slowest observed shard, as for the server shards.
+    # Retain setup/performance headroom until the balanced split is measured in CI.
     timeout-minutes: 15
     # SCIENT-FORK:END
     strategy:
@@ -499,24 +498,24 @@ jobs:
           overwrite: true
           retention-days: 14
 
+  # SCIENT-FORK:END
+
+  # SCIENT-FORK:START — duration-balanced hosted shards, JSON reports and performance suites.
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
   # separate workers, so no two server test files ever share a machine and the
   # isolation that flag buys is preserved exactly.
   test_server:
-    needs: [queue_ci, release_notes]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' }}
+    # Wait for Changes before expanding runners under the 20-job organization limit.
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.test_server != 'false' }}
     name: Test Server ${{ matrix.shard }}
     runs-on: ubuntu-24.04
-    # V2 roughly tripled the server suite (957 files). The three shard names
-    # are required checks, so they get more time rather than more shards.
-    # Shard duration spans 17-25m depending on runner allocation; the cap must
-    # clear the slowest allocation or a green shard gets cancelled mid-cleanup.
-    timeout-minutes: 35
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -574,6 +573,10 @@ jobs:
           --outputFile.json="$TEST_REPORT"
 
       # SCIENT-FORK:START — retain server measurements outside ordinary correctness tests.
+      - name: Test compute session Python bridge
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        working-directory: apps/server/src/scient/compute/bridge
+        run: python3 -m unittest discover --pattern 'test_*.py' --verbose
       - name: Test scientific server performance
         if: ${{ !cancelled() && matrix.shard == 1 }}
         run: vp run --filter t3 test:performance
@@ -622,68 +625,12 @@ jobs:
           overwrite: true
           retention-days: 30
 
-  # Skipped matrices do not report expanded required names. Report those names after
-  # exact CI reuse or successful focused release-note qualification, explaining which applies.
-  test_web_reused:
-    needs: [queue_ci, release_notes]
-    if: ${{ !cancelled() && (needs.release_notes.outputs.qualified == 'true' || (needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group')) }}
-    name: Test Web ${{ matrix.shard }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    strategy:
-      matrix:
-        shard: [1, 2, 3]
-    steps:
-      - name: Report focused release-note qualification
-        if: needs.release_notes.outputs.qualified == 'true'
-        run: echo 'This shard is not applicable to the verified release-note-only change. Focused catalog, web type, lint and browser checks passed in Release notes qualification.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Report reused shard
-        if: needs.queue_ci.outputs.reused == 'true'
-        env:
-          SOURCE_URL: ${{ needs.queue_ci.outputs.source_url }}
-        run: printf 'This shard passed in [exact-content CI](%s).\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
+  # SCIENT-FORK:END
 
-  test_server_reused:
-    needs: [queue_ci, release_notes]
-    if: ${{ !cancelled() && (needs.release_notes.outputs.qualified == 'true' || (needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group')) }}
-    name: Test Server ${{ matrix.shard }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    strategy:
-      matrix:
-        shard: [1, 2, 3]
-    steps:
-      - name: Report focused release-note qualification
-        if: needs.release_notes.outputs.qualified == 'true'
-        run: echo 'This shard is not applicable to the verified release-note-only change. Focused catalog, web type, lint and browser checks passed in Release notes qualification.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Report reused shard
-        if: needs.queue_ci.outputs.reused == 'true'
-        env:
-          SOURCE_URL: ${{ needs.queue_ci.outputs.source_url }}
-        run: printf 'This shard passed in [exact-content CI](%s).\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
-
-  transfer-report:
-    name: Transfer report artifact
-    needs: [queue_ci, release_notes, test_server]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && (needs.queue_ci.outputs.reused == 'true' || needs.test_server.result == 'success') }}
-    # On Blacksmith like every other job here: the GitHub-hosted queue is shared
-    # with the PR bots and can leave this job waiting until it is abandoned,
-    # which fails `Check` on an otherwise green run.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require transfer measurements
-        uses: actions/download-artifact@v8
-        with:
-          name: thread-transfer-results
-          path: ${{ runner.temp }}/thread-transfer
-
-  # Split out of Check and Test: both paid ~7-9s to install a Rust toolchain
-  # for checks that take under 3s, on the critical path of every PR.
   rust:
-    needs: [queue_ci, release_notes]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' }}
     name: Rust
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.rust != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -707,126 +654,17 @@ jobs:
             cargo fmt --manifest-path "native/$crate/Cargo.toml" -- --check
           done
 
-      # The compute session's Python bridge has no workspace package to run it,
-      # so it would otherwise be the one part of that feature no lane covers.
-      # These tests fake the kernel manager and the channels, so they need only
-      # a standard library and finish in under a second -- the suite that needs
-      # a real kernel lives in `scient-compute-python-kernel.yml` instead.
-      - name: Test compute session Python bridge
-        working-directory: apps/server/src/scient/compute/bridge
-        run: python3 -m unittest discover --pattern 'test_*.py' --verbose
-
       - name: Test Rust crates
         run: |
           for crate in resource-monitor kde-snap-shot hyprland-snap-shot; do
             cargo test --locked --manifest-path "native/$crate/Cargo.toml"
           done
 
-  # The static analysis below needs a macOS runner, which bills ~6.7x a Linux
-  # minute, so gate it on the native sources it actually lints instead of paying
-  # for it on every push. Detection is API-only (no checkout) and fails open: if
-  # the diff cannot be resolved, the lint runs.
-  mobile_native_changes:
-    needs: [queue_ci, release_notes]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' }}
-    name: Mobile Native Changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    outputs:
-      changed: ${{ steps.detect.outputs.changed }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          sparse-checkout: .github/scripts
-      - name: Detect mobile native changes
-        id: detect
-        env:
-          # The same immutable comparison as the other change gates on every event. A PR's live
-          # file list can change during a run, and the merge queue reuses this decision.
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-        run: |
-          set -uo pipefail
-
-          fail_open() {
-            echo "$* Running native static analysis."
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          }
-
-          # Match bytes, not characters: a Git filename need not be valid UTF-8.
-          export LC_ALL=C
-
-          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail_open "The comparison base is missing."
-          # Without rename detection a rename lists both paths: renaming a matched file
-          # out of the matched paths removes a lint input just like editing it. A newline
-          # inside a filename becomes `?`, so each path stays on one line for the matcher.
-          paths=$(git diff --no-renames --name-only -z "$BASE_SHA" "$GITHUB_SHA" | tr '\n\0' '?\n') \
-            || fail_open "Could not resolve changed files."
-
-          # Sources scripts/mobile-native-static-check.ts lints, plus the tool
-          # and rule configuration that decides how it lints them, plus the
-          # root package.json that defines the lint:mobile command.
-          pattern='^apps/mobile/.*\.(swift|kt|kts)$|^apps/mobile/(\.swiftlint\.yml|detekt\.yml|\.editorconfig|Brewfile)$|^scripts/mobile-native-static-check\.ts$|^package\.json$|^\.github/workflows/ci\.yml$'
-
-          if grep -qE "$pattern" <<< "$paths"; then
-            echo "Native sources or lint configuration changed:"
-            grep -E "$pattern" <<< "$paths"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "No mobile native sources or lint configuration changed."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
-    needs: [queue_ci, release_notes, mobile_native_changes]
-    # Skip only on an explicit "no": a gate job that failed or errored leaves the
-    # output empty, and that must run the lint rather than silently skip it.
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.mobile_native_changes.outputs.changed != 'false' }}
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.mobile_native != 'false' }}
     runs-on: macos-26
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            /*
-            !/.repos/
-            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: false
-          run-install: |
-            args:
-              - --filter=@t3tools/scripts...
-
-      - name: Install mobile native static analysis tools
-        run: brew bundle install --file apps/mobile/Brewfile
-
-      - name: Verify mobile native static analysis tools
-        run: |
-          for tool in swiftlint ktlint detekt; do
-            command -v "$tool" >/dev/null || {
-              echo "Required mobile native static analysis tool is unavailable: $tool" >&2
-              exit 1
-            }
-          done
-
-      - name: Lint mobile native sources
-        run: node scripts/mobile-native-static-check.ts
-
-  release_smoke:
-    needs: [queue_ci, release_notes]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' }}
-    name: Release Smoke
-    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -847,15 +685,111 @@ jobs:
             args:
               - --filter=@t3tools/scripts...
 
+      - name: Install mobile native static analysis tools
+        run: brew bundle install --file apps/mobile/Brewfile
+
+      # SCIENT-FORK:START — missing analyzers must not turn into successful skips.
+      - name: Verify mobile native static analysis tools
+        run: |
+          for tool in swiftlint ktlint detekt; do
+            command -v "$tool" >/dev/null || {
+              echo "Required mobile native static analysis tool is unavailable: $tool" >&2
+              exit 1
+            }
+          done
+
+      # SCIENT-FORK:END
+
+      - name: Lint mobile native sources
+        run: vp run lint:mobile
+
+  release_smoke:
+    name: Release Smoke
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.release_smoke != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
-  # Records the exact content and base a fully successful queue run, or same-repository PR run,
-  # qualified. Fork PRs never record one, so their queue entries always run normal CI.
+  # SCIENT-FORK:START — native qualification stays under the same required gate.
+  compute_native:
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.compute_changed != 'false' }}
+    uses: ./.github/workflows/scient-compute-python-kernel.yml
+    with:
+      real_kernel: ${{ needs.changes.outputs.real_kernel != 'false' }}
+      managed_python: ${{ needs.changes.outputs.managed_python != 'false' }}
+
+  windows_packaging:
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.windows_changed != 'false' }}
+    uses: ./.github/workflows/windows-packaging.yml
+
+  remote_server_packaging:
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.windows_changed != 'false' }}
+    uses: ./.github/workflows/remote-server-packaging.yml
+
+  linux_packaging:
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.linux_changed != 'false' }}
+    uses: ./.github/workflows/linux-packaging.yml
+
+  # Only Check is required, so one reporter per reused/focused suite is sufficient.
+  test_web_reused:
+    needs: [queue_ci, release_notes]
+    if: ${{ !cancelled() && (needs.release_notes.outputs.qualified == 'true' || (needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group')) }}
+    name: Test Web (qualified)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Report focused or reused qualification
+        env:
+          FOCUSED: ${{ needs.release_notes.outputs.qualified }}
+          SOURCE_URL: ${{ needs.queue_ci.outputs.source_url }}
+        run: |
+          if [[ "$FOCUSED" == true ]]; then
+            echo 'Focused release-note qualification passed; this suite is not applicable.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'Applicable suites passed in [exact-content CI](%s).\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  test_server_reused:
+    needs: [queue_ci, release_notes]
+    if: ${{ !cancelled() && (needs.release_notes.outputs.qualified == 'true' || (needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group')) }}
+    name: Test Server (qualified)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Report focused or reused qualification
+        env:
+          FOCUSED: ${{ needs.release_notes.outputs.qualified }}
+          SOURCE_URL: ${{ needs.queue_ci.outputs.source_url }}
+        run: |
+          if [[ "$FOCUSED" == true ]]; then
+            echo 'Focused release-note qualification passed; this suite is not applicable.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'Applicable suites passed in [exact-content CI](%s).\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   qualification:
     name: Qualification receipt
-    needs: [queue_ci, release_notes, check, test_workspaces, compute_changes, compute_native, windows_packaging_changes, windows_packaging, remote_server_packaging, linux_packaging, test, test_web, test_server, transfer-report, rust, mobile_native_changes, mobile_native_static_analysis, release_smoke]
-    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused]
+    if: ${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -879,3 +813,52 @@ jobs:
           path: ${{ runner.temp }}/ci-queue-reuse/receipt.json
           if-no-files-found: error
           retention-days: 14
+  # SCIENT-FORK:END
+
+  # Branch protection requires this job by its name, `Check`. It fails when any
+  # other job fails, is cancelled, or is skipped without a reason, so splitting
+  # or resharding jobs needs no ruleset change. Add every new job to `needs`.
+  # `always()` rather than `!cancelled()`: a skipped job reports success to
+  # branch protection, so a cancelled run must still produce a failing check.
+  check:
+    name: Check
+    if: ${{ always() }}
+    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, qualification]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # SCIENT-FORK:START — validate explicit skip reasons, including reuse and native gates.
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+      - name: Require every job to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          QUALIFYING_PR: ${{ github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node .github/scripts/ci-check.cjs
+
+      - name: Require applicable native qualification
+        if: needs.queue_ci.outputs.reused != 'true' && needs.release_notes.outputs.qualified != 'true'
+        env:
+          WORKSPACE_RESULT: ${{ needs.test.result == 'skipped' && needs.changes.outputs.test == 'false' && 'success' || needs.test.result }}
+          DETECTION_RESULT: ${{ needs.changes.result }}
+          COMPUTE_CHANGED: ${{ needs.changes.outputs.compute_changed }}
+          NATIVE_RESULT: ${{ needs.compute_native.result }}
+          WINDOWS_DETECTION_RESULT: ${{ needs.changes.result }}
+          WINDOWS_CHANGED: ${{ needs.changes.outputs.windows_changed }}
+          WINDOWS_NATIVE_RESULT: ${{ needs.windows_packaging.result }}
+          REMOTE_SERVER_RESULT: ${{ needs.remote_server_packaging.result }}
+          LINUX_CHANGED: ${{ needs.changes.outputs.linux_changed }}
+          LINUX_NATIVE_RESULT: ${{ needs.linux_packaging.result }}
+        run: |
+          node .github/scripts/compute-ci-gate.mjs check
+          node .github/scripts/windows-packaging-ci-gate.mjs check
+
+      # thread-transfer-report.yml reads this artifact after CI, including restored queue evidence.
+      - name: Require transfer measurements
+        if: needs.test_server.result == 'success' || needs.queue_ci.outputs.server_reports == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: thread-transfer-results
+          path: ${{ runner.temp }}/thread-transfer
+      # SCIENT-FORK:END

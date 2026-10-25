@@ -33,25 +33,28 @@ describe("Compute CI suite selection", () => {
   it("wires each suite independently and skips it only on an explicit false", () => {
     expect(workflow("ci.yml")).toMatchObject({
       jobs: {
-        compute_changes: {
+        changes: {
           outputs: {
-            changed: "${{ steps.detect.outputs.changed }}",
-            real_kernel: "${{ steps.detect.outputs.real_kernel }}",
-            managed_python: "${{ steps.detect.outputs.managed_python }}",
+            compute_changed:
+              "${{ github.event_name == 'push' && 'true' || steps.compute.outputs.changed }}",
+            real_kernel:
+              "${{ github.event_name == 'push' && 'true' || steps.compute.outputs.real_kernel }}",
+            managed_python:
+              "${{ github.event_name == 'push' && 'true' || steps.compute.outputs.managed_python }}",
           },
         },
         compute_native: {
-          needs: ["queue_ci", "release_notes", "compute_changes"],
-          if: "${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.compute_changes.outputs.changed != 'false' }}",
+          needs: ["queue_ci", "release_notes", "changes"],
+          if: "${{ !cancelled() && needs.release_notes.outputs.qualified != 'true' && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.compute_changed != 'false' }}",
           uses: "./.github/workflows/scient-compute-python-kernel.yml",
           with: {
-            real_kernel: "${{ needs.compute_changes.outputs.real_kernel != 'false' }}",
-            managed_python: "${{ needs.compute_changes.outputs.managed_python != 'false' }}",
+            real_kernel: "${{ needs.changes.outputs.real_kernel != 'false' }}",
+            managed_python: "${{ needs.changes.outputs.managed_python != 'false' }}",
           },
         },
-        test: {
-          name: "Test",
-          needs: expect.arrayContaining(["test_workspaces", "compute_changes", "compute_native"]),
+        check: {
+          name: "Check",
+          needs: expect.arrayContaining(["test", "changes", "compute_native"]),
           if: "${{ always() }}",
         },
       },
