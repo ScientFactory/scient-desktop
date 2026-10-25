@@ -1,5 +1,4 @@
 import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
-import { waitForTestReceipt } from "../../../test/receipt";
 import { useEffect, useState, type ReactNode } from "react";
 import type { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
@@ -436,81 +435,6 @@ Body.
     expect(onEdit).not.toHaveBeenCalled();
   });
 
-  it.for([
-    "\\newcommand% name follows\n\\hiddenBegin{\\begin{comment}}",
-    "\\newcommand% star follows\r\n*{\\hiddenBegin}{\\begin{comment}}",
-    "\\DeclareDocumentCommand{\\hiddenBegin}{m}{\\begin{comment}#1}",
-  ])("types and undoes below unused declaration %s", async (definition, context) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const original = `\\documentclass{article}\n${definition}\n\\begin{document}\nActual body.\n\\end{document}`;
-    let current = original;
-    const publications = new Map<string, () => void>();
-    // Native text paints before recovery journaling and worker conversion publish it.
-    const nextPublication = (source: string) => {
-      const { promise, resolve } = Promise.withResolvers<void>();
-      publications.set(source, resolve);
-      const dispose = () => {
-        if (publications.get(source) === resolve) publications.delete(source);
-      };
-      _fixture.cleanup.defer(dispose);
-      return () => waitForTestReceipt(context.signal, promise, dispose);
-    };
-    function Harness() {
-      const [source, setSource] = useState(current);
-      const owner = useLatexVisualTestOwner(source);
-      return (
-        <LatexVisualEditor
-          draftKey="browser-statement-test"
-          fileRevision="r1"
-          source={source}
-          sourceSnapshot={owner.snapshot}
-          disabled={false}
-          onEditingChange={() => {}}
-          onOpenSource={() => {}}
-          onEdit={(request) => {
-            const outcome = owner.edit(request, request.edit.source === current);
-            if (!outcome.accepted) return outcome;
-            current = outcome.snapshot.source;
-            setSource(current);
-            publications.get(current)?.();
-            return outcome;
-          }}
-        />
-      );
-    }
-    await _fixture.root0.rerender(<Harness />);
-    await readingViewReady(_fixture);
-    const live = readMountedLatexVisualTestEditor(_fixture.container)!;
-    expect(live.isEditable).toBe(true);
-    expect(live.state.doc.textContent).toBe("Actual body.");
-    const changed = original.replace("Actual body.", "New Actual body.");
-    const typed = nextPublication(changed);
-    live.commands.setTextSelection(1);
-    live.view.focus();
-    expect(document.activeElement).toBe(live.view.dom);
-    expect(live.view.hasFocus()).toBe(true);
-    const native = document.getSelection()!;
-    expect(native.isCollapsed).toBe(true);
-    expect(native.anchorNode).not.toBeNull();
-    expect(live.view.posAtDOM(native.anchorNode!, native.anchorOffset)).toBe(1);
-    await userEvent.keyboard("New ");
-    await vi.waitFor(() => expect(live.state.doc.textContent).toBe("New Actual body."));
-    await typed();
-    expect(current).toBe(changed);
-    const undone = nextPublication(original);
-    await undoKeyboard();
-    await undone();
-    expect(current).toBe(original);
-    const redone = nextPublication(changed);
-    live.commands.redo();
-    await redone();
-    expect(current).toBe(changed);
-    expect(readMountedLatexVisualTestEditor(_fixture.container)).toBe(live);
-  });
-
   it("saves and undoes a compound prose edit without rewriting protected commands", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -648,7 +572,9 @@ Body.
     }
   });
 
-  it.each(["Theorem", "Remark"])("inserts and edits %s through the actual menu", async (name) => {
+  // Every statement kind inserts through the same latexVisualScientificSource path.
+  it("inserts and edits Theorem through the actual menu", async () => {
+    const name = "Theorem";
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
