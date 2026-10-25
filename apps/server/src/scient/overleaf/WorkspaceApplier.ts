@@ -863,7 +863,7 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
   return WorkspaceApplier.of({ apply });
 });
 export const make = (hooks: ApplierHooks = {}) => makeEffect(hooks);
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const layer = Layer.effect(WorkspaceApplier, make());
 
 async function readMarkerText(path: string): Promise<string> {

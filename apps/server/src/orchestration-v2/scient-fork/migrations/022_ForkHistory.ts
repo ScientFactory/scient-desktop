@@ -2,14 +2,8 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 /**
- * A fork's inherited history, fixed at fork time: one row per item, in order,
- * naming the conversation that stores the item and the message it stands for,
- * with the item's type and whether it started a turn (and the user wrote it),
- * which history windows count. Written once when the fork is accepted; not
- * derived from events, so a projection rebuild keeps it.
- *
- * `scient_fork_frozen_items` keeps a shown item (and its message) as the fork
- * showed it, written the first time something rewrites the stored original.
+ * Fix membership and order at acceptance, independently of events, so projection rebuilds preserve
+ * history. Freeze an item's displayed contents before its stored original is first rewritten.
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

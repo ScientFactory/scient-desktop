@@ -3421,8 +3421,6 @@ it.effect(
     }),
 );
 
-// Upstream deleted these fix-commit cases in 05696c636e; Scient keeps them as
-// the only guards of the behaviour.
 // regression: c299308a83 fix(server): metrics count interrupted work on the monotonic clock (#16207)
 it.effect("ProviderSessionManagerV2 records provider session and turn metrics", () =>
   Effect.gen(function* () {

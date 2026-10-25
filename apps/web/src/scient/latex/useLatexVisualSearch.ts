@@ -21,15 +21,9 @@ export const LatexVisualSearch = Extension.create({
 });
 
 /**
- * Replaces the matches one text block at a time, last block first so earlier
- * positions stay valid. `commit` writes a block to the source; the next block
- * waits for a paint, because the source owner takes one edit per update.
- *
- * The positions were found in one document. The work therefore stops as soon
- * as the document is anything other than what the previous replacement left:
- * typing, undo, or a newer file from disk all end it. It also stops at the
- * first block the source refuses, and while text is being composed.
- * Returns a function that stops the remaining work.
+ * Replace last block first to preserve positions, committing one block per paint. Stop on any
+ * deviation from the prior replacement's document, source refusal, or composition;
+ * typing/undo/external revisions must never receive stale offsets.
  */
 function replaceByBlock(
   editor: Editor,
@@ -87,13 +81,8 @@ function replaceByBlock(
 }
 
 /**
- * `editable` turns on Replace. A replacement is an ordinary text edit in the
- * editor, so it is written to the LaTeX source the same way typing is.
- *
- * The source is updated one text block at a time, as it is for typing. Replace
- * all therefore edits one block, has `commit` write it to the source, and
- * moves to the next after a paint; it stops at the first block the source
- * refuses. Each block is its own undo step for the same reason.
+ * Use ordinary source commits for replacement, one block per paint and undo step. Stop at the first
+ * refused block rather than continuing with stale or uncommitted positions.
  */
 export function useLatexVisualSearch(
   editor: Editor | null,

@@ -220,11 +220,9 @@ export function resolveCodexRuntimeSource(input: {
   if (input.hasCustomRuntime) {
     return input.configuredRuntimeHealthy ? "custom" : "unknown";
   }
-  // Installing the private runtime is the user's durable selection. Prefer it
-  // while it is capability-healthy, without maintaining a second preference
-  // file that can drift from the atomic managed-runtime state. If it is
-  // unhealthy, use a healthy PATH runtime while preserving the repair action;
-  // if neither runtime is healthy, retain the private copy as the repair target.
+  // Atomic private-runtime state is the durable selection; avoid a second preference file. Prefer
+  // healthy private, fall back to healthy PATH while retaining repair, and keep private as repair
+  // target if neither is healthy.
   if (input.managedInstalled && (input.managedRuntimeHealthy || !input.configuredRuntimeHealthy)) {
     return "scient_managed";
   }
@@ -305,12 +303,9 @@ export function resolveCodexManagedRuntimePolicy(input: {
     })
       ? ["update", "repair", "remove"]
       : ["repair", "remove"];
-  // While PATH Codex stands in for a private copy that failed its check,
-  // repairing or updating that copy would put it back in use without the user
-  // choosing it: never with an older release than PATH Codex. Each action is
-  // judged by the release it installs. Installing a private copy beside PATH
-  // Codex is the user's own choice, whatever the two releases are; its plan
-  // shows both before anything starts.
+  // Repairing a private copy while PATH stands in would select it implicitly, so never install
+  // older than the current PATH release. Explicit private installation is the user's choice with
+  // both versions shown in its plan.
   const wouldDowngrade = input.source === "system" && isManagedRuntimeDowngrade(input);
   const repairWouldDowngrade =
     input.source === "system" &&
@@ -475,12 +470,9 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
     });
     const initialConfiguredCheck = skipConfiguredProbe ? null : yield* probeConfiguredRuntime;
     const configuredRuntimeHealthy = initialConfiguredCheck?.healthy ?? false;
-    // Runtime actions change install state after this resolution is built, so
-    // getSummary re-derives selection. The probe result is cached: a summary
-    // that suddenly needs configured health after remove probes once instead
-    // of starting another app-server on every read. A download drops the
-    // cached check first (`prepareAction`), so it decides on PATH Codex as it
-    // is now.
+    // Re-derive selection after runtime actions. Cache configured health to avoid app-server probes
+    // per summary, but drop that check before download so replacement decisions use current PATH
+    // state.
     const configuredCheckCache = yield* Ref.make<CodexCapabilityCheck | null>(
       initialConfiguredCheck,
     );

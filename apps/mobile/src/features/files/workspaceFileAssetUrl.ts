@@ -25,11 +25,10 @@ export function useWorkspaceFileAssetUrlState(props: {
   );
 
   const relativePath = props.relativePath;
-  const draftCwd = props.draftCwd ?? props.cwd;
+  const draftCwd = props.draftCwd ?? null;
   const resource = useMemo<AssetResource | null>(() => {
-    if (relativePath === null) return null;
+    if (absolutePath === null || relativePath === null) return null;
     if (props.threadId !== null) {
-      if (absolutePath === null) return null;
       return {
         _tag:
           isVideoPreviewFile(absolutePath) ||

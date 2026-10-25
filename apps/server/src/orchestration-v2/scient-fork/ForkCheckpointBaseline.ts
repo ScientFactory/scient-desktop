@@ -38,11 +38,9 @@ export interface ScientForkCheckpointBaselineShape {
     readonly toCheckpointRef: CheckpointRef;
   }) => Effect.Effect<void, VcsError>;
   /**
-   * Whether a fork worktree is this repository's checkout of the fork branch at
-   * the frozen checkpoint, with no checkout still in progress. A reused
-   * worktree must also be clean: that scan reads the whole tree, so a worktree
-   * Git has just created is not scanned. A check that cannot run (Git fails or
-   * times out) proves nothing, so it reads as false.
+   * Reused worktrees must be clean and match the frozen branch/checkpoint with no checkout in
+   * progress. Skip the full-tree clean scan only for newly created worktrees; failed/timed-out
+   * checks prove nothing.
    */
   readonly verifyWorktree: (input: {
     readonly cwd: string;

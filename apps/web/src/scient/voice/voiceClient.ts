@@ -1,10 +1,5 @@
-// Web-safe accessor for the desktop voice bridge.
-//
-// The voice surface is desktop-only: `window.desktopBridge.voice` is present
-// only in the Electron build and is `undefined` on the web. Every consumer must
-// treat it as optional and degrade gracefully when it is absent, exactly like
-// `desktopBridge.preview` does elsewhere in the renderer.
-//
+// The voice bridge exists only in Electron; every consumer must treat its absence on web as an
+// optional capability.
 import type { DesktopVoiceBridge } from "@t3tools/contracts";
 
 /** Adapter surface consumed by the UI; Electron is only one implementation. */

@@ -1,13 +1,8 @@
-// SCIENT-FORK:START
-import {
-  ThreadId,
-  COMPACT_THREAD_SNAPSHOT_FORMAT,
-  THREAD_SNAPSHOT_FORMAT_HEADER,
-} from "@t3tools/contracts";
-// SCIENT-FORK:END
+import { OrchestrationV2ThreadBoundedSnapshot, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/model.ts";
 import * as RpcHttp from "../rpc/http.ts";
@@ -121,101 +116,31 @@ const boundedBody = (compact: boolean) => ({
   historyCursor: "bounded-cursor",
   hasMoreHistory: true,
   latestLocalTurnOrdinal: 2,
-  payloadBudgetExceeded: false,
   ...(compact ? { turnItemsOmitLocalVisible: true } : {}),
 });
+const BoundedJson = Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot);
+const idTableBody = () => {
+  const snapshot = Schema.decodeUnknownSync(BoundedJson)(boundedBody(true));
+  return Schema.encodeSync(BoundedJson)({ ...snapshot, idTable: true });
+};
 
 describe("boundedThreadSnapshotLoader", () => {
-  // SCIENT-FORK:START
-  it.effect(
-    "negotiates compact snapshots and reconstructs the exact visible item before caching",
-    () => {
-      const item = {
-        id: "answer-item",
-        threadId: THREAD_ID,
-        runId: null,
-        nodeId: null,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal: 1,
-        status: "completed",
-        title: null,
-        startedAt: null,
-        completedAt: null,
-        updatedAt: NOW,
-        type: "assistant_message",
-        messageId: "answer-message",
-        text: "Preserved answer",
-        streaming: false,
-      };
-      const body = {
-        ...FULL_SNAPSHOT_BODY,
-        snapshotFormat: COMPACT_THREAD_SNAPSHOT_FORMAT,
-        historyCursor: "older",
-        hasMoreHistory: true,
-        latestLocalTurnOrdinal: 1,
-        projection: {
-          ...FULL_SNAPSHOT_BODY.projection,
-          turnItems: [item],
-          visibleTurnItems: [
-            {
-              position: 0,
-              visibility: "local",
-              sourceThreadId: THREAD_ID,
-              sourceItemId: item.id,
-              itemIndex: 0,
-            },
-          ],
-        },
-      };
-      const fetchFn = ((input: RequestInfo | URL, init?: RequestInit) => {
-        const headers = input instanceof Request ? input.headers : new Headers(init?.headers);
-        expect(headers.get(THREAD_SNAPSHOT_FORMAT_HEADER)).toBe(COMPACT_THREAD_SNAPSHOT_FORMAT);
-        return Promise.resolve(
-          new Response(JSON.stringify(body), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      }) satisfies typeof fetch;
-      return Effect.gen(function* () {
-        const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
-        const result = yield* loader.load(PREPARED, THREAD_ID);
-        expect(result._tag).toBe("present");
-        if (result._tag !== "present") return;
-        expect(result.snapshot.projection.visibleTurnItems[0]?.item).toEqual(
-          result.snapshot.projection.turnItems[0],
-        );
-        expect(result.snapshot.projection.turnItems[0]).toMatchObject({ text: "Preserved answer" });
-        expect(result.history).toEqual({
-          historyCursor: "older",
-          hasMoreHistory: true,
-          latestLocalTurnOrdinal: 1,
-        });
-      }).pipe(
-        Effect.provide(
-          Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
-        ),
-      );
-    },
-  );
-  // SCIENT-FORK:END
   it.effect.each([
-    ["an older server that ignores the opt-in", false],
-    ["a server that sends compact turnItems", true],
-  ] as const)("requests compact turnItems and loads %s", ([, compact]) => {
+    ["an older server that ignores the opt-in", () => boundedBody(false)],
+    ["a server that sends compact turnItems", () => boundedBody(true)],
+    ["a server that also sends an ID table", idTableBody],
+  ] as const)("requests compact turnItems and loads %s", ([, body]) => {
     const urls: string[] = [];
     const fetchFn = ((input: RequestInfo | URL) => {
       urls.push(String(input));
-      return Promise.resolve(Response.json(boundedBody(compact)));
+      return Promise.resolve(Response.json(body()));
     }) satisfies typeof fetch;
 
     return Effect.gen(function* () {
       const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
       const result = yield* loader.load(PREPARED, THREAD_ID);
       expect(new URL(urls[0]!).searchParams.get("compactTurnItems")).toBe("1");
+      expect(new URL(urls[0]!).searchParams.get("compactIds")).toBe("1");
       expect(result._tag).toBe("present");
       if (result._tag !== "present") return;
       expect(result.snapshot.projection.turnItems.map((item) => String(item.id))).toEqual([
@@ -236,52 +161,6 @@ describe("boundedThreadSnapshotLoader", () => {
     );
   });
 
-  // SCIENT-FORK:START
-  it.effect(
-    "composes Scient item references with local omission without losing or duplicating rows",
-    () => {
-      const body = boundedBody(true);
-      const inherited = {
-        position: 2,
-        visibility: "inherited",
-        sourceThreadId: "parent-thread",
-        sourceItemId: DEPENDENCY.id,
-        itemIndex: 0,
-      };
-      const fetchFn = ((input: RequestInfo | URL, init?: RequestInit) => {
-        const headers = input instanceof Request ? input.headers : new Headers(init?.headers);
-        expect(headers.get(THREAD_SNAPSHOT_FORMAT_HEADER)).toBe(COMPACT_THREAD_SNAPSHOT_FORMAT);
-        expect(new URL(String(input)).searchParams.get("compactTurnItems")).toBe("1");
-        return Promise.resolve(
-          Response.json({
-            ...body,
-            snapshotFormat: COMPACT_THREAD_SNAPSHOT_FORMAT,
-            projection: { ...body.projection, visibleTurnItems: [...VISIBLE, inherited] },
-          }),
-        );
-      }) satisfies typeof fetch;
-      return Effect.gen(function* () {
-        const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
-        const result = yield* loader.load(PREPARED, THREAD_ID);
-        expect(result._tag).toBe("present");
-        if (result._tag !== "present") return;
-        const projection = result.snapshot.projection;
-        expect(projection.turnItems.map((item) => String(item.id))).toEqual([
-          "local-1",
-          "local-2",
-          "older-dependency",
-        ]);
-        expect(projection.visibleTurnItems[2]?.item).toEqual(projection.turnItems[2]);
-        expect("turnItemsOmitLocalVisible" in result.snapshot).toBe(false);
-      }).pipe(
-        Effect.provide(
-          Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
-        ),
-      );
-    },
-  );
-
-  // SCIENT-FORK:END
   it.effect("falls back to full HTTP snapshot when bounded returns a plain route 404", () => {
     const fetchFn = ((input: RequestInfo | URL) => {
       const url = String(input);

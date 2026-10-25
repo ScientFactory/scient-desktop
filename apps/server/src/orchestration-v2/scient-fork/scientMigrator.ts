@@ -1,38 +1,7 @@
 /**
- * Scient-owned versioned migration runner.
- *
- * Built on the standard Effect SQL Migrator (`Migrator.make`) with a separate
- * `scient_schema_migrations` ledger table. T3's `effect_sql_migrations` table
- * and numbering are never modified.
- *
- * Before delegating to the standard Migrator, the runner performs three
- * Scient-owned preflight passes:
- *
- * 1. Ledger reconciliation. Existing development databases created by the
- *    legacy `ensureScientForkSchema` recorded the ledger with an
- *    `applied_at TEXT NOT NULL` column and no `created_at`. The standard
- *    Migrator expects the canonical `(migration_id, created_at, name)` shape
- *    and inserts only `(migration_id, name)`, relying on
- *    `DEFAULT current_timestamp`. The preflight rebuilds a legacy ledger into
- *    that canonical shape in a single transaction, copying `applied_at` into
- *    `created_at` and keeping `applied_at` as a nullable historical-residue
- *    column. No timestamp value, ledger ID, or migration name is lost or
- *    altered. Fresh databases skip reconciliation; the Migrator creates the
- *    canonical table directly.
- *
- * 2. A narrowly guarded development-ledger reconciliation for the former
- *    import migration 17, now 18. It runs fork migration 17 and remaps the
- *    existing import ledger row only for the exact known 1..16 prefix.
- *
- * 3. Strict ledger integrity validation. The standard Migrator treats the
- *    latest recorded ID as a high-water mark and never inspects earlier rows,
- *    so a gapped, renamed, or newer-than-this-build ledger would be silently
- *    accepted. Scient additionally requires the recorded ledger to be a
- *    contiguous prefix of the manifest with exact name matches: no gaps, no
- *    unknown future IDs, no mismatched names. Violations fail closed with a
- *    `ScientMigrationError` of kind `BadState` before any migration runs.
- *
- * SCIENT-OWNED.
+ * Keep Scient's ledger separate from upstream. Reconcile legacy timestamps without losing IDs or
+ * receipts, and remap import-17 only for its exact known prefix. Reject gaps, renamed entries, and
+ * future IDs before the high-water-mark Migrator can silently accept them.
  */
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -90,12 +59,8 @@ export interface ScientMigration {
 }
 
 /**
- * Explicit, ordered Scient migration manifest.
- *
- * IDs 1 and 2 match the names recorded by the legacy `ensureScientForkSchema`
- * function. Existing databases that already have these ledger entries will not
- * re-run them. Migration 3 is the historical normalization pass; migration 4
- * finalizes decoder-aligned quarantine for databases that already recorded 3.
+ * IDs 1/2 must match legacy ensureScientForkSchema ledger names. Databases that recorded
+ * normalization at 3 still need the decoder-aligned quarantine at 4.
  */
 export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 1, name: "durable-thread-forks", effect: Migration001 },
@@ -144,16 +109,8 @@ interface TableColumn {
 }
 
 /**
- * Rebuild a legacy `applied_at` ledger into the canonical Effect Migrator
- * shape, transactionally.
- *
- * Detection key: a legacy ledger declares `applied_at TEXT NOT NULL`. A
- * ledger that already went through reconciliation keeps `applied_at` as a
- * *nullable* residue column, so `notnull = 0` marks a completed rebuild and
- * makes the pass idempotent. Both a missing `created_at` (pure legacy) and a
- * partially populated one (crash between an earlier runner's ALTER and
- * backfill) are handled by reading `COALESCE(created_at, applied_at)` when
- * the column exists.
+ * Only NOT NULL applied_at identifies an unreconciled ledger; nullable residue marks completion.
+ * COALESCE(created_at, applied_at) also preserves timestamps after a partial ALTER/backfill crash.
  */
 const reconcileLedger = Effect.fn("reconcileScientLedger")(function* (sql: SqlClient.SqlClient) {
   const tables = yield* sql<{ readonly name: string }>`
@@ -243,15 +200,8 @@ const reconcileFormerImport17 = Effect.fn("reconcileFormerImport17")(function* (
 // Preflight: strict ledger integrity validation
 
 /**
- * Validate that the recorded ledger is a contiguous prefix of
- * `SCIENT_MIGRATIONS` with exact name matches.
- *
- * - A recorded ID beyond the manifest means the database was migrated by a
- *   newer build; running older migrations against it must fail closed.
- * - A recorded ID that skips a manifest entry means the ledger was gapped or
- *   hand-modified; the high-water mark alone would silently ignore the hole.
- * - A recorded name that differs from the manifest means the ledger no longer
- *   describes the migrations this build would have run.
+ * The Migrator's high-water mark hides gaps; reject skipped IDs, mismatched names, and future
+ * migrations before running anything against incompatible state.
  */
 const validateLedger = Effect.fn("validateScientLedger")(function* (sql: SqlClient.SqlClient) {
   const tables = yield* sql<{ readonly name: string }>`
@@ -303,21 +253,9 @@ const migrator = Migrator.make({});
 const migrationLock = Semaphore.makeUnsafe(1);
 
 /**
- * Run all pending Scient schema migrations.
- *
- * 1. Reconcile a legacy `applied_at` ledger into the canonical shape.
- * 2. Reconcile only the exact former import-17 development ledger, preserving
- *    its receipt at 18 while applying fork migration 17 transactionally.
- * 3. Validate ledger integrity (contiguous prefix, exact names, no unknown
- *    IDs).
- * 4. Delegate to the standard Effect SQL Migrator with the
- *    `scient_schema_migrations` table. The Migrator creates the ledger on
- *    fresh databases, inserts reservation rows for all pending migrations
- *    first (doubling as the concurrent-runner lock), runs each migration in
- *    ascending order inside one transaction, and treats a reservation
- *    conflict from a concurrent runner as a locked no-op.
- *
- * @returns Array of `[id, name]` tuples for migrations that were run.
+ * The standard Migrator reserves pending IDs before running them in one transaction; a concurrent
+ * reservation conflict is a locked no-op. Reconciliation and integrity checks must precede that
+ * high-water-mark decision.
  */
 export const runScientMigrations = Effect.fn("runScientMigrations")(function* (
   sql: SqlClient.SqlClient,

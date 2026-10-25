@@ -1,19 +1,7 @@
 /**
- * Bibliographic citations for Word export.
- *
- * Scient's document profile writes citations the way its Markdown editor
- * does: a bracketed group of `@key` items, optionally prefixed, suffixed, or
- * with `-@key` to suppress the author (`[see @doe2021, p. 3; -@roe2020]`).
- * Neither of Pandoc's readers is correct for that profile alone — CommonMark
- * has no citation syntax, and Pandoc's own Markdown misreads the rest of the
- * profile (Pandoc qualification, REPORT §6) — so preparation reads with
- * CommonMark and turns a group into a Pandoc `Cite` node itself.
- *
- * Decision: a group becomes a `Cite` only when every key in it has a CSL-JSON
- * reference in the document bundle; Pandoc's built-in citeproc then formats it
- * and appends the bibliography. Otherwise the group stays as the text the
- * author wrote, and the export reports the keys it could not format. A
- * citation is never silently turned into something else.
+ * CommonMark lacks citations and Pandoc Markdown misreads Scient's other syntax. Build Cite nodes
+ * only when every key has a bundled CSL reference; otherwise retain authored text and report
+ * unformatted keys instead of silently changing meaning.
  */
 import type { CslItem, DocumentCitation, DocumentWarning } from "@t3tools/contracts";
 

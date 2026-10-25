@@ -1,13 +1,6 @@
 /**
- * Turns chat controls and cards in a detached clipboard fragment into plain
- * content before the T3 sanitizer removes buttons and graphics, so the rich
- * flavour of a right-to-left copy carries everything its Markdown carries.
- *
- * - A chip rendered as a control (mentions, file and context references)
- *   becomes the content of its Markdown copy: code, link text, or text.
- * - A details block becomes a bold summary paragraph followed by its body.
- * - A rendered diagram or chart card becomes a code block with its source.
- * - Display math becomes its own left-to-right paragraph of `$$` source.
+ * Convert controls, details, diagrams, and display math into copyable content before sanitization
+ * removes buttons and graphics; rich RTL copies must retain the Markdown copy's content.
  */
 
 /** Mirrors what the T3 clipboard sanitizer removes. */

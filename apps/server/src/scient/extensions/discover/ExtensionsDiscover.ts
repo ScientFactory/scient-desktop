@@ -1,10 +1,6 @@
 /**
- * Discover: Scient's curated catalog plus a server-side client for the
- * official MCP Registry. Registry entries are filtered to active servers and
- * normalized into `DiscoverEntry`, where only a Streamable HTTP remote over
- * https that needs no user-supplied headers or URL variables is one-click
- * installable as a connector. Curated entries carry a tagline, categories and
- * a bundled icon, inlined as a `data:` URI. See docs/internals/scient-extensions.md.
+ * One-click connectors require active Streamable HTTP over HTTPS with no user-supplied headers or
+ * URL variables. Keep curated icons bundled; see docs/internals/scient-extensions.md.
  */
 import {
   ExtensionsError,

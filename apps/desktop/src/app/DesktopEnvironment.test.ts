@@ -108,6 +108,7 @@ describe("DesktopEnvironment", () => {
   );
   // SCIENT-FORK:END desktop-state-isolation
   // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+
   // regression: aa219be713 port desktop app to Effect (#2546) - sole guard: renaming the logs directory passed every other desktop test
   it.effect("derives state paths and development identity inside Effect", () =>
     Effect.gen(function* () {
@@ -185,6 +186,7 @@ describe("DesktopEnvironment", () => {
   // SCIENT-FORK:END restored-sole-guards
 
   // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+
   // regression: aa219be713 port desktop app to Effect (#2546) - sole guard: dropping the bare ~ expansion passed every other desktop test
   it.effect("resolves picker defaults without nullish sentinels", () =>
     Effect.gen(function* () {
@@ -208,6 +210,7 @@ describe("DesktopEnvironment", () => {
   // SCIENT-FORK:END restored-sole-guards
 
   // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+
   // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103) - sole guard: giving packaged builds the development desktop entry passed every other desktop test
   it.effect("uses the stable desktop entry as the packaged Linux portal identity", () =>
     Effect.gen(function* () {

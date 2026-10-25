@@ -1,12 +1,3 @@
-// The engine-neutral `TranscriptionEngine` interface and its only current
-// implementation: a local whisper.cpp engine.
-//
-// The interface is deliberately engine-neutral (results carry `engine`) so a
-// remote engine could be added later, but only `local` is implemented today.
-// This ties together the model manager (download/verify) and the whisper
-// runtime (inference), and maps low-level failures into the shared
-// `VoiceTranscriptionError` taxonomy (lifted from the old `localWhisperBackend`).
-
 import {
   type NormalizedVoiceClip,
   type VoiceEngineId,

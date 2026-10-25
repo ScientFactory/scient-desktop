@@ -1,12 +1,6 @@
-// Core domain types and the typed failure taxonomy for the local voice core.
-//
-// This module is the lowest layer of `@scientfactory/scient-voice`: it imports
-// nothing else in the package, so every other module can depend on it without
-// creating an import cycle.
-//
-// The `VoiceEngineId` and `VoiceTranscriptionErrorKind` unions are a plain-TS
-// mirror of the `effect/Schema` wire contract in
-// `packages/contracts/src/voice.ts` and MUST be kept in sync with it.
+// Keep this lowest layer free of package imports to avoid cycles. VoiceEngineId and
+// VoiceTranscriptionErrorKind must stay in sync with the wire schema in
+// packages/contracts/src/voice.ts.
 
 /** Transcription engine identifier. Engine-neutral; only `local` ships now. */
 export type VoiceEngineId = "local";

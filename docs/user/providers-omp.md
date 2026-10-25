@@ -126,12 +126,16 @@ holding the selected model opens with the picker, and searching lists every matc
   does not open it automatically. The thread history keeps only the URL's address and path, not its
   query, so sign-in parameters such as an OAuth `state` are not stored. When Oh My Pi offers a local
   launch link that redirects to the full URL, the action opens that link.
-- Steer a running turn, and stop a turn or background work from the thread banner. Stop closes
-  that conversation's Oh My Pi process so detached jobs cannot keep running. The next message
-  starts a new process and resumes the conversation. On macOS and Linux, the process runs in its
-  own process group and forced stop signals that group. On Windows, stop uses `taskkill /T /F`;
-  Scient has not verified that against a live Oh My Pi child-process tree. A turn still open when
-  the process closes is recorded as aborted.
+- Steer a running turn, and stop a turn or background work from the thread banner. With a
+  runtime that supports `abort_and_restore_queue`, Stop aborts the run and keeps the process
+  and conversation ready for your next message. Desktop queued messages stay held for you to
+  send or edit. When the runtime returns unused steers, Scient shows their text in a warning;
+  send those messages again if still wanted. They are not automatically restored to the editable
+  queue. Older OMP versions keep the previous restart behaviour: Stop closes the process, and
+  the next message starts a new process and resumes the conversation. Scient also closes the
+  process if abort fails or the run does not settle within three seconds. Forced cleanup signals
+  the process group on macOS and Linux and uses `taskkill /T /F` on Windows; the Windows
+  child-process tree has not been verified live.
 - See model failures as failed turns. Oh My Pi reports a model error, an unexpected abort, or a
   retry that gave up inside the turn rather than as a protocol error; Scient marks the turn failed
   with Oh My Pi's message (up to 512 characters). A reply cut off at the output limit completes and
@@ -139,10 +143,11 @@ holding the selected model opens with the picker, and searching lists every matc
 - See subagent activity in the same conversation when Oh My Pi accepts subagent updates. If that
   command is missing, the conversation still starts and subagent updates stay hidden. Scient does
   not create a separate thread for each subagent. Oh My Pi runs subagents as background jobs that
-  can outlive their turn, and stopping a turn does not stop them, so a subagent stays shown as
-  running under the turn that started it until it reports its own end, Oh My Pi reports the session
-  settled, or the conversation closes. When a background subagent finishes after its turn ended,
-  Oh My Pi may run the agent again on its own to read the result; Scient shows that as a
+  can outlive their turn. Stop pauses the conversation; it does not guarantee termination of
+  detached native jobs. Otherwise, a subagent stays shown as running under the turn that started
+  it until it reports its own end, Oh My Pi reports the session settled, or the conversation closes.
+  After a naturally completed turn, a background subagent's result may run the agent again on its
+  own; Scient shows that as a
   continuation in the same thread, including after a turn whose outcome was uncertain. You can
   send a new message while background work is pending. With Oh My Pi 18.3.1 or newer, your
   message's turn ends only when Oh My Pi reports that message's own result, so a background run

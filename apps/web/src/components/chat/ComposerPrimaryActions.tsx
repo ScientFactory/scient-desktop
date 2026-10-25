@@ -48,11 +48,10 @@ interface ComposerPrimaryActionsProps {
   hasSendableContent: boolean;
   canResume?: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
-  /** While a turn is running and the composer has sendable content, render
-   * the submit button beside stop. Submitting a busy thread queues the
-   * message, so the button advertises "Queue message" in that state.
-   * SCIENT-FORK: enabled on desktop as well (DF-028); upstream only used it
-   * on mobile viewports. */
+  /**
+   * Busy sends queue messages, so advertise Queue message beside Stop.
+   * SCIENT-FORK: Available on desktop as well as mobile.
+   */
   showSendWhileRunning?: boolean;
 
   onSubmitMessage?: MouseEventHandler<HTMLButtonElement>;

@@ -16,6 +16,7 @@ function typeOn(target: Element, key: string): boolean {
 
 // Letters typed elsewhere in the chat reaching the composer are covered by
 // useChatShortcuts.browser.test.tsx "still types other letters into the composer…".
+
 // regression: 0c609ab87d fix(web): the device screen keeps focus when typing or returning to the window (#14534)
 it("keeps letters typed on the device screen on the device", () => {
   using stack = new DisposableStack();

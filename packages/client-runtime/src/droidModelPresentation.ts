@@ -4,11 +4,8 @@ type DroidModelRow = {
   readonly isLegacy?: boolean | undefined;
 };
 
-// Presentation only: never filter discovery or change availability. Unknown/new
-// model families remain visible until deliberately curated. A model moves to
-// More models only once it is superseded in every catalog Scient runs: the
-// managed Droid 0.213.0 and the current 0.230.0 (checked 2026-10-01). So
-// claude-fable-5, glm-5.2 and grok-4.6 stay visible: they are the newest in 0.213.0.
+// Presentation never filters discovery/availability; unknown families remain visible. Move models
+// to More only when superseded in every supported Droid catalog, not just the newest runtime.
 const OLDER_CLAUDE = /^claude-(?:opus-4-(?:5|6|7)|sonnet-4-5)(?:-|$)/;
 const ADDITIONAL_MODELS = new Set([
   "claude-opus-4-8",

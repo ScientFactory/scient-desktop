@@ -222,6 +222,7 @@ describe("DesktopAppIdentity", () => {
     );
   });
   // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+
   // regression: aa219be713 port desktop app to Effect (#2546) - sole guard: ignoring the commit-hash override or its 12-character trim passed every other desktop test
   it.effect("configures app identity from the environment commit override", () => {
     const calls: ElectronAppCalls = {

@@ -85,7 +85,7 @@ export interface AcpRegistryAdapterV2Options {
   readonly application?: AcpAdapterV2ApplicationBridge;
 }
 
-// Mistral Vibe: its application error code for rate limits (not an ACP code).
+// Mistral Vibe's application rate-limit code, outside ACP.
 const MISTRAL_VIBE_RATE_LIMITED = -31001;
 
 const MistralVibeSessionRetrying = Schema.Struct({

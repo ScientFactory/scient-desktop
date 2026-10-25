@@ -136,6 +136,7 @@ export function codexReplayPreamble(input: {
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
           summary: "detailed",
+          collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
           additionalContext: {
             t3_code_runtime: {
               kind: "application",

@@ -4,7 +4,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 
-// Restored from the upstream-deleted PullRequestsUnavailableState.test.tsx.
 // regression: 7068e86f76 fix(web): open GitHub pull requests in browser when loading fails (#8507)
 describe("PullRequestsUnavailableState", () => {
   // regression: cad2c93616 feat: multi-provider pull requests page with in-app reviews (#4849)

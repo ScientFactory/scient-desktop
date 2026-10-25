@@ -300,7 +300,6 @@
   "src/components/settings/SettingInheritance.test.ts": 0.015,
   "src/components/settings/SettingsPanels.logic.test.ts": 0.034,
   "src/components/settings/SettingsPanels.restore.browser.test.tsx": 0.225,
-  "src/components/settings/SettingsRouteLoading.browser.test.tsx": 0.664,
   "src/components/settings/settingsScope.test.ts": 0.017,
   "src/components/settings/settingsScopeAxis.test.ts": 0.008,
   "src/components/settings/settingsScopeNavigation.test.ts": 0.132,

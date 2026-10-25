@@ -5095,7 +5095,7 @@ it.effect.each(
       assert.equal(terminal.status, "failed");
       if (terminal.status !== "failed") return;
       assert.isNotEmpty(terminal.failure.message);
-      // Without rate-limit evidence a blocking limit is not a usage limit (upstream #19848).
+      // Without rate-limit evidence, a blocking limit is not a usage limit.
       assert.equal(terminal.failure.class, "provider_error");
       assert.isFalse(
         harness.events.some(

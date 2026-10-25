@@ -38,6 +38,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
+import { OmpRpcCommandError } from "effect-omp-rpc/errors";
 import type { OmpRpcNotification } from "effect-omp-rpc/client";
 import { OMP_KNOWN_EVENT_TYPES, type OmpRpcResponse } from "effect-omp-rpc/schema";
 import * as ServerConfig from "../../config.ts";
@@ -111,6 +112,7 @@ const harness = Effect.fnUntraced(function* (
   let freshSessions = 0;
   let switches = 0;
   let prompts = 0;
+  let continuations = 0;
   let eventFilterWrites = 0;
   let processTarget: OmpTarget | undefined;
   let processStateRoot: string | undefined;
@@ -153,7 +155,12 @@ const harness = Effect.fnUntraced(function* (
     crypto: yield* Crypto.Crypto,
     serverConfig: config,
     idAllocator: yield* IdAllocator.IdAllocatorV2,
-    continuations: { offer: () => Effect.void },
+    continuations: {
+      offer: () =>
+        Effect.sync(() => {
+          continuations += 1;
+        }),
+    },
     makeProcess:
       behavior?.makeProcess ??
       ((options) =>
@@ -189,6 +196,12 @@ const harness = Effect.fnUntraced(function* (
             flushEvents: () => Queue.offer(notifications, { _tag: "Drain" }).pipe(Effect.asVoid),
             command: (body) =>
               Effect.gen(function* () {
+                // This legacy fixture exercises destructive Stop and lock ownership.
+                if (body.type === "abort_and_restore_queue")
+                  return yield* new OmpRpcCommandError({
+                    command: body.type,
+                    detail: "Abort is not scripted by this peer.",
+                  });
                 if (body.type === "new_session" && !behavior?.ignoreFreshWrite) {
                   freshSessions += 1;
                   sessionId = `fresh-${freshSessions}`;
@@ -341,6 +354,7 @@ const harness = Effect.fnUntraced(function* (
     processSessionDir,
     eventFilterWrites: () => eventFilterWrites,
     prompts: () => prompts,
+    continuations: () => continuations,
     freshSessions: () => freshSessions,
     switches: () => switches,
     promptDelivered,
@@ -532,6 +546,14 @@ const capturedTurn = Effect.fnUntraced(function* (name: OmpCaptureName, interrup
           return yield* Effect.die("Missing native capture session directory");
         let ordinal = 0;
         replay = yield* makeOmpCaptureReplay(name, (command) => {
+          if (command.type === "abort_and_restore_queue")
+            return {
+              id: command.id,
+              type: "response",
+              command: command.type,
+              success: false,
+              error: "Unknown command: abort_and_restore_queue",
+            };
           if (command.type === "new_session") ordinal++;
           if (command.type !== "get_state") return undefined;
           const sessionFile = path.join(options.sessionDir!, `capture-session-${ordinal}.jsonl`);
@@ -603,8 +625,13 @@ const capturedTurn = Effect.fnUntraced(function* (name: OmpCaptureName, interrup
     latestItems,
     terminal: h.recorded.filter((event) => event.type === "turn.terminal"),
     assistant: latestItems.filter((item) => item.type === "assistant_message"),
-    warnings: latestItems.flatMap((item) =>
-      item.type === "dynamic_tool" && item.toolName === "Oh My Pi warning" ? [item] : [],
+    retries: h.recorded.flatMap((event) =>
+      event.type === "turn_item.updated" &&
+      event.turnItem.type === "error" &&
+      event.turnItem.retry &&
+      event.turnItem.status === "running"
+        ? [event.turnItem]
+        : [],
     ),
   };
 });
@@ -1228,9 +1255,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             (item) => item.title === null && item.streaming === false && item.text.length > 0,
           ),
         );
-        assert.lengthOf(h.warnings, scenario.warningCount);
+        assert.lengthOf(h.retries, scenario.warningCount);
         if (scenario.name === "retry-recovered-session")
-          assert.include(h.warnings[0]?.output ?? "", "attempt 1 of 2");
+          assert.deepEqual(h.retries[0]?.retry, { attempt: 1, maxAttempts: 2, retryDelayMs: 100 });
         if ("reasoning" in scenario)
           assert.isTrue(
             h.latestItems.some(
@@ -1266,13 +1293,20 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                 item.status === "completed",
             ),
           );
-        if (!("interrupt" in scenario)) assert.deepEqual(h.late, []);
-        assert.isFalse(
-          h.late.some(
-            (event) =>
-              event.type !== "provider_session.updated" && event.type !== "provider_thread.updated",
-          ),
+        const lateUnexpected = h.late.filter(
+          (event) =>
+            event.type !== "provider_session.updated" &&
+            event.type !== "provider_thread.updated" &&
+            !(
+              scenario.name === "retry-recovered-session" &&
+              ((event.type === "turn_item.updated" &&
+                event.turnItem.type === "error" &&
+                event.turnItem.retry !== undefined &&
+                event.turnItem.status === "completed") ||
+                (event.type === "node.updated" && event.node.status === "completed"))
+            ),
         );
+        assert.deepEqual(lateUnexpected, []);
         if (scenario.status === "completed")
           assert.equal(h.runtime.providerSession.status, "ready");
       }),
@@ -3274,9 +3308,8 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         yield* h.takeUntil(
           (event) =>
             event.type === "turn_item.updated" &&
-            event.turnItem.type === "dynamic_tool" &&
-            typeof event.turnItem.output === "string" &&
-            event.turnItem.output.includes("host-tool call"),
+            event.turnItem.type === "system_notice" &&
+            event.turnItem.message.includes("host-tool call"),
         );
         const results = h.peer.state.frames.filter((frame) => frame.type === "host_tool_result");
         assert.lengthOf(results, 1);
@@ -3656,5 +3689,476 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.equal(h.prompts(), 0);
       }),
     ),
+  );
+});
+
+// SCIENT-FORK: RPC observations must reach the existing desktop artifacts.
+it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
+  it.effect.each([false, true])(
+    "projects usage and billed idle refreshes for target scientific=%s",
+    (scientific) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let cost = 1.25;
+          const peer = scriptedOmpRpc({
+            models: [{ provider: "test", id: "selected", contextWindow: 200_000 }],
+            initial: { provider: "test", id: "selected" },
+            responseData: (frame) =>
+              frame.type === "get_session_stats"
+                ? {
+                    sessionId: "session",
+                    userMessages: 1,
+                    assistantMessages: 1,
+                    toolCalls: 0,
+                    toolResults: 0,
+                    totalMessages: 2,
+                    tokens: { input: 10, output: 5, cacheRead: 20, cacheWrite: 30, total: 65 },
+                    premiumRequests: 0,
+                    cost,
+                    contextUsage: { tokens: 80, contextWindow: 200_000, percent: 0.04 },
+                  }
+                : undefined,
+          });
+          const h = yield* harness(false, {
+            target: scientific ? scientAgentTarget : ompTarget,
+            makeProcess: peer.makeProcess,
+          });
+          yield* h.runtime.startTurn(h.input);
+          yield* peer.promptDelivered();
+          yield* peer.emit([
+            { type: "agent_start" },
+            {
+              type: "message_end",
+              messageId: "usage",
+              message: {
+                role: "assistant",
+                content: "done",
+                provider: "test",
+                model: "selected",
+                usage: { input: 10, output: 5, cacheRead: 20, cacheWrite: 30, totalTokens: 65 },
+              },
+            },
+          ]);
+          const usage = yield* h.takeUntil(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.tokenUsage?.usedTokens === 65,
+          );
+          assert.isTrue(usage.type === "provider_turn.updated");
+          if (usage.type === "provider_turn.updated")
+            assert.include(usage.providerTurn.tokenUsage, {
+              maxTokens: 200_000,
+              inputTokens: 60,
+              cachedInputTokens: 20,
+              outputTokens: 5,
+            });
+          yield* peer.finish();
+          yield* h.takeUntil((event) => event.type === "turn.terminal");
+          const thread = h.recorded.findLast((event) => event.type === "provider_thread.updated");
+          assert.isTrue(thread?.type === "provider_thread.updated");
+          if (thread?.type === "provider_thread.updated")
+            assert.deepEqual(thread.providerThread.contextUsage?.cost, {
+              amount: 1.25,
+              currency: "USD",
+            });
+          cost = 1.5;
+          yield* peer.emit([
+            { type: "cache_warming_end", usage: { input: 1000, cost: { total: 0.25 } } },
+          ]);
+          const warmed = yield* h.takeUntil(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.contextUsage?.cost?.amount === 1.5,
+          );
+          assert.isTrue(warmed.type === "provider_thread.updated");
+          assert.isFalse(peer.state.frames.some((frame) => frame.type === "set_cache_warming"));
+          assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
+        }),
+      ),
+  );
+
+  it.effect(
+    "compacts through a real turn and retains the summary, counts, and post-compaction meter",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const result = {
+            summary: "Retained context",
+            tokensBefore: 500,
+            estimatedTokensAfter: 50,
+          };
+          const peer = scriptedOmpRpc({
+            models: [],
+            initial: { provider: "test", id: "selected" },
+            responseData: (frame) =>
+              frame.type === "compact"
+                ? result
+                : frame.type === "get_session_stats"
+                  ? {
+                      sessionId: "session",
+                      userMessages: 0,
+                      assistantMessages: 0,
+                      toolCalls: 0,
+                      toolResults: 0,
+                      totalMessages: 0,
+                      tokens: { input: 50, output: 0, cacheRead: 0, cacheWrite: 0, total: 50 },
+                      premiumRequests: 0,
+                      cost: 0.2,
+                      contextUsage: { tokens: 50, contextWindow: 1000, percent: 5 },
+                    }
+                  : undefined,
+          });
+          const h = yield* harness(false, { makeProcess: peer.makeProcess });
+          assert.isDefined(h.runtime.compactThread);
+          if (!h.runtime.compactThread) return;
+          yield* h.runtime.compactThread(h.input);
+          const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+          assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+          const items = h.recorded.flatMap((event) =>
+            event.type === "turn_item.updated" ? [event.turnItem] : [],
+          );
+          const compact = items.find((item) => item.type === "compaction");
+          assert.isTrue(compact?.type === "compaction");
+          if (compact?.type === "compaction")
+            assert.include(compact, {
+              summary: "Retained context",
+              beforeTokenCount: 500,
+              afterTokenCount: 50,
+            });
+          assert.isFalse(items.some((item) => item.type === "dynamic_tool"));
+          assert.isTrue(
+            h.recorded.some(
+              (event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.tokenUsage?.usedTokens === 50,
+            ),
+          );
+          assert.equal(peer.state.frames.filter((frame) => frame.type === "compact").length, 1);
+        }),
+      ),
+  );
+
+  it.effect("keeps older agents usable when compact and session stats are unsupported", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+          commandError: (frame) =>
+            frame.type === "compact" || frame.type === "get_session_stats"
+              ? `Unknown command: ${frame.type}`
+              : undefined,
+        });
+        const h = yield* harness(false, { makeProcess: peer.makeProcess });
+        if (!h.runtime.compactThread) return yield* Effect.die("Missing compaction");
+        assert.equal((yield* h.runtime.compactThread(h.input).pipe(Effect.result))._tag, "Failure");
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
+        yield* h.runtime.startTurn({
+          ...h.input,
+          attemptId: RunAttemptId.make("after-unsupported-compact"),
+        });
+        yield* peer.finish();
+        const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+        assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      }),
+    ),
+  );
+
+  it.effect("uses notice/error items and updates a recovered retry after its turn settles", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, { makeProcess: peer.makeProcess });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        yield* peer.emit([
+          { type: "agent_start" },
+          {
+            type: "auto_retry_start",
+            attempt: 1,
+            maxAttempts: 3,
+            delayMs: 100,
+            errorMessage: "Temporary failure",
+          },
+          {
+            type: "notice",
+            level: "error",
+            source: "session-persistence",
+            message: "Conversation is not being saved",
+          },
+          {
+            type: "extension_ui_request",
+            method: "notify",
+            message: "Extension status",
+            notifyType: "info",
+          },
+          {
+            type: "retry_fallback_applied",
+            from: "vendor/first",
+            to: "vendor/fallback",
+            reason: "Unavailable",
+          },
+        ]);
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "system_notice" &&
+            event.turnItem.message.includes("vendor/fallback"),
+        );
+        yield* peer.finish();
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
+        yield* peer.emit([{ type: "auto_retry_end", success: true, attempt: 2 }]);
+        const recovered = yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.retry?.attempt === 2 &&
+            event.turnItem.status === "completed",
+        );
+        assert.isTrue(recovered.type === "turn_item.updated");
+        const items = h.recorded.flatMap((event) =>
+          event.type === "turn_item.updated" ? [event.turnItem] : [],
+        );
+        assert.isTrue(
+          items.some(
+            (item) =>
+              item.type === "error" &&
+              item.failure.message.includes("session-persistence") &&
+              item.status === "failed",
+          ),
+        );
+        assert.isTrue(
+          items.some(
+            (item) => item.type === "system_notice" && item.message === "Extension status",
+          ),
+        );
+        assert.isFalse(items.some((item) => item.type === "dynamic_tool"));
+      }),
+    ),
+  );
+
+  it.effect("publishes idle notices and process loss on the last turn without continuations", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, { makeProcess: peer.makeProcess });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        yield* peer.finish();
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
+        yield* peer.emit([
+          { type: "notice", level: "info", source: "extension", message: "Idle notice" },
+          {
+            type: "extension_ui_request",
+            method: "notify",
+            message: "Idle notification",
+            notifyType: "info",
+          },
+        ]);
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "system_notice" &&
+            event.turnItem.message === "Idle notification",
+        );
+        yield* peer.close();
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "provider_thread.updated" && event.providerThread.status === "error",
+        );
+        const items = h.recorded.flatMap((event) =>
+          event.type === "turn_item.updated" ? [event.turnItem] : [],
+        );
+        assert.isTrue(
+          items.some(
+            (item) => item.type === "system_notice" && item.message.includes("Idle notice"),
+          ),
+        );
+        const loss = items.findLast(
+          (item) => item.type === "error" && item.failure.message.includes("process lost"),
+        );
+        assert.isDefined(loss);
+        assert.equal(loss?.runId, h.input.runId);
+        assert.equal(loss?.status, "failed");
+        assert.equal(h.continuations(), 0);
+        assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
+        const ordinals = items.map((item) => item.ordinal);
+        assert.equal(new Set(ordinals).size, ordinals.length);
+      }),
+    ),
+  );
+
+  it.effect("shows a process exit code and redacted stderr before the unknown terminal", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, {
+          makeProcess: (options) =>
+            peer.makeProcess(options).pipe(
+              Effect.map((client) => ({
+                ...client,
+                redaction: makeOmpRedaction({ API_KEY: "private-token-123" }, []),
+                shutdown: client.shutdown.pipe(
+                  Effect.map((exit) => ({
+                    ...exit,
+                    code: 1,
+                    stderrTail: "save failed\nprivate-token-123",
+                  })),
+                ),
+              })),
+            ),
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        yield* peer.emit([{ type: "agent_start" }]);
+        yield* peer.close();
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
+        const loss = h.recorded.find(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.failure.message.includes("Exit code: 1"),
+        );
+        assert.isTrue(loss?.type === "turn_item.updated");
+        if (loss?.type === "turn_item.updated" && loss.turnItem.type === "error") {
+          assert.include(loss.turnItem.failure.message, "save failed");
+          assert.notInclude(loss.turnItem.failure.message, "private-token-123");
+        }
+      }),
+    ),
+  );
+
+  it.effect(
+    "preserves select restrictions, editor prefill, confirm title and timeout without session approval",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const peer = scriptedOmpRpc({
+            models: [],
+            initial: { provider: "test", id: "selected" },
+          });
+          const h = yield* harness(false, { makeProcess: peer.makeProcess });
+          yield* h.runtime.startTurn(h.input);
+          yield* peer.promptDelivered();
+          yield* peer.emit([
+            { type: "agent_start" },
+            {
+              type: "extension_ui_request",
+              method: "select",
+              id: "select",
+              title: "Pick",
+              options: ["One"],
+              timeout: 30000,
+            },
+            {
+              type: "extension_ui_request",
+              method: "editor",
+              id: "editor",
+              title: "Edit",
+              prefill: "  original\ntext\n",
+            },
+            {
+              type: "extension_ui_request",
+              method: "confirm",
+              id: "confirm",
+              title: "Delete draft?",
+              message: "Continue?",
+              timeout: 10000,
+            },
+          ]);
+          yield* h.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+          );
+          const items = h.recorded.flatMap((event) =>
+            event.type === "turn_item.updated" ? [event.turnItem] : [],
+          );
+          const select = items.find(
+            (item) => item.type === "user_input_request" && item.questions[0]?.id === "select",
+          );
+          const editor = items.find(
+            (item) => item.type === "user_input_request" && item.questions[0]?.id === "editor",
+          );
+          const confirm = items.find((item) => item.type === "approval_request");
+          if (
+            select?.type !== "user_input_request" ||
+            editor?.type !== "user_input_request" ||
+            confirm?.type !== "approval_request"
+          )
+            return yield* Effect.die("Missing questions");
+          assert.equal(select.questions[0]?.allowCustomAnswer, false);
+          assert.include(select.questions[0]?.question ?? "", "30 seconds");
+          assert.equal(editor.questions[0]?.initialAnswer, "  original\ntext\n");
+          assert.equal(editor.questions[0]?.allowCustomAnswer, true);
+          assert.include(confirm.prompt ?? "", "Delete draft?");
+          assert.include(confirm.prompt ?? "", "10 seconds");
+          assert.deepEqual(
+            confirm.options?.map((option) => option.decision),
+            ["decline", "accept"],
+          );
+          yield* peer.emit([
+            { type: "extension_ui_request", method: "cancel", targetId: "select" },
+          ]);
+          yield* h.takeUntil(
+            (event) =>
+              event.type === "runtime_request.updated" &&
+              event.runtimeRequest.id === select.requestId &&
+              event.runtimeRequest.status === "resolved",
+          );
+        }),
+      ),
+  );
+
+  it.effect(
+    "publishes shared todos from tool results and from authoritative state on settlement",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let phases = [
+            { name: "Build", tasks: [{ content: "Implement", status: "in_progress" }] },
+          ];
+          const peer = scriptedOmpRpc({
+            models: [],
+            initial: { provider: "test", id: "selected" },
+            todoPhases: () => phases,
+          });
+          const h = yield* harness(false, {
+            target: scientAgentTarget,
+            makeProcess: peer.makeProcess,
+          });
+          assert.equal(h.runtime.providerSession.capabilities.planning.emitsTodoList, true);
+          yield* h.runtime.startTurn(h.input);
+          yield* peer.promptDelivered();
+          yield* peer.emit([
+            { type: "agent_start" },
+            {
+              type: "tool_execution_end",
+              toolCallId: "todos",
+              toolName: "todo",
+              isError: false,
+              result: { content: [], details: { phases } },
+            },
+          ]);
+          const todo = yield* h.takeUntil(
+            (event) => event.type === "turn_item.updated" && event.turnItem.type === "todo_list",
+          );
+          if (todo.type !== "turn_item.updated" || todo.turnItem.type !== "todo_list")
+            return yield* Effect.die("Missing todo list");
+          assert.include(todo.turnItem.steps[0], { text: "Build: Implement", status: "running" });
+          const planId = todo.turnItem.planId;
+          assert.isTrue(
+            h.recorded.some((event) => event.type === "plan.updated" && event.plan.id === planId),
+          );
+          phases = [{ name: "Build", tasks: [{ content: "Implement", status: "completed" }] }];
+          yield* peer.finish();
+          yield* h.takeUntil((event) => event.type === "turn.terminal");
+          const plan = h.recorded.findLast((event) => event.type === "plan.updated");
+          if (plan?.type !== "plan.updated") return yield* Effect.die("Missing settled todo plan");
+          assert.equal(plan.plan.status, "completed");
+          if (plan.plan.kind !== "todo_list") return yield* Effect.die("Expected todo plan");
+          assert.equal(plan.plan.steps[0]?.status, "completed");
+          assert.isFalse(peer.state.frames.some((frame) => frame.type === "set_todos"));
+        }),
+      ),
   );
 });

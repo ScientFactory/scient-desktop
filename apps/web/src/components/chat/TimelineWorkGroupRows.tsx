@@ -293,6 +293,7 @@ const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
+  const compacting = row.compacting ?? (isCompacting ? "Compacting…" : undefined);
   // SCIENT-FORK:START — a small breathing dot shows the turn works (chat/liveActivity.tsx);
   // a finished turn's header fades and closes its space (chat/workingRowExit.ts).
   const { sendMotion } = use(TimelineRowActivityCtx);
@@ -302,8 +303,8 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   // SCIENT-FORK:END
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
-  ) : isCompacting ? (
-    <CompactingLabel />
+  ) : compacting !== undefined ? (
+    <CompactingLabel label={compacting} />
   ) : row.createdAt ? (
     <>
       Working for <WorkingTimer createdAt={row.createdAt} />
@@ -375,13 +376,13 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
   );
 }
 
-function CompactingLabel() {
+function CompactingLabel({ label }: { label: string }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       {/* SCIENT-FORK:START — Scient's compaction icon and trace line weight. */}
       <ScanTextIcon aria-hidden="true" className={cn("size-3", TRACE_ICON_STROKE)} />
       {/* SCIENT-FORK:END */}
-      Compacting…
+      {label}
     </span>
   );
 }

@@ -1,11 +1,6 @@
-// Constants + message type for the Scient local-voice AudioWorklet.
-//
-// The actual processor runs from a SAME-ORIGIN static asset at
-// `public/scient-voice-worklet.js` (loaded via `audioWorklet.addModule`) so it
-// satisfies the renderer CSP `script-src 'self'` — a `blob:` URL is blocked
-// there (blob: is only allowed under `worker-src`, but AudioWorklet modules
-// obey script-src). This module holds only the values the main-thread hook
-// needs; it touches no `AudioWorkletGlobalScope` globals.
+// AudioWorklet modules obey script-src rather than worker-src, so CSP requires
+// public/scient-voice-worklet.js as a same-origin asset; blob URLs are blocked. Keep AudioWorklet
+// globals out of this main-thread module.
 
 /**
  * Name the processor registers under; also used to construct the node. MUST

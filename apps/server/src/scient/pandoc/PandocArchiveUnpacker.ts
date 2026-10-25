@@ -1,16 +1,6 @@
 /**
- * Expands a downloaded Pandoc archive into a directory with the system `tar`.
- *
- * The macOS and Windows releases are zip files and the Linux release is a
- * gzipped tarball. bsdtar (macOS `/usr/bin/tar`, and
- * `%SystemRoot%\System32\tar.exe` on Windows 10+) reads zip files, and GNU tar
- * reads the Linux tarball, so no archive dependency is needed. Where the
- * archive is a zip the unpacker is pinned to the system bsdtar by absolute
- * path, as the LaTeX installer is on Windows, because a GNU tar earlier on PATH
- * (Homebrew's on macOS, Git for Windows' or MSYS2's on Windows) cannot read zip
- * files.
- *
- * The archive has already passed its pinned digest check when this runs.
+ * Use absolute system bsdtar for macOS/Windows ZIPs; GNU tar earlier on PATH cannot read them.
+ * Linux's archive is tar.gz. Digest verification must precede extraction.
  */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";

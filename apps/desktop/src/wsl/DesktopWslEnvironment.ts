@@ -79,9 +79,7 @@ export class DesktopWslEnvironment extends Context.Service<
   DesktopWslEnvironment,
   {
     readonly isAvailable: Effect.Effect<boolean>;
-    // Best-effort enumeration for renderer UX. Backend health checks must use
-    // probeDistros so a transient command failure is not mistaken for a
-    // successful empty installation.
+    // UX-only best effort; health checks need probeDistros to distinguish failures from an empty installation.
     readonly listDistros: Effect.Effect<readonly WslDistro[]>;
     readonly probeDistros: Effect.Effect<readonly WslDistro[], DesktopWslDistroListError>;
     readonly preWarm: (distro: string | null) => Effect.Effect<void>;
@@ -90,11 +88,7 @@ export class DesktopWslEnvironment extends Context.Service<
       windowsPath: string,
     ) => Effect.Effect<Option.Option<string>>;
     readonly getUserHome: (distro: string | null) => Effect.Effect<Option.Option<string>>;
-    // The orchestrator uses this for the WSL backend's httpBaseUrl so the
-    // renderer can reach it without relying on wslhost's localhost→WSL
-    // automatic forwarding, which is flaky in practice (the backend can be
-    // listening for 30+ seconds before wslhost starts forwarding 127.0.0.1:port
-    // to WSL-side localhost).
+    // Use the distro IP to avoid unreliable wslhost localhost forwarding.
     readonly getDistroIp: (distro: string | null) => Effect.Effect<Option.Option<string>>;
     readonly prepareRuntime: (
       distro: string | null,
@@ -162,8 +156,7 @@ const buildWslNodeEnvPreamble = (
 ensure_remote_node_path || true
 `;
 
-// wsl.exe re-escapes args before forwarding them to the Linux side, which
-// mangles quotes inside `bash -lc "<script>"`.
+// wsl.exe re-escaping mangles quotes inside bash -lc scripts.
 const runWslShell = (
   distro: string | null,
   bashScript: string,
@@ -213,8 +206,7 @@ const runWslShell = (
         } satisfies ShellResult;
       }
       const handle = spawnResult.handle;
-      // Drain stdout and stderr concurrently so neither pipe buffer can fill
-      // and stall the child (node-gyp rebuild emits large output on both).
+      // Drain both pipes concurrently to prevent node-gyp output from blocking the child.
       const [stdoutBytes, stderrBytes, exitCode] = yield* Effect.all(
         [Stream.runCollect(handle.stdout), Stream.runCollect(handle.stderr), handle.exitCode],
         { concurrency: "unbounded" },
@@ -260,13 +252,8 @@ export const buildWslRuntimeInstallScript = (
     'runtime_parent="$HOME/.t3/wsl-runtime"',
     `runtime_root="$runtime_parent/${safeRuntimeId}"`,
     `ready_marker="$runtime_root/${WSL_RUNTIME_READY_MARKER}"`,
-    // The native payload is the part of the tree the WSL backend actually
-    // dlopens, and the only part a user can plausibly break by hand. Checking
-    // node-pty's package.json alone let a runtime whose pty.node had gone
-    // missing stay cache-ready forever: every launch reused it and then failed
-    // the native probe, with no reinstall and no fallback. Match on the glob
-    // rather than a mapped `uname -m` so this stays a presence check; the probe
-    // is what decides whether the binary is the right arch and loadable.
+    // A missing pty.node must invalidate readiness even when package.json survives.
+    // Glob for payload presence; the launch probe decides architecture/loadability and revokes broken caches.
     "node_pty_payload_present() {",
     '  for candidate in "$1"/node_modules/node-pty/prebuilds/linux-*/pty.node; do',
     '    [ -f "$candidate" ] || continue',
@@ -275,12 +262,7 @@ export const buildWslRuntimeInstallScript = (
     "  done",
     "  return 1",
     "}",
-    // Hashing the server entry is the only check that can tell a working cache
-    // from one whose bin.mjs was truncated or half-written: the file is still
-    // there, the native probe still passes, and launch then picks a server that
-    // exits before it can become ready, on every restart. Hashing the ~7MB
-    // entry measures in single-digit milliseconds inside the distro, once per
-    // launch, against a cold reinstall of a few hundred megabytes.
+    // Hash the entry to detect a swapped or partially written executable, even if it still runs.
     "runtime_server_entry_digest() {",
     `  sha256sum "$1/apps/server/dist/bin.mjs" 2>/dev/null | cut -d ' ' -f 1`,
     "}",
@@ -308,13 +290,9 @@ export const buildWslRuntimeInstallScript = (
     `  printf 'WSL runtime archive does not match its recorded SHA-256 (expected %s, got %s)\\n' ${shellQuote(archiveSha256)} "$archive_sha" >&2`,
     "  exit 1",
     "fi",
-    // Deleting it here unlinks node_modules from under a live backend, which
-    // then breaks the moment it lazily loads anything it had not already read.
-    // A process's cmdline keeps the pre-rename path, so this has to be asked
-    // before the move, not after.
+    // Deletion can remove a live backend's lazy imports; check cmdline before rename preserves its old path.
     "runtime_in_use() {",
-    // No /proc means no way to tell, and guessing wrong costs a live backend
-    // its runtime.
+    // Without /proc, assume the runtime may still be in use.
     "  [ -d /proc/1 ] || return 0",
     '  grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null',
     "}",
@@ -373,8 +351,7 @@ export const buildWslRuntimeInstallScript = (
   ].join("\n");
 };
 
-// A cold install extracts a few hundred MB inside the distro, so two hours is
-// far past any live install while still bounding how long an orphan survives.
+// Two hours exceeds cold-install time while bounding orphan retention.
 const ORPHANED_RUNTIME_SCRATCH_MAX_AGE_MINUTES = 120;
 
 export const buildWslRuntimePruneScript = (runtimeId: string): string => {
@@ -384,13 +361,11 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     'runtime_parent="$HOME/.t3/wsl-runtime"',
     `current_runtime="$runtime_parent/${safeRuntimeId}"`,
     '[ -d "$runtime_parent" ] || exit 0',
-    // Serialize the whole retention decision so two backends cannot select
-    // different "previous" caches and delete around one another.
+    // Serialize pruning so backends cannot select and delete different previous caches.
     'prune_lock="$runtime_parent/.prune.lock"',
     'exec 8> "$prune_lock"',
     "flock -x 8",
-    // Without a way to see the distro's processes we cannot tell which caches
-    // are load-bearing, and the retention rules below are not safe on their own.
+    // Without /proc, retention cannot distinguish caches used by live backends.
     "[ -d /proc/1 ] || exit 0",
     "runtime_in_use() {",
     '  grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null',
@@ -412,7 +387,7 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     "  candidate_name=${candidate##*/}",
     '  candidate_lock="$runtime_parent/.${candidate_name}.install.lock"',
     '  exec 9> "$candidate_lock"',
-    // A held lock means another launch is installing or repairing this cache.
+
     "  flock -n 9 || continue",
     `  selected_marker="$candidate/${WSL_RUNTIME_SELECTED_MARKER}"`,
     `  if [ -f "$selected_marker" ] && find "$selected_marker" -maxdepth 0 -mmin -${String(WSL_RUNTIME_SELECTION_GRACE_MINUTES)} -print -quit | grep -q .; then`,
@@ -430,13 +405,7 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
   ].join("\n");
 };
 
-// Drops the ready marker so the next launch reinstalls the runtime from the
-// archive. Readiness is a presence check by design, so a cached tree whose
-// native payload is present but unloadable (truncated pty.node, a distro whose
-// glibc the binary needs and the tree was copied from another machine) stays
-// ready forever and fails the probe on every launch. Only the probe can see
-// that, so the probe is what revokes the marker. The tree itself is left in
-// place: the install script moves an unready root aside before extracting.
+// Invalidate trees that pass install checks but fail launch probes, or each launch reuses the broken cache.
 export const buildWslRuntimeInvalidateScript = (runtimeId: string): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
@@ -569,8 +538,7 @@ const parseNodeVersion = (stdout: string): string | null => {
   return version ?? null;
 };
 
-// Preserve the value byte-for-byte apart from a Windows-style CR so paths
-// containing spaces or apostrophes can be forwarded as one env argv.
+// Strip only Windows CR; spaces and apostrophes must survive as one env argument.
 export const parseResolvedPath = (stdout: string): string | null => {
   const prefix = "resolvedPath:";
   const line = stdout.split("\n").find((candidate) => candidate.startsWith(prefix));
@@ -977,10 +945,7 @@ const getDistroIpImpl = (
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      // `hostname -I` prints a space-separated list of all non-loopback
-      // IPs the distro has bound. The first entry on the WSL2 default
-      // network is always the eth0 vEthernet address Windows can reach
-      // directly (no wslhost forwarding required).
+      // WSL2's first hostname -I address is reachable directly from Windows without wslhost forwarding.
       const command = ChildProcess.make(
         "wsl.exe",
         [...buildDistroArgs(distro), "--", "sh", "-c", "hostname -I"],
@@ -1122,12 +1087,7 @@ export const layer = Layer.effect(
     ): Effect.Effect<A, E> =>
       effect.pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 
-    // Crucially this keeps `isAvailable` synchronously resolvable: it's read
-    // inside the sync IPC handler getLocalEnvironmentBootstraps (via the
-    // primary instance's lazy label -> resolvePrimaryLabel -> describePrimary).
-    // The underlying probe does a filesystem `exists` check, so leaving it as a
-    // live effect would make Effect.runSync throw there and break the
-    // renderer's synchronous bootstrap path.
+    // Cache availability so synchronous IPC bootstrap can read it without yielding to filesystem I/O.
     const wslAvailable = yield* makeIsAvailable(environment.platform, windir).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, environment.path),

@@ -233,7 +233,7 @@ and it is the only entrance effect on streaming reasoning.
 
 **Rich content** waits for what it needs:
 
-- Diagrams and charts (Mermaid, Vega-Lite, Plotly) stay highlighted source
+- Diagrams and charts (Mermaid, Vega-Lite, Plotly) stay as source
   while the answer streams and become cards once it settles.
 - Math typesets as soon as its closing delimiter arrives.
 - Inline workspace image cards wait for the settled answer.

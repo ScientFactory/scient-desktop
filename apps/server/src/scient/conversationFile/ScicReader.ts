@@ -1,32 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the reader streams ZIP members through Node streams and hashes.
 /**
- * Reads and validates an untrusted portable conversation file, staging its
- * attachments, and either returns a `ValidatedConversationImport` or fails
- * closed with a typed rejection. Nothing outside the given staging directory
- * is written, and nothing is written there before the archive's structure and
- * manifest have been checked.
- *
- * yauzl reads the archive with `lazyEntries`, `validateEntrySizes`, and
- * `strictFileNames`, as elsewhere in Scient. Entry names are read raw
- * (`decodeStrings: false`) and validated here, strictly, so an unsafe name is
- * reported as such instead of as an unreadable archive. Checks, in order:
- *
- * 1. Structure, from the central directory alone: entry count; a `mimetype`
- *    first entry, stored, at offset 0; safe relative paths; regular files only;
- *    no encryption; stored or deflated only; no duplicate or case-colliding
- *    paths; per-entry, total, and compression-ratio limits.
- * 2. `mimetype` content, then the manifest: format, supported major version,
- *    schema, and an entry list that matches the archive exactly.
- * 3. Every declared entry's size, SHA-256, and CRC-32 while it is read; the
- *    snapshot's schema, canonical form, and content digest; resources against
- *    the snapshot; attachment types and the chat attachment media policy.
- * 4. The whole result against `ValidatedConversationImport`.
- *
- * Memory: the snapshot entry is read into one buffer of its declared size, and
- * the snapshot is decoded once. Its canonical form is compared structurally
- * with the JSON it came from and hashed as it is written, once; nothing
- * re-encodes the snapshot or builds its canonical text. The caller runs one
- * read at a time.
+ * Validate archive structure and manifest before any staging write; never write outside staging.
+ * Read raw names for precise unsafe-path rejection, then verify size/digests, snapshot canonical
+ * form, resources, and final schema. Buffer/decode the snapshot once; serialize reads to bound
+ * memory.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";

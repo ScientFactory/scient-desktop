@@ -3,11 +3,8 @@ import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "../baseSchemas.ts";
 
 /**
- * The server asks every open window of its environment to save the editors
- * of one folder, and waits for each window's answer. Windows connect once
- * (a stream of requests), ask the server which of their editors' files are in
- * the folder (the server compares physical identity, so every spelling of a
- * path counts), and answer each request separately.
+ * Every window answers separately, with file membership resolved by server physical identity so
+ * alternate path spellings cannot miss unsaved editors.
  */
 export const EditorFlushWindow = Schema.Struct({
   clientId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),

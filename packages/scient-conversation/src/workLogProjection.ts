@@ -530,14 +530,9 @@ export interface QuestionAnswerProjection {
 }
 
 /**
- * One entry per question request that received an answer, folded the way chat
- * folds it (`foldUserInputActivities`): question texts and option labels from
- * the request, answers from the latest `user-input.answer-submitted` or, when
- * there is none, the latest `user-input.resolved`, and attachments from every
- * activity of the request. Providers report ordinary answers only through
- * `user-input.resolved`; `answer-submitted` is added for attachment-bearing
- * responses. Pending, dismissed, and unanswered requests produce nothing.
- * `toAttachment` resolves a recorded answer attachment, or null when unreadable.
+ * Ordinary answers may arrive only as user-input.resolved; prefer answer-submitted when present and
+ * gather attachments across the request's activities. Pending, dismissed, and unanswered requests
+ * must produce no export entry.
  */
 export function projectQuestionAnswers(
   activities: ReadonlyArray<OrchestrationThreadActivity>,

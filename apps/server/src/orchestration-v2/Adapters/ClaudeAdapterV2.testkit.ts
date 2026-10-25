@@ -87,12 +87,7 @@ function layerClaudeAgentSdkReplay(
   );
 }
 
-/**
- * While a foreground Bash call runs, Claude Code writes its output to a task
- * file the adapter tails. A replay has no Claude Code process, so it writes the
- * file each recorded `task_started` names, holding that call's recorded output,
- * under a scenario-owned `CLAUDE_CODE_TMPDIR`.
- */
+/** Replays write recorded Bash output to task_started files under a scenario-owned CLAUDE_CODE_TMPDIR. */
 const writeReplayTaskOutputFiles = Effect.fn("ClaudeReplay.writeTaskOutputFiles")(function* (
   transcript: ClaudeAgentSdkReplayTranscript,
 ) {

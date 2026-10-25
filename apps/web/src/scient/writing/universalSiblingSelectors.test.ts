@@ -15,11 +15,8 @@ function sources(directory: string): string[] {
   });
 }
 
-// One stylesheet serves every surface. A universal sibling selector such as
-// `> * + *` (Tailwind `[&>*+*]:…`) makes the browser restyle the following
-// siblings of every inserted element anywhere in the page; in a long document
-// that turned each Enter into half a second of style recalculation. Use
-// `[&>:not(:first-child)]:…`, which draws the same separators.
+// Universal sibling selectors restyle following siblings on every insertion, making Enter costly in
+// long documents. Use :not(:first-child) for equivalent separators without that invalidation.
 it("keeps universal sibling selectors out of app styles", () => {
   const offenders = sources(root).flatMap((path) => {
     const text = NodeFS.readFileSync(path, "utf8");

@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Platform, View } from "react-native";
 
 import { AppText as Text } from "./ui/AppText";
-import { SCIENT_BRAND_MARK_SOURCE } from "./brandAssets";
+import { T3_CODE_BRAND_MARK_SOURCE } from "./brandAssets";
 import { IPAD_HOME_TITLE_OFFSET } from "../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../lib/mobileBranding";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
@@ -20,10 +20,7 @@ export function CompactBrandTitle(
   props: {
     readonly allowFontScaling?: boolean;
     readonly accessibilityLabel?: string;
-    /**
-     * Fills the parent row and drops the stage badge when the full title does not fit.
-     * Narrow Android sidebar headers otherwise draw their actions over the badge.
-     */
+    /** Fills the row and hides the stage badge when the full title does not fit. */
     readonly fit?: boolean;
   } = {},
 ) {
@@ -42,11 +39,7 @@ export function CompactBrandTitle(
         props.fit && showStage ? (event) => setFullWidth(event.nativeEvent.layout.width) : undefined
       }
       aria-level={1}
-      accessibilityLabel={
-        // SCIENT-FORK:START product-accessibility-label
-        props.accessibilityLabel ?? "Scient, Threads"
-        // SCIENT-FORK:END product-accessibility-label
-      }
+      accessibilityLabel={props.accessibilityLabel ?? "Scient, Threads"}
       accessible
       role="heading"
       className="flex-row items-center gap-1.5"
@@ -57,7 +50,7 @@ export function CompactBrandTitle(
       ]}
     >
       <Image
-        source={SCIENT_BRAND_MARK_SOURCE}
+        source={T3_CODE_BRAND_MARK_SOURCE}
         accessibilityIgnoresInvertColors
         style={{ width: 24 * scale, height: 24 * scale, borderRadius: 6 * scale }}
       />

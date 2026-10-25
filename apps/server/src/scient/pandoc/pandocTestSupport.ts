@@ -1,11 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Test support: reads produced .docx packages and probes fake Pandoc processes.
 /**
- * Shared fixtures for the Word export tests: document bundles, a tiny PNG, a
- * `.docx` reader, a scripted stand-in for Pandoc, and the managed-tool layer
- * the converter runs against.
- *
- * Tests that need the real Pandoc read its path from `SCIENT_PANDOC_BINARY`
- * and skip when it is unset or missing; nothing here downloads anything.
+ * Real-Pandoc tests use SCIENT_PANDOC_BINARY and skip when absent; fixtures must never download a
+ * tool implicitly.
  */
 import * as NodeFS from "node:fs";
 
@@ -167,12 +163,8 @@ export function managedToolLayer(input: {
 }
 
 /**
- * A stand-in for Pandoc run as `node -e <source> -- <args>`. Behaviour comes
- * from the first argument after `--`: `echo` copies stdin to stdout, `env`
- * prints its environment and arguments as JSON, `sleep` records its pid and
- * waits, `flood` writes without end, `exit:<code>` prints to stderr and exits,
- * and `record-args` appends each run's arguments to `<pidFile>.args` and
- * answers like a minimal Pandoc.
+ * Use a Node stand-in with explicit behavior arguments to exercise process/output/failure
+ * boundaries without installing Pandoc.
  */
 export function fakePandoc(pidFile: string): (mode: string) => PandocCommand {
   const source = [

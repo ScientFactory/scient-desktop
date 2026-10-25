@@ -552,6 +552,7 @@ export const EVENT_DEFINITIONS = {
           "diagnostics",
           "connections",
           "archived",
+          "beta",
           "other",
         ],
       },

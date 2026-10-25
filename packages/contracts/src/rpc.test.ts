@@ -52,6 +52,7 @@ describe("WebSocket RPC contracts", () => {
 });
 
 // SCIENT-FORK:START
+
 // regression: c1c2d5401d feat: let an environment publish themes as a file (#8569)
 it("is carried by a server that declares it", () => {
   const decoded = decodeServerConfigPayload({

@@ -45,11 +45,8 @@ export interface McpProviderSessionConfig {
   /** Connectors delivered with this credential, in a stable order. Empty when none. */
   readonly connectors: ReadonlyArray<McpProviderSessionConnector>;
   /**
-   * Run when a query starts registering connectors for this credential; the
-   * returned reporter receives that query's settled outcome. The thread's
-   * delivery receipt keeps the outcome of the query that started last, across
-   * every session sharing the credential. Bound by the server runtime that
-   * issued the credential to its own receipt store.
+   * Receipts retain the outcome of the query that started last across sessions sharing this credential.
+   * The issuing server binds the reporter to its own receipt store before connector registration.
    */
   readonly beginConnectorRegistration?: Effect.Effect<McpConnectorRegistrationReporter>;
   // SCIENT-FORK:END

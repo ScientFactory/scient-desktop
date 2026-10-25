@@ -35,15 +35,9 @@ export function isActiveDocumentProduction(
 }
 
 /**
- * Opens a new production over whatever the binding already holds.
- *
- * Starting an attempt is not evidence about the revision already published, so
- * it never re-credits one: a binding a previous failure left `stale` carries
- * that condition — and the reason recorded for it — into the producing binding.
- * Only {@link completeDocumentProduction} clears them, because only a published
- * revision earns `current` back. Without that carry-forward a begin would
- * launder the discredited revision, and the abandon that may follow would settle
- * it as `current` with no reason to show the reader.
+ * Starting production is not evidence that the published revision became valid again. Carry stale
+ * status/reason forward; only successful completion earns current, or begin/abandon would launder a
+ * discredited revision.
  */
 export function beginDocumentProduction(
   current: DocumentArtifactBinding | null,
@@ -152,18 +146,9 @@ export function failDocumentProduction(
 }
 
 /**
- * Releases a production that stopped mattering — cancelled by its requester,
- * superseded by its own producer, or interrupted by a restart — without
- * discrediting the inputs.
- *
- * The binding returns to the condition it held before the attempt started: a
- * published revision keeps the standing it already had — `current` is never
- * marked stale by an abandon, and a revision a previous failure discredited
- * stays `stale` with its original reason — and a binding that never published
- * anything settles to `unbound`. That condition is read back off the producing
- * binding, which {@link beginDocumentProduction} carried it into, so this
- * transition restores and never promotes. Abandoning a non-running attempt is a
- * `Superseded` no-op, which makes the transition idempotent.
+ * Abandon restores prior standing and never promotes it: current stays current, stale retains its
+ * reason, unpublished returns unbound. Non-running attempts are Superseded no-ops so repeated
+ * abandonment is idempotent.
  */
 export function abandonDocumentProduction(
   current: DocumentArtifactBinding,

@@ -1,13 +1,5 @@
-// Pure, dependency-light audio encoding for local voice dictation.
-//
-// The recorder captures mono `Float32Array` frames at the AudioContext's native
-// sample rate (commonly 48 kHz). Before a clip crosses the IPC boundary it must
-// be normalised to the shape the local transcription core accepts: 24 kHz mono
-// 16-bit PCM inside a standard 44-byte WAV container, base64-encoded so it
-// survives JSON transport.
-//
-// Everything here is a pure function of its inputs (no DOM, no globals besides
-// `Math`), so it is exhaustively unit-tested in `voiceWavEncoder.test.ts`.
+// Normalize hardware-rate Float32 frames to 24 kHz mono 16-bit PCM WAV before IPC. Base64 preserves
+// the bytes through JSON transport.
 
 import * as Base64 from "effect/encoding/Base64";
 
@@ -70,11 +62,8 @@ function concatFrames(frames: readonly Float32Array[]): Float32Array {
 }
 
 /**
- * Area resampling for downsampling, linear interpolation for the uncommon
- * upsampling case. Area averaging acts as a low-pass filter and avoids folding
- * ultrasonic/high-frequency capture noise into the speech band. The normal
- * Electron path asks AudioContext for 24 kHz directly, so this is a bounded
- * fallback for platforms that choose a different hardware rate.
+ * Area averaging filters high-frequency noise before downsampling so it cannot fold into the speech
+ * band. Resampling remains a bounded fallback when hardware ignores the requested 24 kHz rate.
  */
 function resampleAudio(input: Float32Array, inputRate: number, outputRate: number): Float32Array {
   if (input.length === 0) return new Float32Array(0);

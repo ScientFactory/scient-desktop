@@ -24,6 +24,7 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as ThreadHandlers from "./handlers.ts";
 import { ThreadToolkit } from "./tools.ts";
+import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
 const callerId = ThreadId.make("thread:tool-policy");
 const projectId = ProjectId.make("project:mcp-test");
@@ -60,6 +61,12 @@ const matches = [projectId, otherProjectId].map((id) => ({
   snippet: id === projectId ? "Caller project result" : "Other project's private result",
   messageCreatedAt: null,
 }));
+const listed = (found: ReadonlyArray<(typeof matches)[number]>) => ({
+  matches: found.map((match) => ({
+    ...match,
+    link: formatThreadLink(match.threadId, match.title),
+  })),
+});
 
 const makeHarness = Effect.fn("threadToolPolicy.makeHarness")(function* (
   input: {
@@ -224,8 +231,8 @@ it.effect("refuses an explicit other-project search without retrieving its snipp
 it.effect("filters omitted and explicit same-project searches to the calling project", () =>
   Effect.gen(function* () {
     const { calls, search } = yield* makeHarness();
-    expect(yield* search()).toEqual({ matches: [matches[0]] });
-    expect(yield* search(projectId)).toEqual({ matches: [matches[0]] });
+    expect(yield* search()).toEqual(listed([matches[0]!]));
+    expect(yield* search(projectId)).toEqual(listed([matches[0]!]));
     expect(calls.search).toBe(2);
   }),
 );
@@ -235,8 +242,8 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const { calls, search } = yield* makeHarness({ clientAccess: "read-only" });
-      expect(yield* search()).toEqual({ matches });
-      expect(yield* search(otherProjectId)).toEqual({ matches: [matches[1]] });
+      expect(yield* search()).toEqual(listed(matches));
+      expect(yield* search(otherProjectId)).toEqual(listed([matches[1]!]));
       expect(calls.policy).toBe(0);
     }),
 );

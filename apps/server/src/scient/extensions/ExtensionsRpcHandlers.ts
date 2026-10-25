@@ -1,10 +1,6 @@
 /**
- * The extensions WebSocket RPCs. The inventory is a projection: connectors from
- * ConnectorRuntime, Scient plugins from ScientPluginRegistry and provider
- * compatibility from provider snapshots. Every mutation is dispatched to its
- * owner and the inventory is re-read afterwards.
- *
- * @module ExtensionsRpcHandlers
+ * Mutations belong to each extensions owner; re-read the inventory projection after dispatch rather
+ * than predicting its resulting state.
  */
 import {
   type ExtensionsChangedEvent,
@@ -36,11 +32,8 @@ import {
 } from "./ExtensionsServices.ts";
 
 /**
- * One monotonically increasing revision across every extensions owner:
- * connector and selection changes, Scient plugin changes, newly recorded
- * delivery receipts, and provider changes that alter connector compatibility
- * (instances added or removed, a driver or display name replaced; health and
- * status refreshes are not news).
+ * Use one revision across extension owners and compatibility-changing provider updates.
+ * Health/status refreshes alone must not invalidate the inventory.
  */
 export interface ExtensionsChangeFeedShape {
   readonly current: Effect.Effect<number>;

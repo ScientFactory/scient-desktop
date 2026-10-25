@@ -11,18 +11,8 @@ import packageJson from "../../package.json" with { type: "json" };
 
 type CliRunner = "npx" | "pnpm dlx" | "bunx";
 
-/**
- * How the CLI was launched, judged by where its entry script lives. Each
- * package runner executes out of a distinctive cache/temp layout:
- *
- *   npx      ~/.npm/_npx/<hash>/node_modules/...
- *   pnpm dlx ~/.cache/pnpm/dlx/..., $PNPM_HOME/.pnpm/dlx/...,
- *            or %LOCALAPPDATA%/pnpm-cache/dlx/... on Windows
- *   bunx     ~/.bun/install/cache/... or $TMPDIR/bunx-<uid>-<spec>/...
- *
- * Global installs and repo checkouts match none of these and return null.
- * Detection is best-effort and only describes installation ownership.
- */
+/** Package-runner cache layouts identify install ownership on a best-effort basis.
+ * Global installs and repository checkouts have no recognized runner. */
 function detectCliRunner(entryPath: string): CliRunner | null {
   const path = entryPath.replaceAll("\\", "/");
   if (path.includes("/_npx/")) {
@@ -49,14 +39,8 @@ const InstallManifest = Schema.Struct({
 const decodeInstallManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(InstallManifest));
 
 /**
- * The script this CLI was started through: the `t3` npm launcher that
- * downloaded and ran this executable (it names itself in
- * `T3CODE_NPM_LAUNCHER_PATH`), or the Node entry script of a build run from
- * source. A standalone executable has none and reports its own path.
- *
- * The variable is inherited by everything the server spawns, so a launcher
- * counts only when its package is this exact version: a different `t3` run
- * from an agent's shell must not claim to be the npm install.
+ * `T3CODE_NPM_LAUNCHER_PATH` is inherited by child shells, so accept it only for this package
+ * version to avoid claiming another `t3` invocation is the npm install.
  */
 export const resolveEntryPath = Effect.gen(function* () {
   const npmLauncher = (yield* HostProcess.Environment).T3CODE_NPM_LAUNCHER_PATH?.trim();

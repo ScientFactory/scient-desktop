@@ -88,7 +88,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
           return Effect.succeed({
             threadId: input.threadId,
             projection: {
-              thread: { id: input.threadId, projectId, modelSelection },
+              thread: { id: input.threadId, projectId, title: input.title, modelSelection },
               runs: [],
             },
             resumed: false,
@@ -168,7 +168,12 @@ it.effect("launches a scratch thread into the Scratch project", () =>
           return Effect.succeed({
             threadId: input.threadId,
             projection: {
-              thread: { id: input.threadId, projectId: input.projectId, modelSelection },
+              thread: {
+                id: input.threadId,
+                projectId: input.projectId,
+                title: input.title,
+                modelSelection,
+              },
               runs: [],
             },
             resumed: false,
@@ -415,6 +420,7 @@ const projectLaunchHarness = (input: {
             thread: {
               id: launch.threadId,
               projectId: launch.projectId,
+              title: launch.title,
               modelSelection: launch.modelSelection,
             },
             runs: [],
@@ -473,8 +479,12 @@ it.effect(
           .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
       const result = yield* handle({ title: "Fix", projectId, message: "Fix the bug" });
-      expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection });
       expect(launched).toHaveLength(1);
+      expect(result.at(-1)?.result).toMatchObject({
+        projectId,
+        modelSelection,
+        link: `[Fix](t3-thread://v1/${launched[0]?.threadId})`,
+      });
       expect(launched[0]).toMatchObject({
         projectId,
         modelSelection,

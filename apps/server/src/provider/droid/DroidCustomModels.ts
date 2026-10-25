@@ -160,16 +160,9 @@ function droidConfiguredEfforts(
 }
 
 /**
- * Droid advertises off/low/medium/high for every custom model. For effort
- * APIs (Chat Completions, Responses) it also sends the overlay's configured
- * level when that is selected, xhigh, minimal or max included (other unlisted
- * levels are sent as the configured one), so the ladder is the model's levels
- * that Droid advertises plus the configured one. A model ID Droid knows is the
- * exception (`gpt-5.2` configured with Minimal or Max runs at Low); only its
- * answer to the write says so (see `applyDroidModelAndEffort`). For Messages
- * the ladder is what `droidReasoning` keeps, whatever the overlay configures.
- * Native and unknown models keep Droid's ladder. Verified against Droid
- * 0.213.0 and 0.230.0 with a local wire-capture fixture.
+ * Droid may send a configured effort beyond its advertised ladder, but known model IDs can map it
+ * to a nearest level; only applied-state evidence confirms it. Messages follows droidReasoning
+ * regardless of overlay; native/unknown models keep their reported ladder.
  */
 export function resolveDroidCustomReasoningOptions(
   configOptions: ReadonlyArray<SessionConfigOption>,
@@ -267,15 +260,9 @@ export function buildDroidCustomModelsSettings(
 }
 
 /**
- * Refuses every tool call before it runs, MCP tools included. Droid cannot
- * withhold its tools in ACP mode: verified against Droid 0.228.0, the
- * `--only-tools`/`--remove-tools` flags and the `enabledToolIds`,
- * `disabledToolIds` and `restrictToolIds` settings leave every tool offered,
- * and Read then opens any path without asking, whatever the autonomy. Droid
- * does run PreToolUse hooks from the overlay (also when the user disabled
- * their own hooks) and blocks the call when one exits 2, for Factory-hosted
- * and custom models alike. `exit 2` means the same in sh, cmd and PowerShell,
- * but the hook has not been verified on Windows.
+ * Droid ACP tool flags/settings do not withhold tools, and Read may run without permission at any
+ * autonomy. Use overlay PreToolUse exit 2 to refuse calls, including MCP. That hook applies to
+ * hosted/custom models but has not been verified on Windows.
  */
 const REFUSE_EVERY_TOOL_CALL = {
   PreToolUse: [{ hooks: [{ type: "command", command: "exit 2" }] }],
@@ -575,11 +562,9 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
             }
             return undefined;
           },
-          // One rule for every model. The broker removes tool definitions from a
-          // custom model's requests, but its endpoint can still answer with a tool
-          // call; Droid dispatches it, and only the hook refuses it (verified
-          // against Droid 0.213.0 and 0.230.0: without the hook a Read returns the
-          // file to the endpoint).
+          // Removing tool definitions from custom-model requests does not prevent the endpoint
+          // returning a call. Droid will dispatch it; only the hook can refuse before a file
+          // reaches the endpoint.
           backgroundToolGuard: Effect.fn("DroidCustomModels.backgroundToolGuard")(function* () {
             if (modelTools !== "disabled") return "unconfirmed" as const;
             const policy = yield* readPolicy({

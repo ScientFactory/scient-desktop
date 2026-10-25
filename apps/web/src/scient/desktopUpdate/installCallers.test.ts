@@ -3,11 +3,8 @@ import * as NodeFS from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 
 /**
- * Settings and the legacy sidebar are too heavy to mount in the browser suite
- * (their module graphs exhaust the browser runner's mocking layer), so their
- * install branches are pinned at the source level: they must restart through
- * the shared install, release their pending state, and never ask to confirm.
- * The sidebar footer is covered end to end in updateRestartFlow.browser.test.
+ * Settings/sidebar module graphs exhaust browser mocking, so pin their install branches at source
+ * level. The footer's actual restart flow is covered by updateRestartFlow.browser.test.
  */
 function installBranch(relativePath: string, opening: string): string {
   const source = NodeFS.readFileSync(new URL(relativePath, import.meta.url), "utf8");

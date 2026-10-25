@@ -347,6 +347,7 @@ describe("DesktopUpdates", () => {
   });
 
   // SCIENT-FORK:START desktop-release-channels
+
   // regression: a354dd9ddc fix(desktop): refresh queued updates before install (#6269)
   it.effect("preserves a queued installer when the feed offers another channel", () => {
     const harness = makeHarness();
@@ -1006,6 +1007,7 @@ describe("DesktopUpdates", () => {
   );
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: 9f7861aadd [codex] Structure desktop update persistence errors (#3261)
   it.effect("preserves settings failure context when an update channel cannot be persisted", () => {
     const diskFailure = new Error("disk exploded");
@@ -1039,6 +1041,7 @@ describe("DesktopUpdates", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: aa219be713 port desktop app to Effect (#2546)
   it.effect("fails channel changes with a typed error while a check is in progress", () =>
     Effect.gen(function* () {
@@ -1076,6 +1079,7 @@ describe("DesktopUpdates", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: aa219be713 port desktop app to Effect (#2546)
   it.effect("updates and broadcasts state from updater events", () => {
     const harness = makeHarness();
@@ -1099,6 +1103,7 @@ describe("DesktopUpdates", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: b2f25d390a feat(desktop): update the desktop app on remote Macs from the Update button (#6554)
   it.effect("subscribe delivers the latest state plus subsequent changes", () => {
     const harness = makeHarness();
@@ -1125,6 +1130,7 @@ describe("DesktopUpdates", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: aa219be713 port desktop app to Effect (#2546)
   it.effect("configures the updater and runs startup checks on the test clock", () => {
     const harness = makeHarness();

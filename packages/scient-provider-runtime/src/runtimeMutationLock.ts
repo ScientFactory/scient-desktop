@@ -180,11 +180,8 @@ async function readLock(lockPath: string): Promise<ObservedLock | undefined> {
 }
 
 /**
- * Bump the lock's mtime if it still carries `token`. The ownership check and
- * the touch go through one handle, so they apply to the same file: a lock
- * another owner has since published at the path is never touched, and an
- * absent lock is never re-created. Resolves false only once ownership is
- * definitively lost.
+ * Check token and touch mtime through one handle so replacement owners' locks cannot be touched or
+ * absent locks recreated. Report ownership lost only with definitive evidence.
  */
 async function refreshLock(lockPath: string, token: string): Promise<boolean> {
   // Absent (a removal renamed the root away) or unopenable: retry next beat.
@@ -286,13 +283,8 @@ async function isStaleTakeoverClaim({ raw }: ObservedLock): Promise<boolean> {
 }
 
 /**
- * Run `remove` as the only contender acting on one observed lock file, or
- * return false while another contender holds that claim. Every removal of a
- * lock, whether a stale takeover or a release, goes through the claim for the
- * exact file it removes, and re-reads the path inside it. A lock is only
- * ever published onto an empty path, so while the path still holds the
- * observed file only the claim holder can change it: no contender can remove
- * a lock that replaced the one it observed.
+ * Every removal claims the exact observed lock file and rereads its path inside that claim. Publish
+ * only to an empty path so stale takeover/release cannot remove a successor's lock.
  */
 async function withTakeoverClaim(
   lockPath: string,
@@ -375,13 +367,9 @@ async function isHeldByLiveOwner({ raw, mtimeMs }: ObservedLock): Promise<boolea
 }
 
 /**
- * Take exclusive ownership of a managed runtime root for one mutation
- * (install, reconciliation, removal), or return undefined while a live owner
- * holds it. The lock is a file, so every runtime object for the root, in
- * this process or another, observes the same owner. The owner refreshes the
- * lock's mtime every heartbeat interval while it holds it. A lock whose
- * process has exited is reclaimed. A live pid with unknown process identity
- * is conservatively honored, including when its heartbeat is overdue.
+ * Use filesystem ownership across runtime objects/processes. Reclaim only exited processes; honor
+ * live PIDs with unknown identity even after overdue heartbeat, since stale time alone cannot prove
+ * ownership ended.
  */
 export async function tryAcquireManagedRuntimeMutationLock(
   lockPath: string,

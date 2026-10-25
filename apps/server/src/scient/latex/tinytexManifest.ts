@@ -1,39 +1,14 @@
 /**
- * The one TinyTeX build Scient is willing to install, pinned by digest.
- *
- * TinyTeX is the LaTeX distribution this feature installs because it is small,
- * relocatable, and needs no elevation: the whole tree lives under a directory
- * Scient owns and can be deleted by deleting that directory. The `TinyTeX-1`
- * bundle is the one the project itself installs by default — TeX Live's
- * infrastructure plus roughly a hundred common packages — and it is a base to
- * build on rather than a complete distribution: the install fetches the
- * recommended LaTeX and font collections on top of it, and a build that still
- * meets a package neither of those carries installs it before compiling
- * again. What the bundle guarantees is the infrastructure that makes both of
- * those possible without elevation.
- *
- * Every asset here was downloaded once and hashed by hand; nothing resolves a
- * "latest" pointer at runtime, so an upstream re-tag cannot change what this
- * app installs. Bumping the release means re-pinning every digest below.
- *
- * The table is keyed by platform *and* architecture, not platform alone:
- * TinyTeX ships a distinct archive per architecture (an Apple Silicon Mac does
- * not run an Intel `tar.xz`, and an Arm64 Windows box does not run the x64
- * installer), so a table that only knew `win32`/`darwin`/`linux` could either
- * hand an Arm64 machine an x64 binary it cannot run, or claim support it does
- * not have. Every pair Scient might see is listed explicitly, even the ones
- * pinned to `null`, so a lookup for an unlisted pair is a bug in this file
- * rather than a silent `undefined`.
+ * Pin every TinyTeX release digest; runtime latest pointers or retags cannot select new bytes. Key
+ * assets by platform and architecture, with explicit unsupported slots, so Arm64 cannot silently
+ * receive x64 binaries. The base distribution supports later managed package expansion.
  */
 
 import * as Context from "effect/Context";
 
 /**
- * How the pinned asset is packed. `seven-zip-sfx` is upstream's Windows
- * format: a 7-Zip archive behind 7-Zip's console self-extractor. Scient reads
- * the payload out of it with the system tar, and runs the verified stub to
- * unpack itself only where that tar cannot (see `LatexArchiveUnpacker`).
- * `tar-xz` is the macOS/Linux format.
+ * Try system tar for Windows seven-zip-sfx, then only its verified self-extractor if needed.
+ * macOS/Linux use tar-xz; keep this format aligned with LatexArchiveUnpacker.
  */
 export type TinyTexArchiveKind = "seven-zip-sfx" | "tar-xz";
 
@@ -135,17 +110,9 @@ export const TINYTEX_MANIFEST: TinyTexManifest = {
       archive: "tar-xz",
       executableRelativePath: ".TinyTeX/bin/x86_64-linux/latexmk",
     },
-    // TODO(scient-latex): CI must pin each remaining digest, from the
-    // official release at https://github.com/rstudio/tinytex-releases,
-    // before its platform offers a managed install. Do not pin a hash here
-    // that has not been downloaded and hashed by hand — a placeholder digest
-    // is worse than no install, because it would fail the checksum check
-    // against real bytes instead of refusing up front. The unpacker already
-    // has a `tar-xz` path for the non-Windows assets, and the executable
-    // sits at `TinyTeX/bin/<arch>-<os>/latexmk`, which is architecture-
-    // specific and has to be pinned per asset rather than guessed. Until a
-    // pair is pinned, `resolveTinyTexAsset` reports it as unsupported by
-    // name and `install` refuses accordingly.
+    // Pin only archives actually downloaded and hashed from
+    // https://github.com/rstudio/tinytex-releases. Never use placeholder digests or guess
+    // architecture-specific executable paths; unpinned pairs must refuse upfront as unsupported.
     "win32-arm64": null,
     "linux-arm64": null,
   },
@@ -174,11 +141,8 @@ export interface TinyTexAssetUnsupported {
 }
 
 /**
- * What a lookup answers: the pinned asset, or a typed refusal that names the
- * exact pair it refused. Nothing here collapses to `null` — the old shape
- * this replaces — because `null` cannot say *which* platform and
- * architecture had nothing pinned, and a setup card that only knows "no
- * install available" cannot tell a user anything more honest than that.
+ * Return a typed refusal naming platform/architecture, not null, so setup can explain exactly which
+ * pair lacks a pinned install.
  */
 export type TinyTexAssetLookup = TinyTexAssetPinned | TinyTexAssetUnsupported;
 

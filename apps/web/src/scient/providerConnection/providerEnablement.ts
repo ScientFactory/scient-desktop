@@ -27,12 +27,9 @@ export function withProviderInstanceEnabled(
 }
 
 /**
- * Build the one settings write needed to enable an existing provider.
- *
- * The envelope is canonical. Legacy in-config `enabled` is removed so an old
- * `false` cannot continue to override the user's explicit enable action.
- * Default providers are promoted exactly as the Settings editor promotes
- * them; custom instances must already have a persisted envelope.
+ * Remove legacy in-config enabled when explicitly enabling, or an old false overrides the canonical
+ * envelope. Promote defaults as Settings does; custom instances require existing persisted
+ * envelopes.
  */
 export function buildEnableProviderPatch(
   settings: Pick<ServerSettings, "providerInstances">,

@@ -29,13 +29,9 @@ import {
 } from "./ControlledHtmlPdfRenderer.ts";
 
 /**
- * Prints Scient's document page. The page is the web client's standalone
- * `scient-document.html` entry, served from the desktop's own app scheme into
- * a hidden window with a private, non-persistent session. That session can
- * reach only the page's own files and the one signed capture it renders; it
- * has no permissions, navigation, downloads, popups, or other network access.
- * The page must report a readiness that matches the requested capture, with
- * nothing unfinished and no fatal problem, before anything is printed.
+ * Print in a private nonpersistent session limited to its own page files and one signed capture;
+ * deny permissions/navigation/downloads/popups/other network. Require capture-matching complete
+ * readiness without fatal errors before print.
  */
 
 const DOCUMENT_PAGE_PARTITION = "scient-next-document-page";
@@ -413,11 +409,9 @@ export function createDocumentPagePdfRenderer(options: DocumentPagePdfRendererOp
               outcome: rejected("page-rejected", rejection),
             });
           }
-          // A refused request is the page's isolation working, not a failed
-          // export: the page already treats a refused captured asset as fatal,
-          // and a remote image as a placeholder. Anything else refused (a font,
-          // a stylesheet) is printed as an export note and returned as a
-          // warning with blockedRequestCount, so it never passes silently.
+          // Blocked requests demonstrate isolation, not necessarily failed export. Captured-asset
+          // refusal is fatal and remote images become placeholders; other blocks must still return
+          // warning/export notes and blockedRequestCount.
           if (blockedRequests.count > 0) {
             const note = scientDocumentBlockedRequestsNote(blockedRequests.count);
             yield* Effect.tryPromise({

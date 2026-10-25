@@ -439,8 +439,7 @@ export function layerWithRegistry<Error>(
   // SCIENT-FORK:END
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
   const layerThreadCommandExecutor = ThreadCommandExecutor.layer;
-  // One queue shared by the adapters, the orchestrator, and the worker, like
-  // layerRuntime.ts; layer memoization keeps it a single instance.
+  // Share one continuation queue across adapters, orchestrator, and worker through layer memoization.
   const layerContinuationRequests =
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
   const layerProvidedRegistry = registryLayer.pipe(Layer.provide(layerContinuationRequests));
@@ -537,7 +536,6 @@ export function layerWithRegistry<Error>(
       setProviderAuthenticationFailure: () =>
         Effect.die("Unexpected authentication invalidation in recorded provider replay."),
     });
-  // The real hub, recording what each command streamed so fixtures can assert it.
   const layerCommandOutputHubProvided = CommandOutputRecorder.layer.pipe(
     Layer.provide(Layer.merge(layerEventSinkProvided, layerStores)),
   );
@@ -769,8 +767,7 @@ export function layerWithRegistry<Error>(
   if (options.runEffectWorker === false) {
     return layerReplayRuntime;
   }
-  // Built before the runtime it shares stores with, so recovery commits before
-  // the effect worker claims anything, as in serverRuntimeStartup.
+  // Build recovery before runtime so it commits before the effect worker claims work.
   const layerStartupRecovery: Layer.Layer<
     never,
     | MigrationError

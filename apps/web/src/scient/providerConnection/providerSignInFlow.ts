@@ -1,16 +1,7 @@
 /**
- * Opens a provider's sign-in page once, for the window that started the
- * sign-in, whatever setup view is mounted when the page becomes available.
- *
- * A start sends a fresh request id, which the server stamps on the operation it
- * creates. Whenever the start reply or a streamed snapshot shows an operation
- * stamped with an id this window holds, waiting on a primary page, the window
- * asks the server to claim the opening. The server decides: it grants once per
- * operation, only while that operation is current and waits on the page, and
- * the grant carries the URL to open. An id is released on the claim's answer,
- * when its operation is shown ended, when the start is rejected, when the user
- * opens the page by hand, or on expiry; an unknown answer keeps it for the next
- * report.
+ * Bind automatic opening to this window's request ID and a server-granted current operation/URL
+ * claim. Snapshots can recover a lost start reply after its view unmounts. Release IDs on definite
+ * settlement/manual opening/expiry; unknown claim outcomes must remain retryable.
  */
 import type {
   EnvironmentId,

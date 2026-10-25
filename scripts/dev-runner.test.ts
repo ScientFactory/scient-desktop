@@ -118,6 +118,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     );
 
     // SCIENT-FORK:START
+
     // regression: 4f11740510 Add isolated app testing workflow (#4121)
     it.effect("allows browser auto-open to be explicitly enabled", () =>
       Effect.gen(function* () {
@@ -141,6 +142,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     // SCIENT-FORK:END
 
     // SCIENT-FORK:START
+
     // regression: 4f11740510 Add isolated app testing workflow (#4121)
     it.effect("requires the browser flag even when the environment enables auto-open", () =>
       Effect.gen(function* () {
@@ -195,6 +197,31 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     );
     // SCIENT-FORK:END
 
+    it.effect("turns product analytics off unless the developer opts in", () =>
+      Effect.gen(function* () {
+        const input = {
+          mode: "dev",
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        } as const;
+        const byDefault = yield* createDevRunnerEnv({ ...input, baseEnv: {} });
+        const optedIn = yield* createDevRunnerEnv({
+          ...input,
+          baseEnv: { T3CODE_TELEMETRY_ENABLED: "true" },
+        });
+
+        assert.equal(byDefault.T3CODE_TELEMETRY_ENABLED, "false");
+        assert.equal(optedIn.T3CODE_TELEMETRY_ENABLED, "true");
+      }),
+    );
+
     it.effect("strips inherited service-launcher context", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
@@ -243,9 +270,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           assert.equal(env.VITE_HTTP_URL, undefined);
           assert.equal(env.VITE_WS_URL, undefined);
           assert.equal(env.T3CODE_PORT, "13773");
-          // Deleting the keys is not sufficient — vite.config.ts merges
-          // `.env`/`.env.local` underneath this env and would revive them, so
-          // the intent has to be stated positively.
+
           assert.equal(env.T3CODE_SINGLE_ORIGIN_DEV, "1");
         }),
     );
@@ -472,8 +497,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       });
     });
 
-    // `tailscale serve` config outlives the process, so a dry run that shared
-    // would replace and then tear down whatever mapping the port already had.
     // Base-dir precedence (--home-dir > worktree .scient-next > candidate default)
     it.effect("ignores an ambient T3CODE_HOME in favor of the candidate home", () =>
       Effect.gen(function* () {
@@ -702,6 +725,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     });
 
     // SCIENT-FORK:START
+
     // regression: f50a7cddc1 [codex] Structure dev-runner failures (#3283)
     it.effect("preserves wait-for-exit failures as the exact cause", () => {
       const cause = PlatformError.systemError({

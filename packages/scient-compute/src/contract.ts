@@ -114,13 +114,8 @@ export const ComputeExecutionOutcome = Schema.Literals(["succeeded", "failed", "
 export type ComputeExecutionOutcome = typeof ComputeExecutionOutcome.Type;
 
 /**
- * What a runtime did with an interrupt request.
- *
- * A request is not a result: the code may have finished first (`terminal`), the
- * runtime may refuse while it is between statements (`rejected`), or it may
- * accept the signal and never go idle (`timeout`). Collapsing these into
- * success or failure would leave a caller unable to tell an execution that
- * survived from one that ended.
+ * Interrupt acknowledgement is not execution outcome. Preserve terminal/rejected/timeout
+ * distinctions so callers know whether work ended or survived and whether escalation is needed.
  */
 export const ComputeInterruptOutcome = Schema.Literals([
   "interrupted",
@@ -184,18 +179,9 @@ const OutputEnvelope = {
 } as const;
 
 /**
- * One ordered piece of what a session produced.
- *
- * `sequence` is the runtime ordering cursor, not a globally unique identifier.
- * An adapter may derive more than one normalized product from one runtime
- * report, in which case those products share the cursor and their append order
- * is the tie-breaker. Durable transcript order is authoritative.
- *
- * The union is a closed set on purpose. Rich display members retain bounded
- * alternative representations plus update/clear facts; a pure projector
- * derives what is currently visible without rewriting this immutable history.
- * A client that meets an unknown member fails to decode loudly instead of
- * silently rendering nothing.
+ * Runtime sequence is an ordering cursor, not unique identity; normalized products may share it
+ * with durable append order breaking ties. Keep the union closed so unknown output fails decoding
+ * rather than disappearing silently.
  */
 export const ComputeOutput = Schema.Union([
   Schema.TaggedStruct("stream", {
@@ -229,17 +215,9 @@ export type ComputeOutput = typeof ComputeOutput.Type;
 const utf8 = new TextEncoder();
 
 /**
- * How many retained bytes one output charges to its durable transcript.
- *
- * The newline-delimited JSON fact is counted exactly, including an otherwise
- * empty lifecycle envelope such as `clear-output`. Resource bytes are charged
- * in addition because they are stored beside the transcript rather than inside
- * it. Repeated references are deliberately charged repeatedly: a retention
- * ceiling bounds what code may produce, not merely how well content-addressed
- * storage happens to deduplicate it.
- *
- * A transport's estimate answers a different question -- how much memory a
- * queued event holds before persistence -- and remains a separate number.
+ * Charge exact NDJSON bytes plus resource bytes, including empty lifecycle facts. Count repeated
+ * references repeatedly: limits bound produced output, not content-address deduplication. Transport
+ * queue-memory estimates are a separate budget.
  */
 export function computeOutputByteLength(output: ComputeOutput): number {
   const envelopeBytes = utf8.encode(`${JSON.stringify(output)}\n`).length;
@@ -277,12 +255,8 @@ export const ComputeCapability = Schema.Literals([
 export type ComputeCapability = typeof ComputeCapability.Type;
 
 /**
- * A bounded, transient description of one value in a live runtime namespace.
- *
- * This is intentionally not a serialized value and is never part of durable
- * execution history. Adapters may omit any field they cannot obtain safely;
- * in particular they must not invoke arbitrary user-defined representations
- * merely to make a preview look richer.
+ * Namespace previews are transient descriptions, never serialized values/history. Omit unsafe
+ * fields rather than invoke arbitrary user-defined representations to enrich display.
  */
 export const ComputeVariable = Schema.Struct({
   name: Label,
@@ -316,12 +290,8 @@ export const ComputeRuntimeIdentity = Schema.Struct({
 export type ComputeRuntimeIdentity = typeof ComputeRuntimeIdentity.Type;
 
 /**
- * Transient binary image bytes carried alongside durable image metadata.
- *
- * `ComputeOutput.image` is durable metadata with no bytes; this type carries
- * the validated `Uint8Array` so Phase 3 can consume it into compute-owned
- * storage. It is never persisted: base64 and multi-megabyte byte arrays do not
- * belong in durable snapshots.
+ * Image bytes travel transiently beside durable metadata and are consumed once into compute
+ * storage. Never persist base64 or large byte arrays in history snapshots.
  */
 export const ComputeTransportImageEvent = Schema.Struct({
   bytes: Schema.Uint8Array,
@@ -337,27 +307,9 @@ export const ComputeTransportResourceEvent = Schema.Struct({
 export type ComputeTransportResourceEvent = typeof ComputeTransportResourceEvent.Type;
 
 /**
- * Everything a transport reports, in the order it happened.
- *
- * `output` carries a null `requestId` for output that belongs to the session
- * rather than to a command, which is what asynchronous runtime chatter is.
- * Attributing it to whichever execution happens to be running would put one
- * user's stray thread output inside another user's cell.
- *
- * `image` carries transient bytes only when `output` is an image; it is null
- * for every other output variant. The bytes are consumed once and never
- * persisted.
- *
- * `resources` is the representation-bundle equivalent. Each member must match
- * one resource reference in `output`; the service stores every member before
- * appending the fact that names it. Keeping these bytes beside rather than
- * inside the durable output avoids turning transcript JSON into a binary wire.
- *
- * `runtime-error` carries the language-specific report rather than a normalized
- * `ComputeOutput.diagnostic` because a transport is shared by every language
- * and cannot normalize one. It carries the same `sequence` and `observedAt` as
- * an output so the diagnostic a language adapter derives from it lands in the
- * ordered stream at the point the error actually happened.
+ * Null requestId is session output, never whichever cell happens to run. Store transient
+ * image/resources before appending references. Keep language errors raw for adapter normalization
+ * with their original sequence/time; transports cannot infer language diagnostics.
  */
 export const ComputeTransportEvent = Schema.Union([
   Schema.TaggedStruct("ready", {
@@ -420,14 +372,9 @@ export class ComputeTransportError extends Schema.TaggedError<ComputeTransportEr
 ) {}
 
 /**
- * How to start the process a transport supervises.
- *
- * For the initial Python adapter this executable is both the Jupyter bridge host
- * and the selected kernel interpreter. That is not a cross-language invariant:
- * a later adapter may select an R/Julia/MATLAB runtime while an optional bridge
- * host launches separately. The first real second-language adapter is the gate
- * for a typed transport-specific launch extension; the coordinator must not
- * infer the scientific runtime from this executable.
+ * The launched process may be a bridge host rather than the scientific runtime. Do not infer
+ * runtime identity from this executable; qualify a typed transport-specific extension with the
+ * first real second-language adapter.
  */
 export interface ComputeLaunchPlan {
   readonly executable: string;
@@ -446,15 +393,9 @@ export interface ComputeTransportOpenRequest {
 }
 
 /**
- * Optional source facts forwarded with one execution.
- *
- * Paths are project-relative claims resolved by the server-owned bridge cwd.
- * For a dirty file, cell, or selection, `sourceBytesHash` identifies the
- * submitted `code` bytes; it is not a claim about the whole source document.
- * A bridge may use a saved file path natively only when `saved` and
- * `sourceBytesHash` are present and the on-disk bytes prove that identity.
- * Dirty, cell, and selection submissions remain exact submitted bytes with
- * their stated diagnostic context.
+ * Paths are project-relative claims, not authority. sourceBytesHash binds submitted bytes only; use
+ * saved paths natively only after saved/hash and on-disk verification. Dirty/cell/selection
+ * requests always execute exact submitted code.
  */
 export interface ComputeExecuteSourceContext {
   readonly kind: "file" | "cell" | "selection";
@@ -496,19 +437,9 @@ export interface ComputeVariablesRequest {
 }
 
 /**
- * A live conversation with one runtime.
- *
- * Commands only say what to ask for; what happened is told by `events`, because
- * a runtime reports interrupts, restarts, and death asynchronously and a
- * command that returned its own result would have to guess. `interrupt` is the
- * one exception, and only because its return value answers a different
- * question: whether the signal landed at all. What became of the execution it
- * targeted still arrives on `events`.
- *
- * The channel already identifies the session, so each mutating command carries
- * only its expected generation. This is the stale-command boundary: a delayed
- * client cannot execute in, interrupt, restart, or shut down the namespace that
- * replaced the one it observed.
+ * Events decide asynchronous outcomes; interrupt's return only acknowledges signal delivery.
+ * Expected generation on every mutation prevents stale clients from executing in or destroying a
+ * replacement namespace.
  */
 export interface ComputeChannel {
   readonly events: Stream.Stream<ComputeTransportEvent, ComputeTransportError>;
@@ -664,15 +595,9 @@ export const ComputeRuntimeReadiness = Schema.Literals([
 export type ComputeRuntimeReadiness = typeof ComputeRuntimeReadiness.Type;
 
 /**
- * One bounded package observation made by a language adapter while it verifies
- * a runtime. Package names and versions are transient diagnostics: the durable
- * execution identity remains the environment fingerprint rather than a second
- * package database in compute history.
- *
- * A null version means the adapter deliberately checked for the package and
- * did not find it. Adapters do not enumerate an entire environment merely to
- * populate this list; they report only requirements used by reviewed product
- * capabilities.
+ * Package observations are bounded transient diagnostics, not a second durable package database.
+ * Null means checked-and-missing; report only reviewed capability requirements and retain
+ * fingerprint as execution identity.
  */
 export const ComputeRuntimePackage = Schema.Struct({
   name: Slug,
@@ -757,14 +682,8 @@ export class ComputeRuntimeError extends Schema.TaggedError<ComputeRuntimeError>
 ) {}
 
 /**
- * Everything that differs between one language and the next.
- *
- * A shared transport removes wire-protocol work for every language that has a
- * kernel, and removes none of this: finding an installation, judging whether it
- * can be used, deciding how to start it, and turning its errors into something
- * readable. Session lifecycle, queueing, persistence, and output retention are
- * deliberately absent, because they are identical for every language and
- * putting them here would make each new language re-earn them.
+ * Language adapters own discovery, readiness, launch, and diagnostics. Keep lifecycle, queueing,
+ * persistence, and retention shared so each new language does not reimplement their guarantees.
  */
 export interface ComputeLanguageAdapter {
   readonly languageId: ComputeLanguageId;

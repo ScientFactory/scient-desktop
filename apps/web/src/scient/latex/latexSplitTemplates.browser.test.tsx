@@ -320,10 +320,9 @@ async function selectWordWithoutJumping(
   { lateVisibilityReports = 0 } = {},
 ) {
   // SCIENT-FORK:START — on Linux Chromium, publishing a native selection in the 26-code
-  // literal field moved the reader 25px (the word 418.7 -> 393.9px on screen) on about
-  // every second CI run; macOS never does, even from CI's start position. Tracked in
-  // reviews/ci-flaky-tests-20261024/FOLLOWUP-26code-linux-jump.md. Only the ordinary
-  // 26-code case skips, only on Linux; the late-visibility-report case runs everywhere.
+  // literal field can jump the reader; macOS does not. Track qualification in
+  // reviews/ci-flaky-tests-20261024/FOLLOWUP-26code-linux-jump.md. Skip only ordinary
+  // 26-code on Linux; keep the late-visibility-report case enabled everywhere.
   if (name === "26-code" && !lateVisibilityReports && navigator.userAgent.includes("Linux")) {
     context.skip(
       "Known Linux-only 26-code selection publish scroll; see FOLLOWUP-26code-linux-jump.",

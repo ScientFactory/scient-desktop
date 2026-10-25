@@ -1,38 +1,8 @@
 /**
- * Places packages into the LaTeX distribution Scient installed and owns.
- *
- * TinyTeX is built to be extended at run time: the bundle carries TeX Live's
- * infrastructure plus a base set, and `tlmgr` fetches the rest. Every other
- * editor that ships it — RStudio, Quarto — reads the compiler's log and runs
- * that fetch on the reader's behalf, which is exactly what this service is for.
- *
- * Three rules shape it. It is only ever pointed at the managed distribution's
- * own `bin` directory, because a system TeX Live or MiKTeX belongs to the user
- * and Scient does not reach into it; ordinary repository or package failures
- * come back as `failed`, leaving the caller with the compiler error it already
- * had rather than a second one about the fetch. Unknown process retirement is
- * instead an infrastructure failure that quarantines further distribution work;
- * and it only reports a package as installed once the engine can see the file it was
- * fetched for.
- *
- * Every `tlmgr` run goes through one permit, because `tlmgr` writes the
- * distribution's own package database: two of them against one tree is the
- * "another tlmgr is running" failure at best and a corrupt database at worst.
- * Three documents can compile at once, and the install that seeds a fresh
- * distribution overlaps a first build, so the collision is ordinary rather
- * than exotic.
- *
- * Every `tlmgr` run also goes through the execution port rather than
- * `ProcessRunner`, because a fetch is a long process with children. A big
- * collection can outlive any budget worth setting, and `ProcessRunner` has no
- * process-tree kill: on Windows it would stop the `tlmgr.bat` shim and leave
- * the `perl` doing the actual work running, which then finishes the install
- * minutes after the build already reported it failed — and rebuilds the file
- * index underneath a compile that was told the package was never placed.
- * Cancellation uses the shared adapter to stop its owned process group and
- * observe exit before another installer acquires the distribution permit.
- * Short read-only probes
- * (`kpsewhich`) stay on `ProcessRunner`, which is what it is for.
+ * Mutate only managed TeX, serializing tlmgr through one distribution permit. Use owned-tree
+ * cancellation and prove retirement before release; unknown retirement quarantines work across
+ * restart. Report ordinary fetch failures without replacing compiler errors, and installed only
+ * when the engine sees the file.
  */
 import { ExecutionRunId } from "@scientfactory/execution";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -99,12 +69,9 @@ export class LatexPackageInstaller extends Context.Service<
 >()("t3/scient/latex/LatexPackageInstaller") {}
 
 /**
- * What one install invocation gets. `collection-latexrecommended` is tens of
- * megabytes over whatever connection the reader has, and the old three-minute
- * budget is what turned a slow fetch into an orphaned `tlmgr` finishing behind
- * a build that had already given up. The budget is now long enough that
- * elapsing it means something is genuinely wrong, and short enough that a
- * wedged fetch does not hold a document forever.
+ * Large collections need room for slow real downloads, but wedged fetches must remain bounded.
+ * Budget expiry must retire the owned tree rather than leave an orphan completing behind a failed
+ * build.
  */
 const INSTALL_TIMEOUT = "10 minutes";
 /** The fallback is one index query against the repository, not a download. */
@@ -135,13 +102,9 @@ const PACKAGE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const PROBE_FILE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 
 /**
- * Names the repository has already said it has never heard of, so the file
- * search behind them is paid for once rather than on every save. A document
- * with `\usepackage{mystyle}` — the author's own file, or a typo — asks for
- * the same name every rebuild, and the per-build attempted set cannot see
- * across builds. Short-lived because the answer is only as true as the
- * repository state it came from, and dropped wholesale when a managed install
- * finishes, which is exactly when a "not present" answer stops being true.
+ * Cache repository-negative package names across saves so typos/private files do not trigger
+ * repeated searches. Expire negatives quickly and clear after managed installation because
+ * repository/distribution state can change.
  */
 const FAILED_SEARCH_TTL_MS = 10 * 60 * 1000;
 const MAX_REMEMBERED_FAILED_SEARCHES = 64;
@@ -187,11 +150,8 @@ export function unknownPackagesFromInstall(
 }
 
 /**
- * Reads `tlmgr search --file` output, which prints a package name on its own
- * line followed by the tab-indented paths it ships. The answer is the package
- * that ships a file of this name, never merely the first one listed: a
- * substring query matches longer names too, and installing one of those would
- * be a download that cannot fix the build.
+ * tlmgr substring queries return longer filenames too. Match the exact shipped filename, not the
+ * first package heading, or the download cannot repair the build.
  */
 export function owningPackageFromSearch(output: string, fileStem: string): string | null {
   const wanted = `${fileStem.toLowerCase()}.`;
@@ -266,20 +226,9 @@ export interface TexliveScriptInvocation {
 }
 
 /**
- * How to run `tlmgr` without the shim.
- *
- * On Windows TeX Live ships `tlmgr` as `tlmgr.bat`, and a `.bat` cannot be
- * spawned without a shell — which is a shell process between Scient and the
- * work, and the thing that survives a kill aimed at the shim. The wrapper is
- * not doing anything a caller cannot do directly: it derives the installation
- * root from its own location, puts the bundled `perl` and the distribution's
- * `bin` on PATH, points `PERL5LIB` at the bundled library, and runs
- * `tlpkg/tlperl/bin/perl.exe texmf-dist/scripts/texlive/tlmgr.pl` with the
- * arguments it was given. (Its remaining job — running a self-update script
- * left behind by `tlmgr update --self` — is for an update Scient never asks
- * for.) Encoding that here removes the shell, and with it the shim's argument
- * quoting, from the install path entirely. Elsewhere `tlmgr` is an ordinary
- * executable script and is run as itself.
+ * Windows tlmgr.bat adds a shell and unsafe shim-only cancellation. Invoke bundled Perl/tlmgr.pl
+ * directly with its bin/PERL5LIB setup; Scient never requests the shim's self-update path.
+ * Elsewhere execute the script normally.
  */
 export function texliveScriptInvocation(input: {
   readonly binDirectory: string;
@@ -350,14 +299,9 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * One bounded run of a distribution script, or `null` when it could not be
-   * run at all. Runs one at a time against the tree. The distribution's own
-   * `bin` directory leads the child's PATH exactly as it does for a compile,
-   * because these tools drive the same helpers `latexmk` does.
-   *
-   * A budget that elapses requests process-tree cancellation. The permit stays
-   * owned until retirement is proved; an unknown outcome preserves the durable
-   * marker and refuses further mutation, including after service restart.
+   * Lead PATH with the distribution's own bin and serialize its scripts. On timeout retain the
+   * permit until retirement is proven; unknown outcomes preserve a durable marker and refuse
+   * further mutation even after restart.
    */
   const runScript = (input: {
     readonly binDirectory: string;
@@ -450,14 +394,8 @@ export const make = Effect.gen(function* () {
   }) => runScript({ ...input, script: "tlmgr" });
 
   /**
-   * Which of these the engine cannot find, or `null` when the probe itself
-   * could not answer.
-   *
-   * One `kpsewhich` answers for a whole list: it prints a line per argument,
-   * in order, and leaves the line empty for a name it could not resolve. That
-   * matters because this runs before every compile of a managed build — a
-   * process per package would put a second of spawning in front of every save
-   * of a paper with a real preamble.
+   * One kpsewhich resolves a whole ordered list, leaving missing names blank. Batch probes before
+   * each compile to avoid a process-spawn cost per preamble package.
    */
   const probeFiles = (input: {
     readonly binDirectory: string;
@@ -603,17 +541,9 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Holds the outcome to what the caller can actually observe.
-   *
-   * "`tlmgr` finished" and "the engine can find the file" are two different
-   * moments. `tlmgr` unpacks the files first and rebuilds the distribution's
-   * `ls-R` file index afterwards, as a post-action, and a compile started
-   * between the two searches an index that does not mention what was just
-   * placed — the same "File `microtype.sty' not found" the round was fetching
-   * for, from a tree that already has it. So a round that placed something
-   * asks `kpsewhich`, rebuilds the index once itself if the answer is no, and
-   * reports as installed only what the answer is yes for. Whatever is still
-   * invisible is a failed name, which the caller already knows how to say.
+   * tlmgr can unpack before its ls-R index is rebuilt. Probe with kpsewhich, rebuild the index once
+   * if needed, and report installed only files the engine can actually resolve; invisible files
+   * remain failed names.
    */
   const gateOnVisibility = Effect.fn("LatexPackageInstaller.gateOnVisibility")(function* (input: {
     readonly outcome: LatexPackageInstallResult;

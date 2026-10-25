@@ -1,18 +1,7 @@
 /**
- * Stable identity of the provider-native conversation a turn is sent to.
- *
- * SCIENT-OWNED. A context handoff is delivered to one provider-native thread.
- * When the provider silently replaces that thread (a resume that falls back to
- * a fresh one, a provider switch, a restart without history), the new thread
- * has not received the context and must get it again. Resume cursors are
- * adapter-private, so the fallback identifying field differs per provider:
- * Codex keeps its app-server thread in `threadId`; Claude's cursor `threadId`
- * is Scient's own thread id and its session lives in `resume`; OpenCode, ACP
- * agents and Pi use `sessionId` (Pi also a session file).
- *
- * Prefer the adapter's live native identity when it is available before a
- * resumable transcript. This is the same identity the eventual cursor carries,
- * never a Scient thread ID or a process ID. `null` cannot prove continuity.
+ * Context belongs to a provider-native thread and must be redelivered if that identity changes.
+ * Prefer live adapter identity; cursor fallbacks differ by provider (Claude uses resume, not its
+ * Scient threadId). Neither null nor a Scient thread/process ID proves continuity.
  */
 import * as Predicate from "effect/Predicate";
 

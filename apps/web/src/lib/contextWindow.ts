@@ -24,8 +24,7 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly updatedAt: string;
 };
 
-/** Newest usage report across a thread's provider turns. Snapshots order turns
-    by provider thread, not time, so pick by timestamp. */
+/** Newest report by timestamp; snapshots order turns by provider thread. */
 export function latestProviderTurnTokenUsage(
   turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "tokenUsage">>,
   projection?: Pick<ThreadStructure, "thread" | "contextTransfers"> | null,
@@ -90,7 +89,8 @@ export function deriveLatestContextWindowSnapshot(
       durationMs: null,
       compactsAutomatically: true,
       autoCompactThreshold: liveUsage.autoCompactThreshold ?? null,
-      cost: null,
+      // SCIENT-FORK: turn context counters do not replace the provider's session bill.
+      cost: providerThread?.contextUsage?.cost ?? null,
       updatedAt: liveUsage.updatedAt,
     };
   }

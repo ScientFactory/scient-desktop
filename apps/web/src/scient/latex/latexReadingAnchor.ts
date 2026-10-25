@@ -29,11 +29,9 @@ function changesTopLevel(transaction: Transaction): boolean {
 const MEASURE_CHUNK = 48;
 
 /**
- * Keeps the line at the top of the reading area still. Content may change
- * size anywhere (a formula or image finishing, fonts, an edit, blocks added
- * while the document loads); the reading position moves only when the reader
- * scrolls or the caret must be brought into view. The browser's own anchoring
- * is off: it anchors on the caret while editing, so Enter scrolled the page.
+ * Keep the reading line stable through content/font/layout changes and move only for reader input
+ * or caret visibility. Disable browser anchoring because its caret bias makes Enter scroll the
+ * page.
  */
 export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => void }>({
   name: "latexReadingAnchor",
@@ -154,11 +152,9 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
               return;
             }
             const box = scroll.getBoundingClientRect();
-            // Scrolled since the anchor was taken, possibly before the scroll
-            // event (a restored reading position, the caret followed): the
-            // reading line is a new one, taken now. Content that moved the old
-            // line lies above the new one too only when reading moved down; a
-            // range clamped by content shrinking above is not a reading move.
+            // A scroll can precede its event, so retake the reading anchor immediately. Compensate
+            // old-line content movement only when reading moved down; shrink-clamped ranges are not
+            // reader movement.
             const scrolled = scroll.scrollTop - anchor.scrollTop;
             if (Math.abs(scrolled) > 0.5) {
               const drift = top - box.top - (anchor.offset - scrolled);
@@ -216,11 +212,9 @@ export const LatexReadingAnchor = Extension.create<{ readonly syncLayout: () => 
           };
           // Any block changing size after layout, before it is painted.
           const observed = new Map<Element, () => void>();
-          // Blocks off screen are not rendered (content-visibility) and stand
-          // in at an estimated height until they are. Render each block once,
-          // a chunk per frame while idle, so the browser remembers its real
-          // height: jumps and the scrollbar then land exactly, and content
-          // never changes size under the reader later.
+          // Offscreen content-visibility blocks use estimates. Render each once in idle frame
+          // chunks to establish real heights, preventing later scrollbar jumps or size changes
+          // under the reader.
           const unmeasured = new Set<Element>();
           let marked: Element[] = [];
           let animation = 0;

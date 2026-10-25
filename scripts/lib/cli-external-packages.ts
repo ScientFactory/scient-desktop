@@ -1,18 +1,5 @@
-/**
- * Three consumers derive from this list, and they must never disagree:
- *
- * - apps/server/vite.config.ts decides what stays external to the bundle.
- * - scripts/build-desktop-artifact.ts selects the runtime dependency roots for
- *   the Windows server sidecar.
- * - scripts/package-scient-server.ts selects the remote tarball runtime roots.
- *
- * as Node resolves it from the emitted bundle. Keeping all consumers on one
- */
-/**
- * An external package is loaded from the real filesystem, so its own `require`
- * also resolves from the real filesystem; a dependency that was bundled away
- * exists only inside the emitted bundle and is unreachable there.
- */
+/** Keep bundler externals and staged runtime dependency roots aligned. */
+// Filesystem-loaded externals need dependencies outside the bundle.
 export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // Cursor ships computed Webpack imports and platform helper packages. Its
   // installed JS dependency tree stays on disk with the SDK. Those dependency
@@ -45,12 +32,8 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
 ] as const;
 
 /**
- * External only so the bundler never has to resolve them.
- *
- * These are reached through a runtime-conditional dynamic import that Node
- * never takes, and they resolve `bun:*` specifiers that do not exist when
- * bundling for Node. Because Node never loads them, their dependency closure
- * does not need to be external — only the entry point must stay unbundled.
+ * Node never takes these conditional imports, but their bun:* specifiers cannot resolve during bundling.
+ * Externalize only the entry point; their unused dependency closure need not stay on disk.
  */
 export const CLI_BUILD_ONLY_EXTERNAL_PREFIXES = [
   "@effect/platform-bun",
@@ -66,12 +49,7 @@ export function isRuntimeExternalCliDependency(id: string): boolean {
   return CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix));
 }
 
-/**
- * This has to be wired to the bundler's `neverBundle`, not just to
- * `alwaysBundle`. `alwaysBundle` only forces packages IN — returning false from
- * it means "no opinion", and the default then applies: a declared dependency
- * stays external, but a transitive one gets bundled.
- */
+/** Use neverBundle: false from alwaysBundle means no opinion and leaves transitive packages bundled. */
 export function isExternalCliDependency(id: string): boolean {
   return (
     isRuntimeExternalCliDependency(id) ||
@@ -92,17 +70,15 @@ export function selectCliRuntimeExternalDependencies(
   );
 }
 
-/**
- * `regionCount` is reported so the caller can tell "nothing was inlined" apart
- * from "the marker format changed and this scan no longer sees anything".
- */
+/** regionCount distinguishes a clean bundle from a changed marker format the scan cannot see. */
 export function findInlinedExternalPackages(source: string): {
   readonly regionCount: number;
   readonly inlined: ReadonlyArray<string>;
   readonly inlinedPackages: ReadonlyArray<string>;
 } {
-  // Rolldown marks each inlined module with a `//#region <path>` comment.
-  const regionPattern = /\/\/#region\s+(\S+)/g;
+  // Rolldown marks each inlined module with a `//#region <path>` line; newer
+  // releases (vite-plus 1.4) emit a bare `// <path>` line instead.
+  const regionPattern = /^\/\/(?:#region)?[ \t]+(\S+)[ \t]*$/gm;
   const packagePattern = /node_modules\/((?:@[^/\s]+\/)?[^/\s]+)\//g;
 
   let regionCount = 0;

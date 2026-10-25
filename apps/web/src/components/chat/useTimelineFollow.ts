@@ -90,12 +90,9 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   useLayoutEffect(() => {
     turnUnfinishedRef.current = turnUnfinished;
   });
-  // SCIENT-FORK:START — reader navigation (A): the end control owns Scroll to end and its
-  // unread count (chat/useTimelineEndControl.ts) and changes the follow modes once per
-  // transition. The timeline never pins to its end, so a report of leaving it is never
-  // swallowed (that hid Scroll to end while an answer grew below). One owner for the send
-  // follow (chat/responseFollow.ts). The reader's navigation cancels placement and the
-  // follow without removing reserved room. This extracted host composes Scient's policy.
+  // SCIENT-FORK:START — useTimelineEndControl owns end controls, unread counts and follow transitions.
+  // Never swallow leaving-end reports as an answer grows; responseFollow owns send following.
+  // Reader navigation cancels placement/follow without removing reserved room.
   const timelineScrollIntentRef = useRef<"toward-end" | "away-from-end" | null>(null);
   const timelineScrollModeRef = useRef<TimelineScrollMode>("free-scrolling");
   const anchorUserScrollGenerationRef = useRef(0);
@@ -174,13 +171,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       anchorScrollRestoreFrameRef.current = null;
     }
     if (wasProgrammaticScrollMode) {
-      // While following or anchoring, our scrollToEnd/scrollToOffset calls can
-      // sit in LegendList's pending-imperative-scroll queue (it defers them
-      // while layout settles) and fire seconds later with stale targets,
-      // yanking the view away after the user scrolled. Starting a new
-      // imperative scroll cancels everything queued; targeting an item that
-      // is not in the data makes the new request itself resolve without ever
-      // scrolling, so this is a pure cancel.
+      // LegendList may run queued scrolls after user navigation. A new imperative
+      // scroll cancels that queue; a missing item cancels without moving the view.
       void legendListRef.current?.scrollToItem({
         item: TIMELINE_SCROLL_CANCEL_SENTINEL,
         animated: false,
@@ -248,11 +240,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     pageScrollControllerRef.current?.releaseActiveKey();
   };
   const onComposerPageScrollReleaseStable = useStableCallback(onComposerPageScrollRelease);
-  // SCIENT-FORK:START — reader navigation (C): Scroll to end is one-shot (it releases reserved
-  // room, ends the follow and never re-arms following); a send captures whether the reader
-  // was at the end and frames the prompt; a queued prompt delivered while at the end gets
-  // the same follow (chat/responseFollow.ts).
-  // Explicit navigation is a one-shot operation; it never enables live following.
+  // SCIENT-FORK:START — Scroll to end releases room and follows once; it never re-arms live following.
+  // Sends capture end position and frame the prompt; queued prompts delivered at the end share responseFollow.
   const scrollToEnd = (animated = false) => {
     cancelTimelinePositioning();
     const generation = anchorUserScrollGenerationRef.current;
@@ -349,11 +338,9 @@ export function useTimelineFollow(input: TimelineFollowInput) {
         const handleManualNavigation = () => {
           cancelTimelinePositioningRef.current();
         };
-        // The gestures below must only break follow when they can actually
-        // move the viewport away from the live edge (#5566): a spurious break
-        // while pinned at the end produces no scroll event, never re-arms,
-        // and streaming silently stops following. Underflowing content can't
-        // scroll at all, so nothing there should break follow.
+        // Only break follow for gestures that can move away from the live edge.
+        // A spurious break emits no scroll event to re-arm follow, so streaming stops
+        // following. Underflowing content cannot scroll and must keep following.
         const contentScrollsUp = () => timelineRealContentOverflowsViewportStable();
         // Any outer-list navigation cancels pending placement. Nested scrolls keep their owner.
         const handleWheel = (event: WheelEvent) => {
@@ -464,7 +451,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
           }
         };
         // Input inside an embedded frame reaches none of the listeners above,
-        // but its scroll still chains out to the timeline (#17056).
+        // but its scroll still chains out to the timeline.
         const scrolledUp = createUpwardScrollDetector({
           top: scrollNode.scrollTop,
           height: scrollNode.scrollHeight,

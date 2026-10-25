@@ -65,11 +65,9 @@ const qualificationEnvironment = (
 });
 
 /**
- * Scient Agent's RPC mode exits at startup when it has no model at all, and the
- * isolated home has none of the user's sign-ins. This stub provider gives it
- * one; the check never sends a prompt, so nothing is sent to its unroutable
- * address. Local-server discovery is off so the result does not depend on
- * what else runs on the machine.
+ * RPC startup requires at least one model even in an isolated home. Supply an unroutable stub
+ * without prompting, and disable local discovery so activation checks do not depend on other
+ * machine services.
  */
 const SCIENT_QUALIFICATION_MODELS = `providers:
   scient-qualification:

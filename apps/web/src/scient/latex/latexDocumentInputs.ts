@@ -66,11 +66,8 @@ export class LatexDocumentInputs {
   }
 
   /**
-   * Commits, in the background, the input of every editor whose own file
-   * `inside` picks. An editor whose file is elsewhere but whose document's
-   * root is picked is only inspected: its input is never touched, and any
-   * not yet in source is reported under the root. Returns the editors whose
-   * input is not in source, each named by the picked file.
+   * Commit only editors whose own file is selected. A selected document root permits inspection,
+   * not modification of an outside file's input; report its unsourced work under the root.
    */
   commitWhere(inside: (target: MarkdownPersistenceTarget) => boolean): ReadonlyArray<{
     readonly target: MarkdownPersistenceTarget;

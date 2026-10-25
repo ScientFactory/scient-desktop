@@ -270,6 +270,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-computer-use-outline: #315cff;
   --color-info-foreground: var(--info-foreground);
   --color-info: var(--info);
+  --color-guest: var(--guest);
+  --color-guest-foreground: var(--guest-foreground);
+  --color-guest-surface: var(--guest-surface);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-ring: var(--ring);
   --color-input: var(--contrast-input);
@@ -1175,6 +1178,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --destructive-foreground: var(--error-foreground);
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
+  /* Messages from a guest link, and the sidebar Request status. */
+  --guest: var(--color-fuchsia-500);
+  --guest-foreground: var(--color-fuchsia-600);
+  --guest-surface: color-mix(in srgb, var(--guest) 14%, var(--message-surface));
   --success: var(--color-emerald-500);
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
@@ -1240,6 +1247,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --border: --alpha(var(--color-white) / 6%);
     --input: --alpha(var(--color-white) / 8%);
     --info-foreground: var(--color-blue-400);
+    --guest-foreground: var(--color-fuchsia-300);
     --success-foreground: var(--color-emerald-400);
     --warning-foreground: var(--color-amber-400);
     --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
@@ -1779,7 +1787,7 @@ code {
    inherited sizes on unrelated pre surfaces (terminal previews, approvals).
    Inline code stays relative to its sentence so it never towers over prose;
    diffs and file previews take the size through --diffs-font-size. */
-.chat-markdown .chat-markdown-shiki .shiki,
+.chat-markdown .chat-markdown-shiki :is(.shiki, .diffs),
 .chat-markdown .chat-markdown-codeblock pre,
 :is(.chat-markdown, .composer-tiptap) pre code {
   font-size: var(--font-size-code, inherit);
@@ -2185,7 +2193,7 @@ code {
   overflow-wrap: anywhere;
 }
 
-:is(.chat-markdown, .composer-tiptap) .chat-markdown-shiki .shiki {
+:is(.chat-markdown, .composer-tiptap) .chat-markdown-shiki :is(.shiki, .diffs) {
   background: transparent !important;
 }
 
@@ -2222,10 +2230,21 @@ code {
   /* SCIENT-FORK:END */
 }
 
+/* Top-aligned so wrapped rows share a first line, and the outer columns sit
+   flush with the surrounding prose. */
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
   text-align: start;
+  vertical-align: top;
+}
+
+.chat-markdown :is(th, td):first-child {
+  padding-inline-start: 0;
+}
+
+.chat-markdown :is(th, td):last-child {
+  padding-inline-end: 0;
 }
 
 .chat-markdown thead th {
@@ -2444,6 +2463,22 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
   background-position: center bottom;
   background-repeat: no-repeat;
   background-size: calc(100% - 1rem) 1px;
+}
+
+/* Outer cells sit flush with the prose, so their line runs to the outer edge. */
+.chat-markdown :is(thead th, tbody td):is(:first-child, :last-child) {
+  background-size: calc(100% - 0.5rem) 1px;
+}
+.chat-markdown :is(thead th, tbody td):first-child:last-child {
+  background-size: 100% 1px;
+}
+.chat-markdown :is(thead th, tbody td):first-child,
+.chat-markdown table[dir="rtl"] :is(thead th, tbody td):last-child {
+  background-position: left bottom;
+}
+.chat-markdown :is(thead th, tbody td):last-child,
+.chat-markdown table[dir="rtl"] :is(thead th, tbody td):first-child {
+  background-position: right bottom;
 }
 /* SCIENT-FORK:END */
 

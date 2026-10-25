@@ -1,9 +1,5 @@
-// Real Chromium qualification of Scient's document page PDF export. Renders a
-// fixture set through the web client's document page (served by Vite) and the
-// desktop's document-page renderer, then checks the PDFs with PDF.js: page
-// structure, logical text order, bookmarks, tagging, and refusal cases.
-// Writes the PDFs for visual review to $SCIENT_DOCUMENT_PDF_FIXTURE_OUT
-// (default: <repo>/build/document-pdf-fixtures). On Linux use xvfb-run.
+// Use real Chromium/PDF.js for document-page PDF qualification. Write review PDFs to
+// SCIENT_DOCUMENT_PDF_FIXTURE_OUT (default build/document-pdf-fixtures); Linux requires xvfb-run.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";

@@ -146,12 +146,9 @@ function elementAddresses(element: Element): string[] {
 }
 
 /**
- * A rendered diagram with everything that would load from outside it removed, and the
- * addresses it named. Images, icons, and styles that point elsewhere are dropped (a picture
- * drawn from `data:` stays), and so is any attribute whose value names an outside resource
- * the way CSS does (`mask="url(…)"`, `fill`, `filter`, `cursor`, or one the browser does not
- * know); the rest of the markup is left exactly as Mermaid drew it, so an ordinary diagram
- * comes back unchanged.
+ * Strip every external resource-bearing element/attribute, including unknown CSS URL attributes,
+ * while retaining data images. Leave ordinary Mermaid output unchanged and report removed
+ * addresses.
  */
 export function stripSvgExternalResources(svg: string): {
   readonly svg: string;

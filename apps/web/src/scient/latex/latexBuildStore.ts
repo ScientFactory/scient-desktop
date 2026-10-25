@@ -1,11 +1,7 @@
 /**
- * Per-document LaTeX build state and the poll loop that keeps it current.
- *
- * The server owns the build; this store owns one watcher per open document.
- * A watcher reads status without compiling, then polls on a self-scheduling
- * timeout while the server still has work to do. Successful documents retain a
- * low-frequency currentness check so edits made by agents or external editors
- * cannot leave an open reader calling an old PDF current indefinitely.
+ * The server owns builds; watchers read status without compiling. Keep low-frequency freshness
+ * checks after success so agent/external edits cannot leave an open stale PDF labeled current
+ * indefinitely.
  */
 import type { EnvironmentId, ScientLatexBuildSnapshot } from "@t3tools/contracts";
 import { create } from "zustand";
@@ -341,17 +337,9 @@ function releaseWatcher(key: string, loop: WatchLoop): void {
 }
 
 /**
- * Ask for a fresh build of a document. A build already running is not
- * interrupted: the server queues the rerun and the loop keeps polling. A
- * request for a document nobody watches any more — the save a closing editor
- * flushed on its way out — is remembered for the next watcher instead of
- * being dropped.
- *
- * `reprobeToolchain` belongs to the Rebuild button. Someone who went and
- * installed TeX Live themselves has no other way to tell this environment: the
- * probe's answer is cached for five minutes, the loop is quiet after the build
- * that failed for want of an engine, and nothing else on this client ever asks
- * for a fresh probe. Pressing Rebuild is that request.
+ * Remember close-time saves for the next watcher instead of dropping them. Rebuild explicitly
+ * reprobes toolchain: after missing-engine failure polling is quiet and the cached probe would
+ * otherwise hide a newly installed system TeX.
  */
 export function requestLatexRebuild(
   target: LatexBuildTarget,

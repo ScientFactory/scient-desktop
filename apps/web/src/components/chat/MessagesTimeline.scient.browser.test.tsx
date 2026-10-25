@@ -1497,7 +1497,7 @@ it("renders T3 MCP dynamic tools with the product logo and pretty name", async (
   expect(markup).toContain("Read a Scient thread");
   expect(markup).not.toContain("mcp__t3-code__t3_thread_read");
 
-  // with a live title, screen readers hear it too (#13140).
+  // With a live title, screen readers hear it too.
   liveThreadTitles.set("thread-child", "Review auth flow");
   try {
     const titled = await renderScientExpandedMarkup(

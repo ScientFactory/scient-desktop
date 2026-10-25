@@ -1,23 +1,8 @@
 /**
- * Turns a validated conversation package into the one
- * `thread.conversation.import` command that creates its thread.
- *
- * Every id the command carries is new and local. The mapping from each
- * external record to its local id is minted once per attempt
- * (`mintConversationImportIds`), recorded in the attempt journal, and reused
- * on retry, so a resumed attempt dispatches exactly the same history.
- *
- * SCIC attempts preserve the numbered conversation sequence, retaining source
- * timestamps. Side facts stay within their historical turn. The attempt journal
- * records this ordering version; older journals retain timestamp/id ordering.
- *
- * Turns: every message, reasoning item, plan, answer, and work-log entry of a
- * source turn lands in one new local turn. User messages are stored with no
- * turn (turn starts and mid-turn steering alike), so each one joins the turn
- * of the next record that names one: the turn it started, or the turn it
- * steered, even when that turn has no reply. A request followed by no turn at
- * all gets a turn of its own. Every such turn is inherited history: revert
- * keeps it, as it keeps a fork's inherited turns.
+ * Journal freshly minted IDs and ordering version once per attempt so retry preserves identical
+ * history; older journals retain their ordering. Keep numbered source sequence and shift future
+ * timestamps uniformly. Turnless prompts join their next named turn, or a new turn; mark every
+ * imported turn inherited for revert.
  */
 import {
   ProviderCitationPresentation,
@@ -733,11 +718,8 @@ function importOmissions(
 }
 
 /**
- * Each kind of export warning that becomes a notice: its plain line when the
- * sender's text is unfit to show, and the line for several of that kind.
- * Other kinds are left out: an omission or the times-shifted note already
- * states them (a running turn, attachments, skipped records, earlier gaps,
- * moved times), or they were the sender's own caution about sharing.
+ * Do not duplicate warnings already represented by omissions or time-shift notices, or the sender's
+ * own sharing caution. Use safe fallback text when sender notice text is unfit to display.
  */
 const NOTICE_KINDS: Partial<
   Record<DocumentWarningCode, { readonly one: string; readonly many: (count: number) => string }>
@@ -828,11 +810,8 @@ function currentNotices(input: ValidatedConversationImport): {
 }
 
 /**
- * The import banner's notices: what the file said about itself that no
- * omission states, and the notices an earlier transfer kept. Every line,
- * earlier ones included, is plain text; repeated lines are kept once. Past
- * the limit, earlier and current lines share the room in turn and the last
- * line says how many more there were, so no kind disappears silently.
+ * Keep notices plain and deduplicated. Share limited room between earlier and current lines, then
+ * report the remainder count so no warning kind silently disappears.
  */
 function importNotices(
   input: ValidatedConversationImport,
@@ -927,11 +906,8 @@ function earlierShiftMs(snapshot: ImportedSnapshot): number {
 }
 
 /**
- * The import command for one attempt. Pure: the same package, ids, and
- * destination always give the same command. Imported history is a prefix of
- * the new thread: when its latest time is later than the import (the
- * sender's clock was ahead), every time moves back by the same amount, and
- * the thread's import origin records how far (`timesShiftedMs`).
+ * Import must remain a history prefix even when the sender's clock is ahead. Shift all timestamps
+ * back uniformly and record timesShiftedMs in origin; identical inputs must yield the same command.
  */
 export function buildConversationImportCommand(input: {
   readonly validated: ValidatedConversationImport;

@@ -1,5 +1,8 @@
 import {
   RunId,
+  ProviderThreadId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   MessageId,
   ThreadId,
   TurnItemId,
@@ -14,8 +17,11 @@ import {
   createMessageAttachmentPreviewProjector,
   deriveTimelineEntriesFromVisibleTurnItems,
   isLatestRunSettled,
+  selectComposerTasksPlan,
   workEntrySignalsSevereFailure,
 } from "./session-logic";
+
+import { makeThreadProjectionFixture } from "./test-fixtures";
 
 const timestamp = DateTime.makeUnsafe("2026-09-04T12:00:00.000Z");
 const base = {
@@ -443,4 +449,91 @@ describe("message attachment previews", () => {
     expect(ready.attachments?.[0]).toMatchObject({ previewUrl: "https://server.test/image" });
     expect(first.attachments?.[0]).toMatchObject({ previewUrl: "blob:handoff" });
   });
+});
+
+describe("OMP composer tasks", () => {
+  it.each(["omp", "scient"])(
+    "retains unfinished %s tasks after settlement and into the next run",
+    (driver) => {
+      const projection = makeThreadProjectionFixture();
+      const providerThreadId = ProviderThreadId.make("omp-session");
+      const firstRun = {
+        id: RunId.make("first-run"),
+        threadId: projection.thread.id,
+        ordinal: 1,
+        providerInstanceId: projection.thread.providerInstanceId,
+        modelSelection: projection.thread.modelSelection,
+        providerThreadId,
+        userMessageId: MessageId.make("first-message"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "completed" as const,
+        requestedAt: timestamp,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const settled = {
+        ...projection,
+        runs: [firstRun],
+        providerThreads: [
+          {
+            id: providerThreadId,
+            driver: ProviderDriverKind.make(driver),
+            providerInstanceId: ProviderInstanceId.make(driver),
+            providerSessionId: null,
+            appThreadId: projection.thread.id,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle" as const,
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        ],
+      };
+      const plan = {
+        createdAt: DateTime.formatIso(timestamp),
+        runId: firstRun.id,
+        steps: [{ step: "Restored task", status: "pending" as const }],
+      };
+      expect(selectComposerTasksPlan(settled, plan, firstRun.id, true)).toBe(plan);
+      const nextRun = {
+        ...firstRun,
+        id: RunId.make("next-run"),
+        ordinal: 2,
+        status: "running" as const,
+        completedAt: null,
+      };
+      const later = { ...settled, runs: [firstRun, nextRun] };
+      expect(selectComposerTasksPlan(later, plan, nextRun.id, false)).toBe(plan);
+      expect(
+        selectComposerTasksPlan(
+          later,
+          { ...plan, steps: [{ step: "Done", status: "completed" }] },
+          nextRun.id,
+          false,
+        ),
+      ).toBeNull();
+      expect(
+        selectComposerTasksPlan(
+          {
+            ...later,
+            runs: [
+              firstRun,
+              { ...nextRun, providerThreadId: ProviderThreadId.make("another-session") },
+            ],
+          },
+          plan,
+          nextRun.id,
+          false,
+        ),
+      ).toBeNull();
+    },
+  );
 });

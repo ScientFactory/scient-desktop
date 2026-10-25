@@ -1,13 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This store owns its app-private state file.
 /**
- * `<stateDir>/scient-extensions.json`: connector records, each with its
- * availability (`GrantScope`, shared with Secrets). Versioned; written
- * atomically (temporary file + rename). Entries that do not decode are
- * preserved verbatim and written back, and a file that cannot be loaded is
- * never overwritten: mutations fail instead.
- *
- * Format 1 kept a per-connector project policy plus separate per-project
- * selection records; it is migrated to format 2 on load and saved at once.
+ * Preserve undecodable entries verbatim and refuse mutations when the file cannot load, rather than
+ * overwriting recoverable state. Migrate format 1 to 2 atomically on load.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";

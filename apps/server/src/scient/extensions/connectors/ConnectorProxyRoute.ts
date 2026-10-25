@@ -1,11 +1,7 @@
 /**
- * `GET|POST|DELETE /mcp/connectors/<connectorId>`: the agent-facing endpoint of
- * one connected service. Mounted beside `/mcp` and outside environment auth:
- * the per-session Scient MCP bearer is the authority, exactly as for `/mcp`.
- *
- * A request is forwarded only when the bearer belongs to a thread session, the
- * connector was delivered to that session, and the live grant (connected,
- * enabled, allowed for the thread's project) still holds.
+ * This route uses per-session MCP bearer authority rather than environment auth. Require a thread
+ * session, delivery to that credential, and a still-live connected/enabled/project grant before
+ * forwarding.
  */
 import { ConnectorId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";

@@ -47,7 +47,6 @@ export interface RightPanelPullRequestProps {
   readonly pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   readonly linkedPullRequest: ThreadLinkedPullRequest | null;
   readonly branchPullRequest: ThreadLinkedPullRequest | null | undefined;
-  /** Back to the pull request list; absent when there is no list to go back to. */
   readonly onBack: (() => void) | undefined;
 }
 
@@ -65,7 +64,6 @@ export interface RightPanelFileProps {
   // SCIENT-FORK:END
 }
 
-/** The body of the thread's right panel for the surface it is showing. */
 export function RightPanelSurfaceContent(props: {
   readonly surface: RightPanelSurface | null;
   readonly activeSurfaceId: string | null;

@@ -51,6 +51,8 @@ import {
   type StartThreadTurnInput,
   type StopThreadSessionInput,
   type UnarchiveThreadInput,
+  type CloseGuestShareInput,
+  type ResolveGuestMessageInput,
   type UnlinkThreadPullRequestInput,
   type UnpinThreadInput,
   type WatchThreadPullRequestInput,
@@ -63,6 +65,8 @@ import {
   // SCIENT-FORK:END
   type VisitThreadInput,
   archiveThread,
+  closeGuestShare,
+  resolveGuestMessage,
   cancelQueuedRun,
   createThread,
   deleteThread,
@@ -216,6 +220,18 @@ export function createThreadEnvironmentAtoms<R, E>(
     delete: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:delete",
       execute: (input: DeleteThreadInput) => deleteThread(input),
+      scheduler,
+      concurrency,
+    }),
+    closeGuestShare: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:close-guest-share",
+      execute: (input: CloseGuestShareInput) => closeGuestShare(input),
+      scheduler,
+      concurrency,
+    }),
+    resolveGuestMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:resolve-guest-message",
+      execute: (input: ResolveGuestMessageInput) => resolveGuestMessage(input),
       scheduler,
       concurrency,
     }),

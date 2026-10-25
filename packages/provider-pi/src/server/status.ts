@@ -1,13 +1,6 @@
 /**
- * PiProvider — snapshot/probe layer for the Pi coding agent.
- *
- * Health is probed with `pi --version`. Models, the user's default model, and
- * the user's commands (extension slash commands, prompt templates, skills)
- * are discovered through a short-lived ephemeral RPC session
- * (`pi --mode rpc --no-session`), so everything the user configured in
- * `~/.pi/agent` — models.json entries, prompt templates and skills —
- * shows up in T3 without any hardcoded catalog. Unattended discovery never
- * executes user extensions; native interactive sessions retain them.
+ * Ephemeral RPC discovery reflects the user's Pi models, defaults and commands without a hardcoded catalog.
+ * Unattended discovery never executes user extensions; native interactive sessions retain them.
  */
 import {
   type CustomModelSetting,

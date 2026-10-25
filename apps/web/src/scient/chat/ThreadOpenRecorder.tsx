@@ -8,13 +8,9 @@ import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 /**
- * Records that the user opened a thread, which ranks it in thread search.
- *
- * Upstream records the open from its visit watermark, which also marks the
- * thread read up to its latest activity. In Scient `useAcknowledgeAnswer` is
- * the only visit writer that changes read state, so this sends the open with
- * the thread's current watermark: the server moves `lastVisitedAt` only
- * forward, so the open is counted and nothing is marked read.
+ * Only useAcknowledgeAnswer may change read state. Record an open with the existing watermark so
+ * search ranking updates without marking unseen activity read; the server watermark moves only
+ * forward.
  */
 export function ThreadOpenRecorder(props: { readonly threadRef: ScopedThreadRef }) {
   const serverThread = useThreadShell(props.threadRef);

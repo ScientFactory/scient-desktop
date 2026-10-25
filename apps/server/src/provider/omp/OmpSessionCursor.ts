@@ -35,11 +35,9 @@ const cursorFields = {
 };
 
 /**
- * Resume identity is the provider instance, the OMP home/profile, the
- * workspace, the RPC protocol, and OMP major compatibility. The executable is
- * not part of it: the transcript lives in Scient's own per-conversation
- * `--session-dir`, so a switch between system and Scient-managed OMP, or a
- * package-manager upgrade that moves the binary, resumes the same session.
+ * Exclude executable location from resume identity: transcripts live in Scient's per-conversation
+ * session directory, so system/managed switches and moved package-manager binaries can resume.
+ * Instance, home/profile, workspace, protocol, and major compatibility still bind identity.
  */
 export const OmpSessionCursor = Schema.Struct({
   schemaVersion: Schema.Literal(OMP_SESSION_CURSOR_VERSION),
@@ -48,11 +46,8 @@ export const OmpSessionCursor = Schema.Struct({
 export type OmpSessionCursor = typeof OmpSessionCursor.Type;
 
 /**
- * v3 also recorded an executable fingerprint and folded it into its scope
- * fingerprint. It migrates when that scope, recomputed with its own recorded
- * executable, still matches this instance, session directory, workspace,
- * home and profile. v2 hashed PATH into the executable identity, so it cannot
- * be verified and is refused.
+ * Verify v3 using its recorded executable when recomputing its scope. Refuse v2 because its
+ * PATH-derived executable identity cannot be verified.
  */
 const LegacyOmpSessionCursor = Schema.Struct({
   schemaVersion: Schema.Literals([OMP_V2_SESSION_CURSOR_VERSION, OMP_V3_SESSION_CURSOR_VERSION]),

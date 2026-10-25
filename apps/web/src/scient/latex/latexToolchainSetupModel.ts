@@ -1,11 +1,3 @@
-/**
- * What the LaTeX setup card says, derived from state alone.
- *
- * The card is the whole answer to "I opened a .tex file and nothing built".
- * Every branch it can show — the offer, the progress, the failure, and the
- * plain instructions for a computer Scient cannot help — is decided here so
- * the component stays a rendering of one value.
- */
 import type {
   ScientLatexManagedInstallFailureReason,
   ScientLatexManagedInstallFailureStep,
@@ -230,11 +222,9 @@ function latexSetupCardPhase(
         INSTALLING_PACKAGES_PERCENT,
       );
     case "ready":
-      // The engine is in place; the surface flips to the build flow as soon as
-      // the next toolchain poll sees it. Unless the poll has already answered
-      // and still finds nothing runnable — the server drops the probe cache
-      // before it reports `ready`, so that answer is not going to change on
-      // its own, and a card that spins forever is worse than one that says so.
+      // After ready, a fresh toolchain poll finding no runnable engine will not fix itself: the
+      // server already invalidated its probe cache. Report that state instead of spinning
+      // indefinitely.
       return input.toolchainMissing || requiredCompiler !== null
         ? {
             kind: "offer",

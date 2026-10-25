@@ -3,7 +3,6 @@ import { EditorView } from "@codemirror/view";
 import { undo } from "@codemirror/commands";
 
 import { createScientNestedCodeEditor, type ScientNestedCodeEditor } from "./codeMirrorCodeEditor";
-import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 import { waitForTestReceipt } from "../../../../test/receipt";
 
 describe("Scient nested code editor", () => {
@@ -205,7 +204,10 @@ describe("Scient nested code editor", () => {
         (span) => span.textContent === "flowchart",
       )?.style.color;
     // Module and grammar readiness precede CodeMirror's decoration publication.
-    await waitForTestReceipt(context.signal, import("./mermaidCodeHighlighting"));
+    const { getMermaidHighlighter } = await waitForTestReceipt(
+      context.signal,
+      import("./mermaidCodeHighlighting"),
+    );
     {
       const painted = Promise.withResolvers<void>();
       const observeColor = () => {
@@ -220,7 +222,7 @@ describe("Scient nested code editor", () => {
         attributeFilter: ["style"],
       });
       observeColor();
-      await waitForTestReceipt(context.signal, getSyntaxHighlighterPromise("mermaid"));
+      await waitForTestReceipt(context.signal, getMermaidHighlighter());
       await waitForTestReceipt(context.signal, painted.promise);
     }
     expect(keywordColor()).toBeTruthy();

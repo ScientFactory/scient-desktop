@@ -1,10 +1,6 @@
 /**
- * SCIENT-OWNED queue Send and release decisions.
- *
- * Send on any queued message starts it now and resumes the rest of the queue
- * after it. A message the user starts directly on an idle thread also resumes
- * a held queue. Both are pure plans; the orchestrator emits their events in
- * the same command, so the terminal hold fence sees one release boundary.
+ * Emit queue Send and release decisions in one command so the terminal hold fence observes a single
+ * release boundary. Direct idle sends also resume a held queue.
  */
 import type {
   OrchestrationV2Command,
@@ -51,12 +47,9 @@ export function planQueuedRunSend(
 }
 
 /**
- * True when this message is a direct user send that starts a run of its own:
- * an ordinary Send (`start_immediately`, no delivery intent or `auto`). Such a
- * message resumes the queue. The original intent decides, not the resulting
- * run: a Queue submission or a Steer that starts at once on an idle thread, a
- * Restart, any continuation, automatic deliveries, notifications and scheduled
- * tasks leave a held queue alone.
+ * Use original Send intent, not the resulting run, to release a held queue. Queue/Steer can start
+ * immediately on idle threads without authorizing release; restarts, continuations, and automatic
+ * work do not release it either.
  */
 export function startsDirectUserRun(
   command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,

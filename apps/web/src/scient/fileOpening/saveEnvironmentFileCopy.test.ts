@@ -73,10 +73,10 @@ describe("saveEnvironmentFileCopy", () => {
 });
 
 describe("save a copy from the file viewers", () => {
-  // An exact capability is pinned to the revision it was issued for. A viewer
-  // that asked through a cached query would be handed the previous one after
-  // the file changed, and the save would be refused as changed.
+  // Exact capabilities bind a revision; bypass cached queries so a changed file does not receive
+  // the previous capability and fail as changed.
   // FilePreviewPanel is read together with the Scient module its marked call uses.
+
   // regression: e646470c25 fix(files): keep workspace locators apart from links, and close second review
   it.each([
     ["../../components/files/FilePreviewPanel.tsx", "../fileSurfaces/scientFileReadRecovery.tsx"],

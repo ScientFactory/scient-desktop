@@ -517,6 +517,7 @@ describe("DesktopSettings", () => {
   );
 
   // SCIENT-FORK:START scient-desktop-settings - upstream's snap dropped this fix guard.
+
   // regression: 6f04a5cffb fix(desktop): Niri/Hyprland - Linux secret storage backend (#2916)
   it.effect(
     "normalizes unsupported linux password-store values without dropping other settings",
@@ -797,6 +798,7 @@ describe("DesktopSettings", () => {
   // SCIENT-FORK:END scient-desktop-settings
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: a9b1190a11 Desktop: parallel WSL + Windows backends with mode picker (#2751)
   it.effect("drops invalid persisted wsl distro values on load", () =>
     withSettings(
@@ -815,6 +817,7 @@ describe("DesktopSettings", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: aa219be713 port desktop app to Effect (#2546)
   it.effect("normalizes invalid persisted Tailscale Serve ports", () =>
     withSettings(
@@ -848,6 +851,7 @@ describe("DesktopSettings", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: aa219be713 port desktop app to Effect (#2546)
   it.effect("does not persist no-op semantic updates", () =>
     withSettings(
@@ -877,6 +881,7 @@ describe("DesktopSettings", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: 65385c0281 [codex] Refactor desktop settings Effect services (#3188)
   it.effect("reports the failed desktop settings write operation and path", () =>
     withSettings(
@@ -901,6 +906,7 @@ describe("DesktopSettings", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: aa219be713 port desktop app to Effect (#2546)
   it.effect("loads defaults when no settings file exists", () =>
     withSettings(

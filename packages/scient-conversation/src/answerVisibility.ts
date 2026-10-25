@@ -1,16 +1,6 @@
 /**
- * Whether an assistant message reads as a real answer rather than a progress
- * note. Once a turn settles, the chat folds its work behind "Worked for…";
- * earlier messages that are real answers stay visible in place.
- *
- * A message is an answer when it has structure (a heading, a list of two or
- * more items, a table, fenced code, display math or an image) or at least
- * {@link SUBSTANTIVE_ANSWER_MIN_CHARS} characters. Measured on real threads,
- * this matched hand judgement on 95% of mid-turn messages; a sentence count
- * did not, since status updates are often several short sentences.
- *
- * Line scanning only, without a Markdown parser: the timeline asks on every
- * derivation.
+ * Use structure/length rather than sentence count: progress notes often contain several short
+ * sentences. Scan lines without a Markdown parser because the timeline asks on every derivation.
  */
 export const SUBSTANTIVE_ANSWER_MIN_CHARS = 400;
 

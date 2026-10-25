@@ -10,6 +10,14 @@ Scient Agent is a fork of [Oh My Pi](./providers-omp.md). The two are separate p
 use both on the same computer, neither reads or changes the other's files, and a conversation
 started in one cannot be continued in the other.
 
+**Stop** pauses the current run while keeping the agent process and conversation ready for your
+next message. This requires `abort_and_restore_queue`, available in Scient Agent 0.1.2. Desktop
+queued messages stay held for you to send or edit. If the agent returns unused steers, a warning
+shows their text so you can send them again; they are not automatically put back in the editable
+queue. Older runtimes keep the previous restart behaviour: Stop closes the process and the next
+message resumes the conversation in a new process. Scient also closes the process if Stop fails
+or the run does not settle within three seconds.
+
 ## Setup
 
 Scient Agent is on by default and is the first provider in **Settings > Providers** and in the
@@ -94,6 +102,17 @@ When Scient Agent is the automatic writer for titles or source-control text, Sci
 concrete model from that instance's ready catalog. An explicit writer selection stays explicit.
 
 When Scient Agent has no model at all, its provider card says so and how to add one.
+
+## Conversation details
+
+Scient shows the agent's reported context usage, model capacity and session cost. The cost
+includes billed cache refreshes, with cache warming left at the agent's default. `/compact`
+uses the agent's native compaction and shows its summary when available. The agent's task
+list appears above the composer as a read-only list.
+
+Agent notices, retry progress and save failures appear in the conversation. Questions retain
+the agent's offered choices, editor text and timeout information; an expired question closes
+when the agent cancels it. Plain confirmation questions offer Yes and No.
 
 ## Where it keeps things
 

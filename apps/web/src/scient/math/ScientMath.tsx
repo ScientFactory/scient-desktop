@@ -39,12 +39,9 @@ export function renderCachedScientMath(
 }
 
 /**
- * What highlight-and-copy emits for a math node: the dollar-form source, so a
- * copied message re-renders as the same math (`markdown-clipboard.ts` returns
- * `data-markdown-copy` verbatim instead of walking KaTeX's DOM). Both modes
- * use `$$`: it re-renders unconditionally, while a single-dollar form would
- * be subject to the guarded tokenizer's plausibility rules on paste. The
- * newline framing keeps display math a block.
+ * Copy both inline and display math with double dollars so paste bypasses single-dollar
+ * plausibility guards. Frame display source with newlines to preserve block intent; do not copy
+ * KaTeX DOM.
  */
 export function mathMarkdownCopySource(tex: string, displayMode: boolean): string {
   return displayMode ? `$$\n${tex}\n$$\n\n` : `$$${tex}$$`;

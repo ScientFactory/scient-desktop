@@ -591,19 +591,20 @@ publishing it, and workspace image refresh reaches both inline and Scient-card
 renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
-The current alignment through
-`d53873b6a4799e87afd63c8d288ef0089f5a3748` is recorded in
-[the 2026-10-24 d53873b6a4 receipt](docs/internals/t3-upstream-sync-20261024-d53873b6a4.md).
-Literal merge `8d4dd69b89121d748c23d6373c0a2635ac2f2c4e` has owned base `59e27699a9f3db73f0981460906bb10a85b85f65` (the fef851bee0 alignment) and the frozen
-official target as parents, retaining all 16 official commits after `fef851bee0`,
-mostly upstream's source-control forge refactor and Cmd+K search. Typecheck, lint,
-seam checks and every package's full suite pass. Hosted CI on the exact head is
-required after Scient PRs #640 and #651 merge. Merge, release and native,
-live-provider and visual acceptance remain separate. The
-[previous receipt](docs/internals/t3-upstream-sync-20261024-fef851bee0.md)
-retains its own boundaries and evidence.
-Native V2, scientific capabilities, immutable migrations, database durability and
-all cloud, telemetry, relay, updater, mobile publication and release holds remain.
+The current committed alignment through
+`5b35402623d7d1d88eaa472807272a6c2e78012a` is recorded in
+[the 2026-10-25 receipt](docs/internals/t3-upstream-sync-20261025-5b35402623.md).
+Three literal upstream merges retain all 96 official commits after `d53873b6a4`;
+owned-main catch-up `49bab4df24d8332bbe0546ae660794dcfd85bd94` retains frozen
+owned main `7753f54630c66f5fc2a9df4585bf34b8afad12ed`. Full Stage C browser and
+server runs each had one failure, resolved with affected-file verification;
+post-catch-up affected tests, static checks, root build and isolated desktop
+smoke pass. Owner visual review of `d0f3b04a3a` is approved. Exact-head CI, merge and release
+remain separate pending steps. The
+[previous receipt](docs/internals/t3-upstream-sync-20261024-d53873b6a4.md)
+retains its own boundaries and evidence. Native V2, scientific capabilities,
+immutable migrations, storage compatibility and cloud, telemetry, relay,
+updater, mobile publication and release controls remain.
 
 ## Receiving T3 updates
 

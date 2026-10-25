@@ -13,13 +13,8 @@ export interface FileBreadcrumbChild extends ProjectEntry {
 }
 
 /**
- * The host path of a file named by a file tab or a workspace locator: an
- * absolute path as it is, a workspace path joined to the workspace root.
- *
- * A locator is never a link. A workspace folder really named `~` yields the
- * locator `~/notes.md`, which must stay under the workspace root; expanding it
- * as a home-relative link would name a different file. Links are placed before
- * they become locators.
+ * Locators are not links: a workspace folder named ~ must stay workspace-relative.
+ * Expand home-relative links before converting them to locators.
  */
 export function workspaceFileHostPath(path: string, workspaceRoot: string): string {
   if (!workspaceRoot || isAbsolutePath(path)) return path;
@@ -30,11 +25,8 @@ export function workspaceFileHostPath(path: string, workspaceRoot: string): stri
 }
 
 /**
- * The path a file tab actually reads. A workspace-relative path that climbs
- * out of the workspace (`../notes.md`, including tabs saved before links were
- * resolved) names a host file, so it becomes that absolute path and opens
- * read-only like any other file outside the project. Paths inside the
- * workspace are returned unchanged.
+ * Workspace-relative paths escaping via .. become absolute host paths and open read-only,
+ * including tabs saved before link resolution. Keep paths within the workspace unchanged.
  */
 export function resolveFileTabPath(path: string, workspaceRoot: string): string {
   if (!workspaceRoot || isAbsolutePath(path)) return path;
@@ -62,11 +54,8 @@ function pathSegments(path: string): string[] {
 }
 
 /**
- * Tab titles for open files. A title is the file's name; when several open
- * files share a name, each also gets the shortest run of parent folders that
- * tells it apart from the others (`plan.md — a`, `plan.md — b`). A file with
- * no parent folder left to show keeps its bare name, and two tabs on the very
- * same path cannot be told apart by path at all.
+ * Disambiguate equal filenames with the shortest distinguishing parent suffix.
+ * Identical paths or paths with no remaining parent cannot be distinguished further.
  */
 export function fileTabTitles(paths: ReadonlyArray<string>): Map<string, string> {
   const titles = new Map<string, string>();
@@ -121,47 +110,31 @@ export function fileBreadcrumbs(projectName: string, relativePath: string): File
   ];
 }
 
-/**
- * `relativePath` written the way its own crumb names it, so a link with a
- * trailing or repeated separator still finds its crumb.
- */
+/** Use the crumb's path spelling so trailing or repeated separators still match. */
 export function breadcrumbPathOf(relativePath: string): string {
   return fileBreadcrumbs("", relativePath).at(-1)?.path ?? relativePath;
 }
 
-/**
- * Whether a host folder crumb names a directory the server can list. A UNC
- * server (`\\server`) is not one; its shares (`\\server\share`) are.
- */
+/** UNC servers are not listable directories; their shares are. */
 export function isListableHostFolder(path: string): boolean {
   return isHostPath(path) && !/^\\\\[^\\/]+$/.test(path);
 }
 
-/** Index of `path`'s crumb among `trail`'s crumbs; -1 when the trail does not pass through it. */
 function trailCrumbIndex(trail: string, path: string): number {
   const crumbPath = breadcrumbPathOf(path);
   return fileBreadcrumbs("", trail).findIndex((crumb) => crumb.path === crumbPath);
 }
 
-/**
- * The deepest path the breadcrumbs keep showing after the browser moves to `path`.
- * Going up keeps the folders below visible so the way back down is one click;
- * moving anywhere else starts over at `path`.
- */
+/** Retain descendant crumbs when navigating up; other navigation resets the trail to path. */
 export function retainedBreadcrumbTrail(trail: string | undefined, path: string): string {
   return trail !== undefined && trailCrumbIndex(trail, path) >= 0 ? trail : path;
 }
 
-/** The entry of `folder` that leads toward `trail`; null when the trail ends at the folder. */
 export function trailChildOf(folder: string, trail: string): string | null {
   const index = trailCrumbIndex(trail, folder);
   return index < 0 ? null : (fileBreadcrumbs("", trail)[index + 1]?.label ?? null);
 }
 
-/**
- * A host path for `relativePath` (as a host folder's listing names it, with `/`)
- * inside host folder `folder`, using the folder's own separator.
- */
 export function joinHostPath(folder: string, relativePath: string): string {
   const separator = isWindowsAbsolutePath(folder) ? "\\" : "/";
   const base = folder.endsWith(separator) ? folder : `${folder}${separator}`;

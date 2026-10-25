@@ -1,34 +1,7 @@
 /**
- * Expands a downloaded TinyTeX bundle into a directory.
- *
- * A LaTeX distribution is ten thousand small files in a format Node cannot
- * read on its own, and adding an archive dependency for one feature is a poor
- * trade. `tar` is already on every platform Scient supports — bsdtar/libarchive
- * on Windows 10+ and macOS, GNU tar on Linux — and libarchive reads upstream's
- * Windows bundle (a 7-Zip archive behind an executable stub) as an archive, so
- * Scient extracts the payload instead of running the downloaded installer.
- *
- * Which `tar` is not a detail on Windows: only the OS bsdtar reads the 7-Zip
- * stub, and a bare `tar` resolves through PATH, where Git for Windows and
- * MSYS2 both place a GNU tar that rejects the bundle outright. So on Windows
- * the unpacker is pinned to `%SystemRoot%\System32\tar.exe` and refuses if
- * that is absent, which also keeps PATH — the one thing on this path a user's
- * other software can rewrite — out of the install entirely.
- *
- * Not every Windows bsdtar can decode it, though. The 7-Zip payload is LZMA,
- * and Windows 10's bsdtar is built without liblzma, so it opens the archive
- * and then fails on every entry. The bundle carries its own decoder: the stub
- * is 7-Zip's console self-extractor, which unpacks itself with `x -y -o<dir>`
- * and shows no window. When the system tar cannot expand the bundle, the
- * half-written destination is cleared and the bundle unpacks itself. Its
- * digest has been checked against the pin before this port is ever called,
- * and it is the same reviewed release whose `latexmk.exe` the install runs
- * next, so running it trusts nothing more than the install already does.
- * The system tar stays first so that every computer where it works today
- * keeps exactly the path it has.
- *
- * The extraction runs behind this port so the installer can be tested without
- * a real archive.
+ * Windows system bsdtar, not PATH GNU tar, can read the SFX archive; Windows 10 may still lack
+ * LZMA. After failed extraction, clear partial output and run only the digest-verified
+ * self-extractor. Prefer system tar where it works; this trusts the same pinned release as latexmk.
  */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";

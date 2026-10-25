@@ -1,5 +1,4 @@
 export * from "./baseSchemas.ts";
-export * from "./orchestrationV2SnapshotWire.ts";
 export * from "./assistantCitations.ts";
 export * from "./fileCitations.ts";
 export * from "./composerContext.ts";
@@ -65,6 +64,8 @@ export * from "./orchestrationDispatch.ts";
 export { ORCHESTRATION_WS_METHODS } from "./scientOrchestrationRpcMethods.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
+export * from "./guestShare.ts";
+export * from "./guestStream.ts";
 export * from "./applicationEvent.ts";
 export * from "./orchestratorMcp.ts";
 export * from "./threadMetadataMcp.ts";
@@ -131,6 +132,7 @@ export * from "./secretRequest.ts";
 export * from "./clientRpcPermissions.ts";
 
 export * from "./scientDocumentHost.ts";
+export * from "./scientPdfEdits.ts";
 // SCIENT-FORK:START — Scient editor flush contracts (new file, no upstream edits).
 export * from "./scient/editorFlush.ts";
 // SCIENT-FORK:END

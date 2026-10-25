@@ -1299,11 +1299,9 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                 displacement -= Math.max(0, part.unit.height - placement.height);
                 continue;
               }
-              // A line that follows a hyphenation break and moves to another
-              // column or page becomes a separate element, where the browser
-              // can no longer hyphenate the word; it would hyphenate earlier
-              // and strand letters. Draw the hyphen TeX prints there and keep
-              // the break where it was measured.
+              // After a column/page break the browser cannot hyphenate the split word correctly.
+              // Draw TeX's measured hyphen and retain its break instead of allowing letters to be
+              // stranded.
               const previous = index > 0 ? plan.placements[index - 1] : undefined;
               if (
                 part.hyphenated &&

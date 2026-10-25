@@ -76,6 +76,7 @@ const fakeAppImage = (canMount = true) => {
 // SCIENT-FORK:START scient-cli-command
 describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () => {
   // Scient keeps upstream's fix guards that upstream's snap dropped.
+
   // regression: 73e87f683a fix(desktop): setup prompts name a t3 that runs on desktop installs (#16676)
   it("runs the AppImage's bundled CLI with every argument and unmounts after", () => {
     const { root, image, shim } = fakeAppImage();
@@ -116,7 +117,6 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
       executable: NodePath.join(root, "app"),
       entry: "/bin.mjs",
     });
-    // sudo clears the environment, so the launcher supplies its own.
     expect(run(shim, []).stdout).toContain(`home=${root}/home`);
     // SCIENT-FORK:START scient-cli-command
     expect(run(shim, [], { SCIENT_NEXT_HOME: "/elsewhere" }).stdout).toContain("home=/elsewhere");
@@ -149,6 +149,7 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
   });
 
   // SCIENT-FORK:START scient-cli-command
+
   // regression: 73e87f683a fix(desktop): setup prompts name a t3 that runs on desktop installs (#16676)
   it("tells a person whose app moved to reopen it", () => {
     const root = tempRoot();

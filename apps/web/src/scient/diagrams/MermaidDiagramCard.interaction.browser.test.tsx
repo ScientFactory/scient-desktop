@@ -415,7 +415,7 @@ describe("Mermaid error recovery", () => {
       header.querySelector('[aria-label="Language: mermaid"]') ??
         [...header.querySelectorAll("span")].find((node) => node.textContent === "mermaid"),
     ).toBeTruthy();
-    expect(codeBlock.querySelector(".chat-markdown-shiki .shiki code")?.textContent).toBe(original);
+    expect(codeBlock.querySelector(".chat-markdown-shiki .diffs code")?.textContent).toBe(original);
     await act(() => button(_fixture, "Copy code").click());
     expect(writeText).toHaveBeenCalledWith(original);
   });

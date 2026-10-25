@@ -119,11 +119,8 @@ export function useWorkingRowExit(
 }
 
 /**
- * Plays the working header's exit on its root element: it fades while its
- * space closes, and the negative margin takes the row's bottom padding along,
- * so nothing is left to snap when it leaves. The animation is cancelled (its
- * fill removed) when the row becomes a running turn's header again, unmounts,
- * or reduced motion turns on.
+ * Close bottom padding with the row so exit cannot snap leftover space. Cancel animation fill on
+ * renewed running state, unmount, or reduced motion.
  */
 export function useWorkingRowExitAnimation({ exiting, onExitEnd }: WorkingRowExit) {
   const rootRef = useRef<HTMLDivElement>(null);

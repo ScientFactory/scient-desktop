@@ -39,13 +39,10 @@ import {
   MessageId,
   ExternalLauncherCommandNotFoundError,
   OrchestrationV2ShellSnapshot,
-  OrchestrationV2HttpThreadBoundedSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2TurnItem,
   OrchestrationV2SubagentJson,
   OrchestrationV2TurnItemJson,
-  COMPACT_THREAD_SNAPSHOT_FORMAT,
-  THREAD_SNAPSHOT_FORMAT_HEADER,
   OrchestrationV2ThreadHistoryPage,
   TerminalNotRunningError,
   TextGenerationError,
@@ -184,6 +181,8 @@ import {
   threadCreated as transferV2ThreadCreated,
   turnEvents as transferV2TurnEvents,
   THREAD_ID as transferV2ThreadId,
+  LONG_TURN_THREAD_ID as TRANSFER_V2_LONG_TURN_THREAD_ID,
+  longTurnThreadBatches as transferV2LongTurnThreadBatches,
 } from "../integration/TransferBudgetV2Fixture.integration.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
@@ -333,25 +332,13 @@ const SUCCESSFUL_GIT_EXECUTION = {
   stderrTruncated: false,
 };
 const decodeTransferThreadSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2HttpThreadBoundedSnapshot)),
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
 );
 const decodeLegacyThreadBoundedSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
 );
-const encodeTurnItemJson = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem));
 const decodeQueueOperationError = Schema.decodeUnknownEffect(ScientThreadQueueOperationError);
 const decodeQueueSnapshot = Schema.decodeUnknownEffect(ScientThreadQueueSnapshot);
-const decodeSnapshotWireAssertions = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      snapshotFormat: Schema.optionalKey(Schema.String),
-      projection: Schema.Struct({
-        turnItems: Schema.Array(Schema.Unknown),
-        visibleTurnItems: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
-      }),
-    }),
-  ),
-);
 const decodeTransferHistoryPage = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage)),
 );
@@ -1972,7 +1959,6 @@ const assertBrowserApiCorsPreflightHeaders = (
     "dpop",
     "range",
     "traceparent",
-    THREAD_SNAPSHOT_FORMAT_HEADER,
     ORCHESTRATION_PROTOCOL_HEADER,
   ]);
 };
@@ -5349,8 +5335,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  // SCIENT-FORK:START — Upstream T3 added threads without a project (#13612)
-  // and projects created from a name (#14527). Scratch is approved but still
+  // SCIENT-FORK:START — Upstream T3 added threads without a project
+  // and projects created from a name. Scratch is approved but still
   // withheld in Git data directories; create-from-name remains gated off.
   it.effect("withholds threads without a project inside a Git data directory", () =>
     Effect.gen(function* () {
@@ -5980,7 +5966,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "dpop",
         "range",
         "traceparent",
-        THREAD_SNAPSHOT_FORMAT_HEADER,
         ORCHESTRATION_PROTOCOL_HEADER,
       ]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
@@ -10271,10 +10256,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             ).pipe(Effect.result);
 
             assert.equal(failed._tag, "Failure");
-            assert.deepEqual(effects, [
-              "analytics:client.connected",
-              "launch:cmd-thread-create-failed",
-            ]);
+            assert.deepEqual(effects, ["launch:cmd-thread-create-failed"]);
 
             const succeeded = yield* client[ORCHESTRATION_V2_WS_METHODS.launchThread](
               createThreadCommand(
@@ -10292,12 +10274,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.deepEqual(effects, [
-        "analytics:client.connected",
         "launch:cmd-thread-create-failed",
         "launch:cmd-thread-create-succeeded",
         "analytics:client.thread.started",
-        // Inherited feature usage; Scient's analytics contract drops this name.
-        "analytics:feature.used",
       ]);
       assert.deepEqual(analyticsProperties, [
         {
@@ -10312,21 +10291,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           deviceModel: "iPhone 15 Pro",
           clientDeviceModel: "iPhone 15 Pro",
           connectionMethod: "relay",
+          workspaceStrategy: "root",
         },
-        {
-          surface: "mobile",
-          appVersion: "1.2.3",
-          clientAppVersion: "1.2.3",
-          clientOs: "iOS",
-          os: "iOS",
-          clientDeviceType: "phone",
-          osMajorVersion: 18,
-          clientOsMajorVersion: 18,
-          deviceModel: "iPhone 15 Pro",
-          clientDeviceModel: "iPhone 15 Pro",
-          connectionMethod: "relay",
-        },
-        { feature: "thread.launch", variant: "root", surface: "mobile" },
       ]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
@@ -10423,18 +10389,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("ignores invalid client telemetry without rejecting the connection", () =>
     Effect.gen(function* () {
-      const connectedProperties: Array<Readonly<Record<string, unknown>> | undefined> = [];
-
-      yield* buildAppUnderTest({
-        layers: {
-          analyticsService: {
-            record: (event, properties) =>
-              event === "client.connected"
-                ? Effect.sync(() => connectedProperties.push(properties))
-                : Effect.void,
-          },
-        },
-      });
+      yield* buildAppUnderTest();
 
       const invalidUrl = yield* getWsServerUrl(
         "/ws?clientSurface=watch&clientDeviceType=television&clientOs=Plan9&clientWebDeployment=cdn&clientBrowser=&clientOsMajorVersion=-1&connectionMethod=teleport",
@@ -10442,8 +10397,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Effect.scoped(
         withWsRpcClient(invalidUrl, (client) => client[WS_METHODS.serverGetSettings]({})),
       );
-
-      assert.deepEqual(connectedProperties, [{}]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
@@ -11849,127 +11802,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.deepEqual(persisted.runtimeRequests, []);
         assert.deepEqual(replay.at(-1), { kind: "synchronized" });
       }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
-  it.effect("negotiates compact HTTP snapshots without changing local or inherited history", () =>
-    Effect.gen(function* () {
-      const app = yield* buildAppUnderTest();
-      const source = yield* seedV2StreamThread(app);
-      yield* app.v2.eventSink.write({
-        events: transferV2TurnEvents(ProviderDriverKind.make("codex"), 0, false),
-      });
-      const sourceProjection = yield* app.v2.threads.getThreadProjection(transferV2ThreadId);
-      const sourceRun = sourceProjection.runs[0];
-      assertTrue(sourceRun !== undefined);
-      const targetThreadId = ThreadId.make("http-compact-inherited-target");
-      const created = transferV2ThreadCreated(ProviderDriverKind.make("codex"));
-      yield* app.v2.eventSink.write({
-        events: [
-          {
-            ...created,
-            id: EventId.make("http-compact-inherited-target-created"),
-            threadId: targetThreadId,
-            payload: {
-              ...source.thread,
-              id: targetThreadId,
-              lineage: {
-                parentThreadId: transferV2ThreadId,
-                relationshipToParent: "fork",
-                rootThreadId: transferV2ThreadId,
-              },
-              forkedFrom: { type: "run", threadId: transferV2ThreadId, runId: sourceRun.id },
-            },
-          },
-        ],
-      });
-      yield* app.v2.eventSink.write({
-        events: transferV2TurnEvents(ProviderDriverKind.make("codex"), 1, false).map((event) => {
-          switch (event.type) {
-            case "run.created":
-              return {
-                ...event,
-                threadId: targetThreadId,
-                payload: { ...event.payload, threadId: targetThreadId },
-              };
-            case "run.updated":
-              return {
-                ...event,
-                threadId: targetThreadId,
-                payload: { ...event.payload, threadId: targetThreadId },
-              };
-            case "message.updated":
-              return {
-                ...event,
-                threadId: targetThreadId,
-                payload: { ...event.payload, threadId: targetThreadId },
-              };
-            case "turn-item.updated":
-              return {
-                ...event,
-                threadId: targetThreadId,
-                payload: { ...event.payload, threadId: targetThreadId },
-              };
-            default:
-              throw new Error(`Unexpected transcript fixture event ${event.type}`);
-          }
-        }),
-      });
-      const headers = {
-        cookie: yield* getAuthenticatedSessionCookieHeader(),
-        [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-      };
-      const url = `${yield* getHttpServerUrl()}/api/orchestration/threads/${targetThreadId}/bounded`;
-      const legacyResponse = yield* measureHttpGet({ url, headers });
-      const compactResponse = yield* measureHttpGet({
-        url,
-        headers: { ...headers, [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT },
-      });
-      assert.equal(legacyResponse.status, 200);
-      assert.equal(compactResponse.status, 200);
-      const legacyText = Buffer.from(legacyResponse.decodedBody).toString("utf8");
-      const compactText = Buffer.from(compactResponse.decodedBody).toString("utf8");
-      const legacy = yield* decodeLegacyThreadBoundedSnapshot(legacyText);
-      const compact = yield* decodeTransferThreadSnapshot(compactText);
-      assertTrue("snapshotFormat" in compact);
-      const { snapshotFormat, ...expanded } = compact;
-      assert.equal(snapshotFormat, COMPACT_THREAD_SNAPSHOT_FORMAT);
-      assert.deepEqual(expanded, legacy);
-      const legacyJson = yield* decodeSnapshotWireAssertions(legacyText);
-      const compactJson = yield* decodeSnapshotWireAssertions(compactText);
-      assert.notProperty(legacyJson, "snapshotFormat");
-      assert.equal(compactJson.snapshotFormat, COMPACT_THREAD_SNAPSHOT_FORMAT);
-      let references = 0;
-      let inheritedInline = 0;
-      for (const [index, row] of legacy.projection.visibleTurnItems.entries()) {
-        const legacyRow = legacyJson.projection.visibleTurnItems[index];
-        const wireRow = compactJson.projection.visibleTurnItems[index];
-        assertTrue(legacyRow !== undefined && wireRow !== undefined);
-        assert.notProperty(legacyRow, "itemIndex");
-        assert.deepEqual(legacyRow.item, encodeTurnItemJson(row.item));
-        if ("itemIndex" in wireRow) {
-          references += 1;
-          assert.equal(row.visibility, "local");
-          assert.notProperty(wireRow, "item");
-          const { itemIndex: referenceIndex, ...referenceMetadata } = wireRow;
-          const { item: legacyItem, ...legacyMetadata } = legacyRow;
-          assertTrue(typeof referenceIndex === "number");
-          assert.deepEqual(referenceMetadata, legacyMetadata);
-          assert.deepEqual(compactJson.projection.turnItems[referenceIndex], legacyItem);
-        } else if (row.visibility === "inherited") {
-          inheritedInline += 1;
-          assert.deepEqual(wireRow, legacyRow);
-        }
-      }
-      assert.isAbove(references, 0);
-      assert.isAbove(inheritedInline, 0);
-      assert.deepEqual(
-        legacy.projection.runs.map((run) => run.id),
-        [RunId.make("run-1")],
-      );
-      assert.isTrue(
-        legacy.projection.visibleTurnItems.some((row) => row.sourceThreadId === transferV2ThreadId),
-      );
-    }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
   it.effect("pages the complete V2 transcript after a bounded HTTP cold open", () =>
@@ -14685,11 +14517,10 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
             return yield* Effect.scoped(
               Effect.gen(function* () {
                 const threadSnapshot = yield* measureHttpGet({
-                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}/bounded`,
+                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}/bounded?compactTurnItems=1&dedupeBodies=1&compactIds=1`,
                   headers: {
                     cookie,
                     [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-                    [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT,
                   },
                 });
                 yield* Effect.logInfo(
@@ -14935,6 +14766,36 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   TRANSFER_HISTORY_TURN_COUNT + 1,
                 );
 
+                // A long agent turn opens with a bounded first page (553203c57b).
+                for (const events of transferV2LongTurnThreadBatches(provider))
+                  yield* app.v2.eventSink.write({ events });
+                const longTurnColdOpen = yield* measureHttpGet({
+                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_V2_LONG_TURN_THREAD_ID}/bounded?compactTurnItems=1&dedupeBodies=1&compactIds=1`,
+                  headers: {
+                    cookie,
+                    [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+                  },
+                });
+                assert.equal(longTurnColdOpen.status, 200);
+                const longTurnOpen = yield* decodeTransferThreadSnapshot(
+                  Buffer.from(longTurnColdOpen.decodedBody).toString("utf8"),
+                );
+                const longTurnCursor = longTurnOpen.historyCursor;
+                if (longTurnCursor === null)
+                  return yield* Effect.die("Expected older long-turn history");
+                const longTurnHistoryPage = yield* measureHttpGet({
+                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_V2_LONG_TURN_THREAD_ID}/history?cursor=${encodeURIComponent(longTurnCursor)}`,
+                  headers: {
+                    cookie,
+                    [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+                  },
+                });
+                assert.equal(longTurnHistoryPage.status, 200);
+                const longTurnPage = yield* decodeTransferHistoryPage(
+                  Buffer.from(longTurnHistoryPage.decodedBody).toString("utf8"),
+                );
+                assert.isTrue(longTurnPage.hasMoreHistory);
+
                 return {
                   provider,
                   startupTransport: "bounded-compact-http-with-live-cursor",
@@ -14953,6 +14814,14 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   },
                   measuredTurnSqlStatements,
                   reconnectSqlStatements,
+                  longTurnColdOpen: {
+                    http: longTurnColdOpen,
+                    rows: longTurnOpen.projection.visibleTurnItems.length,
+                  },
+                  longTurnHistoryPage: {
+                    http: longTurnHistoryPage,
+                    rows: longTurnPage.items.length,
+                  },
                 } satisfies TransferBudgetRun;
               }),
             );

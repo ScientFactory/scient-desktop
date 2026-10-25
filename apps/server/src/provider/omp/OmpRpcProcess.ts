@@ -198,11 +198,8 @@ const OMP_SECRET_FIELD =
 const OMP_LOG_MAX_DEPTH = 32;
 
 /**
- * A copy of an Oh My Pi frame or notification that is safe to persist:
- * credential fields are replaced, text is redacted like diagnostics (bearer
- * tokens, key-shaped strings, and the values of credential variables in
- * `env`), image data is replaced by its length, and the value a user typed
- * into an extension UI prompt (which may be an API key) is not kept.
+ * Persist no prompt-entered values: extension UI input may be an API key. Redact
+ * credentials/diagnostic secrets and replace image data with its length before storing frames.
  */
 /**
  * The environment redaction works from: the child environment plus each known
@@ -272,11 +269,8 @@ const OMP_EXACT_SECRET_MIN_CHARS = 12;
 const OMP_EXACT_SECRET_NAME = /(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?)$/iu;
 
 /**
- * Everything one Oh My Pi process knows that must not leave it: the
- * credentials in its environment and the secrets it was given through a
- * bootstrap file (Scient's MCP bearer, custom-model keys, the models endpoint
- * token). The set is fixed for the life of the process: a changed key retires
- * the process and a new one starts with the new set.
+ * Freeze known secrets for the process lifetime, including bootstrap capabilities. A changed key
+ * retires the process so redaction and runtime credentials cannot diverge.
  */
 export interface OmpRedaction {
   /**
@@ -350,11 +344,8 @@ export const makeOmpRedaction = (
 };
 
 /**
- * A bounded stderr tail that is redacted before it is truncated. Complete
- * lines are redacted as they arrive and only then appended to the tail, so a
- * truncation can never cut a credential in half and leave a fragment the
- * redaction no longer recognizes. The unterminated last line waits in
- * `pending` for the chunk that completes it.
+ * Redact complete lines before truncating so credentials cannot be cut into unrecognizable
+ * fragments. Retain an unterminated line until its completing chunk arrives.
  */
 export interface OmpStderrTail {
   readonly redacted: string;

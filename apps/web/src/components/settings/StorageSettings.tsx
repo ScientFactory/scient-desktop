@@ -167,7 +167,6 @@ function RetentionControl({
   );
 }
 
-/** One line for the last-run fold; identical results across machines collapse into one. */
 function lastRunSummary(
   entries: readonly { readonly label: string; readonly counts: string }[],
   machineCount: number,

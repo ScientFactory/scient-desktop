@@ -64,22 +64,15 @@ const TUNNEL_STDERR_TAIL_CHARS = 16_384;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
 const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
-// A cold archive launch also downloads and unpacks a ~70 MB release archive
-// and may wait on another installer's lock. The budgets nest: the checksum
-// file is tiny and the archive download is bounded; a waiter outlasts both
-// downloads plus extraction so it can reuse the result; and the SSH command
-// outlasts an install (own or waited-for) plus readiness, with slack for
-// verification and extraction, which have no timeout of their own.
+// Cold archive launches download and extract ~70 MB and may wait on an install lock.
+// Lock waits must outlast both downloads and extraction; SSH must outlast install or wait plus readiness.
+// Leave slack for verification and extraction, which have no timeout.
 const REMOTE_ARCHIVE_CHECKSUMS_SECONDS = 30;
 const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
 const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
 
-// SCIENT-FORK:START — upstream replaced this module wholesale with the
-// release-archive runner. Scient's own SSH product still installs the exact
-// pinned server package over npx/npm (`scientServerPackageSpec`), so both
-// install strategies are generated here: `packageSpec` is the fork's npm
-// path, `archiveVersion` is upstream's self-contained archive path.
+// SCIENT-FORK:START — Scient SSH installs its pinned npm package; retain upstream's archive strategy too.
 export interface RemoteT3RunnerOptions {
   /**
    * Dev mode: run `node <path>` on the remote instead of an installed
@@ -164,13 +157,8 @@ interface SshAuthOperationInput<T> {
     authOptions: SshAuth.SshAuthOptions,
   ) => Effect.Effect<T, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
 }
-// Which remote install strategy the generated scripts use. The launch script,
-// the launch budget, and the pairing budget must agree on this, so the
-// decision lives in one place.
-//
-// SCIENT-FORK: upstream knows only "node script" and "archive". Scient's own
-// product still installs a pinned server package over npx/npm, which needs
-// Node on the remote just like the dev node-script path does.
+// Launch scripts and launch/pairing budgets must use the same install strategy.
+// SCIENT-FORK: Pinned npm installs require remote Node, just like development node-script installs.
 type RemoteRunnerMode = "node-script" | "package" | "archive";
 
 function remoteRunnerMode(runner: RemoteT3RunnerOptions | undefined): RemoteRunnerMode {
@@ -592,13 +580,8 @@ fi
 exec "$T3_RUNTIME_DIR/t3" "$@"
 `;
 
-// SCIENT-FORK:START — Scient's SSH product installs the exact, immutable
-// server package published in its own signed release, not the upstream
-// per-platform archive, so the npx/npm install path stays. Node is required
-// on the remote here, which is why the launch script's helper dispatch and
-// the launch budget both treat this mode like the dev node-script path.
-// Only that pinned package runs: never a `t3` or `scient` already on the
-// remote PATH, and never T3's npm package.
+// SCIENT-FORK:START — run only the immutable server package pinned by the Scient release.
+// Never reuse remote PATH commands or the T3 npm package. npm mode requires remote Node and its launch budget.
 const REMOTE_PACKAGE_INSTALL_BLOCK = `ensure_remote_node_path || true
 if [ -z @@T3_PACKAGE_SPEC@@ ]; then
   printf 'This Scient build has no published Scient server release to install on the remote host. Connect from a released Scient desktop build.\\n' >&2

@@ -13,18 +13,9 @@ import * as Scope from "effect/Scope";
 import type { OmpTarget } from "./OmpTarget.ts";
 
 /**
- * Serializes Oh My Pi runtime mutation against new OMP processes in this
- * server (invariant I5). Every OMP child process holds a lease on its
- * canonical executable identity (the real path of the resolved command) for
- * its whole life: conversations, discovery, text generation, custom-model
- * tests, and managed qualification. A managed-runtime activation takes the
- * identity exclusively: new leases wait behind it, and it waits for short
- * one-shot work to drain. Conversations are expected to have been stopped by
- * the provider runtime manager's activation window before activation starts.
- *
- * The gate is per server. It does not coordinate a second Scient process;
- * Scient never runs `omp update`, so nothing else replaces an executable that
- * Scient launched.
+ * Every OMP process leases its canonical executable for life; activation takes it exclusively after
+ * the manager stops conversations and short work drains. This gate is per server, not
+ * cross-process; Scient must never run omp update against launched executables.
  */
 
 /** How long a new process waits behind an activation before failing. */

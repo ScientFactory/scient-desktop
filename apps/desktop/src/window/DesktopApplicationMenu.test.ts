@@ -276,6 +276,7 @@ describe("DesktopApplicationMenu", () => {
   );
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: 68c2277f50 feat(composer): fold large pastes into text attachments (#11442)
   it.effect("owns Paste as Text and routes it through the renderer", () =>
     Effect.gen(function* () {
@@ -309,6 +310,7 @@ describe("DesktopApplicationMenu", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: aa219be713 port desktop app to Effect (#2546)
   it.effect("installs the native menu and routes Settings through DesktopWindow", () =>
     Effect.gen(function* () {

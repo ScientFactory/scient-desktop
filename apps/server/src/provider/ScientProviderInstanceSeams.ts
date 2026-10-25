@@ -165,11 +165,8 @@ export interface ProviderConnectionAttempt {
     | ((code: string) => Effect.Effect<void, ProviderConnectionActionFailure>)
     | undefined;
   /**
-   * For a flow that can ask after the attempt is described: resolves when the
-   * provider asks its next question, the first one after the link or another
-   * after an answer. The manager runs it again after each question and
-   * republishes the operation as accepting an answer. Absent when the flow
-   * asks nothing after it starts.
+   * After each provider question, re-arm this wait so the manager can republish answer
+   * availability; some flows ask again after the link or a submitted answer.
    */
   readonly nextQuestion?:
     | Effect.Effect<{
@@ -227,11 +224,9 @@ export interface ProviderManagedRuntimeActions {
     action: ProviderManagedRuntimeAction,
   ) => Effect.Effect<Omit<ProviderRuntimePlan, "instanceId">, ProviderConnectionActionFailure>;
   /**
-   * Runs a planned action. Download, verification, and staging may proceed
-   * while the provider is in use; `awaitActivationWindow` must complete
-   * immediately before the live runtime changes. The runtime manager always
-   * supplies it: it waits for the provider's running work to finish and then
-   * stops its sessions. Direct callers such as tests may omit it.
+   * Downloads and staging may run while the provider is busy, but awaitActivationWindow must finish
+   * immediately before live runtime mutation. The manager waits for work and stops sessions; only
+   * direct callers such as tests may omit it.
    */
   readonly run: (
     action: ProviderManagedRuntimeAction,

@@ -1,10 +1,7 @@
 import * as Hex from "effect/encoding/Hex";
 /**
- * Conversation export on the server: capture a snapshot, build its document
- * bundle, write the requested format, and hand back either a temporary file
- * (read through a signed asset by the HTTP layer) or text for the clipboard.
- * Formats this host cannot produce are reported, not attempted: Word is
- * available whenever the managed Pandoc is installed on this server.
+ * Only attempt formats this server can produce; managed Pandoc availability belongs to the server
+ * host, not the viewing client.
  */
 import {
   CONVERSATION_REFERENCE_URL_PREFIX,
@@ -260,12 +257,8 @@ const make = Effect.gen(function* () {
   const captureRequest = Effect.fn("ConversationExportService.captureRequest")(function* (
     request: ScientConversationExportRequest,
   ) {
-    // Every export path captures through here, so this is where partial
-    // ranges are refused. The snapshot's range selection stays for later, but
-    // it cuts records by creation time, and a plan, reasoning block, or message
-    // created before the chosen message and updated after it keeps its
-    // creation time while carrying the later content. That must be solved
-    // before ranges are accepted again.
+    // Refuse partial ranges: creation-time cuts can include later edits to earlier messages, plans,
+    // or reasoning. Range acceptance needs that historical-content ambiguity resolved first.
     if (request.options.range._tag !== "whole") {
       return yield* reject(
         "range-unavailable",

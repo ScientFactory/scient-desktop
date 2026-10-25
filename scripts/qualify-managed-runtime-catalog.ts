@@ -115,11 +115,9 @@ const verifyPiIntegration = (binary: string, version: string, platform: NodeJS.P
   });
 
 /**
- * Droid is published only after the installed binary speaks the protocol the
- * app depends on: ACP startup, the session controls (model, autonomy level,
- * reasoning effort), a turn, and the guards around custom-model keys,
- * background generation and request loops. Every request goes to a local stub
- * with a fixture key and a private HOME: no Factory account and no network.
+ * Release qualification must exercise ACP controls, a turn, and key/background/request-loop guards.
+ * Use local stubs, fixture keys, and private HOME so no Factory account or external network is
+ * required.
  */
 const verifyDroidProtocol = (binary: string, version: string, platform: NodeJS.Platform) =>
   runLiveTests({
@@ -171,11 +169,9 @@ function isRunning(pid: number): boolean {
 }
 
 /**
- * Ends `root` and every process below it, and resolves to whether they are all
- * known to have exited (waiting up to 10 seconds). On POSIX the agent runs in
- * its own process group, so killing the supervisor alone would leave it
- * running: the tree is read first, because orphans lose their parent link once
- * the supervisor dies. A tree that could not be read is not known to have ended.
+ * Read the descendant tree before killing the supervisor: orphans lose their parent link. Killing
+ * only the POSIX supervisor leaves its process group running; an unreadable tree cannot prove
+ * cleanup succeeded.
  */
 async function terminateProcessTree(root: number): Promise<boolean> {
   if (HostProcess.Platform.defaultValue() === "win32") {

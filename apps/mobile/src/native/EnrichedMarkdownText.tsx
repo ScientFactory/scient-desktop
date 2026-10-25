@@ -1,35 +1,33 @@
-import {
-  decodeComposerContextFragment,
-  encodeComposerContextFragment,
-} from "@t3tools/shared/composerContextClipboard";
+import { decodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
   collectComposerContextReferences,
   formatComposerContextHref,
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
-// SCIENT-FORK:START — rendering and native Copy share source-preserving projections.
-import { nativeMarkdownProjection } from "../lib/markdownDocument";
-// SCIENT-FORK:END
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import {
+  markdownWithHtml,
+  markdownWithInlineFileLinks,
+  markdownWithTableBreaks,
+} from "../lib/markdownDocument";
+import { isValidElement, useCallback, useMemo, useState, type ReactNode } from "react";
 import { Platform, Share, StyleSheet, View } from "react-native";
 import {
   EnrichedMarkdownText,
-  type DocumentAssetsEvent,
+  type MarkdownImageBlock,
+  type MarkdownLinkOccurrence,
   type MarkdownStyle,
-  type MarkdownMediaAsset,
 } from "react-native-enriched-markdown";
 import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { Menu } from "../components/ui/Menu";
 import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
+import { useRetryingImageSource } from "./useRetryingImageSource";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import {
+  ENRICHED_INLINE_FILE_LINK_REGEX,
   enrichedSkillLinkRegex,
   enrichedLinkVariantPattern,
-  // SCIENT-FORK:START — canonical Skill copy uses the existing recognition owner.
-  enrichedSkillReference,
-  // SCIENT-FORK:END
 } from "../lib/enrichedLinkPresentation";
 
 function enrichedStyle(
@@ -156,38 +154,45 @@ function enrichedStyle(
 
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource } = props;
-  // SCIENT-FORK:START
-  const projection = useMemo(() => nativeMarkdownProjection(props.markdown), [props.markdown]);
-  const markdown = projection.markdown;
-  // SCIENT-FORK:END
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
-  const [documentAssets, setDocumentAssets] = useState<DocumentAssetsEvent["assets"]>([]);
-  const onDocumentAssets = useCallback(({ assets }: DocumentAssetsEvent) => {
-    setDocumentAssets((previous) =>
-      previous.length === assets.length &&
-      previous.every((asset, index) => {
-        const next = assets[index]!;
-        return (
-          asset.id === next.id &&
-          asset.kind === next.kind &&
-          asset.url === next.url &&
-          asset.altText === next.altText &&
-          asset.title === next.title &&
-          asset.placement === next.placement &&
-          asset.eligible === next.eligible
-        );
-      })
+  const markdown = useMemo(
+    () =>
+      markdownWithTableBreaks(
+        markdownWithInlineFileLinks(
+          markdownWithHtml(props.markdown),
+          ENRICHED_INLINE_FILE_LINK_REGEX,
+        ),
+      ),
+    [props.markdown],
+  );
+  const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
+  const onLinksChange = useCallback((links: MarkdownLinkOccurrence[]) => {
+    const urls = [...new Set(links.map((link) => link.url))];
+    setParsedLinkUrls((previous) =>
+      previous.length === urls.length && previous.every((url, index) => url === urls[index])
         ? previous
-        : assets,
+        : urls,
     );
   }, []);
-  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(documentAssets, props);
-  const linkRecognition = useMemo(
-    () => ({
-      text: enrichedSkillLinkRegex(props.skills) ?? undefined,
-    }),
-    [props.skills],
+  const skillRegex = useMemo(() => enrichedSkillLinkRegex(props.skills), [props.skills]);
+  // Skill links come from linkRecognition, which runs as the text is drawn, so
+  // onLinksChange never reports them. Joined so a streaming tick keeps the value.
+  const skillLinkKey = useMemo(
+    () =>
+      skillRegex
+        ? [...new Set(markdown.match(new RegExp(skillRegex.source, "gu")) ?? [])].join("\n")
+        : "",
+    [markdown, skillRegex],
   );
+  const linkUrls = useMemo(
+    () =>
+      skillLinkKey
+        ? [...new Set([...parsedLinkUrls, ...skillLinkKey.split("\n")])]
+        : parsedLinkUrls,
+    [parsedLinkUrls, skillLinkKey],
+  );
+  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(linkUrls, props);
+  const linkRecognition = useMemo(() => ({ text: skillRegex ?? undefined }), [skillRegex]);
   const [activeMenu, setActiveMenu] = useState<{
     url: string;
     menu: NonNullable<ReturnType<NonNullable<typeof props.fileContextMenu>>>;
@@ -206,11 +211,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     () =>
       Platform.OS === "ios" && (fileContextMenu || onLinkPress)
         ? Object.fromEntries(
-            [
-              ...new Set(
-                documentAssets.filter((asset) => asset.kind === "link").map((asset) => asset.url),
-              ),
-            ].map((url) => {
+            linkUrls.map((url) => {
               const menu = fileContextMenu?.(url) ?? {
                 title: url,
                 actions: [
@@ -230,34 +231,15 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             }),
           )
         : undefined,
-    [documentAssets, fileContextMenu, onLinkPress, performMenuAction],
+    [linkUrls, fileContextMenu, onLinkPress, performMenuAction],
   );
   const selectionClipboard = useMemo(() => {
     const fragment = decodeComposerContextFragment(props.contextClipboardFragment);
-    // SCIENT-FORK:START — per-occurrence file sources never collapse by URL or label.
-    const linkSources = projection.linkSources;
-    // SCIENT-FORK:END
-    // SCIENT-FORK:START — recognized Skill links copy the canonical authoring sigil.
-    const skillRegex = enrichedSkillLinkRegex(props.skills);
-    const skills = skillRegex
-      ? [...props.markdown.matchAll(new RegExp(skillRegex.source, "gu"))].flatMap((match) => {
-          const skill = enrichedSkillReference(match[0], props.skills);
-          return skill ? [[match[0], `$${skill.name}`]] : [];
-        })
-      : [];
-    if (
-      !fragment &&
-      !linkSources.some((link) => link.source !== null) &&
-      skills.length === 0 &&
-      Object.keys(projection.recognizedLinkTextByUrl).length === 0
-    )
-      return undefined;
-    // SCIENT-FORK:END
+    if (!fragment) return undefined;
     const references = collectComposerContextReferences(props.markdown);
-    const linkTextByUrl = Object.fromEntries([
-      ...skills,
-      ...references.flatMap((reference) => {
-        const record = fragment?.records.find((entry) => entry.contextId === reference.contextId);
+    const linkTextByUrl = Object.fromEntries(
+      references.flatMap((reference) => {
+        const record = fragment.records.find((entry) => entry.contextId === reference.contextId);
         return record
           ? [
               [
@@ -267,47 +249,36 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             ]
           : [];
       }),
-    ]);
+    );
     return {
       linkTextByUrl,
-      // SCIENT-FORK:START — native renderers bind the parse index before pill collapse.
-      linkSources,
-      recognizedLinkTextByUrl: projection.recognizedLinkTextByUrl,
-      // The native Copy operation selects records; only a codec-validated fragment reaches it.
-      ...(fragment
-        ? { contextFragment: encodeComposerContextFragment(fragment) ?? undefined }
-        : {}),
-      // SCIENT-FORK:END
+      htmlAttributes: {
+        "data-t3-context-fragment": encodeURIComponent(props.contextClipboardFragment!),
+      },
+      mimeTypes: { "app.t3.context-fragment": props.contextClipboardFragment! },
     };
-  }, [
-    props.contextClipboardFragment,
-    props.markdown,
-    props.skills,
-    projection.linkSources,
-    projection.recognizedLinkTextByUrl,
-  ]);
+  }, [props.contextClipboardFragment, props.markdown]);
   const markdownStyle = useMemo(
     () => ({ ...enrichedStyle(props.textStyle, themeAppearance === "dark"), linkVariants }),
     [props.textStyle, themeAppearance, linkVariants],
   );
-  const renderMedia = useCallback(
-    (asset: MarkdownMediaAsset) =>
-      renderImage?.({
-        href: asset.url,
-        alt: asset.altText || null,
-        title: asset.title || null,
-      }) ?? null,
+  const renderers = useMemo(
+    () =>
+      renderImage
+        ? {
+            image: (block: MarkdownImageBlock) => {
+              const element = renderImage({
+                href: block.url,
+                alt: block.altText || null,
+                title: block.title || null,
+              });
+              return isValidElement(element) ? element : undefined;
+            },
+          }
+        : undefined,
     [renderImage],
   );
-  const resolveNativeImageSource = useCallback(
-    (asset: MarkdownMediaAsset) =>
-      resolveImageSource?.({
-        href: asset.url,
-        alt: asset.altText || null,
-        title: asset.title || null,
-      }) ?? null,
-    [resolveImageSource],
-  );
+  const resolveNativeImageSource = useRetryingImageSource(resolveImageSource);
   const renderMarkdown = (openAndroidMenu?: () => void) => {
     const onLinkLongPress =
       Platform.OS === "android" && props.fileContextMenu
@@ -336,9 +307,9 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         <EnrichedMarkdownText
           markdown={markdown}
           markdownStyle={markdownStyle}
-          onDocumentAssets={onDocumentAssets}
-          renderMedia={renderImage ? renderMedia : undefined}
-          resolveImageSource={resolveImageSource ? resolveNativeImageSource : undefined}
+          onLinksChange={onLinksChange}
+          renderers={renderers}
+          resolveImageSource={resolveNativeImageSource}
           onImagePress={
             props.onImagePress || props.onLinkPress
               ? ({ url }) => (props.onImagePress ?? props.onLinkPress)?.(url)
@@ -391,7 +362,6 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   );
 }
 
-/** Adapts the rich-text link gesture to Menu's long-press trigger without wrapping text in a Pressable. */
 function MarkdownMenuAnchor(props: {
   readonly renderMarkdown: (openMenu?: () => void) => ReactNode;
   readonly onLongPress?: () => void;

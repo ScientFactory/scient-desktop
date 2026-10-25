@@ -55,9 +55,8 @@ export function getProviderStatusBannerKey(status: ServerProvider | null): strin
   // A healthy provider has nothing to say. An incompatible one already
   // returned above, so this cannot hide a real compatibility banner.
   if (status.status === "ready") return null;
-  // Saved Antigravity credentials are checked on session start, not by the
-  // passive health probe. Its local health check leaves auth unknown after a
-  // restart, which is not a failure. Keep real lifecycle failures visible.
+  // Antigravity validates credentials at session start; unknown restart auth is not failure.
+  // Keep real lifecycle failures visible.
   if (
     status.driver === "antigravity" &&
     status.installed &&

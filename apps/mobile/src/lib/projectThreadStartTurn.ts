@@ -8,35 +8,13 @@ import {
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
-  type UploadChatAttachment,
 } from "@t3tools/contracts";
-import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
-import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
 import {
-  deriveThreadTitleSeed as deriveSharedThreadTitleSeed,
+  deriveThreadTitleSeed,
   threadTitleTextFromPrompt,
 } from "@t3tools/client-runtime/operations";
 
-export function deriveThreadTitleFromPrompt(value: string): string {
-  const title = threadTitleTextFromPrompt(composerCitationsToPlainText(value)) || "New thread";
-  return title.length <= 72 ? title : `${title.slice(0, 69).trimEnd()}...`;
-}
-
-// SCIENT-FORK:START — file quotes keep readable titles through the shared context normalizer.
-export function deriveThreadTitleSeed(input: {
-  readonly text: string;
-  readonly attachments: ReadonlyArray<Pick<ChatAttachment, "type" | "name">>;
-}): string {
-  return deriveSharedThreadTitleSeed({
-    ...input,
-    text: composerCitationsToPlainText(input.text),
-    attachments: input.attachments.map((attachment) => ({
-      ...attachment,
-      name: composerCitationsToPlainText(attachment.name),
-    })),
-  });
-}
-// SCIENT-FORK:END
+import type { UploadedMobileAttachment } from "./attachmentUpload";
 
 export interface ProjectThreadStartTurnSpec {
   readonly projectId: ProjectId;
@@ -48,10 +26,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly text: string;
   readonly titleText?: string;
   readonly context?: OrchestrationMessageContext;
-  /** Wire attachments in composer order: freshly uploaded ones from
-   * `prepareTurnAttachments`, or the server's own persisted copies when a
-   * thread is relaunched from its setup message. */
-  readonly uploadedAttachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
+  readonly uploadedAttachments: ReadonlyArray<UploadedMobileAttachment | ChatAttachment>;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -69,9 +44,8 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
   });
   const isWorktree = spec.workspaceMode === "worktree";
   return {
-    creationSource: "mobile" as const,
     commandId: CommandId.make(spec.commandId),
-    selectedScientSkillNames: collectSelectedScientSkillNames(spec.text),
+    creationSource: "mobile" as const,
     threadId: ThreadId.make(spec.threadId),
     message: {
       messageId: MessageId.make(spec.messageId),
@@ -109,4 +83,9 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
     },
     createdAt: spec.createdAt,
   };
+}
+
+export function deriveThreadTitleFromPrompt(value: string): string {
+  const title = threadTitleTextFromPrompt(value) || "New thread";
+  return title.length <= 72 ? title : `${title.slice(0, 69).trimEnd()}...`;
 }

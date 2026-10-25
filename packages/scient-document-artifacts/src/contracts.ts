@@ -117,11 +117,8 @@ export const DocumentBindingChangeKind = Schema.Literals([
 export type DocumentBindingChangeKind = typeof DocumentBindingChangeKind.Type;
 
 /**
- * Notification payload for the binding-change seam. It carries binding identity
- * and the observable state, never producer-specific detail: a consumer either
- * uses the snapshot directly or re-reads the authoritative binding through
- * `getDescriptor`. Delivery may be coalesced, so the persisted binding stays
- * authoritative.
+ * Binding notifications may be coalesced. Treat the persisted binding as authoritative and carry no
+ * producer-specific detail across this consumer seam.
  */
 export const DocumentBindingChange = Schema.Struct({
   changeKind: DocumentBindingChangeKind,
@@ -266,6 +263,16 @@ export const AssetCopyRequest = Schema.Struct({
   ),
 });
 export type AssetCopyRequest = typeof AssetCopyRequest.Type;
+
+export const PdfBytesCopyRequest = Schema.Struct({
+  bytes: Schema.Uint8Array.check(Schema.isMinLength(1), Schema.isMaxLength(50 * 1024 * 1024)),
+  suggestedFileName: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(255),
+    Schema.isPattern(/^[^/\\\x00]+\.pdf$/iu),
+  ),
+});
+export type PdfBytesCopyRequest = typeof PdfBytesCopyRequest.Type;
 
 export const AssetCopyFailureReason = Schema.Literals([
   "dialog-failed",

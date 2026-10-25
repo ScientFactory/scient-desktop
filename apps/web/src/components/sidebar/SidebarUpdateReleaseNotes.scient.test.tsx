@@ -69,7 +69,6 @@ function renderNotes(state: DesktopUpdateState, openExternal = vi.fn().mockResol
   });
 }
 
-// Restored from the upstream-deleted SidebarUpdateReleaseNotes.test.tsx.
 // regression: 5014e5fcdd fix(desktop): show newest changes in nightly previews (#9138)
 describe("SidebarUpdateReleaseNotes", () => {
   beforeEach(() => {

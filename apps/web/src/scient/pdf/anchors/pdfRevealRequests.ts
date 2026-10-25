@@ -4,12 +4,8 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { pdfReaderSessionDocumentKey } from "../pdfReaderSessionStore";
 
 /**
- * Pending "show this quote" requests, keyed by document (authority and
- * logical key, without the reader scope). A chip click files one and opens
- * the document. While it waits, it lives as long as its PDF stays the panel's
- * active view (the opener watches that). The reader that shows the document
- * claims it and keeps it for as long as it takes to load (a slow download, a
- * password); closing that reader cancels it.
+ * The opener owns a pending reveal until its active PDF reader claims it. That reader may retain it
+ * through slow downloads/password prompts, but closing the reader must cancel it.
  */
 export interface PdfRevealRequest {
   readonly id: number;
@@ -116,7 +112,7 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
-function usePdfRevealRequest(documentKey: string): PdfRevealRequest | null {
+export function usePdfRevealRequest(documentKey: string): PdfRevealRequest | null {
   return useSyncExternalStore(subscribe, () => pendingPdfReveal(documentKey));
 }
 

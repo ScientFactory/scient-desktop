@@ -1,11 +1,6 @@
 /**
- * Scient's fork-related orchestration V2 wire schemas: Claude fork boundary
- * evidence, fork initialization provenance, and the message-boundary fork
- * turn item with the notice older clients decode instead. The fork items
- * share one exact base-field factory. orchestrationV2.ts supplies its status
- * and native-reference schemas and keeps the items at their original union positions.
- *
- * @module orchestrationV2Fork
+ * Fork variants share exact base fields and preserve original union positions. Keep the fallback
+ * notice older clients can decode alongside the native message-boundary item.
  */
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";

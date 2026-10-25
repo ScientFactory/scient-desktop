@@ -40,12 +40,8 @@ const toastInstallFailure: ReportDesktopInstallError = (title, description) => {
 let installInFlight: Promise<boolean> | null = null;
 
 /**
- * Restarts into the downloaded update. Restarting is the user's explicit
- * action, so there is no confirmation step. Concurrent calls (the notice and a
- * footer, or repeated clicks) share one request, and its failures go to the
- * first caller's `reportError`. Resolves true when the install was accepted
- * without an error, so the app is relaunching. A refused or failed install is
- * reported and leaves the footer's Retry state to the updater.
+ * Restart is an explicit user action and needs no second confirmation. Share concurrent calls and
+ * report failure through the first caller; only an accepted, error-free install means relaunching.
  */
 export function installDesktopUpdateNow(
   shell: UpdateInstallShell,

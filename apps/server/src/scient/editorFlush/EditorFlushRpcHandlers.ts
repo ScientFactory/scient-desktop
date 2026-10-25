@@ -1,10 +1,6 @@
 /**
- * The window side of the editor flush: each window connects for requests,
- * asks where its editors' files are, answers each request, and says goodbye
- * when it closes. Every call is bound to the session that authenticated this
- * connection.
- *
- * @module EditorFlushRpcHandlers
+ * Bind every flush RPC to the session authenticating its connection; another session cannot
+ * register or answer for the window.
  */
 import { WS_METHODS, WsWorkspaceRpcGroup } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";

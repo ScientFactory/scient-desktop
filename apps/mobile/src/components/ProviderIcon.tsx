@@ -1,5 +1,5 @@
 import { Image } from "expo-image";
-import { Defs, LinearGradient, Path, Rect, Stop, Svg } from "react-native-svg";
+import { Defs, LinearGradient, Path, Stop, Svg } from "react-native-svg";
 import { View } from "react-native";
 import {
   normalizeProviderAccentColor,
@@ -139,60 +139,6 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  // SCIENT-FORK:START scient-provider-icons
-  // Scient-supported drivers that have no upstream package icon.
-  if (props.provider === "pi") {
-    // Pi's colour mark, drawn from the pi.dev favicon paths.
-    return (
-      <Svg width={size} height={size} viewBox="-40 -40 640 640" fill="none">
-        <Path fill="#F09082" d="M420 280H280V140H0V0H420V280Z" />
-        <Path fill="#4D9ABF" d="M140 560H0V140H140V280H280V420H140V560Z" />
-        <Path fill="#F1BE58" d="M560 560H420V280H560V560Z" />
-      </Svg>
-    );
-  }
-
-  if (props.provider === "omp") {
-    // Oh My Pi's official mark (can1357/oh-my-pi collab-web favicon).
-    return (
-      <Svg width={size} height={size} viewBox="0 0 64 64" fill="none">
-        <Defs>
-          <LinearGradient id="omp-mark" x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor="#ed4abf" />
-            <Stop offset="0.5" stopColor="#9b4dff" />
-            <Stop offset="1" stopColor="#5ad8e6" />
-          </LinearGradient>
-        </Defs>
-        <Rect width={64} height={64} rx={12} fill="#0f0a14" />
-        <Path fill="url(#omp-mark)" d="M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z" />
-      </Svg>
-    );
-  }
-
-  if (props.provider === "droid") {
-    return (
-      <Svg width={size} height={size} viewBox="0 0 67 65" fill="none">
-        <Path
-          fill={mono}
-          d="M47.75 11.15a.867.867 0 0 1-.671-.806.84.84 0 0 1 .067-.362c1.688-4.007 2.433-7.213 1.23-8.555-3.183-3.56-15.952 3.52-20.024 5.919a.9.9 0 0 1-1.273-.41c-1.711-3.998-3.51-6.78-5.334-6.9-4.833-.323-8.73 13.49-9.87 17.992a.85.85 0 0 1-.459.563.9.9 0 0 1-.737.027c-4.109-1.647-7.398-2.373-8.773-1.2-3.651 3.104 3.609 15.557 6.068 19.528a.85.85 0 0 1-.11 1.031.9.9 0 0 1-.31.21C3.455 39.856.604 41.61.478 43.389c-.329 4.713 13.834 8.513 18.452 9.625q.186.046.337.163a.87.87 0 0 1 .332.642.84.84 0 0 1-.067.362c-1.688 4.007-2.433 7.214-1.23 8.555 3.183 3.561 15.954-3.519 20.025-5.917a.9.9 0 0 1 1.058.107.9.9 0 0 1 .215.302c1.711 3.997 3.509 6.779 5.334 6.9 4.833.322 8.73-13.49 9.868-17.993a.85.85 0 0 1 .168-.33.88.88 0 0 1 .659-.324.9.9 0 0 1 .371.066c4.109 1.647 7.397 2.372 8.773 1.2 3.651-3.105-3.61-15.559-6.07-19.53a.85.85 0 0 1 .111-1.03.9.9 0 0 1 .31-.21c4.1-1.67 6.952-3.424 7.075-5.203.331-4.713-13.833-8.513-18.45-9.623m-5.546-4.518c.93 1.624-3.858 12.446-7.42 20.015a.7.7 0 0 1-.28.303.71.71 0 0 1-.796-.059.7.7 0 0 1-.23-.341c-1.439-4.921-3.082-10.704-4.841-15.612a.84.84 0 0 1 .01-.594.87.87 0 0 1 .401-.446c4.392-2.34 11.908-5.446 13.156-3.266m-21.048 1.34c1.833.507 6.294 11.46 9.264 19.268a.67.67 0 0 1-.2.754.71.71 0 0 1-.794.08c-4.589-2.485-9.94-5.444-14.743-7.702a.87.87 0 0 1-.422-.427.84.84 0 0 1-.04-.591c1.414-4.679 4.471-12.063 6.935-11.383M7.243 23.433c1.664-.906 12.762 3.763 20.522 7.235.13.058.239.154.311.274a.67.67 0 0 1-.06.776.7.7 0 0 1-.35.225c-5.045 1.403-10.976 3.006-16.01 4.721a.9.9 0 0 1-.607-.01.88.88 0 0 1-.456-.391c-2.395-4.284-5.586-11.613-3.35-12.83M8.617 43.96c.519-1.788 11.752-6.14 19.758-9.035a.72.72 0 0 1 .773.195.67.67 0 0 1 .081.774c-2.548 4.475-5.582 9.694-7.898 14.377a.87.87 0 0 1-.437.413.9.9 0 0 1-.607.039c-4.797-1.37-12.37-4.36-11.67-6.763m15.855 13.568c-.93-1.623 3.859-12.446 7.42-20.014a.7.7 0 0 1 .28-.303.715.715 0 0 1 .796.059.7.7 0 0 1 .23.34c1.439 4.92 3.083 10.705 4.841 15.613a.84.84 0 0 1-.01.593.87.87 0 0 1-.402.445c-4.391 2.335-11.908 5.447-13.15 3.267zm21.049-1.34c-1.836-.506-6.297-11.461-9.266-19.269a.67.67 0 0 1 .2-.755.71.71 0 0 1 .795-.078c4.587 2.484 9.94 5.445 14.742 7.703.189.088.339.24.423.426a.84.84 0 0 1 .039.592c-1.413 4.686-4.47 12.063-6.933 11.381m13.912-15.462c-1.665.907-12.762-3.763-20.523-7.236a.7.7 0 0 1-.311-.273.67.67 0 0 1 .06-.777.7.7 0 0 1 .35-.225c5.046-1.402 10.975-3.005 16.009-4.72a.9.9 0 0 1 .609.01.88.88 0 0 1 .457.392c2.393 4.282 5.584 11.613 3.349 12.829M58.06 20.2c-.521 1.79-11.753 6.14-19.759 9.036a.72.72 0 0 1-.774-.195.67.67 0 0 1-.08-.776c2.547-4.474 5.581-9.694 7.897-14.377a.87.87 0 0 1 .437-.412.9.9 0 0 1 .607-.038c4.797 1.377 12.37 4.359 11.672 6.762"
-        />
-      </Svg>
-    );
-  }
-
-  if (props.provider === "scient") {
-    // Scient Agent's Möbius symbol, the same drawing the web client shows.
-    return (
-      <Image
-        source={require("../../assets/scient-agent.png")}
-        style={{ width: size, height: size }}
-        contentFit="contain"
-      />
-    );
-  }
-
-  // SCIENT-FORK:END scient-provider-icons
-
   return (
     <Svg width={size} height={size} viewBox="100 100 411 411" fill="none">
       <Path
@@ -221,8 +167,7 @@ export function ProviderInstanceIcon(props: {
         <ProviderIcon iconUrl={props.iconUrl} provider={props.provider} size={props.size} />
       </View>
       {props.showBadge ? (
-        // A wide right-aligned box lets the badge fit its initials. Alone, an
-        // absolute badge is capped at the icon's width, which clips "WO".
+        // An absolute badge alone is capped at icon width and clips initials.
         <View
           pointerEvents="none"
           style={{ position: "absolute", right: -3, bottom: -3, width: 32, alignItems: "flex-end" }}

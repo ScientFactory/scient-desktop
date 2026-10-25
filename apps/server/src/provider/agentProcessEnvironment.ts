@@ -1,11 +1,8 @@
 import type { ProviderInstanceEnvironment } from "@t3tools/contracts";
 
 /**
- * Scient and T3 server internals: the desktop-to-server bootstrap, ports,
- * homes, auth and MCP bearer tokens, analytics, OTLP and dev-runner settings
- * (`T3CODE_*`, `T3_*`, `SCIENT_*`), Vite dev-server wiring (`VITE_*`), the
- * Electron-as-Node switch the desktop sets for its backend, and the dev
- * runner's web and renderer ports. Case-insensitive, because Windows names are.
+ * Filter bootstrap, auth, ports, telemetry, Vite, and Electron-as-Node internals case-insensitively
+ * because Windows environment names are case-insensitive.
  */
 const SCIENT_INTERNAL_ENVIRONMENT_PREFIXES = ["T3CODE_", "T3_", "SCIENT_", "VITE_"] as const;
 const SCIENT_INTERNAL_ENVIRONMENT_NAMES: ReadonlySet<string> = new Set([
@@ -61,14 +58,9 @@ const exemptLoopbackFromProxy = (env: NodeJS.ProcessEnv, platform: NodeJS.Platfo
 };
 
 /**
- * The environment of an agent CLI process: the server's full login
- * environment minus Scient's own internals, then the instance environment on
- * top, exactly as configured, then loopback exempted from any proxy. An agent
- * that runs git, cloud CLIs and toolchains needs what the user's shell has;
- * only what the server itself inherited is filtered, so a variable the user
- * configured on the instance is passed even when its name looks internal.
- * Scient adds no secrets here; per-process capabilities travel elsewhere.
- * Droid and Oh My Pi use it; OMP adds its own home and profile handling.
+ * Filter only inherited server internals, then apply the instance environment exactly as configured
+ * and exempt loopback from proxies. Agents need the user's login toolchains; explicit instance
+ * variables remain valid even with internal-looking names. Add no secrets here.
  */
 export const agentProcessEnvironment = (input: {
   readonly baseEnv?: NodeJS.ProcessEnv | undefined;

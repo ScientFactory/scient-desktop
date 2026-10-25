@@ -1,5 +1,4 @@
-import type { ModelSelection, ProviderOptionSelection } from "@t3tools/contracts";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import type { ProviderOptionSelection } from "@t3tools/contracts";
 import { appAtomRegistry } from "./atom-registry";
 import {
   modelOptionMemoryAtom,
@@ -60,11 +59,17 @@ export function rememberedModelOptions(
   );
 }
 
-export function withRememberedModelOptions<T extends ModelSelection>(selection: T): T {
+export function withRememberedModelOptions<
+  T extends {
+    readonly instanceId: string;
+    readonly model: string;
+    readonly options?: ReadonlyArray<ProviderOptionSelection>;
+  },
+>(selection: T): T {
   const remembered = rememberedModelOptions(selection.instanceId, selection.model);
   if (
     remembered === undefined ||
-    modelSelectionsEqual(selection, { ...selection, options: remembered })
+    JSON.stringify(remembered) === JSON.stringify(selection.options ?? [])
   ) {
     return selection;
   }

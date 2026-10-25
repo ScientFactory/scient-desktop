@@ -10,11 +10,8 @@ import { MarkdownPersistenceCoordinator } from "./persistenceCoordinator.ts";
 import type { MarkdownReconciliation } from "./reconciliation.ts";
 
 /**
- * The document-session stress scenarios, run through the real Markdown
- * reconciliation. Tracked units are one-line paragraphs `key · value`, placed
- * between structural blocks that neither side edits; paragraphs are edited,
- * inserted, and deleted. Every published source must keep the untouched
- * blocks byte-for-byte.
+ * Tracked paragraphs sit between structural blocks neither side edits; every published source must
+ * preserve those blocks byte-for-byte.
  */
 
 const FRONT_MATTER = "---\ntitle: Stress\n---\n\n";
