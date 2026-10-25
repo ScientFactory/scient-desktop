@@ -398,18 +398,29 @@ it("reveals the latest message after very tall notes", async (context) => {
   // below the rendered window.
   await render(_fixture, key, [...entries, prompt, ...tallNotes], running);
   await advanceClock(_fixture, 192);
-  // Measured means Legend knows the first note's very tall height (sizeAtIndex reads only
-  // measured sizes; the later notes are estimated from it). Fake time does not lay out or
-  // measure. The list is virtualized: the follow can scroll the note out of the rendered
-  // window, which keeps its measurement; while it is rendered, the measurement is its
-  // current height.
+  // The latest message lands below the last note. Wait until that is far past the rendered
+  // window: every rendered note measured at its current, very tall height (a slow runner
+  // lays a note's text out late, and a note measured short pulls the landing place into
+  // the window), and the last note's end several viewports below the reader. Fake time
+  // does not lay out or measure. The list is virtualized: a note outside the rendered
+  // window keeps its measurement (sizeAtIndex reads only measured sizes).
   await vi.waitFor(() => {
     const state = _fixture.listRef.current!.getState();
-    const index = state.indexByKey(tallNotes[0]!.id)!;
-    const size = state.sizeAtIndex(index) ?? 0;
-    expect(size).toBeGreaterThan(node(_fixture).clientHeight * 2);
-    const rendered = state.elementAtIndex(index);
-    if (rendered?.isConnected) expect(size).toBeCloseTo(rendered.getBoundingClientRect().height, 0);
+    const viewportHeight = node(_fixture).clientHeight;
+    for (const note of tallNotes) {
+      const index = state.indexByKey(note.id)!;
+      const rendered = state.elementAtIndex(index);
+      if (!rendered?.isConnected) continue;
+      const size = state.sizeAtIndex(index) ?? 0;
+      expect(size, note.id).toBeGreaterThan(viewportHeight * 2);
+      expect(size, note.id).toBeCloseTo(rendered.getBoundingClientRect().height, 0);
+    }
+    const last = state.indexByKey(tallNotes.at(-1)!.id)!;
+    const landing = state.positionAtIndex(last) + (state.sizeAtIndex(last) ?? 0);
+    expect(
+      landing - (state.scroll + viewportHeight),
+      "latest lands below the window",
+    ).toBeGreaterThan(viewportHeight * 2);
   });
   await render(_fixture, key, [...entries, prompt, ...tallNotes, latest], running);
   await advanceClock(_fixture, 16);
