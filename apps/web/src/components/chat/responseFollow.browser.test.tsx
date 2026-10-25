@@ -4,7 +4,8 @@ import {
   render as _fixtureRender,
   type Screen,
 } from "../../../test/render";
-import { waitForTestReceipt } from "../../../test/receipt";
+import { waitForMeasuredRow } from "../../../test/listMeasurement";
+import { advanceTestClock } from "../../../test/testClock";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import "../../index.css";
 import {
@@ -17,7 +18,7 @@ import {
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef, useLayoutEffect, useRef } from "react";
 
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, vi, type TestContext } from "vite-plus/test";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { motionClock } from "./motionClock";
 import { useQueuedDeliveryFollow, useResponseFollow } from "./responseFollow";
@@ -52,25 +53,25 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 }
 async function play(_fixture: _Fixture, ms: number, eachFrame?: () => void | Promise<void>) {
   if (!eachFrame) {
-    await _fixtureAct(() => vi.advanceTimersByTimeAsync(ms));
+    await advanceTestClock(_fixture.signal, ms);
     return;
   }
   for (let elapsed = 0; elapsed < ms; elapsed += 16) {
-    await _fixtureAct(() => vi.advanceTimersByTimeAsync(Math.min(16, ms - elapsed)));
+    await advanceTestClock(_fixture.signal, Math.min(16, ms - elapsed));
     await eachFrame();
   }
 }
+/**
+ * Plays frames until `done`, for at most `ms` of motion time. Bounded by the
+ * owned clock only: a real-time bound (vi.waitFor's) would cap how much motion
+ * a slow machine gets to play. A test past its deadline stops at the next frame.
+ */
 async function playUntil(_fixture: _Fixture, done: () => boolean, ms = 6000) {
   const motionDeadline = motionClock.now() + ms;
-  await vi.waitFor(
-    async () => {
-      if (!done() && motionClock.now() < motionDeadline) {
-        await _fixtureAct(() => vi.advanceTimersByTimeAsync(16));
-      }
-      expect(done()).toBe(true);
-    },
-    { interval: 0 },
-  );
+  while (!done() && motionClock.now() < motionDeadline) {
+    await advanceTestClock(_fixture.signal, 16);
+  }
+  expect(done()).toBe(true);
 }
 
 /** Legend's receipt needs scheduled work; waitFor drives the owned clock while it is pending. */
@@ -80,30 +81,6 @@ async function scroll(operation: () => Promise<void>) {
     receipt = operation();
   });
   await vi.waitFor(() => receipt);
-}
-
-async function waitForMeasuredRow(_fixture: _Fixture, rowId: string, signal: AbortSignal) {
-  const list = _fixture.listRef.current!;
-  const measured = Promise.withResolvers<void>();
-  const check = () => {
-    const state = list.getState();
-    const index = state.indexByKey(rowId);
-    if (index === undefined) return;
-    const element = state.elementAtIndex(index);
-    if (element instanceof HTMLElement && state.sizeAtIndex(index) === element.offsetHeight)
-      measured.resolve();
-  };
-  const stopSize = list.getState().listen("totalSize", check);
-  const stopPosition = list.getState().listen("lastPositionUpdate", check);
-  using _measurement = {
-    [Symbol.dispose]() {
-      stopSize();
-      stopPosition();
-    },
-  };
-  // The reveal changes native layout; fake RAF must not outrun Legend's size delivery.
-  check();
-  await waitForTestReceipt(signal, measured.promise);
 }
 
 type Entry = React.ComponentProps<typeof MessagesTimeline>["timelineEntries"][number];
@@ -259,7 +236,9 @@ async function render(
     _fixture.root0 = _fixture.stack.use(
       await _fixtureRender(null, { container: _fixture.host, router: false }),
     );
-    _fixture.cleanup.use(fakeTimers());
+    // On the outer stack: the tree unmounts (cleanup) while its frames are
+    // still the fake ones it can cancel; then the real timers come back.
+    _fixture.stack.use(fakeTimers());
   }
   await _fixtureAct(
     async () =>
@@ -303,8 +282,8 @@ async function visitElsewhere(_fixture: _Fixture, key: string) {
   await play(_fixture, 96);
 }
 
-it("follows a later prompt sent at the end through its run's start, to the prompt at the top", async () => {
-  await using _fixture = _createFixture();
+it("follows a later prompt sent at the end through its run's start, to the prompt at the top", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -362,8 +341,8 @@ it("follows a later prompt sent at the end through its run's start, to the promp
   expect(Math.abs(viewport(_fixture).scrollTop - stopped)).toBeLessThanOrEqual(1);
 });
 
-it("ends once the prompt's own run has ended and its answer is shown", async () => {
-  await using _fixture = _createFixture();
+it("ends once the prompt's own run has ended and its answer is shown", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -387,8 +366,45 @@ it("ends once the prompt's own run has ended and its answer is shown", async () 
   expect(readTimelinePosition(key)?.followingPromptId).toBeUndefined();
 });
 
-it("follows a queued prompt the server delivers in one update while the reader is at the end", async () => {
-  await using _fixture = _createFixture();
+it("drops the follow from the saved position when it ends, with nothing else to save it", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const key = "follow:settle-save";
+  const { history, runs } = await answeredThread(_fixture, key);
+  const prompt = message(10, "user", { text: "Short follow-up", runId: "run-10" });
+  await _fixtureAct(() => _fixture.chat.sendAtEnd("message-10"));
+  const answer = message(11, "assistant", { text: "Done.", runId: "run-10" });
+  const entries = [...history, prompt, ...steps(1, "run-10"), answer];
+  await render(_fixture, key, entries, [...runs, run("run-10", "message-10", "running")]);
+  await playUntil(_fixture, () => toEnd(_fixture) <= 1);
+  expect(readTimelinePosition(key)?.followingPromptId).toBe("message-10");
+  // Nothing but the follow's end may save the position again. Scrolls and
+  // resizes save it too, and arrive in real rendering steps, at no fixed point
+  // among the fake frames: a slow machine delivers the follow's own last
+  // scrolls after it has ended. So the answer is measured first, the finished
+  // turn's working header (which closes on real time) stays open, and the
+  // scrolls are held back from every reader: the timeline's own scroll capture
+  // (React's listener on the root, ahead of any listener the host could add),
+  // and Legend's `scroll` and `scrollend` listeners, each of which reports a
+  // scroll to the bookkeeping. Window capture runs before all of them.
+  await waitForMeasuredRow(_fixture.listRef.current!, "entry-11", context.signal);
+  const host = _fixture.host!;
+  const holdScroll = (event: Event) => event.stopPropagation();
+  for (const type of ["scroll", "scrollend"]) {
+    window.addEventListener(type, holdScroll, true);
+    _fixture.cleanup.defer(() => window.removeEventListener(type, holdScroll, true));
+  }
+  await render(_fixture, key, entries, [...runs, run("run-10", "message-10", "completed")]);
+  for (const animation of host.getAnimations({ subtree: true })) animation.pause();
+  await playUntil(_fixture, () => _fixture.chat.followPromptId === null);
+  await play(_fixture, 16);
+  expect(readTimelinePosition(key)?.followingPromptId).toBeUndefined();
+});
+
+it("follows a queued prompt the server delivers in one update while the reader is at the end", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -418,8 +434,8 @@ it("follows a queued prompt the server delivers in one update while the reader i
   expect(viewport(_fixture).scrollTop).toBeGreaterThan(start);
 });
 
-it("follows this window's queued send when its delivery arrives before its receipt", async () => {
-  await using _fixture = _createFixture();
+it("follows this window's queued send when its delivery arrives before its receipt", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -454,8 +470,8 @@ it("follows this window's queued send when its delivery arrives before its recei
   expect(viewport(_fixture).scrollTop).toBeGreaterThan(start);
 });
 
-it("leaves a prompt another window sent directly alone, and never saves that as following", async () => {
-  await using _fixture = _createFixture();
+it("leaves a prompt another window sent directly alone, and never saves that as following", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -484,8 +500,8 @@ it("leaves a prompt another window sent directly alone, and never saves that as 
   expect(Math.abs(viewport(_fixture).scrollTop - resting)).toBeLessThanOrEqual(1);
 });
 
-it("keeps a follow cancelled by scrolling up cancelled across a thread switch", async () => {
-  await using _fixture = _createFixture();
+it("keeps a follow cancelled by scrolling up cancelled across a thread switch", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -514,8 +530,8 @@ it("keeps a follow cancelled by scrolling up cancelled across a thread switch", 
   expect(toEnd(_fixture)).toBeGreaterThan(40);
 });
 
-it("ends only for keys that scroll the timeline, not for a menu's arrow keys or shortcuts", async () => {
-  await using _fixture = _createFixture();
+it("ends only for keys that scroll the timeline, not for a menu's arrow keys or shortcuts", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -560,8 +576,8 @@ it("ends only for keys that scroll the timeline, not for a menu's arrow keys or 
   expect(_fixture.chat.followPromptId).toBeNull();
 });
 
-it("lets Scroll to end cancel a follow resumed after coming back to the thread", async () => {
-  await using _fixture = _createFixture();
+it("lets Scroll to end cancel a follow resumed after coming back to the thread", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -591,8 +607,8 @@ it("lets Scroll to end cancel a follow resumed after coming back to the thread",
   expect(toEnd(_fixture)).toBeGreaterThan(40);
 });
 
-it("brings a reader who left while following back to where the follow would be now", async () => {
-  await using _fixture = _createFixture();
+it("brings a reader who left while following back to where the follow would be now", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -623,8 +639,8 @@ it("brings a reader who left while following back to where the follow would be n
   expect(toEnd(_fixture)).toBeGreaterThan(100);
 });
 
-it("returns a reader who scrolled well up before leaving a working thread to that spot", async () => {
-  await using _fixture = _createFixture();
+it("returns a reader who scrolled well up before leaving a working thread to that spot", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -651,7 +667,7 @@ it("returns a reader who scrolled well up before leaving a working thread to tha
 });
 
 it("scrolls smoothly with an answer appearing line by line, never ahead of it", async (context) => {
-  await using _fixture = _createFixture();
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -690,7 +706,8 @@ it("scrolls smoothly with an answer appearing line by line, never ahead of it", 
       viewport(_fixture).clientHeight -
       _fixture.base.contentInsetEndAdjustment;
     aheadOfReveal = Math.max(aheadOfReveal, readingBottom - shownBottom - 64);
-    await waitForMeasuredRow(_fixture, "entry-11", context.signal);
+    // The reveal changes native layout; fake RAF must not outrun Legend's size delivery.
+    await waitForMeasuredRow(_fixture.listRef.current!, "entry-11", context.signal);
   });
   const moves = positions.slice(1).map((value, index) => value - positions[index]!);
   expect(positions.at(-1)! - positions[0]!).toBeGreaterThan(40);
@@ -701,8 +718,8 @@ it("scrolls smoothly with an answer appearing line by line, never ahead of it", 
   await playUntil(_fixture, () => toEnd(_fixture) <= 1);
 });
 
-it("yields to the reader scrolling down mid-follow, then carries on from where they stop", async () => {
-  await using _fixture = _createFixture();
+it("yields to the reader scrolling down mid-follow, then carries on from where they stop", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -759,8 +776,8 @@ it("yields to the reader scrolling down mid-follow, then carries on from where t
   expect(toEnd(_fixture)).toBeGreaterThan(1);
 });
 
-it("rests between changes: no frames while the run works and nothing changes", async () => {
-  await using _fixture = _createFixture();
+it("rests between changes: no frames while the run works and nothing changes", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -802,8 +819,8 @@ it("rests between changes: no frames while the run works and nothing changes", a
   }
 });
 
-it("follows a queued prompt promoted to a steer through the run it went into", async () => {
-  await using _fixture = _createFixture();
+it("follows a queued prompt promoted to a steer through the run it went into", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -964,8 +981,8 @@ const answerBottom = (_fixture: _Fixture, messageId: string) => {
 const readingBottom = (_fixture: _Fixture) =>
   viewport(_fixture).clientHeight - _fixture.base.contentInsetEndAdjustment;
 
-it("brings a reader back to the prompt they followed, not past it to a later one", async () => {
-  await using _fixture = _createFixture();
+it("brings a reader back to the prompt they followed, not past it to a later one", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -988,8 +1005,8 @@ it("brings a reader back to the prompt they followed, not past it to a later one
   expect(Math.abs(viewport(_fixture).scrollTop - resting)).toBeLessThanOrEqual(1);
 });
 
-it("brings a reader back to the prompt they followed when it finished while they were away", async () => {
-  await using _fixture = _createFixture();
+it("brings a reader back to the prompt they followed when it finished while they were away", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -1008,8 +1025,8 @@ it("brings a reader back to the prompt they followed when it finished while they
   expect(_fixture.chat.followPromptId).toBeNull();
 });
 
-it("keeps the reveal of a first prompt as it was: traces do not move it", async () => {
-  await using _fixture = _createFixture();
+it("keeps the reveal of a first prompt as it was: traces do not move it", async (context) => {
+  await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
@@ -1030,10 +1047,10 @@ it("keeps the reveal of a first prompt as it was: traces do not move it", async 
   expect(toEnd(_fixture)).toBeGreaterThan(100);
 });
 
-it.each(["running", "completed"] as const)(
+it.for(["running", "completed"] as const)(
   "brings a reader back to the prompt they followed across rows never rendered (%s)",
-  async (followed) => {
-    await using _fixture = _createFixture();
+  async (followed, context) => {
+    await using _fixture = _createFixture(context);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
@@ -1105,7 +1122,7 @@ it.each(["running", "completed"] as const)(
   },
 );
 
-function _createFixture() {
+function _createFixture(context: TestContext) {
   const stack = new AsyncDisposableStack();
   const cleanup = new AsyncDisposableStack();
   const listRef = createRef<LegendListRef>();
@@ -1165,6 +1182,8 @@ function _createFixture() {
     host: undefined! as HTMLDivElement | undefined,
     stack,
     cleanup,
+    /** Aborts at the test's deadline; the clock drivers stop on it. */
+    signal: context.signal,
     root0: undefined! as Screen | undefined,
     async [Symbol.asyncDispose]() {
       try {

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DocumentPersistenceCoordinator } from "./persistenceCoordinator.ts";
 import { reconcileKeyedLines, type KeyedLinesReconciliation } from "./testing/keyedLines.ts";
@@ -51,28 +51,33 @@ describe("DocumentPersistenceCoordinator under randomized interleavings", () => 
     vi.useRealTimers();
   });
 
-  // Hundreds of seeded runs: well under a second locally, slower on shared CI runners.
-  it("never silently loses a change or stalls, and settles on the disk bytes", async () => {
-    const results: StressResult[] = [];
-    for (let seed = 1; seed <= 400; seed += 1) {
-      results.push(
-        await runStressScenario<KeyedLinesReconciliation>({
-          format: keyedLines,
-          createCoordinator: (options) =>
-            new DocumentPersistenceCoordinator({ ...options, reconcile: reconcileKeyedLines }),
-          advanceTime: async (ms) => {
-            await vi.advanceTimersByTimeAsync(ms);
-          },
-          seed,
-          steps: 80,
-        }),
-      );
-    }
-    expect(results.flatMap((result) => result.violations)).toEqual([]);
-    // Every path must be exercised for the checks above to mean anything.
-    const total = totalStressStats(results);
+  // Package tests run under vitest's 5 s default, so each seed is its own test.
+  const SEEDS = 400;
+  const results = new Map<number, StressResult>();
+  it.each(Array.from({ length: SEEDS }, (_, index) => index + 1))(
+    "never silently loses a change or stalls, and settles on the disk bytes (seed %i)",
+    async (seed) => {
+      const result = await runStressScenario<KeyedLinesReconciliation>({
+        format: keyedLines,
+        createCoordinator: (options) =>
+          new DocumentPersistenceCoordinator({ ...options, reconcile: reconcileKeyedLines }),
+        advanceTime: async (ms) => {
+          await vi.advanceTimersByTimeAsync(ms);
+        },
+        seed,
+        steps: 80,
+      });
+      results.set(seed, result);
+      expect(result.violations).toEqual([]);
+    },
+  );
+  // Every path must be exercised for the checks above to mean anything. Checked after
+  // every seed has run, in any order; a run filtered to some seeds cannot judge coverage.
+  afterAll(() => {
+    if (results.size < SEEDS) return;
+    const total = totalStressStats([...results.values()]);
     expect(total.runsWithoutChoices).toBeGreaterThan(50);
-    expect(total.runsWithoutChoices).toBeLessThan(400);
+    expect(total.runsWithoutChoices).toBeLessThan(SEEDS);
     expect(total.merges).toBeGreaterThan(200);
     expect(total.mergesWithLocalEdits).toBeGreaterThan(150);
     expect(total.conflicts).toBeGreaterThan(50);

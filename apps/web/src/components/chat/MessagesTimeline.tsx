@@ -746,6 +746,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const onRevealFinished = (promptId: string) => {
     setFinishedRevealPromptId(promptId);
     onFollowFinished?.(promptId);
+    // The saved reading position records a follow still going: save it again
+    // now, rather than at the reader's next scroll or the next content change.
+    scheduleBookkeepingRef.current();
   };
   const revealActive =
     readingFollowPromptId !== null && finishedRevealPromptId !== readingFollowPromptId;
