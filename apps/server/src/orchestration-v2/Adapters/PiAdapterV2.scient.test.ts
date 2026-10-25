@@ -1,64 +1,74 @@
-// Scient's PiAdapterV2 cases, run through the Scient composition (makeScientPiAdapterV2).
-// Upstream behavior of the shared Pi adapter is tested in packages/provider-pi/src/server/adapter.test.ts.
 import { assert, describe, it } from "@effect/vitest";
-import {
-  DEFAULT_SERVER_SETTINGS,
-  EnvironmentId,
-  MessageId,
-  NodeId,
-  ProviderInstanceId,
-  RunAttemptId,
-  RunId,
-  type ChatAttachment,
-} from "@t3tools/contracts";
+import { EnvironmentId, NodeId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { type ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
-import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import { ProviderContinuationRequests } from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import { piContextErrorMessage } from "@t3tools/provider-pi/server/contextError";
 import {
   makePiRpcConnection,
-  parsePiModelSlug,
-  piContinuationRequestsIfProvided,
+  PI_PROVIDER,
   PiRpcError,
   type PiRpcRecord,
 } from "@t3tools/provider-pi/testing";
-import * as Cause from "effect/Cause";
-import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
-import * as Queue from "effect/Queue";
-import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
-import { FetchHttpClient, HttpClient } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
-import * as ServerConfig from "../../config.ts";
-import type { ResolvedModelConnection } from "../../customModels.ts";
-import { makePiCustomModelsConnectionFactory } from "../../provider/pi/PiCustomModelsConnection.ts";
-import { encodePiModelSlug } from "../../provider/pi/PiModel.ts";
 import {
-  expectModelFailure,
   FAKE_SESSION_FILE,
-  isNativeStartReceiptError,
-  makeAdapter,
   makeFakePi,
   modelSelection,
   openRuntime,
   PI_INSTANCE_ID,
-  recordedIdleState,
   runtimePolicy,
   SESSION_ID,
   startTurn,
   testLayer,
   THREAD_ID,
+} from "./PiAdapterV2.fixture.ts";
+
+import { RunId } from "@t3tools/contracts";
+import { piContextErrorMessage } from "@t3tools/provider-pi/server/contextError";
+import * as Cause from "effect/Cause";
+import * as Fiber from "effect/Fiber";
+import { expectModelFailure } from "./PiAdapterV2.fixture.ts";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Duration from "effect/Duration";
+import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
+import { FAKE_PID } from "./PiAdapterV2.fixture.ts";
+
+import { ProviderInstanceId } from "@t3tools/contracts";
+
+// Scient's PiAdapterV2 cases, run through the Scient composition (makeScientPiAdapterV2).
+// Upstream behavior of the shared Pi adapter is tested in packages/provider-pi/src/server/adapter.test.ts.
+import {
+  DEFAULT_SERVER_SETTINGS,
+  MessageId,
+  RunAttemptId,
+  type ChatAttachment,
+} from "@t3tools/contracts";
+import { type ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { ProviderContinuationRequests } from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { parsePiModelSlug, piContinuationRequestsIfProvided } from "@t3tools/provider-pi/testing";
+import * as Deferred from "effect/Deferred";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
+import * as Redacted from "effect/Redacted";
+import { FetchHttpClient, HttpClient } from "effect/http";
+import * as ServerConfig from "../../config.ts";
+import type { ResolvedModelConnection } from "../../customModels.ts";
+import { makePiCustomModelsConnectionFactory } from "../../provider/pi/PiCustomModelsConnection.ts";
+import { encodePiModelSlug } from "../../provider/pi/PiModel.ts";
+import {
+  isNativeStartReceiptError,
+  makeAdapter,
+  recordedIdleState,
 } from "./PiAdapterV2.fixture.ts";
 
 describe("Pi captured work admission fences", () => {
@@ -2133,6 +2143,289 @@ describe("PiAdapterV2 Sessions", () => {
         .pipe(Effect.result);
       assert.equal(result._tag, "Failure");
       assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+});
+
+// Upstream deleted these cases in 05696c636e; Scient keeps them because they are the only
+// guards of behaviour Scient still ships (mutation-checked or restored conservatively).
+describe("PiAdapterV2 restored upstream cases", () => {
+  const makeHandle = (options: {
+    readonly exitCode: Effect.Effect<ChildProcessSpawner.ExitCode>;
+    readonly stderr: Stream.Stream<Uint8Array>;
+  }) =>
+    ChildProcessSpawner.makeHandle({
+      pid: ChildProcessSpawner.ProcessId(FAKE_PID),
+      exitCode: options.exitCode,
+      isRunning: Effect.succeed(true),
+      kill: () => Effect.void,
+      unref: Effect.succeed(Effect.void),
+      stdin: Sink.drain,
+      stdout: Stream.empty,
+      stderr: options.stderr,
+      all: Stream.empty,
+      getInputFd: () => Sink.drain,
+      getOutputFd: () => Stream.empty,
+    });
+
+  it.effect("offers an explicit empty value for extension input dialogs", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-input",
+        method: "input",
+        title: "Optional value",
+      });
+      const event = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+      assert.isTrue(
+        event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request")
+        return;
+      assert.equal(event.turnItem.questions[0]?.options[0]?.value, "");
+      yield* runtime.respondToRuntimeRequest({
+        requestId: event.turnItem.requestId,
+        answers: { "ui-input": "" },
+      });
+      const response = yield* fake.takeRequest("extension_ui_response");
+      assert.equal(response["value"], "");
+      assert.isUndefined(response["cancelled"]);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("persists current xAI capacity text for the thread error banner", () =>
+    expectModelFailure("The model is currently at capacity due to high demand."),
+  );
+
+  it.effect("persists extension-normalized xAI capacity text for the thread error banner", () =>
+    expectModelFailure(
+      "Provider overloaded: The model is currently at capacity due to high demand.",
+    ),
+  );
+
+  it.effect("keeps the unexplained stdout-close message when the process has not exited", () =>
+    Effect.gen(function* () {
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          makeHandle({
+            exitCode: Effect.never,
+            stderr: Stream.empty,
+          }),
+        ),
+      );
+      const connection = yield* makePiRpcConnection({
+        command: "pi",
+        args: ["--mode", "rpc"],
+        cwd: undefined,
+        env: {},
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+
+      const fiber = yield* Effect.forkChild(Queue.take(connection.events).pipe(Effect.flip));
+      yield* TestClock.adjust(Duration.millis(300));
+      const error = yield* Fiber.join(fiber);
+      assert.equal(error._tag, "PiRpcError");
+      assert.equal(error.operation, "read");
+      assert.equal(error.detail, "pi process closed stdout");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps the exit-code diagnosis when stdin breaks while exit is still pending", () =>
+    Effect.gen(function* () {
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(FAKE_PID),
+            exitCode: Effect.sleep(Duration.millis(50)).pipe(
+              Effect.andThen(Effect.succeed(ChildProcessSpawner.ExitCode(1))),
+            ),
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "ChildProcess",
+                method: "stdin",
+                description: "broken pipe",
+              }),
+            ),
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const connection = yield* makePiRpcConnection({
+        command: "pi",
+        args: ["--mode", "rpc"],
+        cwd: undefined,
+        env: {},
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+
+      const fiber = yield* Effect.forkChild(Queue.take(connection.events).pipe(Effect.flip));
+      yield* TestClock.adjust(Duration.millis(300));
+      const error = yield* Fiber.join(fiber);
+      assert.equal(error._tag, "PiRpcError");
+      assert.equal(error.operation, "read");
+      assert.equal(error.detail, "pi process exited with code 1");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("waits for a slow Pi resume without starting a replacement", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextLifecycle("switch_session");
+      const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      const request = yield* fake.takeRequest("switch_session");
+      yield* TestClock.adjust(Duration.millis(16_820));
+      yield* fake.emit({
+        type: "response",
+        id: request.id,
+        command: "switch_session",
+        success: true,
+        data: { cancelled: false },
+      });
+      assert.equal((yield* Fiber.join(resumed)).nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+      assert.isFalse(fake.allRequests().some((request) => request.type === "new_session"));
+      yield* startTurn(runtime, providerThread, "default");
+      yield* fake.takeRequest("prompt");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("retires a timed-out lifecycle process before a late switch can race replacement", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextLifecycle("switch_session");
+      const resumed = yield* runtime
+        .resumeThread({ providerThread })
+        .pipe(Effect.flip, Effect.forkChild);
+      const request = yield* fake.takeRequest("switch_session");
+      yield* TestClock.adjust(Duration.seconds(60));
+      const error = yield* Fiber.join(resumed);
+      assert.match(String(error.cause), /timed out after 60000ms/);
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_session.updated" && event.providerSession.status === "error",
+      );
+      yield* fake.emit({
+        type: "response",
+        id: request.id,
+        command: "switch_session",
+        success: true,
+        data: { cancelled: false },
+      });
+      yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+          existingProviderThread: { ...providerThread, nativeThreadRef: null },
+        })
+        .pipe(Effect.flip);
+      assert.isFalse(
+        fake
+          .allRequests()
+          .some((request) => request.type === "new_session" || request.type === "prompt"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "uses the lifecycle deadline for fresh sessions and drops replaced native metadata",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        fake.deferNextLifecycle("new_session");
+        fake.queueState({ sessionFile: "/fake/fresh-after-delay.jsonl" });
+        const replacing = yield* runtime
+          .ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+            existingProviderThread: {
+              ...providerThread,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: {
+                driver: PI_PROVIDER,
+                nativeId: "old-leaf",
+                strength: "strong",
+              },
+              contextUsage: { usedTokens: 314_551, maxTokens: 1_000_000 },
+            },
+          })
+          .pipe(Effect.forkChild);
+        const request = yield* fake.takeRequest("new_session");
+        yield* TestClock.adjust(Duration.millis(16_820));
+        yield* fake.emit({
+          type: "response",
+          id: request.id,
+          command: "new_session",
+          success: true,
+          data: { cancelled: false },
+        });
+        const replacement = yield* Fiber.join(replacing);
+        assert.equal(replacement.nativeThreadRef?.nativeId, "/fake/fresh-after-delay.jsonl");
+        assert.isNull(replacement.contextUsage);
+        assert.isNull(replacement.nativeConversationHeadRef);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("replaces a native session when the first resume's state refresh fails", () =>
+    Effect.gen(function* () {
+      const original = yield* makeFakePi;
+      const originalRuntime = yield* openRuntime(original);
+      const providerThread = yield* originalRuntime.runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      fake.failNextState();
+      yield* runtime.resumeThread({ providerThread }).pipe(Effect.flip);
+      const replacement = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+        existingProviderThread: { ...providerThread, nativeThreadRef: null },
+      });
+      assert.notEqual(
+        replacement.nativeThreadRef?.nativeId,
+        providerThread.nativeThreadRef?.nativeId,
+      );
+      yield* startTurn(runtime, replacement, "default");
+      yield* fake.takeRequest("prompt");
+      assert.isTrue(fake.allRequests().some((request) => request.type === "new_session"));
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 });
