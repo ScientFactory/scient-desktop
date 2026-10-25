@@ -328,36 +328,31 @@ describe("writing editor source transactions", () => {
     await renderMountedEditor(_fixture, <Harness />);
   }
 
-  it.for([
-    "\\newcommand% name follows\n\\hiddenBegin{\\begin{comment}}",
-    "\\newcommand% star follows\r\n*{\\hiddenBegin}{\\begin{comment}}",
-    "\\DeclareDocumentCommand{\\hiddenBegin}{m}{\\begin{comment}#1}",
-  ] as const)(
-    "edits the body and preserves unused declaration %s through undo and redo",
-    async (definition, testContext) => {
-      await using _fixture = _createFixture(testContext);
-      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-      await _setupFixture0(_fixture);
+  // latexSourceSyntax.test.ts runs every declaration spelling; one editor round trip here.
+  it("edits the body and preserves an unused declaration through undo and redo", async (testContext) => {
+    const definition = "\\newcommand% star follows\r\n*{\\hiddenBegin}{\\begin{comment}}";
+    await using _fixture = _createFixture(testContext);
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
 
-      await mount(_fixture, "Actual body.", `${definition}\n`);
-      const original = current;
-      expect(editor(_fixture).isEditable).toBe(true);
-      expect(editor(_fixture).state.doc.textContent).toBe("Actual body.");
-      let published = nextWriteReceipt(_fixture);
-      await act(() => editor(_fixture).chain().setTextSelection(1).insertContent("New ").run());
-      await settleTyping(published);
-      const changed = original.replace("Actual body.", "New Actual body.");
-      expect(current).toBe(changed);
-      published = nextWriteReceipt(_fixture);
-      await act(() => editor(_fixture).commands.undo());
-      await settleTyping(published);
-      expect(current).toBe(original);
-      published = nextWriteReceipt(_fixture);
-      await act(() => editor(_fixture).commands.redo());
-      await settleTyping(published);
-      expect(current).toBe(changed);
-    },
-  );
+    await mount(_fixture, "Actual body.", `${definition}\n`);
+    const original = current;
+    expect(editor(_fixture).isEditable).toBe(true);
+    expect(editor(_fixture).state.doc.textContent).toBe("Actual body.");
+    let published = nextWriteReceipt(_fixture);
+    await act(() => editor(_fixture).chain().setTextSelection(1).insertContent("New ").run());
+    await settleTyping(published);
+    const changed = original.replace("Actual body.", "New Actual body.");
+    expect(current).toBe(changed);
+    published = nextWriteReceipt(_fixture);
+    await act(() => editor(_fixture).commands.undo());
+    await settleTyping(published);
+    expect(current).toBe(original);
+    published = nextWriteReceipt(_fixture);
+    await act(() => editor(_fixture).commands.redo());
+    await settleTyping(published);
+    expect(current).toBe(changed);
+  });
 
   it("edits a visible heading label in the footer and adds/removes it through source and undo", async (testContext) => {
     await using _fixture = _createFixture(testContext);
@@ -2172,10 +2167,11 @@ Control & 1 \\\\
     expect(projectLatexVisualDocument(current).rawBlocks).toBe(0);
   });
 
+  // Code's checked state is also covered by the Markdown-bar formatting test; italic
+  // reads \textit and writes \emph.
   it.for([
     ["bold", 0, "textbf"],
     ["italic", 1, "textit"],
-    ["code", 2, "texttt"],
   ] as const)(
     "follows the cell caret for %s availability, checked state and menu actions",
     async ([mark, index, command], testContext) => {
@@ -2220,68 +2216,67 @@ Control & 1 \\\\
     },
   );
 
-  it.for(["MacIntel", "Win32"] as const)(
-    "respects default, disabled and remapped cell formatting shortcuts on %s",
-    async (platform, testContext) => {
-      await using _fixture = _createFixture(testContext);
-      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-      await _setupFixture0(_fixture);
+  // keyboard.browser.test.ts resolves the platform's modifier; one platform here.
+  it("respects default, disabled and remapped cell formatting shortcuts", async (testContext) => {
+    const platform: string = "MacIntel";
+    await using _fixture = _createFixture(testContext);
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
 
-      vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
-      reloadKeyboardPreferences();
-      await mount(_fixture, "\\begin{tabular}{l}\nCell text\\\\\n\\end{tabular}");
-      const field = _fixture.container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
-      const inner = (field as HTMLElement & { editor: Editor }).editor;
-      await focusCellEditor(_fixture, inner);
-      await act(() => inner.commands.selectAll());
-      const press = async (key: string, shiftKey = false) =>
-        await act(() =>
-          field.dispatchEvent(
-            new KeyboardEvent("keydown", {
-              key,
-              shiftKey,
-              metaKey: platform === "MacIntel",
-              ctrlKey: platform !== "MacIntel",
-              bubbles: true,
-              cancelable: true,
-            }),
-          ),
-        );
-      for (const [command, key, mark] of [
-        ["latex.bold", "b", "bold"],
-        ["latex.italic", "i", "italic"],
-        ["latex.inlineCode", "e", "code"],
-      ] as const) {
-        await act(() => saveKeyboardPreferences(DEFAULT_KEYBOARD_PREFERENCES));
-        await press(key);
-        expect(inner.isActive(mark)).toBe(true); // One toggle, not two owners.
-        await press(key);
-        expect(inner.isActive(mark)).toBe(false);
-        await act(() =>
-          saveKeyboardPreferences({
-            ...DEFAULT_KEYBOARD_PREFERENCES,
-            overrides: { [command]: [] },
+    vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    reloadKeyboardPreferences();
+    await mount(_fixture, "\\begin{tabular}{l}\nCell text\\\\\n\\end{tabular}");
+    const field = _fixture.container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
+    const inner = (field as HTMLElement & { editor: Editor }).editor;
+    await focusCellEditor(_fixture, inner);
+    await act(() => inner.commands.selectAll());
+    const press = async (key: string, shiftKey = false) =>
+      await act(() =>
+        field.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key,
+            shiftKey,
+            metaKey: platform === "MacIntel",
+            ctrlKey: platform !== "MacIntel",
+            bubbles: true,
+            cancelable: true,
           }),
-        );
-        const before = current;
-        await press(key);
-        expect(inner.isActive(mark)).toBe(false);
-        expect(current).toBe(before);
-        await act(() =>
-          saveKeyboardPreferences({
-            ...DEFAULT_KEYBOARD_PREFERENCES,
-            overrides: { [command]: [`mod+shift+${key}`] },
-          }),
-        );
-        await press(key);
-        expect(inner.isActive(mark)).toBe(false);
-        await press(key, true);
-        expect(inner.isActive(mark)).toBe(true);
-        await press(key, true);
-        expect(inner.isActive(mark)).toBe(false);
-      }
-    },
-  );
+        ),
+      );
+    for (const [command, key, mark] of [
+      ["latex.bold", "b", "bold"],
+      ["latex.italic", "i", "italic"],
+      ["latex.inlineCode", "e", "code"],
+    ] as const) {
+      await act(() => saveKeyboardPreferences(DEFAULT_KEYBOARD_PREFERENCES));
+      await press(key);
+      expect(inner.isActive(mark)).toBe(true); // One toggle, not two owners.
+      await press(key);
+      expect(inner.isActive(mark)).toBe(false);
+      await act(() =>
+        saveKeyboardPreferences({
+          ...DEFAULT_KEYBOARD_PREFERENCES,
+          overrides: { [command]: [] },
+        }),
+      );
+      const before = current;
+      await press(key);
+      expect(inner.isActive(mark)).toBe(false);
+      expect(current).toBe(before);
+      await act(() =>
+        saveKeyboardPreferences({
+          ...DEFAULT_KEYBOARD_PREFERENCES,
+          overrides: { [command]: [`mod+shift+${key}`] },
+        }),
+      );
+      await press(key);
+      expect(inner.isActive(mark)).toBe(false);
+      await press(key, true);
+      expect(inner.isActive(mark)).toBe(true);
+      await press(key, true);
+      expect(inner.isActive(mark)).toBe(false);
+    }
+  });
 
   it("counts a cell text selection in the footer and follows cell selection changes", async (testContext) => {
     await using _fixture = _createFixture(testContext);

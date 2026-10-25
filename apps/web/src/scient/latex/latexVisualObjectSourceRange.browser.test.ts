@@ -68,3 +68,17 @@ it("rejects a caption whose displayed draft differs from the source", () => {
   field.setSelectionRange(0, 5);
   expect(latexVisualObjectSourceRange({}, source, 0, field, null, source)).toBeNull();
 });
+
+it("maps a description item's body word through its authored item", () => {
+  const source =
+    "\\begin{description}\n  \\item[קלט] קובץ מקור בעברית.\n  \\item[פלט] מסמך עם טקסט, טבלאות ונוסחאות.\n\\end{description}";
+  const block = projectLatexVisualDocument(source).blocks[0]!;
+  const field = document.createElement("textarea");
+  field.setAttribute("aria-label", "Description item 2 body");
+  field.value = "מסמך עם טקסט, טבלאות ונוסחאות.";
+  field.setSelectionRange(field.value.indexOf("ונוסחאות"), field.value.indexOf("ונוסחאות") + 8);
+  expect(latexVisualObjectSourceRange(block.node, source, 0, field, null, source)).toEqual({
+    from: source.indexOf("ונוסחאות"),
+    to: source.indexOf("ונוסחאות") + 8,
+  });
+});
