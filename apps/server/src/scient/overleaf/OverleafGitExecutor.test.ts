@@ -306,9 +306,15 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
             // it): none of this executor's homes may appear there.
             for (const [name, stamp] of xcrunFiles(temp)) {
               if (before.get(name) === stamp) continue;
-              expect(NodeFS.readFileSync(NodePath.join(temp, name)).includes(runtimeRoot)).toBe(
-                false,
-              );
+              // Other processes' xcrun runs replace these files; one gone since the listing holds nothing.
+              let content: Buffer;
+              try {
+                content = NodeFS.readFileSync(NodePath.join(temp, name));
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+                throw error;
+              }
+              expect(content.includes(runtimeRoot)).toBe(false);
             }
           }),
         { allowLocalProtocols: true },
