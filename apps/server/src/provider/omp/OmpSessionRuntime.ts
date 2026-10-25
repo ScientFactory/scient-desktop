@@ -113,6 +113,9 @@ export type OmpSessionUpdate =
       readonly title: string;
       readonly message: string;
       readonly options: ReadonlyArray<OmpQuestionOption>;
+      readonly allowCustomAnswer?: boolean;
+      readonly initialAnswer?: string;
+      readonly timeout?: number;
     }
   | { readonly type: "question-resolved"; readonly id: string }
   | { readonly type: "questions-cleared"; readonly ids: ReadonlyArray<string> }
@@ -122,7 +125,9 @@ export type OmpSessionUpdate =
       readonly launchUrl?: string;
       readonly instructions?: string;
     }
-  | { readonly type: "compacted" }
+  // SCIENT-FORK: preserve native observations for shared desktop items.
+  | { readonly type: "observation"; readonly event: OmpRpcEvent }
+  | { readonly type: "compacted"; readonly result?: unknown }
   /**
    * OMP 18.3+: nothing live, queued or running in the background can wake the
    * session again, so no subagent it started is still running.
@@ -170,6 +175,10 @@ export interface OmpSessionRuntime {
   /** The open turn's prompt command was rejected before OMP accepted it. */
   readonly commandFailed: (turnId?: string) => Effect.Effect<void>;
   readonly requestProcessExit: () => Effect.Effect<void>;
+  /** Fence autonomous wake-ups before abort; the returned receipt waits for this turn to settle. */
+  readonly pause: Effect.Effect<{
+    readonly settled: Effect.Effect<void>;
+  }>;
 }
 
 const text = (value: unknown): string | undefined =>
@@ -384,8 +393,8 @@ const lastAssistantMessage = (messages: unknown): Record<string, unknown> | unde
 };
 
 /**
- * Item status of a finished assistant message: a failed model request fails
- * its item. Scient's Stop closes the process, so an abort came from elsewhere.
+ * A failed model request fails its item. The adapter's Stop owner overrides
+ * content status when the abort was requested by the user.
  */
 const assistantItemStatus = (message: unknown): "completed" | "failed" => {
   if (!isRecord(message)) return "completed";
@@ -410,6 +419,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   let catalog = emptyOmpCommandCatalog();
   let turn = initialOmpTurnState;
   let activeTurnId: string | undefined;
+  let paused = false;
+  let pauseSettled: Deferred.Deferred<void> | undefined;
   let continuationSequence = 0;
   let autonomousTurn = false;
   let assistantMessageSequence = 0;
@@ -488,13 +499,19 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   /** A run still open when its turn settled; nothing it sends belongs to a turn. */
   let abandonedRunId: number | undefined;
   let protocolFailed = false;
+  let retryObserved = false;
   const seenUnknownEvents = new Set<string>();
   const questions = new Map<string, OmpPendingQuestion>();
   const subagentStatuses = new Map<string, "inProgress" | "completed" | "failed" | "stopped">();
   const scientSubagents = new Map<string, ScientSubagentObservation>();
   const cancelledHostTools = new Set<string>();
   const cancelledHostUris = new Set<string>();
-  const publish = (update: OmpSessionUpdate) => input.onUpdate(update);
+  // Late diagnostics must not offer a continuation after Stop settled the turn.
+  // Their text is unredacted here, so only the fact is logged.
+  const publish = (update: OmpSessionUpdate) =>
+    update.type === "warning" && paused && !turnIsOpen(turn)
+      ? Effect.logDebug("Dropped an agent warning that arrived after Stop")
+      : input.onUpdate(update);
   /**
    * Events of an aborted run may still arrive after its turn settled, and
    * after the next turn began.
@@ -597,12 +614,15 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     rememberSettledPrompt(requestId);
     pendingOutcomes = [];
     abandonedRunId = openRunId;
-    yield* publish({
-      type: "turn-outcome",
-      ...turnOutcome(outcome, signal),
-      ...(requestId ? { requestId } : {}),
-    });
+    // Stop owns the terminal receipt until its RPC reply (including withdrawn input) is handled.
+    if (!pauseSettled)
+      yield* publish({
+        type: "turn-outcome",
+        ...turnOutcome(outcome, signal),
+        ...(requestId ? { requestId } : {}),
+      });
     activeTurnId = undefined;
+    if (pauseSettled && outcome !== "unknown") yield* Deferred.succeed(pauseSettled, undefined);
   });
 
   const applySignal = Effect.fn("OmpSessionRuntime.applySignal")(function* (signal: OmpTurnSignal) {
@@ -615,6 +635,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     turnId: string,
     autonomous: boolean,
   ) {
+    pauseSettled = undefined;
     activeTurnId = turnId;
     autonomousTurn = autonomous;
     assistantMessageSequence = 0;
@@ -847,6 +868,10 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }
       return;
     }
+    if (method === "notify") {
+      yield* publish({ type: "observation", event });
+      return;
+    }
     if (
       !id ||
       (method !== "select" && method !== "confirm" && method !== "input" && method !== "editor")
@@ -854,6 +879,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       // Notification-style extension UI methods do not expect a response.
       // In particular, do not acknowledge setWidget/setTitle/open_url as if
       // they were interactive questions.
+      return;
+    }
+    // After Stop no continuation will show an unowned question, so release the
+    // extension's waiting promise. Otherwise the adapter buffers it as before.
+    if (paused && !turnIsOpen(turn)) {
+      yield* cancelStaleQuestion(event);
       return;
     }
     const options = Array.isArray(event.options)
@@ -887,12 +918,13 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       id,
       method,
       title: text(event.title) ?? input.target.name,
-      message:
-        text(event.message) ??
-        text(event.placeholder) ??
-        text(event.prefill) ??
-        "Choose a response.",
+      message: text(event.message) ?? text(event.placeholder) ?? "Choose a response.",
       options: questionOptions,
+      allowCustomAnswer: method !== "select" && method !== "confirm",
+      ...(method === "editor" && event.prefill !== undefined
+        ? { initialAnswer: event.prefill }
+        : {}),
+      ...(event.timeout === undefined ? {} : { timeout: event.timeout }),
     });
   });
 
@@ -910,6 +942,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       // protocol failure ends the process instead.
       if (
         !turnIsOpen(turn) &&
+        !paused &&
         !protocolFailed &&
         (turn.phase === "terminal" || turn.phase === "failed" || turn.phase === "unknown")
       ) {
@@ -999,25 +1032,29 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }
       return;
     }
+    if (
+      event.type === "notice" ||
+      event.type === "retry_fallback_applied" ||
+      event.type === "cache_warming_end"
+    ) {
+      yield* publish({ type: "observation", event });
+      return;
+    }
     if (event.type === "auto_retry_start") {
       if (!turnIsOpen(turn) || staleRunOpen()) return;
       evidence.retryExhausted = false;
       evidence.retryFinalError = undefined;
-      const attempt =
-        typeof event.attempt === "number" && typeof event.maxAttempts === "number"
-          ? ` (attempt ${event.attempt} of ${event.maxAttempts})`
-          : "";
-      const cause = clip(event.errorMessage);
-      yield* publish({
-        type: "warning",
-        message: `${input.target.name} is retrying the model request${attempt}${cause ? `: ${cause}` : "."}`,
-      });
+      retryObserved = true;
+      yield* publish({ type: "observation", event });
       return;
     }
     if (event.type === "auto_retry_end") {
       // A recovered retry reports success after the turn settled; nothing is
       // left to decide then.
-      if (event.success !== false || !turnIsOpen(turn) || staleRunOpen()) return;
+      if (staleRunOpen() || (!retryObserved && !turnIsOpen(turn))) return;
+      retryObserved = false;
+      yield* publish({ type: "observation", event });
+      if (event.success !== false || !turnIsOpen(turn)) return;
       evidence.retryExhausted = true;
       evidence.retryFinalError = text(event.finalError);
       return;
@@ -1063,7 +1100,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           message: `${input.target.name} compaction will retry.`,
         });
       } else {
-        yield* publish({ type: "compacted" });
+        yield* publish({ type: "compacted", result: event.result });
       }
       return;
     }
@@ -1105,6 +1142,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       evidence.assistantEnded = true;
       evidence.stopReason = text(message.stopReason);
       evidence.errorMessage = text(message.errorMessage);
+      if (message.usage !== undefined) yield* publish({ type: "observation", event });
       yield* ensureAssistant(nativeId, message);
       yield* finishAssistant(assistantItemStatus(message), message);
       return;
@@ -1152,6 +1190,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     }
     // A fresh agent_start gives autonomous runs a turn. Unowned frames
     // and the tail of an aborted run still cannot leak into another turn.
+    if (event.type === "todo_auto_clear") {
+      if (staleRunOpen()) return;
+      yield* publish({ type: "observation", event });
+      return;
+    }
     if (event.type === "tool_stream_update") {
       if (!turnIsOpen(turn) || staleRunOpen()) return;
       const toolCallId = text(event.toolCallId);
@@ -1430,6 +1473,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
 
   const consume = Effect.fn("OmpSessionRuntime.consume")(function* (item: InboxItem) {
     if (item.type === "begin" && item.turnId && item.admission) {
+      paused = false;
+      pauseSettled = undefined;
       if (turnIsOpen(turn) && activeTurnId) {
         yield* Deferred.succeed(item.admission, { turnId: activeTurnId, steering: true });
       } else {
@@ -1535,6 +1580,17 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }),
     commandFailed: (turnId) =>
       offer({ type: "command-failed", ...(turnId === undefined ? {} : { turnId }) }),
+    pause: Effect.gen(function* () {
+      const settled = yield* Deferred.make<void>();
+      // Do not queue Stop behind an actor waiting for an RPC state reply. Fence
+      // publication now; only the actor settles the open turn and its receipt.
+      paused = true;
+      pauseSettled = settled;
+      if (!turnIsOpen(turn)) yield* Deferred.succeed(settled, undefined);
+      return {
+        settled: Deferred.await(settled),
+      };
+    }),
     requestProcessExit: Effect.fn("OmpSessionRuntime.requestProcessExit")(function* () {
       const done = yield* Deferred.make<void>();
       yield* offer({ type: "process-exit", done });

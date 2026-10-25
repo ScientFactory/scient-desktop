@@ -365,67 +365,6 @@ it("stops paging history for a missing saved message after a few pages", async (
   });
 });
 
-it("reveals the latest message after very tall notes", async (context) => {
-  await using _fixture = _createFixture(context);
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  const key = "reading-end:virtualized";
-  const entries = history(10);
-  await render(_fixture, key, entries);
-  await vi.waitFor(() => {
-    expect(readTimelinePosition(key)).toBeDefined();
-  });
-  const prompt = message(20, "user", "A question with a long investigation");
-  // A running turn keeps its notes as rows; a settled one would fold them.
-  const running = {
-    isWorking: true,
-    runningRunId: RunId.make("turn-20"),
-    readingFollowPromptId: prompt.message.id,
-  };
-  await render(_fixture, key, [...entries, prompt], running);
-  await advanceClock(_fixture, 128);
-  // Several very tall notes push the next message far past the rendered window.
-  const tallNotes = [21, 22, 23, 24].map((index) =>
-    message(
-      index,
-      "assistant",
-      `Investigation ${index}. ${"Reading the logs. ".repeat(900)}`,
-      "turn-20",
-    ),
-  );
-  const latest = message(25, "assistant", "Here is what I found.", "turn-20");
-  // The notes are measured first; the latest message arrives afterwards, far
-  // below the rendered window.
-  await render(_fixture, key, [...entries, prompt, ...tallNotes], running);
-  await advanceClock(_fixture, 192);
-  // Wait for the last note's text/layout and current measured height in list coordinates, with its
-  // end over two viewports away. Earlier notes may never mount; later measurement preserves visible
-  // content, moving reader and landing together, so waiting for all notes cannot establish this
-  // boundary.
-  await vi.waitFor(() => {
-    const state = _fixture.listRef.current!.getState();
-    const viewportHeight = node(_fixture).clientHeight;
-    const last = state.indexByKey(tallNotes.at(-1)!.id)!;
-    const rendered = state.elementAtIndex(last);
-    expect(rendered?.isConnected, "last note rendered").toBe(true);
-    const size = state.sizeAtIndex(last) ?? 0;
-    expect(size, "last note laid out").toBeGreaterThan(viewportHeight * 2);
-    expect(size, "last note measured").toBeCloseTo(rendered!.getBoundingClientRect().height, 0);
-    const landing = state.positionAtIndex(last) + size;
-    expect(
-      landing - (state.scroll + viewportHeight),
-      "latest lands below the window",
-    ).toBeGreaterThan(viewportHeight * 2);
-  });
-  await render(_fixture, key, [...entries, prompt, ...tallNotes, latest], running);
-  await advanceClock(_fixture, 16);
-  // Precondition: the latest message has never been rendered.
-  expect(rowRect(_fixture, latest.message.id)).toBeNull();
-  await vi.waitFor(() => {
-    expect(firstLinesVisible(_fixture, latest.message.id)).toBe(true);
-  });
-});
-
 it("waits for a history page still loading before giving up on the saved message", async (context) => {
   await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));

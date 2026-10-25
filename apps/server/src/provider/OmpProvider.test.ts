@@ -125,6 +125,7 @@ describe("Oh My Pi provider status", () => {
       const result = yield* checkOmpProviderStatus(ompTarget, settings, {}, () =>
         Effect.succeed(process()),
       );
+      expect(result.reportsContextWindow).toBe(true);
       expect(result.status).toBe("ready");
       expect(result.auth).toEqual({ status: "unknown", required: false });
       expect(result.message).toBeUndefined();

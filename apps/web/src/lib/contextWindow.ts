@@ -89,7 +89,8 @@ export function deriveLatestContextWindowSnapshot(
       durationMs: null,
       compactsAutomatically: true,
       autoCompactThreshold: liveUsage.autoCompactThreshold ?? null,
-      cost: null,
+      // SCIENT-FORK: turn context counters do not replace the provider's session bill.
+      cost: providerThread?.contextUsage?.cost ?? null,
       updatedAt: liveUsage.updatedAt,
     };
   }

@@ -857,6 +857,7 @@ const {
   EnvironmentScientSourcesHttpApi,
   EnvironmentScientLatexHttpApi,
   EnvironmentScientMarkdownHttpApi,
+  EnvironmentScientPdfHttpApi,
   EnvironmentScientAnalyticsHttpApi,
   EnvironmentScientThreadQueueHttpApi,
   EnvironmentScientConversationExportHttpApi,
@@ -903,6 +904,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentScientProjectHttpApi)
   .add(EnvironmentScientSourcesHttpApi)
   .add(EnvironmentScientMarkdownHttpApi)
+  .add(EnvironmentScientPdfHttpApi)
   .add(EnvironmentScientAnalyticsHttpApi)
   .add(EnvironmentScientLatexHttpApi)
   // SCIENT-FORK:START

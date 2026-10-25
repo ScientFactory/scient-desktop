@@ -58,9 +58,9 @@ const firstText = (...values: ReadonlyArray<string | undefined>) =>
   values.find((value) => value !== undefined && value.trim().length > 0);
 
 /**
- * Without confirmed terminal evidence, report unknown. prompt_result status is authoritative when
- * present; older versions use assistant/retry frames. Abort is external because Scient Stop closes
- * the process; preserve length as completed and use final retry error before message/prompt detail.
+ * Without confirmed terminal evidence, report unknown. A confirmed abort is failed; the Stop owner
+ * maps user-requested aborts to interruption. prompt_result status is authoritative when present;
+ * older versions use assistant/retry frames. Preserve length as completed and prefer retry error detail.
  */
 export const classifyOmpTurnOutcome = (
   target: OmpTarget,

@@ -264,6 +264,16 @@ export const AssetCopyRequest = Schema.Struct({
 });
 export type AssetCopyRequest = typeof AssetCopyRequest.Type;
 
+export const PdfBytesCopyRequest = Schema.Struct({
+  bytes: Schema.Uint8Array.check(Schema.isMinLength(1), Schema.isMaxLength(50 * 1024 * 1024)),
+  suggestedFileName: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(255),
+    Schema.isPattern(/^[^/\\\x00]+\.pdf$/iu),
+  ),
+});
+export type PdfBytesCopyRequest = typeof PdfBytesCopyRequest.Type;
+
 export const AssetCopyFailureReason = Schema.Literals([
   "dialog-failed",
   "source-unavailable",

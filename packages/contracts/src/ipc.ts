@@ -536,9 +536,11 @@ export const PickFolderOptionsSchema = Schema.Struct({
 // SCIENT-FORK:START — Scient asset copy contracts live in scient/desktopBridge.ts.
 export {
   DesktopAssetCopyRequestSchema,
+  DesktopPdfBytesCopyRequestSchema,
   DesktopAssetCopyResultSchema,
 } from "./scient/desktopBridge.ts";
 export type { DesktopAssetCopyRequest, DesktopAssetCopyResult };
+export type { DesktopPdfBytesCopyRequest } from "./scient/desktopBridge.ts";
 // SCIENT-FORK:END
 
 /** Oversized files have empty text so the main process never loads their contents. */

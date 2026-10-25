@@ -132,6 +132,7 @@ export * from "./secretRequest.ts";
 export * from "./clientRpcPermissions.ts";
 
 export * from "./scientDocumentHost.ts";
+export * from "./scientPdfEdits.ts";
 // SCIENT-FORK:START — Scient editor flush contracts (new file, no upstream edits).
 export * from "./scient/editorFlush.ts";
 // SCIENT-FORK:END
