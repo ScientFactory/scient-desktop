@@ -71,10 +71,14 @@ describe("Scient skill loads in the v2 work log", () => {
     },
   );
 
+  // regression: 794ff29ed2 merge: complete orchestration v2 alignment with Scient main
   it.each([
     ["running", "Loading Latex Authoring"],
+    ["pending", "Loading Latex Authoring"],
+    ["waiting", "Loading Latex Authoring"],
     ["failed", "Couldn't load Latex Authoring"],
     ["cancelled", "Didn't load Latex Authoring"],
+    ["interrupted", "Didn't load Latex Authoring"],
   ] as const)("reflects the durable skill load status: %s", (status, label) => {
     const item = {
       ...base,
@@ -83,7 +87,11 @@ describe("Scient skill loads in the v2 work log", () => {
       status,
       input: { releaseKey: "scient.latex-authoring@immutable-release" },
     } satisfies OrchestrationV2TurnItem;
-    expect(entriesFor(item)[0]).toMatchObject({ kind: "work", entry: { label, toolTitle: label } });
+    const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [visible(item)],
+      optimisticMessages: [],
+    });
+    expect(entry).toMatchObject({ kind: "work", entry: { label, toolTitle: label } });
   });
 
   it.each(["mcp__foreign__scient_skill_load", "scient_skill_load_extra"])(

@@ -493,7 +493,8 @@ function fanoutInput(fixture: Awaited<ReturnType<typeof setup>>) {
 
 describe("mounted composer send admission owner", () => {
   // The command regex itself is covered in ContextWindowMeter.logic.scient.test.ts.
-  it.each(["/compact keep the API notes"])(
+  // regression: f6e88b251e chore(upstream): merge official T3 through 9a391eb3f5
+  it.each(["/compact keep the API notes", "/compact\n  tests"])(
     "dispatches an instructed compaction once without a preceding bare command: %s",
     async (prompt) => {
       await using fixture = await setup({

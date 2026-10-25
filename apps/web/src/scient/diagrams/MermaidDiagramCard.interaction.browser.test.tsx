@@ -487,7 +487,8 @@ describe("Mermaid error recovery", () => {
     },
   );
 
-  it.each(["Download SVG", "Copy image", "Download PNG"] as const)(
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
+  it.each(["Copy source", "Download SVG", "Copy image", "Download PNG"] as const)(
     "executes %s from the expanded diagram through the export boundary",
     async (action) => {
       await using _fixture = _createFixture();
@@ -495,6 +496,7 @@ describe("Mermaid error recovery", () => {
       await _setupFixture0(_fixture);
 
       const exported = Promise.withResolvers<void>();
+      writeText.mockImplementation(async () => exported.resolve());
       vi.mocked(copyPngBlobToClipboard).mockImplementation(async () => exported.resolve());
       vi.mocked(downloadPresentationBlob).mockImplementation(() => exported.resolve());
       const original = 'flowchart LR\nA["Current export"] --> B\n';
@@ -519,7 +521,9 @@ describe("Mermaid error recovery", () => {
       // Native canvas encoding finishes through its callback, not a polling interval.
       await act(async () => await exported.promise);
 
-      if (action === "Copy image") {
+      if (action === "Copy source") {
+        expect(writeText).toHaveBeenCalledExactlyOnceWith(original);
+      } else if (action === "Copy image") {
         expect(copyPngBlobToClipboard).toHaveBeenCalledOnce();
         const blob = vi.mocked(copyPngBlobToClipboard).mock.calls[0]![0];
         expect(blob.type).toBe("image/png");
@@ -550,9 +554,11 @@ describe("Mermaid error recovery", () => {
       } else {
         expect(loadCanvasImage).not.toHaveBeenCalled();
       }
-      expect(writeText).not.toHaveBeenCalled();
+      if (action !== "Copy source") expect(writeText).not.toHaveBeenCalled();
       if (action !== "Copy image") expect(copyPngBlobToClipboard).not.toHaveBeenCalled();
-      if (action === "Copy image") expect(downloadPresentationBlob).not.toHaveBeenCalled();
+      if (action === "Copy source" || action === "Copy image") {
+        expect(downloadPresentationBlob).not.toHaveBeenCalled();
+      }
       expect(toastManager.add).not.toHaveBeenCalled();
       await expect.element(dialog).toBeVisible();
     },

@@ -146,36 +146,41 @@ describe("Scient nested code editor", () => {
     expect(content.getAttribute("aria-label")).toBe("HTML source");
   });
 
-  it.each(["plotly-json", "vega-lite"])(
-    "highlights %s source as JSON without changing its source language",
-    async (language) => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
+  it.each([
+    "plotly",
+    "plotly.js",
+    "plotly-json",
+    "plotlyjs",
+    "vega",
+    "vega-lite",
+    "vegalite",
+    "vl",
+  ])("highlights %s source as JSON without changing its source language", async (language) => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-      const parent = document.createElement("div");
-      document.body.append(_ownDOM(_fixture, parent));
-      const onUserCodeChange = vi.fn();
-      _fixture.editor = createScientNestedCodeEditor({
-        parent,
-        code: '{"data": [1, true, "label"]}',
-        editable: true,
-        language,
-        onEscape: vi.fn(),
-        onUserCodeChange,
-      });
-      await vi.waitFor(() => {
-        const tokens = [...parent.querySelectorAll(".cm-line span")];
-        expect(tokens.some((token) => token.textContent === '"data"')).toBe(true);
-        expect(new Set(tokens.map((token) => getComputedStyle(token).color)).size).toBeGreaterThan(
-          2,
-        );
-      });
-      expect(parent.querySelector(".cm-content")?.getAttribute("aria-label")).toBe(
-        `${language} code block`,
-      );
-      expect(onUserCodeChange).not.toHaveBeenCalled();
-    },
-  );
+    const parent = document.createElement("div");
+    document.body.append(_ownDOM(_fixture, parent));
+    const onUserCodeChange = vi.fn();
+    _fixture.editor = createScientNestedCodeEditor({
+      parent,
+      code: '{"data": [1, true, "label"]}',
+      editable: true,
+      language,
+      onEscape: vi.fn(),
+      onUserCodeChange,
+    });
+    await vi.waitFor(() => {
+      const tokens = [...parent.querySelectorAll(".cm-line span")];
+      expect(tokens.some((token) => token.textContent === '"data"')).toBe(true);
+      expect(new Set(tokens.map((token) => getComputedStyle(token).color)).size).toBeGreaterThan(2);
+    });
+    expect(parent.querySelector(".cm-content")?.getAttribute("aria-label")).toBe(
+      `${language} code block`,
+    );
+    expect(onUserCodeChange).not.toHaveBeenCalled();
+  });
 
   it("colors Mermaid across edits and themes without replacing the editor or its undo history", async (context) => {
     await using _fixture = _createFixture();

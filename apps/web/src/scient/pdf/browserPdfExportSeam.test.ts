@@ -58,11 +58,14 @@ describe("browser PDF export seams", () => {
     expect(NodeFS.existsSync(oldRendererUrl)).toBe(false);
   });
 
+  // regression: 666ea3a41a feat: refine browser PDF export lifecycle
   it("keeps browser fallback bytes out of the inherited local API facade", () => {
     const localApi = read("../../localApi.ts");
+    const fallback = read("../documentArtifacts/browserAssetCopy.ts");
 
     expect(localApi).toContain("saveAssetCopyInBrowser(request)");
     expect(localApi).not.toMatch(/createObjectURL|response\.blob|document\.createElement/gu);
+    expect(fallback).toContain("URL.createObjectURL(await response.blob())");
   });
 
   // regression: 666ea3a41a feat: refine browser PDF export lifecycle

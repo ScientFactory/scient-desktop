@@ -81,9 +81,11 @@ function shouldUseSidebarUpdateReleaseNotesPopover(
   );
 }
 
-function shouldShowSidebarUpdateRestartIcon(state: DesktopUpdateState | null): boolean {
+// SCIENT-FORK:START — expose the existing restart-icon policy to its restored regression guards.
+export function shouldShowSidebarUpdateRestartIcon(state: DesktopUpdateState | null): boolean {
   return state?.status === "error" && state.errorContext === "install";
 }
+// SCIENT-FORK:END
 
 function handleSidebarUpdateReleaseNotesPopoverOpenChange(
   _open: boolean,

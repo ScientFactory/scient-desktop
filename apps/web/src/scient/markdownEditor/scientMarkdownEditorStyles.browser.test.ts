@@ -1,3 +1,5 @@
+import _sourceContract4 from "../../components/ChatMarkdown.tsx?raw";
+import tableRendererSource from "../../components/chat/MarkdownTable.tsx?raw";
 import cssSource from "./scient-markdown-editor.css?raw";
 import previewCssSource from "../../index.css?raw";
 import appStyles from "../../index.css?inline";
@@ -26,6 +28,8 @@ function styledDocument(markup: string) {
 
 const computed = (host: HTMLElement, selector: string) =>
   getComputedStyle(host.querySelector(selector)!);
+
+const previewRendererSource = _sourceContract4;
 
 describe("rich Markdown document styles", () => {
   // regression: 6cb8d62aae fix(markdown): harden editor reliability
@@ -302,3 +306,19 @@ function _createFixture() {
     },
   };
 }
+
+// regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
+it("retains the established preview table expansion and export controls", async () => {
+  await using _fixture = _createFixture();
+
+  expect(previewRendererSource).toContain('from "./chat/MarkdownTable"');
+  expect(previewRendererSource).toContain("<MarkdownTable {...props} dir={tableDirection} />");
+  for (const label of [
+    '"Collapse table cells"',
+    '"Expand table cells"',
+    "Copy as Markdown",
+    "Copy as CSV",
+  ]) {
+    expect(tableRendererSource).toContain(label);
+  }
+});

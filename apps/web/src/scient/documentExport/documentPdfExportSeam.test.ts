@@ -16,11 +16,14 @@ describe("document PDF export seams", () => {
     expect(host).not.toContain("renderDocumentPagePdf!(");
   });
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it("keeps capture, validation, and publication out of the inherited server files", () => {
     const ws = [
       read("../../../../server/src/ws.ts"),
       read("../../../../server/src/scient/documentExport/DocumentPdfRpcHandlers.ts"),
     ].join("\n");
+    expect(ws).toContain("prepareMarkdownPdf(input)");
+    expect(ws).toContain("publishCapturedDocumentPdf(input)");
     expect(ws).not.toMatch(/scientDocumentReadinessRejection|writeDocumentCapture|DocumentBundle/u);
   });
 

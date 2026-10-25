@@ -56,8 +56,8 @@ function deferredDiagram() {
 }
 
 describe("PDF diagram renderer boundary", () => {
-  // Every typed content code takes the same branch (isMermaidContentError); one stands for all.
-  it.each(["semantic"])(
+  // regression: a495ed55e0 chore(upstream): merge t3 through 21da3061aa
+  it.each(["syntax", "unsupported-diagram", "semantic", "limit"])(
     "prints labelled original source for a typed Pele %s content error",
     async (code) => {
       setup();

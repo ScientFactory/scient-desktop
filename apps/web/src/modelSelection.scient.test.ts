@@ -1,6 +1,7 @@
 import {
   DROID_DEFAULT_MODEL,
   PI_DEFAULT_TEXT_GENERATION_MODEL,
+  OMP_DEFAULT_TEXT_GENERATION_MODEL,
   SCIENT_DEFAULT_TEXT_GENERATION_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -134,7 +135,7 @@ describe("native agent model selection", () => {
   );
 
   // regression: 3766d2d0fd fix(models): leave selection empty when all models are unavailable
-  it.each(["pi", "claudeAgent"])(
+  it.each(["pi", "omp", "scient", "claudeAgent"])(
     "does not invent a default when every %s model is unavailable",
     (kind) => {
       const driver = ProviderDriverKind.make(kind);
@@ -309,6 +310,7 @@ describe("native agent model selection", () => {
   // regression: 234475659b fix(provider): resolve automatic Pi and OMP metadata models
   it.each([
     ["pi", PI_DEFAULT_TEXT_GENERATION_MODEL],
+    ["omp", OMP_DEFAULT_TEXT_GENERATION_MODEL],
     ["scient", SCIENT_DEFAULT_TEXT_GENERATION_MODEL],
   ] as const)(
     "shows %s's automatic native model without changing stored settings",

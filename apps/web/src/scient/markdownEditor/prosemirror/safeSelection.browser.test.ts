@@ -132,9 +132,11 @@ describe("safe atom selections", () => {
     },
   );
 
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
   it.each([
-    // Every modifier takes the same early return.
     ["Shift+ArrowLeft", { key: "ArrowLeft", shiftKey: true }],
+    ["Alt+ArrowRight", { altKey: true, key: "ArrowRight" }],
+    ["Meta+Enter", { key: "Enter", metaKey: true }],
     ["Control+Backspace", { ctrlKey: true, key: "Backspace" }],
   ] as const)("leaves %s to the nested field", (_label, eventInit) => {
     const markdownDocument = createScientMarkdownProjection("Before [@source] after.\n").document;
@@ -160,7 +162,8 @@ describe("safe atom selections", () => {
     } as Pick<EditorView, "dispatch" | "focus" | "state"> as EditorView;
     const editor = globalThis.document.createElement("input");
     editor.value = eventInit.key === "Backspace" ? "" : "@source";
-    editor.setSelectionRange(0, 0);
+    const caret = eventInit.key === "ArrowRight" ? editor.value.length : 0;
+    editor.setSelectionRange(caret, caret);
     const event = new KeyboardEvent("keydown", { ...eventInit, cancelable: true });
 
     expect(

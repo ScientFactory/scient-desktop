@@ -688,11 +688,11 @@ describe("ChatMarkdown thread find", () => {
     });
   });
 
+  // regression: da7c4f234d test(web): chat markdown and timeline tests run in a real browser (#20905)
   it.each([
     { text: "Before $x^2$ after.", query: "x^2", count: 1, mathSource: true },
     { text: "Before $x^2$ after.", query: "Before $x^2$ after", count: 1, canonicalPhrase: true },
     { text: "Before \\(x^2\\) after.", query: "(x^2)", count: 1, mathSource: true },
-    // SCIENT-FORK: Scient's guarded single-dollar math stays on one line; display math uses $$.
     { text: "$$\nx^2\n$$", query: "x^2", count: 1, mathSource: true },
     { text: "Before $a*b*c$ after.", query: "$abc$", count: 1, mathSource: true },
     { text: "```math\nx^2\n```", query: "x^2", count: 1, mathSource: true },
@@ -718,6 +718,12 @@ describe("ChatMarkdown thread find", () => {
       count: 1,
     },
     { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Hello World", count: 1, withTemplate: true },
+    {
+      text: ARTIFACT_TEMPLATE_DIRECTIVE,
+      query: "Document template",
+      count: 1,
+      withTemplate: true,
+    },
     { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "World Document", count: 0, withTemplate: true },
     { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Use template", count: 0, withTemplate: true },
   ])(

@@ -43,6 +43,11 @@ const rightPanelTabsSource = NodeFS.readFileSync(
   "utf8",
 );
 
+const settingsSource = NodeFS.readFileSync(
+  NodePath.join(here, "ScientificComputingSettings.tsx"),
+  "utf8",
+);
+
 describe("compute result surface seam", () => {
   // regression: e28be01e7d fix(compute): tighten runtime truth and authority
   it("keeps one secondary Compute-session command in the add-surface menu", () => {
@@ -221,4 +226,25 @@ describe("compute result surface seam", () => {
     expect(followerSource).toContain("if (events.data?.stale || latestSession === null) return;");
     expect(followerSource).toContain("if (events.data?.stale) return null;");
   });
+});
+
+// regression: 78962a11ee feat(compute): checkpoint runtime settings and managed package improvements
+it("keeps default selection separate from installation actions using shared settings rows", () => {
+  expect(settingsSource).toContain("SettingsRow");
+  expect(settingsSource).toContain("SettingsSection");
+  expect(settingsSource).toContain('variant="plain"');
+  expect(settingsSource).toContain("SettingsSourceStrip");
+  expect(settingsSource).toContain("SettingsSourcePanel");
+  expect(settingsSource).not.toContain("Python & MATLAB");
+  expect(settingsSource).not.toContain("Advanced");
+  expect(settingsSource).toContain('title="Default runtime"');
+  expect(settingsSource).toContain("SelectTrigger");
+  expect(settingsSource).toContain("computeRuntimePickerLabel");
+  expect(settingsSource).not.toContain("<select");
+  expect(settingsSource).not.toContain("break-all");
+  expect(settingsSource).toContain("ManagedRuntimeMaintenanceMenu");
+  expect(settingsSource).toContain("ComputeInstallationRow");
+  expect(settingsSource).not.toContain("More scientific tools are coming soon");
+  expect(settingsSource).toContain('title="Scientific Computing"');
+  expect(pythonActionsSource).toContain("runtimeVersion:");
 });

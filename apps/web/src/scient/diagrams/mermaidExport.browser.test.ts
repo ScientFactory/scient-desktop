@@ -108,8 +108,15 @@ describe("diagram PNG export", () => {
 
   // One row per refusal branch: a fetching element (feImage also proves the name is
   // lower-cased), an external href, CSS that names an outside resource, and a handler.
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
   it.each([
     ["an SVG image", '<image href="https://example.invalid/plot.png"/>', /external image/],
+    ["an xlink image", '<image xlink:href="plot.png"/>', /external image/],
+    [
+      "an HTML image in a label",
+      '<foreignObject><div xmlns="http://www.w3.org/1999/xhtml"><img src="https://example.invalid/p.png"/></div></foreignObject>',
+      /external image/,
+    ],
     [
       "a filter image",
       '<filter id="f"><feImage href="https://example.invalid/p.png"/></filter>',
@@ -120,12 +127,34 @@ describe("diagram PNG export", () => {
       '<use href="https://example.invalid/sprite.svg#icon"/>',
       /external resource/,
     ],
+    ["an external xlink use", '<use xlink:href="sprite.svg#icon"/>', /external resource/],
+    [
+      "a link wrapping an image",
+      '<a href="https://example.com"><image href="https://example.invalid/p.png"/></a>',
+      /external image/,
+    ],
     [
       "an external paint server",
       '<rect width="4" height="4" style="fill:url(https://example.invalid/p.svg#g)"/>',
       /external resource/,
     ],
+    [
+      "a label background image",
+      '<foreignObject><div xmlns="http://www.w3.org/1999/xhtml" style="background:url(https://example.invalid/p.png)">x</div></foreignObject>',
+      /external resource/,
+    ],
     ["an event handler", '<rect width="4" height="4" onclick="alert(1)"/>', /active content/],
+    ["a script", "<script>alert(1)</script>", /external image/],
+    [
+      "an embedded object",
+      '<foreignObject><object xmlns="http://www.w3.org/1999/xhtml" data="https://example.invalid/x"/></foreignObject>',
+      /external image/,
+    ],
+    [
+      "an embedded frame",
+      '<foreignObject><iframe xmlns="http://www.w3.org/1999/xhtml" src="https://example.invalid/"/></foreignObject>',
+      /external image/,
+    ],
   ])("refuses %s before rasterizing", async (_label, body, message) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

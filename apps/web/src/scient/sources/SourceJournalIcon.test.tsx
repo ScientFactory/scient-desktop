@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vite-plus/test";
+import { EnvironmentId } from "@t3tools/contracts";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { sourceJournalIconInternals } from "./SourceJournalIcon";
+import { SourceJournalIcon, sourceJournalIconInternals } from "./SourceJournalIcon";
 
 const record = {
   formatVersion: 1 as const,
@@ -35,4 +37,20 @@ describe("SourceJournalIcon", () => {
     ).toBe(false);
     expect(sourceJournalIconInternals.canResolveJournalIcon(record)).toBe(true);
   });
+});
+
+// regression: 4e05b272c1 feat(sources): complete reference intake workflows
+it("renders the book immediately and does not wait for journal lookup", () => {
+  const resolveIcon = vi.fn(async () => null);
+  const markup = renderToStaticMarkup(
+    <SourceJournalIcon
+      environmentId={EnvironmentId.make("environment-test")}
+      root="/project"
+      record={record}
+      resolveIcon={resolveIcon}
+    />,
+  );
+  expect(markup).toContain('data-testid="source-generic-icon"');
+  expect(markup).not.toContain("<img");
+  expect(resolveIcon).not.toHaveBeenCalled();
 });

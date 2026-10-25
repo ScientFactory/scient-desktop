@@ -1975,3 +1975,49 @@ it("marks generic dynamic tools with a wrench in an expanded group", async () =>
   expect(markup).not.toContain("lucide-hammer");
   expect(markup).not.toContain("lucide-blocks");
 });
+
+// regression: e0e4158af1 Merge official T3 through d8e9fd267e with Scient policy composition
+it("renders elapsed time for a completed turn", async () => {
+  const runId = RunId.make("turn-with-fold");
+  const assistantEntry = buildAssistantTimelineEntry({
+    text: "Done.",
+  });
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...buildProps()}
+      latestRun={{
+        runId,
+        status: "completed",
+        startedAt: "2026-03-17T19:12:20.000Z",
+        completedAt: "2026-03-17T19:12:28.000Z",
+      }}
+      timelineEntries={[
+        {
+          id: "work-entry-with-fold",
+          kind: "work",
+          createdAt: "2026-03-17T19:12:22.000Z",
+          entry: {
+            id: "work-with-fold",
+            createdAt: "2026-03-17T19:12:22.000Z",
+            runId,
+            label: "Ran command",
+            tone: "tool",
+            toolLifecycleStatus: "completed",
+          },
+        },
+        {
+          ...assistantEntry,
+          message: {
+            ...assistantEntry.message,
+            runId,
+          },
+        },
+      ]}
+    />,
+  );
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector("[data-timeline-row-kind]")).not.toBeNull(),
+  );
+  const markup = screen.container.innerHTML;
+  expect(markup).toContain("Worked for 8.0s");
+});

@@ -228,25 +228,34 @@ describe("visual-card toolbar movement", () => {
     expect(f.position()).toEqual([-50, 50]);
   });
 
-  // The control check is one closest() over a selector list; a tag and a role row stand for it.
-  it.each(["button", '[role="slider"]'])(
-    "does not drag from a %s control or its nested icon",
-    (selector) => {
-      const f = fixture();
-      const control = new ElementTarget([selector], f.toolbar);
-      const icon = new ElementTarget([], control);
-      for (const target of [control, icon]) {
-        expect(f.backgroundDown(target).defaultPrevented).toBe(false);
-      }
-      expect(f.captured.size).toBe(0);
-      expect(f.handle.focus).not.toHaveBeenCalled();
-      expect(frames.size).toBe(0);
-      const action = vi.fn();
-      control.addEventListener("click", action);
-      event(control, "click");
-      expect(action).toHaveBeenCalledOnce();
-    },
-  );
+  // regression: 618e73cf1e feat(web): simplify visual cards with movable toolbars (#220)
+  it.each([
+    "button",
+    "a",
+    "input",
+    "select",
+    "textarea",
+    "label",
+    "summary",
+    "[contenteditable]",
+    "[tabindex]",
+    '[role="button"]',
+    '[role="slider"]',
+  ])("does not drag from a %s control or its nested icon", (selector) => {
+    const f = fixture();
+    const control = new ElementTarget([selector], f.toolbar);
+    const icon = new ElementTarget([], control);
+    for (const target of [control, icon]) {
+      expect(f.backgroundDown(target).defaultPrevented).toBe(false);
+    }
+    expect(f.captured.size).toBe(0);
+    expect(f.handle.focus).not.toHaveBeenCalled();
+    expect(frames.size).toBe(0);
+    const action = vi.fn();
+    control.addEventListener("click", action);
+    event(control, "click");
+    expect(action).toHaveBeenCalledOnce();
+  });
 
   it("leaves disabled controls and later action clicks alone after a background drag", () => {
     const f = fixture();
