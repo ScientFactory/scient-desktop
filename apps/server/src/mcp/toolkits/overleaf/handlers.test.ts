@@ -69,6 +69,24 @@ const summary = {
   linkedHere: true,
 };
 
+const emptyReview = () => ({
+  reviewId: "r",
+  digest: "d",
+  remoteTree: "b".repeat(40),
+  upToDate: false,
+  needsDecision: false,
+  incoming: [],
+  outgoing: [],
+  conflicts: [],
+  warnings: [],
+  unresolvedMarkers: [],
+  released: [],
+  collisions: [],
+  selectedAdditions: [],
+  additions: [],
+  localOnly: [],
+});
+
 /**
  * Fills what the service always reports and these tests don't vary: a sync that
  * neither retried nor first settled an interrupted sync, unless a test says so.
@@ -221,24 +239,11 @@ describe("Overleaf tool handlers", () => {
               sync: {
                 _tag: "synced",
                 review: {
-                  reviewId: "r",
-                  digest: "d",
-                  remoteTree: "b".repeat(40),
-                  upToDate: false,
-                  needsDecision: false,
-                  incoming: [],
+                  ...emptyReview(),
                   outgoing: [
                     { kind: "modified", path: "main.tex" },
                     { kind: "added", path: "gone.tex" },
                   ],
-                  conflicts: [],
-                  warnings: [],
-                  unresolvedMarkers: [],
-                  released: [],
-                  collisions: [],
-                  selectedAdditions: [],
-                  additions: [],
-                  localOnly: [],
                 },
                 adopted: { outcome: "complete", interrupted: [], markerPaths: [] },
                 publication: { _tag: "accepted", attemptNumber: 5 },
@@ -345,21 +350,9 @@ describe("Overleaf tool handlers", () => {
   it.effect("names files held for their conflict marks, even when nothing else would move", () =>
     Effect.gen(function* () {
       const review = {
-        reviewId: "r",
-        digest: "d",
-        remoteTree: "b".repeat(40),
+        ...emptyReview(),
         upToDate: true,
-        needsDecision: false,
-        incoming: [],
-        outgoing: [],
-        conflicts: [],
-        warnings: [],
         unresolvedMarkers: ["guide.md"],
-        released: [],
-        collisions: [],
-        selectedAdditions: [],
-        additions: [],
-        localOnly: [],
       };
       const previewed = yield* overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(
         provide(
@@ -613,21 +606,9 @@ describe("Overleaf tool handlers", () => {
   it.effect("says when Overleaf moved under the choices, so they don't answer the new review", () =>
     Effect.gen(function* () {
       const review = {
-        reviewId: "r",
-        digest: "d",
-        remoteTree: "b".repeat(40),
-        upToDate: false,
+        ...emptyReview(),
         needsDecision: true,
-        incoming: [],
-        outgoing: [],
         conflicts: [{ key: "k2", paths: ["main.tex"], allowed: ["mine", "theirs"], chosen: null }],
-        warnings: [],
-        unresolvedMarkers: [],
-        released: [],
-        collisions: [],
-        selectedAdditions: [],
-        additions: [],
-        localOnly: [],
       };
       const overleaf = fakeOverleaf({
         sync: () =>
@@ -665,24 +646,12 @@ describe("Overleaf tool handlers", () => {
   it.effect("says a send-related change happened only when Overleaf accepted the send", () =>
     Effect.gen(function* () {
       const review = {
-        reviewId: "r",
-        digest: "d",
-        remoteTree: "b".repeat(40),
-        upToDate: false,
-        needsDecision: false,
-        incoming: [],
+        ...emptyReview(),
         outgoing: [{ kind: "renamed" as const, from: "a.tex", to: "b.tex" }],
-        conflicts: [],
         warnings: [
           { kind: "rename", from: "a.tex", to: "b.tex" },
           { kind: "restores-older-version", path: "c.tex" },
         ],
-        unresolvedMarkers: [],
-        released: [],
-        collisions: [],
-        selectedAdditions: [],
-        additions: [],
-        localOnly: [],
       };
       const linesFor = (publication: unknown) =>
         overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
@@ -742,21 +711,8 @@ describe("Overleaf tool handlers", () => {
   it.effect("claims incoming changes only when the apply completed", () =>
     Effect.gen(function* () {
       const review = (incoming: ReadonlyArray<unknown>) => ({
-        reviewId: "r",
-        digest: "d",
-        remoteTree: "b".repeat(40),
-        upToDate: false,
-        needsDecision: false,
+        ...emptyReview(),
         incoming,
-        outgoing: [],
-        conflicts: [],
-        warnings: [],
-        unresolvedMarkers: [],
-        released: [],
-        collisions: [],
-        selectedAdditions: [],
-        additions: [],
-        localOnly: [],
       });
       const linesFor = (
         outcome: string,
@@ -820,19 +776,8 @@ describe("Overleaf tool handlers", () => {
               Effect.succeed({
                 _tag: "review",
                 review: {
-                  reviewId: "r",
-                  digest: "d",
-                  remoteTree: "b".repeat(40),
+                  ...emptyReview(),
                   upToDate: true,
-                  needsDecision: false,
-                  incoming: [],
-                  outgoing: [],
-                  conflicts: [],
-                  warnings: [],
-                  unresolvedMarkers: [],
-                  released: [],
-                  collisions: [],
-                  selectedAdditions: [],
                   additions: [
                     { path: "main.aux", size: 4, selected: false, skippedBecause: "build-output" },
                     {
@@ -911,21 +856,10 @@ describe("Overleaf tool handlers", () => {
           incoming: ReadonlyArray<unknown>,
           conflicts: ReadonlyArray<unknown> = [],
         ) => ({
-          reviewId: "r",
-          digest: "d",
-          remoteTree: "b".repeat(40),
-          upToDate: false,
+          ...emptyReview(),
           needsDecision: conflicts.length > 0,
           incoming,
-          outgoing: [],
           conflicts,
-          warnings: [],
-          unresolvedMarkers: [],
-          released: [],
-          collisions: [],
-          selectedAdditions: [],
-          additions: [],
-          localOnly: [],
         });
         const synced = (options: {
           readonly incoming: ReadonlyArray<unknown>;
@@ -1170,21 +1104,8 @@ describe("Overleaf tool handlers", () => {
                   baseGeneration: 1,
                 },
                 review: {
-                  reviewId: "r",
-                  digest: "d",
-                  remoteTree: "b".repeat(40),
+                  ...emptyReview(),
                   upToDate: true,
-                  needsDecision: false,
-                  incoming: [],
-                  outgoing: [],
-                  conflicts: [],
-                  warnings: [],
-                  unresolvedMarkers: [],
-                  released: [],
-                  collisions: [],
-                  selectedAdditions: [],
-                  additions: [],
-                  localOnly: [],
                 },
               }) as never,
           }),

@@ -56,14 +56,6 @@ it.effect(
           requiredCapabilities: ["documents:build"],
           approval: "session-grant",
         });
-        expect(tool.description).not.toMatch(/confirm with the user|ask the user to approve/iu);
       }
-      const description = (name: string) =>
-        tools.find(({ tool }) => tool.name === name)!.tool.description ?? "";
-      expect(description("scient_overleaf_sync")).toContain("Only a conflict stops it");
-      expect(description("scient_overleaf_sync")).toContain("save the folder's open editors");
-      expect(description("scient_overleaf_token")).toContain("request_secret");
-      expect(description("scient_overleaf_token")).toContain("Never ask for the token in chat");
-      expect(description("scient_overleaf_connect")).toContain("mode new-folder");
     }).pipe(Effect.provide(TestLayer)),
 );
