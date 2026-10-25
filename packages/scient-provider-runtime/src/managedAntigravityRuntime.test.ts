@@ -1,7 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Tests exercise the package's private filesystem boundary.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { ManagedRuntimeChecksum } from "./managedRuntimeArtifact.ts";
+import type { ManagedRuntimeChecksum } from "./managedRuntimeArtifact.ts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveReviewedAntigravityArtifact } from "./antigravityManifest.ts";
