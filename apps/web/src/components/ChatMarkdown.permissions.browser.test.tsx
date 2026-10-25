@@ -291,12 +291,10 @@ it.each(["link-to-thread", "unlink-from-thread"])(
   },
 );
 
+// SCIENT-FORK:START — relative links open inside Scient; one row per path hazard, both parsers.
 it.each([
   [false, "LTC - Cystic Fibrosis - new (readable).md"],
-  [true, "LTC - Cystic Fibrosis - new (readable).md"],
-  [false, "סיכום.md"],
   [true, "סיכום.md"],
-  [false, "Folder (draft)/Study [final].md"],
   [true, "Folder (draft)/Study [final].md"],
 ] as const)(
   "opens a relative file inside Scient (raw HTML=%s, path=%s)",
@@ -315,3 +313,4 @@ it.each([
     expect(state.toast).not.toHaveBeenCalled();
   },
 );
+// SCIENT-FORK:END

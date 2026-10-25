@@ -139,39 +139,29 @@ describe("provider settings lifecycle presentation", () => {
     });
   });
 
-  it.each([
-    ["codex", "Codex"],
-    ["claudeAgent", "Claude"],
-    ["antigravity", "Antigravity"],
-    ["cursor", "Cursor"],
-    ["droid", "Droid"],
-    ["grok", "Grok"],
-    ["opencode", "OpenCode"],
-  ] as const)("routes disabled %s through its management card", (driver, displayName) => {
-    expect(
-      providerSettingsLifecyclePresentation(
-        provider({
-          driver: ProviderDriverKind.make(driver),
+  // Disabled and probe-pending providers resolve before any driver-specific branch.
+  it.each([["codex", "Codex"]] as const)(
+    "routes disabled %s through its management card",
+    (driver, displayName) => {
+      expect(
+        providerSettingsLifecyclePresentation(
+          provider({
+            driver: ProviderDriverKind.make(driver),
+            displayName,
+            enabled: false,
+          }),
           displayName,
-          enabled: false,
-        }),
-        displayName,
-      ),
-    ).toMatchObject({
-      kind: "disabled",
-      actionLabel: "Manage",
-      actionKind: "manage",
-    });
-  });
+        ),
+      ).toMatchObject({
+        kind: "disabled",
+        actionLabel: "Manage",
+        actionKind: "manage",
+      });
+    },
+  );
 
-  it.each([
-    ["codex", "Codex"],
-    ["claudeAgent", "Claude"],
-    ["antigravity", "Antigravity"],
-    ["cursor", "Cursor"],
-    ["droid", "Droid"],
-    ["grok", "Grok"],
-  ] as const)(
+  // regression: 22f5ecd732 fix(providers): suppress provisional lifecycle actions
+  it.each([["codex", "Codex"]] as const)(
     "suppresses provisional lifecycle actions while %s is being checked",
     (driver, displayName) => {
       expect(
@@ -542,21 +532,21 @@ describe("provider settings lifecycle presentation", () => {
     });
   });
 
-  it.each([
-    ["install", "Installing"],
-    ["update", "Updating"],
-    ["repair", "Repairing"],
-    ["remove", "Removing"],
-  ] as const)("uses one concise action label throughout %s", (action, label) => {
-    for (const status of ["preparing", "downloading", "installing", "activating"] as const) {
-      expect(presentingOperation({ action, status })).toMatchObject({
-        actionLabel: label,
-        statusLabel: label,
-        runtimeAction: null,
-        busy: true,
-      });
-    }
-  });
+  // regression: 4f8a2ef99e fix(providers): install and update directly with quiet settings progress
+  // The label is a lookup by action; one action proves it holds across stages.
+  it.each([["install", "Installing"]] as const)(
+    "uses one concise action label throughout %s",
+    (action, label) => {
+      for (const status of ["preparing", "downloading", "installing", "activating"] as const) {
+        expect(presentingOperation({ action, status })).toMatchObject({
+          actionLabel: label,
+          statusLabel: label,
+          runtimeAction: null,
+          busy: true,
+        });
+      }
+    },
+  );
 
   it.each(["verifying", "testing"] as const)(
     "shows Verifying for %s, not a leftover download percentage",
@@ -567,11 +557,12 @@ describe("provider settings lifecycle presentation", () => {
     },
   );
 
+  // One row per guard: floor, upper clamp, missing either side, zero total, non-finite.
   it.each([
+    // regression: 4f8a2ef99e fix(providers): install and update directly with quiet settings progress
     [0, 100, 0],
     [42, 100, 42],
     [999, 1000, 99],
-    [100, 100, 100],
     [110, 100, 100],
     [undefined, 100, undefined],
     [42, undefined, undefined],
@@ -591,7 +582,8 @@ describe("provider settings lifecycle presentation", () => {
     },
   );
 
-  it.each(["preparing", "installing", "activating", "succeeded", "failed", "cancelled"] as const)(
+  // An active non-download stage and a finished operation take the two other paths.
+  it.each(["preparing", "succeeded"] as const)(
     "never treats download bytes as overall progress during %s",
     (status) => {
       expect(

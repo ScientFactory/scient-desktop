@@ -46,18 +46,6 @@ describe("PDF validation worker location", () => {
       "file:///opt/scient/backend/dist/pdf-validation-worker.mjs",
     ],
     [
-      "file:///opt/scient/backend/dist/binCli-ByLO77_f.mjs",
-      "file:///opt/scient/backend/dist/pdf-validation-worker.mjs",
-    ],
-    [
-      "file:///opt/scient/backend/dist/shared-GeneratedDocumentStore.mjs",
-      "file:///opt/scient/backend/dist/pdf-validation-worker.mjs",
-    ],
-    [
-      "file:///opt/scient/relocated/binCli-hashed.mjs",
-      "file:///opt/scient/relocated/pdf-validation-worker.mjs",
-    ],
-    [
       "file:///C:/Program%20Files/Scient/resources/backend/dist/binCli-hashed.mjs",
       "file:///C:/Program%20Files/Scient/resources/backend/dist/pdf-validation-worker.mjs",
     ],

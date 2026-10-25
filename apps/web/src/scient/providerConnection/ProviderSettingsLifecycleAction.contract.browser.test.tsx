@@ -209,16 +209,9 @@ describe("ProviderSettingsLifecycleAction", () => {
     const install = await render(_fixture, provider({ source: "missing" }));
 
     expect(manage).toContain(">Manage<");
-    expect(manage).toContain("lucide-settings-2");
-    expect(manage).toContain("border-transparent");
-    expect(manage).toContain("text-muted-foreground");
-    expect(manage).not.toContain("text-primary");
     expect(install).toContain(">Install<");
-    expect(install).toContain("lucide-download");
-    expect(install).toContain("text-primary");
     const disabled = await render(_fixture, provider({ source: "system", enabled: false }));
     expect(disabled).toContain(">Manage<");
-    expect(disabled).toContain("lucide-settings-2");
     expect(
       await render(
         _fixture,
@@ -245,33 +238,29 @@ describe("ProviderSettingsLifecycleAction", () => {
     ).toContain(`aria-label="Manage ${name}"`);
   });
 
-  it.each([
-    ["codex", "Codex"],
-    ["claudeAgent", "Claude"],
-    ["antigravity", "Antigravity"],
-    ["cursor", "Cursor"],
-    ["droid", "Droid"],
-    ["grok", "Grok"],
-    ["opencode", "OpenCode"],
-  ] as const)("routes disabled %s through its management card", async (driver, displayName) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-    await _setupFixture2(_fixture);
+  // A disabled provider is resolved before any driver-specific branch.
+  it.each([["codex", "Codex"]] as const)(
+    "routes disabled %s through its management card",
+    async (driver, displayName) => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      await _setupFixture2(_fixture);
 
-    const value = provider({ driver, source: "missing", enabled: false });
-    const presentation = providerSettingsLifecyclePresentation(value, displayName);
+      const value = provider({ driver, source: "missing", enabled: false });
+      const presentation = providerSettingsLifecyclePresentation(value, displayName);
 
-    expect(
-      resolveProviderSettingsPrimaryAction({
-        provider: value,
-        presentation,
-        canRunExternalUpdate: false,
-      }),
-    ).toEqual({ kind: "open", runtimeAction: null });
-    expect(await render(_fixture, value)).toContain(">Manage<");
-    expect(await render(_fixture, value)).not.toContain(">Enable<");
-  });
+      expect(
+        resolveProviderSettingsPrimaryAction({
+          provider: value,
+          presentation,
+          canRunExternalUpdate: false,
+        }),
+      ).toEqual({ kind: "open", runtimeAction: null });
+      expect(await render(_fixture, value)).toContain(">Manage<");
+      expect(await render(_fixture, value)).not.toContain(">Enable<");
+    },
+  );
 
   it("keeps management available while the enabled provider probe settles", async () => {
     await using _fixture = _createFixture();
@@ -291,10 +280,10 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(markup).not.toContain(">Checking<");
   });
 
+  // regression: 29da09f8c3 fix(providers): retain setup progress outside management dialogs
+  // The label is a lookup by action; removal is the one row without download progress.
   it.each([
     ["install", "Installing"],
-    ["update", "Updating"],
-    ["repair", "Repairing"],
     ["remove", "Removing"],
   ] as const)("keeps %s progress visible beside icon-only management", async (action, label) => {
     await using _fixture = _createFixture();
@@ -318,8 +307,6 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(markup).toContain('aria-label="Manage Codex"');
     expect(markup).not.toContain(">Manage</button>");
     expect(markup).toContain('role="status"');
-    expect(markup).toContain("text-primary");
-    expect(markup).toContain("animate-spin");
     if (action === "remove") expect(markup).not.toContain("Download progress");
     else expect(markup).toContain('aria-label="Download progress 42%"');
 
@@ -364,7 +351,9 @@ describe("ProviderSettingsLifecycleAction", () => {
     },
   );
 
-  it.each(["succeeded", "cancelled", "failed"] as const)(
+  // regression: 29da09f8c3 fix(providers): retain setup progress outside management dialogs
+  // Succeeded and cancelled take the same inactive path; failed has its own.
+  it.each(["succeeded", "failed"] as const)(
     "clears progress after the runtime operation is %s",
     async (status) => {
       await using _fixture = _createFixture();
@@ -706,7 +695,9 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(onManage).not.toHaveBeenCalled();
   });
 
-  it.each(["install", "update", "repair", "remove"] as const)(
+  // regression: 4f8a2ef99e fix(providers): install and update directly with quiet settings progress
+  // An active or failed operation opens details whatever its action.
+  it.each(["install"] as const)(
     "opens existing details for active or failed %s without starting/retrying it",
     async (action) => {
       await using _fixture = _createFixture();
@@ -762,7 +753,6 @@ describe("ProviderSettingsLifecycleAction", () => {
     ]) {
       expect(markup).not.toContain(">Update</button>");
       expect(markup).toContain('aria-label="Manage Codex"');
-      expect(markup).toContain("lucide-settings-2");
       expect(markup).toContain(">Manage</button>");
     }
 

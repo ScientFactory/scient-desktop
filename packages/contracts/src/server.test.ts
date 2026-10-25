@@ -40,6 +40,7 @@ describe("ServerProvider", () => {
     }
   });
 
+  // SCIENT-FORK:START
   it("defaults capability arrays when decoding provider snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",
@@ -64,6 +65,7 @@ describe("ServerProvider", () => {
     expect(parsed.connection).toBeUndefined();
   });
 
+  // regression: 6dbb795ff0 feat(providers): add guided Codex lifecycle
   it("decodes an additive provider connection summary without credential data", () => {
     const parsed = decodeServerProvider({
       ...baseProviderSnapshot,
@@ -98,6 +100,7 @@ describe("ServerProvider", () => {
       },
     });
   });
+  // SCIENT-FORK:END
 });
 
 describe("server config forward compatibility", () => {

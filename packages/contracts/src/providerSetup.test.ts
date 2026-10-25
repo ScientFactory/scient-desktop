@@ -6,6 +6,7 @@ import { ProviderAuthState } from "./providerSetup.ts";
 const decodeState = Schema.decodeUnknownSync(ProviderAuthState);
 
 describe("provider auth state", () => {
+  // SCIENT-FORK:START
   it("preserves an explicit unverified native completion without changing older messages", () => {
     const state = {
       instanceId: "muse",
@@ -21,6 +22,7 @@ describe("provider auth state", () => {
     });
     expect(decodeState(state)).toEqual(state);
   });
+  // SCIENT-FORK:END
   it("drops auth variants from newer servers instead of rejecting the state", () => {
     const method = { id: "browser", name: "Browser", description: null, type: "agent" };
     expect(

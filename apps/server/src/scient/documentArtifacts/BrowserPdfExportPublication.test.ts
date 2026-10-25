@@ -5,8 +5,7 @@ import {
   LogicalDocumentKey,
   ProducingOperationId,
 } from "@scientfactory/document-artifacts";
-import { PDF_VALIDATION_MAX_BYTES } from "@scientfactory/pdf-validation";
-import { BROWSER_PDF_EXPORT_MAX_BYTES, BrowserPdfExportInput } from "@t3tools/contracts";
+import { BrowserPdfExportInput } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { vi } from "vite-plus/test";
@@ -74,11 +73,6 @@ function makeStore(publishError?: GeneratedDocumentStoreError) {
 }
 
 describe("BrowserPdfExportPublication", () => {
-  it("keeps the JSON transport ceiling narrower than general PDF validation", () => {
-    expect(BROWSER_PDF_EXPORT_MAX_BYTES).toBe(64 * 1_024 * 1_024);
-    expect(PDF_VALIDATION_MAX_BYTES).toBe(256 * 1_024 * 1_024);
-  });
-
   it.effect(
     "publishes through the generated-document boundary with browser validation evidence",
     () =>

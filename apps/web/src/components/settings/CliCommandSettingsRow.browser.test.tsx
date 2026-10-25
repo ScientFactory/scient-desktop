@@ -63,6 +63,7 @@ describe("desktop CLI shortcut actions", () => {
     return found;
   }
 
+  // regression: ad9bf52f2d fix(settings): simplify terminal command actions
   it("offers only installation on fresh setup and removal after canonical installation", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -118,6 +119,7 @@ describe("desktop CLI shortcut actions", () => {
     expect(button(_fixture, "Install scient").disabled).toBe(false);
   });
 
+  // regression: ad9bf52f2d fix(settings): simplify terminal command actions
   it("keeps both actions disabled until failure-state reconciliation completes", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

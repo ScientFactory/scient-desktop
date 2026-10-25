@@ -150,18 +150,22 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex catalog disco
     }),
   );
 
+  // regression: ed0f7b908b fix(server): Sol Ultrafast stops vanishing from the Codex model picker (#18200).
+  // Its probe also pins the real child's originator and client identity.
   it.effect("keeps Ultrafast when another Codex client wrote the shared catalog cache", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* solServiceTiers(true), ["default", "priority", "ultrafast"]);
     }).pipe(Effect.scoped),
   );
 
+  // regression: ed0f7b908b (the not-entitled branch)
   it.effect("drops Ultrafast once the account is no longer entitled to it", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* solServiceTiers(false), ["default", "priority"]);
     }).pipe(Effect.scoped),
   );
 
+  // regression: 3b844dab5c fix(codex): display inherited service tiers across models (#15623)
   it.effect("displays the inherited global Fast tier on every discovered model", () =>
     Effect.gen(function* () {
       for (const tier of ["fast", "priority"]) {
@@ -190,6 +194,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex catalog disco
     }).pipe(Effect.scoped),
   );
 
+  // regression: 3b844dab5c fix(codex): display inherited service tiers across models (#15623)
   it.effect(
     "preserves the catalog when global tier config is missing, unknown, failing, or stalled",
     () =>

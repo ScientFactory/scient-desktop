@@ -68,11 +68,11 @@ vi.mock("../../lib/useMobileNavigationTheme", () => ({
   useMobileNavigationTheme: () => ({ colors: { primary: "blue" } }),
 }));
 
+// One row per branch of the compact-ipad-compose rule; other devices share the phone row.
 it.each([
   { device: "pad", split: false, compose: true },
   { device: "pad", split: true, compose: false },
   { device: "duo-folded", split: false, compose: true },
-  { device: "duo-unfolded", split: true, compose: false },
   { device: "phone", split: false, compose: false },
 ])("keeps the touch compose entry for $device split=$split", async (pose) => {
   layout.device = pose.device;

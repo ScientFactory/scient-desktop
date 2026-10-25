@@ -375,7 +375,9 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   const connectedRoutes = yield* Ref.make<ReadonlyArray<string>>([]);
   const checkRoute = (route: ConnectionRoute) =>
     Effect.succeed(options?.checkRoute?.(route) ?? "unchecked");
+  // SCIENT-FORK:START
   const connectRoute = (_entry: ConnectionCatalogEntry, route: ConnectionRoute) =>
+    // SCIENT-FORK:END
     Effect.gen(function* () {
       const target = route.target;
       const credential =

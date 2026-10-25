@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
  * resolves the worker from node_modules.
  */
 describe("packaged pdfjs worker seam", () => {
+  // regression: 58751dd49c fix(server): ship the pdfjs worker module the packaged validator loads
   it("keeps the pdf.worker entry in the server bundle", () => {
     const viteConfig = NodeFS.readFileSync(
       new URL("../../../vite.config.ts", import.meta.url),

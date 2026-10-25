@@ -1,4 +1,7 @@
-import { ChatAttachmentId, EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
+// SCIENT-FORK:START — the queued-edit image budget cases below.
+import { ChatAttachmentId } from "@t3tools/contracts";
+// SCIENT-FORK:END
 import * as Option from "effect/Option";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -96,7 +99,9 @@ import {
   validateDraftFileAttachments,
 } from "./attachmentUpload";
 import type { DraftComposerAttachment } from "./composerImages";
+// SCIENT-FORK:START — the queued-edit image budget cases below.
 import { prepareQueuedRunEditAttachments } from "./queuedEditAttachmentPreparation";
+// SCIENT-FORK:END
 
 const environmentId = EnvironmentId.make("environment-1");
 const MINTED_ID = "pending-00000000-0000-4000-8000-000000000001-pdf";
@@ -217,6 +222,7 @@ describe("prepareTurnAttachments", () => {
     mocks.upload.mockResolvedValue({ status: 204, body: "", headers: {} });
   });
 
+  // SCIENT-FORK:START — Scient caps a turn's images at 80 MiB before any upload or byte read.
   const MiB = 1024 * 1024;
   const imageRefs = (count: number): DraftComposerAttachment[] =>
     Array.from({ length: count }, (_, index) => ({
@@ -344,6 +350,8 @@ describe("prepareTurnAttachments", () => {
     expect(mocks.upload).not.toHaveBeenCalled();
     expect(mocks.runAtomCommand).not.toHaveBeenCalled();
   });
+
+  // SCIENT-FORK:END
 
   it("does not mint or transfer attachments without task operation access", async () => {
     mocks.canOperate = false;

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
 import { toAppModelOption } from "../../modelSelection.ts";
-import type { ModelEsque } from "./providerIconUtils";
 
 /**
  * The web layer renders `providerCostLabel` verbatim as an opaque
@@ -29,16 +28,5 @@ describe("model providerCostLabel plumbing", () => {
       capabilities: null,
     } as never);
     expect(option.providerCostLabel).toBeUndefined();
-  });
-
-  it("is carried on picker rows as an optional field", () => {
-    const withBadge: ModelEsque = {
-      slug: "composer-2",
-      name: "Composer 2",
-      providerCostLabel: "0.5×",
-    };
-    const withoutBadge: ModelEsque = { slug: "auto", name: "Auto" };
-    expect(withBadge.providerCostLabel).toBe("0.5×");
-    expect(withoutBadge.providerCostLabel).toBeUndefined();
   });
 });

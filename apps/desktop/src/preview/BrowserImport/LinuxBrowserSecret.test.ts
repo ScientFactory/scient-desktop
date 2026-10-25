@@ -22,6 +22,7 @@ it.layer(NodeServices.layer)("Linux browser secret path", (it) => {
         "browser-secret",
         "build",
         "x64",
+        // SCIENT-FORK:START scient-branding
         "scient-browser-secret",
       );
       const staged = path.join(
@@ -33,6 +34,7 @@ it.layer(NodeServices.layer)("Linux browser secret path", (it) => {
         "scient-browser-secret",
       );
       const packaged = path.join(resourcesPath, "browser-secret", "scient-browser-secret");
+      // SCIENT-FORK:END scient-branding
       for (const filename of [native, staged, packaged]) {
         yield* fileSystem.makeDirectory(path.dirname(filename), { recursive: true });
         yield* fileSystem.writeFileString(filename, "helper");

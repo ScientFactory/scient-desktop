@@ -124,6 +124,7 @@ describe("Scient Agent first managed release", () => {
     ).toBe(promoted);
   });
 
+  // regression: 8f4842a96b feat(scient-agent): add managed runtime installation and maintenance
   it.each(["0.0.9", "1.0.0", "0.1.0-beta.1", "0.1.0+build", "latest"])(
     "rejects unsupported stable pointer %s",
     async (version) => {
@@ -465,6 +466,7 @@ describe("managed runtime policy transitions", () => {
     ).toThrow(/every app-approved target/u);
   });
 
+  // regression: aa7e503582 fix(provider-runtime): qualify Codex packages without patched zsh
   it.each([0, 5, 999])("rejects unknown Codex contract %s", (contractRevision) => {
     expect(() =>
       validateManagedRuntimeCatalog({

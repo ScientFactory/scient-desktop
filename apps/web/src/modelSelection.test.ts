@@ -1,10 +1,6 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
-  DROID_DEFAULT_MODEL,
-  OMP_DEFAULT_TEXT_GENERATION_MODEL,
-  PI_DEFAULT_TEXT_GENERATION_MODEL,
-  SCIENT_DEFAULT_TEXT_GENERATION_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -14,14 +10,9 @@ import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@t3tools/shared/model";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
-import {
-  deriveProviderInstanceEntries,
-  getDefaultProviderInstanceModel,
-  NO_PROVIDER_MODEL_SELECTION,
-} from "./providerInstances";
+import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./providerInstances";
 import {
   getAppModelOptionsForInstance,
-  resolveAppModelSelection,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
 } from "./modelSelection";
@@ -77,227 +68,6 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
-  it.each(["pi", "omp", "scient"])(
-    "applies curated %s defaults without replacing saved visibility",
-    (kind) => {
-      const native = provider({
-        provider: ProviderDriverKind.make(kind),
-        instanceId: kind,
-        models: [
-          "google-antigravity/claude-opus-4-5",
-          "google-antigravity/claude-opus-4-6",
-          "google-antigravity/gemini-3.8-flash",
-          "google-antigravity/gemini-3.1-pro",
-          "anthropic/claude-haiku-4-5",
-          "anthropic/claude-sonnet-5-5",
-          "openai-codex/gpt-6-sol",
-          "openai-codex/gpt-6.1-sol",
-        ],
-      });
-      const entry = deriveProviderInstanceEntries([native])[0]!;
-      const selected = getAppModelOptionsForInstance(
-        DEFAULT_UNIFIED_SETTINGS,
-        entry,
-        "anthropic/claude-haiku-4-5",
-      );
-      expect(selected.map((model) => model.slug)).toEqual([
-        "anthropic/claude-sonnet-5-5",
-        "openai-codex/gpt-6.1-sol",
-        "google-antigravity/claude-opus-4-6",
-        "google-antigravity/gemini-3.8-flash",
-        "google-antigravity/gemini-3.1-pro",
-      ]);
-      expect(
-        resolveAppModelSelectionForInstance(
-          entry.instanceId,
-          DEFAULT_UNIFIED_SETTINGS,
-          [native],
-          "anthropic/claude-haiku-4-5",
-        ),
-      ).toBe("anthropic/claude-sonnet-5-5");
-      expect(
-        resolveAppModelSelection(
-          native.driver,
-          DEFAULT_UNIFIED_SETTINGS,
-          [native],
-          "anthropic/claude-haiku-4-5",
-        ),
-      ).toBe("anthropic/claude-sonnet-5-5");
-      expect(
-        resolveAppModelSelection(
-          native.driver,
-          DEFAULT_UNIFIED_SETTINGS,
-          [{ ...native, models: native.models.slice(0, 1) }],
-          null,
-        ),
-      ).toBe("");
-      expect(
-        resolveAppModelSelectionState(DEFAULT_UNIFIED_SETTINGS, [
-          { ...native, models: native.models.slice(0, 1) },
-        ]).model,
-      ).toBe("");
-
-      const saved = {
-        ...DEFAULT_UNIFIED_SETTINGS,
-        providerModelPreferences: { [entry.instanceId]: { hiddenModels: [], modelOrder: [] } },
-      };
-      expect(getAppModelOptionsForInstance(saved, entry).map((model) => model.slug)).toEqual([
-        "anthropic/claude-haiku-4-5",
-        "anthropic/claude-sonnet-5-5",
-        "openai-codex/gpt-6-sol",
-        "openai-codex/gpt-6.1-sol",
-        "google-antigravity/claude-opus-4-5",
-        "google-antigravity/claude-opus-4-6",
-        "google-antigravity/gemini-3.8-flash",
-        "google-antigravity/gemini-3.1-pro",
-      ]);
-    },
-  );
-  it.each(["pi", "omp", "scient", "claudeAgent"])(
-    "does not invent a default when every %s model is unavailable",
-    (kind) => {
-      const driver = ProviderDriverKind.make(kind);
-      const blocked: ServerProvider = {
-        ...provider({ provider: driver, instanceId: kind }),
-        models: [
-          {
-            slug: "native/blocked",
-            name: "Blocked",
-            isCustom: false,
-            unavailableReason: "Account access required.",
-            capabilities: null,
-          },
-        ],
-      };
-      expect(resolveAppModelSelection(driver, DEFAULT_UNIFIED_SETTINGS, [blocked], null)).toBe("");
-    },
-  );
-  it.each(["pi", "omp", "scient"])(
-    "does not revive a native default after every %s model is explicitly hidden",
-    (kind) => {
-      const driver = ProviderDriverKind.make(kind);
-      const native = provider({
-        provider: driver,
-        instanceId: kind,
-        models: ["native/available"],
-      });
-      const settings: UnifiedSettings = {
-        ...DEFAULT_UNIFIED_SETTINGS,
-        providerModelPreferences: {
-          [native.instanceId]: { hiddenModels: ["native/available"], modelOrder: [] },
-        },
-      };
-      expect(resolveAppModelSelection(driver, settings, [native], "native/available")).toBe("");
-      expect(
-        resolveAppModelSelectionForInstance(
-          native.instanceId,
-          settings,
-          [native],
-          "native/available",
-        ),
-      ).toBeNull();
-    },
-  );
-  it.each(["pi", "omp", "scient"])(
-    "excludes known unavailable %s models even when selected or configured as custom",
-    (kind) => {
-      const driver = ProviderDriverKind.make(kind);
-      const entry: ServerProvider = {
-        ...provider({ provider: driver, instanceId: kind }),
-        models: [
-          {
-            slug: "native/blocked",
-            name: "Blocked",
-            isCustom: false,
-            isDefault: true,
-            unavailableReason: "Account access required.",
-            capabilities: null,
-          },
-          { slug: "native/unknown", name: "Unverified", isCustom: false, capabilities: null },
-        ],
-      };
-      const settings = {
-        ...DEFAULT_UNIFIED_SETTINGS,
-        providerInstances: {
-          [entry.instanceId]: { driver, config: { customModels: ["native/blocked"] } },
-        },
-      };
-      const projected = deriveProviderInstanceEntries([entry])[0]!;
-      expect(
-        getAppModelOptionsForInstance(settings, projected, "native/blocked").map(
-          (option) => option.slug,
-        ),
-      ).toEqual(["native/unknown"]);
-      expect(getDefaultProviderInstanceModel([entry], entry.instanceId)).toBe("native/unknown");
-    },
-  );
-  it.each(["droid", "pi", "omp", "scient"] as const)(
-    "keeps %s discovered BYOK models selectable, scoped, hideable, and removable",
-    (kind) => {
-      const driver = ProviderDriverKind.make(kind);
-      const nativeSlug = kind === "droid" ? "custom:personal" : "native/model";
-      const connectedSlug = kind === "droid" ? "custom:scient-fixture" : "scient_fixture/model";
-      const primary = provider({
-        provider: driver,
-        instanceId: kind,
-        models: [nativeSlug, connectedSlug],
-      });
-      const other = provider({
-        provider: driver,
-        instanceId: `${kind}_other`,
-        models: [nativeSlug],
-      });
-      const entries = deriveProviderInstanceEntries([primary, other]);
-      const settings: UnifiedSettings = {
-        ...DEFAULT_UNIFIED_SETTINGS,
-        providerInstances: {
-          [primary.instanceId]: {
-            driver,
-            config: { customModels: [connectedSlug, "manual-only"] },
-          },
-        },
-      };
-      const options = getAppModelOptionsForInstance(settings, entries[0]!);
-      expect(options.map((option) => option.slug)).toEqual([
-        nativeSlug,
-        connectedSlug,
-        "manual-only",
-      ]);
-      expect(options.find((option) => option.slug === connectedSlug)?.isCustom).toBe(false);
-      expect(resolveAppModelSelection(driver, settings, [primary, other], connectedSlug)).toBe(
-        connectedSlug,
-      );
-      expect(
-        getAppModelOptionsForInstance(settings, entries[1]!).map((option) => option.slug),
-      ).toEqual([nativeSlug]);
-      const hidden: UnifiedSettings = {
-        ...DEFAULT_UNIFIED_SETTINGS,
-        providerModelPreferences: {
-          [primary.instanceId]: { hiddenModels: [connectedSlug], modelOrder: [] },
-        },
-      };
-      expect(
-        getAppModelOptionsForInstance(hidden, entries[0]!).map((option) => option.slug),
-      ).toEqual([nativeSlug]);
-      expect(
-        resolveAppModelSelectionForInstance(
-          primary.instanceId,
-          settings,
-          [primary, other],
-          connectedSlug,
-        ),
-      ).toBe(connectedSlug);
-      const removed = deriveProviderInstanceEntries([
-        { ...primary, models: primary.models.slice(0, 1) },
-      ])[0]!;
-      expect(
-        getAppModelOptionsForInstance(DEFAULT_UNIFIED_SETTINGS, removed).map(
-          (option) => option.slug,
-        ),
-      ).toEqual([nativeSlug]);
-    },
-  );
-
   it("keeps custom models on the provider instance that declared them", () => {
     const providers = [
       provider({
@@ -833,64 +603,6 @@ describe("instance-scoped model selection", () => {
     ).toEqual(createModelSelection(instanceId, "openai/gpt-5.5"));
   });
 
-  it("resolves Droid's default marker to the model Droid reports, not the first listed", () => {
-    const instanceId = ProviderInstanceId.make("droid");
-    const base = provider({
-      provider: ProviderDriverKind.make("droid"),
-      instanceId,
-      models: ["claude-fable-5.1", "gpt-6-sol"],
-    });
-    const droid = {
-      ...base,
-      models: base.models.map((model) =>
-        model.slug === "gpt-6-sol" ? { ...model, isDefault: true } : model,
-      ),
-    };
-    const settings: UnifiedSettings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      textGenerationModelSelection: { instanceId, model: DROID_DEFAULT_MODEL },
-    };
-
-    // Settings shows the model the marker stands for; a new thread starts on it too.
-    expect(resolveAppModelSelectionState(settings, [droid]).model).toBe("gpt-6-sol");
-    expect(getDefaultProviderInstanceModel([droid], instanceId)).toBe("gpt-6-sol");
-  });
-
-  it.each([
-    ["pi", PI_DEFAULT_TEXT_GENERATION_MODEL],
-    ["omp", OMP_DEFAULT_TEXT_GENERATION_MODEL],
-    ["scient", SCIENT_DEFAULT_TEXT_GENERATION_MODEL],
-  ] as const)(
-    "shows %s's automatic native model without changing stored settings",
-    (driver, marker) => {
-      const instanceId = ProviderInstanceId.make(`${driver}_work`);
-      const base = provider({
-        provider: ProviderDriverKind.make(driver),
-        instanceId,
-        models: ["openai/hosted", "local/team%2Fmodel"],
-      });
-      const discovered = {
-        ...base,
-        models: base.models.map((model) =>
-          model.slug === "local/team%2Fmodel" ? { ...model, isDefault: true } : model,
-        ),
-      };
-      const storedSelection = createModelSelection(instanceId, marker);
-      const settings = {
-        ...DEFAULT_UNIFIED_SETTINGS,
-        textGenerationModelSelection: storedSelection,
-      };
-      expect(resolveAppModelSelectionState(settings, [discovered]).model).toBe(
-        "local/team%2Fmodel",
-      );
-      expect(settings.textGenerationModelSelection).toBe(storedSelection);
-      expect(getDefaultProviderInstanceModel([discovered], instanceId)).toBe("local/team%2Fmodel");
-      expect(resolveAppModelSelectionState(settings, [{ ...discovered, models: [] }]).model).toBe(
-        "",
-      );
-    },
-  );
-
   it("self-heals a persisted selection pointing at a text-generation-incapable instance", () => {
     const providers = [
       provider({
@@ -1001,7 +713,7 @@ describe("resolveAppModelSelectionState with the opencode plan agent", () => {
   });
 });
 
-describe("default model resolution and new-thread composer parity", () => {
+describe("default model settings and new-thread composer parity", () => {
   it.each([
     ["hidden", "claudeAgent", "claude-opus-5", "claude-opus-5-5", "medium"],
     ["visible", "claudeAgent", "claude-opus-5", "claude-opus-5", "max"],
@@ -1049,6 +761,8 @@ describe("default model resolution and new-thread composer parity", () => {
         projectModelSelection: stored,
         settings,
       });
+      // SCIENT-FORK:START — Scient resolves the saved default per instance (no
+      // resolveEffectiveDefaultModelSelection); an unavailable saved pick is preserved.
       const resolvedModel = resolveAppModelSelectionForInstance(
         instanceId,
         settings,
@@ -1056,6 +770,7 @@ describe("default model resolution and new-thread composer parity", () => {
         stored.model,
         { preserveUnavailableSelection: true },
       );
+      // SCIENT-FORK:END
       const traits = (model: string, modelOptions: typeof stored.options) =>
         getComposerProviderState({
           provider: driver,
@@ -1067,8 +782,10 @@ describe("default model resolution and new-thread composer parity", () => {
       const composerTraits = traits(composer.selectedModel, composer.modelOptions?.[instanceId]);
 
       expect(composer.selectedModel).toBe(expectedModel);
+      // SCIENT-FORK:START — the resolved default matches the composer and keeps its traits.
       expect(resolvedModel).toBe(expectedModel);
       expect(traits(expectedModel, stored.options)).toEqual(composerTraits);
+      // SCIENT-FORK:END
       expect(composerTraits.promptEffort).toBe(effort);
     },
   );

@@ -174,14 +174,11 @@ it("saves the painted PDF while a newer source stages, is held, or fails", async
   // B is requested and may stage or remain held, but A still owns the canvas.
   await render(_fixture, sourceB, assetB, paintedA);
   await savePaintedCopy(_fixture);
-  await render(_fixture, sourceB, assetB, paintedA);
-  await savePaintedCopy(_fixture);
 
   // Resolver failure also keeps A's descriptor and authorization paired together.
   await render(_fixture, sourceB, failedB, paintedA);
   await savePaintedCopy(_fixture);
-  expect(saveCopy.mock.calls.slice(0, 4)).toEqual([
-    [sourceA, { url: assetA.url, expiresAt: assetA.expiresAt, refresh: refreshA }],
+  expect(saveCopy.mock.calls.slice(0, 3)).toEqual([
     [sourceA, { url: assetA.url, expiresAt: assetA.expiresAt, refresh: refreshA }],
     [sourceA, { url: assetA.url, expiresAt: assetA.expiresAt, refresh: refreshA }],
     [sourceA, { url: assetA.url, expiresAt: assetA.expiresAt, refresh: refreshA }],

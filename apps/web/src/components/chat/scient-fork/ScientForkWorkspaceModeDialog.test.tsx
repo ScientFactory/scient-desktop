@@ -24,6 +24,7 @@ function resolve(input: {
 }
 
 describe("scientForkDialogCopy", () => {
+  // regression: cd097f1362 fix(fork): "Fork this chat" title with a one-line subtitle
   it("uses one title and a one-line subtitle per fork source", () => {
     const cases = [
       ["latest-response", "Fork from the latest response"],

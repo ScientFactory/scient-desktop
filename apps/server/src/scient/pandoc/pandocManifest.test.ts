@@ -61,6 +61,7 @@ describe("PANDOC_MANIFEST", () => {
     expect(copying).toContain("GNU GENERAL PUBLIC LICENSE");
   });
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it("names the executable where each release packs it", () => {
     expect(PANDOC_MANIFEST.assets["darwin-arm64"]?.executableRelativePath).toBe(
       "pandoc-3.11-arm64/bin/pandoc",

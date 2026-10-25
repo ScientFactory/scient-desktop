@@ -83,14 +83,11 @@ describe("diagram PNG export", () => {
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 40 20">${body}</svg>`;
 
   // Links never load anything when an SVG is drawn as an image; Mermaid emits
-  // them for `click` directives and for links in labels.
+  // them for `click` directives and for links in labels. One row per allowance branch of
+  // svgRasterizationRefusal: a link (`href` and `xlink:href` share a local name), an
+  // in-document reference, and a fragment paint server.
   it.each([
     ["an anchor href", '<a href="https://example.com/docs"><text>Docs</text></a>'],
-    ["an anchor xlink:href", '<a xlink:href="https://example.com/docs"><text>Docs</text></a>'],
-    [
-      "an HTML link in a label",
-      '<foreignObject width="40" height="20"><div xmlns="http://www.w3.org/1999/xhtml"><a href="https://example.com">Docs</a></div></foreignObject>',
-    ],
     ["an in-document reference", '<defs><path id="m" d="M0 0"/></defs><use href="#m"/>'],
     ["a fragment paint server", '<rect width="4" height="4" fill="url(#gradient)"/>'],
   ])("copies and downloads a diagram with %s", async (_label, body) => {
@@ -109,6 +106,9 @@ describe("diagram PNG export", () => {
     expect(downloadPresentationBlob).toHaveBeenCalledWith(expect.any(Blob), "Study-flow.png");
   });
 
+  // One row per refusal branch: a fetching element (feImage also proves the name is
+  // lower-cased), an external href, CSS that names an outside resource, and a handler.
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
   it.each([
     ["an SVG image", '<image href="https://example.invalid/plot.png"/>', /external image/],
     ["an xlink image", '<image xlink:href="plot.png"/>', /external image/],

@@ -18,12 +18,13 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host = undefined;
 }
 
-it.each(["light", "dark"])("keeps one form focus border in %s mode", async (mode) => {
+// regression: 55bc1eda01 fix(web): preserve Scient single-border form focus
+// scient-form-focus.css is theme-independent, so one appearance covers it.
+it("keeps one form focus border", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
   _fixture.host = document.createElement("div");
-  _fixture.host.className = mode;
   document.body.append(_fixture.host);
   _fixture.root0 = _fixture.stack.use(
     await _fixtureRender(null, { container: _fixture.host, router: false }),

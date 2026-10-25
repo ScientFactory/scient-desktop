@@ -160,7 +160,8 @@ it("reserves archived sibling titles from the same origin project and environmen
   expect(discovery.archiveReads).toHaveBeenLastCalledWith([environmentId]);
 });
 
-it.each([null, undefined])(
+// The dialog treats null and undefined lineage alike (`forkLineage != null`).
+it.each([null])(
   "does not revive stale wrapper lineage when source lineage is %s",
   async (forkLineage) => {
     await using _fixture = _createFixture();
@@ -212,7 +213,8 @@ it("uses an archived unsuffixed witness but excludes other projects and environm
   expect(titleInput().value).toBe("Study (3)");
 });
 
-it.each(["Renamed research (2024)", "Renamed research (2)"])(
+// Numbering rules per title shape are covered in packages/shared/src/scientForkTitle.test.ts.
+it.each(["Renamed research (2)"])(
   "preserves authored numeric titles without a matching base witness: %s",
   async (title) => {
     await using _fixture = _createFixture();

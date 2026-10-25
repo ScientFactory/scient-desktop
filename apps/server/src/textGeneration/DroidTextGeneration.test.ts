@@ -25,7 +25,11 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as ServerConfig from "../config.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import type { DroidAcpRuntime, DroidAcpRuntimeInput } from "../provider/acp/DroidAcpSupport.ts";
+import {
+  makeDroidAcpRuntime,
+  type DroidAcpRuntime,
+  type DroidAcpRuntimeInput,
+} from "../provider/acp/DroidAcpSupport.ts";
 import { makeDroidCustomModelsRuntimeFactory } from "../provider/droid/DroidCustomModels.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
@@ -76,6 +80,8 @@ function makeAcpDroidWrapper(dir: string, requested: Record<string, string>): st
 function withFakeAcpDroid<A, E, R>(
   env: Record<string, string>,
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  /** Replaces the 5 s wait for Droid's report of a written setting. */
+  settleTimeout?: DroidAcpRuntimeInput["configOptionSettleTimeout"],
 ) {
   return Effect.gen(function* () {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-droid-text-acp-"));
@@ -94,7 +100,9 @@ function withFakeAcpDroid<A, E, R>(
         subscribeChanges: Effect.succeed(Stream.never),
       },
       ProviderInstanceId.make("droid"),
-      undefined,
+      settleTimeout === undefined
+        ? undefined
+        : (input) => makeDroidAcpRuntime({ ...input, configOptionSettleTimeout: settleTimeout }),
       // No organization policy; never the real home folder's Droid settings.
       () => Effect.succeed("overlay-hooks-allowed" as const),
     );
@@ -735,6 +743,7 @@ it.layer(DroidTextGenerationTestLayer)("DroidTextGeneration", (it) => {
           );
           expect(requests.some((request) => request.method === "session/prompt")).toBe(false);
         }),
+      "500 millis",
     ).pipe(
       // The confirmation deadline runs on the real clock.
       TestClock.withLive,

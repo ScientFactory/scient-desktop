@@ -8,6 +8,9 @@ import { collapseDockGroups, dockButtonClass } from "./dockChrome";
 const cssSource = NodeFS.readFileSync(new URL("./dockChrome.css", import.meta.url), "utf8");
 
 describe("dock chrome overflow contract", () => {
+  // Source-text guards: each is the only test of a fix(...) commit's dock rule (a
+  // local mutation of each rule left every behavioral test green, 2026-10-25).
+  // regression: 5de892e190 fix(markdown): stop dock icons from shrinking on narrow windows
   it("never flex-shrinks dock controls: narrow docks scroll sideways at full icon size", () => {
     // Multi-part triggers (icon + chevron + label) used to compress against
     // single-icon buttons, which is why only the right-hand icons shrank.
@@ -16,20 +19,20 @@ describe("dock chrome overflow contract", () => {
     expect(dockButtonClass()).toContain("whitespace-nowrap");
     expect(cssSource).toMatch(/\.scient-markdown-command-button \{[^}]*flex-shrink: 0/su);
   });
-
+  // regression: 5de892e190 fix(markdown): stop dock icons from shrinking on narrow windows
   it("keeps the dock single-line with hidden horizontal overflow", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-editor-dock \{[^}]*flex-wrap: nowrap[^}]*overflow-x: auto[^}]*scrollbar-width: none/su,
     );
   });
-
+  // regression: 0604b03479 fix(markdown): stabilize saving and table navigation
   it("uses one fixed-height dock instead of adding a contextual table row", () => {
     expect(cssSource).not.toContain(".scient-markdown-table-toolbar");
     expect(cssSource).toMatch(
       /\.scient-markdown-editor-dock \{[^}]*padding: 0\.25rem 0\.65rem[^}]*height: 2\.25rem[^}]*flex-wrap: nowrap/su,
     );
   });
-
+  // regression: 0604b03479 fix(markdown): stabilize saving and table navigation
   it("uses the app control color and subtly softens only idle toolbar glyphs", () => {
     // Labels retain the normal app-control contrast. The direct SVG glyph gets
     // a small idle-only reduction without changing hover or active states.
@@ -42,16 +45,6 @@ describe("dock chrome overflow contract", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-command-button:not\(\[data-preserve-icon-weight="true"\]\) > svg \{[^}]*stroke-width: 1\.75/su,
     );
-  });
-
-  it("slightly reduces primary glyphs without shrinking their button targets or menu chevrons", () => {
-    expect(cssSource).toMatch(
-      /\.scient-markdown-command-button \{[^}]*min-width: 1\.65rem[^}]*min-height: 1\.65rem/su,
-    );
-    expect(cssSource).toMatch(
-      /\.scient-markdown-command-button > svg:first-child \{\s*width: 0\.9375rem;\s*height: 0\.9375rem;/su,
-    );
-    expect(cssSource).not.toMatch(/\.scient-markdown-command-button > svg \{/su);
   });
 });
 
@@ -66,6 +59,14 @@ describe("collapseDockGroups", () => {
     { id: "direction", priority: 10, width: 44 },
   ];
 
+  // regression: bf3afafe53 feat(markdown): collapse dock groups by priority into a unified overflow menu
+  it("cascades insert, history, then lists as width shrinks, keeping style and format", () => {
+    const hidden = collapseDockGroups({ availableWidth: 300, reservedWidth: 80, groups });
+    expect([...hidden].sort()).toEqual(["direction", "history", "insert", "lists"].sort());
+    expect(hidden.has("style")).toBe(false);
+    expect(hidden.has("format")).toBe(false);
+  });
+
   it("keeps every group when they all fit", () => {
     const hidden = collapseDockGroups({ availableWidth: 500, reservedWidth: 80, groups });
     expect([...hidden]).toEqual([]);
@@ -74,13 +75,6 @@ describe("collapseDockGroups", () => {
   it("collapses the least important group first", () => {
     const hidden = collapseDockGroups({ availableWidth: 480, reservedWidth: 80, groups });
     expect([...hidden]).toEqual(["direction"]);
-  });
-
-  it("cascades insert, history, then lists as width shrinks, keeping style and format", () => {
-    const hidden = collapseDockGroups({ availableWidth: 300, reservedWidth: 80, groups });
-    expect([...hidden].sort()).toEqual(["direction", "history", "insert", "lists"].sort());
-    expect(hidden.has("style")).toBe(false);
-    expect(hidden.has("format")).toBe(false);
   });
 
   it("never collapses the pinned formatting group, even at extreme narrowness", () => {

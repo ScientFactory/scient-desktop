@@ -3,8 +3,10 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  // SCIENT-FORK:START
   EventId,
   type OrchestrationThreadActivity,
+  // SCIENT-FORK:END
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -21,7 +23,9 @@ import {
   elapsedShare,
   paceOf,
   paceRemainingPercent,
+  // SCIENT-FORK:START
   isChatGptUsageLimitError,
+  // SCIENT-FORK:END
   usesChatGptSharing,
 } from "./usageLimits.ts";
 
@@ -1292,6 +1296,7 @@ describe("ChatGPT sharing presentation", () => {
       }),
     ).toBe(false);
   });
+  // SCIENT-FORK:START
   it("only gives the matching current structured limit error a management action", () => {
     const limit: OrchestrationThreadActivity = {
       id: EventId.make("sharing-limit"),
@@ -1318,4 +1323,5 @@ describe("ChatGPT sharing presentation", () => {
       ),
     ).toBe(false);
   });
+  // SCIENT-FORK:END
 });

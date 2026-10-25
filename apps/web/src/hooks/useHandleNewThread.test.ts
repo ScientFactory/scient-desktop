@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { RuntimeMode } from "@t3tools/contracts";
 
 const testState = vi.hoisted(() => {
+  // SCIENT-FORK:START — Scient abandons a delayed open on the router's before-navigate event.
   let beforeNavigate: () => void = () => undefined;
+  // SCIENT-FORK:END
   let completeProjectFileRead: (value: null) => void = () => undefined;
   let projectFileRead = Promise.resolve<null>(null);
   let projectRemoved = false;
@@ -21,12 +23,16 @@ const testState = vi.hoisted(() => {
   } | null = null;
   const router = {
     state: {
+      // SCIENT-FORK:START — the router reads location state and is subscribed to.
       location: { href: "/", state: {} },
+      // SCIENT-FORK:END
       matches: [{ params: {} }],
     },
+    // SCIENT-FORK:START
     subscribe: (_event: string, listener: () => void) => {
       beforeNavigate = listener;
     },
+    // SCIENT-FORK:END
     navigate: vi.fn(async (request: { readonly params: { readonly draftId: string } }) => {
       router.state.location.href = `/draft/${request.params.draftId}`;
     }),
@@ -43,10 +49,12 @@ const testState = vi.hoisted(() => {
   };
 
   return {
+    // SCIENT-FORK:START
     navigateAway: () => {
       beforeNavigate();
       router.state.location.href = "/usage";
     },
+    // SCIENT-FORK:END
     completeProjectFileRead: (value: null) => completeProjectFileRead(value),
     draftStore,
     get projectFileRead() {
@@ -205,7 +213,9 @@ vi.mock("../state/entities", () => {
     readThreadShell: () => null,
     readThreadShells: () => [],
     useProjects: () => [],
+    // SCIENT-FORK:START — Scient reads the thread shell.
     useThreadShell: () => null,
+    // SCIENT-FORK:END
   };
 });
 vi.mock("../state/presentation", () => ({
@@ -221,192 +231,168 @@ vi.mock("../uiStateStore", () => ({
   useUiStateStore: () => [],
 }));
 vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
+// SCIENT-FORK:START
 vi.mock("../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
+// SCIENT-FORK:END
 
+// SCIENT-FORK:START
 import { readProject } from "../state/entities";
+// SCIENT-FORK:END
 import { useNewThreadHandler } from "./useHandleNewThread";
 
-describe("useNewThreadHandler", () => {
-  it.each([
-    null,
+describe.each([
+  ["new", null],
+  [
+    "reusable",
     {
       draftId: "draft-existing",
       environmentId: "environment-ssh",
       promotedTo: null,
       threadId: "thread-existing",
     },
-  ])("hands off after preparation but before deferred navigation (%s)", async (draft) => {
-    testState.reset(draft);
-    let completeNavigation!: () => void;
-    const navigation = new Promise<void>((resolve) => {
-      completeNavigation = resolve;
-    });
-    let markNavigationStarted!: () => void;
-    const navigationStarted = new Promise<void>((resolve) => {
-      markNavigationStarted = resolve;
-    });
-    const ready = vi.fn();
-    testState.router.navigate.mockImplementationOnce(async () => {
-      expect(ready).toHaveBeenCalledOnce();
-      markNavigationStarted();
-      await navigation;
-    });
-    const pending = useNewThreadHandler()(
-      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
-      { onNavigationReady: ready },
-    );
-    expect(ready).not.toHaveBeenCalled();
-    testState.completeProjectFileRead(null);
-    await navigationStarted;
-    expect(testState.router.navigate).toHaveBeenCalledOnce();
-    completeNavigation();
-    expect(await pending).not.toBeNull();
-  });
-
-  describe.each([
-    ["new", null],
-    [
-      "reusable",
-      {
-        draftId: "draft-existing",
-        environmentId: "environment-ssh",
-        promotedTo: null,
-        threadId: "thread-existing",
-      },
-    ],
-  ])("useNewThreadHandler with a %s draft", (_, draft) => {
-    it.each(["approval-required", "auto-accept-edits", "auto", "full-access"] as const)(
-      "uses the target environment's %s permissions for new threads",
-      async (runtimeMode) => {
-        testState.reset(draft);
-        testState.targetSettings.defaultRuntimeMode = runtimeMode;
-        const projectRef = {
-          environmentId: "environment-ssh",
-          projectId: "project-remote",
-        } as never;
-        const pendingOpen = useNewThreadHandler()(projectRef);
-        testState.completeProjectFileRead(null);
-        const opened = await pendingOpen;
-
-        expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-          "remote-project",
-          projectRef,
-          opened!.draftId,
-          expect.objectContaining({ runtimeMode }),
-        );
-      },
-    );
-
-    it("abandons a delayed draft open when the user navigates elsewhere", async () => {
-      testState.reset(draft);
-      const openThread = useNewThreadHandler();
-      const pendingOpen = openThread(
-        { environmentId: "environment-ssh", projectId: "project-remote" } as never,
-        { replace: true },
-      );
-
-      testState.navigateAway();
-      testState.completeProjectFileRead(null);
-      await pendingOpen;
-
-      expect(testState.router.state.location.href).toBe("/usage");
-      expect(testState.router.navigate).not.toHaveBeenCalled();
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
-    });
-
-    it("abandons a delayed draft open when the project is removed meanwhile", async () => {
-      testState.reset(draft);
-      const pendingOpen = useNewThreadHandler()(
-        { environmentId: "environment-ssh", projectId: "project-remote" } as never,
-        { replace: true },
-      );
-
-      testState.removeProject();
-      testState.completeProjectFileRead(null);
-
-      await expect(pendingOpen).resolves.toBeNull();
-      expect(testState.router.navigate).not.toHaveBeenCalled();
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
-    });
-
-    // SCIENT-FORK:START — the index landing retries a null open only for a removed project.
-    it("yields a superseded automatic open while its project still exists", async () => {
-      testState.reset(draft);
-      // A fresh route visit, so no earlier explicit claim on "/" refuses the automatic one.
-      testState.navigateAway();
-      testState.router.state.location.href = "/";
+  ],
+])("useNewThreadHandler with a %s draft", (_, draft) => {
+  // SCIENT-FORK:START — restore the original behavior guard.
+  // regression: e22040dfc1 feat(settings): edit any scopable setting as a project override (#10639)
+  it.each([true, false])(
+    "preserves an explicit start-from-origin choice of %s",
+    async (startFromOrigin) => {
+      testState.reset(draft, { envMode: "worktree", startFromOrigin: !startFromOrigin });
       const openThread = useNewThreadHandler();
       const projectRef = {
         environmentId: "environment-ssh",
         projectId: "project-remote",
       } as never;
-      const automatic = openThread(projectRef, { replace: true, navigationKind: "automatic" });
-      const explicit = openThread(projectRef, { replace: true });
+
+      const opened = await openThread(projectRef, { envMode: "worktree", startFromOrigin });
+
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+        "remote-project",
+        projectRef,
+        opened!.draftId,
+        expect.objectContaining({ envMode: "worktree", startFromOrigin }),
+      );
+    },
+  );
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — restore the original behavior guard.
+  // regression: cf1ba3d7da feat(settings): configure default permissions for new threads (#11346)
+  it.each(["approval-required", "auto-accept-edits", "auto", "full-access"] as const)(
+    "uses the target environment's %s permissions for new threads",
+    async (runtimeMode) => {
+      testState.reset(draft);
+      testState.targetSettings.defaultRuntimeMode = runtimeMode;
+      const projectRef = {
+        environmentId: "environment-ssh",
+        projectId: "project-remote",
+      } as never;
+      const pendingOpen = useNewThreadHandler()(projectRef);
+      testState.completeProjectFileRead(null);
+      const opened = await pendingOpen;
+
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+        "remote-project",
+        projectRef,
+        opened!.draftId,
+        expect.objectContaining({ runtimeMode }),
+      );
+    },
+  );
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — restore the original behavior guard.
+  // regression: e22040dfc1 feat(settings): edit any scopable setting as a project override (#10639)
+  it.each([true, false])(
+    "uses the target environment's start-from-origin default of %s",
+    async (startFromOrigin) => {
+      testState.reset(draft, { envMode: "worktree", startFromOrigin });
+      const openThread = useNewThreadHandler();
+      const projectRef = {
+        environmentId: "environment-ssh",
+        projectId: "project-remote",
+      } as never;
+      const pendingOpen = openThread(projectRef);
 
       testState.completeProjectFileRead(null);
+      const opened = await pendingOpen;
 
-      await expect(automatic).resolves.toBeNull();
-      await expect(explicit).resolves.not.toBeNull();
-      expect(testState.router.navigate).toHaveBeenCalledOnce();
-      // A null here is not a removal, so the landing must not retry it into a loop.
-      expect(readProject(projectRef)).not.toBeNull();
-    });
+      expect(opened).toEqual({
+        draftId: draft?.draftId ?? "draft-delayed",
+        threadId: draft?.threadId ?? "thread-delayed",
+      });
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+        "remote-project",
+        projectRef,
+        opened!.draftId,
+        expect.objectContaining({ envMode: "worktree", startFromOrigin }),
+      );
+      if (draft) {
+        expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(
+          draft.draftId,
+          expect.objectContaining({ envMode: "worktree", startFromOrigin }),
+        );
+      }
+    },
+  );
+  // SCIENT-FORK:END
+  it("abandons a delayed draft open when the user navigates elsewhere", async () => {
+    testState.reset(draft);
+    const openThread = useNewThreadHandler();
+    const pendingOpen = openThread(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { replace: true },
+    );
+
+    // SCIENT-FORK:START — navigating away fires the router's before-navigate event.
+    testState.navigateAway();
     // SCIENT-FORK:END
+    testState.completeProjectFileRead(null);
+    await pendingOpen;
 
-    it.each([true, false])(
-      "uses the target environment's start-from-origin default of %s",
-      async (startFromOrigin) => {
-        testState.reset(draft, { envMode: "worktree", startFromOrigin });
-        const openThread = useNewThreadHandler();
-        const projectRef = {
-          environmentId: "environment-ssh",
-          projectId: "project-remote",
-        } as never;
-        const pendingOpen = openThread(projectRef);
-
-        testState.completeProjectFileRead(null);
-        const opened = await pendingOpen;
-
-        expect(opened).toEqual({
-          draftId: draft?.draftId ?? "draft-delayed",
-          threadId: draft?.threadId ?? "thread-delayed",
-        });
-        expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-          "remote-project",
-          projectRef,
-          opened!.draftId,
-          expect.objectContaining({ envMode: "worktree", startFromOrigin }),
-        );
-        if (draft) {
-          expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(
-            draft.draftId,
-            expect.objectContaining({ envMode: "worktree", startFromOrigin }),
-          );
-        }
-      },
-    );
-
-    it.each([true, false])(
-      "preserves an explicit start-from-origin choice of %s",
-      async (startFromOrigin) => {
-        testState.reset(draft, { envMode: "worktree", startFromOrigin: !startFromOrigin });
-        const openThread = useNewThreadHandler();
-        const projectRef = {
-          environmentId: "environment-ssh",
-          projectId: "project-remote",
-        } as never;
-
-        const opened = await openThread(projectRef, { envMode: "worktree", startFromOrigin });
-
-        expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-          "remote-project",
-          projectRef,
-          opened!.draftId,
-          expect.objectContaining({ envMode: "worktree", startFromOrigin }),
-        );
-      },
-    );
+    expect(testState.router.state.location.href).toBe("/usage");
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
+
+  it("abandons a delayed draft open when the project is removed meanwhile", async () => {
+    testState.reset(draft);
+    const pendingOpen = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { replace: true },
+    );
+
+    testState.removeProject();
+    testState.completeProjectFileRead(null);
+
+    await expect(pendingOpen).resolves.toBeNull();
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+  });
+
+  // SCIENT-FORK:START — the index landing retries a null open only for a removed project.
+  it("yields a superseded automatic open while its project still exists", async () => {
+    testState.reset(draft);
+    // A fresh route visit, so no earlier explicit claim on "/" refuses the automatic one.
+    testState.navigateAway();
+    testState.router.state.location.href = "/";
+    const openThread = useNewThreadHandler();
+    const projectRef = {
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never;
+    const automatic = openThread(projectRef, { replace: true, navigationKind: "automatic" });
+    const explicit = openThread(projectRef, { replace: true });
+
+    testState.completeProjectFileRead(null);
+
+    await expect(automatic).resolves.toBeNull();
+    await expect(explicit).resolves.not.toBeNull();
+    expect(testState.router.navigate).toHaveBeenCalledOnce();
+    // A null here is not a removal, so the landing must not retry it into a loop.
+    expect(readProject(projectRef)).not.toBeNull();
+  });
+  // SCIENT-FORK:END
 });
 
 describe("useNewThreadHandler", () => {
@@ -423,3 +409,42 @@ describe("useNewThreadHandler", () => {
     expect(testState.router.navigate).toHaveBeenCalledOnce();
   });
 });
+
+// SCIENT-FORK:START — opening a project hands off before its deferred navigation.
+// regression: 9d823d659f fix(web): make project opening responsive and reliable
+it.each([
+  null,
+  {
+    draftId: "draft-existing",
+    environmentId: "environment-ssh",
+    promotedTo: null,
+    threadId: "thread-existing",
+  },
+])("hands off after preparation but before deferred navigation (%s)", async (draft) => {
+  testState.reset(draft);
+  let completeNavigation!: () => void;
+  const navigation = new Promise<void>((resolve) => {
+    completeNavigation = resolve;
+  });
+  let markNavigationStarted!: () => void;
+  const navigationStarted = new Promise<void>((resolve) => {
+    markNavigationStarted = resolve;
+  });
+  const ready = vi.fn();
+  testState.router.navigate.mockImplementationOnce(async () => {
+    expect(ready).toHaveBeenCalledOnce();
+    markNavigationStarted();
+    await navigation;
+  });
+  const pending = useNewThreadHandler()(
+    { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+    { onNavigationReady: ready },
+  );
+  expect(ready).not.toHaveBeenCalled();
+  testState.completeProjectFileRead(null);
+  await navigationStarted;
+  expect(testState.router.navigate).toHaveBeenCalledOnce();
+  completeNavigation();
+  expect(await pending).not.toBeNull();
+});
+// SCIENT-FORK:END

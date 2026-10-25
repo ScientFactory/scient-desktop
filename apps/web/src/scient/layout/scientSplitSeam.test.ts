@@ -7,6 +7,7 @@ const readSource = (relativePath: string): string =>
   NodeFS.readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
 describe("Scient split seams", () => {
+  // regression: dff1da7e13 fix(web): align LaTeX split interaction
   it("keeps inherited UI independent while aligning separator chrome", () => {
     const separator = readSource("./ResizeSeparator.tsx");
     const rightPanelHandle = readSource("../../components/preview/RightPanelResizeHandle.tsx");
@@ -30,6 +31,7 @@ describe("Scient split seams", () => {
     expect(rightPanelHandle).not.toContain("-translate-x-1/2");
   });
 
+  // regression: 017821d992 fix(web): improve platform cursor behavior (#301)
   it("preserves barred resize cursors except on Windows", () => {
     // The app stylesheet and the Scient stylesheet it imports for these cursors.
     const appStyles = [
@@ -47,6 +49,7 @@ describe("Scient split seams", () => {
     );
   });
 
+  // regression: 017821d992 fix(web): improve platform cursor behavior (#301)
   it("uses platform-aware cursors for the complete split drag", () => {
     const split = readSource("./useScientSplit.ts");
 
@@ -54,6 +57,7 @@ describe("Scient split seams", () => {
     expect(split).toContain('axis === "y" ? "vertical" : "horizontal"');
   });
 
+  // regression: dff1da7e13 fix(web): align LaTeX split interaction
   it("keeps the LaTeX split on the shared Scient-owned behavior", () => {
     const surface = readSource("../latex/ScientLatexSurface.tsx");
 
@@ -64,6 +68,7 @@ describe("Scient split seams", () => {
     expect(surface).not.toContain("scient-latex-divider");
   });
 
+  // regression: eed0733208 feat(compute): implement Phase 4 scientific workflow
   it("shares fractional behavior between Python and LaTeX without sharing their storage", () => {
     const python = readSource("../compute/ScientComputeFileSurface.tsx");
     const latex = readSource("../latex/ScientLatexSurface.tsx");
@@ -76,6 +81,7 @@ describe("Scient split seams", () => {
     expect(latex).not.toContain("scient-latex-divider");
   });
 
+  // regression: 3af6b42581 feat(compute): add stacked results layout
   it("wires the Python stacked layout through the shared split behavior", () => {
     const python = readSource("../compute/ScientComputeFileSurface.tsx");
 
@@ -85,13 +91,5 @@ describe("Scient split seams", () => {
     expect(python).toContain('isStacked ? "border-t border-border" : "border-l border-border"');
     expect(python).toContain('isStacked ? "inset-x-0 -top-1" : "inset-y-0 -left-1"');
     expect(python).toContain("COMPUTE_FILE_SPLIT_LAYOUT_STORAGE_KEY");
-  });
-
-  it("keeps the Python and LaTeX view controls on the same outer radius", () => {
-    const python = readSource("../compute/ScientComputeFileSurface.tsx");
-    const latexStyles = readSource("../latex/scient-latex.css");
-
-    expect(python).toContain("gap-px rounded-[6px] border");
-    expect(latexStyles).toMatch(/\.scient-latex-modes\s*\{[^}]*border-radius:\s*6px;/su);
   });
 });

@@ -4,7 +4,9 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   restoreEarlyLinuxDeviceScaleFactor,
+  // SCIENT-FORK:START desktop-state-isolation
   resolveEarlyLinuxElectronOptions,
+  // SCIENT-FORK:END desktop-state-isolation
   resolveEarlyLinuxPasswordStorePreference,
   resolveLinuxDisableFeaturesSwitch,
 } from "./DesktopEarlyElectronStartup.ts";
@@ -14,11 +16,13 @@ describe("DesktopEarlyElectronStartup", () => {
 
   it("reads the persisted linux password-store preference before Electron is ready", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
+      // SCIENT-FORK:START desktop-state-isolation
       env: { SCIENT_NEXT_HOME: "/home/user/.scient-next-test" },
       homeDirectory: "/home/user",
       joinPath,
       readFileString: (path) => {
         assert.equal(path, "/home/user/.scient-next-test/userdata/desktop-settings.json");
+        // SCIENT-FORK:END desktop-state-isolation
         return JSON.stringify({ linuxPasswordStore: "kwallet6" });
       },
     });
@@ -28,7 +32,9 @@ describe("DesktopEarlyElectronStartup", () => {
 
   it("accepts JSONC in the early desktop settings file", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
+      // SCIENT-FORK:START desktop-state-isolation
       env: { SCIENT_NEXT_HOME: "/home/user/.scient-next-test" },
+      // SCIENT-FORK:END desktop-state-isolation
       homeDirectory: "/home/user",
       joinPath,
       readFileString: () => `{
@@ -53,6 +59,8 @@ describe("DesktopEarlyElectronStartup", () => {
     assert.equal(preference, "auto");
   });
 
+  // SCIENT-FORK:START desktop-state-isolation
+  // regression: 6f04a5cffb fix(desktop): Niri/Hyprland - Linux secret storage backend (#2916)
   it("preserves absolute root paths when resolving early settings", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
       env: { SCIENT_NEXT_HOME: "/" },
@@ -67,6 +75,7 @@ describe("DesktopEarlyElectronStartup", () => {
     assert.equal(preference, "kwallet6");
   });
 
+  // regression: 6f04a5cffb fix(desktop): Niri/Hyprland - Linux secret storage backend (#2916)
   it("resolves the early linux Electron switches", () => {
     const options = resolveEarlyLinuxElectronOptions({
       env: {
@@ -122,6 +131,7 @@ describe("DesktopEarlyElectronStartup", () => {
 
     assert.equal(preference, "gnome-libsecret");
   });
+  // SCIENT-FORK:END desktop-state-isolation
 
   describe("resolveLinuxDisableFeaturesSwitch", () => {
     const hyprland = { XDG_CURRENT_DESKTOP: "Hyprland", XDG_SESSION_TYPE: "wayland" };

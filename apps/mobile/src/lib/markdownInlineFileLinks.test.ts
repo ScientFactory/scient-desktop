@@ -1,11 +1,13 @@
+import { describe, expect, it } from "vite-plus/test";
+// SCIENT-FORK:START — Scient's native Markdown projection owns inline file links.
 import { unified } from "unified";
 import remarkParse from "remark-parse";
-import { describe, expect, it } from "vite-plus/test";
 import { nativeMarkdownProjection } from "./markdownDocument";
 
 const rewrite = (markdown: string) => nativeMarkdownProjection(markdown).markdown;
 // The native parser consumes CommonMark escapes, not the authored-Windows-path extension.
 const commonMarkParser = unified().use(remarkParse);
+// SCIENT-FORK:END
 
 describe("inline code that names a file", () => {
   it("becomes a link to the same path", () => {
@@ -26,9 +28,11 @@ describe("inline code that names a file", () => {
 
   it("links to the exact path when it holds backslashes or ampersands", () => {
     for (const path of ["C:\\repo\\_private\\file.ts", "./src/a&copy;.ts", "./src/[id].ts"]) {
+      // SCIENT-FORK:START — check the projection's link source and its CommonMark rendering.
       const projection = nativeMarkdownProjection(`\`${path}\``);
       expect(projection.linkSources[0]?.url).toBe(path);
       const paragraph = commonMarkParser.parse(projection.markdown).children[0];
+      // SCIENT-FORK:END
       const link = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
       expect(link?.type === "link" && link.url).toBe(path);
       expect(

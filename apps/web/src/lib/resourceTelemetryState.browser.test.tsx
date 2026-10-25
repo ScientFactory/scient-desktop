@@ -63,7 +63,9 @@ vi.mock("../state/server", () => ({
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => monitor.retry }));
 
 import { ResourceTelemetryDiagnostics } from "../components/settings/ResourceTelemetryDiagnostics";
+// SCIENT-FORK:START
 import { useResourceTelemetry } from "./resourceTelemetryState";
+// SCIENT-FORK:END
 
 class MonitorError extends Data.TaggedError("MonitorError")<{ readonly message: string }> {}
 
@@ -172,7 +174,9 @@ function setup({ retryFails = false, holdRetry = false } = {}) {
   const registry = AtomRegistry.make();
   return {
     registry,
+    // SCIENT-FORK:START
     snapshot,
+    // SCIENT-FORK:END
     historyQueries,
     historyReads,
     releaseRetry,
@@ -181,6 +185,7 @@ function setup({ retryFails = false, holdRetry = false } = {}) {
 }
 
 describe("resource monitor retry", () => {
+  // SCIENT-FORK:START
   it("stops reporting pending after an open subscription delivers its first snapshot", async () => {
     using fixture = setup();
     const telemetry = Atom.make<AsyncResult.AsyncResult<ResourceTelemetrySnapshot, MonitorError>>(
@@ -205,6 +210,7 @@ describe("resource monitor retry", () => {
     expect(fixture.registry.get(telemetry).waiting).toBe(true);
     await expect.element(screen.getByText("Resources ready", { exact: true })).toBeVisible();
   });
+  // SCIENT-FORK:END
   it("clears the settings and history errors after a successful retry without remounting", async () => {
     using fixture = setup();
     await using screen = await render(

@@ -1,5 +1,7 @@
 import {
   ComputeLanguageId,
+  ComputeSessionGeneration,
+  ComputeSessionId,
   ComputeToolkitId,
   type ComputeLanguageRuntimeInspection,
 } from "@t3tools/contracts";
@@ -22,6 +24,7 @@ import {
   resolveComputePreRunRuntimeChoice,
   defaultComputeRuntime,
   isComputeCapacityReachedError,
+  isExactTerminalComputeSession,
 } from "./computeFileSurfaceModel";
 
 const pythonRuntime = {
@@ -457,5 +460,27 @@ describe("python compute surface model", () => {
         liveSession: { ...liveSession, activity: "busy" },
       }),
     ).toEqual({ kind: "status", label: "Python · Custom · Running", canRun: true });
+  });
+
+  it("accepts a stop as shutdown only for the exact session, generation and a terminal status", () => {
+    const expected = {
+      sessionId: ComputeSessionId.make("retained-session"),
+      generation: ComputeSessionGeneration.make(1),
+    };
+    const stopped = { ...expected, status: "stopped" as const };
+    expect(isExactTerminalComputeSession(stopped, expected)).toBe(true);
+    expect(
+      isExactTerminalComputeSession(
+        { ...stopped, sessionId: ComputeSessionId.make("another-session") },
+        expected,
+      ),
+    ).toBe(false);
+    expect(
+      isExactTerminalComputeSession(
+        { ...stopped, generation: ComputeSessionGeneration.make(2) },
+        expected,
+      ),
+    ).toBe(false);
+    expect(isExactTerminalComputeSession({ ...stopped, status: "stopping" }, expected)).toBe(false);
   });
 });

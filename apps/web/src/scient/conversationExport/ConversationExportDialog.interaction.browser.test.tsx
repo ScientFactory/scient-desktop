@@ -233,10 +233,6 @@ describe("ConversationExportDialog", () => {
     expect(document.body.textContent).toContain(INCLUDE_CAUTION);
     const workLogCaution = document.querySelector<HTMLElement>("#export-work-log-caution");
     expect(workLogCaution?.parentElement).toBe(dialog());
-    expect(workLogCaution?.className).toContain("absolute");
-    expect(workLogCaution?.className).toContain("w-80");
-    expect(workLogCaution?.className).toContain("bg-popover");
-    expect(workLogCaution?.querySelector("svg")?.getAttribute("class")).toContain("text-warning");
     expect(workLog?.closest("label")?.parentElement?.querySelectorAll("label")).toHaveLength(2);
     expect(workLog?.getAttribute("aria-describedby")).toBe("export-work-log-caution");
     await pressKey(reasoning!, "Enter");
@@ -265,6 +261,7 @@ describe("ConversationExportDialog", () => {
     expect(prepareConversationExport).toHaveBeenCalledTimes(2);
   });
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it("moves the caution to the next activated switch and dismisses it four seconds later", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

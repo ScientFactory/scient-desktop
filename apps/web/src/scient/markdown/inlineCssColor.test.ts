@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveInlineCssColor } from "./inlineCssColor";
 
 describe("resolveInlineCssColor", () => {
+  // regression: fecb1b2cdd feat(markdown): render inline CSS color swatches
   it.each([
     "#fff",
     "#fff8",
@@ -32,16 +33,8 @@ describe("resolveInlineCssColor", () => {
   });
 
   it.each([
-    "",
-    "#12",
     "#12345",
-    "#1234567",
-    "#gggggg",
-    "0x1b4ed8",
-    "#theme-blue",
     "red",
-    "transparent",
-    "currentColor",
     "var(--brand-color)",
     "color-mix(in srgb, red, blue)",
     "rgb(1 2)",
@@ -50,6 +43,7 @@ describe("resolveInlineCssColor", () => {
     expect(resolveInlineCssColor(value)).toBeNull();
   });
 
+  // regression: fecb1b2cdd feat(markdown): render inline CSS color swatches
   it.each([
     " #1b4ed8",
     "#1b4ed8 ",

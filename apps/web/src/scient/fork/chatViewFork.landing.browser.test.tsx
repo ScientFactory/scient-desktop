@@ -114,6 +114,7 @@ it("measures pending rows but blocks pointer/focus until their own landing settl
   expect(onAction).toHaveBeenCalledTimes(2);
 });
 
+// regression: b75327a435 chore: merge main and preserve frozen fork history readers
 it("releases inertness at expiry even when the fork never finishes loading", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));

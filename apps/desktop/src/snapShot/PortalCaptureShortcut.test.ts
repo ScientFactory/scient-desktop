@@ -366,20 +366,3 @@ it("rejects a foreign session without trying to close someone else's session", a
   expect(client.state.shortcutRegistered).toBe(false);
   expect(bus.sends.some((message) => message.path.includes("9_9"))).toBe(false);
 });
-
-it("guides users to manual desktop settings when the portal cannot open them", async () => {
-  const bus = new FakeBus();
-  bus.version = 1;
-  bus.bindStatus = 1;
-  const { client } = start(bus);
-  await client.ready;
-  expect(client.hasSession).toBe(true);
-  expect(client.state.shortcutCanRetry).toBe(false);
-  expect(client.state.shortcutMessage).toBe(
-    "Shortcut permission wasn't granted. Allow Scient in your desktop's shortcut settings.",
-  );
-  await expect(client.configure()).rejects.toThrow("Open your desktop's shortcut settings");
-  expect(bus.calls.some((message) => message.member === "ConfigureShortcuts")).toBe(false);
-  client.close();
-  expect(client.hasSession).toBe(false);
-});

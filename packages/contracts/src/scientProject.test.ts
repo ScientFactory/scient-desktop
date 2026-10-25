@@ -1,13 +1,12 @@
+import { ScientProjectInitializationResult } from "./scientProject.ts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
 
-import {
-  ScientProjectInitializationResult,
-  ScientProjectInitializeRequest,
-} from "./scientProject.ts";
+import { ScientProjectInitializeRequest } from "./scientProject.ts";
+
+const decodeInitializationResult = Schema.decodeUnknownSync(ScientProjectInitializationResult);
 
 const decodeInitializeRequest = Schema.decodeUnknownSync(ScientProjectInitializeRequest);
-const decodeInitializationResult = Schema.decodeUnknownSync(ScientProjectInitializationResult);
 
 describe("Scient project contracts", () => {
   it("accepts bounded initialization requests", () => {
@@ -15,6 +14,7 @@ describe("Scient project contracts", () => {
     expect(() => decodeInitializeRequest({ root: "  " })).toThrow();
   });
 
+  // regression: 9aaa4ee9ff feat(projects): add safe Scient project setup
   it("decodes an initialized result", () => {
     const result = decodeInitializationResult({
       root: "/tmp/study",

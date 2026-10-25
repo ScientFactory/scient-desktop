@@ -1,11 +1,10 @@
-import * as Logger from "effect/Logger";
-import type * as Scope from "effect/Scope";
 import * as NodeSqlite from "node:sqlite";
 import type * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Logger from "effect/Logger";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -14,7 +13,9 @@ import * as Statement from "effect/sql/Statement";
 import type * as Tracer from "effect/Tracer";
 import { vi } from "vite-plus/test";
 
+// SCIENT-FORK:START
 import * as HostProcess from "./HostProcess.ts";
+// SCIENT-FORK:END
 import * as SqliteClient from "./nodeSqliteClient.ts";
 
 // SCIENT-FORK:START — Windows cannot remove a file SQLite holds open.
@@ -141,6 +142,7 @@ layer("NodeSqliteClient", (it) => {
 
 const largeText = "x".repeat(64 * 1024 + 1);
 
+// regression: 4cd0076ec6 perf(shared): cached SQLite statements no longer hold large parameters (#19305)
 it.effect("keeps large text and blob parameters off cached statements", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -205,6 +207,7 @@ it.effect("reads integers on the values path as the caller asked, cached or not"
   }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
 );
 
+// SCIENT-FORK:START
 it.effect("preserves raw buffer bytes across prepared, unprepared and named bindings", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -230,6 +233,7 @@ it.effect("preserves raw buffer bytes across prepared, unprepared and named bind
     assert.equal(reads, 1);
   }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
 );
+// SCIENT-FORK:END
 
 const makeTempDatabase = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -369,6 +373,7 @@ it.effect("keeps read-only work inside a write transaction on the writer", () =>
   ),
 );
 
+// SCIENT-FORK:START
 it.effect("binds raw buffers on the reader and recovers from an unreadable named binding", () =>
   withReaderClient((sql) =>
     Effect.gen(function* () {
@@ -396,6 +401,7 @@ it.effect("binds raw buffers on the reader and recovers from an unreadable named
     }),
   ),
 );
+// SCIENT-FORK:END
 
 it.effect("fails a read-only transaction whose reader stops, then starts a new reader", () =>
   withReaderClient((sql) =>
@@ -435,6 +441,7 @@ const withFileClient = <A, E>(
     }).pipe(Effect.provide(SqliteClient.layer({ filename, readerWorker: true })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
+// SCIENT-FORK: Windows cannot remove a file SQLite holds open.
 it.effect.skipIf(windowsHost)("uses the writer when the reader cannot open the database", () =>
   withFileClient((sql, filename) =>
     Effect.gen(function* () {
@@ -459,6 +466,7 @@ const captureWarnings = () => {
   return { warnings, layer: Logger.layer([logger], { mergeWithExisting: false }) };
 };
 
+// regression: 8659fcf145 fix(server): thread list reads no longer freeze the server on large databases (#19226)
 it.effect.skipIf(windowsHost)(
   "logs one warning when concurrent first reads find the reader unavailable",
   () => {
@@ -485,47 +493,6 @@ it.effect.skipIf(windowsHost)(
     ).pipe(Effect.provide(logs));
   },
 );
-
-const waitForCheckpointMessage = (worker: NodeWorkerThreads.Worker, id: unknown) =>
-  new Promise<Record<string, unknown>>((resolve) => {
-    const onMessage = (message: unknown) => {
-      if (
-        typeof message === "object" &&
-        message !== null &&
-        "type" in message &&
-        message.type === "checkpoint" &&
-        "id" in message &&
-        message.id === id
-      ) {
-        worker.off("message", onMessage);
-        resolve(message as Record<string, unknown>);
-      }
-    };
-    worker.on("message", onMessage);
-  });
-
-const pauseCheckpointRequests = (worker: NodeWorkerThreads.Worker) => {
-  const queued: Array<Parameters<typeof worker.postMessage>> = [];
-  const send = worker.postMessage.bind(worker);
-  const spy = vi.spyOn(worker, "postMessage").mockImplementation((...args) => {
-    queued.push(args);
-  });
-  let restored = false;
-  return {
-    queued,
-    sendNext() {
-      const args = queued.shift();
-      if (args !== undefined) send(...args);
-      return args?.[0];
-    },
-    release() {
-      if (restored) return;
-      restored = true;
-      spy.mockRestore();
-      for (const args of queued.splice(0)) send(...args);
-    },
-  };
-};
 
 it.effect("finishes masked database cleanup after its caller is interrupted", () =>
   Effect.gen(function* () {

@@ -38,37 +38,47 @@ afterEach(() => {
 });
 
 describe("clientPersistenceStorage", () => {
-  it.each([300, 400, 500] as const)("reloads interface weight %s", async (fontWeightInterface) => {
+  // SCIENT-FORK:START
+  it("reloads the interface weight", async () => {
     getTestWindow();
     const { writeBrowserClientSettings } = await import("./clientPersistenceStorage");
-    writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, fontWeightInterface });
+    writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, fontWeightInterface: 500 });
     vi.resetModules();
     const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
-    expect(readBrowserClientSettings()?.fontWeightInterface).toBe(fontWeightInterface);
+    expect(readBrowserClientSettings()?.fontWeightInterface).toBe(500);
   });
 
+  // SCIENT-FORK:END
   it.each(["not-json", '{"wordWrap":"invalid"}'])(
     "does not treat invalid saved settings as absent: %s",
     async (value) => {
       const testWindow = getTestWindow();
+      // SCIENT-FORK:START
       testWindow.localStorage.setItem("scient-next:client-settings:v1", value);
+      // SCIENT-FORK:END
       const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
 
       expect(() => readBrowserClientSettings()).toThrow(
         expect.objectContaining({
           _tag: "LocalStorageOperationError",
           operation: "decode",
+          // SCIENT-FORK:START
           storageKey: "scient-next:client-settings:v1",
+          // SCIENT-FORK:END
         }),
       );
+      // SCIENT-FORK:START
       expect(testWindow.localStorage.getItem("scient-next:client-settings:v1")).toBe(value);
+      // SCIENT-FORK:END
     },
   );
 
   it("preserves saved settings across a transient read failure", async () => {
     const testWindow = getTestWindow();
     const settings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
+    // SCIENT-FORK:START
     testWindow.localStorage.setItem("scient-next:client-settings:v1", JSON.stringify(settings));
+    // SCIENT-FORK:END
     const write = vi.spyOn(testWindow.localStorage, "setItem");
     const failure = new Error("storage unavailable");
     vi.spyOn(testWindow.localStorage, "getItem").mockImplementationOnce(() => {
@@ -80,13 +90,16 @@ describe("clientPersistenceStorage", () => {
       expect.objectContaining({
         _tag: "LocalStorageOperationError",
         operation: "read",
+        // SCIENT-FORK:START
         storageKey: "scient-next:client-settings:v1",
+        // SCIENT-FORK:END
         cause: failure,
       }),
     );
     expect(readBrowserClientSettings()).toEqual(settings);
     expect(write).not.toHaveBeenCalled();
   });
+  // SCIENT-FORK:START
 
   it("uses new defaults only for preferences missing from browser storage", async () => {
     const testWindow = getTestWindow();
@@ -121,4 +134,5 @@ describe("clientPersistenceStorage", () => {
       }),
     );
   });
+  // SCIENT-FORK:END
 });

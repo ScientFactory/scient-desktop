@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+// SCIENT-FORK:START
 // Subject reloads must not include the shared schema graph's cold loader work.
 import "@t3tools/contracts";
+// SCIENT-FORK:END
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Effect from "effect/Effect";
 import * as Tracer from "effect/Tracer";
@@ -8,12 +10,16 @@ import * as Tracer from "effect/Tracer";
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  // SCIENT-FORK:START
   vi.doUnmock("@t3tools/shared/scientDesktopIdentity");
   vi.resetModules();
+  // SCIENT-FORK:END
 });
 
 describe("web runtime relay telemetry policy", () => {
+  // SCIENT-FORK:START
   const surfaces = [
+    // SCIENT-FORK:END
     {
       surface: "desktop opt-out",
       desktopBridge: { getRelayTelemetryEnabled: () => false },
@@ -30,16 +36,18 @@ describe("web runtime relay telemetry policy", () => {
       desktopBridge: undefined,
       exports: true,
     },
+    // SCIENT-FORK:START
   ];
-  it.each(
-    [false, true].flatMap((enabled) =>
-      surfaces.map((surface) => ({
-        ...surface,
-        enabled,
-        policy: enabled ? "synthetic enabled foundation" : "Scient hold",
-      })),
-    ),
-  )(
+  it.each([
+    // The Scient hold keeps even an exporting surface silent; the surface policy is then
+    // checked on a synthetically enabled foundation.
+    { ...surfaces.find((surface) => surface.exports)!, enabled: false, policy: "Scient hold" },
+    ...surfaces.map((surface) => ({
+      ...surface,
+      enabled: true,
+      policy: "synthetic enabled foundation",
+    })),
+  ])(
     "applies $policy, $surface before the first relay span",
     async ({ desktopBridge, exports, enabled }) => {
       vi.resetModules();
@@ -105,4 +113,5 @@ describe("web runtime relay telemetry policy", () => {
       }
     },
   );
+  // SCIENT-FORK:END
 });

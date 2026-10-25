@@ -2,8 +2,10 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  // SCIENT-FORK:START — late-answer test ids.
   RunId,
   RuntimeRequestId,
+  // SCIENT-FORK:END
   ORCHESTRATION_V2_WS_METHODS,
   ThreadId,
   TurnItemId,
@@ -1524,6 +1526,7 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  // SCIENT-FORK:START — late answers inside a partial history window.
   it.effect("retains a late answer inside its visible run while history is partial", () =>
     Effect.gen(function* () {
       const runId = RunId.make("live-partial-run");
@@ -1646,6 +1649,8 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  // SCIENT-FORK:END
+
   it.effect("installs and advances latestLocalTurnOrdinal for partial progressive windows", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -1756,6 +1761,7 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  // SCIENT-FORK:START — tombstone snapshots stay deleted after synchronization.
   it.effect.each(
     (["socket", "http"] as const).map((source) => ({
       caseTitle: `retires a ${source} tombstone snapshot and stays deleted after synchronization`,
@@ -1796,6 +1802,8 @@ describe("EnvironmentThreads", () => {
       expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
     }).pipe(Effect.scoped),
   );
+
+  // SCIENT-FORK:END
 
   it.effect("does not recreate a deleted cache from a queued save or finalizer", () =>
     Effect.gen(function* () {

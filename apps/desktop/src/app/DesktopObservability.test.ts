@@ -40,6 +40,7 @@ const TraceRecordLine = Schema.Struct({
 
 const decodeTraceRecordLine = Schema.decodeUnknownSync(Schema.fromJsonString(TraceRecordLine));
 
+// SCIENT-FORK:START desktop-state-isolation
 const environmentInput = (baseDir: string, isDevelopment: boolean) =>
   ({
     dirname: "/repo/apps/desktop/dist-electron",
@@ -49,6 +50,7 @@ const environmentInput = (baseDir: string, isDevelopment: boolean) =>
     appVersion: "1.2.3",
     appPath: "/repo",
     isPackaged: !isDevelopment,
+    // SCIENT-FORK:END desktop-state-isolation
     resourcesPath: "/repo/resources",
     runningUnderArm64Translation: false,
   }) satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
@@ -58,12 +60,14 @@ const layerEnvironmentFor = (
   isDevelopment = true,
   env: Readonly<Record<string, string | undefined>> = {},
 ) =>
+  // SCIENT-FORK:START desktop-state-isolation
   DesktopEnvironment.layer(environmentInput(baseDir, isDevelopment)).pipe(
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
           SCIENT_NEXT_HOME: baseDir,
+          // SCIENT-FORK:END desktop-state-isolation
           VITE_DEV_SERVER_URL: isDevelopment ? "http://127.0.0.1:5733" : undefined,
           ...env,
         }),

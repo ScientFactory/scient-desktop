@@ -541,7 +541,6 @@ describe("Scient seam snapshot verification", () => {
   it.each(
     [
       null,
-      {},
       [{ signal: "absent", changed: "connector" }],
       [{ signal: "[Cc]onnectors?\\b", changed: "" }],
       [{ signal: "[Cc]onnectors?\\b", changed: "connector", fileContext: false }],

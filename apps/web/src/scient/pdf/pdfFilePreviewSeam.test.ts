@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import { describe, expect, it } from "@effect/vitest";
 
 describe("Scient PDF file-preview seam", () => {
+  // regression: ec260266b9 fix(web): prevent restored non-PDF previews from crashing
   it("keeps restored file tabs behind the PDF-only source adapter", () => {
     const source = NodeFS.readFileSync(
       new URL("../../components/files/FilePreviewPanel.tsx", import.meta.url),

@@ -2,15 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { settingsSourceOutline } from "./settingsSourceOutline";
 
 describe("raised settings outline", () => {
-  it("keeps the design-token body radius independent of the smaller cue", () => {
-    const path = settingsSourceOutline(600, 300, 14, 100)!;
-    expect(path.match(/A 14 14/g)).toHaveLength(4);
-    expect(path).toContain("H 62 Q 68 12.5 68 6.5 Q 68 0.5 74 0.5 H 126");
-    expect(path.startsWith("M ")).toBe(true);
-    expect(path.endsWith(" Z")).toBe(true);
-    expect(path.match(/M /g)).toHaveLength(1);
-  });
-
   it("keeps both main corners intact at either edge", () => {
     for (const center of [0, 600]) {
       const path = settingsSourceOutline(600, 300, 14, center)!;

@@ -13,9 +13,10 @@ import {
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+// SCIENT-FORK:START — ids for the attachment admission cases at the end of this file.
+import { ChatAttachmentId, RunId } from "@t3tools/contracts";
+// SCIENT-FORK:END
 import {
-  ChatAttachmentId,
-  RunId,
   CommandId,
   ComposerContextId,
   EnvironmentId,
@@ -159,7 +160,9 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
 }));
 
 vi.mock("../lib/attachmentUpload", async (importOriginal) => ({
+  // SCIENT-FORK:START — admission uses the real attachment budget helpers.
   ...(await importOriginal<typeof import("../lib/attachmentUpload")>()),
+  // SCIENT-FORK:END
   releasePendingAttachmentUploads: composerAttachmentCleanupMocks.releaseUploads,
 }));
 
@@ -173,8 +176,10 @@ import {
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "./atom-registry";
+// SCIENT-FORK:START — attachment admission cases at the end of this file.
 import { appendPreparedComposerDraftAttachments } from "./composer-attachment-admission";
 import { queuedEditDraftKey, queuedRunEditsAtom } from "./queued-run-edit";
+// SCIENT-FORK:END
 import { threadOutboxManager } from "./thread-outbox";
 import {
   appendComposerDraftAttachments,
@@ -2589,6 +2594,7 @@ describe("mobile composer drafts", () => {
   });
 });
 
+// SCIENT-FORK:START — Scient caps a draft's images at 80 MiB without losing the prior draft.
 describe("normalized attachment admission into the actual mobile draft store", () => {
   const key = "environment-1:aggregate-thread";
   const tenMiBDataUrl = `data:image/png;base64,${Buffer.alloc(10 * 1024 * 1024).toString("base64")}`;
@@ -2734,3 +2740,4 @@ describe("normalized attachment admission into the actual mobile draft store", (
     expect(appAtomRegistry.get(composerDraftsAtom)).toBe(storedBefore);
   });
 });
+// SCIENT-FORK:END

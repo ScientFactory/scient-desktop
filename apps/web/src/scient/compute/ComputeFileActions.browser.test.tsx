@@ -466,9 +466,9 @@ describe("Python file run actions", () => {
     "cancel",
     "failed",
     "thrown",
+    // The exact-owner, exact-generation rule is covered in Node by
+    // computeFileSurfaceModel.test.ts; "nonterminal" proves its rejection here.
     "nonterminal",
-    "wrong-owner",
-    "wrong-generation",
     "closed-during-stop",
     "changed-before-stop",
   ])(
@@ -591,8 +591,8 @@ describe("Python file run actions", () => {
               : {
                   _tag: "Success",
                   value: {
-                    sessionId: outcome === "wrong-owner" ? "another-session" : sessionId,
-                    generation: outcome === "wrong-generation" ? 2 : 1,
+                    sessionId,
+                    generation: 1,
                     status: outcome === "nonterminal" ? "closing" : "stopped",
                   },
                 },
@@ -744,7 +744,6 @@ describe("Python file run actions", () => {
     { ready: true, selection: "existing" as const, notice: false },
     { ready: false, selection: "existing" as const, notice: true },
     { ready: true, selection: "managed" as const, notice: true },
-    { ready: false, selection: "managed" as const, notice: true },
   ])(
     "scopes MATLAB helper failures to its Engine host ($selection, ready=$ready)",
     async ({ ready, selection, notice }) => {

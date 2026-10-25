@@ -62,6 +62,8 @@ vi.mock("../../scient/providerConnection/useProviderLifecycleController", () => 
 
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => commands.accountCommand }));
 
+// One row per composer setup component. Oh My Pi renders the same
+// ManagedRuntimeComposerSetup path as Pi (only its icon and hint differ).
 const DRIVERS = [
   "codex",
   "claudeAgent",
@@ -70,7 +72,6 @@ const DRIVERS = [
   "grok",
   "antigravity",
   "scient",
-  "omp",
   "pi",
 ] as const;
 const METHODS: Record<(typeof DRIVERS)[number], ProviderConnectionMethod[]> = {
@@ -81,7 +82,6 @@ const METHODS: Record<(typeof DRIVERS)[number], ProviderConnectionMethod[]> = {
   grok: ["grok_account"],
   antigravity: ["antigravity_google"],
   scient: [],
-  omp: [],
   pi: [],
 };
 function snapshot(driver: (typeof DRIVERS)[number], installed = false): ServerProvider {
@@ -208,6 +208,7 @@ async function setupButton() {
 }
 
 describe("actual picker provider setup", () => {
+  // regression: 4e07b49b73 fix(providers): restore composer installation and account setup
   it.each(DRIVERS)("keeps %s installation visible with no model rows", async (driver) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
@@ -220,6 +221,7 @@ describe("actual picker provider setup", () => {
     expect(commands.startConnection).not.toHaveBeenCalled();
   });
 
+  // regression: 4e07b49b73 fix(providers): restore composer installation and account setup
   it.each(DRIVERS)("keeps %s model connection visible after installation", async (driver) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
@@ -660,7 +662,8 @@ describe("composed picker Connect models overlay", () => {
       .poll(() => document.activeElement?.getAttribute("aria-label"))
       .toBe("Choose test model");
   });
-  it.each(["pi", "omp", "droid"] as const)(
+  // regression: 897488d333 fix(providers): retain model connection dialogs above the picker
+  it.each(["pi", "droid"] as const)(
     "suspends %s setup through a ready catalog and closes its dialog",
     async (driver) => {
       await using _fixture = _createFixture();
@@ -993,7 +996,8 @@ describe("composer-owned setup portals", () => {
     });
     expect(composerSubmit).not.toHaveBeenCalled();
   });
-  it.each(["scient", "pi", "omp", "droid"] as const)(
+  // regression: 10213dd4fc fix(web): retain model dialogs across onboarding and nested portals
+  it.each(["scient", "pi", "droid"] as const)(
     "retains %s onboarding's owned modal until dismissal before choosing ready models",
     async (driver) => {
       await using _fixture = _createFixture();

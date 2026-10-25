@@ -354,9 +354,9 @@ describe("shared image controls", () => {
   });
 
   it.each([
+    // Inline, every action runs in the click whatever its kind; only the viewer branches.
     { expanded: false, picker: false },
     { expanded: true, picker: false },
-    { expanded: false, picker: true },
     { expanded: true, picker: true },
   ])("runs gesture-sensitive actions in the item click (%j)", async ({ expanded, picker }) => {
     await using _fixture = _createFixture();

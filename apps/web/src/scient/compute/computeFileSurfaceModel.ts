@@ -1,4 +1,8 @@
-import type { ComputeLanguageRuntimeInspection, ComputeSessionRecord } from "@t3tools/contracts";
+import {
+  TERMINAL_COMPUTE_SESSION_STATUSES,
+  type ComputeLanguageRuntimeInspection,
+  type ComputeSessionRecord,
+} from "@t3tools/contracts";
 
 type ComputeRuntimeProfile = ComputeLanguageRuntimeInspection["runtimes"][number]["profile"];
 
@@ -24,6 +28,18 @@ export function computeRuntimeDisplayLabel(
 ): string {
   const version = profile.languageVersion.trim();
   return `${version.length > 0 && version !== "unknown" ? `${languageName} ${version}` : languageName} · ${computeRuntimeSourceLabel(profile.source)}`;
+}
+
+/** A stop or read proves shutdown only for the exact session and generation, in a terminal status. */
+export function isExactTerminalComputeSession(
+  record: Pick<ComputeSessionRecord, "sessionId" | "generation" | "status">,
+  expected: Pick<ComputeSessionRecord, "sessionId" | "generation">,
+): boolean {
+  return (
+    record.sessionId === expected.sessionId &&
+    record.generation === expected.generation &&
+    TERMINAL_COMPUTE_SESSION_STATUSES.has(record.status)
+  );
 }
 
 export type ComputePreRunRuntimeChoice = {

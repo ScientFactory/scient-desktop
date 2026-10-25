@@ -181,7 +181,9 @@ describe("ConnectionResolver", () => {
       const error = yield* Effect.flip(broker.prepare(catalogEntry(target)));
 
       expect(error).toMatchObject({ reason: "unsupported" });
+      // SCIENT-FORK:START
       expect(error.message).toContain("Update Scient on Compatible environment");
+      // SCIENT-FORK:END
     }),
   );
 

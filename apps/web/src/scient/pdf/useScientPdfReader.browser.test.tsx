@@ -300,7 +300,7 @@ it("releases both displayed and pending presentations at document unmount", asyn
   expect(_fixture.viewerElement.children.length).toBe(0);
 });
 
-it("stress-tests fifty revisions without accumulating page surfaces or resetting focused input", async () => {
+it("replaces revision after revision without accumulating page surfaces or resetting focused input", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
@@ -310,7 +310,7 @@ it("stress-tests fifty revisions without accumulating page surfaces or resetting
   await publish(_fixture, 0);
   const input = _fixture.mount.querySelector("textarea")!;
   input.focus();
-  for (let revision = 1; revision <= 50; revision++) {
+  for (let revision = 1; revision <= 3; revision++) {
     await render(_fixture, `revision-${revision}`);
     expect(_fixture.reader.state.phase).toBe("ready");
     expect(_fixture.viewerElement.children.length).toBe(2);

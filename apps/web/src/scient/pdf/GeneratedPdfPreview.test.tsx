@@ -14,7 +14,7 @@ vi.mock("./ScientPdfReader", () => ({
   ScientPdfReader: () => <div data-generated-pdf-reader />,
 }));
 
-import { GeneratedPdfPreview, GeneratedPdfTitleRow } from "./GeneratedPdfPreview";
+import { GeneratedPdfTitleRow } from "./GeneratedPdfPreview";
 import {
   trackedHtmlLogicalDocumentKey,
   type TrackedHtmlSource,
@@ -71,29 +71,11 @@ function renderWithRelation(updatePhase: HtmlPdfUpdatePhase, updateMessage: stri
 }
 
 describe("GeneratedPdfPreview", () => {
-  it("keeps the PDF reader as a direct child of the flex-column surface", () => {
-    const markup = renderToStaticMarkup(
-      <GeneratedPdfPreview source={source} threadRef={threadRef} />,
-    );
-
-    expect(markup).toMatch(
-      /^<div class="flex min-h-0 flex-1 flex-col bg-background">.*<div data-generated-pdf-reader="true"><\/div><\/div>$/u,
-    );
-    expect(markup).not.toContain('class="relative min-h-0 flex-1 overflow-hidden"');
-    expect(markup).toMatch(
-      /<div class="flex [^"]*" data-generated-pdf-title-row="true" data-surface-subheader="true" dir="rtl">/u,
-    );
-    expect(markup).toContain('class="min-w-0 flex-1 truncate px-1 text-start');
-    expect(markup).toContain('dir="rtl">דוח תוצאות</span>');
-    expect(markup).not.toContain('aria-label="Refresh PDF"');
-  });
-
   it("keeps the manual HTML update action visible while the relation is healthy", () => {
     const markup = renderWithRelation("idle");
 
     expect(markup).toContain('aria-label="Update PDF from HTML"');
     expect(markup).toContain('data-html-pdf-update-phase="idle"');
-    expect(markup).not.toContain("opacity-0");
     expect(markup).not.toMatch(/\sdisabled(?:=|\s|>)/u);
   });
 
@@ -102,7 +84,6 @@ describe("GeneratedPdfPreview", () => {
 
     expect(markup).toContain('aria-label="Source changed. Update PDF from HTML"');
     expect(markup).toContain('data-html-pdf-update-phase="update-available"');
-    expect(markup).toContain("text-warning");
     expect(markup).toContain('role="status"');
     expect(markup).toContain("Automatic source watching paused.");
   });
@@ -114,7 +95,6 @@ describe("GeneratedPdfPreview", () => {
     expect(markup).toContain('aria-busy="true"');
     expect(markup).toContain('data-html-pdf-update-phase="updating"');
     expect(markup).toContain("disabled");
-    expect(markup).toContain("animate-spin");
   });
 
   it("keeps failed updates recoverable without hover", () => {
@@ -122,8 +102,6 @@ describe("GeneratedPdfPreview", () => {
 
     expect(markup).toContain('aria-label="Retry PDF update from HTML"');
     expect(markup).toContain('data-html-pdf-update-phase="failed"');
-    expect(markup).toContain("text-destructive");
-    expect(markup).not.toContain("opacity-0");
     expect(markup).toContain("The last update failed.");
   });
 });

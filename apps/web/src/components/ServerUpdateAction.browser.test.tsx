@@ -180,16 +180,10 @@ describe("ServerUpdateAction", () => {
     expect(testState.updateServer).not.toHaveBeenCalled();
   });
 
+  // SCIENT-FORK:START — Scient relaunch guidance and reconnect-confirmed success.
   it.each([
     [
       { kind: "npm-global", prefix: "/opt/node" },
-      "Copy relaunch command",
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient",
-      "Relaunch command copied",
-      "This does not update an installed scient command.",
-    ],
-    [
-      { kind: "npx" },
       "Copy relaunch command",
       "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient",
       "Relaunch command copied",
@@ -242,6 +236,7 @@ describe("ServerUpdateAction", () => {
       description: "Reconnected on Scient server 0.0.31.",
     });
   });
+  // SCIENT-FORK:END
 });
 
 describe("ServerUpdatesAction", () => {

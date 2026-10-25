@@ -53,6 +53,7 @@ import {
   computeRuntimeDisplayLabel,
   defaultComputeRuntime,
   isComputeCapacityReachedError,
+  isExactTerminalComputeSession,
   resolveComputePreRunRuntimeChoice,
   resolveComputeRuntimeToolbarState,
   SCIENTIFIC_PYTHON_TOOLKIT_ID,
@@ -251,9 +252,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         if (
           observed._tag !== "Success" ||
           observed.value === null ||
-          observed.value.sessionId !== sessionId ||
-          observed.value.generation !== generation ||
-          !TERMINAL_COMPUTE_SESSION_STATUSES.has(observed.value.status)
+          !isExactTerminalComputeSession(observed.value, { sessionId, generation })
         ) {
           return;
         }
@@ -911,11 +910,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             reportFailure("Unable to stop this session", result);
           return;
         }
-        if (
-          result.value.sessionId !== target.session.sessionId ||
-          result.value.generation !== target.session.generation ||
-          !TERMINAL_COMPUTE_SESSION_STATUSES.has(result.value.status)
-        )
+        if (!isExactTerminalComputeSession(result.value, target.session))
           throw new Error("The session has not confirmed shutdown. Run fresh was not started.");
         const current = getComputeContext(target.contextId);
         if (

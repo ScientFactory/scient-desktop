@@ -22,6 +22,22 @@
     "./server/usage": {
       "types": "./src/server/usage.ts",
       "import": "./src/server/usage.ts"
+    },
+    "./server/contextError": {
+      "types": "./src/server/contextError.ts",
+      "import": "./src/server/contextError.ts"
+    },
+    "./server/modelSelection": {
+      "types": "./src/server/modelSelection.ts",
+      "import": "./src/server/modelSelection.ts"
+    },
+    "./server/rpcClient": {
+      "types": "./src/server/rpcClient.ts",
+      "import": "./src/server/rpcClient.ts"
+    },
+    "./server/rpcSchema": {
+      "types": "./src/server/rpcSchema.ts",
+      "import": "./src/server/rpcSchema.ts"
     }
   },
   "scripts": {

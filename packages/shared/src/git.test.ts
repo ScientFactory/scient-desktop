@@ -137,6 +137,7 @@ describe("isTemporaryWorktreeBranch", () => {
     );
   });
 
+  // SCIENT-FORK:START
   it("creates new temporary refs under the Scient namespace", () => {
     expect(WORKTREE_BRANCH_PREFIX).toBe("scient");
     expect(buildTemporaryWorktreeBranchName(() => "deadbeef")).toBe("scient/deadbeef");
@@ -150,6 +151,7 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(flattenTemporaryWorktreeBranchName("t3/deadbeef")).toBe("scient-deadbeef");
   });
 
+  // SCIENT-FORK:END
   it("matches legacy t3code temporary worktree refs", () => {
     expect(isTemporaryWorktreeBranch("t3code/deadbeef")).toBe(true);
     expect(isTemporaryWorktreeBranch("t3code-deadbeef")).toBe(true);
@@ -213,7 +215,9 @@ describe("applyGitStatusStreamEvent", () => {
 
   it("preserves local-only fields when applying a remote update", () => {
     const current: VcsStatusResult = {
+      // SCIENT-FORK:START
       gitAvailability: "missing",
+      // SCIENT-FORK:END
       isRepo: true,
       sourceControlProvider: {
         kind: SourceControlProviderKind.make("github"),

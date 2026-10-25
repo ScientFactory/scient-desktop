@@ -75,6 +75,7 @@ describe("orchestration protocol compatibility", () => {
       }),
     ).toMatchObject({ serverUpdateRequired: true });
   });
+  // SCIENT-FORK:START
 
   it("uses Scient guidance when an older server must be updated", () => {
     const error = orchestrationProtocolCompatibilityError(
@@ -84,4 +85,5 @@ describe("orchestration protocol compatibility", () => {
     expect(error?.message).toContain("Update Scient on Build Mac");
     expect(error?.message).not.toContain("T3 Code");
   });
+  // SCIENT-FORK:END
 });

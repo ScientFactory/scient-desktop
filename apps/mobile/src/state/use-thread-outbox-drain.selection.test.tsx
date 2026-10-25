@@ -342,9 +342,10 @@ it("keeps a connected target's captured selection queued when its exact operatio
   });
   await deliver(baseSelection, { ...baseSelection, model: "model-b" }, false);
 });
+// Equality is modelSelectionsEqual (tabled in packages/shared/src/model.test.ts); these rows
+// pin the drain's skip and sync branches with the cases a naive comparison gets wrong.
 it.each([
   [baseSelection, { ...baseSelection, options: [] }],
-  [{ ...baseSelection, options: [] }, baseSelection],
   [
     {
       ...baseSelection,
@@ -369,19 +370,12 @@ it.each([
   },
 );
 it.each([
-  {
-    current: baseSelection,
-    captured: { ...baseSelection, options: [{ id: "thinking", value: "high" }] },
-  },
+  // regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
   {
     current: baseSelection,
     captured: { ...baseSelection, instanceId: ProviderInstanceId.make("codex-second") },
   },
   { current: baseSelection, captured: { ...baseSelection, model: "model-b" } },
-  {
-    current: { ...baseSelection, options: [{ id: "thinking", value: "high" }] },
-    captured: { ...baseSelection, options: [{ id: "thinking", value: "low" }] },
-  },
   {
     current: { ...baseSelection, options: [{ id: "search", value: true }] },
     captured: { ...baseSelection, options: [{ id: "search", value: false }] },
