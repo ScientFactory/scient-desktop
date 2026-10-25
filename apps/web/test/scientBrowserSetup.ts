@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, expect, vi } from "vite-plus/test";
+import { beforeAll, beforeEach, chai, expect, vi } from "vite-plus/test";
 import { commands } from "vite-plus/test/browser";
 
 declare module "vite-plus/test/browser" {
@@ -197,37 +197,198 @@ vi.waitUntil = ((callback, options) => {
   );
 }) as typeof vi.waitUntil;
 
-// expect.poll keeps Vitest's loop (it carries the matchers and expect.element), but with a
-// zero interval, so Vitest itself never advances fake time by more than zero. The real
-// pause and the advance happen here, before each retry, only while the poll's test owns
-// the clock. Once that test is gone the function never settles and the loop parks until
-// the poll's own timeout, advancing nothing: checked before the callback runs and again
-// when it settles, since a rejection reaching Vitest's retry step would advance (by zero,
-// enough to fire the next test's zero-delay timers) whatever clock is installed then.
+// expect.poll, on the same ownership as the waits above. Vitest's own poll loop advances
+// fake time after every failed attempt, including one whose callback or matcher settled
+// after its test had ended: on the next test's clock. So the loop is Vitest's
+// (vitest/dist poll: the chain, the matchers, expect.element's flags, the "not awaited"
+// check, the error and its cause), run here: it checks its test after the callback
+// settles, after the matcher settles, after the pause, and before every advance, and once
+// the test is gone it rejects with the test's abort reason and moves no clock.
+const POLL_UNSUPPORTED = new Set([
+  "matchSnapshot",
+  "toMatchSnapshot",
+  "toMatchInlineSnapshot",
+  "toThrowErrorMatchingSnapshot",
+  "toThrowErrorMatchingInlineSnapshot",
+  "throws",
+  "Throw",
+  "throw",
+  "toThrow",
+  "toThrowError",
+]);
+type PollFlag = (assertion: object, name: string, value?: unknown) => unknown;
+const pollFlag: PollFlag = (assertion, name, ...value) =>
+  (chai.util.flag as (...args: unknown[]) => unknown)(assertion, name, ...value);
+
+function withStackOf(error: unknown, source: Error) {
+  if (error instanceof Error) {
+    (error as Error & { cause?: unknown }).cause ??= new Error("Matcher did not succeed in time.");
+    if (source.stack !== undefined)
+      error.stack = source.stack.replace(source.message, error.message);
+  }
+  return error;
+}
+
+type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown } | { ok: "expired" };
+
 const pollUnowned = expect.poll;
-expect.poll = ((fn, options) => {
+expect.poll = ((
+  fn: (this: unknown, context: { signal: AbortSignal }) => unknown,
+  options: { interval?: number; timeout?: number; message?: string } = {},
+) => {
   const signal = testSignal;
-  if (!signal) return pollUnowned(fn, options);
-  const interval = options?.interval ?? DEFAULT_INTERVAL_MS;
-  let first = true;
-  return pollUnowned(
-    async function (this: unknown, ...args: Parameters<typeof fn>) {
-      if (!first) {
-        await new Promise<void>((resolve) => realTimers.setTimeout(resolve, interval));
-        advanceOwnedClock(signal, interval);
-      }
-      first = false;
-      if (ownerGone(signal)) return new Promise<never>(() => {});
-      const settled = await Promise.resolve()
-        .then(() => fn.apply(this, args))
-        .then(
-          (value) => ({ ok: true as const, value }),
-          (error: unknown) => ({ ok: false as const, error }),
+  if (!signal) return pollUnowned(fn as never, options);
+  // The browser project's expect.poll defaults (vite.config.ts), as Vitest would read them.
+  const { interval = DEFAULT_INTERVAL_MS, timeout = BROWSER_WAIT_TIMEOUT_MS, message } = options;
+  const assertion = (
+    expect(null, message) as unknown as { withContext(context: object): object }
+  ).withContext({ poll: true });
+  const bound = fn.bind(assertion);
+  pollFlag(assertion, "_poll.fn", bound);
+  pollFlag(assertion, "_poll.timeout", timeout);
+  pollFlag(assertion, "_poll.interval", interval);
+  const test = pollFlag(assertion, "vitest-test") as { onFinished?: (() => void)[] } | undefined;
+  if (!test) throw new Error("expect.poll() must be called inside a test");
+  const proxy: object = new Proxy(assertion, {
+    get(target, key, receiver) {
+      const assertionFunction: unknown = Reflect.get(target, key, receiver);
+      if (typeof assertionFunction !== "function")
+        return assertionFunction instanceof chai.Assertion ? proxy : assertionFunction;
+      if (key === "assert") return assertionFunction;
+      if (typeof key === "string" && POLL_UNSUPPORTED.has(key))
+        throw new SyntaxError(
+          `expect.poll() is not supported in combination with .${key}(). Use vi.waitFor() if your assertion condition is unstable.`,
         );
-      if (ownerGone(signal)) return new Promise<never>(() => {});
-      if (!settled.ok) throw settled.error;
-      return settled.value;
+      const matcher = assertionFunction as (...args: unknown[]) => unknown;
+      return function pollChain(...args: unknown[]) {
+        const stackTraceError = new Error("STACK_TRACE_ERROR");
+        const run = async () => {
+          pollFlag(assertion, "_name", key);
+          pollFlag(assertion, "error", stackTraceError);
+          const onStart = pollFlag(assertion, "_poll.onStart") as
+            | ((event: { assertion: object }) => Promise<void> | void)
+            | undefined;
+          const onSettled = pollFlag(assertion, "_poll.onSettled") as
+            | ((event: { assertion: object; status: "pass" | "fail" }) => Promise<void> | void)
+            | undefined;
+          await onStart?.({ assertion });
+          if (Object.getOwnPropertyDescriptor(matcher, "__vitest_poll_takeover__")?.value) {
+            // A matcher that owns its own retries (toMatchScreenshot): as Vitest runs it.
+            try {
+              const output = await matcher.apply(assertion, args);
+              await onSettled?.({ assertion, status: "pass" });
+              return output;
+            } catch (error) {
+              await onSettled?.({ assertion, status: "fail" });
+              throw withStackOf(error, stackTraceError);
+            }
+          }
+          const expiry = new AbortController();
+          const expired = Promise.withResolvers<{ ok: "expired" }>();
+          const gone = Promise.withResolvers<never>();
+          const stop = () => gone.reject(signal.reason);
+          gone.promise.catch(() => {});
+          const timeoutId = realTimers.setTimeout(() => {
+            expiry.abort();
+            expired.resolve({ ok: "expired" });
+          }, timeout);
+          signal.addEventListener("abort", stop, { once: true });
+          /** One step of the attempt, unless the poll expires or its test goes first. */
+          const step = <T>(work: () => T | PromiseLike<T>): Promise<Settled<T>> =>
+            Promise.race([
+              Promise.resolve()
+                .then(work)
+                .then(
+                  (value): Settled<T> => ({ ok: true, value }),
+                  (error: unknown): Settled<T> => ({ ok: false, error }),
+                ),
+              expired.promise,
+              gone.promise,
+            ]);
+          const ensureOwner = () => {
+            if (ownerGone(signal))
+              throw signal.aborted
+                ? signal.reason
+                : new Error("The test that started this poll has ended.");
+          };
+          let lastError: unknown;
+          try {
+            while (true) {
+              ensureOwner();
+              const called = await step(() => bound({ signal: expiry.signal }));
+              ensureOwner();
+              if (called.ok === "expired") {
+                lastError ??= new Error("expect.poll() function didn't resolve in time.");
+                break;
+              }
+              if (called.ok) {
+                pollFlag(assertion, "object", called.value);
+                const asserted = await step(() => matcher.apply(assertion, args));
+                ensureOwner();
+                if (asserted.ok === "expired") {
+                  lastError ??= new Error("expect.poll() assertion didn't resolve in time.");
+                  break;
+                }
+                if (asserted.ok) {
+                  await onSettled?.({ assertion, status: "pass" });
+                  return asserted.value;
+                }
+                lastError = asserted.error;
+              } else lastError = called.error;
+              // As in Vitest: a screenshot match owns its retries once its element resolved.
+              if (key === "toMatchScreenshot") break;
+              const paused = await step(
+                () => new Promise<void>((resolve) => realTimers.setTimeout(resolve, interval)),
+              );
+              if (paused.ok === "expired") break;
+              advanceOwnedClock(signal, interval);
+            }
+          } finally {
+            realTimers.clearTimeout(timeoutId);
+            signal.removeEventListener("abort", stop);
+          }
+          await onSettled?.({ assertion, status: "fail" });
+          throw withStackOf(lastError, stackTraceError);
+        };
+        let awaited = false;
+        (test.onFinished ??= []).push(() => {
+          if (awaited) return;
+          const negated = pollFlag(assertion, "negate") ? "not." : "";
+          const shown = `expect.${pollFlag(assertion, "_poll.element") ? "element(locator)" : "poll(assertion)"}.${negated}${String(key)}()`;
+          throw withStackOf(
+            new Error(
+              `${shown} was not awaited. This assertion is asynchronous and must be awaited; otherwise, it is not executed to avoid unhandled rejections:\n\nawait ${shown}\n`,
+            ),
+            stackTraceError,
+          );
+        });
+        let result: Promise<unknown> | undefined;
+        const wrap = pollFlag(assertion, "_poll.wrap") as
+          | ((promise: Promise<unknown>, stack: Error) => Promise<unknown>)
+          | undefined;
+        const start = () => (result ??= wrap ? wrap(run(), stackTraceError) : run());
+        // Vitest's poll result: a thenable that starts the poll when awaited.
+        return {
+          // oxlint-disable-next-line unicorn/no-thenable -- expect.poll's contract is a lazy thenable.
+          then(
+            onFulfilled?: (value: unknown) => unknown,
+            onRejected?: (error: unknown) => unknown,
+          ) {
+            awaited = true;
+            return start().then(onFulfilled, onRejected);
+          },
+          catch(onRejected?: (error: unknown) => unknown) {
+            awaited = true;
+            return start().catch(onRejected);
+          },
+          finally(onFinally?: () => void) {
+            awaited = true;
+            return start().finally(onFinally);
+          },
+          [Symbol.toStringTag]: "Promise",
+        };
+      };
     },
-    { ...options, interval: 0 },
-  );
-}) as typeof expect.poll;
+  });
+  return proxy;
+}) as unknown as typeof expect.poll;

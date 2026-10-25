@@ -7,6 +7,7 @@ import { fakeTimers } from "../../../test/render";
 
 const realSetTimeout = globalThis.setTimeout.bind(globalThis);
 const realDelay = (ms: number) => new Promise<void>((resolve) => realSetTimeout(resolve, ms));
+const realNow = performance.now.bind(performance);
 
 /** The next test: real time passes while its fake clock must stand still. */
 async function expectClockUntouched() {
@@ -66,6 +67,62 @@ it.fails(
   },
 );
 it("keeps its zero-delay timer after a timed-out test's pending poll callback", async () => {
+  using _clock = fakeTimers();
+  const fired = vi.fn();
+  setTimeout(fired, 0);
+  await realDelay(400);
+  expect(fired).not.toHaveBeenCalled();
+});
+
+// The poll's callback settles while its test runs; the matcher then fails after the
+// deadline, synchronously or asynchronously. Its retry must not advance the next test's
+// clock either.
+expect.extend({
+  toFailAcrossDeadline() {
+    // Real time: the fake clock stands still inside a synchronous matcher.
+    const start = realNow();
+    while (realNow() - start < 120) {
+      // A matcher busy for longer than the test's remaining time.
+    }
+    return { pass: false, message: () => "not ready" };
+  },
+  async toFailAsyncAfterDeadline() {
+    await realDelay(250);
+    return { pass: false, message: () => "not ready yet" };
+  },
+});
+interface DeadlineMatchers {
+  toFailAcrossDeadline(): Promise<void>;
+  toFailAsyncAfterDeadline(): Promise<void>;
+}
+// oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- the deadline is the scenario.
+it.fails("times out while expect.poll's synchronous matcher runs", { timeout: 100 }, async () => {
+  using _clock = fakeTimers();
+  await (
+    expect.poll(
+      async () => {
+        await realDelay(30);
+        return 1;
+      },
+      { timeout: 1000, interval: 20 },
+    ) as unknown as DeadlineMatchers
+  ).toFailAcrossDeadline();
+});
+it("keeps its zero-delay timer after a timed-out test's synchronous poll matcher", async () => {
+  using _clock = fakeTimers();
+  const fired = vi.fn();
+  setTimeout(fired, 0);
+  await realDelay(400);
+  expect(fired).not.toHaveBeenCalled();
+});
+// oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- the deadline is the scenario.
+it.fails("times out while expect.poll's async matcher is pending", { timeout: 100 }, async () => {
+  using _clock = fakeTimers();
+  await (
+    expect.poll(() => 1, { timeout: 1000, interval: 20 }) as unknown as DeadlineMatchers
+  ).toFailAsyncAfterDeadline();
+});
+it("keeps its zero-delay timer after a timed-out test's async poll matcher", async () => {
   using _clock = fakeTimers();
   const fired = vi.fn();
   setTimeout(fired, 0);
