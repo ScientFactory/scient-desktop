@@ -1,13 +1,6 @@
 /**
- * Conversation snapshot → document bundle. Writes each message under a
- * speaker heading with its timestamp, applies chat's line-break and raw-HTML
- * decisions per message, resolves inline references to readable Markdown,
- * lists attachments with their availability, and places the selected work log
- * and reasoning with the message chat shows them under.
- *
- * The bundle Markdown is Scient conversation Markdown v1 without front matter:
- * readable-output writers share it, and the Markdown writer adds front matter
- * and resolves `scient-asset:` destinations.
+ * Share bundle Markdown across readable writers; only the Markdown writer adds front matter and
+ * resolves scient-asset destinations.
  */
 import {
   CONVERSATION_REFERENCE_URL_PREFIX,
@@ -878,12 +871,8 @@ function assetListItem(asset: ConversationDocumentAsset): string {
 }
 
 /**
- * A snapshot message's text as an imported thread stores it. A transfer file
- * carries inline references as typed display fields, not as the composer
- * context chips they came from, so they become the same readable Markdown the
- * document export writes: quotes as block quotations with their source,
- * attachments by name (the files stay attached to the message), and other
- * context by label, with its details listed after the text.
+ * Transfer references carry typed display fields rather than executable composer context. Import
+ * them as readable Markdown and keep attachment files attached to the message.
  */
 export function importedMessageMarkdown(message: ConversationMessage): string {
   if (!message.text.includes(CONVERSATION_REFERENCE_URL_PREFIX)) return message.text;
@@ -899,11 +888,8 @@ export function importedMessageMarkdown(message: ConversationMessage): string {
 }
 
 /**
- * Replaces `scient-ref:` links with readable Markdown. Quotes become block
- * quotations with their source; attachments point at bundle assets; other
- * context shows its label inline and its details in the message's context part.
- * A link to `scient-asset:` in a message is neutralized so only generated
- * links can address bundle assets.
+ * Neutralize authored scient-asset links so only generated links can address bundle assets. Render
+ * typed references as readable Markdown rather than restoring installation-local chips.
  */
 function renderReferences(
   message: ConversationMessage,

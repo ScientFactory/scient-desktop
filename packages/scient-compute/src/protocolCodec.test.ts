@@ -247,11 +247,8 @@ describe("compute protocol messages", () => {
 });
 
 /**
- * The decoder's buffer grows, compacts, and slides in place, and that is the
- * one piece of this module where an off-by-one would be invisible in a
- * hand-written case and corrupting in a real pipe. So it is driven with
- * arbitrary frame sizes cut at arbitrary boundaries, from a fixed seed so a
- * failure is a failure anyone can reproduce.
+ * Use fixed-seed arbitrary frame/chunk boundaries to expose buffer grow/compact/slide off-by-ones
+ * that handwritten cases miss, while keeping failures reproducible.
  */
 describe("compute frame decoder under load", () => {
   const nextRandom = (seed: number): (() => number) => {

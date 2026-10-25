@@ -25,13 +25,8 @@ import { transitionComputeSessionStatus } from "./sessionStateMachine.ts";
 import { createSimulatedComputeTransport } from "./simulator.ts";
 
 /**
- * A fake R adapter paired with the language-neutral simulated transport.
- *
- * This exit gate proves that session lifecycle is independent from Python and
- * that another adapter can provide discovery, launch preparation, diagnostics,
- * and fingerprints. It deliberately makes no claim that the Python-hosted
- * Jupyter bridge can launch R; a real R kernel is the proof for that later
- * transport-host/kernel boundary.
+ * A fake R adapter proves language-neutral coordinator lifecycle, not that the Python-hosted bridge
+ * runs R. Real second-language kernel qualification is a separate transport boundary.
  */
 const R_LANGUAGE = ComputeLanguageId.make("r");
 const SIMULATED_TRANSPORT = ComputeTransportKind.make("simulated");

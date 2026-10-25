@@ -1,9 +1,6 @@
 /**
- * Scient's one-shot Pi text generation run: a typed `pi --mode rpc` client
- * with no workspace instructions, skills, tools, extensions or persisted
- * session, the requested model and thinking level applied through the native
- * selection path, assistant output collected from the ordered event stream,
- * and a bounded total duration.
+ * One-shot text generation must carry no workspace instructions, skills, tools, extensions, or
+ * persisted session. Apply model/effort natively, consume ordered events, and bound total duration.
  */
 import { TextGenerationError, type ModelSelection } from "@t3tools/contracts";
 import {

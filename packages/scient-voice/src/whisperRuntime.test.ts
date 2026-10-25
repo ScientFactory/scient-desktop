@@ -429,7 +429,6 @@ describe("Whisper segment formatting", () => {
     ).resolves.toEqual({ text: expected });
   });
 
-  // One row per check: no segment array, a missing segment, a non-text segment.
   // regression: fa095e4714 fix(voice): preserve transcript formatting and scope cancellation (#392)
   it.each([null, {}, { segments: [null] }, { segments: [{ text: 42 }] }, { segments: "text" }])(
     "rejects malformed segment responses: %j",

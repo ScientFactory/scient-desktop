@@ -42,15 +42,9 @@ const DROID_ADAPTIVE_CLAUDE = [
 ] as const;
 
 /**
- * The levels beyond Low, Medium and High that Droid sends for an Anthropic
- * Messages model, or undefined when Droid does not treat the model as
- * adaptive. Droid picks the request from its own model table by matching the
- * model ID: Claude Opus and Sonnet 4.6 and later get adaptive thinking with an
- * effort level, and Off turns thinking off. Any other ID gets budget thinking
- * for Low, Medium and High, nothing for another level, and no thinking for
- * the rest of a thread that started without it. Verified against Droid
- * 0.213.0 and 0.230.0 with a wire-capture fixture; a model Droid adds later
- * stays on Low, Medium and High here until it is added.
+ * Droid chooses adaptive Messages thinking from model ID, not overlay settings. Only reviewed
+ * adaptive IDs get Off/extra efforts; other IDs remain Low/Medium/High and can stay without
+ * thinking after an unthinking start. Add newly supported IDs only after wire verification.
  */
 export function droidAdaptiveClaudeLevels(
   modelId: string,

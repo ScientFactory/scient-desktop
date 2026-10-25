@@ -112,15 +112,9 @@ export interface SelectedConversationContent {
 }
 
 /**
- * Applies the running-turn cutoff and the range. "Up to a message" ends at
- * exactly that message: later messages are left out, and so are activities,
- * plans, and answers recorded after it, including later items of the turn it
- * belongs to or interrupted. Throws `SnapshotRangeError` when the range's last
- * message is not a completed user or assistant message.
- *
- * Known limitation, and why the server refuses ranges for now: records are
- * cut by creation time, so a plan, reasoning block, or message created before
- * the chosen message and updated after it keeps its later content.
+ * Creation-time cuts retain later edits to earlier records, so the server must refuse ranges until
+ * historical contents can be reconstructed. A range endpoint still must name a completed
+ * user/assistant message.
  */
 export function selectConversationContent(
   thread: ConversationSnapshotThread,

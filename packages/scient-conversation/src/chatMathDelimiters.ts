@@ -6,15 +6,8 @@
  */
 
 /**
- * Rewrites the TeX delimiters models emit — `\(...\)` and `\[...\]` — into the
- * `$$` forms remark-math parses. Every replacement swaps a two-character
- * delimiter for the two-character `$$`, so the rewritten string is exactly the
- * same length as the source and no character offset ever moves. Offset-based
- * behavior (task-list toggling, list-item positions) therefore stays correct on
- * every surface, with no per-surface gating.
- *
- * Mid-sentence pairs render as inline math; a pair alone in its paragraph is
- * promoted to display math by `remarkScientMathRefinements`.
+ * Replace two-character delimiters with two-character double dollars so source offsets never move.
+ * Preserve authored inline/display intent for later tree refinement.
  */
 
 interface ProtectedRange {

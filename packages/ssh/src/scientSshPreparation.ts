@@ -1,17 +1,6 @@
-// SCIENT-OWNED: runs a long SSH host preparation as a job the environment
-// manager owns, so a saved connection that retries is answered in time.
-// tunnel.ts uses it from one marked step.
-//
-// The renderer gives each saved-connection attempt about 15 seconds, then
-// abandons it and retries, but preparing a host can take minutes the first
-// time: installing the pinned Scient server package, or copying an earlier
-// Scient home. The preparation runs in the manager's scope, not in any
-// caller's fiber. A saved connection asks for a bounded wait: it waits up to
-// SSH_PREPARATION_JOIN_BUDGET and otherwise fails at once as still preparing,
-// so no attempt is abandoned mid-wait. Any other caller, such as adding a new
-// host, waits for the whole preparation as before. The outcome goes to the
-// first caller that receives it; if nobody was waiting, the next caller gets
-// it, so a failure is reported instead of the work starting over.
+// Host preparation can outlast saved-connection retries, so own it in the manager scope. Bound
+// saved callers' joins while others wait fully. Deliver each result to the first waiting/next
+// caller so an unobserved failure is reported rather than silently restarting work.
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";

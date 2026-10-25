@@ -227,12 +227,9 @@ function locateDestination(
 }
 
 /**
- * Rewrites image destinations in place, leaving every other byte of the
- * source untouched. `replace` returns the new destination, or null to keep
- * one. Destinations are located inside the parsed node's own source span, so
- * matching text in code, prose, or other nodes is never touched. A destination
- * written with escapes or entities that cannot be located verbatim is kept and
- * reported in `unlocated`.
+ * Locate destinations only inside their parsed node spans, never matching prose or code elsewhere.
+ * Preserve and report escaped/entity destinations that cannot be located verbatim; all other source
+ * bytes must remain unchanged.
  */
 export function rewriteMarkdownImageDestinations(
   source: string,

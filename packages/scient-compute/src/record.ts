@@ -31,15 +31,9 @@ import {
 } from "./primitives.ts";
 
 /**
- * What a session and its executions look like once they are written down.
- *
- * `contract.ts` describes a live conversation with a runtime: what a transport
- * promises, what it reports, and in what order. This describes what survives
- * the runtime, the server, and the machine being switched off. The two are
- * deliberately separate types over shared primitives -- a durable record has to
- * answer questions a live event never does ("what was submitted", "what was it
- * submitted against", "how did it end"), and a live event carries things that
- * must never be stored, such as image bytes.
+ * Separate durable records from live transport events while sharing bounds. History must retain
+ * submitted code/context/outcome across runtime loss; transient image bytes must never enter those
+ * snapshots.
  */
 
 /** A project identifier as the server knows it, used as a storage segment. */
@@ -63,20 +57,9 @@ export const ComputeSourceRange = Schema.Struct({
 export type ComputeSourceRange = typeof ComputeSourceRange.Type;
 
 /**
- * Where submitted code came from.
- *
- * A union rather than one struct with nullable members: console code has no
- * path, no revision, and no range, and a struct would leave a reader unable to
- * tell an absent locator from a console execution that stored one anyway. The
- * three document origins share every field, so they share a member and differ
- * by `origin`.
- *
- * `bufferState` says whether the submitted bytes matched durable source. The
- * exact submitted code is stored on the request either way; this flag prevents
- * a reader from attributing dirty editor bytes to the saved file. `revision` is
- * the saved revision the editor was based on, or null for an untracked/unknown
- * base. It lets a transcript say the file has changed since rather than showing
- * a range that now points somewhere else.
+ * Store exact submitted code regardless of buffer state. Dirty bytes must not be attributed to
+ * saved source; revision names only the saved base and detects moved ranges. Use a union so console
+ * origin cannot accidentally carry a document locator.
  */
 export const ComputeExecutionSource = Schema.Union([
   Schema.TaggedStruct("console", {}),
@@ -109,13 +92,8 @@ export const EMPTY_COMPUTE_SESSION_STORAGE: ComputeSessionStorage = {
 };
 
 /**
- * The durable state of one session.
- *
- * `activeExecutionId` and `pendingCount` are stored rather than derived because
- * they are the two facts recovery has to contradict: a record that says an
- * execution was active is exactly what proves, after a restart, that something
- * has to be marked lost. Deriving them from the execution directory would
- * require reading every execution to answer a question about the session.
+ * Persist activeExecutionId/pendingCount as recovery evidence rather than deriving them from all
+ * execution files. A recorded active execution proves something must become lost after restart.
  */
 export const ComputeSessionRecord = Schema.Struct({
   sessionId: ComputeSessionId,
@@ -149,12 +127,8 @@ export const ComputeSessionRecord = Schema.Struct({
 export type ComputeSessionRecord = typeof ComputeSessionRecord.Type;
 
 /**
- * What was submitted, written once and never rewritten.
- *
- * Split from the result so a crash mid-update can corrupt only the mutable
- * half. It is also what makes recovery honest: a request with no result is an
- * execution that was in flight when the server stopped, which is the one case
- * that must become `lost` rather than being quietly forgotten.
+ * Keep requests immutable and separate from mutable results so a crash cannot erase submitted work.
+ * Request-without-result proves in-flight execution and must recover as lost.
  */
 export const ComputeExecutionRequestRecord = Schema.Struct({
   executionId: ComputeExecutionId,
@@ -193,12 +167,8 @@ export const ComputeExecutionResultRecord = Schema.Struct({
 export type ComputeExecutionResultRecord = typeof ComputeExecutionResultRecord.Type;
 
 /**
- * A whole execution as a reader sees it.
- *
- * `result` is null only for a request that was persisted and never updated,
- * which recovery repairs the first time it reads the session. It is modelled
- * rather than defaulted so the repair is a decision the service makes, not a
- * gap a reader silently fills.
+ * Model a missing result explicitly so recovery, not silent reader defaults, decides how a
+ * persisted-but-unsettled request ended.
  */
 export const ComputeExecutionRecord = Schema.Struct({
   request: ComputeExecutionRequestRecord,
@@ -262,14 +232,9 @@ export const ComputeOutputResourceRef = Schema.Struct({
 export type ComputeOutputResourceRef = typeof ComputeOutputResourceRef.Type;
 
 /**
- * What a subscriber is told, in one ordered stream.
- *
- * `eventSequence` is a subscription-local ordering and recovery cursor: initial
- * snapshots and the first live delta are zero. It is not a durable identity or
- * a cursor shared by different subscribers or workspace owners.
- * A subscriber discards events covered by its snapshot; if it observes a gap,
- * it re-reads the durable list/output APIs before applying later deltas. The
- * stream is a fast notification path, never the authority for a transcript.
+ * eventSequence belongs only to one subscription, not durable/global identity. On gaps, reread
+ * durable APIs before later deltas; discard snapshot-covered events. Notifications accelerate
+ * reading but never authorize transcript truth.
  */
 export const ComputeSessionStreamEvent = Schema.Union([
   Schema.TaggedStruct("session-snapshot", {

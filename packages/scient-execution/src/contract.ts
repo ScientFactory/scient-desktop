@@ -82,11 +82,8 @@ export interface ExecutionProcessRequest {
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string>>;
   /**
-   * Whether to merge the host environment into `environment`. Defaults to
-   * `true`, which is what every caller that builds an environment on top of the
-   * host's wants. A caller that has already sanitized a complete environment
-   * passes `false`, the same as a duplex launch: handing over a filtered record
-   * while the process layer re-adds what was filtered out is not sanitization.
+   * Sanitized complete environments must set merge-host false; silently re-adding host variables
+   * would undo sanitization. Default true preserves callers that extend the host.
    */
   readonly extendEnv?: boolean;
 }
@@ -144,31 +141,9 @@ export class DuplexProcessError extends Schema.TaggedError<DuplexProcessError>()
 ) {}
 
 /**
- * A long-lived child process Scient both writes to and reads from.
- *
- * `ExecutionProcessHandle` answers one question — what did this command print
- * before it exited — so it decodes text and merges the two output streams. A
- * process that speaks a request/reply protocol needs the opposite: bytes kept
- * intact, `stdout` kept separate from the diagnostics on `stderr`, a way to
- * send a request, and the pid that owns the tree. Both handles come from the
- * same spawn and are stopped the same way; they differ only in what they
- * expose, so a one-shot caller never acquires an input channel it cannot use.
- *
- * `write` resolves once the bytes have been accepted by the operating-system
- * stream; only the peer's protocol acknowledgement proves it received and
- * accepted a request. Writes serialize so two frames cannot arrive interleaved.
- * Consumers must start draining both `stdout` and `stderr` concurrently as
- * soon as the handle is created. The port deliberately does not add an
- * unbounded buffering layer, so a caller that waits to read can deadlock a
- * peer that is producing enough output to fill its pipe.
- *
- * `exitCode` fails when the operating system reports signal termination. A
- * caller that initiated `cancelProcessTree` should use that operation's
- * completion as the stop acknowledgement, not interpret the signal-shaped
- * `exitCode` failure as a second cancellation failure.
- * There is deliberately no way to close the input channel: a peer that answers
- * requests is asked to leave by a request it understands, and one that has
- * stopped answering is removed with `cancelProcessTree`.
+ * Preserve stdout bytes separately from stderr; drain both immediately or bounded pipes can
+ * deadlock. Serialized writes acknowledge OS acceptance, not peer receipt. Cancel completion, not
+ * signal-failed exitCode, acknowledges Stop; request protocol shutdown rather than closing input.
  */
 export interface DuplexProcessHandle {
   readonly pid: number;

@@ -60,7 +60,7 @@ describe("Scient writer fallback across scopes", () => {
     expect(selected?.instanceId).toBe("codex-a");
   });
 
-  // A backend behind a custom model may refuse the built-in default (upstream #12651).
+  // A custom-model backend may refuse the built-in default.
   it("uses the thread default only when it is a custom model on the chosen instance", () => {
     const claude = ProviderInstanceId.make("claudeAgent");
     const claudeWork = ProviderInstanceId.make("claude-work");
