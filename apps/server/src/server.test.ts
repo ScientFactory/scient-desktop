@@ -5351,9 +5351,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  /* oxlint-disable-next-line t3code/no-low-value-comments -- Preserve the required Scient fork marker. */
-  // SCIENT-FORK:START — Upstream T3 added threads without a project (#13612)
-  // and projects created from a name (#14527). Scratch is approved but still
+  // SCIENT-FORK:START — Upstream T3 added threads without a project
+  // and projects created from a name. Scratch is approved but still
   // withheld in Git data directories; create-from-name remains gated off.
   it.effect("withholds threads without a project inside a Git data directory", () =>
     Effect.gen(function* () {
