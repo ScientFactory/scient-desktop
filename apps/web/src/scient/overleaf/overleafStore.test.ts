@@ -8,6 +8,25 @@ const client = vi.hoisted(() => ({
 }));
 vi.mock("./client", () => client);
 
+const editors = vi.hoisted(() => ({
+  entries: [] as Array<{
+    environmentId: string;
+    cwd: string;
+    relativePath: string;
+    pending: boolean;
+  }>,
+  listeners: new Set<() => void>(),
+}));
+vi.mock("~/scient/markdownEditor/persistence/markdownPersistenceRegistry", () => ({
+  markdownPersistenceRegistry: {
+    getSnapshot: () => editors.entries,
+    subscribe: (listener: () => void) => editors.listeners.add(listener),
+  },
+}));
+
+import { notifyWorkspaceFileSaved } from "~/scient/files/workspaceFileSaves";
+import { ensureOverleafSaveWatch } from "./overleafSaveWatch";
+
 const {
   forgetOverleafConnection,
   pendingOverleafDecisions,
@@ -345,5 +364,68 @@ describe("overleafStore", () => {
       expect(readOverleafWorkspace(environmentId, WORKTREE).fileDecisions.has("c1")).toBe(false);
       expect(readOverleafWorkspace(environmentId, WORKTREE).reviews.get("c1")?.applied).toBe(true);
     });
+  });
+});
+
+describe("Overleaf save watch", () => {
+  function setup() {
+    resetOverleafStoreForTests();
+    editors.entries = [];
+    for (const listener of editors.listeners) listener();
+    ensureOverleafSaveWatch();
+    client.listOverleafConnections.mockReset().mockResolvedValue({ connections: [link] });
+    client.readOverleafStatus.mockReset().mockResolvedValue(status(true));
+    vi.useFakeTimers();
+    return {
+      [Symbol.dispose]() {
+        resetOverleafStoreForTests();
+        vi.useRealTimers();
+      },
+    };
+  }
+
+  it("reads the status again when a document in the linked folder finishes saving", async () => {
+    using _watch = setup();
+    await loadOverleafWorkspace(environmentId, ROOT);
+    editors.entries = [
+      { environmentId, cwd: ROOT, relativePath: "paper/intro.tex", pending: true },
+    ];
+    for (const listener of editors.listeners) listener();
+    client.readOverleafStatus.mockResolvedValue(status(false));
+    notifyWorkspaceFileSaved({ environmentId, cwd: ROOT, relativePath: "notes/a.txt" });
+    notifyWorkspaceFileSaved({ environmentId, cwd: "/elsewhere", relativePath: "paper/a.txt" });
+    await vi.runAllTimersAsync();
+    expect(client.readOverleafStatus).toHaveBeenCalledTimes(1);
+    editors.entries = [{ ...editors.entries[0]!, pending: false }];
+    for (const listener of editors.listeners) listener();
+    await vi.runAllTimersAsync();
+    expect(client.readOverleafStatus).toHaveBeenCalledTimes(2);
+    expect(readOverleafWorkspace(environmentId, ROOT).statuses.get("c1")).toEqual(status(false));
+  });
+
+  it("reads the status again, once, after plain text saves in the linked folder", async () => {
+    using _watch = setup();
+    await loadOverleafWorkspace(environmentId, ROOT);
+    client.readOverleafStatus.mockResolvedValue(status(false));
+    notifyWorkspaceFileSaved({ environmentId, cwd: ROOT, relativePath: "paper/refs.bib" });
+    notifyWorkspaceFileSaved({ environmentId, cwd: ROOT, relativePath: "paper/a.sty" });
+    await vi.runAllTimersAsync();
+    expect(client.readOverleafStatus).toHaveBeenCalledTimes(2);
+    expect(readOverleafWorkspace(environmentId, ROOT).statuses.get("c1")).toEqual(status(false));
+  });
+
+  it("a save that finishes after the last workspace view closed still refreshes the status", async () => {
+    using _watch = setup();
+    await loadOverleafWorkspace(environmentId, ROOT);
+    const stop = subscribeOverleafWorkspace(environmentId, ROOT, () => {});
+    editors.entries = [{ environmentId, cwd: ROOT, relativePath: "paper/main.tex", pending: true }];
+    for (const listener of editors.listeners) listener();
+    stop();
+    client.readOverleafStatus.mockResolvedValue(status(false));
+    editors.entries = [];
+    for (const listener of editors.listeners) listener();
+    await vi.runAllTimersAsync();
+    expect(client.readOverleafStatus).toHaveBeenCalledTimes(2);
+    expect(readOverleafWorkspace(environmentId, ROOT).statuses.get("c1")).toEqual(status(false));
   });
 });

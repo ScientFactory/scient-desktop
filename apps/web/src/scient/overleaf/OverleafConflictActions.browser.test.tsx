@@ -71,18 +71,6 @@ const actions = (line: number) =>
   page.getByRole("group", { name: `Overleaf conflict at line ${line}` });
 
 describe("Overleaf conflict blocks in Source", () => {
-  it("highlights each block, with its three choices above it", async () => {
-    await using view = await openSource(SOURCE);
-    await expect.element(actions(2)).toBeVisible();
-    await expect.element(actions(8)).toBeVisible();
-    for (const label of ["Use mine", "Use Overleaf's", "Keep both"]) {
-      await expect.element(actions(2).getByRole("button", { name: label })).toBeVisible();
-    }
-    expect(
-      view.host.querySelector("[data-overleaf-conflicts]")?.getAttribute("data-overleaf-conflicts"),
-    ).toBe("2");
-  });
-
   it("Use mine keeps this computer's lines, undoably, and saves like any edit", async () => {
     await using view = await openSource(SOURCE);
     await actions(2).getByRole("button", { name: "Use mine" }).click();

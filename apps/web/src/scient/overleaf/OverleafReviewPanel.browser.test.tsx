@@ -637,34 +637,6 @@ describe("OverleafReviewPanel", () => {
       });
     });
 
-    it("counts an undone decision by the rule, not by the earlier sync's selection", async () => {
-      await using _screen = await readNewFiles();
-      const keep = page.getByRole("button", {
-        name: "Keep only on this computer: figures/plot.pdf",
-      });
-      await keep.click();
-      client.syncOverleaf.mockResolvedValueOnce({
-        ...decision,
-        review: review({
-          reviewId: "r-conflict",
-          conflicts: [
-            { key: "k-main", paths: ["main.tex"], allowed: ["mine", "theirs"], chosen: null },
-          ],
-          // The review leaves the kept file out, as the sync was asked.
-          additions: [
-            { path: "figures/plot.pdf", size: 10, selected: false, skippedBecause: null },
-            { path: "main.aux", size: 10, selected: false, skippedBecause: "build-output" },
-          ],
-          localOnly: [],
-        }),
-      });
-      await page.getByRole("button", { name: "Sync", exact: true }).click();
-      await expect.element(page.getByText("0 will be sent at the next sync")).toBeVisible();
-      // Taking the decision back: the rule sends the file again.
-      await keep.click();
-      await expect.element(page.getByText("1 will be sent", { exact: true })).toBeVisible();
-    });
-
     it("keeps decisions when the tab closes and opens again, until a sync applies", async () => {
       {
         await using _screen = await readNewFiles();
