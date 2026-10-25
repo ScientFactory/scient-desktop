@@ -287,6 +287,10 @@
       "types": "./src/state/scientLatexHttp.ts",
       "default": "./src/state/scientLatexHttp.ts"
     },
+    "./state/scient-pdf-edits": {
+      "types": "./src/state/scientPdfEditsHttp.ts",
+      "default": "./src/state/scientPdfEditsHttp.ts"
+    },
     "./state/scient-markdown": {
       "types": "./src/state/scientMarkdownHttp.ts",
       "default": "./src/state/scientMarkdownHttp.ts"

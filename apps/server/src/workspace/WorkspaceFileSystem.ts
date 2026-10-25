@@ -29,6 +29,7 @@ import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 // SCIENT-FORK:START — saves, creates, renames and the open-file watch.
+import { isInSourceFileStore } from "../scient/sources/sourceFileStore.ts";
 import {
   isNodeError,
   WorkspaceFileExistsError,
@@ -851,7 +852,9 @@ export const make = Effect.gen(function* () {
     resolveRetentionStorageDirectory,
     retentionDirectoryFor,
     retentionLimitBytes: config.filePublicationRetentionLimitBytes ?? null,
-    isProtectedPath: isInGitFolder,
+    // Sources' content-addressed files are shared by every attachment with their bytes.
+    isProtectedPath: async (absolutePath) =>
+      isInSourceFileStore(absolutePath) || (await isInGitFolder(absolutePath)),
   });
   // SCIENT-FORK:END
 
