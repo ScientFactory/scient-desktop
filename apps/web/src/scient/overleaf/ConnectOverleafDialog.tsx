@@ -1,8 +1,6 @@
-// SCIENT-OWNED: the one Connect to Overleaf dialog. The Files bar's Connect
-// menu, a folder's right-click menu and Project Settings all open it. It links
-// a folder, or brings a project in as a new folder, then runs the first sync
-// and shows its result. Add project ▸ Overleaf project opens it too: it first
-// makes the Scient project, then brings the paper in as a subfolder of it.
+// SCIENT-OWNED: the one Connect to Overleaf dialog, opened by every entry point. It links a
+// folder or brings a project in as a new folder, then runs and shows the first sync. "Add
+// project" opens it after making the Scient project, bringing the paper in as a subfolder.
 import type { EnvironmentId, ScientOverleafSyncResult } from "@t3tools/contracts";
 import { ExternalLinkIcon, FolderOpenIcon } from "lucide-react";
 import { useState } from "react";

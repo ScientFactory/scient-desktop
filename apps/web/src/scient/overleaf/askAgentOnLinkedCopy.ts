@@ -1,7 +1,5 @@
-// SCIENT-OWNED: work on the linked copy when this thread works in another
-// copy of the project than the link. The marks and the files are in the linked
-// copy, so a new thread opens there, as "New thread on this branch" does: for
-// Ask the agent (with the message ready to send), and for opening a file in
+// SCIENT-OWNED: when this thread works in another copy than the link, open the new thread in
+// the linked copy, where the marks and files are: for Ask the agent and for opening a file in
 // its normal editor.
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";

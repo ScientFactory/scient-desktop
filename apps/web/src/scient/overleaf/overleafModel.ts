@@ -788,18 +788,9 @@ export function reviewIdentity(review: Pick<ScientOverleafReview, "reviewId" | "
   return `${review.reviewId}\u0000${review.remoteTree}`;
 }
 
-/**
- * The decisions that still apply to the review shown. A review from a sync
- * that carried decisions already encodes them (a kept file not selected, a
- * sent one selected, a sent local-only file read like a new one), so a
- * decision applies when its file is still where it can be decided:
- * - "keep" for a new file the rule would send (whether or not this review
- *   already leaves it out);
- * - "send" for a new file the rule skips and Overleaf would take, or a file
- *   kept only here.
- * A decision for a file no longer listed, or now impossible (too large), is
- * left out, so it is neither shown nor sent.
- */
+/** The decisions still applicable to the review shown: "keep" for a new file the rule would
+ * send, "send" for a skipped-but-sendable or local-only file, "release" for a held file. A
+ * decision for an unlisted or now-impossible file is dropped, so it is neither shown nor sent. */
 export function actionableDecisions(
   review: Pick<ScientOverleafReview, "additions" | "localOnly" | "unresolvedMarkers"> | null,
   decisions: ReadonlyMap<string, OverleafFileDecision>,
@@ -825,15 +816,9 @@ export function actionableDecisions(
   return kept.size === decisions.size ? decisions : kept;
 }
 
-/**
- * The files decisions can be made on, for the review shown: none after a sync
- * applied (its new files are decided; files kept only here still can be
- * sent). A local-only file the sync that produced the review was asked to
- * send is read like a new file and leaves both lists; it counts as kept only
- * here, so the decision is shown and sent again. Files held back for their
- * conflict marks can always be sent anyway; one a review not yet applied
- * already sends as it is (`released`) counts as held, so its decision stays.
- */
+/** Files decidable in the review shown: after a sync applied, no additions (local-only and
+ * held files stay decidable). A local-only file that sync was asked to send counts as
+ * local-only again; a `released` file counts as held, so both decisions stay. */
 export function decidableFiles(
   shown: { readonly review: ScientOverleafReview; readonly applied: boolean } | null,
   carried: {
