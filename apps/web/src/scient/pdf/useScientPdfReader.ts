@@ -10,7 +10,7 @@ import {
   type PdfPasswordChallenge,
   type ScientPdfRuntime,
 } from "./pdfRuntime";
-import { clampPdfPage, nextPdfRotation, normalizePdfZoom } from "./pdfReaderModel";
+import { clampPdfPage, nextPdfRotation, normalizePdfZoom, pdfZoomOrigin } from "./pdfReaderModel";
 import {
   createPdfResponsiveZoomController,
   type PdfResponsiveZoomController,
@@ -526,7 +526,12 @@ export function useScientPdfReader(input: {
           if (!event.ctrlKey || runtime.viewer.currentScale <= 0) return;
           event.preventDefault();
           pendingPinchFactor *= Math.exp(Math.min(0.5, Math.max(-0.5, -event.deltaY * 0.01)));
-          pendingPinchOrigin = [event.clientX, event.clientY];
+          pendingPinchOrigin = pdfZoomOrigin(
+            runtime.viewer,
+            container,
+            event.clientX,
+            event.clientY,
+          );
           if (pinchFrame !== null) return;
           pinchFrame = requestAnimationFrame(() => {
             pinchFrame = null;
@@ -711,7 +716,24 @@ export function useScientPdfReader(input: {
     if (!runtime) return;
     runtime.cancelContainerSizeRefresh();
     const normalized = responsiveZoomRef.current?.rememberScale(scale) ?? normalizePdfZoom(scale);
-    runtime.viewer.currentScale = normalized;
+    const current = runtime.viewer.currentScale;
+    const container = runtime.viewer.container;
+    if (!(current > 0) || normalized === current) {
+      runtime.viewer.currentScale = normalized;
+      return;
+    }
+    // Zoom around the middle of the view, as pinching does around the fingers, rather
+    // than PDF.js's default of keeping the top-left corner still.
+    const rect = container.getBoundingClientRect();
+    runtime.viewer.updateScale({
+      scaleFactor: normalized / current,
+      origin: pdfZoomOrigin(
+        runtime.viewer,
+        container,
+        rect.left + container.clientLeft + container.clientWidth / 2,
+        rect.top + container.clientTop + container.clientHeight / 2,
+      ),
+    });
   });
 
   const setZoomMode = useStableCallback((mode: "page-width" | "page-fit" | "page-actual") => {

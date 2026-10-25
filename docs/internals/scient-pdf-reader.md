@@ -49,6 +49,15 @@ internal destinations, bounded canvases, and cleanup. The reader additionally
 virtualizes thumbnails, loads outlines lazily, preserves fit modes across panel
 resizes, and destroys loading/rendering work on file switches or unmount.
 
+Pages sit 8px from the view's edges and 8px apart. PDF.js runs with
+`removePageBorders`, so its fit modes use the container's whole client box, and the
+container's transparent 8px border is the margin; PDF.js's fixed 40px page-width
+allowance no longer applies, so the responsive zoom passes 0 padding to
+`pdfFitWidthScale`. PDF.js measures zoom origins from the container's
+offsetTop/offsetLeft (relative to its positioned parent), so `pdfZoomOrigin` converts
+screen points first. Pinch zoom keeps the point under the fingers still, and the zoom
+buttons and shortcuts zoom around the middle of the view.
+
 The reader uses PDF.js's legacy/compatibility build at the same pinned version
 as its worker. This keeps Electron compatibility without changing the parsing or
 rendering engine. Search uses PDF.js's indexed text path with a short debounce,

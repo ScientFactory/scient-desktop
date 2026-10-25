@@ -98,10 +98,10 @@ describe("PDF resize settlement", () => {
       update: vi.fn(),
     };
     controller.capturePreference(target);
-    controller.reconcile(target, 600);
+    controller.reconcile(target, 560);
     expect(target.currentScale).toBeCloseTo(0.7);
 
-    let settledWidth = 600;
+    let settledWidth = 560;
     const settlement = createPdfResizeSettlement(
       () => controller.reconcile(target, settledWidth),
       frames.clock,
@@ -118,7 +118,7 @@ describe("PDF resize settlement", () => {
     expect(target.currentScale).toBe(0.75);
     expect(controller.persistedScaleValue()).toBe("0.75");
 
-    settledWidth = 560;
+    settledWidth = 520;
     settlement.schedule();
     frames.flush();
     frames.flush();
