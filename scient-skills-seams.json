@@ -8,6 +8,7 @@
     "packages/scient-skills"
   ],
   "ownedFiles": [
+    ".github/scripts/ci-test-dependencies.json",
     "apps/mobile/src/state/scientSkills.ts",
     "apps/server/src/mcp/ScientMcpInvocation.ts",
     "apps/server/src/mcp/ScientOperationCatalog.ts",
@@ -44,6 +45,11 @@
     "skillScope"
   ],
   "upstreamMounts": [
+    {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "\"src/assets/AssetAccess.test.ts\":",
+      "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."
+    },
     {
       "path": "apps/server/src/testUtils/weightedShardSequencer.ts",
       "anchor": "recordedSeconds[key] ?? UNRECORDED_FILE_SECONDS",
