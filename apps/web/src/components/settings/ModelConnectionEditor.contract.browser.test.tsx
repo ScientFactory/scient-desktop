@@ -140,8 +140,24 @@ async function editor(
     ["xhigh", "Extra-high"],
   ]);
   const optionLabel = (value: string) => optionLabels.get(value) ?? value;
-  const select = async (label: string, value: string) => {
+  // Base UI's Select opens on the animation frame after the trigger's mousedown, so a
+  // finished click does not mean an open menu. On a busy runner that frame came after the
+  // next step: Escape went to a menu not yet open (which then opened and stayed open), or
+  // the following click found it open and toggled it closed. Click once (a second click
+  // would toggle a pending open closed) and wait for the open menu.
+  const openMenu = async (label: string) => {
     await userEvent.click(control(label));
+    await vi.waitFor(() => {
+      expect(control(label).getAttribute("aria-expanded")).toBe("true");
+      expect(
+        [...document.querySelectorAll<HTMLElement>('[role="option"]')].some((o) =>
+          o.checkVisibility(),
+        ),
+      ).toBe(true);
+    });
+  };
+  const select = async (label: string, value: string) => {
+    await openMenu(label);
     try {
       await page
         .getByRole("option", { name: optionLabel(value), exact: true })
@@ -158,7 +174,7 @@ async function editor(
     }
   };
   const item = async (value: string) => {
-    await userEvent.click(control("Reasoning"));
+    await openMenu("Reasoning");
     const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
       (element) =>
         element.textContent?.trim() === optionLabel(value) ||
