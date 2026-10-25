@@ -154,14 +154,14 @@ holding the selected model opens with the picker, and searching lists every matc
   that starts at the same moment cannot end it early. If that result never arrives, the turn is
   marked uncertain after a minute of idle waiting. An acknowledged message that never starts
   is bounded the same way; active generation, compaction, and unanswered questions do not count.
-- Use **Stop** beside a running subagent in the lineage panel to stop that child while its parent
-  and other subagents continue. This requires Oh My Pi's `cancel_subagent` RPC command. An older
-  runtime that lacks it reports an unsupported operation and leaves the parent running. The
-  child's lifecycle report determines its final state.
   When a background result reaches Oh My Pi while it answers you, the answer can use it, and the turn shows a "Background result" entry where it arrived.
   Slash commands wait until background work settles, because Oh My Pi would reject some of them
   as busy; Scient says so and sends nothing. The same applies to a model change or command if a
   background run resumes while the message is being prepared.
+- Use **Stop** beside a running subagent in the lineage panel to stop that child while its parent
+  and other subagents continue. This requires Oh My Pi's `cancel_subagent` RPC command. An older
+  runtime that lacks it reports an unsupported operation and leaves the parent running. The
+  child's lifecycle report determines its final state.
 - Send `/compact` when this conversation's command list includes it. Scient does not show a compact
   button for Oh My Pi, because native compaction has not been confirmed against a live `omp`.
 - See only explicitly qualified Oh My Pi command names in the provider snapshot. Session,
