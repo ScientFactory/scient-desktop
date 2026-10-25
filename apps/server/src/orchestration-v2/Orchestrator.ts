@@ -27,6 +27,8 @@ import {
   type GuestMessageId,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
+  // SCIENT-FORK: native child Stop is shared with the client.
+  supportsNativeSubagentStop,
   MessageId,
   type NodeId,
   type ModelSelection,
@@ -10832,7 +10834,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       subagent.threadId !== command.threadId ||
       subagent.runId !== command.runId ||
       subagent.origin !== "provider_native" ||
-      subagent.driver !== "claudeAgent" ||
+      !supportsNativeSubagentStop(subagent.driver) ||
       subagent.nativeTaskRef?.driver !== subagent.driver ||
       subagent.nativeTaskRef?.strength !== "strong" ||
       subagent.nativeTaskRef.nativeId === null

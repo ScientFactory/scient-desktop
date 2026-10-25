@@ -105,6 +105,11 @@ When Scient Agent has no model at all, its provider card says so and how to add 
 
 ## Conversation details
 
+Use **Stop** beside a running subagent in the conversation's lineage panel to stop that child
+while the parent conversation and other subagents continue. This requires a runtime with
+`cancel_subagent`, available in Scient Agent 0.1.2. Older runtimes report that individual
+subagent stopping is unsupported. The child's reported lifecycle determines its final state.
+
 Scient shows the agent's reported context usage, model capacity and session cost. The cost
 includes billed cache refreshes, with cache warming left at the agent's default. `/compact`
 uses the agent's native compaction and shows its summary when available. The agent's task
