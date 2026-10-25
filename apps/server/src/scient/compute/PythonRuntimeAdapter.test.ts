@@ -20,6 +20,7 @@ import {
   parseProbeOutput,
   OBSERVED_PYTHON_PACKAGES,
   PYTHON_LANGUAGE_ID,
+  JUPYTER_BRIDGE_TRANSPORT_KIND,
   PROBE_SCRIPT,
 } from "./PythonRuntimeAdapter.ts";
 
@@ -752,4 +753,11 @@ describe("python runtime adapter", () => {
       expect(profiles[0]!.languageVersion).toBe("unknown");
     }),
   );
+
+  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+  it("reports the correct language and transport kind", () => {
+    const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
+    expect(adapter.languageId).toBe(PYTHON_LANGUAGE_ID);
+    expect(adapter.transportKind).toBe(JUPYTER_BRIDGE_TRANSPORT_KIND);
+  });
 });

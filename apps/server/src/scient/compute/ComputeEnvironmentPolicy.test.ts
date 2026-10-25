@@ -29,6 +29,24 @@ describe("compute environment policy", () => {
   });
 
   describe("sanitization", () => {
+    // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+    it("removes prefix-matched keys", () => {
+      const { environment, removedKeys } = sanitizeComputeEnvironment({
+        SCIENT_DB_PASSWORD: "secret",
+        SCIENT_API_TOKEN: "token",
+        T3_PAIRING_KEY: "key",
+        OPENAI_ORG_ID: "org",
+        HOME: "/user",
+      });
+      expect(environment["SCIENT_DB_PASSWORD"]).toBeUndefined();
+      expect(environment["SCIENT_API_TOKEN"]).toBeUndefined();
+      expect(environment["T3_PAIRING_KEY"]).toBeUndefined();
+      expect(environment["OPENAI_ORG_ID"]).toBeUndefined();
+      expect(environment["HOME"]).toBe("/user");
+      expect(removedKeys).toContain("SCIENT_DB_PASSWORD");
+      expect(removedKeys).toContain("T3_PAIRING_KEY");
+    });
+
     it("preserves ordinary runtime variables", () => {
       const { environment } = sanitizeComputeEnvironment({
         HOME: "/user",

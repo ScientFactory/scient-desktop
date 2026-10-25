@@ -60,6 +60,20 @@ describe("PANDOC_MANIFEST", () => {
     );
     expect(copying).toContain("GNU GENERAL PUBLIC LICENSE");
   });
+
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
+  it("names the executable where each release packs it", () => {
+    expect(PANDOC_MANIFEST.assets["darwin-arm64"]?.executableRelativePath).toBe(
+      "pandoc-3.11-arm64/bin/pandoc",
+    );
+    expect(PANDOC_MANIFEST.assets["darwin-x64"]?.executableRelativePath).toBe(
+      "pandoc-3.11-x86_64/bin/pandoc",
+    );
+    expect(PANDOC_MANIFEST.assets["win32-x64"]?.executableRelativePath).toBe(
+      "pandoc-3.11/pandoc.exe",
+    );
+    expect(PANDOC_MANIFEST.assets["linux-arm64"]?.archive).toBe("tar-gz");
+  });
 });
 
 describe("resolvePandocAsset", () => {
