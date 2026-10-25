@@ -74,7 +74,6 @@ NodeTest.test(
       "packages/effect-omp-rpc/test/fixtures/v18.3.1/live-turn.jsonl",
       "apps/desktop/src/__snapshots__/main.test.ts.snap",
       "apps/web/latexPaging.vitest.config.ts",
-      "native/kde-snap-shot/tests/capture.rs",
       "scripts/build-desktop-artifact.test.ts",
       "scripts/lib/scient-synctex-build.test.ts",
     ];
@@ -96,9 +95,28 @@ NodeTest.test(
       "apps/server/src/testUtils/weightedShardSequencer.ts",
       "apps/server/src/scient/skills/built-ins/latex-authoring/SKILL.md",
       "apps/server/src/provider/pi/NOTICE.md",
-      "patches/some-dep@1.0.0.test.patch",
     ])
       NodeAssert.equal(needsWindowsPackaging([...testOnly, ...docsOnly, path]), true, path);
+    // Trees copied or compiled wholesale ship every file, whatever its name.
+    for (const path of [
+      "apps/web/public/docs/help.html",
+      "apps/web/public/fixtures/loader.test.js",
+      "apps/web/public/help.md",
+      "patches/some-dep@1.0.0.test.patch",
+    ])
+      NodeAssert.equal(needsWindowsPackaging([path]), true, path);
+    for (const path of [
+      "apps/desktop/resources/docs/help.html",
+      "apps/desktop/resources/README.md",
+      "apps/desktop/prod-resources/whisper-runtime/test/model.bin",
+      "apps/desktop/gnome-extension/captureService.test.js",
+      "native/kde-snap-shot/tests/qml/tst_feedback.qml",
+      "native/conversation-preview/README.md",
+      "native/resource-monitor/src/sampler.test.rs",
+    ]) {
+      NodeAssert.equal(needsWindowsPackaging([path]), true, path);
+      NodeAssert.equal(needsLinuxPackaging([path]), true, path);
+    }
     for (const path of [
       "apps/desktop/src/main.ts",
       "apps/desktop/package.json",
