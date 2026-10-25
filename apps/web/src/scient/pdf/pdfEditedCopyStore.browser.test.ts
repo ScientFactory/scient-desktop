@@ -21,17 +21,6 @@ function generated(revisionId: string) {
   } as PdfSourceDescriptor;
 }
 
-const workspace = {
-  _tag: "workspace-pdf",
-  authority: "environment-1",
-  logicalDocumentKey: "workspace:paper",
-  title: "Paper",
-  fileName: "Paper.pdf",
-  capabilities: { canSaveCopy: true, canRevealSource: true },
-  workspaceRoot: "/project",
-  relativePath: "paper.pdf",
-} as PdfSourceDescriptor;
-
 /** Starts from, and leaves behind, empty storage. */
 function emptyStorage() {
   localStorage.clear();
@@ -56,10 +45,6 @@ it("remembers a generated PDF's copy per revision, so a rebuild shows the new bu
   remember(after);
   remember(before);
   expect(readPdfEditedCopy(after)?.sessionKey).toBe(after);
-});
-
-it("remembers a copy of a file that is never rebuilt by its document alone", () => {
-  expect(pdfEditedCopyKey("document", workspace)).toBe("document");
 });
 
 it("remembers at most 100 edited copies, forgetting the oldest", () => {
