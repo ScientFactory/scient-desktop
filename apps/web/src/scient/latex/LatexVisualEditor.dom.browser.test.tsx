@@ -40,7 +40,7 @@ vi.mock("~/assets/assetUrls", () => ({
 }));
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { setLatexPageMarkers } from "./latexPageMarkers";
-import { pagedLayoutSettled } from "./latexPagedGeometry";
+import { latexPagedKey, pagedLayoutSettled } from "./latexPagedGeometry";
 import {
   createLatexVisualTestOwner,
   useLatexVisualTestOwner,
@@ -587,6 +587,47 @@ Control & 1 \\\\
     expect(_fixture.container.textContent).toContain(
       "The file changed before the reference was saved",
     );
+  });
+
+  it("keeps writing tools in one permanent row and reader controls in the footer", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await mount(_fixture);
+    const toolbar = _fixture.container.querySelector(
+      '[role="toolbar"][aria-label="Writing tools"]',
+    )!;
+    expect(
+      [...toolbar.querySelectorAll("[data-dock-group]")].map((group) =>
+        group.getAttribute("data-dock-group"),
+      ),
+    ).toEqual(["history", "text", "insert", "math", "lists", "document"]);
+    expect(toolbar.querySelector('button[aria-label="Text"]')).not.toBeNull();
+    expect(toolbar.querySelector('[aria-label="Hide formatting tools"]')).toBeNull();
+    expect(toolbar.querySelector('input[aria-label="Page number"]')).toBeNull();
+    expect(latexPagedKey.getState(editor(_fixture).state)?.plan?.pages).toBe(1);
+    await expect
+      .element(_fixture.root0.getByRole("textbox", { name: "Page number", exact: true }))
+      .toHaveValue("1");
+    expect(
+      _fixture.container.querySelector('.scient-latex-reader-footer [aria-label="1 pages"]'),
+    ).not.toBeNull();
+    expect(
+      _fixture.container.querySelector('.scient-latex-reader-footer button[aria-label^="Zoom in"]'),
+    ).not.toBeNull();
+    expect(_fixture.container.querySelector(".scient-latex-document-tools")).toBeNull();
+    const context = _fixture.container.querySelector(".scient-latex-context-tools")!;
+    // The percentage fits the width; there is no separate Fit width button.
+    expect(
+      context.previousElementSibling?.previousElementSibling?.getAttribute("aria-label"),
+    ).toMatch(/^Zoom in/);
+    // Search is a field right after the zoom; the object options follow it.
+    expect(context.previousElementSibling?.className).toBe("scient-reader-search");
+    expect(context.querySelector(".scient-latex-context-tools-slot")).not.toBeNull();
+    expect(
+      _fixture.container.querySelector('[aria-label="Selected object properties"]'),
+    ).toBeNull();
   });
 
   it("draws the reader controls in the host's header and leaves a compact footer", async (testContext) => {
@@ -1202,6 +1243,46 @@ Control & 1 \\\\
     await act(() => editor(_fixture).commands.redo());
     await advance();
     await vi.waitFor(() => expect(current).toBe(applied));
+  });
+
+  it("moves lower-priority writing groups into More on narrow panes", async (testContext) => {
+    await using _fixture = _createFixture(testContext);
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    _fixture.container.style.width = "230px";
+    _fixture.container.dataset.nativeNarrowWriting = "true";
+    const layout = document.createElement("style");
+    layout.textContent =
+      "[data-native-narrow-writing] [data-dock-group]{width:70px;flex-shrink:0}[data-native-narrow-writing] [data-dock-reserved]{width:36px;flex-shrink:0}";
+    document.body.append(layout);
+    _fixture.stack.defer(() => layout.remove());
+    await mount(_fixture);
+    const toolbar = _fixture.container.querySelector(
+      '[role="toolbar"][aria-label="Writing tools"]',
+    )!;
+    // Bold and italic leave last, as in the Markdown bar.
+    expect(toolbar.querySelector('[data-dock-group="text"]')).not.toBeNull();
+    expect(toolbar.querySelector('[data-dock-group="history"]')).toBeNull();
+    await act(() =>
+      toolbar.querySelector<HTMLButtonElement>('button[aria-label="More actions"]')!.click(),
+    );
+    const menuItems = [
+      ...document.body.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'),
+    ];
+    for (const label of [
+      "Undo",
+      "Redo",
+      "Bullet list",
+      "Theorems & proofs",
+      "Document settings",
+      "Keyboard shortcuts",
+    ])
+      // A row may end with its shortcut.
+      expect(
+        menuItems.some((item) => item.textContent?.trim().startsWith(label)),
+        label,
+      ).toBe(true);
   });
 
   it("shows the list menu in the Markdown menu's shape, with its shortcuts", async (testContext) => {
@@ -2086,48 +2167,54 @@ Control & 1 \\\\
     expect(projectLatexVisualDocument(current).rawBlocks).toBe(0);
   });
 
-  // Bold and code take the same mark path; italic also reads \\textit and writes \\emph.
-  it("follows the cell caret for italic availability, checked state and menu actions", async (testContext) => {
-    const [mark, index, command] = ["italic", 1, "textit"] as const;
-    await using _fixture = _createFixture(testContext);
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
+  // Code's checked state is also covered by the Markdown-bar formatting test; italic
+  // reads \textit and writes \emph.
+  it.for([
+    ["bold", 0, "textbf"],
+    ["italic", 1, "textit"],
+  ] as const)(
+    "follows the cell caret for %s availability, checked state and menu actions",
+    async ([mark, index, command], testContext) => {
+      await using _fixture = _createFixture(testContext);
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
 
-    await mount(
-      _fixture,
-      `\\begin{tabular}{ll}\n\\${command}{Marked} Plain & Other\\\\\n\\end{tabular}`,
-    );
-    await selectKind(_fixture, "table");
-    const field = _fixture.container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
-    const inner = (field as HTMLElement & { editor: Editor }).editor;
-    await focusCellEditor(_fixture, inner);
-    await act(() => inner.commands.setTextSelection({ from: 1, to: 7 }));
-    let items = await openCellFormatting(_fixture);
-    expect(items.every((item) => item.getAttribute("aria-disabled") !== "true")).toBe(true);
-    expect(items[index]!.getAttribute("aria-checked")).toBe("true");
-    await act(() => items[index]!.click());
-    expect(inner.isActive(mark)).toBe(false);
-    await advance();
-    expect(current).not.toContain(`\\${command}{Marked}`);
-    await focusCellEditor(_fixture, inner);
-    await act(() => inner.commands.setTextSelection({ from: 8, to: 13 }));
-    items = await openCellFormatting(_fixture);
-    expect(items[index]!.getAttribute("aria-checked")).toBe("false");
-    await act(() => items[index]!.click());
-    expect(inner.isActive(mark)).toBe(true);
-    await advance();
-    expect(current).toContain(`Marked \\${mark === "italic" ? "emph" : command}{Plain}`);
-    // A different cell has its own marks, even though the outer selection stays a table.
-    const other = (
-      _fixture.container.querySelector('[data-table-cell="0-1"]') as HTMLElement & {
-        editor: Editor;
-      }
-    ).editor;
-    await focusCellEditor(_fixture, other);
-    await act(() => other.commands.selectAll());
-    items = await openCellFormatting(_fixture);
-    expect(items[index]!.getAttribute("aria-checked")).toBe("false");
-  });
+      await mount(
+        _fixture,
+        `\\begin{tabular}{ll}\n\\${command}{Marked} Plain & Other\\\\\n\\end{tabular}`,
+      );
+      await selectKind(_fixture, "table");
+      const field = _fixture.container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
+      const inner = (field as HTMLElement & { editor: Editor }).editor;
+      await focusCellEditor(_fixture, inner);
+      await act(() => inner.commands.setTextSelection({ from: 1, to: 7 }));
+      let items = await openCellFormatting(_fixture);
+      expect(items.every((item) => item.getAttribute("aria-disabled") !== "true")).toBe(true);
+      expect(items[index]!.getAttribute("aria-checked")).toBe("true");
+      await act(() => items[index]!.click());
+      expect(inner.isActive(mark)).toBe(false);
+      await advance();
+      expect(current).not.toContain(`\\${command}{Marked}`);
+      await focusCellEditor(_fixture, inner);
+      await act(() => inner.commands.setTextSelection({ from: 8, to: 13 }));
+      items = await openCellFormatting(_fixture);
+      expect(items[index]!.getAttribute("aria-checked")).toBe("false");
+      await act(() => items[index]!.click());
+      expect(inner.isActive(mark)).toBe(true);
+      await advance();
+      expect(current).toContain(`Marked \\${mark === "italic" ? "emph" : command}{Plain}`);
+      // A different cell has its own marks, even though the outer selection stays a table.
+      const other = (
+        _fixture.container.querySelector('[data-table-cell="0-1"]') as HTMLElement & {
+          editor: Editor;
+        }
+      ).editor;
+      await focusCellEditor(_fixture, other);
+      await act(() => other.commands.selectAll());
+      items = await openCellFormatting(_fixture);
+      expect(items[index]!.getAttribute("aria-checked")).toBe("false");
+    },
+  );
 
   // keyboard.browser.test.ts resolves the platform's modifier; one platform here.
   it("respects default, disabled and remapped cell formatting shortcuts", async (testContext) => {

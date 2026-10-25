@@ -295,13 +295,16 @@ async function scrollToWord(editor: ProseEditor, word: string, context: TestCont
   // A scroll event can precede lazy-block layout and leave readiness briefly stale.
   await waitForTestReceipt(context.signal, visible.promise);
 }
-// One row per way a word is selected and owned: prose, a table cell, a title field, a
-// footnote's own editor, the literal code field, and the English column template.
+// One row per way a word is selected and owned: prose, a table cell, each front-matter
+// field (title, author and date are looked up separately), a footnote's own editor, the
+// literal code field, and the English column template.
 // latexVisualDocument.test.ts maps words in every other block kind of template 26.
 const WORD_CASES = [
   ["26", template26, "פסקה"],
   ["26-table", template26, "ראשונה"],
   ["26-title", template26, "נוספים"],
+  ["26-author", template26, "מחבר"],
+  ["26-date", template26, "אוקטובר"],
   ["26-footnote", template26, "ובה"],
   ["26-code", template26, "return"],
   ["28", template28, "Early"],

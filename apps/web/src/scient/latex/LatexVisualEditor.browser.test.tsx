@@ -572,9 +572,7 @@ Body.
     }
   });
 
-  // Every statement kind inserts through the same latexVisualScientificSource path.
-  it("inserts and edits Theorem through the actual menu", async () => {
-    const name = "Theorem";
+  it.each(["Theorem", "Remark"])("inserts and edits %s through the actual menu", async (name) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
