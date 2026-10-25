@@ -39,13 +39,13 @@ the same limits as before.
 
 ### Timing
 
-`OverleafSync.bench.test.ts` syncs 1, 10 and 50 files each way, and 300 files
+`OverleafSync.bench.ts` syncs 1, 10 and 50 files each way, and 300 files
 from Overleaf into one folder, against a local bare repository with the real
-applier and prints the time of each stage. It is
-skipped unless asked for; from `apps/server`:
+applier and prints the time of each stage. It runs in the explicit benchmark
+lane (`test:performance`), outside normal CI test discovery. From `apps/server`:
 
 ```sh
-SCIENT_OVERLEAF_BENCH=1 node_modules/.bin/vp test run src/scient/overleaf/OverleafSync.bench.test.ts --testTimeout=0
+pnpm exec vp test bench --run --fileParallelism=false --maxWorkers=1 src/scient/overleaf/OverleafSync.bench.ts
 ```
 
 ## Local application

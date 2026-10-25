@@ -4,7 +4,7 @@
  * folders. A sync with a write that could not be leased is refused before
  * anything is written, never stopped part way through. (300 new files into one
  * folder, which once stopped at file 236, is the `incoming 300` case of
- * `OverleafSync.bench.test.ts`; `WorkspaceFileMutations.lease.test.ts` keeps
+ * `OverleafSync.bench.ts`; `WorkspaceFileMutations.lease.test.ts` keeps
  * the lease from growing with the records a folder keeps.)
  */
 import * as NodeFSP from "node:fs/promises";
