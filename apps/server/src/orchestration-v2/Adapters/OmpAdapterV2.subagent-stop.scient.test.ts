@@ -48,10 +48,15 @@ it.live.each([scientAgentTarget, ompTarget])(
             yield* waitFor((p) => p.providerTurns.some((t) => t.nativeAcceptance === "accepted"));
             yield* peer.emit([
               { type: "agent_start" },
+              lifecycle("", "started"),
+              lifecycle(" extra ", "started"),
               lifecycle("first", "started"),
               lifecycle("second", "started"),
             ]);
-            const before = yield* waitFor((p) => p.subagents.length === 2);
+            const before = yield* waitFor((p) =>
+              p.subagents.some((s) => s.nativeTaskRef?.nativeId === "second"),
+            );
+            assert.lengthOf(before.subagents, 2);
             const task = before.subagents.find((s) => s.nativeTaskRef?.nativeId === "first")!;
             const sibling = before.subagents.find((s) => s.nativeTaskRef?.nativeId === "second")!;
             const providerThread = before.providerThreads[0]!;
