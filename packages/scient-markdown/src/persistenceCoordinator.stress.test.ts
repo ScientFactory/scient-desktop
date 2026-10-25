@@ -1,8 +1,10 @@
 import {
   runStressScenario,
+  totalStressStats,
   type StressDocumentFormat,
+  type StressResult,
 } from "@scientfactory/scient-document/testing";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { MarkdownPersistenceCoordinator } from "./persistenceCoordinator.ts";
 import type { MarkdownReconciliation } from "./reconciliation.ts";
@@ -140,7 +142,9 @@ describe("MarkdownPersistenceCoordinator under randomized interleavings", () => 
   });
 
   // Give independent scenarios their own deadline and fake clock, not concurrent timers.
-  it.each(Array.from({ length: 300 }, (_, index) => index + 1))(
+  const SEEDS = 300;
+  const results = new Map<number, StressResult>();
+  it.each(Array.from({ length: SEEDS }, (_, index) => index + 1))(
     "merges through Markdown reconciliation without losing a change or an untouched byte (seed %i)",
     async (seed) => {
       expect(markdown.validate!(INITIAL)).toBeNull();
@@ -153,7 +157,25 @@ describe("MarkdownPersistenceCoordinator under randomized interleavings", () => 
         seed,
         steps: 80,
       });
+      results.set(seed, result);
       expect(result.violations).toEqual([]);
     },
   );
+  // Every path must be exercised for the checks above to mean anything. Checked after
+  // every seed has run, in any order; a run filtered to some seeds cannot judge coverage.
+  afterAll(() => {
+    if (results.size < SEEDS) return;
+    const total = totalStressStats([...results.values()]);
+    expect(total.runsWithoutChoices).toBeGreaterThan(30);
+    expect(total.runsWithoutChoices).toBeLessThan(SEEDS);
+    expect(total.merges).toBeGreaterThan(150);
+    expect(total.mergesWithLocalEdits).toBeGreaterThan(150);
+    expect(total.disconnects).toBeGreaterThan(50);
+    expect(total.refusedDuringRename).toBeGreaterThan(20);
+    expect(total.conflicts).toBeGreaterThan(30);
+    expect(total.renames).toBeGreaterThan(15);
+    expect(total.bursts).toBeGreaterThan(150);
+    expect(total.deferrals).toBeGreaterThan(15);
+    expect(total.viewRefusals).toBeGreaterThan(10);
+  });
 });

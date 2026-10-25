@@ -336,6 +336,15 @@ export function useReadingBookkeepingFrame({
   useLayoutEffect(() => {
     keepReadingEndInViewRef.current = keepReadingEndInView;
   });
+  // A finished restore leaves the reader where it placed them: record that at
+  // once, so late layout in the very next frame is kept in view too (idle end
+  // keeping needs where the reader rests, which the bookkeeping records).
+  const restoringRef = useRef(restoringThreadPosition);
+  useLayoutEffect(() => {
+    const restored = restoringRef.current && !restoringThreadPosition;
+    restoringRef.current = restoringThreadPosition;
+    if (restored) handleScrollRef.current();
+  }, [restoringThreadPosition]);
   const bookkeepingFrameRef = useRef<number | null>(null);
   const handleScrollOnNextFrame: () => void = useStableCallback(() => {
     if (bookkeepingFrameRef.current !== null) return;

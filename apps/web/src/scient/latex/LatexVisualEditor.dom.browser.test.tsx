@@ -127,7 +127,7 @@ describe("writing editor source transactions", () => {
       _fixture.context,
       "source transactions",
     );
-    _fixture.clock = _fixture.cleanup.use(fakeTimers());
+    _fixture.clock = _fixture.stack.use(fakeTimers());
   }
   async function _cleanupFixture1(_fixture: _Fixture) {
     // References keeps forms across remounts; discard this fixture's retained form.
