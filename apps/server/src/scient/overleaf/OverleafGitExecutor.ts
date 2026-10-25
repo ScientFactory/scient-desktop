@@ -379,13 +379,9 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
   const exists = (candidate: string) =>
     fs.exists(candidate).pipe(Effect.orElseSucceed(() => false));
 
-  /**
-   * The real Git of the selected developer tools on macOS, or null. Never the
-   * `/usr/bin/git` launcher: that one runs `xcrun` on every call, and with the
-   * fresh `HOME` each command gets it misses its cache and rewrites a shared
-   * database in the user's temporary folder (or opens an installer dialog when
-   * the tools are absent).
-   */
+  /** The real Git of the selected developer tools on macOS, or null. Never the
+   * `/usr/bin/git` launcher: it runs `xcrun` per call and, with each command's
+   * fresh `HOME`, rewrites a shared database or opens an installer dialog. */
   const developerGit = Effect.gen(function* () {
     const selected = yield* Effect.promise(
       () =>

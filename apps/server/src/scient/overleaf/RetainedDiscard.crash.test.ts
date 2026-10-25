@@ -1,16 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
-/**
- * A discard of a kept version after real process death, for a record with a
- * current journal and for a legacy one. A child discards and kills itself
- * before the copy goes, between the copy and its view, or after both before
- * the folder is synced (and, for a current record, the mark dropped); a fresh
- * file layer then finds the marked record on its next settled read and
- * finishes the discard, so no hidden copy keeps the bytes or the room. A kept
- * copy that is a folder goes only while it is empty: a discard of one with
- * anything in it is refused before it marks anything, and a mark already on
- * one leaves it (and whatever it links to or has mounted in it) as it is,
- * listed, without failing anything else.
- */
+/** Discard of a kept version after real process death (current and legacy records):
+ * a fresh file layer finishes a marked discard on its next settled read. A kept
+ * copy that is a folder goes only while empty; a non-empty one is refused/left
+ * listed without failing anything else. */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";

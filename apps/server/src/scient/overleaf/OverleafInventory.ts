@@ -258,13 +258,9 @@ export interface OverleafInventoryInput {
   readonly localOnlyPaths: ReadonlyArray<string>;
   /** Additions the user checked in the review. */
   readonly selectedAdditions: ReadonlyArray<string>;
-  /**
-   * The review's default selection: every addition no rule skips is selected
-   * too, except `except` (kept only on this computer on purpose). With
-   * `lenient`, the selections come from an earlier review, and a selected or
-   * sent path that is no longer selectable is left out instead of refused: the
-   * review then differs from the earlier one and replaces it.
-   */
+  /** The review's default selection: every addition no rule skips, except `except`
+   * (kept only here). With `lenient`, selections no longer selectable are left
+   * out instead of refused, so the rebuilt review replaces the earlier one. */
   readonly defaultSelection?: {
     readonly except: ReadonlyArray<string>;
     readonly lenient: boolean;

@@ -1,16 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
-/**
- * How long one sync takes, stage by stage: 1, 10, 50 and 300 files coming
- * from Overleaf, and 1, 10 and 50 going to it, against a real local bare
- * repository with the real applier. The 300 case puts every file in one folder,
- * past the 256 folders one native lease can bind. Run it in the explicit
- * benchmark lane from `apps/server`:
- *
- *   pnpm exec vp test bench --run --fileParallelism=false --maxWorkers=1 src/scient/overleaf/OverleafSync.bench.ts
- *
- * It prints one table. The numbers are wall-clock times on this machine; only
- * their comparison before and after a change means anything.
- */
+/** Sync timing by stage (1/10/50/300 incoming, 1/10/50 outgoing) vs a real bare
+ * repo/applier; 300 files in one folder exceed one lease's 256 folders. From
+ * `apps/server`: pnpm exec vp test bench --run --fileParallelism=false --maxWorkers=1
+ * src/scient/overleaf/OverleafSync.bench.ts; only before/after comparisons count. */
 import { afterAll, describe, expect, it, type TestContext } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Tracer from "effect/Tracer";

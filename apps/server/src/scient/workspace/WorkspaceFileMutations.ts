@@ -137,13 +137,9 @@ export interface WorkspaceRetainedFileMethods {
     readonly cwd: string;
     readonly retentionDirectory: string;
   }) => Effect.Effect<void, MutationError>;
-  /**
-   * At most how many folders one native lease binds for a retained write of any
-   * of `relativePaths`, its record kept in `retentionDirectory`, as things stand
-   * now; nothing is written. Compared with `NATIVE_LEASE_FOLDER_LIMIT` before a
-   * group of writes starts, so a write that could not be leased is refused
-   * before any other is made. Zero on a host without native publication.
-   */
+  /** At most how many folders one native lease binds for a retained write of any of
+   * `relativePaths` now; writes nothing. Checked against the lease limit before a
+   * group starts, so an unleaseable write is refused first. Zero without native. */
   readonly retainedWriteFolders: (input: {
     readonly cwd: string;
     readonly retentionDirectory: string;
@@ -509,13 +505,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       throw e;
     }
   };
-  /**
-   * A kept record that is finished: a version 2 journal at `done` with no
-   * discard under way. Its target, mutation id, outcome and published revision
-   * never change. Anything else may still change: settlement finishes an
-   * unfinished one or an interrupted discard, an index without its journal yet
-   * is a write in flight, and an unreadable journal is unknown.
-   */
+  /** A finished kept record: a version 2 journal at `done` with no discard under
+   * way; its target, mutation id, outcome and revision never change. Anything
+   * else may still change and is settled or treated as unknown. */
   const finished = (entry: Stored) =>
     entry.record?.version === 2 &&
     entry.record.phase === "done" &&
@@ -544,14 +536,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       ((await present(leaf)) || (await present(viewName(target, leaf))))
     );
   };
-  /**
-   * Removes the name `path`: a file or a link with `unlink`, and a folder (a
-   * kept copy may be one: a folder that stood where a file was) with a single
-   * `rmdir`, which removes only an empty real folder and fails, harmlessly, on
-   * one with anything in it, a link or a mount point. Nothing below the name is
-   * ever visited, so nothing outside the record can be reached through it.
-   * Whatever is already gone is skipped.
-   */
+  /** Removes `path` only: `unlink` a file/link, single `rmdir` a folder (empty real
+   * folders only; fails harmlessly otherwise). Nothing below the name is visited,
+   * so nothing outside the record is reachable. Already-gone is skipped. */
   const removeKept = async (path: string): Promise<void> => {
     try {
       await NodeFSP.unlink(path);
@@ -589,15 +576,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       generation: record.generation + 1,
     });
   };
-  /**
-   * Finished records already read, by their place in a store, with how their
-   * folders and journal stood just before they were read. A finished journal
-   * (version 2 at `done`) is final but for bookkeeping (discards, the receipt's
-   * epoch), each replacing `record.json` by a rename, which gives it another
-   * inode and change time. Every discovery reads every record its store keeps,
-   * so without this each write read and decoded every journal ever kept beside
-   * it, a cost that grew with each one.
-   */
+  /** Finished records already read, keyed by place with their prior stand. A finished
+   * journal changes only by rename (new inode/ctime), so an unchanged stand reuses
+   * the read instead of re-decoding every journal on each write. */
   const finishedRecords = new Map<string, { readonly stand: string; readonly stored: Stored }>();
   /**
    * How a record's folders and journal stand: each folder still a private
@@ -789,21 +770,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       return false;
     }
   };
-  /**
-   * The lease for work on kept records. It holds a record's folder exclusively
-   * when the work may change what is in it: every record not finished
-   * (settlement may finish it), and each finished one that `writesFinished`
-   * names (a discard rewrites its journal and removes a copy; a review adds its
-   * acceptance). A finished record the work only reads is not held: its journal
-   * is replaced in one rename, so a read sees it whole, and whoever changes it
-   * holds it. Nor is one the work only adds a view to (`retainedViewPath`): a
-   * view is a hard link of a copy already there, made only while that copy is
-   * there, and a second making finds the same file there. A discard removes the
-   * copy before its view, so a view made meanwhile is removed too or not made.
-   * Holding every record instead made the lease grow with every record ever
-   * kept in a folder or for a path, past the 256 folders a native lease can
-   * bind.
-   */
+  /** Lease for kept-record work: hold a folder exclusively only when work may change
+   * it (unfinished records, plus finished ones `writesFinished` names). Read-only
+   * finished records and view-only adds are not held, so the lease does not grow
+   * with every record ever kept past the 256-folder native limit. */
   const bindingsFor = async (
     base: ReadonlyArray<NativeFileLeaseBinding>,
     records: ReadonlyArray<Stored>,
@@ -2996,17 +2966,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         }
       });
     });
-  /**
-   * Counts, for each folder written, the folders the leases of a retained write
-   * there can bind (`publish`, `withRoot`, `ensureParents`, and the removal of
-   * each folder standing in a written file's place): every folder from the
-   * written folder up to `/`, from the step's record, from the identity and
-   * index records in the shared store, and from each unfinished record a lease
-   * holds (its folder and its target's). Paths are
-   * spelled canonically, as the leases spell them; a folder not made yet counts
-   * as it will be. Leases stop at the volume's edge and bind each folder once,
-   * so this is never less than what they bind.
-   */
+  /** Counts folders a retained write's leases can bind per written folder: up to
+   * `/`, the step's record, shared identity/index records, and each unfinished
+   * record held. Canonical spelling; unmade folders count as they will be. This
+   * is never less than what the leases bind. */
   const retainedWriteFolders: WorkspaceRetainedFileMethods["retainedWriteFolders"] = Effect.fn(
     "WorkspaceFileSystem.retainedWriteFolders",
   )(function* (input) {
