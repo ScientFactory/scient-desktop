@@ -301,7 +301,7 @@ export function deriveActivePlanState(
   };
 }
 
-// Claude's unfinished tasks belong to the provider session, not just the turn.
+// SCIENT-FORK: Claude and OMP keep unfinished tasks for the provider session.
 export function selectComposerTasksPlan(
   projection: ThreadStructure | null,
   plan: ActivePlanState | null,
@@ -318,7 +318,7 @@ export function selectComposerTasksPlan(
   const planDriver = projection.providerThreads.find(
     (providerThread) => providerThread.id === planProviderThreadId,
   )?.driver;
-  if (planDriver !== "claudeAgent") return null;
+  if (planDriver !== "claudeAgent" && planDriver !== "omp" && planDriver !== "scient") return null;
   let latestStartedRun: OrchestrationV2ThreadProjection["runs"][number] | null = null;
   for (const run of projection.runs) {
     if (

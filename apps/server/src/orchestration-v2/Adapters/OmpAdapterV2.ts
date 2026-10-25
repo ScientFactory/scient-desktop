@@ -3,6 +3,7 @@ import { makeOmpProcessOwnership } from "../scient-provider/OmpProcessOwnership.
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  type ThreadTokenUsageSnapshot,
   type ModelSelection,
   type OmpSettings,
 } from "@t3tools/contracts";
@@ -67,6 +68,12 @@ import {
   makeOmpSessionRuntime,
   type OmpSessionUpdate,
 } from "../../provider/omp/OmpSessionRuntime.ts";
+import {
+  ompMessageUsage,
+  ompStatsUsage,
+  ompTodoSteps,
+} from "../../provider/omp/OmpDesktopPresentation.ts";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import type { OmpProcessFactory } from "../../provider/OmpProvider.ts";
 import { formatOmpBytes, planOmpImages } from "../../provider/omp/OmpImagePrompt.ts";
 import {
@@ -176,7 +183,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
       planning: {
         ...AcpProviderCapabilitiesV2.planning,
         emitsPlanUpdated: false,
-        emitsTodoList: false,
+        emitsTodoList: true,
       },
       subagents: {
         ...AcpProviderCapabilitiesV2.subagents,
@@ -455,6 +462,11 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               })
             : undefined;
         });
+        let processLossReported = false;
+        let processLossDescription = `${target.name} process lost.`;
+        // compact's response owns its item; its notification can arrive after that response.
+        let manualCompaction = false;
+        let activeModel = decodeOmpModelSlug(input.modelSelection.model);
         let processLossPublished: Effect.Effect<void> | undefined;
         const publishProcessLoss = Effect.fn("OmpAdapterV2.publishProcessLoss")(function* (
           publish: Effect.Effect<void>,
@@ -467,14 +479,210 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               : previous.pipe(Effect.andThen(Deferred.await(published)));
           yield* stopOwnedProcess.pipe(
             Effect.ignore,
+            Effect.andThen(
+              Effect.gen(function* () {
+                if (processLossReported) return;
+                processLossReported = true;
+                const exit = yield* shutdownObserved.pipe(Effect.option);
+                const detail = Option.isSome(exit)
+                  ? `Exit code: ${exit.value.code ?? "unavailable"}.${exit.value.stderrTail ? `\n${exit.value.stderrTail.split("\n").slice(-8).join("\n").slice(-2048)}` : ""}`
+                  : "Exit status unavailable.";
+                processLossDescription = client.redaction.text(
+                  `${target.name} process lost. ${detail}`,
+                );
+                yield* notice(processLossDescription, true, "native-process-loss");
+              }),
+            ),
             Effect.andThen(publish),
             Effect.ensuring(Deferred.succeed(published, undefined)),
           );
         });
+        // SCIENT-FORK: costs are authoritative session totals, including billed cache refreshes.
+        let contextUsage: ThreadTokenUsageSnapshot | undefined;
+        let statsUnsupported = false;
+        const contextWindow = (provider?: string, modelId?: string) => {
+          const window = catalog.find(
+            (model) => model.provider === provider && model.id === modelId,
+          )?.contextWindow;
+          return typeof window === "number" && Number.isFinite(window) && window > 0
+            ? Math.trunc(window)
+            : undefined;
+        };
+        const refreshUsage = Effect.fn("OmpAdapterV2.refreshUsage")(function* (includeTurn = true) {
+          if (statsUnsupported) return;
+          const response = yield* client.command({ type: "get_session_stats" }).pipe(
+            Effect.timeout("2 seconds"),
+            Effect.catch((error) => {
+              if (
+                error._tag === "OmpRpcCommandError" &&
+                (error.code === "unknown_command" || /unknown command/i.test(error.message))
+              )
+                statsUnsupported = true;
+              return Effect.succeed(undefined);
+            }),
+          );
+          const usage = response?.success ? ompStatsUsage(response.data, contextUsage) : undefined;
+          if (!usage) return;
+          contextUsage = usage;
+          yield* onUpdate({
+            type: "usage",
+            contextUsage: usage,
+            ...(includeTurn
+              ? { tokenUsage: { usedTokens: usage.usedTokens, maxTokens: usage.maxTokens ?? null } }
+              : {}),
+          });
+        });
+        const publishTodos = (phases: unknown) => {
+          const steps = ompTodoSteps(phases);
+          return steps === undefined
+            ? Effect.void
+            : onUpdate({
+                type: "item",
+                id: "todos",
+                status: "completed",
+                item: {
+                  type: "todo_list",
+                  steps: steps.map((step) => ({ ...step, text: client.redaction.text(step.text) })),
+                },
+              });
+        };
+        const refreshTodos = Effect.fn("OmpAdapterV2.refreshTodos")(function* () {
+          const state = yield* client.getState().pipe(Effect.option);
+          if (Option.isSome(state) && state.value.todoPhases !== undefined)
+            yield* publishTodos(state.value.todoPhases);
+        });
         let nextWarningOrdinal = 0;
+        let retrySequence = 0;
+        let retryId: string | undefined;
+        let retryProgress:
+          | { attempt: number; maxAttempts: number | null; retryDelayMs: number | null }
+          | undefined;
+        const notice = (
+          message: string,
+          error = false,
+          id = `native-notice-${++nextWarningOrdinal}`,
+        ) =>
+          onUpdate({
+            type: "item",
+            id,
+            status: error ? "failed" : "completed",
+            item: error
+              ? {
+                  type: "error",
+                  failure: makeProviderFailure({
+                    message: client.redaction.text(message),
+                    class: "provider_error",
+                  }),
+                }
+              : { type: "system_notice", message: client.redaction.text(message) },
+          });
+
         const ordinaryTools = new Map<string, Extract<NativeSessionUpdate, { type: "tool" }>>();
+        const publishCompaction = (resultValue: unknown) => {
+          const result = isRecord(resultValue) ? resultValue : {};
+          const counter = (value: unknown) =>
+            typeof value === "number" && Number.isFinite(value) && value >= 0
+              ? Math.trunc(value)
+              : undefined;
+          const before = counter(result.tokensBefore);
+          const after = counter(result.estimatedTokensAfter);
+          return onUpdate({
+            type: "item",
+            id: "compaction",
+            status: "completed",
+            item: {
+              type: "compaction",
+              ...(typeof result.summary === "string"
+                ? { summary: client.redaction.text(result.summary) }
+                : {}),
+              ...(before === undefined ? {} : { beforeTokenCount: before }),
+              ...(after === undefined ? {} : { afterTokenCount: after }),
+            },
+          }).pipe(Effect.andThen(refreshUsage()));
+        };
         const applyUpdate = (update: OmpSessionUpdate): Effect.Effect<void> => {
           switch (update.type) {
+            // SCIENT-FORK: translate RPC observations into the existing provider-neutral UI.
+            case "observation": {
+              const event = update.event;
+              if (event.type === "message_end" && isRecord(event.message)) {
+                const usage = ompMessageUsage(
+                  event.message.usage,
+                  contextWindow(
+                    typeof event.message.provider === "string" ? event.message.provider : undefined,
+                    typeof event.message.model === "string" ? event.message.model : undefined,
+                  ) ??
+                    contextWindow(activeModel?.provider, activeModel?.modelId) ??
+                    contextUsage?.maxTokens,
+                );
+                if (!usage) return Effect.void;
+                contextUsage = {
+                  ...contextUsage,
+                  ...usage,
+                  ...(usage.maxTokens ? { maxTokens: usage.maxTokens } : { maxTokens: undefined }),
+                };
+                return onUpdate({ type: "usage", tokenUsage: usage, contextUsage });
+              }
+              if (event.type === "cache_warming_end")
+                return event.usage === undefined ? Effect.void : refreshUsage(false);
+              if (event.type === "todo_auto_clear") return publishTodos([]);
+              if (event.type === "auto_retry_start" || event.type === "auto_retry_end") {
+                const starting = event.type === "auto_retry_start";
+                if ((starting || event.success === false) && retryId === undefined) {
+                  retryId = `native-retry-${++retrySequence}`;
+                  retryProgress = undefined;
+                }
+                if (retryId === undefined) return Effect.void;
+                const id = retryId;
+                const attempt = Math.max(
+                  1,
+                  Math.trunc(event.attempt ?? retryProgress?.attempt ?? 1),
+                );
+                const retry = {
+                  attempt,
+                  maxAttempts:
+                    event.maxAttempts === undefined
+                      ? (retryProgress?.maxAttempts ?? null)
+                      : Math.max(attempt, Math.trunc(event.maxAttempts)),
+                  retryDelayMs:
+                    event.delayMs === undefined
+                      ? (retryProgress?.retryDelayMs ?? null)
+                      : Math.max(0, Math.trunc(event.delayMs)),
+                };
+                retryProgress = retry;
+                if (!starting) retryId = undefined;
+                return onUpdate({
+                  type: "item",
+                  id,
+                  status: starting ? "running" : event.success ? "completed" : "failed",
+                  item: {
+                    type: "error",
+                    failure: makeProviderFailure({
+                      message: client.redaction.text(
+                        event.errorMessage ??
+                          event.finalError ??
+                          (event.success
+                            ? `${target.name} model request recovered.`
+                            : `${target.name} model request failed.`),
+                      ),
+                      class: "provider_error",
+                      retryable: starting,
+                    }),
+                    retry,
+                  },
+                });
+              }
+              if (event.type === "retry_fallback_applied")
+                return notice(
+                  `${target.name} switched from ${event.from ?? "the requested model"} to ${event.to ?? "a fallback model"}${event.reason ? `: ${event.reason}` : "."}`,
+                );
+              if (event.type === "notice" || event.method === "notify")
+                return notice(
+                  `${event.source ? `${event.source}: ` : ""}${event.message ?? `${target.name} notification.`}`,
+                  event.level === "error" || event.notifyType === "error",
+                );
+              return Effect.void;
+            }
             case "assistant-delta":
               return onUpdate({
                 type: "text",
@@ -523,6 +731,23 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   : { output: boundedToolText(client.redaction.text(rawOutput)) }),
               };
               ordinaryTools.set(item.id, item);
+              if (
+                item.name === "todo" &&
+                update.phase === "completed" &&
+                item.status === "completed"
+              ) {
+                const details =
+                  isRecord(update.data) && isRecord(update.data.details)
+                    ? update.data.details
+                    : undefined;
+                return onUpdate(item).pipe(
+                  Effect.andThen(
+                    details && ompTodoSteps(details.phases) !== undefined
+                      ? publishTodos(details.phases)
+                      : refreshTodos(),
+                  ),
+                );
+              }
               return onUpdate(item);
             }
             case "question":
@@ -530,6 +755,14 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 ...update,
                 message: client.redaction.text(update.message),
                 title: client.redaction.text(update.title),
+                options: update.options.map((option) => ({
+                  ...option,
+                  label: client.redaction.text(option.label),
+                  description: client.redaction.text(option.description),
+                })),
+                ...(update.initialAnswer === undefined
+                  ? {}
+                  : { initialAnswer: client.redaction.text(update.initialAnswer) }),
               });
             case "question-resolved":
               return onUpdate(update);
@@ -606,36 +839,28 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     : Effect.void,
                 ),
               );
-              return broken ? publishProcessLoss(publish) : publish;
+              return broken
+                ? publishProcessLoss(publish)
+                : refreshUsage().pipe(Effect.andThen(refreshTodos()), Effect.andThen(publish));
             }
             case "process-exited":
               return publishProcessLoss(
-                onUpdate({
-                  type: "terminal",
-                  status: "failed",
-                  detail: `${target.name} exited before confirming this turn; its outcome is unknown.`,
-                  failureClass: "unknown",
-                  broken: true,
-                }),
+                Effect.suspend(() =>
+                  onUpdate({
+                    type: "terminal",
+                    status: "failed",
+                    detail: `${processLossDescription} Its turn outcome is unknown.`,
+                    failureClass: "unknown",
+                    broken: true,
+                  }),
+                ),
               ).pipe(
                 Effect.andThen(closeSession(Exit.void).pipe(Effect.forkDetach, Effect.asVoid)),
               );
             case "error":
-              return onUpdate({
-                type: "tool",
-                id: "native-error",
-                name: `${target.name} error`,
-                status: "failed",
-                output: client.redaction.text(update.message),
-              });
+              return notice(update.message, true);
             case "warning":
-              return onUpdate({
-                type: "tool",
-                id: `native-warning-${++nextWarningOrdinal}`,
-                name: `${target.name} warning`,
-                status: "completed",
-                output: client.redaction.text(update.message),
-              });
+              return notice(update.message);
             case "subagent":
               return onUpdate({
                 type: "subagent",
@@ -691,7 +916,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     }),
               });
             case "session-settled":
-              return onUpdate({ type: "background", pending: false });
+              return refreshUsage(false).pipe(
+                Effect.andThen(onUpdate({ type: "background", pending: false })),
+              );
             case "command-output":
               return onUpdate({
                 type: "text",
@@ -709,12 +936,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   })
                 : Effect.void;
             case "compacted":
-              return onUpdate({
-                type: "tool",
-                id: "compaction",
-                name: "Conversation compacted",
-                status: "completed",
-              });
+              return manualCompaction ? Effect.void : publishCompaction(update.result);
             case "open-url": {
               const url = browserActionUrl(update.url);
               const launchUrl = browserActionUrl(update.launchUrl);
@@ -738,9 +960,11 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             case "assistant-started":
               return Effect.void;
             case "turn-started":
+              manualCompaction = false;
               ordinaryTools.clear();
               return onUpdate({ type: "continuation-started" });
             case "model-changed":
+              if (update.model) activeModel = decodeOmpModelSlug(update.model);
               return update.model ? onUpdate({ type: "model", model: update.model }) : Effect.void;
           }
         };
@@ -1031,6 +1255,34 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           return { message: delivery.message, images };
         });
         const native: NativeSession = {
+          // SCIENT-FORK: older agents can reject compact without breaking the conversation.
+          compact: Effect.fn("OmpAdapterV2.compact")(function* (_turnInput, nativeTurnId) {
+            const state = yield* client.getState().pipe(Effect.mapError(safeFailure));
+            if (
+              state.hasPendingAsyncWork === true ||
+              state.isSettled === false ||
+              state.isStreaming === true ||
+              state.isCompacting === true
+            )
+              return yield* new NativeSessionOperationError({
+                detail: `${target.name} compaction waits until background work settles.`,
+                breaksSession: false,
+              });
+            yield* onUpdate({ type: "offered", nativeTurnId });
+            manualCompaction = true;
+            const response = yield* client.compact().pipe(
+              Effect.mapError(
+                (cause) =>
+                  new NativeSessionOperationError({
+                    detail: client.redaction.text(cause.message),
+                    breaksSession: cause._tag !== "OmpRpcCommandError",
+                  }),
+              ),
+            );
+            yield* onUpdate({ type: "accepted", nativeTurnId });
+            yield* publishCompaction(response.data);
+            yield* onUpdate({ type: "terminal", status: "completed" });
+          }),
           getModelContextWindow: (selection) => {
             if (closed || selection.instanceId !== options.instanceId) return undefined;
             const selected = decodeOmpModelSlug(selection.model);
@@ -1049,6 +1301,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           interruptBreaksSession: true,
           send: Effect.fn("OmpAdapterV2.send")(
             function* (turnInput, nativeTurnId) {
+              manualCompaction = false;
+              activeModel = decodeOmpModelSlug(turnInput.modelSelection.model);
               if (
                 turnInput.runtimePolicy.runtimeMode !== "full-access" ||
                 turnInput.runtimePolicy.approvalPolicy !== undefined ||

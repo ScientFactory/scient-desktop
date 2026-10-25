@@ -95,6 +95,17 @@ concrete model from that instance's ready catalog. An explicit writer selection 
 
 When Scient Agent has no model at all, its provider card says so and how to add one.
 
+## Conversation details
+
+Scient shows the agent's reported context usage, model capacity and session cost. The cost
+includes billed cache refreshes, with cache warming left at the agent's default. `/compact`
+uses the agent's native compaction and shows its summary when available. The agent's task
+list appears above the composer as a read-only list.
+
+Agent notices, retry progress and save failures appear in the conversation. Questions retain
+the agent's offered choices, editor text and timeout information; an expired question closes
+when the agent cancels it. Plain confirmation questions offer Yes and No.
+
 ## Where it keeps things
 
 Scient Agent's settings, sign-ins, logs and caches are in a folder inside Scient's own data
