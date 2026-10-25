@@ -201,7 +201,9 @@ vi.waitUntil = ((callback, options) => {
 // zero interval, so Vitest itself never advances fake time by more than zero. The real
 // pause and the advance happen here, before each retry, only while the poll's test owns
 // the clock. Once that test is gone the function never settles and the loop parks until
-// the poll's own timeout, advancing nothing.
+// the poll's own timeout, advancing nothing: checked before the callback runs and again
+// when it settles, since a rejection reaching Vitest's retry step would advance (by zero,
+// enough to fire the next test's zero-delay timers) whatever clock is installed then.
 const pollUnowned = expect.poll;
 expect.poll = ((fn, options) => {
   const signal = testSignal;
@@ -216,7 +218,15 @@ expect.poll = ((fn, options) => {
       }
       first = false;
       if (ownerGone(signal)) return new Promise<never>(() => {});
-      return fn.apply(this, args);
+      const settled = await Promise.resolve()
+        .then(() => fn.apply(this, args))
+        .then(
+          (value) => ({ ok: true as const, value }),
+          (error: unknown) => ({ ok: false as const, error }),
+        );
+      if (ownerGone(signal)) return new Promise<never>(() => {});
+      if (!settled.ok) throw settled.error;
+      return settled.value;
     },
     { ...options, interval: 0 },
   );

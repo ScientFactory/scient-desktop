@@ -45,6 +45,34 @@ it.fails("times out while expect.poll retries", { timeout: 200 }, async () => {
 });
 it("keeps its own clock after a timed-out test's expect.poll", expectClockUntouched);
 
+// The poll's callback is still pending at the deadline and rejects afterwards: the
+// rejection must not reach Vitest's retry step, which advances whatever clock is
+// installed (by zero, enough to fire the next test's zero-delay timer).
+// oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- the deadline is the scenario.
+it.fails(
+  "times out while expect.poll's callback is pending, which then rejects",
+  { timeout: 100 },
+  async () => {
+    using _clock = fakeTimers();
+    await expect
+      .poll(
+        async () => {
+          await realDelay(250);
+          throw new Error("late callback rejection");
+        },
+        { timeout: 1000, interval: 20 },
+      )
+      .toBe(1);
+  },
+);
+it("keeps its zero-delay timer after a timed-out test's pending poll callback", async () => {
+  using _clock = fakeTimers();
+  const fired = vi.fn();
+  setTimeout(fired, 0);
+  await realDelay(400);
+  expect(fired).not.toHaveBeenCalled();
+});
+
 // A test that passes but leaves a wait running: the next test's start ends it.
 it("leaves a vi.waitFor running when it passes", () => {
   using _clock = fakeTimers();
