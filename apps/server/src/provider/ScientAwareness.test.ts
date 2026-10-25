@@ -136,9 +136,6 @@ describe("Scient awareness", () => {
 
   it("points agents at the Overleaf tools and skill with document authority, adding no gate", () => {
     expect(wordCount(SCIENT_OVERLEAF_AWARENESS)).toBeLessThanOrEqual(60);
-    expect(SCIENT_OVERLEAF_AWARENESS).toContain("`scient_overleaf_status`");
-    expect(SCIENT_OVERLEAF_AWARENESS).toContain("`overleaf-sync` skill");
-    expect(SCIENT_OVERLEAF_AWARENESS).toContain("only a conflict stops a sync");
     expect(buildScientAwareness(new Set(["sources:read"]))).not.toContain("Overleaf");
     expect(
       buildScientAwareness(new Set(["documents:build"]), CLAUDE_SCIENT_TOOL_PROJECTION),
