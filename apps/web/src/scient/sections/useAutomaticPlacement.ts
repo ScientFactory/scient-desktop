@@ -55,6 +55,7 @@ export function useAutomaticPlacement(input: {
   readonly groups: readonly PlacementInput[];
   readonly openKey: string | null;
   readonly ready: boolean;
+  readonly paused?: boolean;
   readonly knownKeys?: readonly string[];
   /** Environments without a live thread list; their rows keep their last known state. */
   readonly frozenEnvironmentIds?: readonly string[];
@@ -65,7 +66,8 @@ export function useAutomaticPlacement(input: {
     key,
     state: load(key),
   }));
-  const [paused, setPaused] = useState(false);
+  const [interactionPaused, setPaused] = useState(false);
+  const paused = interactionPaused || input.paused === true;
   const [clock, setClock] = useState(() => Date.now());
   // Shell updates that do not change placement must not reset timers or write storage.
   const signature = JSON.stringify(input.groups);
@@ -225,11 +227,20 @@ export function useAutomaticPlacement(input: {
       }));
       // The drop alone places the moved row: reconciling without it (and before the new
       // keys) keeps it from counting as an arrival and its re-keyed neighbours as remote drops.
+      const previousKeys = new Map(
+        current.state.groups.flatMap((group) => group.rows.map((row) => [row.key, row.orderKey])),
+      );
       const reconciled = reconcilePlacement(
         current.state,
         current.groups.map((group) => ({
           ...group,
-          rows: group.rows.filter((row) => row.key !== key),
+          rows: group.rows
+            .filter((row) => row.key !== key)
+            .map((row) =>
+              previousKeys.has(row.key) && orderKeys.get(row.key) === row.orderKey
+                ? { ...row, orderKey: previousKeys.get(row.key)! }
+                : row,
+            ),
         })),
         current.openKey,
         Date.now(),

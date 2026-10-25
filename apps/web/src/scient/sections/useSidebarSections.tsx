@@ -7,8 +7,6 @@ import {
 } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
-import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import { sortActiveThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import {
   EnvironmentId,
   ProjectId,
@@ -19,7 +17,6 @@ import {
 import * as Schema from "effect/Schema";
 import { type ReactNode, useEffect, useState } from "react";
 
-import { filterSidebarV2VisibleThreads } from "../../components/Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -30,6 +27,7 @@ import { environmentServerConfigsAtom } from "../../state/server";
 import { useUiStateStore } from "../../uiStateStore";
 import { readThreadShell } from "../../state/entities";
 import { placementEligible } from "./placementEligibility";
+import { automaticPlacementThreads } from "./placementThreads";
 import { migrateLegacyPlacement } from "./placementMigration";
 import { useAutomaticPlacement } from "./useAutomaticPlacement";
 import { useThreadSectionActions } from "./actions";
@@ -235,19 +233,10 @@ export function useSidebarSections(input: {
   })();
   const completeGroups = (() => {
     const now = input.now ?? new Date().toISOString();
-    // The rows the sidebar can show, regardless of project scope; hidden subagents never place.
-    const active = filterSidebarV2VisibleThreads(input.threads, null).filter((thread) => {
-      if (thread.pinnedAt != null) return false;
-      const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
-      return (
-        !(capabilities?.threadSettlement && thread.settledOverride === "settled") &&
-        !(capabilities?.threadSnooze && effectiveSnoozed(thread, { now }))
-      );
-    });
     return groupThreadsBySection({
       layouts,
       pinned: [],
-      active: sortActiveThreadsByOrderKey(active),
+      active: automaticPlacementThreads(input.threads, serverConfigs, now),
     });
   })();
   const placementInputs = completeGroups.map((group) => ({
@@ -270,7 +259,7 @@ export function useSidebarSections(input: {
     scope: PLACEMENT_SCOPE,
     groups: placementInputs,
     openKey: routeThreadKey,
-    ready: supported && frozenKey !== null,
+    ready: sectionsView && frozenKey !== null,
     frozenEnvironmentIds,
     knownKeys: knownPlacementKeys,
   });

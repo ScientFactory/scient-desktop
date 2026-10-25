@@ -15,7 +15,11 @@ export function migrateLegacyPlacement(readStorage: () => Storage, scope: string
     if (storage.getItem(target) !== null) return;
     const legacy = Array.from({ length: storage.length }, (_, index) => storage.key(index)).filter(
       (key): key is string =>
-        key !== null && key.startsWith(PREFIX) && key !== target && key !== `${PREFIX}unavailable`,
+        key !== null &&
+        key.startsWith(PREFIX) &&
+        key !== target &&
+        key !== `${PREFIX}status` &&
+        key !== `${PREFIX}unavailable`,
     );
     if (legacy.length !== 1) return;
     const [key] = legacy as [string];

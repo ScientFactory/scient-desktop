@@ -395,6 +395,37 @@ it("keeps a newly woken shelf row in its chosen slot until it appears, and prune
   expect(order(_fixture)).not.toContain("shelf");
 });
 
+it("keeps unrelated active positions when a bulk drop's shell echoes precede its command result", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await act(() => _fixture.value.onInteractionChange(true));
+  const assignments = new Map([
+    ["x", "d"],
+    ["a", "m"],
+    ["b", "t"],
+  ]);
+  _fixture.input = {
+    ..._fixture.input,
+    groups: [
+      {
+        id: "general",
+        rows: group(["a", "b"])[0]!.rows.map((row) => ({
+          ...row,
+          orderKey: assignments.get(row.key)!,
+        })),
+      },
+    ],
+  };
+  await render(_fixture);
+  await act(() => _fixture.value.onManualPlacement("general", ["a", "x", "b"], "b", assignments));
+  await act(() => _fixture.value.onInteractionChange(false));
+  expect(order(_fixture)).toEqual(["a", "x", "b"]);
+  expect(_fixture.value.state.groups[0]!.upper).toEqual(["a"]);
+  expect(_fixture.value.state.groups[0]!.aside).toEqual(["b"]);
+});
+
 function _createFixture() {
   let _published_value = undefined! as ReturnType<typeof useAutomaticPlacement>;
 
