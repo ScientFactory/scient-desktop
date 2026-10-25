@@ -287,13 +287,8 @@ const listingFailure = (fallback: string) => (cause: unknown) => ({
 });
 
 /**
- * One Codex instance generation's native inventory: the bounded machine
- * listing that runs as snapshot enrichment, the reports it publishes, and the
- * plugin and MCP server actions. Scoped to the instance; closing the scope
- * retires the actions and ends pending work.
- *
- * `open` starts an initialized app-server in the caller's scope, in `cwd`
- * when given.
+ * Inventory and action seams belong to one instance generation. Closing its scope must retire
+ * actions and pending work so a replacement cannot inherit stale authority.
  */
 export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(function* <E>(
   open: (cwd: string | undefined) => Effect.Effect<CodexAppServerClient, E, Scope.Scope>,
@@ -392,11 +387,9 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
       return next;
     });
   /**
-   * Stops the listings of the workspaces `stale` picks and waits until they
-   * have exited. Removing a listing from the map and handing it to an
-   * instance-owned fiber that interrupts it happen together, safe from
-   * interruption, so no stopped listing is lost and a queued one never
-   * starts its app-server. Only the wait for their teardown is interruptible.
+   * Remove listing ownership and hand interruption to an instance fiber atomically; otherwise
+   * cancellation can lose cleanup or let a queued app-server start. Only waiting for teardown may
+   * be interrupted.
    */
   const stopWorkspaceListings = (stale: (cwd: string) => boolean) =>
     Effect.uninterruptible(

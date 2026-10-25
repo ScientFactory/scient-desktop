@@ -173,14 +173,9 @@ function extractFrames(
 }
 
 /**
- * Normalizes a raw Python error report into one or more `ComputeDiagnostic`
- * records.
- *
- * Strips ANSI/control sequences, bounds every field, preserves the
- * human-readable traceback, and extracts only project-local source locations.
- * The adapter owns that decision because it has both runtime syntax knowledge
- * and the server-authoritative project root; clients never infer file authority
- * from traceback text.
+ * Only the runtime adapter has both Python syntax and the authorized project root. Extract
+ * project-local locations there; clients must never infer file authority from traceback text. Strip
+ * controls and bound diagnostics.
  */
 export function normalizePythonDiagnostic(
   report: ComputeRuntimeErrorReport,

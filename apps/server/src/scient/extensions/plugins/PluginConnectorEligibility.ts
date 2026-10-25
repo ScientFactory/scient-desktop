@@ -1,18 +1,8 @@
 /**
- * Grant-time authority for connectors created by Scient plugin bundles.
- *
- * The plugin registry publishes, after each committed change, the exact set of
- * connectors owned by an enabled plugin whose installed copy verified. The
- * connector runtime consults it on delivery, on every grant check and proxied
- * request, and before enabling a connector. A plugin-sourced connector outside
- * that set (an orphan, or one of a disabled or unverified plugin) is denied even
- * when its own record says enabled, so revocation never depends on a
- * successful connector write. Until the registry has published, and while its
- * state file is unreadable, every plugin-sourced connector is denied.
- *
- * This service holds no lock and calls nothing: it sits below both the
- * connector runtime and the plugin registry in the layer graph, so neither
- * depends on the other through it.
+ * Deny plugin connectors outside committed enabled/verified ownership even if their own record
+ * remains enabled; revocation cannot depend on a successful connector write. Before publication or
+ * on unreadable registry state, deny all. Keep this lock-free seam below both owners to avoid
+ * dependency cycles.
  */
 import type { ConnectorId } from "@t3tools/contracts";
 import * as Context from "effect/Context";

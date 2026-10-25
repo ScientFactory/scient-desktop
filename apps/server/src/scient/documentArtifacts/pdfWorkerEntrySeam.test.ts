@@ -3,11 +3,8 @@ import * as NodeFS from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 
 /**
- * pdfjs resolves its Node fake-worker as `./pdf.worker.mjs` beside the bundle
- * that imported it. The packaged validation worker therefore needs the server
- * build to emit that sibling; dropping the entry ships an app whose every PDF
- * publish fails validation — found in production, never in dev, because dev
- * resolves the worker from node_modules.
+ * pdfjs resolves its Node fake-worker beside the importing bundle. The server build must emit
+ * pdf.worker.mjs there; dev's node_modules resolution can hide a broken packaged validation path.
  */
 describe("packaged pdfjs worker seam", () => {
   // regression: 58751dd49c fix(server): ship the pdfjs worker module the packaged validator loads

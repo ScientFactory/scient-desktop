@@ -1,19 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Bounded capture reads the real manuscript folder.
 /**
- * What a manual Overleaf sync sees in the manuscript folder (implementation
- * plan section 4.9, coordinator contract section 8).
- *
- * The connection holds the files in its base plus additions the user selects.
- * There is no `.gitignore` evaluation. Repositories, links, reserved and
- * application folders, operating-system droppings and Git LFS pointers are
- * never included. Build leftovers and anything inside a hidden folder are
- * listed but unchecked. Only managed files, selected additions and paths the
- * review asks for are read in full; other additions are read only far enough
- * to recognize a forbidden format.
- *
- * Every limit is enforced before the bytes or entries it bounds are read. A
- * file, or a folder above it, that changes while it is read fails the capture;
- * the caller captures again rather than waiting a fixed time.
+ * Read only managed/selected/review-required files fully; list unchecked hidden/build additions
+ * without adopting them. Enforce limits before reading and fail changing-file/ancestor captures for
+ * retry. Never include repositories, links, reserved/app files, OS droppings, or LFS pointers.
  */
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -56,11 +45,8 @@ export const isOverleafLfsPointer = (bytes: Uint8Array) =>
   bytes.length >= LFS_POINTER.length && LFS_POINTER.every((byte, index) => bytes[index] === byte);
 
 /**
- * Names that are never part of a connection, wherever they appear: Git's own
- * folder and Scient's. They compare as the host's file layer compares Git's
- * (`WorkspaceFileSystem`): upcased, ignoring the trailing dots and spaces and
- * `:` stream suffix Windows ignores, plus the 8.3 short name `GIT~1`. A path
- * the file layer would refuse to write must never reach a plan.
+ * Reserve Git/Scient names using host file-layer normalization, including Windows trailing
+ * dots/spaces, stream suffixes, and GIT~1. A path the file layer refuses must never enter a plan.
  */
 const RESERVED_NAMES = new Set([".GIT", "GIT~1", ".SCIENT", ".SCIENT-OVERLEAF"]);
 const isReservedName = (segment: string) =>

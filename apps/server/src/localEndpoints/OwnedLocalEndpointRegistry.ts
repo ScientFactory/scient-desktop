@@ -132,7 +132,7 @@ const closeReservations = (servers: ReadonlyArray<NodeNet.Server>) =>
 const closeReservationsIgnoringErrors = (servers: ReadonlyArray<NodeNet.Server>) =>
   closeReservations(servers).pipe(Effect.ignore);
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("OwnedLocalEndpointRegistry.make")(function* (
   options: OwnedLocalEndpointRegistryMakeOptions = {},
 ) {

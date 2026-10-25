@@ -57,11 +57,9 @@ export type DroidSkillInventoryClientFactory = (input: {
   readonly signal: AbortSignal;
 }) => Promise<DroidSkillInventoryClient>;
 
-// Deliberately use the official SDK's transport and protocol client instead of
-// its high-level createSession helper. The helper requires FACTORY_API_KEY,
-// while Scient also supports Droid's existing subscription login. The lower
-// level client preserves that login and still owns framing, request matching,
-// protocol compatibility, process cleanup, and cross-platform spawning.
+// The SDK's high-level createSession requires FACTORY_API_KEY and loses subscription-login support.
+// Use its transport/protocol client to retain existing login while preserving SDK framing and
+// process cleanup.
 const liveDroidSkillInventoryClient: DroidSkillInventoryClientFactory = async (input) => {
   const transport = new ProcessTransport({
     droidExecPath: input.binaryPath,
@@ -220,11 +218,9 @@ export const discoverDroidSkills = Effect.fn("discoverDroidSkills")(function* (
 });
 
 /**
- * Turns a personal, built-in or automation skill on or off in Droid's
- * user-level settings. A project skill is refused: Droid writes project-level
- * settings into its working directory, and this session runs in the server's,
- * so the choice would land there and leave the project's skill unchanged
- * (verified against Droid 0.213.0 and 0.230.0).
+ * Refuse project skill writes from this server-cwd session: Droid would update server project
+ * settings and leave the intended project's skill unchanged. Only user-level skills are writable
+ * here.
  */
 export const setDroidSkillEnabled = Effect.fn("setDroidSkillEnabled")(function* (
   input: {

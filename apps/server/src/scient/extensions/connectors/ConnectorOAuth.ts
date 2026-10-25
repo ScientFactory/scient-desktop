@@ -1,13 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Promise-based OAuth flow state for the MCP SDK.
 /**
- * Connector OAuth (MCP authorization 2025-11-25) on `@modelcontextprotocol/sdk`:
- * discovery, client registration (user-supplied client, else DCR stored per
- * `(issuer, redirect_uri)`), PKCE S256 with RFC 8707 `resource`, code exchange,
- * refresh and RFC 7009 revocation.
- *
- * Pending sign-ins live only in memory: keyed by a 32-byte `state`, claimed
- * once, valid for 10 minutes, at most 16 at a time. The PKCE verifier never
- * leaves the server.
+ * Keep sign-in state/verifiers server-only, single-claim, bounded, and expiring. Register clients
+ * per issuer/redirect URI and use PKCE S256 plus the resource indicator.
  */
 import * as NodeCrypto from "node:crypto";
 

@@ -1,11 +1,6 @@
 /**
- * Where the Scient-installed Pandoc lives on disk, and how to find out whether
- * it is really there.
- *
- * Everything Pandoc-related sits under `<stateDir>/pandoc`: the managed
- * installs, their staging area, and the per-conversion scratch directories.
- * Nothing outside that directory is ever written, and no Pandoc found on the
- * computer's PATH is ever used.
+ * Use only Scient-managed Pandoc under stateDir/pandoc. Never execute PATH Pandoc or write outside
+ * that managed root.
  */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";

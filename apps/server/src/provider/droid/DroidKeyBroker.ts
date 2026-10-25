@@ -18,11 +18,8 @@ import { AcpRequestError } from "effect-acp/errors";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 
 /**
- * The header each Droid BYOK provider sends the configured `apiKey` in, and
- * the one the upstream API expects, and the API paths Droid appends to
- * `baseUrl`. Only those paths are forwarded (to the same path under the real
- * `baseUrl`), so a capability can call the connection's models and nothing
- * else on that account. Verified against Droid 0.228.0 with a local capture.
+ * Forward only the provider-specific model API paths under the real base URL. A loopback capability
+ * must not authorize other account endpoints; use the exact upstream credential header.
  */
 const PROTOCOL_WIRE: Record<
   CustomModelProtocol,
@@ -46,13 +43,9 @@ const TOOL_REQUEST_FIELDS = [
 ] as const;
 
 /**
- * Per-turn request limits for Scient custom models. Droid answers a response
- * that stopped at the output limit with "Continue where you left off." and
- * retries without bound (thousands of requests a minute when every response
- * is truncated). A long answer legitimately needs a few continuations, so five
- * consecutive truncated responses mark a loop. The absolute ceiling is far
- * above a long agentic turn (one request per tool call, including subagents)
- * and exists only to bound a loop the truncation rule cannot see.
+ * Droid can continue truncated responses without bound. Detect five consecutive truncations while
+ * allowing legitimate long answers; retain a high absolute per-turn request cap for loops without
+ * truncation, including subagent/tool requests.
  */
 const DROID_TURN_REQUEST_LIMITS = {
   consecutiveTruncatedResponses: 5,
@@ -76,12 +69,8 @@ const MAX_SCANNED_LINE_BYTES = 8 * 1024 * 1024;
 /** Matches Droid's own turn idle watchdog; a streaming model sends far more often. */
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 600_000;
 /**
- * How long establishing the connection (TCP, and TLS for HTTPS) may take. A
- * reachable endpoint is connected in well under a second; this leaves room for
- * a slow network or proxy and stays well inside what a caller waits for an
- * answer (the Test action 45 s, background generation 180 s), so a connection
- * that stalls is reported with its cause. An established connection is not
- * bounded by it: a slow model has the idle bound above.
+ * Bound TCP/TLS establishment below caller deadlines so stalled connections report their cause.
+ * Once connected, use the model idle bound instead; slow inference is not connection failure.
  */
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 
@@ -302,11 +291,8 @@ const isRetriedStatus = (status: number) => status === 429 || status >= 500;
 const digest = (value: string) => NodeCrypto.createHash("sha256").update(value).digest();
 
 /**
- * The certificate authorities the Droid instance's environment trusts beyond
- * the defaults. Droid reads NODE_EXTRA_CA_CERTS (0.213.0 and 0.231.0) and
- * SSL_CERT_FILE (0.213.0) for its own model requests, which the broker makes
- * in its place. A file that cannot be read adds nothing, as in Node, and is
- * named when a certificate then fails (`unreadable`).
+ * Mirror Droid's NODE_EXTRA_CA_CERTS/SSL_CERT_FILE trust when proxying model requests. Unreadable
+ * files add no trust and must be named in resulting certificate failures.
  */
 function instanceCertificateAuthorities(environment: NodeJS.ProcessEnv | undefined) {
   const extra: Array<string> = [];
@@ -382,25 +368,10 @@ export interface DroidKeyBroker {
 }
 
 /**
- * A loopback proxy that lets one Droid process use Scient's custom models
- * without ever holding their keys. Each connection gets a route and a random
- * capability; the overlay Droid reads carries only those. The broker checks
- * the capability (constant time), asks the owner whether the configuration is
- * still current (so a rotated or removed key is refused even when a request
- * races the retirement), replaces the capability with the real key in the
- * protocol's header, and streams the upstream response back unbuffered.
- * The listener, its routes and all in-flight upstream requests end with the
- * owning runtime scope.
- *
- * This is the only place Droid code unwraps a real key, and it sends it only
- * upstream, so a key can reach Droid only inside an upstream response. A
- * successful one holds a key only if the model already had it from elsewhere,
- * where Droid holds it anyway, so its content is relayed unchanged. An error is
- * where services echo keys: one that holds any configured key or capability
- * is withheld whole (see `errorBody`). Droid's own output is not redacted: the
- * only secret Droid holds is its capability, which works only on loopback,
- * only for its connections and only while its process lives, so seeing it in
- * a transcript or native log grants nothing the agent does not already have.
+ * Droid holds only process-scoped loopback capabilities, never real model keys. Recheck current
+ * configuration before substituting a key upstream to fence rotation races. Withhold secret-bearing
+ * errors whole; successful content passes unchanged. Scope closure ends routes and in-flight
+ * requests.
  */
 export const makeDroidKeyBroker = Effect.fn("DroidKeyBroker.make")(function* (input: {
   readonly connections: ReadonlyArray<ResolvedModelConnection>;
@@ -634,20 +605,10 @@ export const makeDroidKeyBroker = Effect.fn("DroidKeyBroker.make")(function* (in
     });
 
   /**
-   * What Droid receives for an upstream error: the body as sent, cut to
-   * `MAX_ERROR_BODY_BYTES` at a character boundary, unless it holds a key or
-   * capability in any spelling (checked a margin past the cut, so a key the
-   * cut would split is still seen), in which case the whole body is withheld
-   * and replaced by a Scient error in the protocol's shape with the same
-   * status. Never partially redacted. A short placeholder key that happens to
-   * occur also withholds; that loses an error message, never a key.
-   *
-   * Threat model: this catches an honest service echoing the key by accident,
-   * in the spellings services use (raw, JSON-escaped, percent- or
-   * \u-encoded). An endpoint that deliberately obfuscates the key, with mixed
-   * or nested encodings or by spelling it past the checked window, already
-   * holds it (it just received it) and gains nothing by getting it to Droid,
-   * so adversarial encodings are out of scope.
+   * Withhold the whole error if any checked key/capability spelling appears, scanning past the
+   * truncation cut to catch split secrets. Never partially redact. This handles accidental service
+   * echoes; deliberate mixed/nested obfuscation by an endpoint already holding the key is outside
+   * this boundary.
    */
   const errorBody = async (
     route: BrokerRoute,

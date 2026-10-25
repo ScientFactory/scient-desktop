@@ -1,21 +1,7 @@
 /**
- * Context transfers and handoffs for conversation forks.
- *
- * Mirrors upstream Orchestration V2's split between lineage (immutable, on
- * `scient_thread_lineage`), the context transfer a fork needs (one per fork),
- * and the handoffs that deliver it (tracked per provider-native thread). The
- * single `provider_bootstrap_status` flag could not express a delivery that
- * belongs to one provider session and must be repeated for a new one.
- *
- * Existing forks migrate without re-sending context they already received:
- * - completed deliveries become `inline` handoffs with `rebind_pending`;
- *   migration 16 binds them to the saved identity before provider resume;
- * - sending/ambiguous deliveries become `pending` handoffs, which the next turn
- *   settles from provider evidence or re-delivers on a fresh provider session;
- * - pending deliveries keep a pending transfer with no handoff.
- *
- * Inherited turn ids are recorded explicitly so revert keeps the whole
- * inherited transcript, not only its selected boundary turn.
+ * Delivery belongs to a provider-native session and must repeat on a new one. Preserve completed
+ * deliveries for rebind, settle ambiguous sends from evidence or a fresh session, and retain
+ * inherited turn IDs so revert keeps the full prefix.
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

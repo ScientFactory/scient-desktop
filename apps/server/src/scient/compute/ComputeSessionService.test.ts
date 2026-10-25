@@ -351,12 +351,8 @@ interface HarnessOptions {
 }
 
 /**
- * A coordinator over a throwaway state directory and a scripted runtime.
- *
- * `use` builds and tears down the whole service, so a test can prove a fact
- * survives the process that wrote it: a second `use` over the same directory is
- * the next run of the server, with an empty registry and only the disk to go
- * on.
+ * Rebuild the whole service over the same throwaway directory to prove recovery from disk alone,
+ * with no live registry surviving the previous server run.
  */
 const harness = (options: HarnessOptions = {}) =>
   Effect.gen(function* () {
@@ -4103,13 +4099,8 @@ describe("compute session reads", () => {
 });
 
 /**
- * The load this coordinator will actually meet.
- *
- * Each of these has a cheap wrong answer that a happy-path test cannot see: a
- * publisher that blocks, a queue that over-admits under a race, a transcript
- * that grows past what it promised to keep, a recovery that handles one session
- * because it was only ever shown one. So each test asserts the answer rather
- * than that nothing threw.
+ * Assert backpressure, admission, retention, and multi-session recovery outcomes under load; a
+ * happy-path call or absence of exceptions cannot expose their cheap wrong answers.
  */
 describe("compute session under load", () => {
   for (const initiallyEmpty of [false, true]) {

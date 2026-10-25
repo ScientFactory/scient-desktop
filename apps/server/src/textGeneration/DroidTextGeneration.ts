@@ -86,11 +86,8 @@ const selectValues = (option: ReturnType<typeof findSelectDroidConfigOption>) =>
     : [];
 
 /**
- * The model for background text when Scient chooses it (`DROID_DEFAULT_MODEL`)
- * and not the user: titles and commit messages do not need the account's
- * default model. Droid describes each Factory model by its token rate
- * ("0.08x Factory token rate"); the lowest rate wins, deprecated models
- * aside. Undefined when Droid reports no rate: its own default stays.
+ * Background titles/commits use the cheapest nondeprecated reported Factory rate rather than the
+ * account default. If no rate is known, retain Droid's own default.
  */
 function cheapestDroidModel(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
@@ -125,13 +122,9 @@ function lowestDroidEffort(
 }
 
 /**
- * Background prompts carry untrusted diffs and messages, so they run without
- * tools: Scient custom models receive no tool definitions, and the process
- * refuses every tool call before it runs (see `modelTools`). As a second
- * line, they run at Droid's lowest autonomy, confirmed by Droid's own report
- * before anything is sent, and every permission request is rejected.
- * Verified against Droid 0.228.0: at `normal` every shell command asks for
- * permission; `spec` asks the same but turns the task into planning.
+ * Background prompts contain untrusted diffs/messages. Offer no custom-model tools and verify the
+ * process refuses calls; also confirm lowest autonomy from Droid's report and reject permission
+ * requests. normal prompts for shell permission; spec instead turns the work into planning.
  */
 const BACKGROUND_AUTONOMY = "normal";
 

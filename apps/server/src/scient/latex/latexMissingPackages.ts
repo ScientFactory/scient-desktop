@@ -1,17 +1,7 @@
 /**
- * Reads which files a TeX run could not find out of its own transcript, and
- * decides which of them a package repository could supply.
- *
- * The distribution Scient installs ships TeX Live's infrastructure and a base
- * set of packages; everything else is fetched on demand. A document that uses
- * anything outside that set therefore stops at `File `mathtools.sty' not
- * found.` until the package is placed, which is what the caller uses this
- * module to notice. Nothing here runs anything: it turns one transcript into
- * names, and the decision to install them belongs to `LatexPackageInstaller`.
- *
- * A missing `.tex`, `.bib`, or image is the author's own file — no repository
- * has it, and offering to install one would be a lie — so those are read and
- * deliberately map to nothing.
+ * Only repository-supplied names are install candidates. Missing tex/bib/images belong to the
+ * author and must not trigger a promised download; parsing transcript names never authorizes
+ * installation itself.
  */
 
 /**

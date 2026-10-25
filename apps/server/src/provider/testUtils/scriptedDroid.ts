@@ -6,12 +6,8 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 
 /**
- * An ACP stand-in that behaves like Droid 0.228.0 where Scient depends on it:
- * `{}` config acknowledgements followed by `config_option_update`, an
- * `autonomy_level` selector (`AUTONOMY=none` omits it), and concurrent
- * prompts. The test supplies `onPrompt(message)` and optionally `onCancel()`;
- * `request`, `update`, `reply` and `fail` are in scope. Every inbound message
- * is appended to the log.
+ * Mirror Droid's empty config acknowledgements followed by async updates, optional autonomy
+ * selector, and concurrent prompts so compatibility tests exercise the actual protocol quirks.
  */
 async function makeScriptedDroid(body: string, env: Record<string, string> = {}) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "droid-acp-scripted-"));

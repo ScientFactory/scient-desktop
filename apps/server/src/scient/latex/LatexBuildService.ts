@@ -1,25 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Build work directories are keyed by a host SHA-256 digest.
 /**
- * Coordinates one LaTeX build per logical document. The service owns the only
- * mutable build state on the server: a map keyed by logical document key, one
- * supervised fiber per active build, and the handshake with
- * `GeneratedDocumentStore` that turns a produced PDF into an immutable
- * revision the viewer can render.
- *
- * Six invariants shape the code below:
- *   - A rebuild requested while one is in flight coalesces into a single
- *     follow-up run, so a save-happy editor cannot queue a hundred compiles.
- *   - At most `MAX_CONCURRENT_COMPILES` documents compile at once; the rest
- *     sit in `queued` until a permit frees.
- *   - Aux files never touch the workspace; every engine writes into
- *     a fresh directory under `<latexDir>/builds/` for each attempt.
- *   - A build that loses the binding race (`superseded`) reports itself
- *     cancelled and leaves the store alone; only the newest generation may
- *     record a failure.
- *   - Only a run that exited clean publishes. An error-carrying run fails and
- *     the last PDF that did compile stays visible, marked stale.
- *   - A PDF is only reported `succeeded` while the files it was built from
- *     still hash to what they hashed then; see `latexBuildEvidence.ts`.
+ * Coalesce rebuilds and bound compiles; keep aux files outside the workspace. Superseded
+ * generations cannot mutate binding/failure state. Publish only clean exits, retaining stale
+ * last-good PDF on compiler failure; succeeded also requires unchanged content evidence.
  */
 import * as NodeCrypto from "node:crypto";
 
@@ -193,16 +176,9 @@ const MAX_PREAMBLE_PACKAGES_PER_BUILD = 40;
 /** A compile is CPU- and disk-bound; three at once keeps a laptop usable. */
 const MAX_CONCURRENT_COMPILES = 3;
 /**
- * How many times one build may fetch packages and compile again.
- *
- * A compile reveals exactly one missing package, however many the document
- * needs: LaTeX takes an emergency stop at the first input it cannot find, and
- * `nonstopmode` does not change that. So a paper whose preamble wants five
- * packages the distribution does not have needs five rounds, and a low ceiling
- * is not a safety rail — it is a document that can never build. This bound is
- * therefore set well above a real preamble and is not what ends the loop: a
- * round that places nothing new ends it, and the per-build `attempted` set
- * keeps a package no repository has from being asked for twice.
+ * LaTeX exposes only the first missing package per compile, even in nonstopmode. Keep the round
+ * bound above real preambles; stop on no progress and never retry an already-attempted missing name
+ * within the build.
  */
 const MAX_PACKAGE_RESOLUTION_ROUNDS = 15;
 
@@ -222,11 +198,8 @@ const NO_TOOLCHAIN_SUMMARY =
   "No LaTeX toolchain found. Install latexmk (TeX Live or MiKTeX) or tectonic, then try again.";
 
 /**
- * A driver that exists but would not run is a different problem from none at
- * all, and the engine's own complaint is usually the whole answer (MiKTeX's
- * `latexmk` without Perl), so it is named instead of the install advice. The
- * summary also reaches agents, so it names the distribution and the file, not
- * the folder (which carries the user's name); the setup card shows the path.
+ * A broken existing driver needs its own complaint, not no-install advice. Agent-visible summaries
+ * name distribution/file without username-bearing folders; show full paths only in setup UI.
  */
 function noToolchainSummary(toolchain: Pick<ScientLatexToolchainStatus, "unusable">): string {
   const unusable = toolchain.unusable?.[0];
@@ -265,11 +238,9 @@ function missingPackageDiagnostic(packageName: string): ScientLatexDiagnostic {
 }
 
 /**
- * What a build says when its own distribution could not supply a package: the
- * machine was offline, the repository has moved on from what this frozen TeX
- * Live knows, or the name is the author's own file and no repository ever had
- * it. The engine's error stays alongside this, because it is the one that says
- * where in the document the name came from.
+ * Keep the engine's missing-package error beside repository failure because it identifies the
+ * source location. Offline, frozen-repository drift, and author-private files need distinct honest
+ * fetch outcomes.
  */
 function unresolvedPackageDiagnostic(packageName: string): ScientLatexDiagnostic {
   return {
@@ -281,16 +252,9 @@ function unresolvedPackageDiagnostic(packageName: string): ScientLatexDiagnostic
 }
 
 /**
- * A failed build always says why.
- *
- * Every terminal failure below goes through here, because the one thing a
- * reader cannot act on is a build that reports nothing. The gap this closes is
- * real and was reachable in production: `latexmk` declining to redo a target it
- * had already failed prints only its own prose, `parseLatexLog` finds no
- * `file:line:` in it and returns nothing, and the build then recorded an empty
- * diagnostics list under `summarizeLatexFailure`'s bare fallback — the reader
- * was told "LaTeX build failed." and given nothing else, on a run that had
- * plenty to say.
+ * Every terminal failure needs actionable diagnostics. latexmk can emit only prose when declining a
+ * failed target, so empty parse output must retain that explanation rather than fall back to a bare
+ * Build failed.
  */
 function withFailureReason(
   diagnostics: ReadonlyArray<ScientLatexDiagnostic>,
@@ -424,11 +388,8 @@ function workspaceIdentityDigest(workspaceRoot: string): string {
 const ABSOLUTE_PATH_PATTERN = /^(?:\/|[A-Za-z]:)/u;
 
 /**
- * Containment guard for a path already made relative to the workspace root and
- * normalized to forward slashes. `..` walks are the obvious escape; the absolute
- * form is the quiet one, because `path.relative` gives up and returns an
- * absolute path whenever the two sides sit on different Windows drives — which
- * is exactly what a drive-relative request like `C:evil\x.tex` produces.
+ * Reject absolute results as well as parent walks: path.relative returns absolute across Windows
+ * drives, including drive-relative requests. Normalized slashes alone do not prove containment.
  */
 export function escapesWorkspaceRoot(relativePath: string): boolean {
   return (
@@ -596,11 +557,9 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * TeX resolves `\input` against its working directory, so a build compiles
-   * from the root document's folder and every printed path is relative to that
-   * folder. Clients only understand workspace-relative paths, so rebase them
-   * here. Only existing project entries become navigation links; a package
-   * basename from the engine bundle remains a noninteractive location label.
+   * TeX paths are relative to the root document's compile directory, not the workspace. Rebase
+   * before clients see them, and link only existing project entries; engine-package basenames
+   * remain noninteractive labels.
    */
   const rebaseDiagnostics = (input: {
     readonly workspaceRoot: string;
@@ -640,11 +599,8 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * The write a build fiber is allowed to make: only while the entry is still
-   * the one that fiber was started for. A fiber parked in a package fetch can
-   * wake after a cancel and a fresh `requestBuild` have replaced the entry
-   * underneath it, and without this it would stamp its own state and process
-   * handle over the live build's.
+   * Write only while the fiber still owns this entry. A cancelled package fetch can wake after
+   * replacement and otherwise overwrite a fresh build's state/process handle.
    */
   const updateOwnEntry = (
     key: string,
@@ -803,14 +759,9 @@ export const make = Effect.gen(function* () {
     );
 
   /**
-   * Releases a production without discrediting the sources it was reading.
-   *
-   * The distinction from `recordStoreFailure` is the whole point: failing a
-   * production stales whatever PDF is currently published, and staling is a
-   * statement about the sources — "what you are looking at no longer matches
-   * them". A cancel, a supersession, and an infrastructure error are none of
-   * them that, so they end here instead. Idempotent in the store, so any
-   * number of paths may run it for the same handle.
+   * Cancel, supersession, and infrastructure failure do not discredit source freshness. Abandon
+   * rather than fail production so a valid published PDF is not staled; the store operation must
+   * remain idempotent.
    */
   const recordStoreAbandon = (production: GeneratedDocumentProductionHandle, reason: string) =>
     store.abandonProduction({ ...production, reason }).pipe(
@@ -1176,19 +1127,8 @@ export const make = Effect.gen(function* () {
   );
 
   /**
-   * Everything the document says it needs that this distribution does not
-   * already have, read before the first compile.
-   *
-   * The reactive resolver can only ever learn one name per compile, because
-   * LaTeX stops at the first input it cannot find. A first build of an
-   * ordinary paper against a fresh TinyTeX therefore spends a compile and a
-   * `tlmgr` run per package — minutes of a progress strip naming one package
-   * at a time — for information that was sitting in the preamble the whole
-   * time. This reads it: the root's own `\usepackage`/`\RequirePackage` names
-   * plus those of the files it pulls in one level down, dropped to the ones
-   * `kpsewhich` cannot already find, so a distribution that has them pays a
-   * few probes and no fetch. The reactive loop still runs afterwards, for the
-   * packages a package pulls in.
+   * LaTeX reveals one missing input per compile. Scan root/one-level preambles and batch absent
+   * package names before compiling; retain the reactive loop for transitive package dependencies.
    */
   const readPreambleHeads = Effect.fn("LatexBuildService.readPreambleHeads")(function* (
     rootAbsolutePath: string,
@@ -1292,11 +1232,9 @@ export const make = Effect.gen(function* () {
   );
 
   /**
-   * What the document itself says it reads, for an engine that keeps no
-   * recorder: the root plus the files it `\input`s or `\include`s one level
-   * down. Narrower than a recorder manifest — no `.bib`, no image, nothing a
-   * package pulled in — and honest about being narrower, because the root is
-   * still the file most edits land in.
+   * Without a recorder, root plus one-level inputs is explicitly narrower evidence: it omits
+   * bibliographies, images, and package-loaded files. Do not present it as a full dependency
+   * manifest.
    */
   const preambleDependencies = Effect.fn("LatexBuildService.preambleDependencies")(
     function* (input: {
@@ -1320,16 +1258,9 @@ export const make = Effect.gen(function* () {
   );
 
   /**
-   * Reads what this compile was built from, between the engine's exit and the
-   * publish that makes its PDF the document.
-   *
-   * The ordering is the point. A status poll that lands after the entry says
-   * `succeeded` and before the evidence exists would find a published PDF with
-   * nothing behind it, conclude it cannot be vouched for, and start a rebuild —
-   * on every build of every document, forever. So the evidence is in place
-   * before the state that would be checked against it, and the compile's own
-   * inputs are read the moment the compile stops rather than after a round trip
-   * through the artifact store.
+   * Collect inputs immediately after engine exit, before publishing succeeded state. Polling
+   * succeeded without evidence would trigger another rebuild on every build, so artifact-store
+   * round trips must not precede collection.
    */
   const collectBuildEvidence = Effect.fn("LatexBuildService.collectBuildEvidence")(
     function* (input: {
@@ -1534,11 +1465,8 @@ export const make = Effect.gen(function* () {
   );
 
   /**
-   * Whether the PDF this document currently shows was built from what is on
-   * disk now. `false` also covers "there is no evidence": a binding written
-   * before this check existed, or one whose evidence file was lost, is not a
-   * PDF anyone can vouch for, so it earns exactly one rebuild — after which
-   * there is evidence and this answers on facts.
+   * A surviving binding without input evidence cannot establish freshness. Rebuild once to replace
+   * legacy/lost evidence, then judge currentness from recorded facts.
    */
   const evidenceIsCurrent = Effect.fn("LatexBuildService.evidenceIsCurrent")(function* (
     target: ResolvedLatexTarget,
@@ -1579,15 +1507,9 @@ export const make = Effect.gen(function* () {
           }),
     );
     if (!probe.changed) return true;
-    // The probe is a fast path — one `stat` per dependency and a hash only
-    // where that leaves the question open — and it is the only thing standing
-    // between a status poll and a full compile. Before spending one, re-read
-    // the identity of every dependency the slow way and check that the two
-    // agree. When they do not, the probe was wrong about this poll, and
-    // rebuilding would not change what the next poll sees: the same
-    // disagreement, the same rebuild, once every 1.5 seconds for as long as
-    // whatever caused it lasts. This one comparison is what bounds that at a
-    // single rebuild.
+    // Recollect full dependency identities before spending a compile on stat-probe disagreement. If
+    // content matches, rebuilding cannot fix the shortcut and would repeat every status poll; bound
+    // that disagreement instead.
     const recollected = yield* withPlatform(
       collectLatexBuildEvidence({
         workspaceRoot: target.workspaceRoot,
@@ -1660,12 +1582,9 @@ export const make = Effect.gen(function* () {
         producerId: LATEX_PRODUCER_ID,
       });
       yield* updateOwnEntry(key, generation, (current) => ({ ...current, production }));
-      // A cancel that landed between `beginProduction` and the write above read
-      // `entry.production === null`, found nothing to release, and left. Without
-      // this the binding would stay `producing` until the next build or a
-      // restart reconciled it — the same window `runProcess` closes around the
-      // spawn, and closed the same way. `abandonProduction` is idempotent, so a
-      // cancel that did reach the handle running it too costs nothing.
+      // Cancel can miss the handle between beginProduction and entry assignment. Abandon after
+      // failed ownership installation too, closing that producing-state leak; duplicate abandonment
+      // is safe.
       if (yield* isSuperseded(key, generation)) {
         yield* recordStoreAbandon(production, CANCELLED_SUMMARY);
         return;
@@ -1768,11 +1687,9 @@ export const make = Effect.gen(function* () {
         );
       }
 
-      // TeX resolves `\input{sections/intro}` against the working directory,
-      // not against the root document, so a root under `paper/` only builds
-      // when the engine runs from `paper/`.
-      // Non-null only for the distribution Scient installed, which is the only
-      // one it may extend: `tlmgr` lives beside the engine in that tree.
+      // Compile from the root document's folder because TeX resolves input against cwd. Extend only
+      // Scient's own distribution, with tlmgr beside its engine; system distributions are not ours
+      // to mutate.
       const managedBinDirectory =
         toolchain.source === "scient-managed" ? path.dirname(toolchainExecutable) : null;
       if (managedBinDirectory !== null && preamble === null) {
@@ -1851,11 +1768,9 @@ export const make = Effect.gen(function* () {
           });
           return;
         }
-        // The work directory outlives a single build. Drop every run-owned
-        // output before spawning the engine: afterwards a PDF, recorder, or
-        // SyncTeX index can only belong to this exact invocation. Otherwise a
-        // clean exit that omitted one of those files could silently inherit it
-        // from the previous build.
+        // Remove all run-owned outputs before spawn because the work directory survives builds. A
+        // clean invocation that omits PDF/recorder/SyncTeX must not inherit the previous run's
+        // file.
         for (const outputPath of [
           invocation.pdfPath,
           invocation.syncTexPath,
@@ -1903,12 +1818,9 @@ export const make = Effect.gen(function* () {
           Effect.map((info) => Number(info.size)),
           Effect.orElseSucceed(() => 0),
         );
-        // A run that both exited clean and wrote a PDF has nothing left to
-        // resolve, whatever the transcript mentions in passing, so a working
-        // document never pays for a `tlmgr` round. Everything else is read for
-        // missing packages, because a missing `.sty` usually aborts the
-        // commands that package defines whether or not the engine typeset
-        // something.
+        // A clean exit with a PDF needs no package fetch despite incidental transcript mentions.
+        // Other outcomes may need resolution even if pages exist, since missing packages can abort
+        // defining commands.
         const missing =
           producedBytes > 0 && outcome.exitCode === 0
             ? []
@@ -1957,19 +1869,9 @@ export const make = Effect.gen(function* () {
                 ),
               ];
 
-        // A run the engine ended in error does not publish, whatever it left at
-        // `pdfPath`.
-        //
-        // The engine still runs to the end of the document — that is what makes
-        // the diagnostics complete — but "it typeset some pages" is not the same
-        // claim as "this is the document". A PDF from an error-carrying run is
-        // missing whatever the error swallowed: the section after it, a
-        // bibliography that never ran, every cross-reference that resolved to
-        // `??`. Publishing it puts "Built" over a document nobody produced, and
-        // the errors shown beside it read as advisory. So the attempt fails, and
-        // `failProduction` leaves the last PDF that did compile in place, marked
-        // stale with this run's reason — the reader keeps something true to look
-        // at and is told plainly that it is behind the source.
+        // Error exits must never publish partial PDFs as Built. TeX may still produce pages with
+        // missing sections/bibliography/references; retain the last clean PDF and mark it stale
+        // with this failure reason.
         if (outcome.exitCode !== 0) {
           const failureDiagnostics = withFailureReason(diagnostics, () =>
             transcriptFailureDiagnostic({
@@ -2096,11 +1998,8 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
-            // Shutdown closes `buildScope`, which interrupts every in-flight
-            // build fiber straight into this handler. An interrupt is not a
-            // build outcome and has nothing to report: re-raise it untouched
-            // so the fiber dies as interrupted, leaving the entry and the
-            // binding for the store's startup reconciliation to settle.
+            // Shutdown interrupts through this handler but is not a build verdict. Re-raise
+            // interruption unchanged and leave binding settlement to startup reconciliation.
             if (Cause.hasInterruptsOnly(cause)) return yield* Effect.failCause(cause);
             yield* Effect.logWarning("latex build failed", { logicalDocumentKey: key, cause });
             const entry = yield* getEntry(key);
@@ -2108,13 +2007,9 @@ export const make = Effect.gen(function* () {
             if (!ACTIVE_STATES.has(entry.state)) return;
             const summary = UNEXPECTED_FAILURE_SUMMARY;
             if (entry.production !== null) {
-              // Everything that reaches here is infrastructure — a full disk, a
-              // state directory that vanished, a defect in this service. None
-              // of it is a claim about the document's sources, so the
-              // production is released rather than failed and the PDF the
-              // reader is looking at keeps its `current` binding. The entry
-              // below still reports `failed` with the reason, which is the part
-              // that is actually true.
+              // Infrastructure failure does not discredit source inputs. Release production without
+              // staling its PDF, while reporting the build entry failed with the actual
+              // infrastructure reason.
               yield* recordStoreAbandon(entry.production, summary);
             }
             yield* finishBuild(key, generation, (current) => ({
@@ -2358,11 +2253,9 @@ export const make = Effect.gen(function* () {
         failureSummary: target.failureSummary,
       };
     }
-    // A published binding survives restarts, so a document with no in-memory
-    // build can still have a PDF (and a recorded reason it went stale). What
-    // the binding cannot say is whether that PDF still matches its sources;
-    // `status` puts the `succeeded` answer below through the evidence check
-    // before letting it stand.
+    // Persisted bindings survive an empty in-memory registry, but cannot alone establish source
+    // freshness. Put restored succeeded state through evidence checks before presenting it as
+    // current.
     const descriptor = yield* store
       .getDescriptor(LogicalDocumentKey.make(target.logicalDocumentKey))
       .pipe(Effect.orElseSucceed(() => null));
@@ -2410,17 +2303,9 @@ export const make = Effect.gen(function* () {
   );
 
   /**
-   * Starts one build pass for an already-resolved document, or coalesces into
-   * the one already running. Every caller goes through here — the client's own
-   * request and the freshness check that finds a PDF older than its sources —
-   * so an auto-triggered rebuild takes the same admission permit and the same
-   * `pendingRerun` coalescing as one a reader asked for, and adds no
-   * concurrency of its own.
-   *
-   * `seedDescriptor` is what the reader keeps looking at while the rebuild
-   * runs: on a restart there is no in-memory entry to inherit a descriptor
-   * from, and starting one without it would blank a viewer that has a perfectly
-   * good — if stale — PDF to show.
+   * Auto-freshness builds must use the same admission/coalescing as explicit requests, adding no
+   * concurrency. Seed a persisted descriptor after restart so rebuilding cannot blank a valid stale
+   * PDF.
    */
   const startBuild = Effect.fn("LatexBuildService.startBuild")(function* (
     target: ResolvedLatexTarget,
@@ -2568,12 +2453,9 @@ export const make = Effect.gen(function* () {
         ),
       );
     if (entry.production !== null) {
-      // A cancel says nothing about the sources, so the production is
-      // abandoned, not failed: a published PDF stays current instead of
-      // being staled by a build the reader chose to stop. The returned
-      // binding is also the linearization result: if this exact production
-      // has already published, publication won the store lock and it is too
-      // late to truthfully replace that success with `cancelled`.
+      // Cancellation abandons without discrediting sources. Its returned binding is the
+      // linearization result: if publication already won the store lock, reporting cancelled would
+      // overwrite a real success.
       const binding = yield* store
         .abandonProduction({ ...entry.production, reason: CANCELLED_SUMMARY })
         .pipe(
@@ -2649,10 +2531,8 @@ export const make = Effect.gen(function* () {
 });
 
 /**
- * The package installer is asked for rather than owned: the managed install
- * fetches collections through the same service, and `tlmgr` serializes against
- * one distribution tree. Both callers therefore have to hold the same
- * instance, which the server layer mounts once for both rather than leaving to
- * layer memoization.
+ * Mount one shared package-installer instance for managed install and builds; tlmgr writes one
+ * distribution database, so separate instances cannot provide serialization even if layers look
+ * equivalent.
  */
 export const layer = Layer.effect(LatexBuildService, make);

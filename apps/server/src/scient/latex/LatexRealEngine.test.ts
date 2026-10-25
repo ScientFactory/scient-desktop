@@ -1,11 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Engine detection has to happen at
 // collection time, before any Effect runtime exists, so the suite can skip itself.
 /**
- * The one test that runs a real TeX engine. It is skipped unless `latexmk` or
- * `tectonic` resolves on PATH, which is the normal state of a machine and of
- * CI; where an engine does exist it proves the two things only a real compile
- * can: that the argv this lane builds actually produces a PDF, and that a root
- * living in a subdirectory finds the files it `\input`s and `\include`s.
+ * Opt in through installed latexmk/tectonic on PATH. A real compile is required to prove invocation
+ * produces a PDF and subdirectory roots resolve input/include paths; absent engines must skip.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";

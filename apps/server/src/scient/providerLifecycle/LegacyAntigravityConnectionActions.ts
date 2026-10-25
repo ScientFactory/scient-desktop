@@ -1,14 +1,7 @@
 /**
- * Official Google-account lifecycle for Antigravity.
- *
- * The Antigravity CLI owns OAuth credentials and subscription entitlement.
- * Scient launches its interactive login in a real PTY, lets the CLI open the
- * Google page, and verifies completion through the provider-owned `agy models`
- * command. Sign-out is first requested through Antigravity's `/logout`
- * command. Some CLI versions block that command behind first-run screens even
- * when a consumer session already exists; in that case Scient removes only
- * Antigravity's own local consumer credential entries and verifies the result
- * through `agy models`. Scient never reads token contents.
+ * Antigravity owns OAuth/entitlement; verify lifecycle through agy models without reading tokens.
+ * If /logout is blocked by first-run screens, remove only its local consumer credential entries and
+ * verify again.
  */
 
 import type {

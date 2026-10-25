@@ -24,12 +24,8 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
 /**
- * `selectedScientSkillNames` is the only authority for an explicit Scient skill
- * selection. Upstream's V2 `message.dispatch` cutover dropped it, so the field
- * compiled away and every V2 turn silently ran without the user's skills. These
- * tests drive the real decider, the real event store and the real projection
- * read, then hand the persisted message to the same provider-turn preparation
- * V1 uses — the full hop, not a type check.
+ * Explicit selectedScientSkillNames must survive decider, persistence, projection, and provider
+ * preparation; type checks alone cannot prove the user's selection reaches execution.
  */
 
 const instanceId = ProviderInstanceId.make("codex");

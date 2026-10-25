@@ -7,15 +7,9 @@ import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
 /**
- * Reads of project files that must come from the file a path check saw.
- *
- * A path check (real path inside the project, a regular file) and a later
- * read by the same path can see different files: a concurrent writer can
- * swap the file, or a folder above it, for a link out of the project in
- * between. These reads open the checked path so that no link is followed
- * (macOS) or confirm through the open descriptor that it is inside the
- * project (Linux), then confirm that the open file is the one the check
- * recorded, and never hold more than the cap.
+ * Checks and later pathname reads can see different files after ancestor/link swaps. Bind reads to
+ * the checked descriptor/inode, enforce no-follow/descriptor containment per platform, and bound
+ * bytes.
  */
 
 /** What a path check established about one file, for the handle-bound read to confirm. */
@@ -60,11 +54,9 @@ const isInsideNative = (root: string, candidate: string) => {
 const DARWIN_O_NOFOLLOW_ANY = 0x20000000;
 
 /**
- * Reads a checked workspace file from the same inode the check saw, holding
- * at most `maxBytes` plus one. The open never waits (a FIFO or device is
- * refused, not read) and refuses any symlink on the way
- * (macOS) or is confirmed inside the project through its descriptor (Linux);
- * other platforms cannot confirm that and read nothing.
+ * Read only the checked regular inode, bounded to maxBytes plus one without waiting on
+ * devices/FIFOs. Require no-follow ancestry on macOS or descriptor containment on Linux; unverified
+ * platforms read nothing.
  */
 export const readVerifiedWorkspaceFile = (
   located: CheckedFile,
@@ -138,14 +130,9 @@ export const readVerifiedWorkspaceFile = (
   }).pipe(Effect.orElseSucceed(() => ({ _tag: "unreadable" }) as const));
 
 /**
- * Reads at most `maxBytes` plus one from a path, without binding the open file
- * to the project. Only for a caller that then requires the bytes to equal a
- * revision the user already has (the editor's saved file): a file swapped in
- * by path between the check and the read then either has those same bytes,
- * so the export shows nothing the user did not already have, or other bytes
- * and is refused. What remains is the open itself, so it cannot hang or reach
- * a device: it is non-blocking where the platform supports that, must be a
- * regular file, and must still look like the file the path check saw.
+ * Unbound path reads are allowed only against a revision the user already has, accepting identical
+ * bytes or refusing mismatches. Still require a nonblocking regular file matching the path check so
+ * opening cannot reach a device or hang.
  */
 export const readCappedFile = (checked: CheckedFile, maxBytes: number) =>
   Effect.tryPromise({

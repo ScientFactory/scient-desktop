@@ -44,11 +44,8 @@ export const ompThinkingLevel = (value: string | undefined): OmpThinkingLevel | 
     : undefined;
 
 /**
- * The reasoning levels a model offers, from what Oh My Pi reports and nothing
- * else. OMP 18.x sends `thinking.efforts` (its `getSupportedEfforts`); the
- * older `thinkingLevels` field is read only when `thinking` is absent. A model
- * without either offers no selector: the six-level list is never invented.
- * "off" is not an effort; OMP represents it as the absence of reasoning.
+ * Advertise only reported thinking.efforts; use legacy thinkingLevels only when thinking is absent.
+ * Never invent a six-level selector. OMP represents off as no reasoning, not an effort.
  */
 export const ompModelThinkingLevels = (
   model: OmpRpcModel,

@@ -1,15 +1,7 @@
 /**
- * Optional integration check against a real `droid exec --output-format acp`
- * install. Enable with: T3_DROID_ACP_PROBE=1 vp test run DroidAcpCliProbe
- *
- * The probe assumes either `FACTORY_API_KEY` is set in the environment or
- * the user has previously paired via `droid` (device-pairing caches the
- * credential). Without credentials `authenticate` fails and the probe
- * surfaces that error — which is itself diagnostic.
- *
- * This is the Phase-0 gate from docs/design/droid-provider-plan.md §7: every
- * 🔬 assumption becomes an explicit assertion here. Run once per reviewed
- * Droid version and record the output in the plan's revision log.
+ * Opt in with T3_DROID_ACP_PROBE=1 against an authenticated real Droid install. Credentials must
+ * come from FACTORY_API_KEY or prior pairing; expose authentication failure rather than silently
+ * skipping it.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";

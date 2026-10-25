@@ -1,13 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Whether a file an editor names lies in a folder, by physical identity: the
- * folder is known by its device and inode, and a file is inside when one of
- * the folders physically holding it is that folder. A symlinked spelling, a
- * different letter case on a case-insensitive disk, or a relative detour all
- * find the same folder. A file not yet on disk is placed by its nearest
- * existing folder.
- *
- * @module folderIdentity
+ * Use physical ancestor identity so symlink/case/detour spellings find the same folder. Place
+ * nonexistent files by their nearest existing ancestor.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";

@@ -2,16 +2,9 @@
 // @effect-diagnostics globalDate:off
 // @effect-diagnostics globalTimers:off
 /**
- * Resolves the file a chat link means, on the machine that owns the files.
- *
- * A link is opened exactly as written whenever its location exists. Agents
- * often write paths relative to the wrong directory, though, so when nothing
- * exists there the workspace is searched for files with the link's exact name,
- * and the one whose path ends most like the link is what the link meant.
- * Anything short of one provable best match is reported as a tie, as nothing
- * found, or as an incomplete search: never silently opened.
- *
- * @module EnvironmentFileLinkResolve
+ * Open existing locations as written. Search only missing locations and redirect only to a provable
+ * unique best match; ties, incomplete search, and absence must remain explicit rather than silently
+ * choosing a file.
  */
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -97,15 +90,9 @@ function isSymlinkLoop(error: unknown): boolean {
 }
 
 /**
- * Finds every file named `fileName` under `root`, including symlinks that lead
- * to regular files, which a file index does not list. `root` must be a real
- * path: every directory entered is checked to still be a directory rather
- * than a link, so the search neither enters symlinked directories nor follows
- * one swapped in while it runs, and cannot leave the workspace or loop.
- *
- * The result is a snapshot. Anything that could not be examined (a bound, an
- * unreadable or replaced directory, a link whose target cannot be inspected)
- * clears `complete`, because it may hide a better match or a tie.
+ * Use a real root and check entered directories rather than following directory links; include
+ * links to regular files. Any unreadable/replaced/bounded location makes the snapshot incomplete
+ * because it may hide a better match or tie.
  */
 export async function findFilesNamed(
   root: string,
@@ -214,12 +201,8 @@ function sharedSuffixLength(left: ReadonlyArray<string>, right: ReadonlyArray<st
 }
 
 /**
- * The candidates whose paths share the longest run of trailing segments with
- * the link. One of them is the match; several are a tie, unless exactly one of
- * them is a file the link's own turn changed, which breaks the tie. A changed
- * file never beats a candidate that matches more of the path.
- *
- * @returns The best candidates: one entry for a match, several for a tie.
+ * Changed-file evidence breaks ties only among equally strong trailing-path matches; it must never
+ * beat a candidate matching more of the authored path.
  */
 export function rankLinkCandidates(
   linkPath: string,

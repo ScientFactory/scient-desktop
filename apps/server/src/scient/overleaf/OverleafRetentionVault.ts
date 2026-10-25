@@ -1,17 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Volume identity and capability probes need the real filesystem.
 /**
- * Where a manual Overleaf connection keeps displaced manuscript copies and the
- * applier's journals (owner decision 1, coordinator contract section 8).
- *
- * - The server's own state directory, when it is on the checkout's volume and
- *   outside the checkout.
- * - Otherwise a hidden `.scient-overleaf/<environment>/<connection>` folder
- *   beside the checkout, on the project's own disk.
- *
- * Locations are recorded by the volume's UUID plus the folder's file ID, never
- * the device number, so a disk mounted again under another path is still
- * recognized. Once a connection has a recorded location, nothing is created:
- * a missing or replaced folder is reported, never silently replaced.
+ * Retained copies need the checkout's volume and must sit outside it. Persist volume UUID plus
+ * folder ID, not device number, across remounts. Once recorded, missing/replaced vaults must be
+ * reported, never silently recreated.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";

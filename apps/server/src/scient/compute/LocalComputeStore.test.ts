@@ -1113,12 +1113,8 @@ describe("LocalComputeStore storage accounting", () => {
 });
 
 /**
- * The store under the load a real session puts on it.
- *
- * A store that is right one call at a time can still be wrong when a kernel is
- * printing as fast as it can: batches interleave, two figures land at once, a
- * lifetime ends in the middle of a line. Each of these asserts what survived
- * rather than that nothing threw.
+ * Assert what survives concurrent output batches, figures, and lifetime changes; individually
+ * correct store calls or absence of exceptions cannot prove retention under load.
  */
 describe("LocalComputeStore under load", () => {
   const streamAt = (sequence: number, text: string) =>

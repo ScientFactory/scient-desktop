@@ -324,7 +324,7 @@ export interface GeneratedDocumentStoreOptions {
   readonly retention?: Partial<GeneratedDocumentRetentionPolicy> | undefined;
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
   options: GeneratedDocumentStoreOptions = {},
 ) {
@@ -923,11 +923,8 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
             ),
           ),
         );
-        // The revision directory exists but nothing references it yet, so a
-        // crash here strands an orphan the startup sweep reclaims. The
-        // retention entry is added only after the binding write commits: an
-        // adopted-but-unreferenced revision would otherwise be mistaken for
-        // retained history.
+        // Add retention only after the binding commits. A crash before binding leaves a sweepable
+        // orphan; adopting it earlier would misclassify unreferenced bytes as retained history.
         yield* commitBinding(transition.binding, "publish").pipe(
           Effect.catch((cause) =>
             fileSystem
@@ -1140,11 +1137,9 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
     );
 
   /**
-   * Every binding this authority owns, plus how many binding files could not be
-   * read or decoded. Unreadable files are reported, not fatal — the store keeps
-   * serving every binding that does decode — but the revisions an unreadable
-   * binding references are invisible to the protection set, so the count is what
-   * lets the startup sweep refuse to mistake them for orphans.
+   * Unreadable bindings leave their revisions invisible to the protection set. Report the skipped
+   * count so startup sweeping can refuse orphan reclamation while continuing to serve readable
+   * bindings.
    */
   const listPersistedBindings = Effect.gen(function* () {
     const fileNames = yield* listDirectory(bindingsDirectory);
@@ -1215,22 +1210,9 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
   );
 
   /**
-   * Rebuilds retention accounting from the durable evidence, then returns every
-   * binding whose production was interrupted.
-   *
-   * A directory the index does not list is either an orphan from a crashed
-   * publish or eviction, or — if a binding still references it — an entry lost
-   * before its index write. Referenced directories are re-adopted; the rest are
-   * reclaimed. Bindings are the only authority on what is protected, so an index
-   * that is missing, stale, or corrupt can never cause a referenced revision to
-   * be deleted.
-   *
-   * That guarantee only holds while every binding can be read: a binding this
-   * pass could not decode names revisions nothing in the protection set knows
-   * about, and with the index also unavailable they would look exactly like
-   * orphans. So a pass that skipped any binding reclaims nothing — it keeps
-   * serving, reports why, and leaves the real orphans for a later pass that can
-   * see the whole picture.
+   * Bindings alone authorize protection: re-adopt referenced revisions even if the index is
+   * missing/stale/corrupt. If any binding cannot be decoded, reclaim nothing; its unseen references
+   * could otherwise be mistaken for orphans.
    */
   const rebuildRetentionState = Effect.gen(function* () {
     const { bindings, undecodable } = yield* listPersistedBindings;

@@ -1,19 +1,7 @@
 /**
- * ThreadBackgroundLivenessService - in-memory per-thread background liveness
- * for the sidebar status pill.
- *
- * The turn can settle while native background work runs on (subagent fleets,
- * workflow runs, Monitor watch loops); the shell previously showed nothing.
- * Ingestion records task lifecycle transitions and the shell query reads the
- * derived state at mapping time — no persistence, no migration. After a
- * server restart the registry is empty until new task events arrive, which
- * matches reality: orphaned background work is not live.
- *
- * "monitoring" is reserved for watch loops (monitor tasks and background
- * shells) when they are the ONLY live work; any agent work presents as
- * "working".
- *
- * @module ThreadBackgroundLivenessService
+ * Background tasks can outlive turns and must keep shell liveness visible. Restart clears this
+ * in-memory registry; orphaned work is not live. Show monitoring only when watch loops are the sole
+ * live work, otherwise working.
  */
 import { INERT_TASK_TYPES, MONITOR_TASK_TYPES } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -25,11 +13,8 @@ interface ThreadLivenessState {
   readonly monitors: Set<string>;
 }
 
-// Classification sets are the shared contracts copies (MONITOR_TASK_TYPES:
-// watch loops — monitor tasks plus background shells, which in practice are
-// PR babysitting/log tails since pacing sleeps complete inside the turn;
-// INERT_TASK_TYPES: plan-mode bookkeeping) so this registry, ingestion's
-// agentKind stamp, and the client fold can never drift apart.
+// Use shared classification sets so ingestion's agentKind, client folds, and liveness cannot drift.
+// Monitor tasks include background shells; inert tasks are plan bookkeeping.
 
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   "completed",
@@ -43,12 +28,9 @@ export class ThreadBackgroundLivenessService extends Context.Service<
   ThreadBackgroundLivenessService,
   {
     /**
-     * Feed one task lifecycle transition. taskType may be absent on
-     * synthesized rows (workflow members, Codex children) — those count as
-     * agents. agentId marks a task launched from inside a subagent: its
-     * internal shells are covered by the owning agent's liveness, but a
-     * NESTED AGENT (agentId + agent-flavored taskType) still counts — it
-     * can outlive its parent and must keep the thread Working.
+     * Missing taskType on synthesized workflow/Codex rows counts as agent work. Internal shells are
+     * covered by their owning agent, but nested agents count separately because they can outlive
+     * that parent.
      */
     readonly recordTaskLiveness: (input: {
       readonly threadId: string;
@@ -128,8 +110,8 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
         return;
       }
 
-      // Status-free progress and metadata updates are not restarts. A delayed
-      // row after idle must not put the task back in the live set (#7128).
+      // Status-free progress/metadata is not a restart; a delayed row after idle must not re-enter
+      // the live set.
       if ((input.kind === "progress" || input.kind === "updated") && input.status === undefined) {
         const existing = stateByThreadId.get(input.threadId);
         const stillLive =

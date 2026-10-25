@@ -305,11 +305,9 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
     }),
   );
 
-  // Every shape of unit, killed while a step is staged or just before or after its
-  // native call: unchanged, recovery finishes it. With the guard changed, a first step
-  // not yet published publishes nothing; a published one is reported. A create leaves
-  // nothing in its record to show it ran, so one killed just after its call (`create`)
-  // stays for review: the file there could be another writer's.
+  // Crash probes must distinguish unpublished steps from confirmed publication. A create killed
+  // after its native call lacks durable ownership proof and stays for review because another writer
+  // could own the visible file.
   const shapes = [
     {
       name: "an edit",

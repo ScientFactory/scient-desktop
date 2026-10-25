@@ -1,9 +1,6 @@
 /**
- * `scient.plugin.json`: the manifest of a declarative Scient plugin bundle.
- * A bundle contributes only data (Agent Skills directories and remote
- * connector definitions). Capabilities, settings pages and any executable
- * entry point are reserved for built-in plugins and are rejected here.
- * See docs/internals/scient-extensions.md.
+ * Declarative bundles may supply data only. Reject executable entry points, capabilities, and
+ * settings pages reserved for built-ins; see docs/internals/scient-extensions.md.
  */
 import { isStrictSemver } from "@scientfactory/scient-skills";
 import { ExtensionsError, ScientPluginId, TrimmedNonEmptyString } from "@t3tools/contracts";

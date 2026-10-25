@@ -22,13 +22,8 @@ import {
 const make = EnvironmentFilePath.make;
 
 /**
- * A workspace and a sibling folder outside it:
- *
- *   <base>/workspace/project/reviews/inside.md
- *   <base>/workspace/project/reviews/{a,b}/dup.md
- *   <base>/workspace/project/linked-notes.md -> <base>/outside/notes.md
- *   <base>/workspace/node_modules/pkg/inside.md
- *   <base>/outside/notes.md
+ * Include an outside sibling, a linked file escaping the workspace, duplicate basenames, and nested
+ * node_modules so resolution tests distinguish location, ambiguity, and search exclusions.
  */
 const makeFixture = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;

@@ -1,10 +1,6 @@
 /**
- * Scient server composition: the Scient services, HTTP groups and provider
- * lifecycle layers that server.ts mounts into the shared server layer.
- * Shared upstream layers are passed in so every consumer builds the same
- * layer instance.
- *
- * @module ScientServerLayers
+ * Pass shared upstream layers into composition so every Scient consumer receives the same instances
+ * rather than independently constructing ownership services.
  */
 import { ServerSelfUpdateError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -153,13 +149,9 @@ export function makeScientRouteServices<
     Layer.provide(OwnedLocalEndpointRegistryLive),
   );
 
-  // The build coordinator owns its execution port the way the analysis runtime
-  // does; the toolchain probe is merged out because the HTTP group reads it too,
-  // and the managed installer sits on top of the probe so a finished install can
-  // drop its cache. The package installer is mounted once for both, because
-  // `tlmgr` serializes against a single distribution tree. All of them keep
-  // TeX's own files where TeX can read them, which on Windows may not be the
-  // profile `latexDir`.
+  // Mount one package installer for managed setup and builds so tlmgr serialization spans both.
+  // Share probe cache with HTTP/installer invalidation, and use the selected TeX-readable location
+  // rather than assuming profile latexDir.
   const ScientLatexServicesLive = Layer.mergeAll(
     LatexBuildService.layer,
     LatexTikzPreview.layer,

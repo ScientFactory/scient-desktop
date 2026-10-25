@@ -1,20 +1,7 @@
 /**
- * Scient's curated Discover catalog: remote MCP servers chosen for a
- * research-focused audience, grouped into the Settings → Extensions sections.
- *
- * Verification (2026-10-21): every `url` below answered a POST MCP `initialize`
- * with either 200 and a valid initialize result ("open") or 401 with a
- * `WWW-Authenticate` challenge ("sign-in"); candidates that failed (403, 404,
- * DNS, expired TLS, 401 without a challenge) were dropped. `registry` was
- * cross-checked against registry.modelcontextprotocol.io v0.1 search by remote
- * URL; entries without it are not listed there. Re-verify before changing an
- * entry.
- *
- * Icons are bundled, never fetched at runtime: `curatedIcons.json` maps each
- * entry `id` to the vendor's official logo or app icon (PNG at most 256 px, or
- * SVG), inlined as a `data:` URI. The JSON import ships the logos inside the
- * server bundle. The logos only identify the third-party services they belong
- * to (nominative use); Scient claims no affiliation or endorsement.
+ * Re-verify MCP initialization and registry identity before changing curated entries. Bundle
+ * official icons rather than fetching at runtime; they identify third-party services without
+ * affiliation or endorsement.
  */
 import type { DiscoverEntry, ExtensionCategory } from "@t3tools/contracts";
 

@@ -107,12 +107,9 @@ type SeededFigure = {
 };
 
 /**
- * A store over the same state directory the server under test will read.
- *
- * The asset path resolves an image from the transcript on disk, so a test can
- * seed one and then ask for it over the wire without an interpreter: the
- * transcript is the only thing that decides what may be served, and writing it
- * through the store's own API is what makes the seeded history a real one.
+ * Seed history through the store API: durable transcript records alone authorize asset serving.
+ * This permits real wire reads without substituting an interpreter or bypassing retention
+ * authority.
  */
 const withComputeStore = <A, E>(
   baseDir: string,

@@ -299,11 +299,9 @@ export function changedManagedRuntimeProviders(
 }
 
 /**
- * Apply an authoritative fetch against both the app floor and current LKG.
- * Explicit version withdrawals are allowed down to the bundled floor, while
- * missing entries, incomparable versions, and same-version repacks retain the
- * current known-good release. A same-version republish that only adds targets
- * replaces it.
+ * Allow explicit withdrawals only down to the bundled floor. Missing/incomparable entries and
+ * same-version repacks retain known-good; a same-version publication adding targets alone may
+ * replace it.
  */
 export function resolveFetchedManagedRuntimeCatalog(
   fetched: ManagedRuntimeCatalogData,
@@ -565,7 +563,7 @@ export class ManagedRuntimeCatalog extends Context.Reference<ManagedRuntimeCatal
   { defaultValue: () => bundledOnlyService },
 ) {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const layerTest = Layer.succeed(ManagedRuntimeCatalog, bundledOnlyService);
 
 export const makeWithOptions = Effect.fn("ManagedRuntimeCatalog.makeWithOptions")(
@@ -732,7 +730,7 @@ export const makeWithOptions = Effect.fn("ManagedRuntimeCatalog.makeWithOptions"
   },
 );
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = makeWithOptions();
 
 export const layer = Layer.effect(ManagedRuntimeCatalog, make);

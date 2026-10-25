@@ -1,15 +1,6 @@
 /**
- * ThreadPlanProgressService - in-memory per-thread plan progress for the
- * Working indicators (sidebar rows, in-chat working line).
- *
- * Plans are a progress annotation, not a surface of their own: the useful
- * kernel of a turn.plan.updated event is "which step is the agent on right
- * now". Ingestion records the current step here and the shell query reads it
- * at mapping time — no persistence, no migration (same pattern as
- * ThreadBackgroundLivenessService). Cleared when the turn settles or the
- * session dies, so a finished plan never lingers as stale UI.
- *
- * @module ThreadPlanProgressService
+ * Plans annotate current progress rather than forming a separate surface. Clear them when the turn
+ * settles or session dies so finished steps cannot linger as working UI.
  */
 import * as Context from "effect/Context";
 

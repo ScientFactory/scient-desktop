@@ -1,10 +1,6 @@
 /**
- * A small, typed client for Antigravity CLI's native persistent NDJSON mode.
- *
- * One process is kept warm for multiple turns. Scient writes one `user` event
- * per turn and receives `init`, `step_update`, and `result` events. The module
- * deliberately exposes Antigravity concepts rather than pretending the CLI is
- * an ACP server.
+ * Keep one native NDJSON process warm across turns; expose Antigravity concepts rather than
+ * assuming ACP semantics.
  */
 
 import type { RuntimeMode } from "@t3tools/contracts";

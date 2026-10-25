@@ -1,11 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-/** Migration 25 archived each legacy projection body once. Replace the projection
- * copy with the metadata routine reads already derive, so startup no longer
- * parses the body on every scan. A row is rewritten only when its archive holds
- * the identical body; malformed and unarchived rows stay untouched. The SQL is a
- * frozen copy of `handoffMetadataSql` at the time of this migration. */
+/**
+ * Compact only when the archive holds the identical body; leave malformed or unarchived rows
+ * untouched. Keep this SQL frozen independently of later changes to `handoffMetadataSql`.
+ */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const projection =
