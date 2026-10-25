@@ -3,6 +3,27 @@ import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 import { testGatePasses } from "./compute-ci-gate.mjs";
 
+/**
+ * Tests, fixtures and docs inside runtime directories never reach a packaged
+ * artifact: the bundlers follow imports from the app entry points, staging
+ * copies only built output, and no production module imports these paths.
+ * testUtils/ and testing/ stay relevant because build configs and runtime
+ * packages import from them (apps/server/vite.config.ts loads src/testUtils/).
+ * License, notice and SKILL Markdown is product content, and patches always
+ * apply to shipped dependencies.
+ */
+export function cannotAffectPackaging(path) {
+  if (path.startsWith("patches/")) return false;
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  if (/\.md$/i.test(name))
+    return !/^(?:licen[cs]e|copying|notice|third_party_notices|skill)\b/i.test(name);
+  return (
+    /\.(?:test|spec|testkit)\./.test(name) ||
+    /\.vitest\.config\./.test(name) ||
+    /(?:^|\/)(?:__tests__|test|tests|fixtures|testkit|docs)\//.test(path)
+  );
+}
+
 export function needsWindowsPackaging(paths) {
   const exact = new Set([
     ".github/workflows/ci.yml",
@@ -32,7 +53,9 @@ export function needsWindowsPackaging(paths) {
     "patches/",
   ];
   return paths.some(
-    (path) => exact.has(path) || prefixes.some((prefix) => path.startsWith(prefix)),
+    (path) =>
+      exact.has(path) ||
+      (prefixes.some((prefix) => path.startsWith(prefix)) && !cannotAffectPackaging(path)),
   );
 }
 
@@ -69,7 +92,7 @@ export function needsLinuxPackaging(paths) {
     (path) =>
       exact.has(path) ||
       path.endsWith("/package.json") ||
-      prefixes.some((prefix) => path.startsWith(prefix)),
+      (prefixes.some((prefix) => path.startsWith(prefix)) && !cannotAffectPackaging(path)),
   );
 }
 

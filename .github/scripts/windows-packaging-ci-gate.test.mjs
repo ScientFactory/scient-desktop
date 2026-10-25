@@ -61,6 +61,63 @@ NodeTest.test(
 );
 
 NodeTest.test(
+  "test-only and docs-only changes skip packaging; runtime inputs still select it",
+  () => {
+    const testOnly = [
+      "apps/server/src/ws.test.ts",
+      "apps/web/src/components/ChatView.browser.test.tsx",
+      "apps/desktop/src/main.spec.ts",
+      "apps/server/src/textGeneration/__tests__/prompt.ts",
+      "apps/web/test/browserSetup.ts",
+      "apps/server/src/workspace/knownWorkspaces.testkit.ts",
+      "apps/server/src/orchestration-v2/testkit/fixtures/shared.ts",
+      "packages/effect-omp-rpc/test/fixtures/v18.3.1/live-turn.jsonl",
+      "apps/desktop/src/__snapshots__/main.test.ts.snap",
+      "apps/web/latexPaging.vitest.config.ts",
+      "native/kde-snap-shot/tests/capture.rs",
+      "scripts/build-desktop-artifact.test.ts",
+      "scripts/lib/scient-synctex-build.test.ts",
+    ];
+    const docsOnly = [
+      "apps/server/README.md",
+      "scripts/lib/conversation-preview-build.md",
+      "apps/desktop/docs/notes.txt",
+      "docs/user/agents.md",
+    ];
+    for (const paths of [testOnly, docsOnly, [...testOnly, ...docsOnly]]) {
+      NodeAssert.equal(needsWindowsPackaging(paths), false, paths.join());
+      NodeAssert.equal(needsLinuxPackaging(paths), false, paths.join());
+    }
+    // Source, packaging config and product Markdown keep selecting packaging,
+    // including when mixed with test-only edits.
+    for (const path of [
+      "apps/server/src/ws.ts",
+      "apps/server/vite.config.ts",
+      "apps/server/src/testUtils/weightedShardSequencer.ts",
+      "apps/server/src/scient/skills/built-ins/latex-authoring/SKILL.md",
+      "apps/server/src/provider/pi/NOTICE.md",
+      "patches/some-dep@1.0.0.test.patch",
+    ])
+      NodeAssert.equal(needsWindowsPackaging([...testOnly, ...docsOnly, path]), true, path);
+    for (const path of [
+      "apps/desktop/src/main.ts",
+      "apps/desktop/package.json",
+      "scripts/build-desktop-artifact.ts",
+      "pnpm-lock.yaml",
+    ]) {
+      NodeAssert.equal(needsWindowsPackaging([...testOnly, path]), true, path);
+      NodeAssert.equal(needsLinuxPackaging([...testOnly, path]), true, path);
+    }
+    // Test files that packaging jobs execute stay exact inputs.
+    NodeAssert.equal(needsLinuxPackaging([".github/scripts/linux-packaging-probe.test.mjs"]), true);
+    NodeAssert.equal(
+      needsWindowsPackaging([".github/scripts/windows-packaging-ci-gate.test.mjs"]),
+      true,
+    );
+  },
+);
+
+NodeTest.test(
   "Linux qualification failure or unknown/skipped execution blocks the required Test gate",
   () => {
     for (const native of ["failure", "cancelled", "skipped", ""]) {
