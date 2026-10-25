@@ -88,7 +88,7 @@ function ChecksBody({
               key={`${index}:${check.name}`}
               className="col-span-full grid grid-cols-subgrid items-center text-xs"
             >
-              <PullRequestCheckStatusIcon status={check.status} />
+              <PullRequestCheckStatusIcon check={check} />
               <Tooltip>
                 <TooltipTrigger render={<span className="min-w-0 truncate">{check.name}</span>} />
                 <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
@@ -152,11 +152,16 @@ export function PullRequestChecksPopover({
 }) {
   const presentation = pullRequestChecksStatePresentation(checksState);
   const incompleteCount =
-    checks?.filter((check) => check.status === "pending" || check.status === "action-required")
-      .length ?? 0;
+    checks?.filter(
+      (check) =>
+        check.outcome !== "warning" &&
+        (check.status === "pending" || check.status === "action-required"),
+    ).length ?? 0;
   const failedCount =
-    checks?.filter((check) => check.status === "failure" || check.status === "cancelled").length ??
-    0;
+    checks?.filter(
+      (check) =>
+        check.outcome !== "warning" && (check.status === "failure" || check.status === "cancelled"),
+    ).length ?? 0;
   const summary = checks === undefined || stale ? null : summarizePullRequestChecks(checks);
   return (
     <Popover>

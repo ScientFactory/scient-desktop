@@ -2,8 +2,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type * as FileSystem from "effect/FileSystem";
-import type * as Path from "effect/Path";
 import * as Terminal from "effect/Terminal";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
@@ -14,7 +12,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { resolveCliCommand } from "./invocation.ts";
+import { resolveCliCommand, resolveEntryPath } from "./invocation.ts";
 
 export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
   BootService.layer({
@@ -116,13 +114,9 @@ export function formatServiceStatus(
   ].join("\n");
 }
 
-const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
+const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E, R>(
   flags: { readonly baseDir: Parameters<typeof resolveCliAuthConfig>[0]["baseDir"] },
-  run: Effect.Effect<
-    A,
-    E,
-    BootService.BootService | ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path
-  >,
+  run: Effect.Effect<A, E, R>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
@@ -148,7 +142,9 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
       Effect.gen(function* () {
         const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
         if (!result.changed) {
-          yield* Console.log(`Scient service is already installed with t3@${packageJson.version}.`);
+          yield* Console.log(
+            `Scient service is already installed with t3@${packageJson.version} (${yield* resolveEntryPath}).`,
+          );
           return;
         }
         yield* Console.log(formatServiceChange(result));
@@ -167,7 +163,9 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
       Effect.gen(function* () {
         const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
         if (!result.changed) {
-          yield* Console.log(`Scient service is already using t3@${packageJson.version}.`);
+          yield* Console.log(
+            `Scient service is already using t3@${packageJson.version} (${yield* resolveEntryPath}).`,
+          );
           return;
         }
         yield* Console.log(formatServiceChange(result));

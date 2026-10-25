@@ -190,6 +190,7 @@ describe("Oh My Pi model picker sections", () => {
     await expect.poll(() => text(_fixture).includes("Claude Opus")).toBe(false);
   });
 
+  // regression: a6a042172b test(models): drive the OMP picker sections in a browser
   it("shows a plain list when an instance has only one kind of model", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

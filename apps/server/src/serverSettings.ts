@@ -37,6 +37,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -208,6 +209,18 @@ function ensureProviderInstanceMutationAllowed(
   return Effect.void;
 }
 
+// SCIENT-FORK:START — a `null` patch entry keeps keys released clients cannot see; deletion
+// removes the whole entry.
+function withoutProjectSettingsOverrides(
+  settings: ServerSettings,
+  projectIds: ReadonlyArray<ProjectId>,
+): ServerSettings {
+  const projectSettingsOverrides = { ...settings.projectSettingsOverrides };
+  for (const projectId of projectIds) delete projectSettingsOverrides[projectId];
+  return { ...settings, projectSettingsOverrides };
+}
+// SCIENT-FORK:END
+
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   {
@@ -231,6 +244,12 @@ export class ServerSettingsService extends Context.Service<
       use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
       options?: { readonly allowUnresolvedSecrets?: boolean },
     ) => Effect.Effect<A, E | ServerSettingsError, R>;
+    // SCIENT-FORK:END
+
+    // SCIENT-FORK:START — authoritative project deletion. Server-only: no RPC exposes it.
+    readonly removeProjectSettingsOverrides: (
+      projectIds: ReadonlyArray<ProjectId>,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
     // SCIENT-FORK:END
 
     readonly streamChanges: Stream.Stream<ServerSettings>;
@@ -307,6 +326,12 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
           return applyProviderInstanceMutation(patched, mutation);
         }),
       ),
+    // SCIENT-FORK:START — authoritative project deletion
+    removeProjectSettingsOverrides: (projectIds) =>
+      updateTestSettings((currentSettings) =>
+        Effect.succeed(withoutProjectSettingsOverrides(currentSettings, projectIds)),
+      ),
+    // SCIENT-FORK:END
     withSettingsSnapshot: (use) =>
       writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
     streamChanges: Stream.empty,
@@ -905,6 +930,7 @@ const make = Effect.gen(function* () {
       FROM provider_session_runtime
       WHERE provider_name IN ('cursor', 'droid', 'grok', 'opencode')
     `.pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(
         (cause) =>
           new ServerSettingsError({
@@ -932,6 +958,7 @@ const make = Effect.gen(function* () {
           FROM projection_projects
           WHERE deleted_at IS NULL
         `.pipe(
+            NodeSqliteClient.readOnly,
             Effect.mapError(
               (cause) =>
                 new ServerSettingsError({
@@ -1508,6 +1535,15 @@ const make = Effect.gen(function* () {
           return applyProviderInstanceMutation(patched, mutation);
         }),
       ),
+    // SCIENT-FORK:START — authoritative project deletion shares the serialized settings writer.
+    removeProjectSettingsOverrides: Effect.fn("serverSettings.removeProjectSettingsOverrides")(
+      function* (projectIds: ReadonlyArray<ProjectId>) {
+        return yield* updateAndPersistSettings((current) =>
+          Effect.succeed(withoutProjectSettingsOverrides(current, projectIds)),
+        );
+      },
+    ),
+    // SCIENT-FORK:END
     withSettingsSnapshot,
     get streamChanges() {
       return materializeChanges(Stream.fromPubSub(changesPubSub));

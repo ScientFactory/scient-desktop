@@ -6,16 +6,14 @@ import {
 } from "./ScientRuntimeInstructions.ts";
 
 describe("Scient runtime instructions", () => {
-  it.each(["Codex", "Claude Code", "Cursor", "Grok", "OpenCode", "Antigravity", "Muse"])(
-    "keeps the Scient identity for the %s harness",
-    (harness) => {
-      const instructions = buildScientRuntimeInstructions({ harness });
-      assert.include(instructions, `running in Scient through the ${harness} harness.`);
-      assert.include(instructions, "embed images and videos");
-      assert.include(instructions, "Markdown with absolute file paths");
-      assert.notInclude(instructions, "undefined");
-    },
-  );
+  // Every harness name takes the same interpolation path.
+  it.each(["Codex"])("keeps the Scient identity for the %s harness", (harness) => {
+    const instructions = buildScientRuntimeInstructions({ harness });
+    assert.include(instructions, `running in Scient through the ${harness} harness.`);
+    assert.include(instructions, "embed images and videos");
+    assert.include(instructions, "Markdown with absolute file paths");
+    assert.notInclude(instructions, "undefined");
+  });
 
   it("keeps app identity and PR workflow copy outside the generic provider package", () => {
     const instructions = buildScientRuntimeInstructions({

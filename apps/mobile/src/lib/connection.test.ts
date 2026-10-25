@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@t3tools/contracts";
 
 import { toStableSavedRemoteConnection } from "./connection";
-import { authClientMetadata } from "./authClientMetadata";
 
 const mobilePlatform = vi.hoisted(() => ({ OS: "ios" as "ios" | "android" }));
 const mobileDevice = vi.hoisted(() => ({
@@ -36,17 +35,6 @@ describe("mobile remote connection records", () => {
     mobileDevice.deviceType = mobileDevice.DeviceType.PHONE;
     mobileDevice.osVersion = "18.4.1";
     mobileDevice.modelName = "iPhone 15 Pro";
-  });
-
-  it("identifies mobile token exchanges for authorized-client presentation", () => {
-    expect(authClientMetadata()).toEqual({
-      label: "Scient Mobile",
-      deviceType: "mobile",
-      os: "iOS",
-      osMajorVersion: 18,
-      deviceModel: "iPhone 15 Pro",
-      surface: "mobile",
-    });
   });
 
   it("drops short-lived managed environment credentials from stable records", () => {

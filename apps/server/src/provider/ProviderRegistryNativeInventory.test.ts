@@ -247,17 +247,24 @@ const makeHarness = Effect.fn("ProviderRegistryNativeInventory.makeHarness")(fun
   };
 });
 
-/** Lets forked registry subscribers run until `ready` holds for the published providers. */
+/**
+ * Returns the provider once `ready` holds. The registry commits its state before
+ * publishing it, so subscribing before reading cannot miss a later publication.
+ */
 const awaitProviders = Effect.fn("awaitProviders")(function* (
   registry: ProviderRegistry.ProviderRegistry["Service"],
   ready: (provider: ServerProvider | undefined) => boolean,
 ) {
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    const current = (yield* registry.getProviders)[0];
-    if (ready(current)) return current;
-    yield* Effect.yieldNow;
-  }
-  return yield* Effect.die(new Error("The registry never published the expected inventory."));
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const published = yield* Stream.toPull(
+        registry.streamChanges.pipe(Stream.filter((providers) => ready(providers[0]))),
+      );
+      const current = (yield* registry.getProviders)[0];
+      if (ready(current)) return current;
+      return (yield* published)[0][0];
+    }),
+  );
 });
 
 describe("ProviderRegistry provider-native inventory", () => {

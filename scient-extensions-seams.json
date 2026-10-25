@@ -3,6 +3,7 @@
   "owner": "ScientFactory",
   "ownedRoots": ["apps/server/src/scient/extensions", "apps/web/src/scient/extensions"],
   "ownedFiles": [
+    "apps/web/src/testUtils/shardWeights.json",
     "packages/contracts/src/scient/extensions.ts",
     "packages/contracts/src/scient/extensionRpcs.ts",
     "packages/contracts/src/scient/secrets.ts",
@@ -34,7 +35,7 @@
   "diffSignalRefinements": [
     {
       "signal": "[Cc]onnectors?\\b",
-      "changed": "\\b[Cc]onnectors\\b"
+      "changed": "(?:^|\\n)(?:[+-](?![ \\t]*(?://|/?\\*|#))|[^+\\-\\n])[^\\n]*\\b[Cc]onnectors\\b"
     },
     {
       "signal": "[Cc]onnectors?\\b",
@@ -43,6 +44,11 @@
     }
   ],
   "upstreamMounts": [
+    {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "\"src/assets/AssetAccess.test.ts\":",
+      "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."
+    },
     {
       "path": "apps/server/scripts/acp-mock-agent.ts",
       "anchor": "T3_ACP_MCP_HTTP",

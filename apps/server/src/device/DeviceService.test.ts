@@ -200,6 +200,7 @@ const fixture = Effect.fn("fixture")(function* (
       ServerSettingsService.of({
         ...customModelsTestMethods,
         updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
+        removeProjectSettingsOverrides: () => Effect.die("Unexpected project settings removal"),
         withSettingsSnapshot: (use) => Effect.flatMap(Ref.get(settings), use),
         start: Effect.void,
         ready: Effect.void,

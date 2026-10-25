@@ -117,6 +117,13 @@ To generate a fresh title from the conversation, open a thread's context menu an
 **Regenerate title**. While Scient is generating it, the action reads **Regenerating…** and cannot
 be selected again. The option is hidden when the connected environment needs a server update.
 
+To change how titles are written, add **Thread title instructions** in **Settings → General →
+Text generation**, such as a length limit or an identifier to put first. They apply to new and
+regenerated titles. Select a project to give it its own instructions. An empty project value
+disables extra instructions for that project; clearing its override restores the environment value.
+Older Scient apps cannot see project title instructions, so changing or resetting the project's
+other settings there keeps them.
+
 Agents connected through Scient can use the same server-owned metadata workflow to rename a thread,
 regenerate its title, or link and unlink a pull request. These changes appear on web, desktop, and
 mobile without requiring the originating browser to remain open.
@@ -357,6 +364,17 @@ On web and desktop, right-click a pull request link in a thread and choose
 **Link to thread** to select a different PR. Use **Unlink from thread** on the
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
+
+## Find threads
+
+On web and desktop, press `Cmd/Ctrl+K` to open the command palette and search threads across
+connected environments by title, branch, pull request, or project. Threads you open often or
+recently rank higher, and for three weeks the thread you last picked for a query ranks higher when
+you type that query again. Threads whose messages contain all your words appear below, under **In
+messages**, and open at the matching message. Message search needs at least one word of three or
+more letters, or two for Chinese, Japanese, and Korean. On mobile, the thread list search also
+lists message matches and opens them at the matching message; on an iPad with a keyboard, `Cmd+K`
+opens the same palette.
 
 ## Environment icons
 

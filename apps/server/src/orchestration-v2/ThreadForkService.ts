@@ -168,6 +168,8 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         pullRequests: input.sourceProjection.thread.pullRequests?.map(
           ({ watch: _watch, ...link }) => link,
         ),
+        // A fork is a new thread; it does not inherit how often the source was opened.
+        opens: null,
         deletedAt: null,
       };
       const transfer: OrchestrationV2ContextTransfer = {

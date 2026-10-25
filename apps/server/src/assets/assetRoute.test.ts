@@ -11,16 +11,11 @@ import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from "effect/h
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerConfig from "../config.ts";
 import { assetRouteHandler } from "../http.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
-import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
-import * as ServerSourceControlHost from "../sourceControl/ServerSourceControlHost.ts";
-import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
@@ -40,14 +35,8 @@ const testLayer = Layer.mergeAll(
     getTurnItem: () =>
       Effect.die("This fixture serves files and never reads provider tool output."),
   }),
-  GitHubRest.layerWithDependencies.pipe(
-    Layer.provide(ServerSourceControlHost.layer),
-    Layer.provide(VcsDriverRegistry.layer),
-    Layer.provideMerge(VcsProcess.layer),
-    Layer.provide(GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer))),
-    Layer.provide(ServerSettings.layerTest()),
-    Layer.provide(FetchHttpClient.layer),
-  ),
+  // The route reads host media through the drivers' own services; this fixture serves files only.
+  Layer.succeed(BuiltInDrivers.SourceControlDrivers, []),
   NodeHttpPlatform.layer,
 ).pipe(
   Layer.provideMerge(FetchHttpClient.layer),

@@ -11,10 +11,6 @@
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"
     },
-    "./githubMarkdownLinks": {
-      "types": "./src/githubMarkdownLinks.ts",
-      "import": "./src/githubMarkdownLinks.ts"
-    },
     "./orchestrationV2ForkInitialization": {
       "types": "./src/orchestrationV2ForkInitialization.ts",
       "import": "./src/orchestrationV2ForkInitialization.ts"
@@ -22,6 +18,10 @@
     "./orchestrationV2ThreadShell": {
       "types": "./src/orchestrationV2ThreadShell.ts",
       "import": "./src/orchestrationV2ThreadShell.ts"
+    },
+    "./authScopeOptions": {
+      "types": "./src/authScopeOptions.ts",
+      "import": "./src/authScopeOptions.ts"
     },
     "./orchestrationV2ThreadError": {
       "types": "./src/orchestrationV2ThreadError.ts",
@@ -62,10 +62,6 @@
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"
-    },
-    "./githubMedia": {
-      "types": "./src/githubMedia.ts",
-      "import": "./src/githubMedia.ts"
     },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",
@@ -247,17 +243,13 @@
       "types": "./src/threadTranscript.ts",
       "import": "./src/threadTranscript.ts"
     },
-    "./threadReference": {
-      "types": "./src/threadReference.ts",
-      "import": "./src/threadReference.ts"
+    "./paletteSearch": {
+      "types": "./src/paletteSearch.ts",
+      "import": "./src/paletteSearch.ts"
     },
     "./threadPullRequests": {
       "types": "./src/threadPullRequests.ts",
       "import": "./src/threadPullRequests.ts"
-    },
-    "./changeRequestUrl": {
-      "types": "./src/changeRequestUrl.ts",
-      "import": "./src/changeRequestUrl.ts"
     },
     "./composerTrigger": {
       "types": "./src/composerTrigger.ts",
@@ -279,6 +271,14 @@
       "types": "./src/pdfCitations.ts",
       "import": "./src/pdfCitations.ts"
     },
+    "./promptLinks": {
+      "types": "./src/promptLinks.ts",
+      "import": "./src/promptLinks.ts"
+    },
+    "./scientPromptLinks": {
+      "types": "./src/scientPromptLinks.ts",
+      "import": "./src/scientPromptLinks.ts"
+    },
     "./threadLinks": {
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"
@@ -290,6 +290,10 @@
     "./composerContextLegacy": {
       "types": "./src/composerContextLegacy.ts",
       "import": "./src/composerContextLegacy.ts"
+    },
+    "./composerContextLegacySend": {
+      "types": "./src/composerContextLegacySend.ts",
+      "import": "./src/composerContextLegacySend.ts"
     },
     "./composerContextClipboard": {
       "types": "./src/composerContextClipboard.ts",
@@ -411,6 +415,10 @@
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
     },
+    "./orchestrationV2BoundedSnapshot": {
+      "types": "./src/orchestrationV2BoundedSnapshot.ts",
+      "import": "./src/orchestrationV2BoundedSnapshot.ts"
+    },
     "./orchestrationV2Timeline": {
       "types": "./src/orchestrationV2Timeline.ts",
       "import": "./src/orchestrationV2Timeline.ts"
@@ -435,17 +443,13 @@
       "types": "./src/hostClassification.ts",
       "import": "./src/hostClassification.ts"
     },
-    "./dateTime": {
-      "types": "./src/dateTime.ts",
-      "import": "./src/dateTime.ts"
+    "./cliRelease": {
+      "types": "./src/cliRelease.ts",
+      "import": "./src/cliRelease.ts"
     },
     "./gitPatchPath": {
       "types": "./src/gitPatchPath.ts",
       "import": "./src/gitPatchPath.ts"
-    },
-    "./cliRelease": {
-      "types": "./src/cliRelease.ts",
-      "import": "./src/cliRelease.ts"
     },
     "./providerAuthReturnUrl": {
       "types": "./src/providerAuthReturnUrl.ts",
@@ -466,14 +470,6 @@
     "./diffCacheKey": {
       "types": "./src/diffCacheKey.ts",
       "import": "./src/diffCacheKey.ts"
-    },
-    "./mcpApp": {
-      "types": "./src/mcpApp.ts",
-      "import": "./src/mcpApp.ts"
-    },
-    "./orchestrationV2BoundedSnapshot": {
-      "types": "./src/orchestrationV2BoundedSnapshot.ts",
-      "import": "./src/orchestrationV2BoundedSnapshot.ts"
     },
     "./codexArtifactTemplates": {
       "types": "./src/codexArtifactTemplates.ts",
@@ -523,13 +519,9 @@
       "types": "./src/inlineSkills.ts",
       "import": "./src/inlineSkills.ts"
     },
-    "./authScopeOptions": {
-      "types": "./src/authScopeOptions.ts",
-      "import": "./src/authScopeOptions.ts"
-    },
-    "./composerContextLegacySend": {
-      "types": "./src/composerContextLegacySend.ts",
-      "import": "./src/composerContextLegacySend.ts"
+    "./mcpApp": {
+      "types": "./src/mcpApp.ts",
+      "import": "./src/mcpApp.ts"
     },
     "./atomicWrite": {
       "types": "./src/atomicWrite.ts",
@@ -542,14 +534,6 @@
     "./PtyAdapter": {
       "types": "./src/PtyAdapter.ts",
       "import": "./src/PtyAdapter.ts"
-    },
-    "./promptLinks": {
-      "types": "./src/promptLinks.ts",
-      "import": "./src/promptLinks.ts"
-    },
-    "./scientPromptLinks": {
-      "types": "./src/scientPromptLinks.ts",
-      "import": "./src/scientPromptLinks.ts"
     },
     "./markdownMath": {
       "types": "./src/markdownMath.ts",

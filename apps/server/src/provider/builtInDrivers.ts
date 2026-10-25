@@ -63,7 +63,8 @@ export type BuiltInUsageReadersEnv =
   | ProviderUsageReaderEnv<typeof OpenCodeDriver>
   | ProviderUsageReaderEnv<typeof AntigravityDriver>
   | ProviderUsageReaderEnv<typeof CursorDriver>
-  | ProviderUsageReaderEnv<typeof PiDriver>;
+  | ProviderUsageReaderEnv<typeof PiDriver>
+  | ProviderUsageReaderEnv<typeof MuseDriver>;
 
 /** Transcript readers precede scan readers; first duplicates win aggregation. */
 export const BUILT_IN_USAGE_DRIVERS: ReadonlyArray<
@@ -74,6 +75,7 @@ export const BUILT_IN_USAGE_DRIVERS: ReadonlyArray<
   GrokDriver,
   PiDriver,
   OpenCodeDriver,
+  MuseDriver,
   AntigravityDriver,
   CursorDriver,
 ];

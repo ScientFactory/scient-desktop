@@ -33,10 +33,7 @@ const pythonSurfaceSource = NodeFS.readFileSync(
   NodePath.join(here, "ScientComputeFileSurface.tsx"),
   "utf8",
 );
-const settingsSource = NodeFS.readFileSync(
-  NodePath.join(here, "ScientificComputingSettings.tsx"),
-  "utf8",
-);
+
 const managedRuntimeSource = NodeFS.readFileSync(
   NodePath.join(here, "ComputeManagedRuntimeControls.tsx"),
   "utf8",
@@ -46,7 +43,13 @@ const rightPanelTabsSource = NodeFS.readFileSync(
   "utf8",
 );
 
+const settingsSource = NodeFS.readFileSync(
+  NodePath.join(here, "ScientificComputingSettings.tsx"),
+  "utf8",
+);
+
 describe("compute result surface seam", () => {
+  // regression: e28be01e7d fix(compute): tighten runtime truth and authority
   it("keeps one secondary Compute-session command in the add-surface menu", () => {
     const primaryActions = rightPanelTabsSource.slice(
       rightPanelTabsSource.indexOf("const addSurfaceActions"),
@@ -57,6 +60,7 @@ describe("compute result surface seam", () => {
     expect(rightPanelTabsSource).toContain('label: "Scientific computing"');
   });
 
+  // regression: 13a5e053d2 chore(compute): checkpoint before main alignment
   it("keys standalone controls by their owner and preserves producing result generations", () => {
     // ChatView mounts the compute panel from the owned right-panel content module.
     const chat = [
@@ -77,14 +81,8 @@ describe("compute result surface seam", () => {
     expect(actions).not.toContain("operation !== null");
     expect(actions).toContain('operation === "stop"');
   });
-  it("keeps editing in the file surface and results focused on outputs", () => {
-    const resultSource = `${panelSource}\n${outputSource}`;
-    expect(resultSource).not.toContain("Submitted code");
-    expect(resultSource).not.toContain("Code that ran");
-    expect(resultSource).not.toContain("Run code in this session");
-    expect(resultSource).not.toContain("<textarea");
-  });
 
+  // regression: 13a5e053d2 chore(compute): checkpoint before main alignment
   it("captures confirmation targets and keeps compact controls able to wrap", () => {
     expect(panelSource).toContain('kind: "stop"');
     expect(panelSource).toContain("anchorRect:");
@@ -104,6 +102,7 @@ describe("compute result surface seam", () => {
     expect(panelSource).toContain("shrink-0 flex-wrap items-center gap-2");
   });
 
+  // regression: eed0733208 feat(compute): implement Phase 4 scientific workflow
   it("keeps text, errors, figures and live variables in one progressive result surface", () => {
     expect(outputSource).toContain('case "stream"');
     expect(outputSource).toContain('case "diagnostic"');
@@ -119,6 +118,7 @@ describe("compute result surface seam", () => {
     expect(outputSource).not.toContain("File \\\\s+");
   });
 
+  // regression: a015a05c01 fix: harden scientific compute workflows
   it("keeps runtime recovery contextual to the file toolbar", () => {
     expect(pythonActionsSource).toContain("resolveComputeRuntimeToolbarState");
     expect(pythonActionsSource).toContain("Scientific Computing");
@@ -142,6 +142,7 @@ describe("compute result surface seam", () => {
     expect(panelSource).toContain("!props.embedded && contextSessions.length > 0");
   });
 
+  // regression: 0b6af7cc3c feat(compute): add assisted Python setup and runtime recovery
   it("keeps the Python file toolbar usable as its panel narrows", () => {
     expect(pythonSurfaceSource).toContain("flex-wrap items-center gap-x-2 gap-y-1");
     expect(pythonSurfaceSource).toContain('className="min-w-22 flex-1"');
@@ -166,6 +167,7 @@ describe("compute result surface seam", () => {
     expect(pythonActionsSource).toContain("Switch {props.language.displayName} environment…");
   });
 
+  // regression: 9d11c5ad39 feat(compute): selectively adopt runtime UX improvements
   it("keeps file-header runtime errors to one line with copy and details", () => {
     expect(pythonActionsSource).toContain('variant="toolbar"');
     expect(pythonActionsSource).not.toContain("setupProgress ? null : capacityBlocked");
@@ -182,26 +184,7 @@ describe("compute result surface seam", () => {
     expect(managedRuntimeSource).toContain("Copy the full error");
   });
 
-  it("keeps default selection separate from installation actions using shared settings rows", () => {
-    expect(settingsSource).toContain("SettingsRow");
-    expect(settingsSource).toContain("SettingsSection");
-    expect(settingsSource).toContain('variant="plain"');
-    expect(settingsSource).toContain("SettingsSourceStrip");
-    expect(settingsSource).toContain("SettingsSourcePanel");
-    expect(settingsSource).not.toContain("Python & MATLAB");
-    expect(settingsSource).not.toContain("Advanced");
-    expect(settingsSource).toContain('title="Default runtime"');
-    expect(settingsSource).toContain("SelectTrigger");
-    expect(settingsSource).toContain("computeRuntimePickerLabel");
-    expect(settingsSource).not.toContain("<select");
-    expect(settingsSource).not.toContain("break-all");
-    expect(settingsSource).toContain("ManagedRuntimeMaintenanceMenu");
-    expect(settingsSource).toContain("ComputeInstallationRow");
-    expect(settingsSource).not.toContain("More scientific tools are coming soon");
-    expect(settingsSource).toContain('title="Scientific Computing"');
-    expect(pythonActionsSource).toContain("runtimeVersion:");
-  });
-
+  // regression: 43ee632b0c fix(compute): refresh generated files and tighten narrow layouts
   it("refreshes the current workspace tree after successful or failed executions", () => {
     expect(panelSource).toContain(
       "TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status)",
@@ -210,12 +193,14 @@ describe("compute result surface seam", () => {
     expect(panelSource).not.toContain("getProjectEntriesQueryAtom");
   });
 
+  // regression: 0b6af7cc3c feat(compute): add assisted Python setup and runtime recovery
   it("focuses a new run in the session that actually owns it", () => {
     expect(pythonActionsSource).toContain("onExecutionSubmitted(session.sessionId, executionId)");
     expect(pythonSurfaceSource).toContain("focusSessionId={focusExecution?.sessionId ?? null}");
     expect(panelSource).toContain("setSelectedSessionId(props.focusSessionId)");
   });
 
+  // regression: f82ba747e0 feat(compute): add language-neutral figure following
   it("follows only current stable figures through passive generic surfaces", () => {
     expect(panelSource).toContain("selectedIsCurrentResult");
     expect(panelSource).toContain("allowFigureFollowing={selectedIsCurrentResult}");
@@ -241,4 +226,25 @@ describe("compute result surface seam", () => {
     expect(followerSource).toContain("if (events.data?.stale || latestSession === null) return;");
     expect(followerSource).toContain("if (events.data?.stale) return null;");
   });
+});
+
+// regression: 78962a11ee feat(compute): checkpoint runtime settings and managed package improvements
+it("keeps default selection separate from installation actions using shared settings rows", () => {
+  expect(settingsSource).toContain("SettingsRow");
+  expect(settingsSource).toContain("SettingsSection");
+  expect(settingsSource).toContain('variant="plain"');
+  expect(settingsSource).toContain("SettingsSourceStrip");
+  expect(settingsSource).toContain("SettingsSourcePanel");
+  expect(settingsSource).not.toContain("Python & MATLAB");
+  expect(settingsSource).not.toContain("Advanced");
+  expect(settingsSource).toContain('title="Default runtime"');
+  expect(settingsSource).toContain("SelectTrigger");
+  expect(settingsSource).toContain("computeRuntimePickerLabel");
+  expect(settingsSource).not.toContain("<select");
+  expect(settingsSource).not.toContain("break-all");
+  expect(settingsSource).toContain("ManagedRuntimeMaintenanceMenu");
+  expect(settingsSource).toContain("ComputeInstallationRow");
+  expect(settingsSource).not.toContain("More scientific tools are coming soon");
+  expect(settingsSource).toContain('title="Scientific Computing"');
+  expect(pythonActionsSource).toContain("runtimeVersion:");
 });

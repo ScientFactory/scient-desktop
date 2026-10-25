@@ -105,16 +105,6 @@ describe("section membership", () => {
     expect(mocks.mutate).not.toHaveBeenCalled();
   });
 
-  it("moves to General without touching any catalog", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    mocks.shell.mockReturnValue({ sectionId });
-    await _fixture.actions.setThreadSection(target, null);
-    expect(mocks.mark).not.toHaveBeenCalled();
-  });
-
   it("refuses another environment's section even when it shares the thread's section id", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -130,22 +120,6 @@ describe("section membership", () => {
       expect.objectContaining({ title: "Failed to move thread to section" }),
     );
     expect(mocks.mark).not.toHaveBeenCalled();
-    expect(mocks.mutate).not.toHaveBeenCalled();
-  });
-
-  it("refuses a section of another environment without writing anything", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const result = await _fixture.actions.setThreadSection(target, {
-      environmentId: EnvironmentId.make("primary"),
-      sectionId,
-    });
-    expect(result._tag).toBe("Failure");
-    expect(
-      result._tag === "Failure" && Cause.squash(result.cause as Cause.Cause<unknown>),
-    ).toBeInstanceOf(ThreadSectionElsewhereError);
     expect(mocks.mutate).not.toHaveBeenCalled();
   });
 
@@ -166,7 +140,9 @@ describe("section membership", () => {
     expect(mocks.mutate).not.toHaveBeenCalled();
   });
 
-  it("moves a thread to General", async () => {
+  // regression: 102f5feb9d fix(sections): resolve sections against each thread's own environment
+  // regression: 6628cb42d7 fix(sections): address review of environment-local sections
+  it("moves a thread to General without touching any catalog", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -177,6 +153,7 @@ describe("section membership", () => {
       environmentId: REMOTE,
       input: { threadId: target.threadId, sectionId: null },
     });
+    expect(mocks.mark).not.toHaveBeenCalled();
   });
 
   it("skips a thread already in the section", async () => {

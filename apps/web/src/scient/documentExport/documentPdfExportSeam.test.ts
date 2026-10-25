@@ -7,6 +7,7 @@ const read = (relativePath: string) =>
   NodeFS.readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
 describe("document PDF export seams", () => {
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it("keeps the desktop host mount narrow and ahead of browser session work", () => {
     const host = read("./documentHost.tsx");
     expect(host).toContain('case "documentPagePdfRender"');
@@ -15,6 +16,7 @@ describe("document PDF export seams", () => {
     expect(host).not.toContain("renderDocumentPagePdf!(");
   });
 
+  // regression: f05e0897b7 feat: conversation export, portable import and cross-platform file opening (#397)
   it("keeps capture, validation, and publication out of the inherited server files", () => {
     const ws = [
       read("../../../../server/src/ws.ts"),

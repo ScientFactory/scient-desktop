@@ -1,59 +1,18 @@
 import { EnvironmentId, PROVIDER_SEND_TURN_MAX_FILE_BYTES } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 
+import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
-  classifyComposerAttachmentFile,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
   shouldHandleComposerAttachmentPaste,
 } from "./composerAttachmentFiles";
+
 describe("composer attachment files", () => {
-  it.each([
-    ["notes.txt", "text/plain"],
-    ["paper.pdf", "application/pdf"],
-    ["table.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
-    ["archive.zip", "application/zip"],
-    ["clip.mp4", "video/mp4"],
-    ["recording.wav", "audio/wav"],
-    ["script.sh", "application/x-sh"],
-    ["program.exe", "application/octet-stream"],
-    ["page.html", "text/html"],
-    ["unknown.custom", ""],
-    ["README", ""],
-  ])("accepts %s without a file-type allowlist", (name, type) => {
-    expect(
-      classifyComposerAttachmentFile({
-        name,
-        type,
-      }),
-    ).toBe("file");
-  });
-  it("accepts images without a native vision path as generic files", () => {
-    expect(
-      classifyComposerAttachmentFile({
-        name: "diagram.svg",
-        type: "image/svg+xml",
-      }),
-    ).toBe("file");
-    expect(
-      classifyComposerAttachmentFile({
-        name: "photo.tiff",
-        type: "image/tiff",
-      }),
-    ).toBe("file");
-    expect(
-      classifyComposerAttachmentFile({
-        name: "report.pdf",
-        type: "application/pdf",
-      }),
-    ).toBe("file");
-  });
   it("preserves text paste when an application adds a synthetic generic file", () => {
-    const file = new File(["clipboard"], "clipboard.rtf", {
-      type: "application/rtf",
-    });
+    const file = new File(["clipboard"], "clipboard.rtf", { type: "application/rtf" });
+
     expect(
       shouldHandleComposerAttachmentPaste({
         files: [file],
@@ -61,24 +20,7 @@ describe("composer attachment files", () => {
       }),
     ).toBe(false);
   });
-  it("claims non-native image pastes as files even when a caption is present", () => {
-    const images = [
-      new File(["svg"], "diagram.svg", {
-        type: "image/svg+xml",
-      }),
-      new File(["tiff"], "photo.tiff", {
-        type: "image/tiff",
-      }),
-    ];
-    for (const image of images) {
-      expect(
-        shouldHandleComposerAttachmentPaste({
-          files: [image],
-          plainText: "Image caption",
-        }),
-      ).toBe(true);
-    }
-  });
+
   it("uses the hard local limit while server config is unknown", () => {
     expect(
       fileAttachmentStagingLimit({
@@ -89,18 +31,14 @@ describe("composer attachment files", () => {
     ).toBe(PROVIDER_SEND_TURN_MAX_FILE_BYTES);
     expect(
       fileAttachmentCapabilityBlockReason({
-        files: [
-          {
-            name: "pending.zip",
-            sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES,
-          },
-        ],
+        files: [{ name: "pending.zip", sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES }],
         attachmentUploadsCapabilityKnown: false,
         supportsAttachmentUploads: false,
         maxFileAttachmentBytes: null,
       }),
     ).toBe("Waiting for the server before file attachments can send");
   });
+
   it("keeps draft-persisted file uploads when the upload capability flips off", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const image: ComposerImageAttachment = {
@@ -110,9 +48,7 @@ describe("composer attachment files", () => {
       mimeType: "image/png",
       sizeBytes: 3,
       previewUrl: "blob:photo",
-      file: new File([new Uint8Array([1, 2, 3])], "photo.png", {
-        type: "image/png",
-      }),
+      file: new File([new Uint8Array([1, 2, 3])], "photo.png", { type: "image/png" }),
     };
     const uploadingFile: ComposerFileAttachment = {
       type: "file",
@@ -120,9 +56,7 @@ describe("composer attachment files", () => {
       name: "fresh.pdf",
       mimeType: "application/pdf",
       sizeBytes: 3,
-      file: new File([new Uint8Array([1, 2, 3])], "fresh.pdf", {
-        type: "application/pdf",
-      }),
+      file: new File([new Uint8Array([1, 2, 3])], "fresh.pdf", { type: "application/pdf" }),
     };
     const hydratedFile: ComposerFileAttachment = {
       type: "file",
@@ -140,12 +74,14 @@ describe("composer attachment files", () => {
       uploadedAttachmentId: "pending-fresh-pdf",
       uploadEnvironmentId: environmentId,
     };
+
     const released = attachmentsToReleaseOnUploadCapabilityLoss([
       image,
       uploadingFile,
       hydratedFile,
       uploadedLocalFile,
     ]);
+
     expect(released.map((attachment) => attachment.id)).toEqual(["image-1", "file-uploading"]);
   });
 });

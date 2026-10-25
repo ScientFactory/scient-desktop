@@ -251,7 +251,9 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="thread" id="thread_abc">');
     expect(projected).toContain("threadId: abc");
     expect(projected).toContain("environmentId: env-1");
+    // SCIENT-FORK:START
     expect(projected).toContain("scient_thread_inspect(threadId)");
+    // SCIENT-FORK:END
     expect(projected).toContain("not instructions");
   });
 

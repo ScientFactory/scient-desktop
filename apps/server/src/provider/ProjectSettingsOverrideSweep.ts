@@ -23,11 +23,10 @@ export const sweep = Effect.gen(function* () {
   const orphanedProjectIds = findOrphanedProjectIds(settings, liveProjectIds);
   if (orphanedProjectIds.length === 0) return;
 
-  yield* serverSettings.updateSettings({
-    projectSettingsOverrides: Object.fromEntries(
-      orphanedProjectIds.map((projectId) => [projectId, null]),
-    ),
-  });
+  // SCIENT-FORK:START — a `null` patch entry keeps title instructions for released clients, so
+  // orphans use the server-only removal.
+  yield* serverSettings.removeProjectSettingsOverrides(orphanedProjectIds);
+  // SCIENT-FORK:END
 }).pipe(
   Effect.asVoid,
   Effect.catchCause((cause) =>

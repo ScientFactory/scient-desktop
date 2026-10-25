@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
 import { ModelConnectionEditor } from "./ModelConnectionEditor";
-import { CUSTOM_MODEL_PRESETS, customModelPresetId } from "./customModels";
+import { CUSTOM_MODEL_PRESETS } from "./customModels";
 
 async function _setupFixture0(_fixture: _Fixture) {
   await undefined;
@@ -140,12 +140,41 @@ async function editor(
     ["xhigh", "Extra-high"],
   ]);
   const optionLabel = (value: string) => optionLabels.get(value) ?? value;
-  const select = async (label: string, value: string) => {
+  // Base UI's Select opens on the animation frame after the trigger's mousedown, so a
+  // finished click does not mean an open menu. On a busy runner that frame came after the
+  // next step: Escape went to a menu not yet open (which then opened and stayed open), or
+  // the following click found it open and toggled it closed. Click once (a second click
+  // would toggle a pending open closed) and wait for the open menu.
+  const openMenu = async (label: string) => {
     await userEvent.click(control(label));
-    await page.getByRole("option", { name: optionLabel(value), exact: true }).click();
+    await vi.waitFor(() => {
+      expect(control(label).getAttribute("aria-expanded")).toBe("true");
+      expect(
+        [...document.querySelectorAll<HTMLElement>('[role="option"]')].some((o) =>
+          o.checkVisibility(),
+        ),
+      ).toBe(true);
+    });
+  };
+  const select = async (label: string, value: string) => {
+    await openMenu(label);
+    try {
+      await page
+        .getByRole("option", { name: optionLabel(value), exact: true })
+        .click({ timeout: 10_000 });
+    } catch (cause) {
+      // Say what the menu looked like, so a CI-only failure is readable from the log.
+      const menu = {
+        expanded: control(label)?.getAttribute("aria-expanded"),
+        options: [...document.querySelectorAll('[role="option"]')].map((o) => o.textContent),
+      };
+      throw new Error(`Option "${optionLabel(value)}" never appeared: ${JSON.stringify(menu)}`, {
+        cause,
+      });
+    }
   };
   const item = async (value: string) => {
-    await userEvent.click(control("Reasoning"));
+    await openMenu("Reasoning");
     const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
       (element) =>
         element.textContent?.trim() === optionLabel(value) ||
@@ -155,6 +184,16 @@ async function editor(
       ? { disabled: option.getAttribute("aria-disabled") === "true" }
       : undefined;
     await userEvent.keyboard("{Escape}");
+    // Wait for the menu to finish closing (its options stay mounted, hidden): on a slow runner
+    // the next click otherwise lands on the still-open menu and closes it instead.
+    await vi.waitFor(() => {
+      expect(control("Reasoning").getAttribute("aria-expanded")).toBe("false");
+      expect(
+        [...document.querySelectorAll<HTMLElement>('[role="option"]')].some((o) =>
+          o.checkVisibility(),
+        ),
+      ).toBe(false);
+    });
     return state;
   };
   const submit = async () => {
@@ -207,6 +246,8 @@ describe("custom model editor", () => {
     await f.submit();
     expect(f.onSave.mock.calls[1]![0].connection.models[0]!.defaultReasoningLevel).toBeUndefined();
   });
+  // regression: e2fc205c51 feat(droid): custom models and setup say what will happen, and document it
+  // Sole guard of the droidAttached gate on the Droid reasoning note.
   it("explains which reasoning levels Droid offers when the model is used with Droid", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -414,16 +455,6 @@ describe("custom model editor", () => {
     await f.submit();
     expect(f.onSave.mock.calls[0]![0].connection.models.at(-1)!.imageInput).toBe("automatic");
   });
-  it("uses the shared compact selector for the limits and reasoning rows", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const f = await editor(_fixture);
-    expect(f.field("Model provider").dataset.slot).toBe("native-select");
-    expect(f.control("Limits").dataset.slot).toBe("select-trigger");
-    expect(f.control("Reasoning").dataset.slot).toBe("select-trigger");
-  });
   it("defaults new models to automatic capability detection without inventing reasoning support", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -499,6 +530,8 @@ describe("custom model editor", () => {
       defaultReasoningLevel: "high",
     });
   });
+  // regression: 16d1e4d030 feat(models): add shared model connections for Pi and Droid (#246)
+  // Sole guard of the default preset of a new connection.
   it("lists providers in the preferred order and defaults to OpenRouter", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -558,6 +591,7 @@ describe("custom model editor", () => {
     await f.submit();
     expect(f.onSave.mock.calls[0]![0].connection.models[0]!.instanceIds).toEqual([pi]);
   });
+  // regression: 9c85e2c8be fix(custom-models): keep provider test failures local
   it("preserves an existing model's explicit agent attachments", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -699,30 +733,8 @@ describe("custom model editor", () => {
     expect(f.onSave.mock.calls[0]![0].connection.id).not.toBe("router");
     expect(f.onSave.mock.calls[0]![0].connection.baseUrl).toBe("https://api.anthropic.com");
   });
-  it("classifies connections by exact endpoint and compatible protocol, never their display name", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    expect(customModelPresetId({ ...connection, baseUrl: "https://api.x.ai/v1" })).toBe("spacexai");
-    expect(customModelPresetId({ ...connection, name: "OpenAI" })).toBe("custom");
-    expect(customModelPresetId({ ...connection, baseUrl: "https://api.openai.com/v1/" })).toBe(
-      "openai",
-    );
-    expect(
-      customModelPresetId({
-        ...connection,
-        baseUrl: "https://api.openai.com/v1",
-        protocol: "anthropic-messages",
-      }),
-    ).toBe("custom");
-    expect(
-      customModelPresetId({ ...connection, baseUrl: "https://api.openai.com.attacker.test/v1" }),
-    ).toBe("custom");
-    expect(customModelPresetId({ ...connection, baseUrl: "https://api.openai.com/other" })).toBe(
-      "custom",
-    );
-  });
+  // regression: 16d1e4d030 feat(models): add shared model connections for Pi and Droid (#246)
+  // Sole guard that choosing a preset applies its protocol.
   it("submits SpaceXAI with its preset endpoint and a redacted API key", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

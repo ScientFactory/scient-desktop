@@ -111,6 +111,7 @@ describe("optional project import entry point", () => {
     expect(mocks.toast).not.toHaveBeenCalled();
   });
 
+  // regression: 79f62ba2cf fix(onboarding): complete partial Scient history imports
   it("reports partial and successful history only after the import view closes", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

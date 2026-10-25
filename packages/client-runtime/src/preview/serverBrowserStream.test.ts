@@ -63,6 +63,7 @@ describe("preview stream control", () => {
     dialog: null,
   };
 
+  // SCIENT-FORK:START
   it("forwards the document navigation lease only for its own controlling viewer", () => {
     const { client, socket, onControl } = connect();
     socket.control({
@@ -84,6 +85,8 @@ describe("preview stream control", () => {
     client.stop();
   });
 
+  // SCIENT-FORK:END
+
   // SCIENT-FORK:START — the one in control learns that another window watches
   it("forwards how many other windows watch, ignoring malformed counts", () => {
     const { client, socket, onControl } = connect();
@@ -96,7 +99,6 @@ describe("preview stream control", () => {
     client.stop();
   });
   // SCIENT-FORK:END
-
   it("does not grant control from malformed dialog metadata", () => {
     const { client, socket, onControl } = connect();
     socket.message(

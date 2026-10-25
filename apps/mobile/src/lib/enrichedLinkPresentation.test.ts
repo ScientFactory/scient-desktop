@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   enrichedLinkVariantPattern,
   enrichedSkillLinkRegex,
+  enrichedThreadLinkPresentation,
   ENRICHED_INLINE_FILE_LINK_REGEX,
+  threadChipTargets,
 } from "./enrichedLinkPresentation";
 
 describe("Enriched link presentation", () => {
@@ -46,4 +49,69 @@ describe("Enriched link presentation", () => {
     expect(pattern.test(`${url}/child`)).toBe(false);
     expect(pattern.test("file:///workspace/app1Xtsx?line=34")).toBe(false);
   });
+
+  it("presents thread links as thread chips and leaves other links alone", () => {
+    expect(enrichedThreadLinkPresentation("t3-thread://v1/thread%3Aproject%3A1")).toEqual({
+      accent: "#009c96",
+      icon: { kind: "chip", name: "messages-square" },
+    });
+    for (const href of [
+      "https://github.com/example/repo/pull/7",
+      "https://example.com",
+      "t3-context://v1/thread/thread_1",
+    ]) {
+      expect(enrichedThreadLinkPresentation(href), href).toBeUndefined();
+    }
+  });
+
+  it("finds each linked thread once and resolves thread records to their own environment", () => {
+    const here = "env-here" as EnvironmentId;
+    const there = "env-there" as EnvironmentId;
+    expect(
+      threadChipTargets(
+        here,
+        "See [A](t3-thread://v1/thread_a), [A again](t3-thread://v1/thread_a) and [B](t3-thread://v1/thread_b).",
+        [
+          {
+            version: 1,
+            contextId: "thr1" as ComposerContextId,
+            kind: "thread",
+            label: "C",
+            environmentId: there,
+            threadId: "thread_c" as ThreadId,
+            title: "C",
+          },
+        ],
+      ),
+    ).toEqual([
+      { href: "t3-thread://v1/thread_a", environmentId: here, threadId: "thread_a", link: true },
+      { href: "t3-thread://v1/thread_b", environmentId: here, threadId: "thread_b", link: true },
+      {
+        href: "t3-context://v1/thread/thr1",
+        environmentId: there,
+        threadId: "thread_c",
+        link: false,
+      },
+    ]);
+    expect(threadChipTargets(here, "No links here.")).toEqual([]);
+  });
+
+  // SCIENT-FORK:START — stored environment-qualified thread links.
+  it("presents a stored environment-qualified link as a chip of its recorded thread", () => {
+    const href = "t3-thread://v1/studio%20mac/mcp%3A%281%29%2F2";
+    const chip = enrichedThreadLinkPresentation("t3-thread://v1/thread_a");
+    expect(chip).toBeDefined();
+    expect(enrichedThreadLinkPresentation(href)).toEqual(chip);
+    const markdown = `[A](t3-thread://v1/thread_a) and [Q](${href})`;
+    expect(threadChipTargets("env-here" as EnvironmentId, markdown)).toEqual([
+      {
+        href: "t3-thread://v1/thread_a",
+        environmentId: "env-here",
+        threadId: "thread_a",
+        link: true,
+      },
+      { href, environmentId: "studio mac", threadId: "mcp:(1)/2", link: false },
+    ]);
+  });
+  // SCIENT-FORK:END
 });

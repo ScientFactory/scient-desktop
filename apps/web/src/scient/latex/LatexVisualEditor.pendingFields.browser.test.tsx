@@ -128,7 +128,7 @@ describe("pending fields across outside document changes", () => {
       expect(mounted).not.toBeNull();
       expect(mounted!.view.dom.dataset.latexLoading).not.toBe("true");
     });
-    _fixture.clock ??= _fixture.cleanup.use(_fixtureFakeTimers());
+    _fixture.clock ??= _fixture.stack.use(_fixtureFakeTimers());
   };
   const advance = async (ms: number) =>
     await act(async () => {

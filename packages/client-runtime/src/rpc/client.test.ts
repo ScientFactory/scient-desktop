@@ -1,3 +1,4 @@
+// SCIENT-FORK: completion resubscription tests below drive the test clock.
 import * as TestClock from "effect/testing/TestClock";
 import {
   EnvironmentId,
@@ -338,10 +339,12 @@ describe("environment RPC", () => {
     }),
   );
 
+  // SCIENT-FORK:START — completed-stream resubscription (resubscribeOnCompleteAfter).
   it.effect("resubscribes on the same session after the server completes the stream", () =>
     Effect.gen(function* () {
       const subscriptionCount = yield* Ref.make(0);
       const received = yield* Ref.make<ReadonlyArray<number>>([]);
+      const arrivals = yield* Queue.unbounded<number>();
       const client = {
         [WS_METHODS.subscribeTerminalEvents]: () =>
           Stream.unwrap(
@@ -361,23 +364,19 @@ describe("environment RPC", () => {
         { resubscribeOnCompleteAfter: "100 millis" },
       ).pipe(
         Stream.runForEach((value) =>
-          Ref.update(received, (values) => [...values, value as unknown as number]),
+          Ref.update(received, (values) => [...values, value as unknown as number]).pipe(
+            Effect.andThen(Queue.offer(arrivals, value as unknown as number)),
+          ),
         ),
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.forkChild,
       );
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(received)).length >= 1) break;
-        yield* Effect.yieldNow;
-      }
+      yield* Queue.take(arrivals);
 
       expect(yield* Ref.get(subscriptionCount)).toBe(1);
 
       yield* TestClock.adjust("100 millis");
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(received)).length >= 2) break;
-        yield* Effect.yieldNow;
-      }
+      yield* Queue.take(arrivals);
       yield* Fiber.interrupt(subscriptionFiber);
 
       expect(yield* Ref.get(subscriptionCount)).toBe(2);
@@ -390,10 +389,12 @@ describe("environment RPC", () => {
     () =>
       Effect.gen(function* () {
         const subscriptionCount = yield* Ref.make(0);
+        const subscribed = yield* Deferred.make<void>();
         const client = {
           [WS_METHODS.subscribeTerminalEvents]: () =>
             Stream.unwrap(
               Ref.update(subscriptionCount, (count) => count + 1).pipe(
+                Effect.andThen(Deferred.succeed(subscribed, undefined)),
                 Effect.as(
                   Stream.fail(
                     new RpcClientError.RpcClientError({
@@ -419,11 +420,9 @@ describe("environment RPC", () => {
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
           Effect.forkChild,
         );
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-          if ((yield* Ref.get(subscriptionCount)) >= 1) break;
-          yield* Effect.yieldNow;
-        }
+        yield* Deferred.await(subscribed);
         yield* TestClock.adjust("1 second");
+        // Nothing should follow: give a wrongful resubscription its chance to run.
         for (let attempt = 0; attempt < 100; attempt += 1) yield* Effect.yieldNow;
         yield* Fiber.interrupt(subscriptionFiber);
 
@@ -436,10 +435,12 @@ describe("environment RPC", () => {
       const completions = 20;
       const subscriptionCount = yield* Ref.make(0);
       const defectCount = yield* Ref.make(0);
+      const subscribed = yield* Queue.unbounded<void>();
       const client = {
         [WS_METHODS.subscribeTerminalEvents]: () =>
           Stream.unwrap(
             Ref.getAndUpdate(subscriptionCount, (count) => count + 1).pipe(
+              Effect.tap(() => Queue.offer(subscribed, undefined)),
               Effect.map((count) =>
                 count < completions ? Stream.make(count) : Stream.die(new Error("boom")),
               ),
@@ -462,10 +463,10 @@ describe("environment RPC", () => {
         Effect.exit,
         Effect.forkChild,
       );
-      for (let attempt = 0; attempt < 1_000; attempt += 1) {
-        if ((yield* Ref.get(subscriptionCount)) > completions) break;
+      // Each completed subscription is followed by one spaced resubscription.
+      for (let completed = 0; completed < completions; completed += 1) {
+        yield* Queue.take(subscribed);
         yield* TestClock.adjust("100 millis");
-        yield* Effect.yieldNow;
       }
       const exit = yield* Fiber.join(subscriptionFiber);
 
@@ -474,6 +475,8 @@ describe("environment RPC", () => {
       expect(yield* Ref.get(defectCount)).toBe(1);
     }),
   );
+
+  // SCIENT-FORK:END
 
   it.effect.each(["input", "stream"] as const)(
     "does not classify %s subscription defects as expected failures",

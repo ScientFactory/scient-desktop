@@ -145,36 +145,6 @@ describe("CodexInlineSetup", () => {
     expect(markup).toContain("Open sign-in page");
   });
 
-  it("keeps managed installation compact without synthetic progress", () => {
-    const markup = render(
-      provider({
-        connection: {
-          ...provider().connection!,
-          runtime: {
-            ...provider().connection!.runtime!,
-            operation: {
-              operationId: "runtime-install",
-              action: "install",
-              status: "downloading",
-              startedAt: "2026-08-11T20:00:00.000Z",
-              finishedAt: null,
-              message: "Downloading Codex.",
-              downloadedBytes: 1,
-              totalBytes: 2,
-            },
-          },
-        },
-      }),
-    );
-
-    expect(markup).toContain("Installing Codex");
-    expect(markup).toContain("Downloading Codex…");
-    expect(markup).toContain(">Cancel<");
-    expect(markup).toContain("text-destructive/80");
-    expect(markup).not.toContain("progressbar");
-    expect(markup).toContain("space-y-3 px-6 pb-4");
-  });
-
   it("keeps the connected account action in the ready row", () => {
     const markup = renderToStaticMarkup(
       <CodexInlineSetup

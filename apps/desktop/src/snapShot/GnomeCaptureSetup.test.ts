@@ -72,7 +72,9 @@ it("preserves the replaced extension as a recoverable backup", async () => {
   await installGnomeCaptureBundle({ bundle, dataHome });
   await NodeFSP.writeFile(NodePath.join(installedPath(), "custom.txt"), "local change");
   await installGnomeCaptureBundle({ bundle, dataHome });
+  // SCIENT-FORK:START scient-branding
   const backups = NodePath.join(dataHome, "scient-next/extension-backups");
+  // SCIENT-FORK:END scient-branding
   const [backup] = await NodeFSP.readdir(backups);
   expect(
     await NodeFSP.readFile(

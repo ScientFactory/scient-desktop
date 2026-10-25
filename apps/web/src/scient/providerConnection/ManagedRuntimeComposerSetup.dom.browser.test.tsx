@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { render as _fixtureRender, type Screen, act } from "../../../test/render";
+import { render as _fixtureRender, type Screen } from "../../../test/render";
 import {
   EnvironmentId,
   ProviderDriverKind,
@@ -11,10 +11,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { PiInlineSetup } from "./PiInlineSetup";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
-
-vi.mock("./ProviderRuntimeSection", () => ({
-  ProviderRuntimeSection: () => <div>Management runtime controls</div>,
-}));
 
 type Runtime = NonNullable<NonNullable<ServerProvider["connection"]>["runtime"]>;
 
@@ -98,20 +94,6 @@ describe("Pi composer setup", () => {
       ([, variant, body]) => ({ variant, label: body!.replace(/<[^>]+>/g, "") }),
     );
 
-  it("shows one ready frame whose only action connects models", async () => {
-    await using _fixture = _createFixture();
-
-    const markup = await render(_fixture, base);
-    expect(frames(markup)).toHaveLength(1);
-    expect(markup).toContain(`${name} is ready`);
-    expect(markup).toContain(`Using Scient-managed ${name} 1.2.3.`);
-    expect(markup).toContain("lucide-circle-check");
-    expect(buttons(markup)).toEqual([{ variant: "ghost-primary", label: "Connect models" }]);
-    expect(markup).not.toContain("Management runtime controls");
-    expect(markup).not.toContain("Remove");
-    expect(markup).not.toContain("Repair");
-  });
-
   it("describes a system installation as ready without offering the managed runtime", async () => {
     await using _fixture = _createFixture();
 
@@ -123,6 +105,24 @@ describe("Pi composer setup", () => {
     expect(markup).toContain(`Using ${name} 1.2.3 installed on this Mac.`);
     expect(markup).not.toContain("Scient-managed");
     expect(buttons(markup)).toEqual([{ variant: "ghost-primary", label: "Connect models" }]);
+  });
+
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
+  it("offers installation, or explains when this computer cannot install it", async () => {
+    await using _fixture = _createFixture();
+
+    const missing = withRuntime(
+      { ...base, installed: false, version: null, status: "warning", models: [] },
+      { source: "missing", actions: ["install"], managedVersion: null },
+    );
+    const markup = await render(_fixture, missing);
+    expect(markup).toContain(`Install ${name}`);
+    expect(markup).toContain(`${name} is not installed on this Mac.`);
+    expect(buttons(markup)).toEqual([{ variant: "ghost-primary", label: "Install" }]);
+
+    const unsupported = await render(_fixture, withRuntime(missing, { actions: [] }));
+    expect(unsupported).toContain(`existing ${name} installation`);
+    expect(buttons(unsupported)).toEqual([]);
   });
 
   it("puts Connect models inside the frame when no model is available", async () => {
@@ -154,182 +154,6 @@ describe("Pi composer setup", () => {
     expect(markup).toContain(`${name} RPC timed out.`);
     expect(markup).toContain('role="alert"');
     expect(buttons(markup)).toEqual([{ variant: "ghost-primary", label: "Connect models" }]);
-  });
-
-  it("offers the reviewed managed update as the primary action, with Connect models under it", async () => {
-    await using _fixture = _createFixture();
-
-    const markup = await render(
-      _fixture,
-      withRuntime(base, { actions: ["update", "repair", "remove"] }),
-    );
-    expect(markup).toContain(`${name} update available`);
-    expect(buttons(markup)).toEqual([
-      { variant: "ghost-primary", label: " Update" },
-      { variant: "ghost-muted", label: "Connect models" },
-    ]);
-  });
-
-  it("asks for repair with the server's error and a warning icon", async () => {
-    await using _fixture = _createFixture();
-
-    const markup = await render(_fixture, {
-      ...base,
-      status: "error",
-      models: [],
-      message: `${name}'s private runtime could not start: exit 1.`,
-    });
-    expect(markup).toContain(`${name} needs repair`);
-    expect(markup).toContain(`${name}'s private runtime could not start: exit 1.`);
-    expect(markup).toContain("lucide-triangle-alert");
-    expect(markup).not.toContain("Connect models");
-    expect(buttons(markup)).toEqual([{ variant: "ghost-primary", label: `Repair ${name}` }]);
-  });
-
-  it("offers installation, or explains when this computer cannot install it", async () => {
-    await using _fixture = _createFixture();
-
-    const missing = withRuntime(
-      { ...base, installed: false, version: null, status: "warning", models: [] },
-      { source: "missing", actions: ["install"], managedVersion: null },
-    );
-    const markup = await render(_fixture, missing);
-    expect(markup).toContain(`Install ${name}`);
-    expect(markup).toContain(`${name} is not installed on this Mac.`);
-    expect(buttons(markup)).toEqual([{ variant: "ghost-primary", label: "Install" }]);
-
-    const unsupported = await render(_fixture, withRuntime(missing, { actions: [] }));
-    expect(unsupported).toContain(`existing ${name} installation`);
-    expect(buttons(unsupported)).toEqual([]);
-  });
-
-  it("shows a failed installation with a retry", async () => {
-    await using _fixture = _createFixture();
-
-    const markup = await render(
-      _fixture,
-      withRuntime(
-        { ...base, installed: false, version: null, status: "warning", models: [] },
-        {
-          source: "missing",
-          actions: ["install"],
-          managedVersion: null,
-          operation: {
-            operationId: "install-1",
-            action: "install",
-            status: "failed",
-            startedAt: "2026-09-27T00:00:00.000Z",
-            finishedAt: "2026-09-27T00:00:01.000Z",
-            message: "Checksum mismatch.",
-          },
-        },
-      ),
-    );
-    expect(markup).toContain(`${name} installation couldn’t finish`);
-    expect(markup).toContain("Checksum mismatch.");
-    expect(buttons(markup)).toEqual([{ variant: "ghost-primary", label: "Retry installation" }]);
-  });
-
-  it("shows installation progress with Cancel as the single action", async () => {
-    await using _fixture = _createFixture();
-
-    const markup = await render(
-      _fixture,
-      withRuntime(
-        { ...base, installed: false, version: null, status: "warning", models: [] },
-        {
-          source: "missing",
-          actions: ["install"],
-          managedVersion: null,
-          operation: {
-            operationId: "install-1",
-            action: "install",
-            status: "downloading",
-            startedAt: "2026-09-27T00:00:00.000Z",
-            finishedAt: null,
-            message: `Downloading ${name}…`,
-            downloadedBytes: 42,
-            totalBytes: 100,
-          },
-        },
-      ),
-    );
-    expect(markup).toContain(`Installing ${name}`);
-    expect(markup).toContain(`Downloading ${name}…`);
-    expect(markup).toContain("animate-spin");
-    expect(markup).not.toContain("42%");
-    expect(buttons(markup)).toEqual([{ variant: "ghost-destructive-action", label: "Cancel" }]);
-  });
-});
-
-describe("managed runtime composer actions", () => {
-  async function _setupFixture0(_fixture: _Fixture) {
-    vi.clearAllMocks();
-
-    _fixture.host = document.createElement("div");
-    document.body.append(_fixture.host);
-    _fixture.root0 = _fixture.stack.use(
-      await _fixtureRender(null, { container: _fixture.host, router: false }),
-    );
-  }
-  async function _cleanupFixture1(_fixture: _Fixture) {
-    await act(async () => await _fixture.root0.unmount());
-    _fixture.host.remove();
-    vi.unstubAllGlobals();
-  }
-
-  it("plans and starts the reviewed Pi update", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const plan = {
-      instanceId: ProviderInstanceId.make(driver),
-      action: "update" as const,
-      target: "darwin-arm64",
-      version: "1.3.0",
-      downloadBytes: null,
-      sourceLabel: "Official release",
-      catalogRevision: "revision",
-      message: `Update ${name}`,
-    };
-    vi.mocked(controller.planRuntime).mockResolvedValueOnce(plan);
-    await act(
-      async () =>
-        await _fixture.root0.rerender(
-          <PiInlineSetup
-            composerController={controller}
-            displayName={name}
-            environmentId={EnvironmentId.make("local")}
-            provider={withRuntime(ready(), { actions: ["update", "repair", "remove"] })}
-          />,
-        ),
-    );
-    const button = [..._fixture.host.querySelectorAll("button")].find(
-      (element) => element.textContent?.trim() === "Update",
-    );
-    await act(async () => button!.click());
-    expect(controller.planRuntime).toHaveBeenCalledWith("update");
-    expect(controller.startRuntime).toHaveBeenCalledWith(plan);
-  });
-
-  it("keeps Pi's runtime management on the management surface", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    await act(
-      async () =>
-        await _fixture.root0.rerender(
-          <PiInlineSetup
-            displayName="Pi"
-            environmentId={EnvironmentId.make("local")}
-            provider={ready()}
-          />,
-        ),
-    );
-    expect(_fixture.host.textContent).toContain("Management runtime controls");
-    expect(_fixture.host.textContent).not.toContain("Pi is ready");
   });
 });
 

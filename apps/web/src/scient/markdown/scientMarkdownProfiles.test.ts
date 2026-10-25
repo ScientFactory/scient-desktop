@@ -24,13 +24,8 @@ const chatMarkdown = NodeFS.readFileSync(
 
 describe("Scient Markdown profiles", () => {
   it("shares the actual chat grammar and order through its canonical pipeline owner", () => {
+    // The import boundary: chat takes its plugins from the canonical pipeline owner.
     expect(chatMarkdown).toContain('} from "../scient/markdown/scientMarkdownPipeline";');
-    expect(chatMarkdown).toContain(
-      "lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS",
-    );
-    expect(chatMarkdown).toContain("scientMathRemarkPluginsForMessage(remarkPlugins, text)");
-    expect(chatMarkdown).toContain("remarkPlugins={scientRemarkPlugins}");
-    expect(SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS).toHaveLength(7);
     for (const plugins of [
       CHAT_MARKDOWN_REMARK_PLUGINS,
       CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,

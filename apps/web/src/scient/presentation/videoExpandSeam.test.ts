@@ -7,6 +7,7 @@ const source = (path: string) => NodeFS.readFileSync(new URL(path, import.meta.u
 
 // Upstream replaced the video Expand button (#9253); a merge once brought it
 // back. A video keeps its own full-screen control and open link.
+// regression: 010d58e874 fix(chat): Stop reaches answers that left the screen
 it("gives answer videos no Expand action", () => {
   expect(source("../../components/media/MediaVideoPlayer.tsx")).not.toContain("onExpand");
   const chatMarkdown = source("../../components/ChatMarkdown.tsx");

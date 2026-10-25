@@ -1,7 +1,9 @@
 import type { BrowserLinkTarget } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+// SCIENT-FORK:START
 import { isSignInUrl, resolveLinkTarget } from "./browserLinkTarget";
+// SCIENT-FORK:END
 
 const settings = vi.hoisted(() => ({ browserLinkTarget: "system" as BrowserLinkTarget }));
 
@@ -22,6 +24,7 @@ describe("resolveLinkTarget", () => {
   });
 });
 
+// SCIENT-FORK:START
 describe("sign-in links", () => {
   const inApp = (url: string) =>
     resolveLinkTarget({ url, event: click, preference: "app", canOpenInApp: true });
@@ -49,3 +52,5 @@ describe("sign-in links", () => {
     expect(isSignInUrl("not a url")).toBe(false);
   });
 });
+
+// SCIENT-FORK:END

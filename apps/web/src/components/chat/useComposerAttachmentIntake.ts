@@ -45,6 +45,11 @@ import { requestConfirmDialog } from "~/confirmDialog";
 import { toastManager } from "../ui/toast";
 import { type RefObject, useRef } from "react";
 import { videoMimeType } from "../../types";
+import {
+  addPreparingComposerImages,
+  isPreparingComposerImage,
+  removePreparingComposerImages,
+} from "./preparingComposerImages";
 
 /**
  * Takes files into the draft: validates and reserves slots, compresses images, inserts
@@ -69,7 +74,6 @@ export function useComposerAttachmentIntake(input: {
   readonly composerFilesRef: ChatComposerProps["composerFilesRef"];
   readonly composerEditorRef: RefObject<ComposerPromptEditorHandle | null>;
   readonly isRevertingCheckpointRef: RefObject<boolean>;
-  readonly pendingImageCompressionsRef: RefObject<Map<string, number>>;
   readonly setThreadError: ChatComposerProps["setThreadError"];
   readonly countReservedAttachments: () => number;
   readonly addComposerImage: (image: ComposerImageAttachment) => string[];
@@ -98,7 +102,6 @@ export function useComposerAttachmentIntake(input: {
     composerFilesRef,
     composerEditorRef,
     isRevertingCheckpointRef,
-    pendingImageCompressionsRef,
     setThreadError,
     countReservedAttachments,
     addComposerImage,
@@ -163,9 +166,8 @@ export function useComposerAttachmentIntake(input: {
         stripInlineContextReferences(promptRef.current).trim().length > 0);
 
     // Validation happens synchronously so concurrent pastes see each other:
-    // accepted files reserve their attachment slots (via the pending counter)
+    // accepted files reserve their attachment slots (as preparing images)
     // before the first await, keeping the total under the limit.
-    const pendingCount = pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0;
     let reservedCount = countReservedAttachments();
     // A pick that matches a needs-reattach marker replaces it in the draft, so
     // it must not consume a slot; a draft full of markers would otherwise hit
@@ -235,18 +237,28 @@ export function useComposerAttachmentIntake(input: {
       }
     }
     setThreadError(threadId, error);
-    // Reserve all async image slots before conversion. Files are staged only
-    // with the admitted batch, so a byte-limit rejection leaves the draft intact.
-    pendingImageCompressionsRef.current.set(
-      attachmentTargetKey,
-      pendingCount + acceptedImages.length,
-    );
+    const preparingImages = acceptedImages.map((file) => ({
+      id: randomUUID(),
+      name: file.name || "image",
+      file,
+    }));
+    if (preparingImages.length > 0)
+      addPreparingComposerImages(attachmentTargetKey, preparingImages);
     if (questionAttachmentTarget)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, acceptedImages.length);
+    const preparingIds = new Set(preparingImages.map((image) => image.id));
+    // Runs at commit and again in the finally. The size check keeps an empty second run from
+    // recreating a cleared question's count: `-0` is not a decrement.
+    const releasePreparingImages = () => {
+      const removed = removePreparingComposerImages(attachmentTargetKey, preparingIds);
+      if (questionAttachmentTarget && removed.size > 0)
+        changeQuestionAttachmentPreparation(questionAttachmentTarget, -removed.size);
+    };
     const stageAttachments = async (): Promise<boolean> => {
       const staged = await stageComposerAttachmentBatch({
-        images: acceptedImages,
+        images: preparingImages,
         files: acceptedFiles,
+        isImageWanted: (id) => isPreparingComposerImage(attachmentTargetKey, id),
         readExisting: () => {
           const targetDraft = getComposerDraft(attachmentDraftTarget) ?? {
             images: [],
@@ -271,7 +283,7 @@ export function useComposerAttachmentIntake(input: {
         stillWanted: () =>
           acceptedImages.length === 0 ||
           !questionAttachmentTarget ||
-          Boolean(useQuestionAttachmentPreparation.getState().counts[questionAttachmentTarget]),
+          questionAttachmentTarget in useQuestionAttachmentPreparation.getState().counts,
         commit: ({ images, files }) => {
           let insertedAny = false;
           if (files.length > 0) {
@@ -295,9 +307,12 @@ export function useComposerAttachmentIntake(input: {
               });
             }
           }
-          const nextImages: ComposerImageAttachment[] = images.map((file) => ({
+          // Same tick as the draft insert below, with nothing that could render in between, so
+          // the strip swaps each placeholder for its ready tile under one key in one render.
+          releasePreparingImages();
+          const nextImages: ComposerImageAttachment[] = images.map(({ id, file }) => ({
             type: "image",
-            id: randomUUID(),
+            id,
             name: file.name || "image",
             mimeType: file.type,
             sizeBytes: file.size,
@@ -312,6 +327,9 @@ export function useComposerAttachmentIntake(input: {
                 : [],
           );
           const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
+          for (const image of nextImages) {
+            if (!storedImageIds.has(image.id)) URL.revokeObjectURL(image.previewUrl);
+          }
           if (storedImages.length > 0 && imageAttachmentsGetChips) {
             insertedAny =
               insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
@@ -322,20 +340,16 @@ export function useComposerAttachmentIntake(input: {
       if (staged.error !== null) setThreadError(threadId, staged.error);
       return staged.inserted;
     };
-    return await stageAttachments().finally(() => {
-      if (questionAttachmentTarget)
-        changeQuestionAttachmentPreparation(questionAttachmentTarget, -acceptedImages.length);
-      const remaining =
-        (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) - acceptedImages.length;
-      if (remaining > 0) {
-        pendingImageCompressionsRef.current.set(attachmentTargetKey, remaining);
-      } else {
-        pendingImageCompressionsRef.current.delete(attachmentTargetKey);
-      }
-    });
+    return await stageAttachments().finally(releasePreparingImages);
   };
 
   const removeComposerImage = (imageId: string) => {
+    if (removePreparingComposerImages(attachmentTargetKey, new Set([imageId])).size > 0) {
+      // Its compression finishes in the background and is dropped.
+      if (questionAttachmentTarget)
+        changeQuestionAttachmentPreparation(questionAttachmentTarget, -1);
+      return;
+    }
     const image = composerImagesRef.current.find((candidate) => candidate.id === imageId);
     const referenced = collectInlineContextIds(promptRef.current).includes(
       image ? imageContextReference(image).contextId : "",

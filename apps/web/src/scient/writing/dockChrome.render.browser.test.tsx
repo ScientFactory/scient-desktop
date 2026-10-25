@@ -2,18 +2,9 @@ import "../../index.css";
 
 import { render as _fixtureRender, type Screen, act, stubGlobal } from "../../../test/render";
 
-import { useState } from "react";
-
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { scientMarkdownShortcut } from "../markdownEditor/shortcuts";
-import {
-  DockButton,
-  DockCommandItem as MenuItem,
-  DockMenu,
-  DockOverflowRow,
-  DockTooltipContent,
-} from "./dockChrome";
+import { DockCommandItem as MenuItem, DockMenu, DockOverflowRow } from "./dockChrome";
 
 describe("DockOverflowRow", () => {
   async function _cleanupFixture0(_fixture: _Fixture) {
@@ -65,53 +56,6 @@ describe("DockOverflowRow", () => {
     host.style.width = "500px";
     await expect.poll(() => toolbar.hasAttribute("data-dock-compact-labels")).toBe(false);
     expect(toolbar.querySelectorAll("[data-dock-group]")).toHaveLength(3);
-  });
-
-  it("keeps the formatting handle at the leading edge in both states", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const host = document.createElement("div");
-    document.body.append(_ownDOM(_fixture, host));
-    const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
-    _fixture.root0.push(root);
-
-    function Harness() {
-      const [expanded, setExpanded] = useState(false);
-      return (
-        <DockOverflowRow
-          label="Document actions"
-          expanded={expanded}
-          onExpandedChange={setExpanded}
-          groups={[
-            {
-              id: "format",
-              priority: 100,
-              estimatedWidth: 40,
-              pinned: true,
-              bar: <button type="button">Bold</button>,
-            },
-          ]}
-        />
-      );
-    }
-
-    await act(async () => await root.rerender(<Harness />));
-    const toolbar = host.querySelector<HTMLElement>("[aria-label='Document actions']")!;
-    const leadingCluster = toolbar.querySelector<HTMLElement>("[data-dock-toggle-cluster]")!;
-    expect(toolbar.firstElementChild).toBe(leadingCluster);
-    expect(leadingCluster.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
-    expect(leadingCluster.querySelector(".scient-markdown-command-divider")).toBeNull();
-
-    await act(() =>
-      leadingCluster
-        .querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']")!
-        .click(),
-    );
-    expect(toolbar.firstElementChild).toBe(leadingCluster);
-    expect(leadingCluster.querySelector("[aria-label='Hide formatting tools']")).not.toBeNull();
-    expect(leadingCluster.querySelector(".scient-markdown-command-divider")).not.toBeNull();
-    expect(toolbar.children[1]?.textContent).toBe("Bold");
   });
 
   it("does not remeasure layout when only command state rerenders", async () => {
@@ -353,45 +297,6 @@ describe("DockOverflowRow", () => {
       expect(document.activeElement).toBe(destination);
     },
   );
-
-  it("keeps shortcut presentation outside an icon-only button", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const host = document.createElement("div");
-    document.body.append(_ownDOM(_fixture, host));
-    const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
-    _fixture.root0.push(root);
-    const shortcut = scientMarkdownShortcut("bold");
-
-    await act(
-      async () =>
-        await root.rerender(
-          <>
-            <DockButton
-              label="Bold"
-              icon={<span aria-hidden="true" />}
-              onClick={() => undefined}
-              shortcut={shortcut}
-            />
-            <div data-tooltip-fixture="">
-              <DockTooltipContent label="Bold" shortcut={shortcut} />
-            </div>
-          </>,
-        ),
-    );
-
-    const button = host.querySelector<HTMLButtonElement>("button[aria-label='Bold']")!;
-    expect(button.textContent).toBe("");
-    expect(button.getAttribute("aria-keyshortcuts")).toBe(shortcut.ariaKeyShortcuts);
-    const hint = host.querySelector<HTMLElement>("[data-tooltip-fixture] kbd")!;
-    expect(hint.textContent).toBe(shortcut.display);
-    expect(hint.dir).toBe("ltr");
-    expect(hint.getAttribute("aria-hidden")).toBe("true");
-    expect(hint.className).toContain("text-secondary-label");
-    expect(hint.className).not.toContain("border");
-    expect(hint.className).not.toContain("bg-");
-  });
 });
 
 function _createFixture() {

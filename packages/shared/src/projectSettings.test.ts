@@ -1,8 +1,10 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
+  // SCIENT-FORK:START
   PROVIDER_DISPLAY_ORDER,
   defaultInstanceIdForDriver,
+  // SCIENT-FORK:END
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -148,12 +150,14 @@ describe("resolveProjectSettings", () => {
       projectSettingsOverrides: {
         [projectId]: {
           providerInstances: {
+            // SCIENT-FORK:START — Scient enables more built-in drivers by default.
             ...Object.fromEntries(
               PROVIDER_DISPLAY_ORDER.map((driver) => [
                 defaultInstanceIdForDriver(driver),
                 { enabled: false },
               ]),
             ),
+            // SCIENT-FORK:END
           },
         },
       },
@@ -364,7 +368,7 @@ describe("resolveWorktreeCleanup", () => {
         [projectId]: { worktreeCleanup: { mode: "off" } },
       },
     });
-    expect(resolveWorktreeCleanup(off, projectId)).toMatchObject({
+    expect(resolveWorktreeCleanup(off, projectId)).toEqual({
       worktreeAfterDays: null,
       worktreeSettledAfterDays: null,
       worktreeOnDelete: false,
@@ -404,11 +408,15 @@ describe("resolveWorktreeCleanup", () => {
     const edited = applyServerSettingsPatch(custom, {
       worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 15 } },
     });
-    expect(resolveWorktreeCleanup(edited, null)).toMatchObject({
+    expect(resolveWorktreeCleanup(edited, null)).toEqual({
       worktreeAfterDays: 15,
       worktreeSettledAfterDays: 0,
       worktreeOnDelete: true,
       worktreeOnMerge: true,
+      worktreeUnchanged: false,
+      // SCIENT-FORK:START — Scient keeps any local file by default.
+      worktreeKeepWhen: "any-local-files",
+      // SCIENT-FORK:END
     });
     expect(
       resolveWorktreeCleanup(applyServerSettingsPatch(edited, { worktreeCleanup: null }), null)

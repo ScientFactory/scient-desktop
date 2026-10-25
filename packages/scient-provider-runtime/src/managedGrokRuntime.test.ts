@@ -2,7 +2,6 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { resolveReviewedGrokArtifact } from "./grokManifest.ts";
@@ -28,6 +27,7 @@ describe("ManagedGrokRuntime conformance", () => {
     );
   });
 
+  // regression: 9f813b1745 test(provider-lifecycle): characterize existing behavior (#153)
   it("passes the reviewed xAI artifact through shared verification and activation", async () => {
     const artifact = resolveReviewedGrokArtifact({ platform: "darwin", arch: "arm64" });
     expect(artifact).toBeDefined();

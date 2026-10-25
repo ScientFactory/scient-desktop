@@ -108,6 +108,7 @@ function setup() {
   discovery.register.mockReset().mockResolvedValue(AsyncResult.success(undefined));
 }
 
+// regression: e37a7a4f71 fix(web): hosted app skips setup and recommends signing in (#19680)
 // The first added computer replaces this screen with the app, so every
 // registration has to start in the same pass, after all health checks finish.
 it("adds every linked computer only after discovery finishes checking them", async () => {

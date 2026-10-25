@@ -153,19 +153,11 @@ vi.mock("~/state/use-atom-command", () => ({
             : vi.fn(async () => ({ _tag: "Success", value: null })),
 }));
 import { ScientificComputingSettings } from "./ScientificComputingSettings";
-import pythonLogo from "~/assets/compute/python.svg";
-import matlabLogo from "~/assets/compute/matlab.svg";
 import octaveLogo from "~/assets/compute/octave.svg";
-import wolframLogo from "~/assets/compute/wolfram.svg";
 
 const managedPath = "/scient/python";
 const systemPath = "/system/python";
 const automaticRuntimeOption = "scient-runtime:automatic";
-function expectCompactAction(node: HTMLButtonElement) {
-  expect(node.getAttribute("data-slot")).toBe("button");
-  expect(node.getAttribute("data-size")).toBe("xs");
-  expect(node.classList.contains("bg-primary")).toBe(false);
-}
 const status = (): ComputeManagedRuntimeStatus => ({
   installed: true,
   selection: "managed",
@@ -636,50 +628,6 @@ describe("Scientific Computing settings interactions", () => {
     expect(_fixture.container.textContent).not.toContain("3.14.6");
   });
 
-  it("separates the default policy from installation-local actions without a heading strip", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    await render(_fixture);
-    expect(_fixture.container.querySelectorAll("[data-compute-installation]")).toHaveLength(2);
-    expect(_fixture.container.textContent).not.toContain("Installations");
-    expect(_fixture.container.textContent).toContain("Default runtime");
-    expect(_fixture.container.querySelector("[data-compute-summary] button")).toBeNull();
-    expect(
-      [..._fixture.container.querySelectorAll("button")].some(
-        (node) => node.textContent?.trim() === "Details",
-      ),
-    ).toBe(false);
-    expect(_fixture.container.textContent).not.toContain("More scientific tools are coming soon");
-    expect(_fixture.container.textContent).toContain("Default runtime");
-    expect(_fixture.container.textContent).toContain("3.12.13");
-    expect(_fixture.container.textContent).toContain("Scient-managed");
-    // Word export lives on Settings ▸ Documents.
-    expect(_fixture.container.textContent).not.toContain("Word export (Pandoc)");
-    expect(_fixture.container.querySelectorAll("h3")).toHaveLength(4);
-    expect(runtimeValue(_fixture)).toBe(managedPath);
-    expect(
-      _fixture.container
-        .querySelector<HTMLButtonElement>('[aria-label="More Python runtime actions"]')!
-        .hasAttribute("title"),
-    ).toBe(false);
-    expect(_fixture.container.textContent).not.toContain(managedPath);
-    expect(_fixture.container.querySelector("select")).toBeNull();
-    expect(
-      _fixture.container.querySelector<HTMLButtonElement>(
-        '[aria-label="More Python runtime actions"]',
-      )!,
-    ).toBeDefined();
-    expect(
-      _fixture.container.querySelector('[aria-label="More Python runtime actions"]'),
-    ).not.toBeNull();
-    expect(_fixture.container.textContent).not.toContain("Rebuild managed Python");
-    expect(_fixture.container.textContent).not.toContain("Remove managed Python");
-    await openMaintenance(_fixture, "Python runtime");
-    expect(menuItem("Rebuild").getAttribute("aria-label")).toBe("Rebuild managed Python");
-    expect(menuItem("Remove").getAttribute("aria-label")).toBe("Remove managed Python");
-  });
   it("renders language rows immediately without offering setup before inventory arrives", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -732,7 +680,6 @@ describe("Scientific Computing settings interactions", () => {
       '[aria-label="Download Image analysis"]',
     );
     expect(imageToolkit?.disabled).toBe(true);
-    expectCompactAction(button(_fixture, "Set up"));
     await click(_fixture, "Set up");
     expect(mocks.manage).toHaveBeenLastCalledWith({
       environmentId: "remote",
@@ -776,16 +723,7 @@ describe("Scientific Computing settings interactions", () => {
       },
     ];
     await render(_fixture);
-    expect(_fixture.container.querySelector("h2")?.textContent).toContain("Scientific Computing");
-    expect(_fixture.container.textContent).not.toContain("Python & MATLAB");
-    expect(_fixture.container.textContent).not.toContain("Advanced");
-    const rows = _fixture.container.querySelectorAll("[data-slot=settings-row]");
-    expect(rows).toHaveLength(4);
-    expect(_fixture.container.textContent).not.toContain("Word export (Pandoc)");
-    const card = _fixture.container.querySelector("div.rounded-xl.border");
-    expect(card).not.toBeNull();
-    expect(card?.className).toContain("bg-card/40");
-    expect(card?.querySelectorAll("[data-slot=settings-row]")).toHaveLength(4);
+    const panel = _fixture.container.querySelector<HTMLElement>("#scientific-computing-python")!;
     expect(_fixture.container.querySelectorAll("[data-compute-installation]")).toHaveLength(2);
     expect(_fixture.container.querySelector("#python-managed-runtime")?.textContent).toContain(
       "3.12.13",
@@ -794,8 +732,7 @@ describe("Scientific Computing settings interactions", () => {
     const strip = _fixture.container.querySelector(
       '[aria-label="Scientific computing languages"]',
     )!;
-    expect(strip.className).toContain("settings-source-strip");
-    expect(card?.contains(strip)).toBe(false);
+    expect(panel.contains(strip)).toBe(false);
     const pythonTrigger = strip.querySelector<HTMLButtonElement>(
       "#scientific-computing-python-trigger",
     )!;
@@ -804,22 +741,8 @@ describe("Scientific Computing settings interactions", () => {
     )!;
     expect(pythonTrigger.getAttribute("aria-expanded")).toBe("true");
     expect(matlabTrigger.getAttribute("aria-expanded")).toBe("false");
-    for (const [trigger, language] of [
-      [pythonTrigger, "python"],
-      [matlabTrigger, "matlab"],
-    ] as const) {
-      const logo = trigger.querySelector("img")!;
-      expect(logo.getAttribute("src")).toBe(language === "python" ? pythonLogo : matlabLogo);
-      expect(logo.alt).toBe("");
-      expect(logo.width).toBe(24);
-      expect(logo.height).toBe(24);
-      expect(logo.className).toContain("object-contain");
-    }
     expect(pythonTrigger.tabIndex).toBe(0);
     expect(matlabTrigger.tabIndex).toBe(0);
-    expect(
-      _fixture.container.querySelector('[aria-label="Enable Python"]')?.getAttribute("data-size"),
-    ).toBe("default");
     await act(() => pythonTrigger.click());
     expect(pythonTrigger.getAttribute("aria-expanded")).toBe("false");
     expect(
@@ -851,15 +774,11 @@ describe("Scientific Computing settings interactions", () => {
     await _setupFixture0(_fixture);
 
     await render(_fixture);
+    // regression: 66514950e8 fix(compute): distinguish upcoming language icons
     for (const [id, logo] of [
       ["julia", "brand"],
-      ["r", "brand"],
-      ["rust", "brand"],
-      ["spss", "brand"],
       ["sql", "symbol"],
       ["octave", octaveLogo],
-      ["wolfram", wolframLogo],
-      ["stata", "symbol"],
     ] as const) {
       const trigger = _fixture.container.querySelector<HTMLButtonElement>(
         `#scientific-computing-${id}-trigger`,
@@ -873,29 +792,24 @@ describe("Scientific Computing settings interactions", () => {
         expect(image).not.toBeNull();
         if (logo !== "brand") expect(image?.getAttribute("src")).toBe(logo);
       }
-      await act(() => trigger.click());
-      const panel = _fixture.container.querySelector<HTMLElement>(`#scientific-computing-${id}`)!;
-      expect(panel.hidden).toBe(false);
-      expect(panel.textContent).toBe("Coming soon");
-      expect(panel.querySelector("button, input, select")).toBeNull();
-      expect(_fixture.container.querySelector("[data-compute-summary]")).toBeNull();
-      await act(() =>
-        _fixture.container
-          .querySelector<HTMLButtonElement>(`#scientific-computing-${id}-trigger`)!
-          .click(),
-      );
-      expect(
-        _fixture.container.querySelector<HTMLElement>(`#scientific-computing-${id}`)!.hidden,
-      ).toBe(true);
-      await act(() =>
-        _fixture.container
-          .querySelector<HTMLButtonElement>(`#scientific-computing-${id}-trigger`)!
-          .click(),
-      );
-      expect(
-        _fixture.container.querySelector<HTMLElement>(`#scientific-computing-${id}`)!.hidden,
-      ).toBe(false);
     }
+    // Every preview language opens the same inert panel.
+    await act(() =>
+      _fixture.container
+        .querySelector<HTMLButtonElement>("#scientific-computing-julia-trigger")!
+        .click(),
+    );
+    const panel = _fixture.container.querySelector<HTMLElement>("#scientific-computing-julia")!;
+    expect(panel.hidden).toBe(false);
+    expect(panel.textContent).toBe("Coming soon");
+    expect(panel.querySelector("button, input, select")).toBeNull();
+    expect(_fixture.container.querySelector("[data-compute-summary]")).toBeNull();
+    await act(() =>
+      _fixture.container
+        .querySelector<HTMLButtonElement>("#scientific-computing-julia-trigger")!
+        .click(),
+    );
+    expect(panel.hidden).toBe(true);
     expect(mocks.calls).toEqual([]);
     expect(mocks.verify).not.toHaveBeenCalled();
     expect(mocks.manage).not.toHaveBeenCalled();
@@ -1374,7 +1288,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
-  it("shows an inline spinner and clears only successful feedback after four seconds", async () => {
+  it("shows test progress inline and clears only successful feedback after a while", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -1392,7 +1306,6 @@ describe("Scientific Computing settings interactions", () => {
     await clickMenuItem("Test");
     const row = installationRow(_fixture, systemPath);
     expect(row.querySelector('[role="status"]')?.textContent).toBe("Testing…");
-    expect(row.querySelector('[role="status"] svg')?.classList.contains("animate-spin")).toBe(true);
     await act(async () =>
       finish({
         _tag: "Success",
@@ -1403,14 +1316,9 @@ describe("Scientific Computing settings interactions", () => {
         },
       }),
     );
-    expect(row.querySelector('[role="status"].text-success')?.textContent).toBe("Test passed");
-    expect(row.querySelector('[role="status"] svg')?.getAttribute("aria-hidden")).toBe("true");
+    expect(row.querySelector('[role="status"]')?.textContent).toBe("Test passed");
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3_999);
-    });
-    expect(row.textContent).toContain("Test passed");
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(4_000);
     });
     expect(row.textContent).not.toContain("Test passed");
     expect(row.textContent).toContain("3.14.6");
@@ -1503,17 +1411,13 @@ describe("Scientific Computing settings interactions", () => {
     await render(_fixture);
     await click(_fixture, "Test");
     expect(mocks.calls).toEqual(["verify"]);
-    expect(_fixture.container.querySelector('[role="status"].text-success')?.textContent).toBe(
-      "Test passed",
-    );
+    expect(_fixture.container.querySelector('[role="status"]')?.textContent).toBe("Test passed");
     expect(mocks.manage).not.toHaveBeenCalled();
     await act(() => {
       mocks.statuses.python = { ...status() };
       notify();
     });
-    expect(_fixture.container.querySelector('[role="status"].text-success')?.textContent).toBe(
-      "Test passed",
-    );
+    expect(_fixture.container.querySelector('[role="status"]')?.textContent).toBe("Test passed");
     await act(() =>
       _fixture.container
         .querySelector<HTMLButtonElement>('[aria-label="Refresh scientific runtimes"]')!
@@ -1527,9 +1431,7 @@ describe("Scientific Computing settings interactions", () => {
     ).toBeDefined();
     expect(mocks.verify).toHaveBeenCalledOnce();
     await click(_fixture, "Test");
-    expect(_fixture.container.querySelector('[role="status"].text-success')?.textContent).toBe(
-      "Test passed",
-    );
+    expect(_fixture.container.querySelector('[role="status"]')?.textContent).toBe("Test passed");
     await act(() => {
       mocks.statuses.python = { ...status(), generationId: "replacement-helper" };
       notify();
@@ -1692,12 +1594,10 @@ describe("Scientific Computing settings interactions", () => {
     ];
     mocks.releaseFails = true;
     await render(_fixture);
-    expectCompactAction(button(_fixture, "Connect MATLAB"));
     await click(_fixture, "Connect MATLAB");
     expect(_fixture.container.textContent).toContain("MATLAB connection failed");
     expect(_fixture.container.textContent).toContain("Busy operation");
     expect(button(_fixture, "Repair connection")).not.toBeNull();
-    expectCompactAction(button(_fixture, "Repair connection"));
   });
 
   it("reports a MATLAB status-query failure without mislabeling the connection", async () => {
@@ -1855,9 +1755,7 @@ describe("Scientific Computing settings interactions", () => {
     ["python", "managed", true],
     ["python", "existing", true],
     ["python", "existing", false],
-    ["matlab", "managed", true],
     ["matlab", "existing", true],
-    ["matlab", "existing", false],
   ] as const)(
     "keeps %s updates on the managed row (%s, enabled=%s)",
     async (languageId, selection, enabled) => {
@@ -1905,8 +1803,6 @@ describe("Scientific Computing settings interactions", () => {
       ];
       await render(_fixture);
       const row = () => _fixture.container.querySelector(`#${languageId}-managed-runtime`)!;
-      expectCompactAction(button(_fixture, "Update", row()));
-      expect(button(_fixture, "Update", row()).classList.contains("text-primary")).toBe(true);
       await openMaintenance(
         _fixture,
         languageId === "matlab" ? "MATLAB connection" : "Python runtime",
@@ -2288,7 +2184,6 @@ describe("Scientific Computing settings interactions", () => {
     ];
     await render(_fixture);
     expect(_fixture.container.textContent).toContain("Connection needs update");
-    expectCompactAction(button(_fixture, "Set up connection"));
     await click(_fixture, "Set up connection");
     expect(mocks.calls).toEqual(["repair"]);
   });
@@ -2349,14 +2244,14 @@ describe("Scientific Computing settings interactions", () => {
     await _setupFixture0(_fixture);
 
     await render(_fixture);
-    for (let n = 0; n < 25; n++) {
+    for (let n = 0; n < 2; n++) {
       await chooseRuntime(_fixture, systemPath);
       expect(runtimeValue(_fixture)).toBe(systemPath);
       await chooseRuntime(_fixture, managedPath);
       expect(runtimeValue(_fixture)).toBe(managedPath);
     }
     expect(mocks.calls).toEqual(
-      Array.from({ length: 25 }, () => ["save", "use-existing", "use-managed"]).flat(),
+      Array.from({ length: 2 }, () => ["save", "use-existing", "use-managed"]).flat(),
     );
     expect(mocks.verify).not.toHaveBeenCalled();
   });

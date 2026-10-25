@@ -26,6 +26,7 @@ describe("code block actions", () => {
     return host.querySelector<HTMLElement>("[aria-pressed]")!;
   }
 
+  // regression: cff39eeba2 fix(chat): Stop shows what arrived; code blocks and thread-read rows match upstream
   it("shows the wrap toggle on while lines wrap, as upstream's code block does", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -37,6 +38,7 @@ describe("code block actions", () => {
     expect((await render(_fixture, false)).dataset.variant).toBe("ghost-muted");
   });
 
+  // regression: 010d58e874 fix(chat): Stop reaches answers that left the screen; thoughts read quietly when expanded
   it("draws the copy button as upstream's: muted, with the morphing icon", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

@@ -137,6 +137,7 @@ import {
 import { V2EventTimelineRow } from "./TimelineV2EventRow";
 import { useTimelinePositionRestore } from "./useTimelinePositionRestore";
 import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
+import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
 
 function timelineListStateFor(identity: string): {
@@ -208,7 +209,9 @@ interface MessagesTimelineProps {
   onOpenWorktreeSetupTerminal?: (terminalId: string) => void;
   isPreparingWorktree?: boolean;
   isCompacting?: boolean;
-  awaitingUser?: boolean;
+  awaitingUser?: "approval" | "input" | null;
+  /** Which request is waiting, so a second one of the same kind is announced too. */
+  awaitingRequestId?: string | null;
   footer?: ReactNode;
 
   listRef: React.RefObject<LegendListRef | null>;
@@ -217,11 +220,17 @@ interface MessagesTimelineProps {
   contextTransfers?: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined;
   // SCIENT-FORK:END
   latestRun: TimelineLatestRun | null;
+  /** The run the screen reader announcer follows; see announcedRun. */
+  announcedRun?: { readonly runId: RunId; readonly status: TimelineLatestRun["status"] } | null;
+  /** See isDetailBehindShell. */
+  detailBehindShell?: boolean;
   runningRunId?: RunId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   routeThreadKey: string;
   displayThreadKey?: string;
   paintOnly?: boolean;
+  /** Off where another region already speaks the thread's status, like a subagent's bar. */
+  announceTurnStatus?: boolean;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   parentThreadLink?: {
@@ -339,7 +348,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onOpenWorktreeSetupTerminal,
   isPreparingWorktree = false,
   isCompacting = false,
-  awaitingUser = false,
+  awaitingUser = null,
+  awaitingRequestId = null,
   listRef,
   timelineEntries,
   // SCIENT-FORK:START
@@ -351,11 +361,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
   findNavigationId = 0,
   findPositionReaderRef,
   latestRun,
+  announcedRun = null,
+  detailBehindShell = false,
   runningRunId = null,
   turnDiffSummaries,
   routeThreadKey,
   displayThreadKey,
   paintOnly = false,
+  announceTurnStatus = true,
   onOpenTurnDiff,
   onOpenThread,
   parentThreadLink = null,
@@ -733,6 +746,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const onRevealFinished = (promptId: string) => {
     setFinishedRevealPromptId(promptId);
     onFollowFinished?.(promptId);
+    // The saved reading position records a follow still going: save it again
+    // now, rather than at the reader's next scroll or the next content change.
+    scheduleBookkeepingRef.current();
   };
   const revealActive =
     readingFollowPromptId !== null && finishedRevealPromptId !== readingFollowPromptId;
@@ -1258,10 +1274,22 @@ const ConversationTimeline = memo(function ConversationTimeline({
     isRevertingCheckpoint,
     backgroundWorktreeSetup,
     activeTurnInProgress,
-    awaitingUser,
+    awaitingUser: awaitingUser !== null,
     isPreparingWorktree,
     latestRunId: latestRun?.runId ?? null,
   };
+  // Mounted in both the empty and filled timeline so a thread's first turn
+  // starts from a baseline instead of a fresh, silent region.
+  const activityAnnouncer = (
+    <ThreadActivityAnnouncer
+      threadKey={paintOnly || !announceTurnStatus ? null : listIdentityKey}
+      status={awaitingUser ?? (isWorking ? "working" : "idle")}
+      requestId={awaitingRequestId}
+      runId={announcedRun?.runId ?? null}
+      runStatus={announcedRun?.status ?? null}
+      detailBehind={detailBehindShell}
+    />
+  );
   const listHeaderLeadingContent =
     parentThreadLink === null ? (
       topFadeEnabled ? (
@@ -1362,108 +1390,119 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
     // SCIENT-FORK:END
     if (hideEmptyPlaceholder) {
-      return <div className="h-full min-h-0 bg-background" data-timeline-loading="true" />;
+      return (
+        <>
+          {activityAnnouncer}
+          <div className="h-full min-h-0 bg-background" data-timeline-loading="true" />
+        </>
+      );
     }
     return (
-      <div
-        className="scient-reading-ui flex h-full items-center justify-center ps-(--chat-lane-inset-start) pe-(--chat-lane-inset-end)"
-        style={{ paddingBottom: emptyPlaceholderInset }}
-      >
-        <p className="text-placeholder text-sm">Send a message to start the conversation.</p>
-      </div>
+      <>
+        {activityAnnouncer}
+        <div
+          className="scient-reading-ui flex h-full items-center justify-center ps-(--chat-lane-inset-start) pe-(--chat-lane-inset-end)"
+          style={{ paddingBottom: emptyPlaceholderInset }}
+        >
+          <p className="text-placeholder text-sm">Send a message to start the conversation.</p>
+        </div>
+      </>
     );
   }
 
   return (
-    <MarkdownFindContext value={findActive}>
-      <TimelineRowActivityCtx value={activityState}>
-        <div className="scient-reading-ui h-full min-h-0">
-          <TooltipScrollDismissArea
-            ref={setTimelineViewportElement}
-            className="relative h-full min-h-0"
-            data-assistant-citation-viewport="true"
-            // SCIENT-FORK:START — Legend coalesces public scroll callbacks into a later frame.
-            // Capture the native event now, before a same-frame thread switch can replace rows.
-            onScrollCapture={(event) => {
-              if (event.target === listRef.current?.getScrollableNode()) saveReadingPosition();
-            }}
-            // SCIENT-FORK:END
-          >
-            {onCiteAssistantText && citationThreadRef ? (
-              <AssistantSelectionToolbar
-                viewport={timelineViewportElement}
-                threadRef={citationThreadRef}
-                onCite={onCiteAssistantText}
+    <>
+      {activityAnnouncer}
+      <MarkdownFindContext value={findActive}>
+        <TimelineRowActivityCtx value={activityState}>
+          <div className="scient-reading-ui h-full min-h-0">
+            <TooltipScrollDismissArea
+              ref={setTimelineViewportElement}
+              className="relative h-full min-h-0"
+              data-assistant-citation-viewport="true"
+              // SCIENT-FORK:START — Legend coalesces public scroll callbacks into a later frame.
+              // Capture the native event now, before a same-frame thread switch can replace rows.
+              onScrollCapture={(event) => {
+                if (event.target === listRef.current?.getScrollableNode()) saveReadingPosition();
+              }}
+              // SCIENT-FORK:END
+            >
+              {onCiteAssistantText && citationThreadRef ? (
+                <AssistantSelectionToolbar
+                  viewport={timelineViewportElement}
+                  threadRef={citationThreadRef}
+                  onCite={onCiteAssistantText}
+                />
+              ) : null}
+              <LegendList<MessagesTimelineRow>
+                ref={setTimelineList}
+                data={rows}
+                extraData={listExtraData}
+                keyExtractor={keyExtractor}
+                getItemType={getItemType}
+                renderItem={renderItem}
+                estimatedItemSize={90}
+                // SCIENT-FORK:START — the restore places the list (chat/readerScrolling.ts).
+                initialScrollAtEnd={false}
+                // SCIENT-FORK:END
+                // Legend needs a data refresh to mount new pins without a scroll event.
+                dataVersion={readyCitationRequest?.key ?? listIdentityKey}
+                {...(alwaysRender ? { alwaysRender } : {})}
+                // SCIENT-FORK:START — the same thread can temporarily lose its loaded rows.
+                // A remounted list must restore its latest receipt, not assume the old DOM
+                // survived.
+                onLoad={() => {
+                  onCitationListLoad();
+                  setFindListReady(true);
+                  setListState(timelineListStateFor(listIdentityKey));
+                  setPositionedThreadKey(null);
+                  setReadingListLoaded(true);
+                }}
+                // SCIENT-FORK:END
+                {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+                contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
+                // SCIENT-FORK:START — never pins to the end; content position is not kept during
+                // any restore; scrolls, row sizes and header/footer measurements run the
+                // same per-frame bookkeeping. A footer is metadata, never the reading end.
+                maintainScrollAtEnd={false}
+                maintainVisibleContentPosition={
+                  findActive || citationPositioning || restoringThreadPosition
+                    ? false
+                    : maintainVisibleContentPosition
+                }
+                maintainScrollAtEndThreshold={1}
+                onScroll={handleScrollOnNextFrame}
+                onItemSizeChanged={handleScrollOnNextFrame}
+                onMetricsChange={handleScrollOnNextFrame}
+                // SCIENT-FORK:END
+                className={cn(
+                  "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+                  topFadeEnabled && "topbar-scroll-fade",
+                )}
+                ListHeaderComponent={listHeader}
+                ListFooterComponent={timelineListFooter}
               />
-            ) : null}
-            <LegendList<MessagesTimelineRow>
-              ref={setTimelineList}
-              data={rows}
-              extraData={listExtraData}
-              keyExtractor={keyExtractor}
-              getItemType={getItemType}
-              renderItem={renderItem}
-              estimatedItemSize={90}
-              // SCIENT-FORK:START — the restore places the list (chat/readerScrolling.ts).
-              initialScrollAtEnd={false}
-              // SCIENT-FORK:END
-              // Legend needs a data refresh to mount new pins without a scroll event.
-              dataVersion={readyCitationRequest?.key ?? listIdentityKey}
-              {...(alwaysRender ? { alwaysRender } : {})}
-              // SCIENT-FORK:START — the same thread can temporarily lose its loaded rows.
-              // A remounted list must restore its latest receipt, not assume the old DOM
-              // survived.
-              onLoad={() => {
-                onCitationListLoad();
-                setFindListReady(true);
-                setListState(timelineListStateFor(listIdentityKey));
-                setPositionedThreadKey(null);
-                setReadingListLoaded(true);
-              }}
-              // SCIENT-FORK:END
-              {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-              contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-              // SCIENT-FORK:START — never pins to the end; content position is not kept during
-              // any restore; scrolls, row sizes and header/footer measurements run the
-              // same per-frame bookkeeping. A footer is metadata, never the reading end.
-              maintainScrollAtEnd={false}
-              maintainVisibleContentPosition={
-                findActive || citationPositioning || restoringThreadPosition
-                  ? false
-                  : maintainVisibleContentPosition
-              }
-              maintainScrollAtEndThreshold={1}
-              onScroll={handleScrollOnNextFrame}
-              onItemSizeChanged={handleScrollOnNextFrame}
-              onMetricsChange={handleScrollOnNextFrame}
-              // SCIENT-FORK:END
-              className={cn(
-                "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
-                topFadeEnabled && "topbar-scroll-fade",
-              )}
-              ListHeaderComponent={listHeader}
-              ListFooterComponent={timelineListFooter}
-            />
-            <TimelineMinimap
-              items={minimapItems}
-              hasPersistentGutter={minimapHasPersistentGutter}
-              hitStripWidth={minimapHitStripWidth}
-              currentIndex={minimapCurrentIndex}
-              stripMap={minimapStripMap}
-              onWheel={forwardMinimapWheel}
-              onSelect={(item) => {
-                onManualNavigation();
-                void listRef.current?.scrollToIndex({
-                  index: item.rowIndex,
-                  animated: true,
-                  viewOffset: 24,
-                });
-              }}
-            />
-          </TooltipScrollDismissArea>
-        </div>
-      </TimelineRowActivityCtx>
-    </MarkdownFindContext>
+              <TimelineMinimap
+                items={minimapItems}
+                hasPersistentGutter={minimapHasPersistentGutter}
+                hitStripWidth={minimapHitStripWidth}
+                currentIndex={minimapCurrentIndex}
+                stripMap={minimapStripMap}
+                onWheel={forwardMinimapWheel}
+                onSelect={(item) => {
+                  onManualNavigation();
+                  void listRef.current?.scrollToIndex({
+                    index: item.rowIndex,
+                    animated: true,
+                    viewOffset: 24,
+                  });
+                }}
+              />
+            </TooltipScrollDismissArea>
+          </div>
+        </TimelineRowActivityCtx>
+      </MarkdownFindContext>
+    </>
   );
 });
 

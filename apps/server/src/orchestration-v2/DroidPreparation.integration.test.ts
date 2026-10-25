@@ -85,7 +85,7 @@ it.live(
           );
           yield* h.observe("C032-cold-recovery");
         }),
-      { receiptName: "C032" },
+      { receiptName: "C032", settleTimeout: "500 millis" },
     ),
 );
 

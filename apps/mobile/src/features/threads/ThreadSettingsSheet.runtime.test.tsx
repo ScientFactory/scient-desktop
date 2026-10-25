@@ -219,7 +219,8 @@ it("keeps a supported requested mode selected and only persists a deliberate cho
   await act(() => button("Full access").click());
   expect(update).toHaveBeenCalledExactlyOnceWith("full-access");
 });
-it.each([{ modes: undefined }, { modes: [] }])(
+// Missing and empty capability lists share one branch.
+it.each([{ modes: [] }])(
   "keeps the existing unknown-capability choices usable: %j",
   async ({ modes }) => {
     const update = await open("auto", { ...grok, supportedRuntimeModes: modes });

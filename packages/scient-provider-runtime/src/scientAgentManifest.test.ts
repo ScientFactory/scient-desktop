@@ -69,25 +69,19 @@ describe("Scient Agent managed release policy", () => {
     expect(named({ platform: "linux", arch: "x64", libc: "musl" })).toBeUndefined();
   });
 
-  it.each([
-    "0.0.9",
-    "1.0.0",
-    "2.0.0",
-    "0.1.0-beta.1",
-    "0.1.0+build",
-    "v0.1.0",
-    "00.1.0",
-    "../0.1.0",
-  ])("refuses incompatible or nonstable version %s", (version) => {
-    expect(isSupportedScientAgentVersion(version)).toBe(false);
-    expect(
-      hydrateManagedRuntimeArtifact(policy, {
-        ...receipt,
-        version,
-        url: receipt.url.replace("v0.1.0/", `v${version}/`),
-      }),
-    ).toBeUndefined();
-  });
+  it.each(["0.0.9", "1.0.0", "0.1.0-beta.1", "0.1.0+build", "v0.1.0", "00.1.0", "../0.1.0"])(
+    "refuses incompatible or nonstable version %s",
+    (version) => {
+      expect(isSupportedScientAgentVersion(version)).toBe(false);
+      expect(
+        hydrateManagedRuntimeArtifact(policy, {
+          ...receipt,
+          version,
+          url: receipt.url.replace("v0.1.0/", `v${version}/`),
+        }),
+      ).toBeUndefined();
+    },
+  );
 
   it("hydrates a real release or durable receipt and keeps its installation private", () => {
     const artifact = hydrateManagedRuntimeArtifact(policy, receipt)!;

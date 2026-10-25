@@ -118,6 +118,7 @@ describe("Scient brand guard", () => {
 });
 
 describe("brand check scope", () => {
+  // regression: 875d4ad0a8 test(brand): catch bare T3, T3 Connect and t3 command copy
   it.each([
     "packages/shared/src/codexAuthCallback.ts",
     "packages/client-runtime/src/webhookAddress.ts",
@@ -132,6 +133,7 @@ describe("brand check scope", () => {
     expect(brandRulesFor(path)).toEqual(["inherited-brand", "bare-t3", "t3-connect", "t3-command"]);
   });
 
+  // regression: 875d4ad0a8 test(brand): catch bare T3, T3 Connect and t3 command copy
   it.each([
     "packages/provider-testing/src/index.ts",
     "packages/source-control-testing/src/index.ts",
@@ -167,6 +169,7 @@ describe("bare T3 product name", () => {
     expect(rulesHit("apps/server/src/example.ts", contents)).toContain("bare-t3");
   });
 
+  // regression: 875d4ad0a8 test(brand): catch bare T3, T3 Connect and t3 command copy
   it.each([
     "const home = process.env.T3CODE_HOME;",
     'import { x } from "@t3tools/shared/x";',
@@ -217,6 +220,7 @@ describe("T3 Connect", () => {
 });
 
 describe("T3 command instructions", () => {
+  // regression: 875d4ad0a8 test(brand): catch bare T3, T3 Connect and t3 command copy
   it.each([
     "Create one in Settings, or run <code>t3 auth pairing create</code> on this machine.",
     "sudo t3 browser setup",
@@ -230,6 +234,7 @@ describe("T3 command instructions", () => {
     expect(rulesHit("apps/web/src/example.tsx", contents)).toContain("t3-command");
   });
 
+  // regression: 875d4ad0a8 test(brand): catch bare T3, T3 Connect and t3 command copy
   it.each([
     'const file = "t3.json";',
     "Older Scient-installed `t3` shortcuts keep working.",

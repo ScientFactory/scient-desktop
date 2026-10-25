@@ -67,17 +67,9 @@ describe("buildProviderInstanceOverridePatch", () => {
     });
   });
 
-  it("resets the only override by clearing the whole project entry", () => {
-    const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
-      projectSettingsOverrides: {
-        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
-      },
-    };
-
-    expect(
-      buildProviderInstanceOverridePatch(settings, [projectId], instanceId, undefined),
-    ).toEqual({ [projectId]: null });
-  });
+  // SCIENT-FORK:START — Scient sends `{}` rather than a `null` entry here; its reset case lives in
+  // ProviderSettingsPanel.logic.scient.test.ts.
+  // SCIENT-FORK:END
 
   it("sends providerInstances: {} explicitly when clearing the last instance override leaves other keys", () => {
     const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {

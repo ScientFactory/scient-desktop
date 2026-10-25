@@ -207,13 +207,11 @@ describe("ProviderConnectionDialog", () => {
     expect(markup).not.toContain(">Close<");
   });
 
+  // The dialog branches on the driver only for Cursor's runtime visibility;
+  // per-provider management wiring is AssistedProviderSetupHost.test's.
   it.each([
     ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
-    ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
-    ["antigravity", "Antigravity", "Antigravity lifecycle surface", "antigravity_google"],
-    ["droid", "Droid", "Droid lifecycle surface", "droid_device_pairing"],
     ["cursor", "Cursor", "Cursor lifecycle surface", "cursor_browser"],
-    ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
   ] as const)(
     "keeps the assisted %s dialog compact and fully manageable",
     (driver, name, surface, method) => {
@@ -232,7 +230,6 @@ describe("ProviderConnectionDialog", () => {
               status: "authenticated",
               required: true,
               label: `${name} account`,
-              ...(driver === "grok" ? { type: "grok_account" } : {}),
             },
             connection: {
               methods: [method],
@@ -259,14 +256,9 @@ describe("ProviderConnectionDialog", () => {
     },
   );
 
-  it.each([
-    ["codex", "Codex"],
-    ["claudeAgent", "Claude"],
-    ["antigravity", "Antigravity"],
-    ["cursor", "Cursor"],
-    ["droid", "Droid"],
-    ["grok", "Grok"],
-  ] as const)(
+  // regression: 22f5ecd732 fix(providers): suppress provisional lifecycle actions
+  // The dialog resolves probe-pending and disabled providers before any driver branch.
+  it.each([["codex", "Codex"]] as const)(
     "suppresses provisional %s dialog actions while detection settles",
     (driver, displayName) => {
       const markup = renderToStaticMarkup(
@@ -297,7 +289,6 @@ describe("ProviderConnectionDialog", () => {
 
       expect(markup).toContain(`Checking ${displayName}…`);
       expect(markup).toContain("Verifying installation and connection status.");
-      expect(markup).toContain("lucide-loader");
       expect(markup).toContain('role="status"');
       expect(markup).not.toContain("Managed runtime actions");
       expect(markup).not.toContain("action requested");
@@ -344,14 +335,8 @@ describe("ProviderConnectionDialog", () => {
     },
   );
 
-  it.each([
-    ["codex", "Codex"],
-    ["claudeAgent", "Claude"],
-    ["antigravity", "Antigravity"],
-    ["cursor", "Cursor"],
-    ["droid", "Droid"],
-    ["grok", "Grok"],
-  ] as const)(
+  // regression: 82eedcd739 fix(providers): gate setup behind enablement
+  it.each([["codex", "Codex"]] as const)(
     "gates a disabled %s before an explicitly requested runtime action",
     (driver, displayName) => {
       const markup = renderToStaticMarkup(
@@ -476,12 +461,9 @@ describe("ProviderConnectionDialog", () => {
     expect(markup).toContain("Grok lifecycle surface");
   });
 
+  // regression: 4f8a2ef99e fix(providers): install and update directly with quiet settings progress
   it.each([
     ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
-    ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
-    ["antigravity", "Antigravity", "Antigravity lifecycle surface", "antigravity_google"],
-    ["droid", "Droid", "Droid lifecycle surface", "droid_device_pairing"],
-    ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
     ["cursor", "Cursor", "Cursor lifecycle surface", "cursor_browser"],
   ] as const)(
     "forwards the explicit Install click to shared runtime management for missing %s",
@@ -504,7 +486,6 @@ describe("ProviderConnectionDialog", () => {
             auth: {
               status: "unauthenticated",
               required: true,
-              ...(driver === "grok" ? { type: "grok_account" as const } : {}),
             },
             connection: {
               methods: [method],
@@ -753,11 +734,7 @@ describe("ProviderConnectionDialog", () => {
 
   it.each([
     ["codex", "Codex", "Codex lifecycle surface", "codex_browser"],
-    ["claudeAgent", "Claude", "Claude lifecycle surface", "claude_subscription"],
-    ["antigravity", "Antigravity", "Antigravity lifecycle surface", "antigravity_google"],
-    ["droid", "Droid", "Droid lifecycle surface", "droid_device_pairing"],
     ["cursor", "Cursor", "Cursor lifecycle surface", "cursor_browser"],
-    ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
   ] as const)(
     "keeps managed runtime actions visible while assisted %s is signed out",
     (driver, name, surface, method) => {
@@ -776,7 +753,6 @@ describe("ProviderConnectionDialog", () => {
             auth: {
               status: "unauthenticated",
               required: true,
-              ...(driver === "grok" ? { type: "grok_account" as const } : {}),
             },
             connection: {
               methods: [method],
@@ -795,11 +771,7 @@ describe("ProviderConnectionDialog", () => {
     },
   );
 
-  it.each([
-    ["codex", "Codex", "codex_browser"],
-    ["claudeAgent", "Claude", "claude_subscription"],
-    ["antigravity", "Antigravity", "antigravity_google"],
-  ] as const)(
+  it.each([["codex", "Codex", "codex_browser"]] as const)(
     "routes assisted %s removal through the shared confirmation flow",
     (driver, name, method) => {
       const markup = renderToStaticMarkup(

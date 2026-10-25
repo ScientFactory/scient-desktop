@@ -65,46 +65,6 @@ const render = async (_fixture: _Fixture, snapshot: ServerProvider, accountActio
   );
 
 describe("DroidInlineSetup", () => {
-  it("uses the shared status icons instead of a separate Droid mark", async () => {
-    await using _fixture = _createFixture();
-    vi.clearAllMocks();
-
-    const snapshots = [
-      {
-        ...provider,
-        installed: false,
-        connection: {
-          ...provider.connection!,
-          runtime: {
-            ...provider.connection!.runtime!,
-            source: "missing" as const,
-            actions: ["install" as const],
-            managedVersion: null,
-          },
-        },
-      },
-      provider,
-      {
-        ...provider,
-        status: "ready" as const,
-        auth: { status: "authenticated" as const, required: true, label: "Factory account" },
-        models: [{ slug: "auto", name: "Auto", isCustom: false, capabilities: null }],
-      },
-    ];
-
-    const markups: string[] = [];
-    for (const snapshot of snapshots) markups.push(await render(_fixture, snapshot));
-    const [missing, signIn, ready] = markups;
-    for (const markup of [missing!, signIn!, ready!]) {
-      expect(markup).not.toContain("data-droid-provider-mark");
-      expect(markup).not.toContain("[data-assisted-setup-icon=true]]:hidden");
-    }
-    // The Droid logo is the install and sign-in status icon; ready shows a check.
-    expect(missing).toContain("lucide-shield-check");
-    expect(signIn).toContain("lucide-shield-check");
-    expect(ready).toContain("lucide-circle-check");
-  });
-
   it("offers the capability-advertised Factory pairing action", async () => {
     await using _fixture = _createFixture();
     vi.clearAllMocks();
@@ -340,6 +300,8 @@ describe("DroidInlineSetup", () => {
     expect(markup).toContain("Sign out");
   });
 
+  // regression: e1a7c2e200 fix(web): keep Droid's and Pi's Connect models, one primary action per frame
+  // (sole guard of the installed/probe gate on the sign-in frame's Connect models)
   it("renders the composer's models action as the connected frame's action, and quietly elsewhere", async () => {
     await using _fixture = _createFixture();
     vi.clearAllMocks();

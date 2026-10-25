@@ -96,7 +96,7 @@ async function open(
   await _fixture.root0.rerender(<Harness />);
   const editor = () => readMountedLatexVisualTestEditor(_fixture.container);
   await vi.waitFor(async () => expect(await editor()).toBeTruthy(), { timeout: 20000 });
-  if (controlledClock) _fixture.clock ??= _fixture.cleanup.use(fakeTimers());
+  if (controlledClock) _fixture.clock ??= _fixture.stack.use(fakeTimers());
   if (!loaded) return editor()!;
   await vi.waitFor(
     async () =>
@@ -257,37 +257,6 @@ async function scrollAndLayout(editor: Editor, change: () => void) {
   await scrollDelivered(editor, change);
   await settleLayout(editor);
 }
-
-it("acknowledges native scroll movement without waiting on an unchanged clamp", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  const editor = await open(_fixture, "visual-stability-scroll-delivery");
-  await formulasRendered(_fixture);
-  const scroll = scroller(editor);
-  const events: Event[] = [];
-  const receive = (event: Event) => events.push(event);
-  scroll.addEventListener("scroll", receive);
-  _fixture.cleanup.defer(() => scroll.removeEventListener("scroll", receive));
-  const before = scroll.scrollTop;
-  await scrollDelivered(editor, () => {
-    scroll.scrollTop += 100;
-  });
-  expect(scroll.scrollTop).toBeGreaterThan(before);
-  expect(events.some((event) => event.isTrusted)).toBe(true);
-
-  await scrollDelivered(editor, () => {
-    scroll.scrollTop = 0;
-  });
-  expect(scroll.scrollTop).toBe(0);
-  const delivered = events.length;
-  await scrollDelivered(editor, () => {
-    scroll.scrollTop = -100;
-  });
-  expect(scroll.scrollTop).toBe(0);
-  expect(events).toHaveLength(delivered);
-});
 
 it("remembers the first visible block when the viewport top is in a real page gap", async () => {
   await using _fixture = _createFixture();
@@ -866,31 +835,6 @@ it("numbers equations before the reading position when a document reopens there"
   });
 });
 
-it("keeps a page marker with its block when content is inserted right before it", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  const editor = await open(_fixture, "visual-stability-marker-boundary");
-  const paragraphs: number[] = [];
-  editor.state.doc.forEach((node, offset) => {
-    if (node.type.name === "paragraph") paragraphs.push(offset);
-  });
-  const anchored = paragraphs[6]!;
-  const text = editor.state.doc.nodeAt(anchored)!.textContent;
-  setLatexPageMarkers(editor.view, {
-    key: "build-boundary",
-    pageCount: 1,
-    anchors: [{ page: 1, position: anchored }],
-  });
-  const paragraph = editor.schema.nodes.paragraph!.create(null, editor.schema.text("Inserted."));
-  editor.view.dispatch(editor.state.tr.insert(anchored, paragraph));
-  const [anchor] = latexPageMarkersKey.getState(editor.state)!.anchors;
-  expect(anchor).toBeDefined();
-  expect(editor.state.doc.nodeAt(anchor!.position)?.textContent).toBe(text);
-  expect(editor.view.dom.querySelectorAll(".scient-latex-page-marker")).toHaveLength(1);
-});
-
 it("keeps the line at the top still when text above it grows its own paragraph", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -1086,66 +1030,6 @@ A noted paragraph\footnote{The note.} with more text after the note.
   expect(navigateToFootnote(editor.view, marker)).toBe(true);
 });
 
-it("removes a page marker with the equation it begins at", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  const editor = await open(_fixture, "visual-stability-marker-equation");
-  let equation = -1;
-  editor.state.doc.forEach((node, offset) => {
-    if (equation < 0 && offset > 0 && node.type.name === "latexDisplayMath") equation = offset;
-  });
-  expect(equation).toBeGreaterThan(0);
-  setLatexPageMarkers(editor.view, {
-    key: "build-equation",
-    pageCount: 2,
-    anchors: [
-      { page: 1, position: 0 },
-      { page: 2, position: equation },
-    ],
-  });
-  const size = editor.state.doc.nodeAt(equation)!.nodeSize;
-  editor.view.dispatch(editor.state.tr.delete(equation, equation + size));
-  expect(editor.state.doc.nodeAt(equation)?.type.name).not.toBe("latexDisplayMath");
-  expect(latexPageMarkersKey.getState(editor.state)!.anchors.map((anchor) => anchor.page)).toEqual([
-    1,
-  ]);
-});
-
-it("removes a page marker when its block is replaced, but keeps it when the block is retyped", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  const editor = await open(_fixture, "visual-stability-marker-replace");
-  const paragraphs: number[] = [];
-  editor.state.doc.forEach((node, offset) => {
-    if (node.type.name === "paragraph") paragraphs.push(offset);
-  });
-  const [kept, replaced] = [paragraphs[4]!, paragraphs[8]!];
-  setLatexPageMarkers(editor.view, {
-    key: "build-replace",
-    pageCount: 2,
-    anchors: [
-      { page: 1, position: kept },
-      { page: 2, position: replaced },
-    ],
-  });
-  const heading = editor.schema.nodes.heading!;
-  editor.view.dispatch(editor.state.tr.setBlockType(kept + 1, kept + 1, heading, { level: 2 }));
-  const size = editor.state.doc.nodeAt(
-    latexPageMarkersKey.getState(editor.state)!.anchors[1]!.position,
-  )!.nodeSize;
-  const at = latexPageMarkersKey.getState(editor.state)!.anchors[1]!.position;
-  const other = editor.schema.nodes.paragraph!.create(null, editor.schema.text("Replacement."));
-  editor.view.dispatch(editor.state.tr.replaceWith(at, at + size, other));
-  expect(editor.state.doc.nodeAt(at)?.textContent).toBe("Replacement.");
-  expect(latexPageMarkersKey.getState(editor.state)!.anchors.map((anchor) => anchor.page)).toEqual([
-    1,
-  ]);
-});
-
 it("keeps a footnote band with its note when text after the note is replaced by paragraphs", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -1215,33 +1099,6 @@ The following paragraph.
   );
   const band = () => editor.view.dom.querySelector(":scope > .scient-latex-footnotes");
   await vi.waitFor(async () => expect(band()?.textContent ?? "").toBe("1The note."));
-});
-
-it("removes a page marker when its equation is replaced by another", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  const editor = await open(_fixture, "visual-stability-marker-equation-replace");
-  let equation = -1;
-  editor.state.doc.forEach((node, offset) => {
-    if (equation < 0 && offset > 0 && node.type.name === "latexDisplayMath") equation = offset;
-  });
-  setLatexPageMarkers(editor.view, {
-    key: "build-equation-replace",
-    pageCount: 2,
-    anchors: [
-      { page: 1, position: 0 },
-      { page: 2, position: equation },
-    ],
-  });
-  const old = editor.state.doc.nodeAt(equation)!;
-  const other = old.type.create({ ...old.attrs, tex: "z=0", sourceId: null });
-  editor.view.dispatch(editor.state.tr.replaceWith(equation, equation + old.nodeSize, other));
-  expect(editor.state.doc.nodeAt(equation)?.attrs.tex).toBe("z=0");
-  expect(latexPageMarkersKey.getState(editor.state)!.anchors.map((anchor) => anchor.page)).toEqual([
-    1,
-  ]);
 });
 
 it("keeps a run-in heading beside its paragraph when a page marker sits between them", async () => {

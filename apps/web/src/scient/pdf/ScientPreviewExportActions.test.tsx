@@ -215,6 +215,7 @@ describe("ScientPreviewExportActions", () => {
     });
   });
 
+  // regression: 666ea3a41a feat: refine browser PDF export lifecycle
   it("keeps the chrome action disabled when the browser surface is unavailable", () => {
     const markup = renderToStaticMarkup(
       <ScientPreviewExportActions

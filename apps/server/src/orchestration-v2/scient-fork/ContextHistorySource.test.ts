@@ -18,10 +18,13 @@ import { historyCost, selectHistory } from "@t3tools/provider-core/server/handof
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import { layerMemory } from "../../persistence/Sqlite.ts";
+import { layerFromPath, layerMemory } from "../../persistence/Sqlite.ts";
 import * as ContextHandoffService from "../ContextHandoffService.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as EventStore from "../EventStore.ts";
@@ -817,3 +820,65 @@ it.layer(TestLayer)("bounded immutable context sources", (it) => {
     }),
   );
 });
+
+it.effect("validates cold legacy history on the writer of a file-backed database", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-cold-legacy-" });
+    const database = layerFromPath(path.join(directory, "statev2.sqlite"));
+    const stores = Layer.mergeAll(ProjectionStore.layer, EventStore.layer).pipe(
+      Layer.provideMerge(database),
+    );
+    const dependencies = Layer.mergeAll(
+      stores,
+      ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer)),
+    );
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const text = "Original cold legacy constraints 🧪";
+      const original = item(0, text);
+      const { store, handoff } = yield* fixture([original]);
+      const { historySource: _source, ...legacy } = handoff;
+      const body = encodeHandoff({
+        ...legacy,
+        history: { ...legacy.history!, messages: [historicalMessage(original)!] },
+      });
+      const sourceId = `legacy-projection:${handoff.id}`;
+      yield* sql`UPDATE orchestration_v2_projection_context_handoffs
+        SET payload_json = ${body} WHERE context_handoff_id = ${handoff.id}`;
+      yield* sql`INSERT INTO scient_handoff_legacy_sources (source_id, payload_json)
+        VALUES (${sourceId}, ${body})`;
+      const cold = yield* sql`SELECT messages_indexed, shape_json
+        FROM scient_handoff_legacy_sources WHERE source_id = ${sourceId}`;
+      assert.deepEqual(cold, [{ messages_indexed: 0, shape_json: null }]);
+
+      assert.deepEqual(yield* store.getUnreadableThreadIds(), []);
+      const indexed = yield* sql<{
+        readonly messages_indexed: number;
+        readonly shape_json: string | null;
+        readonly payload_json: string;
+      }>`
+        SELECT messages_indexed, shape_json, payload_json FROM scient_handoff_legacy_sources
+        WHERE source_id = ${sourceId}`;
+      assert.equal(indexed[0]!.messages_indexed, 1);
+      assert.isNotNull(indexed[0]!.shape_json);
+      assert.equal(indexed[0]!.payload_json, body);
+      const records = yield* store.getThreadRecords(threadId, ["contextHandoffs"]);
+      const compact = records.contextHandoffs.find((candidate) => candidate.id === handoff.id)!;
+      const recovered = yield* store.resolveContextHistory({
+        handoffs: [compact],
+        budget: 16_000,
+        coverage: "Cold recovery",
+        alreadyDeliveredItemIds: new Set(),
+      });
+      assert.deepEqual(
+        recovered.messages.map((message) => message.text),
+        [text],
+      );
+      yield* sql`UPDATE scient_handoff_legacy_messages SET metadata_json = 'null'
+        WHERE source_id = ${sourceId}`;
+      assert.deepEqual(yield* store.getUnreadableThreadIds(), [threadId]);
+    }).pipe(Effect.provide(dependencies));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

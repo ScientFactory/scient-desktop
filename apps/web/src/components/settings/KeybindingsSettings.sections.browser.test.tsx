@@ -93,21 +93,13 @@ it("opens Math when a settings search first navigates to authoring", async () =>
   expect(_fixture.host.querySelector('[aria-label^="Edit math.symbol.alpha"]')).not.toBeNull();
 });
 
-it("uses the shared selector for six persistent, isolated shortcut sections", async () => {
+it("shows one persistent, isolated shortcut section at a time", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
-  expect(_fixture.host.textContent).toContain("Shortcuts");
-  const sourceGroup = _fixture.host.querySelector(".settings-source-group");
-  const sectionSurface = sourceGroup?.parentElement?.parentElement;
-  expect(sectionSurface?.classList.contains("space-y-1")).toBe(true);
-  expect(sectionSurface?.classList.contains("rounded-xl")).toBe(false);
-  expect(sourceGroup?.querySelectorAll("[data-source-panel]")).toHaveLength(1);
-  expect([..._fixture.host.querySelectorAll(".settings-source-strip button")]).toHaveLength(6);
   expect(section(_fixture, "General").getAttribute("aria-expanded")).toBe("true");
-  expect(_fixture.host.textContent).toContain("Appearance: Cycle");
-  expect(_fixture.host.textContent).not.toContain("Document shortcut profile");
+  expect(_fixture.host.querySelectorAll("[data-source-panel]")).toHaveLength(1);
 
   await act(() => section(_fixture, "Write").click());
   expect(_fixture.host.querySelector('[aria-label^="Edit latex.bold"]')).not.toBeNull();
@@ -125,23 +117,15 @@ it("uses the shared selector for six persistent, isolated shortcut sections", as
 
   await act(() => section(_fixture, "Math").click());
   expect(_fixture.host.querySelector('[aria-label^="Edit math.symbol.alpha"]')).not.toBeNull();
-  expect(_fixture.host.textContent).toContain("Math input behavior and preset");
   const mathOptions = [..._fixture.host.querySelectorAll<HTMLButtonElement>("button")].find(
     (candidate) => candidate.textContent?.includes("Math input behavior and preset"),
   )!;
-  const importAction = [..._fixture.host.querySelectorAll<HTMLButtonElement>("button")].find(
-    (candidate) => candidate.textContent === "Import",
-  )!;
-  expect(mathOptions.parentElement).toBe(importAction.parentElement?.parentElement);
   expect(mathOptions.getAttribute("aria-expanded")).toBe("false");
   expect(_fixture.host.querySelector("#math-input-behavior")).toBeNull();
   await act(() => mathOptions.click());
   expect(mathOptions.getAttribute("aria-expanded")).toBe("true");
   expect(_fixture.host.querySelector("#math-input-behavior")).toBeNull();
   expect(document.querySelector("#math-input-behavior")).not.toBeNull();
-  expect(document.querySelector("#math-input-behavior")?.textContent).toContain(
-    "Applies to Write, Tables, Markdown, Math, and PDF shortcuts.",
-  );
   expect(_fixture.host.querySelector('[aria-label^="Edit markdown.bold"]')).toBeNull();
 
   await act(() => section(_fixture, "PDF").click());

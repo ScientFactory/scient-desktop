@@ -23,13 +23,15 @@
       // electron-builder loads the macOS signer by path.
       "entry": [
         // These fixture scripts are injected into a browser page by path.
-        "fixtures/issue-16534/*.js",
+        "fixtures/*/*.js",
         "knip-schemas.ts",
         "qualify-managed-runtime-catalog.ts",
         "mobile-native-client.ts",
         "setup-worktree.ts",
         "sign-macos.ts",
         "verify-windows-desktop-artifact.ts",
+        // release-smoke.ts runs it by path to check the branded nightly release name.
+        "resolve-nightly-release.ts",
         // Documented advisory inventory CLI and its independent Node regressions.
         "scient-divergence-inventory.mjs",
         "scient-divergence-inventory.node-test.mjs",
@@ -38,7 +40,9 @@
       ],
       "ignoreDependencies": ["esbuild"],
       // The `t3` npm package's files: copied into the package, never imported.
-      "ignore": ["npm-launcher/**"],
+      // knip-schemas.test.ts writes a throwaway project to .knip-test-*, which a
+      // knip run beside it in check:changed must not report.
+      "ignore": ["npm-launcher/**", ".knip-test-*/**"],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.
@@ -63,7 +67,6 @@
         "scripts/qualify-muse-runtime.ts",
         "scripts/evaluate-thread-titles.ts",
         "scripts/fetch-expo-schema.ts",
-        "scripts/measure-pr-preview.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",
         "scripts/verify-background-live.ts",
@@ -148,6 +151,10 @@
       // reports an entire component module when nothing imports it.
       "ignoreIssues": {
         "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"],
+        // Upstream's downloaded-update toast. Scient announces a ready update with
+        // scient/desktopUpdate/updateReadyNotice instead; the module stays as upstream
+        // ships it (its release-notes helper is still used) so upstream changes merge.
+        "src/components/desktopUpdate.toast.tsx": ["exports"],
         // Retained donor UI for the explicitly disabled subscription-sharing mode.
         // Keep file auditing active everywhere else; remove these exact exceptions
         // when that mode has approved native-client activation.
@@ -208,7 +215,7 @@
     },
     "packages/source-control-github": {
       // graphqlgen reads its config; the generated operations export every selection's class.
-      "entry": ["graphql.config.ts"],
+      "entry": ["graphql.config.ts", "scripts/measure-pr-preview.ts"],
       "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
     },
   },

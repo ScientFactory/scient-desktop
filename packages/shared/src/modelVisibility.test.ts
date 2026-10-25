@@ -31,6 +31,7 @@ const models = [
 ].map((slug) => ({ slug }));
 
 describe("curated native agent model visibility", () => {
+  // regression: f9ed7a0233 fix(scient-agent): share native model selection policy
   it.each(["pi", "omp", "scient"])(
     "orders %s accounts without changing within-group order",
     (driver) => {

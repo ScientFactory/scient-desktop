@@ -60,6 +60,7 @@ import {
   useEnvironmentModelPreferences,
   useToggleEnvironmentModelFavorite,
 } from "~/hooks/useSettings";
+import { announce } from "~/lib/announce";
 import {
   hasModelSourceSections,
   modelSourceSectionKey,
@@ -759,26 +760,26 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     modelSlug: string,
     instanceId: ProviderInstanceId,
     additive = false,
-  ) => {
+  ): string | null => {
     if (getModelDisabledReason?.(instanceId, modelSlug)) {
-      return;
+      return null;
     }
     const options = modelOptionsByInstance.get(instanceId);
     if (!options) {
-      return;
+      return null;
     }
     const entry = entryByInstanceId.get(instanceId);
     if (!entry) {
-      return;
+      return null;
     }
     const resolvedModel = resolveSelectableModel(entry.driverKind, modelSlug, options);
-    if (resolvedModel) {
-      if (additive && onToggleModel) {
-        onToggleModel(instanceId, resolvedModel);
-      } else {
-        onInstanceModelChange(instanceId, resolvedModel);
-      }
+    if (!resolvedModel) return null;
+    if (additive && onToggleModel) {
+      onToggleModel(instanceId, resolvedModel);
+    } else {
+      onInstanceModelChange(instanceId, resolvedModel);
     }
+    return resolvedModel;
   };
 
   const modelJumpCommandByKey = (() => {
@@ -880,6 +881,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       });
       setSearchQuery("");
       handleSelectInstance(next);
+      announce(
+        next === "favorites" ? "Favorites" : (entryByInstanceId.get(next)?.displayName ?? next),
+        "model-picker",
+      );
       return;
     }
     if (isShowingSetup) return;
@@ -898,7 +903,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (!model) {
       return;
     }
-    handleModelSelect(model.slug, model.instanceId);
+    const selectedSlug = handleModelSelect(model.slug, model.instanceId);
+    if (selectedSlug === null) return;
+    const name = flatModels.find(
+      (item) => item.slug === selectedSlug && item.instanceId === model.instanceId,
+    )?.name;
+    announce(`Model: ${name ?? selectedSlug}`, "model-picker");
   };
 
   return (

@@ -7,6 +7,7 @@ const readSource = (relativePath: string) =>
   NodeFS.readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
 describe("analysis preview mini-player seam", () => {
+  // regression: c4d6bf2ec4 feat(analysis): complete the MATLAB runtime workflow
   it("keeps the shared floating preview generic while preserving its reusable chrome", () => {
     // The inherited player and the Scient parts its marked lines call.
     const componentSource = [

@@ -29,6 +29,21 @@ import { resolveServerConfig } from "./config.ts";
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
 
+const minimalDesktopFlags = (baseDir: string) => ({
+  mode: Option.some("desktop" as const),
+  port: Option.some(4888),
+  host: Option.none<string>(),
+  baseDir: Option.some(baseDir),
+  cwd: Option.none<string>(),
+  devUrl: Option.none<URL>(),
+  noBrowser: Option.none<boolean>(),
+  bootstrapFd: Option.none<number>(),
+  autoBootstrapProjectFromCwd: Option.none<boolean>(),
+  logWebSocketEvents: Option.none<boolean>(),
+  tailscaleServeEnabled: Option.none<boolean>(),
+  tailscaleServePort: Option.none<number>(),
+});
+
 const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -600,6 +615,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         otlpTracesUrl: undefined,
         otlpMetricsUrl: undefined,
         otlpLogsUrl: undefined,
+        otlpTracesSource: "bootstrap",
+        otlpMetricsSource: "bootstrap",
+        otlpLogsSource: "bootstrap",
         mode: "desktop",
         port: 4888,
         cwd: process.cwd(),
@@ -753,11 +771,48 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
-  it.effect("falls back to persisted observability settings when env vars are absent", () =>
+  it.effect("reports the desktop bootstrap as the source of endpoints it supplied", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-config-otlp-bootstrap-",
+      });
+      const fd = yield* openBootstrapFd(
+        makeDesktopBootstrap({
+          otlpTracesUrl: "http://localhost:4318/v1/traces",
+          otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+          otlpLogsUrl: "http://localhost:4318/v1/logs",
+        }),
+      );
+
+      const resolved = yield* resolveServerConfig(
+        { ...minimalDesktopFlags(baseDir), bootstrapFd: Option.some(fd) },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved).toMatchObject({
+        otlpTracesUrl: undefined,
+        otlpMetricsUrl: undefined,
+        otlpLogsUrl: undefined,
+        otlpTracesSource: "bootstrap",
+        otlpMetricsSource: "bootstrap",
+        otlpLogsSource: "bootstrap",
+      });
+    }),
+  );
+
+  it.effect("reports saved settings as the source of endpoints read from settings.json", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-config-settings-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-config-otlp-settings-" });
       const derivedPaths = yield* deriveExplicitServerPaths(baseDir, undefined);
       yield* fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true });
       yield* fs.writeFileString(
@@ -771,23 +826,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         })}\n`,
       );
 
-      const resolved = yield* resolveServerConfig(
-        {
-          mode: Option.some("desktop"),
-          port: Option.some(4888),
-          host: Option.none(),
-          baseDir: Option.some(baseDir),
-          cwd: Option.none(),
-          devUrl: Option.none(),
-          noBrowser: Option.none(),
-          bootstrapFd: Option.none(),
-          autoBootstrapProjectFromCwd: Option.none(),
-          logWebSocketEvents: Option.none(),
-          tailscaleServeEnabled: Option.none(),
-          tailscaleServePort: Option.none(),
-        },
-        Option.none(),
-      ).pipe(
+      const resolved = yield* resolveServerConfig(minimalDesktopFlags(baseDir), Option.none()).pipe(
         Effect.provide(
           Layer.mergeAll(
             ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
@@ -804,6 +843,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         otlpTracesUrl: undefined,
         otlpMetricsUrl: undefined,
         otlpLogsUrl: undefined,
+        otlpTracesSource: "settings",
+        otlpMetricsSource: "settings",
+        otlpLogsSource: "settings",
         mode: "desktop",
         port: 4888,
         cwd: process.cwd(),
@@ -1204,6 +1246,11 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         expect(resolved.otlpMetricsUrl).toBeUndefined();
         expect(resolved.otlpLogsExport.headers).toEqual({ "x-key": "secret" });
         expect(resolved.otlpLogsUrl).toBeUndefined();
+        expect(resolved).toMatchObject({
+          otlpTracesVariable: "T3CODE_OTLP_TRACES_URL",
+          otlpMetricsVariable: "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        });
+        expect(resolved.otlpLogsVariable).toBeUndefined();
       }),
   );
 

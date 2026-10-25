@@ -163,6 +163,93 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     return { root, controller, coordinator };
   }
 
+  // regression: a7d709c066 feat(markdown): harden rich editor interactions
+  it("uses compact icon controls for common table actions", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const host = document.createElement("div");
+    document.body.append(_ownDOM(_fixture, host));
+    const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
+    _fixture.root0.push(root);
+
+    await act(
+      async () =>
+        await root.rerender(
+          <ScientMarkdownWorkspaceSurface
+            source={"| A | B |\n| --- | --- |\n| 1 | 2 |\n"}
+            revision="r0"
+            ariaLabel="Table fixture"
+            persist={vi.fn(async () => ({ revision: "r1" }))}
+            onPendingChange={vi.fn()}
+            onSaveConfirmed={vi.fn()}
+            onSaveFailure={vi.fn()}
+            onExternalConflict={vi.fn()}
+          />,
+        ),
+    );
+
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (candidate) => candidate.view?.dom.isConnected,
+    );
+    expect(controller).not.toBeUndefined();
+    let cellTextPosition: number | null = null;
+    controller!.view!.state.doc.descendants((node, position) => {
+      if (
+        cellTextPosition === null &&
+        (node.type.spec.tableRole === "cell" || node.type.spec.tableRole === "header_cell")
+      ) {
+        cellTextPosition = position + 1;
+      }
+    });
+    expect(cellTextPosition).not.toBeNull();
+
+    await act(() => {
+      const view = controller!.view!;
+      view.dispatch(
+        view.state.tr.setSelection(TextSelection.create(view.state.doc, cellTextPosition!)),
+      );
+    });
+
+    // A table's tools are in the footer; the bar does not change inside a table.
+    const toolbar = host.querySelector("[aria-label='Table actions']");
+    expect(toolbar?.closest(".scient-document-footer")).not.toBeNull();
+    expect(toolbar?.closest("[aria-label='Document actions']") ?? null).toBeNull();
+    expect(host.querySelector(".scient-markdown-table-toolbar")).toBeNull();
+    const addRow = toolbar?.querySelector("[aria-label='Add row below']");
+    const addColumn = toolbar?.querySelector("[aria-label='Add column after']");
+    expect(addRow?.querySelector(".lucide-between-horizontal-end")).not.toBeNull();
+    expect(addColumn?.querySelector(".lucide-between-vertical-end")).not.toBeNull();
+    expect(toolbar?.textContent).not.toContain("Table:");
+    expect(toolbar?.querySelector("[aria-label='Delete row']")).toBeNull();
+    expect(toolbar?.querySelector("[aria-label='Delete column']")).toBeNull();
+    expect(toolbar?.querySelector("[aria-label='More table actions']")).toBeNull();
+    // Entering a table no longer opens the bar: it stays as the writer left it.
+    expect(host.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
+    expect(host.querySelectorAll("[aria-label='Document']")).toHaveLength(0);
+    const moreActions = host.querySelector<HTMLButtonElement>(
+      ".scient-document-footer [aria-label='More table actions']",
+    );
+    expect(moreActions).not.toBeNull();
+    await act(() => moreActions!.click());
+    const menuItems = Array.from(
+      document.body.querySelectorAll<HTMLElement>("[data-slot='menu-item']"),
+      (item) => item.textContent?.trim(),
+    );
+    expect(menuItems).toEqual(
+      expect.arrayContaining([
+        "Add row above",
+        "Add row below",
+        "Add column before",
+        "Add column after",
+        "Align column left",
+        "Align column center",
+        "Align column right",
+      ]),
+    );
+  });
+
   it("keeps refused input visible and restores it from its file owner after a rich surface remount", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
@@ -921,108 +1008,6 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(host.querySelector("[aria-label='Hide formatting tools']")).not.toBeNull();
   });
 
-  it("uses the same Text trigger for paragraphs and quotes", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const renderExpandedSurface = async (source: string, ariaLabel: string) => {
-      const host = document.createElement("div");
-      document.body.append(_ownDOM(_fixture, host));
-      const root = _fixture.stack.use(
-        await _fixtureRender(null, { container: host, router: false }),
-      );
-      _fixture.root0.push(root);
-      await act(
-        async () =>
-          await root.rerender(
-            <ScientMarkdownWorkspaceSurface
-              source={source}
-              revision="r0"
-              ariaLabel={ariaLabel}
-              persist={vi.fn(async () => ({ revision: "r1" }))}
-              onPendingChange={vi.fn()}
-              onSaveConfirmed={vi.fn()}
-              onSaveFailure={vi.fn()}
-              onExternalConflict={vi.fn()}
-            />,
-          ),
-      );
-      await act(() =>
-        host.querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']")!.click(),
-      );
-      return host;
-    };
-
-    const paragraph = await renderExpandedSurface("Plain text.\n", "Paragraph fixture");
-    const paragraphStyle = paragraph.querySelector("[aria-label='Text']");
-    expect(paragraphStyle?.textContent).toBe("Text");
-
-    const quote = await renderExpandedSurface("> Quoted text.\n", "Quote fixture");
-    const quoteStyle = quote.querySelector("[aria-label='Text']");
-    expect(quoteStyle?.textContent).toBe("Text");
-  });
-
-  it("uses the shared compact popover treatment for link editing", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    _fixture.stack.use(_fixtureFakeTimers());
-    const host = document.createElement("div");
-    document.body.append(_ownDOM(_fixture, host));
-    const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
-    _fixture.root0.push(root);
-
-    await act(
-      async () =>
-        await root.rerender(
-          <ScientMarkdownWorkspaceSurface
-            source="Link target.\n"
-            revision="r0"
-            ariaLabel="Link fixture"
-            persist={vi.fn(async () => ({ revision: "r1" }))}
-            onPendingChange={vi.fn()}
-            onSaveConfirmed={vi.fn()}
-            onSaveFailure={vi.fn()}
-            onExternalConflict={vi.fn()}
-          />,
-        ),
-    );
-    await act(() =>
-      host.querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']")!.click(),
-    );
-    // Link is in Insert.
-    await act(() => host.querySelector<HTMLButtonElement>("button[aria-label='Insert']")!.click());
-    const references = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-      (node) => node.textContent?.trim() === "References",
-    )!;
-    await act(() => references.click());
-    const linkItem = Array.from(
-      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
-    ).find((node) => node.textContent?.trim().startsWith("Link"))!;
-    await act(() => linkItem.click());
-    await act(() => vi.advanceTimersByTimeAsync(50));
-
-    const popup = document.body.querySelector<HTMLElement>("[data-slot='popover-popup']");
-    const viewport = popup?.querySelector<HTMLElement>("[data-slot='popover-viewport']");
-    const input = popup?.querySelector<HTMLInputElement>("[aria-label='Link destination']");
-    const cancel = Array.from(popup?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
-      (button) => button.textContent === "Cancel",
-    );
-    const apply = Array.from(popup?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
-      (button) => button.textContent === "Apply",
-    );
-
-    expect(popup?.textContent).toContain("Link");
-    expect(popup?.textContent).not.toContain("Insert or Edit Link");
-    expect(popup?.className).toContain("w-72");
-    expect(viewport?.className).toContain("p-2");
-    expect(input?.closest("[data-slot='input-control']")?.getAttribute("data-size")).toBe(
-      "compact",
-    );
-    expect(cancel?.className).toContain("h-7");
-    expect(apply?.className).toContain("h-7");
-  });
-
   it("offers a stable selection toolbar with searchable recent wiki targets", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
@@ -1323,92 +1308,6 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(onDraftSourceChange).toHaveBeenCalledTimes(2);
   });
 
-  it("uses compact icon controls for common table actions", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
-    const host = document.createElement("div");
-    document.body.append(_ownDOM(_fixture, host));
-    const root = _fixture.stack.use(await _fixtureRender(null, { container: host, router: false }));
-    _fixture.root0.push(root);
-
-    await act(
-      async () =>
-        await root.rerender(
-          <ScientMarkdownWorkspaceSurface
-            source={"| A | B |\n| --- | --- |\n| 1 | 2 |\n"}
-            revision="r0"
-            ariaLabel="Table fixture"
-            persist={vi.fn(async () => ({ revision: "r1" }))}
-            onPendingChange={vi.fn()}
-            onSaveConfirmed={vi.fn()}
-            onSaveFailure={vi.fn()}
-            onExternalConflict={vi.fn()}
-          />,
-        ),
-    );
-
-    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
-      (candidate) => candidate.view?.dom.isConnected,
-    );
-    expect(controller).not.toBeUndefined();
-    let cellTextPosition: number | null = null;
-    controller!.view!.state.doc.descendants((node, position) => {
-      if (
-        cellTextPosition === null &&
-        (node.type.spec.tableRole === "cell" || node.type.spec.tableRole === "header_cell")
-      ) {
-        cellTextPosition = position + 1;
-      }
-    });
-    expect(cellTextPosition).not.toBeNull();
-
-    await act(() => {
-      const view = controller!.view!;
-      view.dispatch(
-        view.state.tr.setSelection(TextSelection.create(view.state.doc, cellTextPosition!)),
-      );
-    });
-
-    // A table's tools are in the footer; the bar does not change inside a table.
-    const toolbar = host.querySelector("[aria-label='Table actions']");
-    expect(toolbar?.closest(".scient-document-footer")).not.toBeNull();
-    expect(toolbar?.closest("[aria-label='Document actions']") ?? null).toBeNull();
-    expect(host.querySelector(".scient-markdown-table-toolbar")).toBeNull();
-    const addRow = toolbar?.querySelector("[aria-label='Add row below']");
-    const addColumn = toolbar?.querySelector("[aria-label='Add column after']");
-    expect(addRow?.querySelector(".lucide-between-horizontal-end")).not.toBeNull();
-    expect(addColumn?.querySelector(".lucide-between-vertical-end")).not.toBeNull();
-    expect(toolbar?.textContent).not.toContain("Table:");
-    expect(toolbar?.querySelector("[aria-label='Delete row']")).toBeNull();
-    expect(toolbar?.querySelector("[aria-label='Delete column']")).toBeNull();
-    expect(toolbar?.querySelector("[aria-label='More table actions']")).toBeNull();
-    // Entering a table no longer opens the bar: it stays as the writer left it.
-    expect(host.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
-    expect(host.querySelectorAll("[aria-label='Document']")).toHaveLength(0);
-    const moreActions = host.querySelector<HTMLButtonElement>(
-      ".scient-document-footer [aria-label='More table actions']",
-    );
-    expect(moreActions).not.toBeNull();
-    await act(() => moreActions!.click());
-    const menuItems = Array.from(
-      document.body.querySelectorAll<HTMLElement>("[data-slot='menu-item']"),
-      (item) => item.textContent?.trim(),
-    );
-    expect(menuItems).toEqual(
-      expect.arrayContaining([
-        "Add row above",
-        "Add row below",
-        "Add column before",
-        "Add column after",
-        "Align column left",
-        "Align column center",
-        "Align column right",
-      ]),
-    );
-  });
-
   it("keeps one dock and one document while the cursor moves into and out of a table", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
@@ -1533,30 +1432,12 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(findBar).not.toBeNull();
     expect(findBar?.parentElement).toBe(richPane);
     expect(host.querySelector(".scient-markdown-find-popover")).toBeNull();
-    const findInput = findBar?.querySelector<HTMLInputElement>("[aria-label='Find text']");
-    const findInputGroup = findInput?.closest<HTMLElement>("[data-slot='input-group']");
-    expect(findInputGroup).not.toBeNull();
-    expect(findInputGroup?.className).toContain("shadow-none");
-    expect(
-      findBar?.querySelector("[aria-label='Match case'] svg")?.classList.contains("size-3.5"),
-    ).toBe(true);
+    expect(findBar?.querySelector("[aria-label='Find text']")).not.toBeNull();
 
     await act(() =>
       findBar?.querySelector<HTMLButtonElement>("[aria-label='Show replace']")?.click(),
     );
-    const replacementInput = findBar?.querySelector<HTMLInputElement>(
-      "[aria-label='Replacement text']",
-    );
-    const replacementInputGroup = replacementInput?.closest<HTMLElement>(
-      "[data-slot='input-group']",
-    );
-    expect(replacementInputGroup).not.toBeNull();
-    expect(replacementInputGroup?.className).toContain("shadow-none");
-    expect(
-      findBar
-        ?.querySelector("[aria-label='Replace current match'] svg")
-        ?.classList.contains("size-3.5"),
-    ).toBe(true);
+    expect(findBar?.querySelector("[aria-label='Replacement text']")).not.toBeNull();
 
     const matchCase = findBar?.querySelector<HTMLButtonElement>("[aria-label='Match case']");
     if (!matchCase) throw new Error("Expected the Match case control to be mounted.");

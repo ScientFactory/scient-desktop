@@ -1,5 +1,6 @@
 import { assert, describe, it } from "vite-plus/test";
 
+// SCIENT-FORK:START scient-preload-actions
 import { verifyPreloadBundle, verifyConversationReviewPreload } from "./verify-preload-bundle.mjs";
 
 const validReview = `
@@ -44,6 +45,7 @@ describe("conversation review preload verifier", () => {
       /unexpected actions/,
     ));
 });
+// SCIENT-FORK:END scient-preload-actions
 
 const validPreload = `
   const electron = require("electron");
@@ -58,6 +60,7 @@ const validPreload = `
 `;
 
 describe("desktop preload bundle verifier", () => {
+  // SCIENT-FORK:START scient-preload-actions
   it("executes macOS window-control inset setup in its DOM sandbox", () => {
     assert.doesNotThrow(() =>
       verifyPreloadBundle(`${validPreload}
@@ -65,6 +68,7 @@ describe("desktop preload bundle verifier", () => {
     `),
     );
   });
+  // SCIENT-FORK:END scient-preload-actions
   it("rejects required API names that only appear in strings", () => {
     assert.throws(
       () =>

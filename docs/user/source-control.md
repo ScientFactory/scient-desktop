@@ -88,9 +88,22 @@ state. Clearing a migrated token does not leave an adopted legacy copy behind.
   see passing and approved reviews first, passing reviews awaiting approval next, and conflicting
   reviews last. Smaller changes come first within each readiness group, and finished reviews follow
   open work when all states are visible.
-- Filter the list by author or labels, rank authors by merges in the loaded results, see label and
-  change-size context on each row, and sort the results currently shown by readiness, update time,
-  creation time, or change size. Your filters, search, scope, and sort are restored when you return.
+- Forgejo warning checks stay distinct from passed checks. A watcher does not report an
+  all-required-checks-passed result while a required check has a warning. Older apps keep showing
+  these checks as pending rather than incorrectly treating them as passed.
+- Filter by author or labels. GitHub, GitLab, Forgejo, and GitCafe search option values on the host;
+  Azure DevOps and Bitbucket use only facets from pull requests already loaded. Searches return at
+  most 100 matches; refine the query when Scient says more are available. A supported repository
+  search failure keeps options from successful repositories visible and marks the results
+  incomplete; if failures leave no options, Scient reports an error rather than a complete empty
+  result.
+  Up to ten label filters can be combined. Existing groups keep their OR alternatives when edited;
+  remove every alternative from a group to free its filter slot.
+- The list sends each filter to a host when that host supports it; filters without host support
+  narrow the pull requests already loaded. Author ranking by merges still uses loaded results. See
+  label and change-size context on each row, and sort the displayed results by readiness, update
+  time, creation time, or change size. Your filters, search, scope, and sort are restored when you
+  return.
 - Merge now, or on GitHub, GitLab, and Azure DevOps, leave an auto-merge instruction with a chosen
   strategy while checks are outstanding; see the completed state in the same control after the
   pull request merges
@@ -309,26 +322,24 @@ Press **Escape** before releasing to cancel. Failed closes stay in the list so y
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
 
-## Trusted GitHub routing
+## Trusted pull request sharing
 
-GitHub routing is off by default. In **Settings → Connections** (or
-**Environments** on mobile), choose **Read PRs** or **Read and act** only for
-environments you trust to share GitHub access. Enable both the original
-environment and the environment answering its requests on that client.
+Pull request sharing is off by default. In **Settings → Connections → Pull request sharing**
+(**Pull request routing** under **Environments** on mobile), choose **Read PRs** or
+**Read and act** only for environments you trust to share their source control access. Enable
+both the original environment and the environment answering its requests on that client.
 
-When enabled, GitHub review details, linked status, and permitted review actions
-can use another connected environment signed in to the same GitHub account.
-Each participating environment needs a project on that host. A connected local
-environment is preferred for actions and can answer slow or failed reads. Browser
-and mobile clients need a paired environment to use its GitHub credentials.
-Credentials remain on their machines. **Read and act** may use broader GitHub
-permissions than the original environment, so enable it only for environments
-you control. Previously verified credentials remain usable for routing for ten
-minutes during a GitHub outage; new credentials must be verified first. An action
-with an uncertain result is never retried automatically on another environment.
-Changing a saved endpoint or removing an environment clears its routing permission.
-Listings, diffs, and checkout or PR creation from Git actions continue to use the
-project's environment.
+When enabled, review details, linked status, and permitted review actions can use another
+connected environment signed in to the same account on the same host. Each participating
+environment needs a project on that host. A connected local environment is preferred for actions
+and can answer slow or failed reads. Browser and mobile clients need a paired environment to use
+its GitHub credentials. Credentials remain on their machines. **Read and act** may use broader
+permissions than the original environment, so enable it only for environments you control.
+Previously verified credentials remain usable for routing for ten minutes during a GitHub outage;
+new credentials must be verified first. An action with an uncertain result is never retried
+automatically on another environment. Changing a saved endpoint or removing an environment clears
+its routing permission. Listings, diffs, and checkout or PR creation from Git actions continue to
+use the project's environment.
 
 For Azure DevOps, use the host website to change comments. Bitbucket does not support reopening a
 declined pull request.
@@ -418,9 +429,10 @@ the thread is active, the server checks the pull request every two minutes and w
 check fails, the required checks pass, someone else comments or reviews, or the branch starts to
 conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
-watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
-when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
-failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
+watching inside GitHub's rate limit. A terminal Forgejo warning does not satisfy a required-check
+pass. Comments from your own account do not wake it. Watching ends when the pull request merges or
+closes, after 10 wakes in a row that bring only comments, after 8 failed reads in a row, or when you
+press Stop on the thread. A rate limit only pauses watching.
 Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new
 watch. Watching a pull request again does not repeat check or conflict news its last
 watch already reported; unlinking the pull request clears that. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop

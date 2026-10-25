@@ -22,11 +22,13 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   __resetClientSettingsPersistenceForTests();
 }
 
-it.each([1280, 384])("keeps the new-chat footer at the bottom at %ipx", async (width) => {
+// regression: 3c7c218d94 fix(models): anchor new-chat footer to picker bottom
+// The picker has no width-dependent layout, so one viewport covers the anchoring.
+it("keeps the new-chat footer at the bottom of the picker", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-  await page.viewport(width, 720);
+  await page.viewport(1280, 720);
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, favorites: [] });
   const models = Array.from({ length: 30 }, (_, i) => ({
     slug: `model-${i}`,

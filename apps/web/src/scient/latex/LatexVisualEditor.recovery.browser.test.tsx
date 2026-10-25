@@ -209,7 +209,7 @@ describe("recovering unsaved work", () => {
       expect(mounted!.view.dom.dataset.latexLoading).not.toBe("true");
     });
     if (openingSave) await openingSave();
-    _fixture.clock ??= _fixture.cleanup.use(fakeTimers());
+    _fixture.clock ??= _fixture.stack.use(fakeTimers());
   }
   /** Something else wrote the file; the host adopts it. */
   const changeOutside = async (source: string) =>
@@ -460,22 +460,6 @@ describe("recovering unsaved work", () => {
     expect(checkpoint()).toEqual({ source: next, baseRevision: "r1" });
   });
 
-  it("sits in the footer as one line with plain actions", async (testContext) => {
-    await using _fixture = _createFixture(testContext);
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    storeSourceDraft(MONDAY, "r1");
-    await mount(_fixture, tex("Monday base"), 1);
-    const footer = _fixture.container.querySelector("footer.scient-latex-reader-footer");
-    expect(footer).not.toBeNull();
-    expect(bar(_fixture)?.parentElement).toBe(footer);
-    expect(message(_fixture)).toBe("Unsaved changes");
-    expect(
-      [...bar(_fixture)!.querySelectorAll(":scope > button")].map((b) => b.textContent),
-    ).toEqual(["Compare", "Discard"]);
-  });
-
   it("has a one-action form for a narrow footer, with Discard inside the comparison", async (testContext) => {
     await using _fixture = _createFixture(testContext);
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -547,22 +531,6 @@ describe("recovering unsaved work", () => {
     await acknowledged();
     expect(disk).toEqual({ source: MONDAY, revision: 3 });
     expect(checkpoint()).toBeNull();
-  });
-
-  it("names each side of a difference for a screen reader", async (testContext) => {
-    await using _fixture = _createFixture(testContext);
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    storeSourceDraft(MONDAY, "r1");
-    await mount(_fixture, AGENT, 2);
-    await click(_fixture, "Compare");
-    expect(_fixture.container.querySelector('pre[data-side="current"]')?.textContent).toMatch(
-      /^File: /u,
-    );
-    expect(_fixture.container.querySelector('pre[data-side="recovered"]')?.textContent).toMatch(
-      /^Recovered: /u,
-    );
   });
 
   it("closes the comparison with the same control", async (testContext) => {

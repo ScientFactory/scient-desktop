@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { ChildProcessSpawner } from "effect/process";
 
 import { ExecutionProcess, layer } from "./LocalExecutionProcess.ts";
 import {
@@ -21,6 +22,35 @@ import {
 } from "./LocalProcessTestSupport.ts";
 
 const Live = layer.pipe(Layer.provideMerge(NodeServices.layer));
+
+/**
+ * The production cleanup, with its SIGTERM-to-SIGKILL deadline (5 s) cut to
+ * 100 ms so a SIGTERM-resistant descendant is force-stopped quickly. A kill
+ * without a deadline is passed through unchanged.
+ */
+const LiveWithShortKillDeadline = layer.pipe(
+  Layer.provide(
+    Layer.effect(
+      ChildProcessSpawner.ChildProcessSpawner,
+      Effect.map(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
+        ChildProcessSpawner.make((command) =>
+          spawner.spawn(command).pipe(
+            Effect.map((handle) => ({
+              ...handle,
+              kill: (options) =>
+                handle.kill(
+                  options?.forceKillAfter === undefined
+                    ? options
+                    : { ...options, forceKillAfter: "100 millis" },
+                ),
+            })),
+          ),
+        ),
+      ),
+    ),
+  ),
+  Layer.provideMerge(NodeServices.layer),
+);
 
 describe("LocalExecutionProcess", () => {
   it.effect("finishes short commands without a cancellation grace delay", () =>
@@ -123,7 +153,7 @@ describe("LocalExecutionProcess", () => {
         expect(yield* handle.exitCode).toBe(0);
         expect(processExists(childPid)).toBe(false);
       }),
-    ).pipe(Effect.provide(Live), TestClock.withLive),
+    ).pipe(Effect.provide(LiveWithShortKillDeadline), TestClock.withLive),
   );
 
   it.effect("cleans up its owned tree when the caller scope closes", () =>

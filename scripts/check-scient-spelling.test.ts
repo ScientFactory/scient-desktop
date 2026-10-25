@@ -45,6 +45,7 @@ export function findMisspellings(
   const hits: MisspellingHit[] = [];
   for (const file of files) {
     if (file.path === GUARD_PATH) continue;
+    if (!MISSPELLING.test(file.contents)) continue;
     const lines = file.contents.split("\n");
     for (const [index, line] of lines.entries()) {
       if (MISSPELLING.test(line)) {

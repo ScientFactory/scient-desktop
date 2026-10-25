@@ -1051,7 +1051,10 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
 describe("ClaudeAdapterV2 approval cancellation", () => {
   it.effect("observes an approval signal that was already aborted", () =>
     Effect.gen(function* () {
-      const decision = yield* Deferred.make<ProviderApprovalDecision>();
+      const decision = yield* Deferred.make<{
+        decision: ProviderApprovalDecision;
+        feedback?: string;
+      }>();
       const controller = new AbortController();
       controller.abort();
 
@@ -1060,7 +1063,7 @@ describe("ClaudeAdapterV2 approval cancellation", () => {
         controller.signal,
       );
 
-      assert.equal(result, "cancel");
+      assert.deepEqual(result, { decision: "cancel" });
     }),
   );
 });
@@ -2247,6 +2250,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
       const processQueues: Array<Queue.Queue<SDKMessage>> = [];
+      // SDK EOF precedes adapter retirement; join the consumer that owns both.
+      const queryWorkers = yield* Queue.unbounded<Fiber.Fiber<unknown, unknown>>();
       const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
       const offerAndWait = Effect.fnUntraced(function* (
         message: SDKMessage,
@@ -2331,6 +2336,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     ),
                   ),
                 ),
+                Stream.onStart(Effect.withFiber((fiber) => Queue.offer(queryWorkers, fiber))),
               );
               if (options?.freshQueueOnReopen === true && processQueues.length > 0) {
                 processQueues.push(processMessages);
@@ -2443,6 +2449,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         threadId,
         sdkMessages,
         processQueues,
+        queryWorkers,
         offerAndWait,
         offeredMessages,
         promptUuid: (index: number) => {
@@ -2964,12 +2971,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       turn: Effect.Success<ReturnType<typeof openPlanTurn>>,
       toolName: string,
       toolInput: Record<string, unknown>,
+      options?: { toolUseID: string; agentID?: string },
     ) {
       const decision = yield* Effect.promise(() =>
         turn.canUseTool(toolName, toolInput, {
           signal: new AbortController().signal,
-          toolUseID: "tool-plan-write",
+          toolUseID: options?.toolUseID ?? "tool-plan-write",
           requestId: "request-plan-write",
+          ...(options?.agentID === undefined ? {} : { agentID: options.agentID }),
         }),
       ).pipe(Effect.forkScoped);
       const first = yield* Effect.raceFirst(
@@ -3043,6 +3052,61 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
+    );
+
+    it.effect(
+      "returns approval feedback to the requesting tool without sending a parent prompt",
+      () =>
+        Effect.gen(function* () {
+          const turn = yield* openPlanTurn("full-access");
+          const parentPermission = yield* requestWrite(
+            turn,
+            "Bash",
+            { command: "git status" },
+            { toolUseID: "parent-command" },
+          );
+          assert.equal(parentPermission.first.type, "request");
+          if (parentPermission.first.type !== "request") return;
+          const permission = yield* requestWrite(
+            turn,
+            "Bash",
+            { command: "rm -f $W/*/*.obj" },
+            { toolUseID: "child-command", agentID: "child-worker" },
+          );
+          assert.equal(permission.first.type, "request");
+          if (permission.first.type !== "request") return;
+          const request = permission.first.event.runtimeRequest;
+          assert.equal(request.responseCapability.type, "live");
+          assert.isTrue(
+            request.responseCapability.type === "live" &&
+              request.responseCapability.supportsFeedback,
+          );
+          yield* turn.runtime.respondToRuntimeRequest({
+            requestId: request.id,
+            decision: "decline",
+            feedback: "Run it in a safer manner.",
+          });
+          const result = yield* Fiber.join(permission.decision);
+          assert.equal(result?.behavior, "deny");
+          if (result?.behavior === "deny") {
+            assert.include(result.message, "Run it in a safer manner.");
+            assert.notProperty(result, "interrupt");
+          }
+          assert.equal(turn.offeredMessages.length, 1);
+          yield* turn.runtime.respondToRuntimeRequest({
+            requestId: parentPermission.first.event.runtimeRequest.id,
+            decision: "accept",
+          });
+          const parentResult = yield* Fiber.join(parentPermission.decision);
+          assert.equal(parentResult?.behavior, "allow");
+          if (parentResult?.behavior === "allow")
+            assert.equal(parentResult.toolUseID, "parent-command");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
     );
 
     it.effect("still captures ExitPlanMode when Plan approvals are never allowed", () =>
@@ -10003,6 +10067,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
           const sdkStops: Array<{ query: number; taskId: string }> = [];
           const sdkStopRequests = yield* Queue.unbounded<{ query: number; taskId: string }>();
+          const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
+          const offerAndWait = Effect.fnUntraced(function* (
+            messages: Queue.Queue<SDKMessage>,
+            message: SDKMessage,
+          ) {
+            const processed = yield* Deferred.make<void>();
+            processedMessages.set(message, processed);
+            yield* Queue.offer(messages, message);
+            yield* Deferred.await(processed);
+          });
           const interrupts: number[] = [];
           const closes: number[] = [];
           const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
@@ -10024,7 +10098,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
-                    messages: Stream.fromQueue(sdkMessages),
+                    messages: Stream.fromQueue(sdkMessages).pipe(
+                      Stream.flatMap((message) =>
+                        Stream.make(message).pipe(
+                          Stream.concat(
+                            Stream.fromEffect(
+                              Effect.suspend(() => {
+                                const processed = processedMessages.get(message);
+                                return processed === undefined
+                                  ? Effect.void
+                                  : Deferred.succeed(processed, undefined);
+                              }),
+                            ).pipe(Stream.drain),
+                          ),
+                        ),
+                      ),
+                    ),
                     offer: () => Effect.void,
                     setModel: () => Effect.void,
                     applyFlagSettings: () => Effect.void,
@@ -10276,7 +10365,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
             // A known task_started can resume the old child while the parent is
             // idle, before a continuation has republished its new activation.
-            yield* Queue.offer(
+            yield* offerAndWait(
               processQueues[1]!,
               makeSubagentTaskStartedFrame({
                 taskId: TASK_ID,
@@ -10284,13 +10373,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 uuid: "00000000-0000-4000-8000-000000002007",
               }),
             );
-            yield* Effect.gen(function* () {
-              for (let attempt = 0; attempt < 5000; attempt++) {
-                if (yield* runtime.hasPendingBackgroundWork!) return;
-                yield* Effect.yieldNow;
-              }
-              return yield* Effect.die("Timed out waiting for the idle subagent resume.");
-            });
+            assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
             const resumedStop = yield* stop!({ providerThread, nativeTaskId: TASK_ID }).pipe(
               Effect.forkScoped,
             );
@@ -11416,11 +11499,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         Effect.gen(function* () {
           const closeStarted = yield* Deferred.make<void>();
           const closeGate = yield* Deferred.make<void>();
-          const streamExited = yield* Deferred.make<void>();
+          const streamExited = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
           const scope = yield* Scope.Scope;
           const h = yield* makeSharedWakeHarnessWithOptions({
             freshQueueOnReopen: true,
-            onStreamExit: Deferred.succeed(streamExited, undefined),
+            onStreamExit: Effect.withFiber((fiber) =>
+              Deferred.succeed(streamExited, fiber).pipe(Effect.asVoid),
+            ),
             close: (messages) =>
               Queue.shutdown(messages).pipe(
                 Effect.andThen(Deferred.succeed(closeStarted, undefined)),
@@ -11454,12 +11539,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           };
           const replacement = yield* h.runtime.startTurn(replacementInput).pipe(Effect.forkScoped);
           yield* Deferred.await(closeStarted);
-          yield* Deferred.await(streamExited);
+          const queryWorker = yield* Deferred.await(streamExited);
           yield* Fiber.interrupt(replacement);
-          for (let attempt = 0; yield* h.hasPendingBackgroundWork; attempt++) {
-            assert.isBelow(attempt, 5000, "abandoned replacement must retire captured wake work");
-            yield* Effect.yieldNow;
-          }
+          yield* Fiber.await(queryWorker);
+          assert.isFalse(yield* h.hasPendingBackgroundWork);
           assert.lengthOf(h.processQueues, 1);
           assert.lengthOf(h.terminalEvents(), 1);
           yield* h.runtime.startTurn({
@@ -13428,19 +13511,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               assert.lengthOf(harness.continuationRequests, 1);
             }
             if (arrival === "query close") {
-              let accepted = false;
-              for (let attempt = 0; attempt < 5000; attempt++) {
-                const next = yield* start("attempt-workflow-waiting-next-user", 3, false).pipe(
-                  Effect.exit,
-                );
-                if (Exit.isSuccess(next)) {
-                  accepted = true;
-                  break;
-                }
-                assert.match(Cause.pretty(next.cause), /captured Stop close remains unresolved/);
-                yield* Effect.yieldNow;
-              }
-              assert.isTrue(accepted, "the next user starts after captured EOF cleanup commits");
+              yield* Fiber.await(yield* Queue.take(harness.queryWorkers));
+              yield* start("attempt-workflow-waiting-next-user", 3, false);
               assert.lengthOf(harness.processQueues, 2);
             } else {
               yield* start("attempt-workflow-waiting-next-user", 3, false);
@@ -14238,10 +14310,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   ),
                 "EOF workflow member publication",
               );
-              for (let attempt = 0; yield* harness.hasPendingBackgroundWork; attempt++) {
-                assert.isBelow(attempt, 5000, "EOF must clear this query's buffered work");
-                yield* Effect.yieldNow;
-              }
+              yield* Fiber.await(yield* Queue.take(harness.queryWorkers));
             }
             assert.isFalse(yield* harness.hasPendingBackgroundWork);
             if (status === "query_failed") {

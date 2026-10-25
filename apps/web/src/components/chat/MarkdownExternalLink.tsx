@@ -1,28 +1,30 @@
 import { GlobeIcon } from "lucide-react";
 import { Children, Fragment, memo, type ReactNode } from "react";
 
-import { GitHubIcon } from "../Icons";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+
+import { sourceControlIcon } from "../../sourceControlPresentation";
 
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
 
-function isGitHubHost(host: string): boolean {
-  const hostname = host.toLowerCase();
-  return hostname === "github.com" || hostname.endsWith(".github.com");
+function sourceControlHostIcon(host: string): ReactNode {
+  const definition = sourceControlClients.findByPublicDomain(host);
+  if (definition === undefined) return null;
+  const Icon = sourceControlIcon(definition);
+  return <Icon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />;
 }
 
 // SCIENT-FORK:START — links use local marks, never a favicon request to another host.
+// Forge hosts get the mark their source-control definition draws locally; every other
+// host falls back to the globe instead of upstream's remote favicon <img>.
 const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: string }) {
+  const brandIcon = sourceControlHostIcon(host);
   return (
     <span
       className="ms-[0.25em] me-[0.2em] inline-flex size-[14px] [vertical-align:-0.125em]"
       aria-hidden
     >
-      {/* Only the brand marks drawn here; any other brand falls back to the globe. */}
-      {isGitHubHost(host) ? (
-        <GitHubIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
-      ) : (
-        <GlobeIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
-      )}
+      {brandIcon ?? <GlobeIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />}
     </span>
   );
 });

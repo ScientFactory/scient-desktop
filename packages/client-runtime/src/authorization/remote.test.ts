@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+// SCIENT-FORK:START
 
+// SCIENT-FORK:END
 import * as Schema from "effect/Schema";
 
 import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
@@ -10,7 +12,9 @@ import {
   issueRemoteDpopWebSocketTicket,
   issueRemoteWebSocketTicket,
   resolveRemoteWebSocketConnectionUrl,
+  // SCIENT-FORK:START
   resolveRemoteDpopWebSocketConnectionUrl,
+  // SCIENT-FORK:END
 } from "./remote.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RpcHttp from "../rpc/http.ts";

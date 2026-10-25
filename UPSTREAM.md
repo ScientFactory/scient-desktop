@@ -592,28 +592,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current alignment through
-`2c8bdf6177159d8fcd12a897d7c9311f6eb93237` is recorded in
-[the 2026-10-23 receipt](docs/internals/t3-upstream-sync-20261023-2c8bdf6177.md).
-Literal merge `29f4ebb106d541307e8b2eb9251e41b9dd5cf703` has exact owned-main
-base `3ca9472f3cf5dd0e7b8d885a2e9bc876db31d5bc` and the frozen official target as
-parents, retaining all 151 additional donor commits after `21da3061aa`.
-Ordinary owned-main catch-ups preserve that merge: `2551263540432343ac6d9b3acb4551b7742015d0`
-includes `be0eaf41518376062d8945709e91b4ab0792a70b`;
-`94fde5e77561a699a30f7c6425d8a0848539b1c8` includes
-`d5c9445fc1ce5326355e80e45f073e91d4169119`; and
-`d7823dce9238cba7f958f3b04ad1ddd4a20072c5` includes
-`87e2e1f4d485c1a957566c27b6ffee621a3f95b4`.
-Local automated qualification covers all 46 workspace test tasks through fresh
-affected checks and exact unchanged-input reuse, including 488 current Overleaf
-cases and the complete 13,022-case web suite. Current-owned-main provenance and all
-six staged seam checks pass. The catch-ups retain the unmounted Overleaf foundation,
-short send admission and network-outside-checkout behavior; the web CI change is
-a job cap, not a test timeout. The owner approved the isolated localhost visual
-review and authorized push and merge in Scient PR #638. Hosted CI remains a required
-PR and merge-queue gate; native-device, authenticated live-provider, signing and
-release acceptance remain separate. The
-[previous receipt](docs/internals/t3-upstream-sync-20261020-81dea7821d.md)
-retains its own boundaries and evidence, including Scient PR #614.
+`d53873b6a4799e87afd63c8d288ef0089f5a3748` is recorded in
+[the 2026-10-24 d53873b6a4 receipt](docs/internals/t3-upstream-sync-20261024-d53873b6a4.md).
+Literal merge `8d4dd69b89121d748c23d6373c0a2635ac2f2c4e` has owned base `59e27699a9f3db73f0981460906bb10a85b85f65` (the fef851bee0 alignment) and the frozen
+official target as parents, retaining all 16 official commits after `fef851bee0`,
+mostly upstream's source-control forge refactor and Cmd+K search. Typecheck, lint,
+seam checks and every package's full suite pass. Hosted CI on the exact head is
+required after Scient PRs #640 and #651 merge. Merge, release and native,
+live-provider and visual acceptance remain separate. The
+[previous receipt](docs/internals/t3-upstream-sync-20261024-fef851bee0.md)
+retains its own boundaries and evidence.
 Native V2, scientific capabilities, immutable migrations, database durability and
 all cloud, telemetry, relay, updater, mobile publication and release holds remain.
 

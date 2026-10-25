@@ -2,7 +2,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+// SCIENT-FORK:START scient-retained-stall-guards
 import * as Fiber from "effect/Fiber";
+// SCIENT-FORK:END scient-retained-stall-guards
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -10,7 +12,9 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+// SCIENT-FORK:START scient-retained-stall-guards
 import * as TestClock from "effect/testing/TestClock";
+// SCIENT-FORK:END scient-retained-stall-guards
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -29,6 +33,7 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     platform: "linux",
     isPackaged: true,
     isDevelopment: false,
+    // SCIENT-FORK:START scient-conversation-files
     displayName: "Scient (Alpha)",
     linuxDesktopEntryName: "scient.desktop",
     linuxWmClass: "scient",
@@ -47,6 +52,7 @@ const mockProcess = (exitCode: number, stdout = "", stalled = false) =>
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
     stdout: stdout ? Stream.make(new TextEncoder().encode(stdout)) : Stream.empty,
+    // SCIENT-FORK:END scient-conversation-files
     stderr: Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -61,7 +67,9 @@ const layerHandler = (
     readonly updateDesktopDatabaseStalled?: boolean;
     readonly updateDesktopDatabaseStarted?: Deferred.Deferred<void>;
     readonly xdgMimeExitCode?: number;
+    // SCIENT-FORK:START scient-conversation-files
     readonly fileDefault?: string;
+    // SCIENT-FORK:END scient-conversation-files
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
     readonly iconSource?: string;
@@ -128,7 +136,9 @@ const layerHandler = (
                 : (input.xdgMimeExitCode ?? 0);
             const handle = mockProcess(
               exitCode,
+              // SCIENT-FORK:START scient-conversation-files
               childProcess.args[0] === "query" ? (input.fileDefault ?? "") : "",
+              // SCIENT-FORK:END scient-conversation-files
               childProcess.command === "update-desktop-database" &&
                 input.updateDesktopDatabaseStalled === true,
             );
@@ -163,6 +173,7 @@ const emptyRecording = (): RecordedRegistration => ({
 describe("DesktopLinuxUrlHandler", () => {
   it("renders a scheme-handler desktop entry with freedesktop Exec quoting", () => {
     const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+      // SCIENT-FORK:START scient-conversation-files
       displayName: "Scient",
       execTarget: '/home/al ice/Apps/T3 "100%" $HOME\\x.AppImage',
       scheme: "scient-next",
@@ -184,11 +195,8 @@ describe("DesktopLinuxUrlHandler", () => {
     assert.include(entry, "Icon=/home/al ice/icons/T3\\\\x.png");
   });
 
+  // regression: 29d46101f3 Linux URL handler quotes the Exec path only when it must (#16670)
   it.each([
-    {
-      execTarget: "/opt/T3(beta)/t3code.AppImage",
-      execLine: 'Exec="/opt/T3(beta)/t3code.AppImage" %U',
-    },
     {
       execTarget: "/opt/t3%20code/t3code.AppImage",
       execLine: "Exec=/opt/t3%%20code/t3code.AppImage %U",
@@ -203,6 +211,7 @@ describe("DesktopLinuxUrlHandler", () => {
     assert.include(entry.split("\n"), execLine);
   });
 
+  // regression: 69dfb7f09a fix(desktop): claim the t3code:// scheme default on Linux at startup (#5054)
   it("carries structured context on registration errors", () => {
     const writeError = new DesktopLinuxUrlHandler.DesktopLinuxUrlHandlerRegistrationError({
       step: "write-desktop-entry",
@@ -229,6 +238,7 @@ describe("DesktopLinuxUrlHandler", () => {
       "Failed to register the scient-next:// URL handler (step: set-default-handler, xdg-mime exit code 4).",
     );
   });
+  // SCIENT-FORK:END scient-conversation-files
 
   it.effect(
     "writes the handler entry, refreshes the MIME cache, and claims the scheme default",
@@ -238,6 +248,7 @@ describe("DesktopLinuxUrlHandler", () => {
       return Effect.gen(function* () {
         yield* runRegister(recorded);
 
+        // SCIENT-FORK:START scient-conversation-files
         assert.deepEqual(recorded.directories, [
           "/home/alice/.local/share/applications",
           "/home/alice/.local/share/applications",
@@ -285,6 +296,7 @@ describe("DesktopLinuxUrlHandler", () => {
           {
             command: "xdg-mime",
             args: ["default", "scient.desktop", "application/vnd.scient.conversation+zip"],
+            // SCIENT-FORK:END scient-conversation-files
           },
         ]);
       });
@@ -300,10 +312,12 @@ describe("DesktopLinuxUrlHandler", () => {
       assert.include(
         recorded.files[0]?.content,
         DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+          // SCIENT-FORK:START scient-conversation-files
           displayName: "Scient (Alpha)",
           execTarget: process.execPath,
           scheme: "scient",
           iconPath: "/home/alice/.local/share/icons/scient.desktop.png",
+          // SCIENT-FORK:END scient-conversation-files
         }),
       );
     });
@@ -315,6 +329,7 @@ describe("DesktopLinuxUrlHandler", () => {
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+          // SCIENT-FORK:START scient-conversation-files
           displayName: "Scient (Alpha)",
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
           scheme: "scient",
@@ -370,6 +385,7 @@ describe("DesktopLinuxUrlHandler", () => {
         }),
       });
       assert.equal(recorded.files.length, 1);
+      // SCIENT-FORK:END scient-conversation-files
       assert.deepEqual(recorded.copies, [
         { source: "/tmp/.mount_T3/resources/icon.png", destination: iconPath },
       ]);
@@ -389,10 +405,12 @@ describe("DesktopLinuxUrlHandler", () => {
           description: "read-only icon directory",
         }),
       });
+      // SCIENT-FORK:START scient-conversation-files
       assert.equal(recorded.files.length, 2);
       assert.deepEqual(
         recorded.commands.map(({ command }) => command),
         ["update-desktop-database", "xdg-mime", "xdg-mime", "xdg-mime", "xdg-mime"],
+        // SCIENT-FORK:END scient-conversation-files
       );
     });
   });
@@ -406,6 +424,7 @@ describe("DesktopLinuxUrlHandler", () => {
       yield* runRegister(unpackaged, {
         environment: {
           isPackaged: false,
+          // SCIENT-FORK:START scient-conversation-files
           linuxDesktopEntryName: "scient-next-dev.desktop",
         },
       });
@@ -431,6 +450,7 @@ describe("DesktopLinuxUrlHandler", () => {
       );
     });
   });
+  // SCIENT-FORK:END scient-conversation-files
 
   it.effect("never fails startup when registration cannot complete", () => {
     const desktopDatabaseFailed = emptyRecording();
@@ -446,6 +466,7 @@ describe("DesktopLinuxUrlHandler", () => {
           module: "FileSystem",
           method: "writeFileString",
           description: "read-only filesystem",
+          // SCIENT-FORK:START scient-conversation-files
           pathOrDescriptor: "/home/alice/.local/share/applications/scient.desktop",
         }),
       });
@@ -453,6 +474,7 @@ describe("DesktopLinuxUrlHandler", () => {
       assert.deepEqual(
         desktopDatabaseFailed.commands.map(({ command }) => command),
         ["update-desktop-database", "xdg-mime", "xdg-mime", "xdg-mime", "xdg-mime"],
+        // SCIENT-FORK:END scient-conversation-files
       );
       assert.equal(xdgMimeFailed.files.length, 1);
       assert.deepEqual(writeFailed.commands, []);
@@ -488,8 +510,10 @@ const registerWithRealFileSystem = (run: ThemeIconRun) =>
                 Effect.map((path) =>
                   makeEnvironment(path, {
                     linuxApplicationsDir: path.join(run.root, "applications"),
+                    // SCIENT-FORK:START scient-conversation-files
                     // SCIENT-FORK: exercise case-sensitive icon names with the Scient identity.
                     linuxDesktopEntryName: "Scient.desktop",
+                    // SCIENT-FORK:END scient-conversation-files
                   }),
                 ),
               ),
@@ -543,7 +567,9 @@ const registerWithRealFileSystem = (run: ThemeIconRun) =>
                   );
                 }
                 const exitCode = run.iconCacheExitCode ?? 0;
+                // SCIENT-FORK:START scient-conversation-files
                 const handle = mockProcess(exitCode, "", run.iconCacheStalled === true);
+                // SCIENT-FORK:END scient-conversation-files
                 const refreshed =
                   exitCode === 0 && run.onIconCacheRefresh ? run.onIconCacheRefresh : Effect.void;
                 return refreshed.pipe(
@@ -569,9 +595,11 @@ const themeIconFixture = (source: Uint8Array) =>
     const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-theme-icons-" });
     yield* fileSystem.makeDirectory(path.join(root, "resources", "icons"), { recursive: true });
     yield* fileSystem.writeFile(path.join(root, "resources", "icons", "256x256.png"), source);
+    // SCIENT-FORK:START scient-conversation-files
     const caseSensitive = !(yield* fileSystem.exists(
       path.join(root, "resources", "ICONS", "256x256.png"),
     ));
+    // SCIENT-FORK:END scient-conversation-files
     const hicolorDir = path.join(root, "icons", "hicolor");
     const appsDir = path.join(hicolorDir, "256x256", "apps");
     const cachePath = path.join(hicolorDir, "icon-theme.cache");
@@ -586,6 +614,7 @@ const themeIconFixture = (source: Uint8Array) =>
     const rewriteCache = fileSystem
       .writeFile(cachePath, new Uint8Array([1]))
       .pipe(Effect.orDie, Effect.provideService(FileSystem.FileSystem, fileSystem));
+    // SCIENT-FORK:START scient-conversation-files
     return {
       root,
       hicolorDir,
@@ -596,6 +625,7 @@ const themeIconFixture = (source: Uint8Array) =>
       rewriteCache,
       caseSensitive,
     };
+    // SCIENT-FORK:END scient-conversation-files
   });
 
 const iconCacheRuns = (run: ThemeIconRun) =>
@@ -611,6 +641,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       const run: ThemeIconRun = { root: fixture.root, commands: [] };
 
       yield* registerWithRealFileSystem(run);
+      // SCIENT-FORK:START scient-conversation-files
       assert.deepEqual(
         [...(yield* fileSystem.readDirectory(fixture.appsDir))].sort(),
         fixture.caseSensitive ? ["Scient.png", "scient.png"] : ["scient.png"],
@@ -623,6 +654,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
 
       yield* registerWithRealFileSystem(run);
       for (const name of ["scient", "Scient"]) {
+        // SCIENT-FORK:END scient-conversation-files
         const info = yield* fileSystem.stat(path.join(fixture.appsDir, `${name}.png`));
         assert.equal(Option.getOrThrow(info.mtime).getTime(), fixture.pastSeconds * 1000);
       }
@@ -637,6 +669,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       const path = yield* Path.Path;
       const fixture = yield* themeIconFixture(new Uint8Array([1, 2, 3]));
       yield* fixture.seedCache;
+      // SCIENT-FORK:START scient-conversation-files
       const lower = path.join(fixture.appsDir, "scient.png");
       const upper = path.join(fixture.appsDir, "Scient.png");
       yield* fileSystem.writeFile(lower, new Uint8Array([3, 2, 1]));
@@ -644,6 +677,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       if (fixture.caseSensitive) {
         yield* fileSystem.writeFile(upper, new Uint8Array([1, 2, 3]));
       }
+      // SCIENT-FORK:END scient-conversation-files
       for (const target of [lower, upper]) {
         yield* fileSystem.utimes(target, fixture.pastSeconds, fixture.pastSeconds);
       }
@@ -658,11 +692,13 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
 
       assert.deepEqual([...(yield* fileSystem.readFile(lower))], [1, 2, 3]);
       const upperInfo = yield* fileSystem.stat(upper);
+      // SCIENT-FORK:START scient-conversation-files
       if (fixture.caseSensitive) {
         assert.equal(Option.getOrThrow(upperInfo.mtime).getTime(), fixture.pastSeconds * 1000);
       } else {
         assert.isAbove(Option.getOrThrow(upperInfo.mtime).getTime(), fixture.pastSeconds * 1000);
       }
+      // SCIENT-FORK:END scient-conversation-files
       assert.deepEqual(
         run.commands.filter(({ command }) => command === "gtk-update-icon-cache"),
         [{ command: "gtk-update-icon-cache", args: ["-f", "-t", fixture.hicolorDir] }],
@@ -687,7 +723,9 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
 
       yield* registerWithRealFileSystem(run);
 
+      // SCIENT-FORK:START scient-conversation-files
       assert.isTrue(yield* fileSystem.exists(path.join(fixture.appsDir, "Scient.png")));
+      // SCIENT-FORK:END scient-conversation-files
       assert.equal(iconCacheRuns(run), 1);
     }).pipe(Effect.scoped),
   );
@@ -702,9 +740,11 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       assert.deepEqual(failing.commands.map(({ command }) => command).slice(1), [
         "update-desktop-database",
         "xdg-mime",
+        // SCIENT-FORK:START scient-conversation-files
         "xdg-mime",
         "xdg-mime",
         "xdg-mime",
+        // SCIENT-FORK:END scient-conversation-files
       ]);
 
       const recovering: ThemeIconRun = {
@@ -725,7 +765,9 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       yield* registerWithRealFileSystem(missingSource);
       assert.deepEqual(
         missingSource.commands.map(({ command }) => command),
+        // SCIENT-FORK:START scient-conversation-files
         ["update-desktop-database", "xdg-mime", "xdg-mime", "xdg-mime", "xdg-mime"],
+        // SCIENT-FORK:END scient-conversation-files
       );
 
       yield* fixture.seedCache;
@@ -737,6 +779,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       yield* registerWithRealFileSystem(missingTool);
       assert.deepEqual(
         missingTool.commands.map(({ command }) => command),
+        // SCIENT-FORK:START scient-conversation-files
         [
           "gtk-update-icon-cache",
           "update-desktop-database",
@@ -745,9 +788,12 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
           "xdg-mime",
           "xdg-mime",
         ],
+        // SCIENT-FORK:END scient-conversation-files
       );
     }).pipe(Effect.scoped),
   );
+  // SCIENT-FORK:START scient-retained-stall-guards - upstream dropped these fix guards; no other test covers the stalled-helper timeout.
+  // regression: 7733bc839e fix(desktop): make Linux URL handlers discoverable with the app icon (#8673)
   it.effect("continues to xdg-mime when the desktop MIME cache refresh stalls", () =>
     Effect.gen(function* () {
       const recorded = emptyRecording();
@@ -768,6 +814,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
     }),
   );
 
+  // regression: f98118d033 fix(desktop): Install Linux theme icons named after the app id (#14471)
   it.effect("continues to xdg-mime when the icon cache refresh stalls", () =>
     Effect.gen(function* () {
       const fixture = yield* themeIconFixture(new Uint8Array([1, 2, 3]));
@@ -803,4 +850,5 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       assert.equal(iconCacheOptions[0]?.forceKillAfter, "1 second");
     }).pipe(Effect.scoped),
   );
+  // SCIENT-FORK:END scient-retained-stall-guards
 });

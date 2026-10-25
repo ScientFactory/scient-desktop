@@ -10,6 +10,16 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { downloadManagedRuntime, verifyManagedRuntimeChecksum } from "./runtimeFiles.ts";
 
 vi.mock("node:timers/promises", { spy: true });
+// The retry backoff resolves at once but still honours cancellation; the
+// "cancels the retry delay promptly" test drives the real timer.
+vi.mocked(NodeTimersPromises.setTimeout).mockImplementation((async (
+  _delay: number,
+  value: unknown,
+  options?: { signal?: AbortSignal },
+) => {
+  options?.signal?.throwIfAborted();
+  return value;
+}) as never);
 
 const roots: string[] = [];
 async function input(signal = new AbortController().signal) {
@@ -33,6 +43,8 @@ afterEach(async () => {
 });
 
 describe("transient managed runtime downloads", () => {
+  // regression: a5d49bba34 fix(scient-agent): recover transient managed download failures
+  // One row per status: dropping one from TRANSIENT_DOWNLOAD_STATUSES fails no other test.
   it.each([500, 502, 503, 504])(
     "recovers from HTTP %s before writing or verifying bytes",
     async (status) => {

@@ -3,6 +3,15 @@
 @import "./scient/presentation/scient-content-scrollbar.css";
 @import "./scient/presentation/scient-trace.css";
 
+/* SCIENT-FORK:START — tests, fixtures and docs never render in the app, so their
+   class names must not reach production CSS. CI skips desktop packaging for
+   these paths (.github/scripts/windows-packaging-ci-gate.mjs); keep both in sync. */
+@source not "../**/*.{test,spec,testkit}.*";
+@source not "../**/*.vitest.config.*";
+@source not "../**/{__tests__,test,tests,fixtures,testkit,docs}/**";
+@source not "../**/*.md";
+/* SCIENT-FORK:END */
+
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));
 /* Window Controls Overlay: active when Electron exposes native titlebar control geometry. */
@@ -2058,16 +2067,13 @@ code {
 }
 
 :is(.chat-markdown, .composer-tiptap) blockquote {
-  border-inline-start: 2px solid var(--contrast-border);
+  border-inline-start: 2px solid color-mix(in srgb, currentcolor 35%, transparent);
   padding-inline-start: 0.8rem;
-  color: var(--contrast-muted-foreground);
+  color: inherit;
 }
 
-/* A quote in the composer is text the user is still writing; muting it reads
-   as disabled in an input, so the border alone carries the quote. */
 .composer-tiptap blockquote {
   margin: 0.65rem 0;
-  color: var(--foreground);
 }
 
 /* Preflight already draws the 1px rule, as it does in chat; only the block

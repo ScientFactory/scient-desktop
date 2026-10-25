@@ -51,10 +51,9 @@ const quote = Schema.decodeUnknownSync(PdfCitation)({
 });
 
 describe("PDF quote chips", () => {
-  it.each([false, true])("names the PDF and page and opens it (composer: %s)", async (composer) => {
-    await using screen = await render(
-      <AssistantCitationChip citation={quote} composer={composer} />,
-    );
+  // The composer chip differs only in its link's styling, so one surface covers both.
+  it("names the PDF and page and opens it", async () => {
+    await using screen = await render(<AssistantCitationChip citation={quote} />);
     const { container } = screen;
     const chip = container.querySelector<HTMLElement>("[data-pdf-citation-chip]");
     expect(chip).not.toBeNull();

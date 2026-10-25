@@ -19,6 +19,7 @@
     "packages/scient-execution"
   ],
   "ownedFiles": [
+    "apps/web/src/testUtils/shardWeights.json",
     "apps/server/scripts/compute-recipes.ts",
     "apps/server/scripts/publish-compute-recipe.ts",
     "apps/server/scripts/qualify-compute-backend.ts",
@@ -84,6 +85,11 @@
     "MATLAB_"
   ],
   "upstreamMounts": [
+    {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "\"src/assets/AssetAccess.test.ts\":",
+      "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."
+    },
     {
       "path": "apps/server/src/testUtils/weightedShardSequencer.ts",
       "anchor": "recordedSeconds[key] ?? UNRECORDED_FILE_SECONDS",

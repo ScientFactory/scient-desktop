@@ -126,6 +126,7 @@ describe("Scient source model", () => {
     );
   });
 
+  // regression: 4e05b272c1 feat(sources): complete reference intake workflows
   it.each(["doi", "pmid", "pmcid", "arxiv"])(
     "treats the work-level %s identifier as authoritative identity",
     (scheme) => {
@@ -144,6 +145,7 @@ describe("Scient source model", () => {
     },
   );
 
+  // regression: 4e05b272c1 feat(sources): complete reference intake workflows
   it.each(["issn", "isbn", "journal-id"])(
     "does not treat the container-level or unknown %s identifier as work identity",
     (scheme) => {

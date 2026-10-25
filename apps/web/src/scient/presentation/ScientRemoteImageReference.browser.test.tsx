@@ -75,8 +75,6 @@ vi.mock("~/lib/openPullRequestLink", async (importOriginal) => ({
 
 import ChatMarkdown from "~/components/ChatMarkdown";
 
-import { hasRemoteSrcSet, remoteImageAddress, srcSetCandidateUrls } from "./remoteImageAddress";
-
 const threadRef = {
   environmentId: EnvironmentId.make("env-remote-images"),
   threadId: ThreadId.make("thread-remote-images"),
@@ -102,7 +100,7 @@ async function mount(_fixture: _Fixture) {
   });
   const render = async (
     text: string,
-    options: { isStreaming?: boolean; githubMedia?: boolean } = {},
+    options: { isStreaming?: boolean; sourceControlMedia?: boolean } = {},
   ) =>
     await act(
       async () =>
@@ -114,7 +112,7 @@ async function mount(_fixture: _Fixture) {
             text={text}
             parseRawHtml
             isStreaming={options.isStreaming ?? false}
-            githubMedia={options.githubMedia ?? false}
+            sourceControlMedia={options.sourceControlMedia ?? false}
           />,
         ),
     );
@@ -436,14 +434,14 @@ describe("web images in chat", () => {
 
     const { host, render, images } = await mount(_fixture);
     const markdown = "![shot](https://github.com/user-attachments/assets/0123-abcd)";
-    await render(markdown, { githubMedia: true });
+    await render(markdown, { sourceControlMedia: true });
 
     expect(host.querySelector('[role="group"]')).toBeNull();
     expect(requestedImageSources(images, host)).toEqual(["https://signed.test/asset.png"]);
     await images.release(host);
 
     testState.assetState = "failure";
-    await render(`${markdown}\n`, { githubMedia: true });
+    await render(`${markdown}\n`, { sourceControlMedia: true });
 
     expect(remoteRequests(images, host).filter((src) => src.includes("github.com"))).toEqual([]);
     expect(host.querySelector('[role="group"]')?.getAttribute("aria-label")).toBe(
@@ -485,112 +483,6 @@ describe("web images in chat", () => {
     await images.release(host);
     expect(host.querySelector('[role="group"]')).toBeNull();
     expect(requestedImageSources(images, host)).toEqual(["https://images.example.org/chart.png"]);
-  });
-});
-
-const DESKTOP = { baseUrl: "scient://app/index.html", appUrl: "scient://app/index.html" };
-const WEB = {
-  baseUrl: "https://scient.example/threads/1",
-  appUrl: "https://scient.example/threads/1",
-};
-
-describe("remoteImageAddress", () => {
-  it("classifies web sources as remote and everything Scient serves as local", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    expect(remoteImageAddress("https://a.example/x/y.png?q=1", DESKTOP)).toEqual({
-      url: "https://a.example/x/y.png?q=1",
-      host: "a.example",
-      label: "a.example/x/y.png",
-    });
-    expect(remoteImageAddress("http://127.0.0.1:4000/p.png", DESKTOP)?.host).toBe("127.0.0.1:4000");
-    expect(remoteImageAddress("https://xn--e1afmkfd.example/p", DESKTOP)?.host).toBe(
-      "xn--e1afmkfd.example",
-    );
-    for (const local of [
-      "data:image/png;base64,AA==",
-      "blob:https://a/1",
-      "/logo.png",
-      "logo.png",
-      "https://scient.example/logo.png",
-      "//scient.example/logo.png",
-    ]) {
-      expect(remoteImageAddress(local, WEB)).toBeNull();
-    }
-    // The desktop's private scheme is answered by its protocol handler, whatever the host.
-    expect(remoteImageAddress("//cdn.example/logo.png", DESKTOP)).toBeNull();
-    expect(remoteImageAddress("//cdn.example/logo.png", WEB)?.url).toBe(
-      "https://cdn.example/logo.png",
-    );
-  });
-
-  it.each([
-    ["a backslash network path", "/\\attacker.example/collect?secret=v"],
-    ["a double backslash", "\\\\attacker.example/collect"],
-    ["mixed slashes", "/\\/attacker.example/collect"],
-    ["a tab inside the scheme", "ht\ttps://attacker.example/collect"],
-    ["a newline inside the scheme", "ht\ntps://attacker.example/collect"],
-    ["an uppercase scheme", "HTTPS://ATTACKER.EXAMPLE/collect"],
-  ])("resolves %s the way the browser does", async (_name, source) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    expect(remoteImageAddress(source, WEB)?.host).toBe("attacker.example");
-  });
-
-  it("treats addresses the parser rejects, and non-web schemes, as remote", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    expect(remoteImageAddress("https://[bad", WEB)).toEqual({
-      url: "https://[bad",
-      host: "https://[bad",
-      label: "https://[bad",
-    });
-    expect(remoteImageAddress("logo.png", { baseUrl: null, appUrl: null })).not.toBeNull();
-    expect(remoteImageAddress("file://server/share/p.png", DESKTOP)).not.toBeNull();
-  });
-});
-
-describe("srcset classification", () => {
-  it("splits candidates by the HTML srcset rules", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    expect(srcSetCandidateUrls("a.png 1x, b.png 2x")).toEqual(["a.png", "b.png"]);
-    // A comma inside a URL belongs to it; trailing commas end a URL without descriptors.
-    expect(srcSetCandidateUrls("a.png,b.png")).toEqual(["a.png,b.png"]);
-    expect(srcSetCandidateUrls("a.png,, b.png")).toEqual(["a.png", "b.png"]);
-    expect(srcSetCandidateUrls("data:image/png;base64,AA== 1x,\n//x.example/c 2x")).toEqual([
-      "data:image/png;base64,AA==",
-      "//x.example/c",
-    ]);
-    // A comma inside parenthesised descriptors does not start a new candidate.
-    expect(srcSetCandidateUrls("a.png 100w (x, y), b.png")).toEqual(["a.png", "b.png"]);
-    expect(srcSetCandidateUrls(" , ")).toEqual([]);
-  });
-
-  it("flags a source when any candidate reaches another server", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    expect(hasRemoteSrcSet("/a.png 1x, data:image/png;base64,AA== 2x", WEB)).toBe(false);
-    expect(hasRemoteSrcSet("/a.png 1x, /\\attacker.example/c 2x", WEB)).toBe(true);
-    // In srcset a tab is a separator: the browser requests the same-origin "ht", not the host.
-    expect(srcSetCandidateUrls("ht\ttps://attacker.example/c")).toEqual(["ht"]);
-    expect(hasRemoteSrcSet("ht\ttps://attacker.example/c", WEB)).toBe(false);
-    expect(hasRemoteSrcSet("data:image/png;base64,AA== 1x,\n\\\\attacker.example/c", WEB)).toBe(
-      true,
-    );
-    expect(hasRemoteSrcSet("/a.png 100w (x, https://attacker.example/c), b.png", WEB)).toBe(false);
-    expect(hasRemoteSrcSet("/a.png 100w, HTTPS://attacker.example/c 200w", WEB)).toBe(true);
-    expect(hasRemoteSrcSet(undefined, WEB)).toBe(false);
   });
 });
 

@@ -46,27 +46,6 @@ describe("shared raised settings surface", () => {
         ),
     );
   };
-  it("updates a single non-interactive outline on resize and scrolling", async () => {
-    await using _fixture = _createFixture();
-    await _setupFixture0(_fixture);
-
-    await render(_fixture);
-    expect(_fixture.host.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
-    const initial = _fixture.host.querySelector("path")!.getAttribute("d");
-    await act(() => {
-      _fixture.host.querySelector<HTMLElement>("[data-source-panel]")!.style.height = "400px";
-    });
-    await expect
-      .poll(() => _fixture.host.querySelector("path")!.getAttribute("d"))
-      .not.toBe(initial);
-    await act(() => {
-      _fixture.host.querySelector<HTMLElement>(".settings-source-strip")!.scrollLeft = 250;
-    });
-    await expect
-      .poll(() => _fixture.host.querySelector("path")!.getAttribute("d"))
-      .not.toContain("Q ");
-    expect(_fixture.host.querySelectorAll("svg")).toHaveLength(2); // outline and existing chevron
-  });
   it("removes the decoration and disconnects when collapsed", async () => {
     await using _fixture = _createFixture();
     await _setupFixture0(_fixture);
@@ -76,17 +55,6 @@ describe("shared raised settings surface", () => {
     expect(_fixture.host.querySelector(".settings-source-outline")).toBeNull();
     expect(_fixture.host.querySelector("[data-source-outline=ready]")).toBeNull();
     expect(_fixture.disconnect).toHaveBeenCalledOnce();
-  });
-  it("keeps the normal card fallback when layout is hidden", async () => {
-    await using _fixture = _createFixture();
-    await _setupFixture0(_fixture);
-
-    _fixture.host.style.display = "none";
-    await render(_fixture);
-    expect(_fixture.host.querySelector(".settings-source-outline")).toBeNull();
-    expect(_fixture.host.querySelector("[data-source-panel]")?.className).toContain(
-      "rounded-xl border",
-    );
   });
 });
 

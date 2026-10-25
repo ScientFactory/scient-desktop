@@ -570,7 +570,7 @@ async function mount(_fixture: _Fixture, body: string, preamble = "") {
     { timeout: 10000 },
   );
   await document.fonts.ready;
-  _fixture.clock ??= _fixture.cleanup.use(fakeTimers());
+  _fixture.clock ??= _fixture.stack.use(fakeTimers());
   await advanceAdmissionClock();
 }
 

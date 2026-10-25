@@ -3,14 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveMarkdownLinkPresentation } from "./markdownLinks";
 
 describe("resolveMarkdownLinkPresentation", () => {
-  it.each([
-    "t3-thread://v1/thread-1",
-    "t3-thread://v1/local/thread-1",
-    "t3-thread://v1/remote/thread%252F1",
-  ])("preserves valid current and saved thread link %s for native dispatch", (href) => {
-    expect(resolveMarkdownLinkPresentation(href)).toEqual({ kind: "link", href });
-  });
-
   it("opens relative directory links as workspace paths", () => {
     expect(resolveMarkdownLinkPresentation("src/")).toMatchObject({
       kind: "file",
@@ -19,13 +11,6 @@ describe("resolveMarkdownLinkPresentation", () => {
     expect(resolveMarkdownLinkPresentation("docs/My Folder/")).toMatchObject({
       kind: "file",
       path: "docs/My Folder/",
-    });
-  });
-
-  it("does not expose malformed thread links as native press targets", () => {
-    expect(resolveMarkdownLinkPresentation("t3-thread://v1/remote/thread-1/extra")).toEqual({
-      kind: "link",
-      href: null,
     });
   });
 

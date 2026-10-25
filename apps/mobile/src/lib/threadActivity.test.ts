@@ -1,5 +1,8 @@
+// SCIENT-FORK:START restored-behavior-guards
+import { workEntryRowLabel } from "./threadActivity";
+// SCIENT-FORK:END restored-behavior-guards
+
 import {
-  OrchestrationV2ContextTransfer,
   MessageId,
   CheckpointId,
   CheckpointRef,
@@ -17,20 +20,24 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
+} from "@t3tools/contracts";
+// SCIENT-FORK:START — decoders for the fork boundary cases.
+import {
+  OrchestrationV2ContextTransfer,
   OrchestrationV2TurnItem as TurnItemSchema,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+// SCIENT-FORK:END
 import { deriveThreadCheckpointSummaries } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { getReviewSectionIdForCheckpoint } from "../features/review/reviewModel";
 import * as DateTime from "effect/DateTime";
-import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildThreadFeed,
-  workEntryRowLabel,
-  type ThreadFeedActivity,
   createThreadFeedCache,
   deriveThreadFeedPresentation,
+  messageFoldRunId,
   type ThreadFeedCache,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
@@ -39,9 +46,14 @@ import {
   isPendingUserInputOptionSelected,
   buildPendingUserInputAnswers,
 } from "./threadActivity";
+// SCIENT-FORK:START restored-sole-guards
+import type { ThreadFeedActivity } from "./threadActivity";
+// SCIENT-FORK:END restored-sole-guards
 
+// SCIENT-FORK:START — decoders for the fork boundary cases.
 const decodeBoundaryItem = Schema.decodeUnknownSync(TurnItemSchema);
 const decodeFeedTransfer = Schema.decodeUnknownSync(OrchestrationV2ContextTransfer);
+// SCIENT-FORK:END
 
 const threadId = ThreadId.make("thread-1");
 const sourceThreadId = ThreadId.make("thread-source");
@@ -150,7 +162,11 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
   };
 }
 
+// SCIENT-FORK:START — fork initialization handoffs stay out of the feed once proven.
+// The visibility decision itself is tabled in packages/client-runtime/src/handoff.test.ts;
+// these rows cover the feed's cache refresh when transfers arrive and a later real switch.
 describe("fork initialization context in the native feed", () => {
+  // regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
   it.each([
     "fork",
     "provider_handoff",
@@ -250,6 +266,8 @@ describe("fork initialization context in the native feed", () => {
     }
   });
 });
+
+// SCIENT-FORK:END
 
 describe("buildThreadFeed", () => {
   it("keeps async answers in question history instead of user bubbles", () => {
@@ -675,6 +693,8 @@ describe("buildThreadFeed", () => {
     expect(activities.at(-1)?.prominent).toBe(true);
   });
 
+  // SCIENT-FORK:START — a fork's destination-owned boundary between inherited and local turns.
+  // regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
   it.each(
     [
       { type: "run" as const, threadId: sourceThreadId, runId },
@@ -746,6 +766,33 @@ describe("buildThreadFeed", () => {
     expect(activities[0]?.projectedItem).toBe(projectedMarker);
     expect(activities[0]?.runId).toBeNull();
     expect(activities[0]?.attemptId).toBeNull();
+  });
+  // SCIENT-FORK:END
+
+  it("names the fold that hides a progress message, with or without a run", () => {
+    const middle = {
+      ...assistantMessage("2026-06-20T00:00:02.500Z"),
+      id: TurnItemId.make("item-middle"),
+      messageId: MessageId.make("message-middle"),
+      text: "Needle found in the build config.",
+    };
+    const items = [userMessage(), command(), middle, assistantMessage()];
+    for (const runless of [false, true]) {
+      const feed = buildThreadFeed(
+        items.map((item, position) =>
+          projected(runless ? { ...item, runId: null } : item, position),
+        ),
+      );
+      const foldRunId = messageFoldRunId(feed, "message-middle");
+      expect(foldRunId, String(runless)).toBe(runless ? "runless:message-user" : runId);
+      const ids = (expanded: ReadonlySet<RunId>) =>
+        deriveThreadFeedPresentation(feed, null, expanded).map((entry) => entry.id);
+      expect(ids(new Set())).not.toContain("message-middle");
+      expect(ids(new Set([foldRunId!]))).toContain("message-middle");
+    }
+    expect(messageFoldRunId(buildThreadFeed([projected(userMessage(), 0)]), "message-user")).toBe(
+      null,
+    );
   });
 
   it("folds progress messages while keeping the final assistant answer visible", () => {
@@ -1162,18 +1209,9 @@ describe("buildThreadFeed", () => {
     ).toEqual([]);
   });
 
-  it("uses a stable Thinking row while work has started without a projected item", () => {
-    const startedAt = "2026-04-01T00:00:01.000Z";
-    const presented = deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt);
-
-    expect(presented).toEqual([
-      { type: "thinking", id: "live-activity-row", createdAt: startedAt, runId: null },
-    ]);
-    expect(deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt)[0]).toBe(
-      presented[0],
-    );
-  });
-
+  // SCIENT-FORK:START restored-sole-guards — upstream deleted these rows in its snap; they are the
+  // only tests of a lone call's stand-in row and of an expanded group's row identities.
+  // regression: b520120cf1 fix(chat): improve tool group summaries and scrolling (#9106)
   it("keeps expanded work in one group with stable row identities", () => {
     const activity = (
       id: string,
@@ -1256,6 +1294,7 @@ describe("buildThreadFeed", () => {
     });
   });
 
+  // regression: d015325b76 fix(mobile): avoid nested dropdowns for single tools (#15674)
   describe("a lone call", () => {
     const wait = (overrides: Partial<OrchestrationV2TurnItem> = {}) =>
       ({
@@ -1361,79 +1400,10 @@ describe("buildThreadFeed", () => {
       expect(standIn(grouped)).toBeUndefined();
     });
   });
+  // SCIENT-FORK:END restored-sole-guards
 
-  it("retains Claude Read image previews without tool output", () => {
-    const item = {
-      ...base("image-read", "2026-06-20T00:00:04.000Z", 3),
-      type: "dynamic_tool" as const,
-      toolName: "Read",
-      input: { file_path: "/workspace/reference.png" },
-      viewedImagePath: "/workspace/reference.png",
-    } satisfies OrchestrationV2TurnItem;
-    const feed = buildThreadFeed([projected(item, 0)]);
-    const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
-    expect(activity?.workEntry.viewedImagePath).toBe("/workspace/reference.png");
-  });
-
-  it("pretty prints T3 MCP dynamic tool activities and attaches the product logo", () => {
-    const toolItem: OrchestrationV2TurnItem = {
-      ...base("item-t3-tool", "2026-06-20T00:00:04.000Z", 3),
-      type: "dynamic_tool",
-      toolName: "mcp__t3-code__t3_thread_read",
-      input: { threadId: "thread-child" },
-      output: { messages: [] },
-    };
-
-    const feed = buildThreadFeed([projected(toolItem, 0)]);
-    const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
-
-    expect(activity?.summary).toBe("Read a Scient thread");
-    expect(activity?.logo).toBe("scient");
-    expect(activity?.getCopyText().split("\n")[0]).toBe("Read a Scient thread");
-  });
-
-  it("uses canonical T3 orchestration summaries in compact work groups", () => {
-    const rows = [
-      projected(command("2026-06-20T00:00:01.000Z"), 0),
-      ...["mcp__t3-code__t3_thread_send", "t3_code.t3_thread_send", "t3_thread_send"].map(
-        (toolName, index) =>
-          projected(
-            {
-              ...base(`item-send-${index}`, `2026-06-20T00:00:0${index + 2}.000Z`, index + 2),
-              type: "dynamic_tool" as const,
-              toolName,
-              input: { threadId: `thread-${index}`, message: "Continue" },
-              output: { threadId: `thread-${index}`, messageId: `message-${index}` },
-            },
-            index + 1,
-          ),
-      ),
-      projected(
-        {
-          ...command("2026-06-20T00:00:06.000Z"),
-          id: TurnItemId.make("item-command-2"),
-          ordinal: 6,
-        },
-        4,
-      ),
-    ];
-
-    const presented = deriveThreadFeedPresentation(
-      buildThreadFeed(rows),
-      { runId, status: "running", startedAt: null, completedAt: null },
-      new Set(),
-    );
-
-    expect(presented).toMatchObject([
-      {
-        type: "work-toggle",
-        summary: "Ran 2 commands and sent messages to 3 threads",
-        hiddenCount: 5,
-        hasFailure: false,
-      },
-    ]);
-  });
-
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
   it("presents project calls and summarizes successful clones through the mobile feed", () => {
     const items: OrchestrationV2TurnItem[] = [
       {
@@ -1479,6 +1449,103 @@ describe("buildThreadFeed", () => {
       hasFailure: true,
     });
   });
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
+  it("uses canonical T3 orchestration summaries in compact work groups", () => {
+    const rows = [
+      projected(command("2026-06-20T00:00:01.000Z"), 0),
+      ...["mcp__t3-code__t3_thread_send", "t3_code.t3_thread_send", "t3_thread_send"].map(
+        (toolName, index) =>
+          projected(
+            {
+              ...base(`item-send-${index}`, `2026-06-20T00:00:0${index + 2}.000Z`, index + 2),
+              type: "dynamic_tool" as const,
+              toolName,
+              input: { threadId: `thread-${index}`, message: "Continue" },
+              output: { threadId: `thread-${index}`, messageId: `message-${index}` },
+            },
+            index + 1,
+          ),
+      ),
+      projected(
+        {
+          ...command("2026-06-20T00:00:06.000Z"),
+          id: TurnItemId.make("item-command-2"),
+          ordinal: 6,
+        },
+        4,
+      ),
+    ];
+
+    const presented = deriveThreadFeedPresentation(
+      buildThreadFeed(rows),
+      { runId, status: "running", startedAt: null, completedAt: null },
+      new Set(),
+    );
+
+    expect(presented).toMatchObject([
+      {
+        type: "work-toggle",
+        summary: "Ran 2 commands and sent messages to 3 threads",
+        hiddenCount: 5,
+        hasFailure: false,
+      },
+    ]);
+  });
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
+  it("pretty prints T3 MCP dynamic tool activities and attaches the product logo", () => {
+    const toolItem: OrchestrationV2TurnItem = {
+      ...base("item-t3-tool", "2026-06-20T00:00:04.000Z", 3),
+      type: "dynamic_tool",
+      toolName: "mcp__t3-code__t3_thread_read",
+      input: { threadId: "thread-child" },
+      output: { messages: [] },
+    };
+
+    const feed = buildThreadFeed([projected(toolItem, 0)]);
+    const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
+
+    expect(activity?.summary).toBe("Read a Scient thread");
+    expect(activity?.logo).toBe("scient");
+    expect(activity?.getCopyText().split("\n")[0]).toBe("Read a Scient thread");
+  });
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
+  it("retains Claude Read image previews without tool output", () => {
+    const item = {
+      ...base("image-read", "2026-06-20T00:00:04.000Z", 3),
+      type: "dynamic_tool" as const,
+      toolName: "Read",
+      input: { file_path: "/workspace/reference.png" },
+      viewedImagePath: "/workspace/reference.png",
+    } satisfies OrchestrationV2TurnItem;
+    const feed = buildThreadFeed([projected(item, 0)]);
+    const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
+    expect(activity?.workEntry.viewedImagePath).toBe("/workspace/reference.png");
+  });
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
+  it("uses a stable Thinking row while work has started without a projected item", () => {
+    const startedAt = "2026-04-01T00:00:01.000Z";
+    const presented = deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt);
+
+    expect(presented).toEqual([
+      { type: "thinking", id: "live-activity-row", createdAt: startedAt, runId: null },
+    ]);
+    expect(deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt)[0]).toBe(
+      presented[0],
+    );
+  });
+  // SCIENT-FORK:END restored-behavior-guards
 });
 
 describe("retained v2 feed presentation", () => {

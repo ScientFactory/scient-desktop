@@ -165,6 +165,33 @@ yield polling loops, or browser frame/transition waits. Browser assertions use
 Skipped tests need a tracking issue and reason. Mock factories must not spread
 real modules that load Shiki or diff workers.
 
+#### Deterministic browser tests
+
+CI runners lay out pages several times slower than a developer Mac, so a test
+that passes locally can still race there.
+
+- Wait on the state you check: a receipt, an owner's event, or a measurement
+  (`test/listMeasurement.ts` for a list row's size). Never wait a fixed delay or
+  a number of frames or steps, and do not let fake time stand in for rendering:
+  a fake clock does not lay out or measure.
+- `vi.waitFor`, `expect.poll` and `expect.element` default to 5 s in the browser
+  project, for eventual readiness. A test that checks something happens quickly
+  states its own `timeout`.
+- Unmount before restoring fake timers, so the tree cancels what it scheduled
+  on them: put `fakeTimers()` on the fixture stack that outlives the unmount.
+- A test past its deadline keeps running, and the fake clock is shared. Drive
+  it through `advanceTestClock(signal, ms)` (`test/testClock.ts`), which stops
+  once the test's `signal` aborts. `vi.waitFor`, `vi.waitUntil` and
+  `expect.poll` belong to the test that started them and stop (without moving
+  the clock) once it aborts or another test starts; a fake clock a timed-out
+  test left installed is removed before the next test, and its late
+  `fakeTimers()` dispose leaves the next test's clock alone.
+- Prove a flaky-test fix under CI-like slowness and a targeted probe (a delayed
+  observer, grammar load or visibility report): fail before, pass after, under
+  the same condition. `SCIENT_TEST_CPU_THROTTLE=<rate>` slows each test page's
+  CPU through Chromium (4 is about a fast runner, 6 a slow one, 8 a stress run):
+  `SCIENT_TEST_CPU_THROTTLE=6 vp test run <file>` in `apps/web`.
+
 Web component tests are `*.browser.test.tsx` and render through
 `apps/web/test/render.tsx`. Acquire test changes with `using` / `await using`
 so disposal restores them even on failure; avoid module-level screens and
@@ -172,10 +199,32 @@ so disposal restores them even on failure; avoid module-level screens and
 `setup()` call at the start of each test. `t3code/require-disposable-render`
 enforces this lifecycle. Test meaningful behavior rather than static markup
 that only repeats props or callback wiring.
-Acquire timers and spies driven after mounting after the render, so they dispose
-before unmounting. A render helper that waits or interacts must own its screen in
+Acquire spies driven after mounting after the render, so they dispose before
+unmounting; fake timers are acquired after the render too, but dispose after it
+unmounts (above). A render helper that waits or interacts must own its screen in
 an `AsyncDisposableStack` until it returns successfully. Give `rerender` a fresh
 element. The router is enabled by default; explain any `router: false` fixture.
+
+#### What earns a test
+
+A test stays only if it guards something that matters and nothing else guards it:
+a user-visible behavior, a data or safety guarantee, a protocol or persistence
+contract, or a fixed bug.
+
+- Do not add tests that restate copy, markup, class names, constants, callback
+  wiring or mock calls, or that check a visual nit. Visual fixes are proven with
+  before/after captures.
+- Keep one table row per code path. Read the implementation to find the
+  branches; rows that differ only by a literal on the same path add nothing.
+- Put pure logic in a Node test. Use a browser test only for DOM and React
+  behavior.
+- Keep a test that a `fix(...)` commit added, and say why with
+  `// regression: <sha> <subject>` when its title does not.
+- Before deleting a test that asserts behavior, break the logic it covered and
+  confirm a kept test fails. "Another test covers it", "same code path" and
+  "upstream deleted it" are guesses until that check passes.
+- Scient cases that extend an upstream test file go in a `.scient.` sibling
+  file, so the upstream file stays identical to upstream.
 
 Match verification to the claim: markup assertions do not establish native
 interaction, and mocked providers do not establish real-provider compatibility.

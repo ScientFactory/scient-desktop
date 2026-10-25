@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
+// SCIENT-FORK:START
 import * as SchemaGetter from "effect/SchemaGetter";
+// SCIENT-FORK:END
 
 import {
   ForwardCompatibleArray,
@@ -77,6 +79,7 @@ describe("ForwardCompatibleUnion", () => {
 });
 
 describe("ForwardCompatibleUnionArray", () => {
+  // SCIENT-FORK:START
   it("keeps a portable historical notice that decodes to a canonical boundary", () => {
     const Notice = Schema.Struct({ kind: Schema.Literal("notice"), boundary: Schema.String });
     const Boundary = Schema.Struct({ kind: Schema.Literal("boundary"), source: Schema.String });
@@ -102,6 +105,7 @@ describe("ForwardCompatibleUnionArray", () => {
       { kind: "notice", boundary: "message-1" },
     ]);
   });
+  // SCIENT-FORK:END
 
   it("keeps a known member however its fields are named", () => {
     const Flagged = Schema.Struct({

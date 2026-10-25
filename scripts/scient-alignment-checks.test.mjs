@@ -72,7 +72,7 @@ test("chat changes select production Chromium interaction, not just policy units
     ["reader"],
   );
   NodeAssert.ok(
-    selection.boundaries[0].checks["web-layout"].includes(
+    selection.boundaries[0].checks["web-browser"].includes(
       "src/components/chat/responseFollow.browser.test.tsx",
     ),
   );
@@ -153,6 +153,30 @@ test("every native provider integration suite, however nested, belongs to a boun
   );
 });
 
+test("every mapped suite exists in its group's package", () => {
+  const { groups, boundaries } = JSON.parse(
+    NodeFS.readFileSync(new URL("./scient-alignment-checks.json", import.meta.url), "utf8"),
+  );
+  const root = NodeURL.fileURLToPath(new URL("../", import.meta.url));
+  // Upstream renames and deletes suites; a stale entry makes --run refuse every selection.
+  const missing = boundaries.flatMap((row) =>
+    Object.entries(row.checks).flatMap(([group, files]) =>
+      files
+        .filter((file) => !NodeFS.existsSync(NodePath.join(root, groups[group].cwd, file)))
+        .map((file) => `${row.id}/${group}: ${file}`),
+    ),
+  );
+  NodeAssert.deepEqual(missing, []);
+  // A group's --project must be one its package's Vitest config still defines.
+  const projects = Object.entries(groups).flatMap(([id, group]) => {
+    const at = group.args.indexOf("--project");
+    if (at === -1) return [];
+    const config = NodeFS.readFileSync(NodePath.join(root, group.cwd, "vite.config.ts"), "utf8");
+    return config.includes(`name: "${group.args[at + 1]}"`) ? [] : [`${id}: ${group.args[at + 1]}`];
+  });
+  NodeAssert.deepEqual(projects, []);
+});
+
 test("a directory entry keeps live suites behind --native", () => {
   const commands = (...args) =>
     JSON.parse(
@@ -185,14 +209,18 @@ test("composer hosts include settings, Stop and queue consumers and existing cli
     ["queue"],
   );
   NodeAssert.ok(
-    queue[0].checks["web-unit"].includes("src/scient/threadQueue/queueShortcuts.test.tsx"),
+    queue[0].checks["web-browser"].includes(
+      "src/scient/threadQueue/queueShortcuts.browser.test.tsx",
+    ),
   );
   NodeAssert.ok(queue[0].checks["web-unit"].includes("src/scient/threadQueue/disposition.test.ts"));
   const stop = selectBoundaries([
     "apps/web/src/components/chat/ComposerPrimaryActions.tsx",
   ]).boundaries.find((row) => row.id === "stop");
   NodeAssert.ok(
-    stop.checks["web-unit"].includes("src/components/chat/ComposerPrimaryActions.test.tsx"),
+    stop.checks["web-browser"].includes(
+      "src/components/chat/ComposerPrimaryActions.scient.browser.test.tsx",
+    ),
   );
   const unknown = "apps/web/src/components/chat/NewComposerHost.tsx";
   NodeAssert.deepEqual(ids([unknown]), all);
@@ -411,7 +439,7 @@ test("a failing group does not hide later groups", () => {
     },
   );
   NodeAssert.equal(result.status, 1, result.stderr);
-  NodeAssert.match(result.stdout, /Failed checks: server, web-unit, web-layout/);
+  NodeAssert.match(result.stdout, /Failed checks: server, web-unit, web-browser/);
 });
 
 test("invalid scope and parent traversal are refused", () => {

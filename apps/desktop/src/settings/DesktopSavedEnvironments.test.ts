@@ -117,7 +117,9 @@ function layer(
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
+      // SCIENT-FORK:START desktop-state-isolation
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ SCIENT_NEXT_HOME: baseDir })),
+      // SCIENT-FORK:END desktop-state-isolation
     ),
   );
 

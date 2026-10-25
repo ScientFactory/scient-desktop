@@ -127,7 +127,7 @@ function rememberRecentSourceAdds(
   return readRecentSourceAdds(contextKey);
 }
 
-export function MetadataReviewIndicator(props: {
+function MetadataReviewIndicator(props: {
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
   readonly onOpen: () => void;
 }) {
@@ -161,10 +161,7 @@ export function MetadataReviewIndicator(props: {
   );
 }
 
-export function SourceErrorBanner(props: {
-  readonly message: string;
-  readonly onDismiss: () => void;
-}) {
+function SourceErrorBanner(props: { readonly message: string; readonly onDismiss: () => void }) {
   return (
     <div className="m-3 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
       <span className="min-w-0 flex-1">{props.message}</span>

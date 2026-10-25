@@ -8,6 +8,7 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   await vi.unstubAllGlobals();
 }
 
+// regression: a382619321 fix(settings): follow deep links without resetting page state
 it("waits for tasks, opens changed or re-entered links, and ignores refreshed data", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));

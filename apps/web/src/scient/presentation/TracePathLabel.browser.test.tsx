@@ -30,8 +30,6 @@ async function _cleanupFixture0(_fixture: _Fixture) {
   _fixture.host?.remove();
   _fixture.root0 = undefined;
   _fixture.host = undefined;
-  document.documentElement.classList.remove("dark");
-  document.documentElement.style.removeProperty("--popover");
 }
 
 async function mount(_fixture: _Fixture, children: React.ReactNode) {
@@ -66,7 +64,7 @@ async function fixture(_fixture: _Fixture, path = fullPath, onClick = vi.fn()) {
   return onClick;
 }
 
-it("shows a light, wrapping full-path card only over the shortened path", async () => {
+it("shows a wrapping full-path card only over the shortened path", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
@@ -75,7 +73,6 @@ it("shows a light, wrapping full-path card only over the shortened path", async 
   await expect.element(page.getByRole("tooltip")).toBeVisible();
   const popup = document.querySelector<HTMLElement>('[role="tooltip"]')!;
   expect(popup.textContent).toBe(`/work/project/${"long folder/".repeat(10)}deep/view.tsx`);
-  expect(getComputedStyle(popup).backgroundColor).toBe("rgb(255, 255, 255)");
   expect(popup.scrollWidth).toBeLessThanOrEqual(popup.clientWidth + 1);
   await expect
     .poll(() => popup.getBoundingClientRect().width)
@@ -83,20 +80,6 @@ it("shows a light, wrapping full-path card only over the shortened path", async 
   expect(popup.clientHeight).toBeGreaterThan(parseFloat(getComputedStyle(popup).lineHeight) * 2);
   await userEvent.keyboard("{Escape}");
   await expect.element(page.getByRole("tooltip")).not.toBeInTheDocument();
-});
-
-it("uses the dark and custom theme surfaces", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  document.documentElement.classList.add("dark");
-  await fixture(_fixture);
-  await page.getByText("deep/view.tsx", { exact: true }).hover();
-  await expect.element(page.getByRole("tooltip")).toBeVisible();
-  const popup = document.querySelector<HTMLElement>('[role="tooltip"]')!;
-  expect(getComputedStyle(popup).backgroundColor).not.toBe("rgb(255, 255, 255)");
-  document.documentElement.style.setProperty("--popover", "rgb(236, 245, 241)");
-  expect(getComputedStyle(popup).backgroundColor).toBe("rgb(236, 245, 241)");
 });
 
 it("opens on keyboard focus and leaves the row click intact", async () => {

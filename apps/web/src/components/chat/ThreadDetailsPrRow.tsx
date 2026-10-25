@@ -1,10 +1,13 @@
+import {
+  capitalizeTerm,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestChangeBreakdownRows } from "../pullRequest/PullRequestChangeBreakdownStat";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ProjectId, PullRequestRef } from "@t3tools/contracts";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import {
   ArrowUpRightIcon,
   EyeIcon,
@@ -32,6 +35,7 @@ import {
   buildFixFindingsHandoff,
   buildResolveConflictsPrompt,
   classifyPullRequestChecks,
+  resolvePullRequestDetailChecks,
   describePullRequestChecks,
   isPullRequestConflicting,
   resolvePullRequestMergeMethod,
@@ -41,7 +45,7 @@ import {
 import { PullRequestChecksPopover } from "../pullRequest/PullRequestChecksPopover";
 import {
   pullRequestChecksState,
-  PullRequestCheckStatusIcon,
+  pullRequestChecksStatePresentation,
   PullRequestDiffStat,
   resolvePullRequestState,
 } from "../pullRequest/pullRequestPresentation";
@@ -105,7 +109,7 @@ export function ThreadDetailsPrRow({
   const serverConfigs = useServerConfigs();
   const supportsPullRequests =
     serverConfigs.get(environmentId)?.environment.capabilities.pullRequests === true;
-  const repository = sourceControlRepositorySelector(project?.repositoryIdentity);
+  const repository = sourceControlClients.repositorySelector(project?.repositoryIdentity);
   const reference: PullRequestRef | null =
     supportsPullRequests && project !== null
       ? linkedReference
@@ -135,12 +139,10 @@ export function ThreadDetailsPrRow({
   const checksSettledEmpty = useEnvironmentQuerySelector(checksAtom, isSettledWithoutChecks);
   const checksQuery = useEnvironmentQueryRefresh(checksAtom);
   const checksAreNewer = useEnvironmentQueryIsNewer(checksAtom, detailAtom);
-  const detail =
-    detailData === null
-      ? null
-      : checksData !== null && checksAreNewer
-        ? { ...detailData, ...checksData }
-        : detailData;
+  const detail = resolvePullRequestDetailChecks(detailData, checksData, checksAreNewer);
+  const terminology = sourceControlClients.get(
+    detail?.provider ?? project?.repositoryIdentity?.provider,
+  ).changeRequest;
   const open = reference !== null && (detail?.state ?? pr?.state) === "open";
   const refreshKey = `${environmentId}:${project?.id}:${reference?.host}:${reference?.repository}:${number}`;
   useLiveRefresh(
@@ -161,6 +163,7 @@ export function ThreadDetailsPrRow({
   const { actionPending, perform } = usePullRequestActionRunner({
     environmentId,
     reference,
+    terminology,
     onSuccess: () => {
       detailQuery.refresh();
       checksQuery.refresh();
@@ -182,6 +185,8 @@ export function ThreadDetailsPrRow({
   const conflicting = isPullRequestConflicting(detail);
   const checksState = detail === null ? "none" : classifyPullRequestChecks(detail.checks);
   const checksRollup = detail === null ? null : pullRequestChecksState(detail.checks);
+  const checkPresentation =
+    checksState === "none" ? null : pullRequestChecksStatePresentation(checksState);
   const selectedMergeMethod = resolvePullRequestMergeMethod(
     allowedPullRequestMergeMethods(detail),
     null,
@@ -242,7 +247,9 @@ export function ThreadDetailsPrRow({
 
   const rowTooltip =
     detail === null || statePresentation === null ? (
-      <TooltipPopup side="top">{status?.tooltip ?? `Pull request #${number}`}</TooltipPopup>
+      <TooltipPopup side="top">
+        {status?.tooltip ?? `${capitalizeTerm(terminology.singular)} #${number}`}
+      </TooltipPopup>
     ) : (
       <TooltipPopup
         side="top"
@@ -270,16 +277,11 @@ export function ThreadDetailsPrRow({
                 {detail.baseBranch} ← {detail.headBranch}
               </div>
             </div>
-            {detail.state === "open" && checksState !== "none" ? (
+            {detail.state === "open" && checkPresentation !== null ? (
               <div className="flex min-w-0 items-center gap-2">
-                <PullRequestCheckStatusIcon
-                  status={
-                    checksState === "failing"
-                      ? "failure"
-                      : checksState === "pending"
-                        ? "pending"
-                        : "success"
-                  }
+                <checkPresentation.Icon
+                  aria-hidden
+                  className={cn("size-3.5 shrink-0", checkPresentation.toneClassName)}
                 />
                 <div className="min-w-0 truncate text-foreground/75">
                   {describePullRequestChecks(detail.checks)}
@@ -332,7 +334,7 @@ export function ThreadDetailsPrRow({
             pending: actionPending,
             destructive: false,
             suffix: null,
-            tooltip: "Mark this pull request as ready for review",
+            tooltip: `Mark this ${terminology.singular} as ready for review`,
             onClick: () => void perform("ready"),
           }
         : rowAction === "fix"
@@ -352,7 +354,7 @@ export function ThreadDetailsPrRow({
                 pending: actionPending,
                 destructive: false,
                 suffix: null,
-                tooltip: `Merge this pull request (${selectedMergeMethod})`,
+                tooltip: `Merge this ${terminology.singular} (${selectedMergeMethod})`,
                 onClick: () => setConfirmingMerge(true),
               }
             : null;
@@ -473,7 +475,7 @@ export function ThreadDetailsPrRow({
         <AlertDialog open={confirmingMerge} onOpenChange={(open) => setConfirmingMerge(open)}>
           <AlertDialogPopup>
             <AlertDialogHeader>
-              <AlertDialogTitle>Merge pull request?</AlertDialogTitle>
+              <AlertDialogTitle>Merge {terminology.singular}?</AlertDialogTitle>
               <AlertDialogDescription>
                 This merges #{number} using {selectedMergeMethod}.
               </AlertDialogDescription>

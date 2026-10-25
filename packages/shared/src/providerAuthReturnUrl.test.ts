@@ -2,7 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import { providerAuthReturnUrl } from "./providerAuthReturnUrl.ts";
 
 describe("provider auth return destinations", () => {
+  // SCIENT-FORK:START
   it.each(["scient", "scient-next-dev"])(
+    // SCIENT-FORK:END
     "returns to %s Welcome and the selected settings instance",
     (scheme) => {
       expect(providerAuthReturnUrl(`${scheme}://app/welcome?code=secret#agents:machine-id`)).toBe(
@@ -14,6 +16,7 @@ describe("provider auth return destinations", () => {
     },
   );
   it.each([
+    // SCIENT-FORK:START
     "scient://attacker/welcome",
     "scient://app:123/welcome",
     "scient://app/auth/callback",
@@ -23,6 +26,7 @@ describe("provider auth return destinations", () => {
     "t3code://app/welcome",
     "t3code-dev://app/welcome",
     "https://app.t3.codes/welcome",
+    // SCIENT-FORK:END
     "https://attacker.example/welcome",
   ])("rejects %s", (url) => expect(providerAuthReturnUrl(url)).toBeUndefined());
 });

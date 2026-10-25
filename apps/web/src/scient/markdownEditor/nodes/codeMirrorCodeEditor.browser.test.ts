@@ -3,6 +3,8 @@ import { EditorView } from "@codemirror/view";
 import { undo } from "@codemirror/commands";
 
 import { createScientNestedCodeEditor, type ScientNestedCodeEditor } from "./codeMirrorCodeEditor";
+import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
+import { waitForTestReceipt } from "../../../../test/receipt";
 
 describe("Scient nested code editor", () => {
   async function _cleanupFixture0(_fixture: _Fixture) {
@@ -144,6 +146,7 @@ describe("Scient nested code editor", () => {
     expect(content.getAttribute("aria-label")).toBe("HTML source");
   });
 
+  // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
   it.each([
     "plotly",
     "plotly.js",
@@ -179,7 +182,7 @@ describe("Scient nested code editor", () => {
     expect(onUserCodeChange).not.toHaveBeenCalled();
   });
 
-  it("colors Mermaid across edits and themes without replacing the editor or its undo history", async () => {
+  it("colors Mermaid across edits and themes without replacing the editor or its undo history", async (context) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
@@ -201,10 +204,26 @@ describe("Scient nested code editor", () => {
       [...parent.querySelectorAll<HTMLElement>(".cm-line span")].find(
         (span) => span.textContent === "flowchart",
       )?.style.color;
-    // Await the actual lazy module, rather than racing its import against the
-    // short polling default when the complete suite saturates the runner.
-    await import("./mermaidCodeHighlighting");
-    await vi.waitFor(() => expect(keywordColor()).toBeTruthy());
+    // Module and grammar readiness precede CodeMirror's decoration publication.
+    await waitForTestReceipt(context.signal, import("./mermaidCodeHighlighting"));
+    {
+      const painted = Promise.withResolvers<void>();
+      const observeColor = () => {
+        if (keywordColor()) painted.resolve();
+      };
+      const observer = new MutationObserver(observeColor);
+      using _paint = { [Symbol.dispose]: () => observer.disconnect() };
+      observer.observe(parent, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ["style"],
+      });
+      observeColor();
+      await waitForTestReceipt(context.signal, getSyntaxHighlighterPromise("mermaid"));
+      await waitForTestReceipt(context.signal, painted.promise);
+    }
+    expect(keywordColor()).toBeTruthy();
     const lightColor = keywordColor();
     expect(onUserCodeChange).not.toHaveBeenCalled();
     view.dispatch({
@@ -225,6 +244,7 @@ describe("Scient nested code editor", () => {
     await vi.waitFor(() => expect(parent.querySelector(".cm-line span[style]")).toBeNull());
   });
 
+  // regression: 9e5513e5c3 fix(web): align shared math and code presentation
   it.each([
     ["light", "#d5512f", "#18a46c", "#636363"],
     ["dark", "#ff855e", "#60d199", "#636363"],

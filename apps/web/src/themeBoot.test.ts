@@ -18,7 +18,9 @@ import {
   toCanonicalThemeColor,
 } from "./themePalette";
 
+// SCIENT-FORK:START
 const THEME_STORAGE_KEY = "scient-next:theme";
+// SCIENT-FORK:END
 const DEFAULT_DARK_CHROME = getDefaultThemeColors("dark").chrome;
 
 const bootScript = (() => {

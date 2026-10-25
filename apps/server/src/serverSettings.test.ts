@@ -4407,6 +4407,36 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("removes a project's whole override entry, including keys a null reset keeps", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const deletedProject = ProjectId.make("project-deleted");
+      const keptProject = ProjectId.make("project-kept");
+      yield* serverSettings.updateSettings({
+        projectSettingsOverrides: {
+          [deletedProject]: {
+            defaultAutoPull: true,
+            threadTitleInstructions: "",
+            providerInstances: { [ProviderInstanceId.make("codex_work")]: { enabled: true } },
+          },
+          [keptProject]: { threadTitleInstructions: "Use ticket ids" },
+        },
+      });
+
+      yield* serverSettings.removeProjectSettingsOverrides([deletedProject]);
+
+      const persisted = yield* decodeServerSettings(
+        JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath)),
+      );
+      assert.deepEqual<ServerSettings["projectSettingsOverrides"]>(
+        persisted.projectSettingsOverrides,
+        { [keptProject]: { threadTitleInstructions: "Use ticket ids" } },
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("leaves an unreadable settings.json untouched instead of folding over it", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

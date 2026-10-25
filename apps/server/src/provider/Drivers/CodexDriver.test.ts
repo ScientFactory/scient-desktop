@@ -1,4 +1,5 @@
 import * as CodexInstallation from "../CodexInstallation.ts";
+import * as CodexManagedTokenBroker from "../CodexManagedTokenBroker.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 // @effect-diagnostics nodeBuiltinImport:off
@@ -59,6 +60,12 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
     }),
   ),
   Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
+  Layer.provideMerge(
+    Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
+      endpoint: Effect.succeed("unused-private-pipe"),
+      awaitIdle: Effect.void,
+    }),
+  ),
   Layer.provideMerge(
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("00000000-0000-4000-8000-000000000001")),
@@ -121,205 +128,243 @@ it.layer(layerTest)("CodexDriver", (it) => {
       ),
   );
 
-  it.effect(
-    "retained managed machinery refreshes a restored account while its auth flow is idle",
-    () =>
-      Effect.gen(function* () {
-        const instanceId = ProviderInstanceId.make("restored-managed-account");
-        const credentials = new Map<string, Uint8Array>();
-        const secrets = ServerSecretStore.ServerSecretStore.of({
-          get: (key) => Effect.sync(() => Option.fromUndefinedOr(credentials.get(key))),
-          set: (key, value) =>
-            Effect.sync(() => {
-              credentials.set(key, value);
-            }),
-          remove: (key) =>
-            Effect.sync(() => {
-              credentials.delete(key);
-            }),
-          create: () => Effect.die("unused"),
-          getOrCreateRandom: () => Effect.die("unused"),
+  const checkManagedAccount = (replacementTiming: "unchanged" | "during-probe") =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("restored-managed-account");
+      const credentials = new Map<string, Uint8Array>();
+      const catalogTokens: Array<string | undefined> = [];
+      const probeEntered = yield* Deferred.make<void>();
+      const resumeProbe = yield* Deferred.make<void>();
+      const secrets = ServerSecretStore.ServerSecretStore.of({
+        get: (key) => Effect.sync(() => Option.fromUndefinedOr(credentials.get(key))),
+        set: (key, value) =>
+          Effect.sync(() => {
+            credentials.set(key, value);
+          }),
+        remove: (key) =>
+          Effect.sync(() => {
+            credentials.delete(key);
+          }),
+        create: () => Effect.die("unused"),
+        getOrCreateRandom: () => Effect.die("unused"),
+      });
+      yield* Effect.gen(function* () {
+        const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
+        const json = yield* encodeCredentials({
+          clientId: "oaiapp_test",
+          accessToken: "dummy-owned-access",
+          refreshToken: "dummy-refresh",
+          expiresAt: Number.MAX_SAFE_INTEGER,
+          earliestRefreshAt: null,
+          scopes: ["chatgpt.tokens.use.direct"],
+          subject: "test-user",
+          email: "account@example.test",
         });
-        yield* Effect.gen(function* () {
-          const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
-          const json = yield* encodeCredentials({
-            clientId: "oaiapp_test",
-            accessToken: "dummy-owned-access",
-            refreshToken: "dummy-refresh",
-            expiresAt: Number.MAX_SAFE_INTEGER,
-            earliestRefreshAt: null,
-            scopes: ["chatgpt.tokens.use.direct"],
-            subject: "test-user",
-            email: "account@example.test",
+        yield* store.set(new TextEncoder().encode(json));
+        const replacement = yield* encodeCredentials({
+          clientId: "oaiapp_replacement",
+          subject: "replacement-user",
+          email: "replacement@example.test",
+          accessToken: "replacement-access",
+          refreshToken: "replacement-refresh",
+          expiresAt: Number.MAX_SAFE_INTEGER,
+          earliestRefreshAt: null,
+          scopes: ["chatgpt.tokens.use.direct"],
+        });
+        const replaceAccount = store.set(new TextEncoder().encode(replacement)).pipe(Effect.orDie);
+        const executable = {
+          executablePath: "/user/bin/codex",
+          managedVersionDirectory: null,
+          source: "local" as const,
+          version: "0.156.1",
+        };
+        const installation = yield* CodexInstallation.CodexInstallation;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const sharedHome = NodePath.join(serverConfig.stateDir, "shared-codex-home");
+        const launches: Array<
+          Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
+        > = [];
+
+        let interruptedChecks = 0;
+        let failAcquire = false;
+        const startupChecksInterrupted = yield* Deferred.make<void>();
+        const acquire = () =>
+          Effect.suspend(() => {
+            if (failAcquire)
+              return Effect.fail(
+                new CodexInstallation.CodexInstallationError({
+                  operation: "acquire",
+                  detail: "The fixture runtime is unavailable",
+                }),
+              );
+            if (interruptedChecks === 2) return Effect.succeed(executable);
+            interruptedChecks += 1;
+            return (
+              interruptedChecks === 2
+                ? Deferred.succeed(startupChecksInterrupted, undefined)
+                : Effect.void
+            ).pipe(Effect.andThen(Effect.interrupt));
           });
-          yield* store.set(new TextEncoder().encode(json));
-          const executable = {
-            executablePath: "/user/bin/codex",
-            managedVersionDirectory: null,
-            source: "local" as const,
-            version: "0.156.1",
-          };
-          const installation = yield* CodexInstallation.CodexInstallation;
-          const serverConfig = yield* ServerConfig.ServerConfig;
-          const sharedHome = NodePath.join(serverConfig.stateDir, "shared-codex-home");
-          const launches: Array<
-            Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
-          > = [];
-          // Interrupt both startup account checks while they resolve the runtime.
-          // A subsequent explicit refresh and disconnect must still update the account.
-          let interruptedChecks = 0;
-          let failAcquire = false;
-          const startupChecksInterrupted = yield* Deferred.make<void>();
-          const acquire = () =>
-            Effect.suspend(() => {
-              if (failAcquire)
-                return Effect.fail(
-                  new CodexInstallation.CodexInstallationError({
-                    operation: "acquire",
-                    detail: "The fixture runtime is unavailable",
-                  }),
-                );
-              if (interruptedChecks === 2) return Effect.succeed(executable);
-              interruptedChecks += 1;
-              return (
-                interruptedChecks === 2
-                  ? Deferred.succeed(startupChecksInterrupted, undefined)
-                  : Effect.void
-              ).pipe(Effect.andThen(Effect.interrupt));
-            });
-          const instance = yield* makeManagedCodexProvider({
-            instanceId,
-            displayName: "Restored account",
-            enabled: true,
-            environment: [{ name: "OPENAI_API_KEY", value: "ambient-key", sensitive: true }],
-            config: { ...CodexDriver.defaultConfig(), setupMode: "managed", homePath: sharedHome },
-          }).pipe(
-            Effect.provideService(
-              CodexAdapterV2.CodexAppServerClientFactory,
-              CodexAdapterV2.CodexAppServerClientFactory.of({
-                open: (launch) =>
-                  Effect.sync(() => launches.push(launch)).pipe(
-                    Effect.andThen(Effect.die("The fixture stops after recording the launch")),
-                  ),
-              }),
-            ),
-            Effect.provideService(
-              CodexInstallation.CodexInstallation,
-              CodexInstallation.CodexInstallation.of({
-                ...installation,
-                managedDirectory: "unused-managed-installation",
-                resolve: () => Effect.succeed(executable),
-                acquire,
-              }),
-            ),
-            Effect.provideService(
-              ChildProcessSpawner.ChildProcessSpawner,
-              ChildProcessSpawner.make(() =>
-                Effect.fail(
-                  PlatformError.badArgument({
-                    module: "ChildProcessSpawner",
-                    method: "spawn",
-                    description: "The fixture app-server is unavailable",
-                  }),
-                ),
-              ),
-            ),
-          );
-          const observedAccount = yield* Deferred.make<void>();
-          const disconnected = yield* instance.snapshot.streamChanges.pipe(
-            Stream.tap((provider) =>
-              provider.auth.status === "authenticated"
-                ? Deferred.succeed(observedAccount, undefined).pipe(Effect.asVoid)
-                : Effect.void,
-            ),
-            Stream.filter((provider) => provider.auth.status === "unauthenticated"),
-            Stream.runHead,
-            Effect.forkScoped,
-          );
-          yield* Deferred.await(startupChecksInterrupted);
-          const restored = yield* instance.snapshot.refresh;
-          expect(restored.auth.email).toBe("account@example.test");
-          expect(restored.runtimePaths?.homePath).toBe(sharedHome);
-          expect(restored.runtimePaths?.shadowHomePath).toContain(
-            `providers/codex/${instanceId}/shadow`,
-          );
-          // The fixture app-server cannot start, so the workspace scan fails
-          // instead of passing the machine snapshot off as the workspace's skills.
-          const scan = yield* instance.snapshotForCwd!(serverConfig.stateDir).pipe(Effect.exit);
-          expect(Exit.isFailure(scan)).toBe(true);
-          // The account is still signed in, so a runtime that cannot start is a
-          // failed scan too, not the machine snapshot's inventory.
-          failAcquire = true;
-          const runtimeScan = yield* instance.snapshotForCwd!(serverConfig.stateDir).pipe(
-            Effect.exit,
-          );
-          failAcquire = false;
-          expect(Exit.isFailure(runtimeScan)).toBe(true);
-          yield* Deferred.await(observedAccount);
-          // Sessions launch the T3-installed Codex with the account's token, not ambient credentials.
-          const threadId = ThreadId.make("managed-account-thread");
-          yield* instance.orchestrationAdapter
-            .openSession({
-              threadId,
-              providerSessionId: ProviderSessionId.make("managed-account-session"),
-              modelSelection: { instanceId, model: "gpt-5.4" },
-              runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-                runtimeMode: "full-access",
-                interactionMode: "default",
-                cwd: serverConfig.stateDir,
-              }),
-            })
-            .pipe(Effect.scoped, Effect.exit);
-          expect(launches).toHaveLength(1);
-          const launch = launches[0]!;
-          expect(launch.settings.binaryPath).toBe(executable.executablePath);
-          expect(launch.settings.launchArgs).toContain("openai_token_sharing");
-          expect(launch.environment.ACCESS_TOKEN).toBe("dummy-owned-access");
-          expect(launch.environment.OPENAI_API_KEY).toBeUndefined();
-          expect(launch.environment.CODEX_HOME).toBe(launch.settings.homePath);
-          const before = yield* instance.auth!.subscribe("test-owner").pipe(Stream.runHead);
-          expect(Option.getOrThrow(before).phase).toBe("idle");
-          yield* instance.auth!.logout(Effect.void);
-          const after = Option.getOrThrow(yield* Fiber.join(disconnected));
-          expect(after.auth.status).toBe("unauthenticated");
-          expect(after.auth.email).toBeUndefined();
-          expect(after.installed).toBe(true);
-          expect(after.models).toEqual([]);
-          expect(Option.isNone(yield* store.get)).toBe(true);
-          // Signed out, there is no runtime to scan with, so the machine
-          // snapshot's empty inventory stands instead of a failed scan.
-          const signedOutScan = yield* instance.snapshotForCwd!(serverConfig.stateDir);
-          expect(signedOutScan.skills).toEqual([]);
+        const instance = yield* makeManagedCodexProvider({
+          instanceId,
+          displayName: "Restored account",
+          enabled: true,
+          environment: [{ name: "OPENAI_API_KEY", value: "ambient-key", sensitive: true }],
+          config: { ...CodexDriver.defaultConfig(), setupMode: "managed", homePath: sharedHome },
         }).pipe(
-          Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
           Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) =>
-              Effect.sync(() => {
-                expect([
-                  "https://auth.openai.com/.well-known/openid-configuration",
-                  "https://auth.openai.com/revoke",
-                  "https://api.openai.com/v1/models",
-                ]).toContain(request.url);
-                if (request.url.endsWith("/models"))
-                  return HttpClientResponse.fromWeb(request, Response.json({ models: [] }));
-                return HttpClientResponse.fromWeb(
-                  request,
-                  request.url.endsWith("/revoke")
-                    ? new Response(null, { status: 200 })
-                    : Response.json({
-                        issuer: "https://auth.openai.com",
-                        authorization_endpoint: "https://auth.openai.com/api/accounts/authorize",
-                        token_endpoint: "https://auth.openai.com/api/accounts/oauth/token",
-                        jwks_uri: "https://auth.openai.com/jwks",
-                        revocation_endpoint: "https://auth.openai.com/revoke",
-                      }),
-                );
+            CodexAdapterV2.CodexAppServerClientFactory,
+            CodexAdapterV2.CodexAppServerClientFactory.of({
+              open: (launch) =>
+                Effect.sync(() => launches.push(launch)).pipe(
+                  Effect.andThen(Effect.die("The fixture stops after recording the launch")),
+                ),
+            }),
+          ),
+          Effect.provideService(
+            CodexInstallation.CodexInstallation,
+            CodexInstallation.CodexInstallation.of({
+              ...installation,
+              managedDirectory: "unused-managed-installation",
+              resolve: () => Effect.succeed(executable),
+              acquire,
+            }),
+          ),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.gen(function* () {
+                if (replacementTiming === "during-probe") {
+                  yield* Deferred.succeed(probeEntered, undefined);
+                  yield* Deferred.await(resumeProbe);
+                }
+                return yield* PlatformError.badArgument({
+                  module: "ChildProcessSpawner",
+                  method: "spawn",
+                  description: "The fixture app-server is unavailable",
+                });
               }),
             ),
           ),
         );
-      }).pipe(Effect.scoped),
+        const observedAccount = yield* Deferred.make<void>();
+        const disconnected = yield* instance.snapshot.streamChanges.pipe(
+          Stream.tap((provider) =>
+            provider.auth.status === "authenticated"
+              ? Deferred.succeed(observedAccount, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+          Stream.filter((provider) => provider.auth.status === "unauthenticated"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(startupChecksInterrupted);
+        const refresh = yield* instance.snapshot.refresh.pipe(Effect.forkChild);
+        if (replacementTiming === "during-probe") {
+          yield* Deferred.await(probeEntered);
+          yield* replaceAccount;
+          yield* Deferred.succeed(resumeProbe, undefined);
+        }
+        const restored = yield* Fiber.join(refresh);
+        if (replacementTiming === "during-probe") {
+          expect(catalogTokens).toEqual([]);
+          expect(restored.models).toEqual([]);
+          expect(restored.auth.email).toBe("replacement@example.test");
+          expect(restored.auth.profileId).toBe("oaiapp_replacement");
+          return;
+        }
+        expect(catalogTokens).toEqual(["Bearer dummy-owned-access"]);
+        expect(restored.auth.email).toBe("account@example.test");
+        expect(restored.runtimePaths?.homePath).toBe(sharedHome);
+        expect(restored.runtimePaths?.shadowHomePath).toContain(
+          `providers/codex/${instanceId}/shadow`,
+        );
+        // The fixture app-server cannot start, so the workspace scan fails
+        // instead of passing the machine snapshot off as the workspace's skills.
+        const scan = yield* instance.snapshotForCwd!(serverConfig.stateDir).pipe(Effect.exit);
+        expect(Exit.isFailure(scan)).toBe(true);
+        // The account is still signed in, so a runtime that cannot start is a
+        // failed scan too, not the machine snapshot's inventory.
+        failAcquire = true;
+        const runtimeScan = yield* instance.snapshotForCwd!(serverConfig.stateDir).pipe(
+          Effect.exit,
+        );
+        failAcquire = false;
+        expect(Exit.isFailure(runtimeScan)).toBe(true);
+        yield* Deferred.await(observedAccount);
+
+        const threadId = ThreadId.make("managed-account-thread");
+        yield* instance.orchestrationAdapter
+          .openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make("managed-account-session"),
+            modelSelection: { instanceId, model: "gpt-5.4" },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: serverConfig.stateDir,
+            }),
+          })
+          .pipe(Effect.scoped, Effect.exit);
+        expect(launches).toHaveLength(1);
+        const launch = launches[0]!;
+        expect(launch.settings.binaryPath).toBe(executable.executablePath);
+        expect(launch.settings.launchArgs).toContain("openai_token_sharing");
+        expect(launch.environment.ACCESS_TOKEN).toBeUndefined();
+        expect(launch.settings.launchArgs).toContain("__managed-chatgpt-token");
+        expect(launch.settings.launchArgs).not.toContain("dummy-owned-access");
+        expect(launch.environment.OPENAI_API_KEY).toBeUndefined();
+        expect(launch.environment.CODEX_HOME).toBe(launch.settings.homePath);
+        const before = yield* instance.auth!.subscribe("test-owner").pipe(Stream.runHead);
+        expect(Option.getOrThrow(before).phase).toBe("idle");
+        yield* instance.auth!.logout(Effect.void);
+        const after = Option.getOrThrow(yield* Fiber.join(disconnected));
+        expect(after.auth.status).toBe("unauthenticated");
+        expect(after.auth.email).toBeUndefined();
+        expect(after.installed).toBe(true);
+        expect(after.models).toEqual([]);
+        expect(Option.isNone(yield* store.get)).toBe(true);
+        // Signed out, there is no runtime to scan with, so the machine
+        // snapshot's empty inventory stands instead of a failed scan.
+        const signedOutScan = yield* instance.snapshotForCwd!(serverConfig.stateDir);
+        expect(signedOutScan.skills).toEqual([]);
+      }).pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() => {
+              expect([
+                "https://auth.openai.com/.well-known/openid-configuration",
+                "https://auth.openai.com/revoke",
+                "https://api.openai.com/v1/models",
+              ]).toContain(request.url);
+              if (request.url.endsWith("/models")) {
+                catalogTokens.push(request.headers.authorization);
+                return HttpClientResponse.fromWeb(request, Response.json({ models: [] }));
+              }
+              return HttpClientResponse.fromWeb(
+                request,
+                request.url.endsWith("/revoke")
+                  ? new Response(null, { status: 200 })
+                  : Response.json({
+                      issuer: "https://auth.openai.com",
+                      authorization_endpoint: "https://auth.openai.com/api/accounts/authorize",
+                      token_endpoint: "https://auth.openai.com/api/accounts/oauth/token",
+                      jwks_uri: "https://auth.openai.com/jwks",
+                      revocation_endpoint: "https://auth.openai.com/revoke",
+                    }),
+              );
+            }),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped);
+  // regression: a sign-in that replaces the account mid-probe must not label the old
+  // account's catalog with the new identity.
+  it.effect.each(["unchanged", "during-probe"] as const)(
+    "retained managed machinery keeps its account label and token together: %s",
+    checkManagedAccount,
   );
 
   it.effect.skipIf(windowsHost)(

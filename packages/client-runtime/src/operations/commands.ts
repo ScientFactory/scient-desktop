@@ -122,6 +122,9 @@ export interface UnsnoozeThreadInput extends ThreadCommandInput {
 
 export interface VisitThreadInput extends ThreadCommandInput {
   readonly visitedAt: string;
+  /** Counts toward search frecency; `searchQuery` is the palette query that picked it. */
+  readonly opened?: boolean;
+  readonly searchQuery?: string;
 }
 
 export type MarkThreadUnreadInput = ThreadCommandInput;
@@ -197,6 +200,7 @@ export interface InterruptThreadTurnInput extends ThreadCommandInput {
 export interface RespondToThreadApprovalInput extends ThreadCommandInput {
   readonly requestId: RuntimeRequestId;
   readonly decision: ProviderApprovalDecision;
+  readonly feedback?: string;
 }
 
 export interface RespondToThreadUserInputInput extends ThreadCommandInput {
@@ -578,6 +582,8 @@ export const visitThread = Effect.fn("EnvironmentCommands.visitThread")(function
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     visitedAt: input.visitedAt,
+    ...(input.opened ? { opened: true } : {}),
+    ...(input.searchQuery ? { searchQuery: input.searchQuery } : {}),
   });
 });
 
@@ -944,6 +950,7 @@ export const respondToThreadApproval = Effect.fn("EnvironmentCommands.respondToT
       threadId: input.threadId,
       requestId: input.requestId,
       decision: input.decision,
+      ...(input.feedback === undefined ? {} : { feedback: input.feedback }),
     });
   },
 );

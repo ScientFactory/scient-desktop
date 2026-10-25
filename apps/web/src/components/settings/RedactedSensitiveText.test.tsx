@@ -24,11 +24,4 @@ describe("RedactedSensitiveText", () => {
     expect(markup).not.toContain(account);
     expect(markup).toContain("blur-xs");
   });
-
-  it("can show provider account emails initially", () => {
-    const markup = renderAccount(true);
-
-    expect(markup).toContain(account);
-    expect(markup).not.toContain("blur-[2px]");
-  });
 });

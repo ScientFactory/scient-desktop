@@ -31,25 +31,26 @@ const record = {
 };
 
 describe("SourceJournalIcon", () => {
-  it("renders the book immediately and does not wait for journal lookup", () => {
-    const resolveIcon = vi.fn(async () => null);
-    const markup = renderToStaticMarkup(
-      <SourceJournalIcon
-        environmentId={EnvironmentId.make("environment-test")}
-        root="/project"
-        record={record}
-        resolveIcon={resolveIcon}
-      />,
-    );
-    expect(markup).toContain('data-testid="source-generic-icon"');
-    expect(markup).not.toContain("<img");
-    expect(resolveIcon).not.toHaveBeenCalled();
-  });
-
   it("does not request journal enrichment without a journal identity", () => {
     expect(
       sourceJournalIconInternals.canResolveJournalIcon({ ...record, containerTitle: null }),
     ).toBe(false);
     expect(sourceJournalIconInternals.canResolveJournalIcon(record)).toBe(true);
   });
+});
+
+// regression: 4e05b272c1 feat(sources): complete reference intake workflows
+it("renders the book immediately and does not wait for journal lookup", () => {
+  const resolveIcon = vi.fn(async () => null);
+  const markup = renderToStaticMarkup(
+    <SourceJournalIcon
+      environmentId={EnvironmentId.make("environment-test")}
+      root="/project"
+      record={record}
+      resolveIcon={resolveIcon}
+    />,
+  );
+  expect(markup).toContain('data-testid="source-generic-icon"');
+  expect(markup).not.toContain("<img");
+  expect(resolveIcon).not.toHaveBeenCalled();
 });

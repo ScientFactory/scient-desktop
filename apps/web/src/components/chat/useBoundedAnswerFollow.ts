@@ -290,9 +290,15 @@ export function useBoundedAnswerFollow({
         // next step rather than starting again from rest.
         const stalled = motion.position - viewport.scrollTop > 2;
         if (delta - step > 0.5 && !stalled) frame = requestAnimationFrame(tick);
-        else if (stalled || !revealing) {
-          motion.velocity = 0;
-          motion.position = viewport.scrollTop;
+        else {
+          if (stalled || !revealing) {
+            motion.velocity = 0;
+            motion.position = viewport.scrollTop;
+          }
+          // Arrived with the response settled: the next frame finds nothing
+          // left to reveal and ends the follow, rather than waiting for some
+          // later change to wake it.
+          if (!stalled && answerSettled) frame = requestAnimationFrame(tick);
         }
         return;
       }

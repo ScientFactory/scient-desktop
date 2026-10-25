@@ -32,6 +32,7 @@ export const ForgejoRepository = Schema.Struct({
   allow_squash_merge: Schema.optional(Schema.Boolean),
   allow_rebase: Schema.optional(Schema.Boolean),
   allow_rebase_update: Schema.optional(Schema.Boolean),
+  default_delete_branch_after_merge: Schema.optional(Schema.Boolean),
 });
 const Branch = Schema.Struct({
   ref: Schema.String,
@@ -212,6 +213,26 @@ export function forgejoCommit(commit: typeof ForgejoCommit.Type): PullRequestCom
   };
 }
 
+// Forgejo Actions reports a job that did not run as `skipped` and a cancelled one as `failure`.
+// Warnings retain released clients' pending status; their additive outcome is terminal.
+function forgejoCheckStatus(state: string): PullRequestCheck["status"] {
+  switch (state) {
+    case "success":
+      return "success";
+    case "failure":
+    case "error":
+      return "failure";
+    case "skipped":
+      return "skipped";
+    // SCIENT-FORK:START — Released clients classify neutral as passing.
+    case "warning":
+      return "pending";
+    // SCIENT-FORK:END
+    default:
+      return "pending";
+  }
+}
+
 export function forgejoChecks(
   statuses: ReadonlyArray<typeof ForgejoStatus.Type>,
   pullRequestUrl: string,
@@ -226,12 +247,10 @@ export function forgejoChecks(
         url: status.target_url
           ? (URL.parse(status.target_url, pullRequestUrl)?.href ?? null)
           : null,
-        status:
-          status.status === "success"
-            ? "success"
-            : status.status === "failure" || status.status === "error"
-              ? "failure"
-              : "pending",
+        status: forgejoCheckStatus(status.status),
+        // SCIENT-FORK:START — Old decoders ignore the outcome; current readers need it.
+        ...(status.status === "warning" ? { outcome: "warning" as const } : {}),
+        // SCIENT-FORK:END
       },
     })),
   );

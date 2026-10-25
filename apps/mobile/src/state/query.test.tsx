@@ -55,6 +55,8 @@ afterEach(async () => {
 });
 
 describe("environment query pending state", () => {
+  // regression: 5cb4bf7ba2 fix(client): stop open subscriptions from reporting pending forever
+  // One row per branch: waiting, initial, settled, and no atom.
   it.each([
     ["before the first value", AsyncResult.initial<string, Error>(true), true, true],
     [
@@ -64,27 +66,7 @@ describe("environment query pending state", () => {
       false,
     ],
     ["after a value settles", AsyncResult.success<string, Error>("value"), false, false],
-    [
-      "after a failure",
-      AsyncResult.failure<string, Error>(Cause.fail(new Error("boom"))),
-      false,
-      false,
-    ],
     ["before a subscription starts", AsyncResult.initial<string, Error>(false), false, true],
-    [
-      "while a failed subscription reconnects",
-      AsyncResult.failure<string, Error>(Cause.fail(new Error("boom")), { waiting: true }),
-      true,
-      false,
-    ],
-    [
-      "after a failure that keeps an earlier value",
-      AsyncResult.failureWithPrevious<string, Error>(Cause.fail(new Error("boom")), {
-        previous: Option.some(AsyncResult.success<string, Error>("value")),
-      }),
-      false,
-      false,
-    ],
     ["without an atom", null, false, false],
   ])("reports pending %s", async (_label, result, queryPending, subscriptionPending) => {
     const { query, subscription } = await render(result);

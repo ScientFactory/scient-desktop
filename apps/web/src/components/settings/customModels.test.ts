@@ -103,6 +103,35 @@ describe("model connection presentation", () => {
     expect(customModelPresetId(saved)).toBe("spacexai");
     expect(saved.protocol).toBe("openai-completions");
   });
+
+  it("classifies connections by exact endpoint and compatible protocol, never their display name", () => {
+    const connection = {
+      id: "shared",
+      name: "Shared endpoint",
+      baseUrl: "https://example.test/v1",
+      protocol: "openai-completions" as const,
+      credentialId: null,
+      models: [],
+    };
+    expect(customModelPresetId({ ...connection, baseUrl: "https://api.x.ai/v1" })).toBe("spacexai");
+    expect(customModelPresetId({ ...connection, name: "OpenAI" })).toBe("custom");
+    expect(customModelPresetId({ ...connection, baseUrl: "https://api.openai.com/v1/" })).toBe(
+      "openai",
+    );
+    expect(
+      customModelPresetId({
+        ...connection,
+        baseUrl: "https://api.openai.com/v1",
+        protocol: "anthropic-messages",
+      }),
+    ).toBe("custom");
+    expect(
+      customModelPresetId({ ...connection, baseUrl: "https://api.openai.com.attacker.test/v1" }),
+    ).toBe("custom");
+    expect(customModelPresetId({ ...connection, baseUrl: "https://api.openai.com/other" })).toBe(
+      "custom",
+    );
+  });
 });
 
 describe("Droid reasoning note", () => {

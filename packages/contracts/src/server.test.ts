@@ -5,6 +5,7 @@ import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   OtlpEndpointCheckInput,
   resolveEnvironmentMachineKind,
+  ServerObservability,
   ServerProvider,
   ServerProviders,
 } from "./server.ts";
@@ -39,6 +40,7 @@ describe("ServerProvider", () => {
     }
   });
 
+  // SCIENT-FORK:START
   it("defaults capability arrays when decoding provider snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",
@@ -63,6 +65,7 @@ describe("ServerProvider", () => {
     expect(parsed.connection).toBeUndefined();
   });
 
+  // regression: 6dbb795ff0 feat(providers): add guided Codex lifecycle
   it("decodes an additive provider connection summary without credential data", () => {
     const parsed = decodeServerProvider({
       ...baseProviderSnapshot,
@@ -97,6 +100,7 @@ describe("ServerProvider", () => {
       },
     });
   });
+  // SCIENT-FORK:END
 });
 
 describe("server config forward compatibility", () => {
@@ -127,6 +131,23 @@ describe("server config forward compatibility", () => {
     expect(parsed.usageLimits?.windows).toEqual([
       { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
     ]);
+  });
+});
+
+describe("ServerObservability", () => {
+  const decodeServerObservability = Schema.decodeUnknownSync(ServerObservability);
+
+  it("rejects an unknown endpoint source", () => {
+    expect(() =>
+      decodeServerObservability({
+        logsDirectoryPath: "/tmp/t3/logs",
+        localTracingEnabled: true,
+        otlpTracesUrl: "https://collector.example.com/v1/traces",
+        otlpTracesSource: "cli",
+        otlpTracesEnabled: true,
+        otlpMetricsEnabled: false,
+      }),
+    ).toThrow();
   });
 });
 
