@@ -669,6 +669,10 @@ test("the mobile gate classifies the tested diff, including renames and unusual 
     path.join(root, ".github/scripts/ci-changes.cjs"),
     path.join(scripts, "ci-changes.cjs"),
   );
+  fs.copyFileSync(
+    path.join(root, ".github/scripts/ci-test-dependencies.json"),
+    path.join(scripts, "ci-test-dependencies.json"),
+  );
   fs.writeFileSync(path.join(temp, "pnpm-workspace.yaml"), "packages:\n");
   const gate = (base, head) => {
     const output = path.join(temp, "output");
