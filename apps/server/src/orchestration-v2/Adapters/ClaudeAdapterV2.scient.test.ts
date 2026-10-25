@@ -1,23 +1,18 @@
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { assert, describe, it } from "@effect/vitest";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
+import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
+import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
-import {
-  EnvironmentId,
-  type ModelSelection,
-  ProviderInstanceId,
-  ProviderSessionId,
-  RunAttemptId,
-  ThreadId,
-} from "@t3tools/contracts";
+import { type ModelSelection, ProviderSessionId, RunAttemptId } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import {
-  type ProviderAdapterV2Event,
-  ProviderAdapterV2RuntimePolicy,
-} from "@t3tools/provider-core/server/ProviderAdapter";
+import { type ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
-import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -28,15 +23,12 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
-import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
 import {
   CLAUDE_TEST_MODEL_SELECTION,
   CLAUDE_TEST_RUNTIME_POLICY,
   DEFAULT_CLAUDE_SETTINGS,
   makeClaudeTestTurnInput,
 } from "./ClaudeAdapterV2.fixture.ts";
-import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import {
   awaitUntil,
   claudeSdkFrame,
@@ -2640,6 +2632,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         ),
       ),
     );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect(
     "does not opaque-misclassify a buffered subagent notification across model/policy query replacement",
@@ -2893,6 +2886,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         ),
       ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("keeps usage warnings and provisioned overage silent", () =>
     Effect.gen(function* () {
@@ -2944,6 +2938,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect.each([
     { recovered: false, expected: "Claude usage limit reached" },
@@ -3002,6 +2997,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect.each([429, 401, 529])(
     "classifies the current Claude API status %s after rate-limit evidence",
@@ -3050,6 +3046,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         ),
       ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("carries exhausted retry progress into the terminal provider error", () =>
     Effect.scoped(
@@ -3108,6 +3105,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it("pre-approves only read-only t3-code tools in a read-only sandbox without an allowlist", () => {
     const threadId = ThreadId.make("thread-claude-mcp-read-only-no-allowlist");
@@ -3121,6 +3119,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ...ClaudeAdapterV2.CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
     ]);
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it("keys live-query reuse on the MCP-derived pre-approvals", () => {
     const threadId = ThreadId.make("thread-claude-mcp-query-key");
@@ -3152,6 +3151,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
     assert.notEqual(readOnlyKey, fullAccessKey);
     assert.notEqual(fullAccessKey, detachedKey);
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it("logs query options without leaking environment values or callback functions", () => {
     const options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions = {
@@ -3196,6 +3196,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       "secret launch prompt",
     );
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("does not offer a continuation for notification-only opaque work", () =>
     Effect.scoped(
@@ -3251,6 +3252,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("terminalizes an agent server wake from a positive task-notification result", () =>
     Effect.scoped(
@@ -3317,6 +3319,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("terminalizes a user mobile turn from a positive task-notification result", () =>
     Effect.scoped(
@@ -3359,6 +3362,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("terminalizes a zero-turn task-notification result in a provider continuation", () =>
     Effect.scoped(
@@ -3413,6 +3417,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("drops zero-turn task-notification debris racing interrupt", () =>
     Effect.scoped(
@@ -3476,6 +3481,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("fails a positive task-notification error result", () =>
     Effect.scoped(
@@ -3514,6 +3520,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("removes the cancellation listener after approval resolves", () =>
     Effect.gen(function* () {
@@ -3539,6 +3546,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       assert.equal(removes, 1);
     }),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("a subagent re-run in the foreground does not join a later wake", () =>
     Effect.scoped(
@@ -3625,6 +3633,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("a turn that fails to start does not expire a queued wake's report", () =>
     Effect.scoped(
@@ -3690,6 +3699,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("keeps a subagent a queued wake turn launches with its continuation", () =>
     Effect.scoped(
@@ -3855,6 +3865,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("routes a subagent that starts while the root turn is idle", () =>
     Effect.scoped(
@@ -3965,6 +3976,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("releases held frames before the notification that first names the tool use", () =>
     Effect.scoped(
@@ -4046,6 +4058,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("does not resolve a newer API retry when replaying a held subagent frame", () =>
     Effect.scoped(
@@ -4111,6 +4124,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("rejects unsupported image types before opening a provider query", () =>
     Effect.scoped(
@@ -4201,6 +4215,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("surfaces a Claude safety model fallback without failing the turn", () =>
     Effect.gen(function* () {
@@ -4265,6 +4280,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("creates the native session on the first provider turn", () =>
     Effect.gen(function* () {
@@ -4274,6 +4290,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       assert.equal(openedQueries[0]?.options.resume, undefined);
     }),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("drops a zero-turn task-notification result while awaiting a prompt echo", () =>
     Effect.scoped(
@@ -4374,6 +4391,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.each([false, true])("requests thinking summaries with resume=%s", (resume) => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
@@ -4386,6 +4404,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
     assert.equal(options.extraArgs?.["thinking-display"], "summarized");
     assert.include(options.settings, { showThinkingSummaries: true });
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it("preserves an explicit omitted thinking display", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
@@ -4399,6 +4418,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
     assert.equal(options.extraArgs?.["thinking-display"], "omitted");
     assert.notInclude(options.settings ?? {}, { showThinkingSummaries: true });
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it("does not enable thinking when the model option disables it", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
@@ -4415,6 +4435,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
     assert.isUndefined(options.extraArgs?.["thinking-display"]);
     assert.include(options.settings, { alwaysThinkingEnabled: false });
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it("passes automatic compaction and resume-dialog controls to the SDK", () => {
     const onUserDialog = async () => ({
@@ -4435,6 +4456,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
     assert.equal(options.onUserDialog, onUserDialog);
     assert.deepEqual(options.supportedDialogKinds, ["resume_return"]);
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it("maps canonical read-only on-request policy to Claude default with callbacks", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
@@ -4458,6 +4480,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       installPermissionCallback: true,
     });
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it("maps Auto runtime mode to Claude's AI-reviewed permission mode", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
@@ -4473,6 +4496,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       installPermissionCallback: false,
     });
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it("installs the permission callback for approval-required plan mode", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
@@ -4488,6 +4512,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       installPermissionCallback: true,
     });
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it("honors never approvals for approval-required workspace-write policy", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
@@ -4507,6 +4532,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       installPermissionCallback: false,
     });
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it("honors never approvals for externally sandboxed policy", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
@@ -4527,6 +4553,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       installPermissionCallback: false,
     });
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it("projects assistant usage against the selected context window", () => {
     const usage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
@@ -4550,6 +4577,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       updatedAt: "2026-08-29T00:00:00.000Z",
     });
   });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   // The CLI process exits on its own after the turn settled (idle, crash),
   // leaving its background task on the roster. Stop must succeed so the
@@ -4599,6 +4627,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("clears the roster when a turn fails", () =>
     Effect.scoped(
@@ -4661,6 +4690,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect(
     "clears buffered wake and continuation state when same-native-thread replacement open fails",
@@ -4869,6 +4899,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         ),
       ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("does not invent process reset state on a first-ever failed open", () =>
     Effect.scoped(
@@ -4948,4 +4979,70 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
       ),
     ),
   );
+});
+
+describe("Restored ClaudeAdapterV2.Mcp.test.ts", () => {
+  describe("ClaudeAdapterV2 native protocol logging", () => {
+    // regression: 2a48f8bac2 refactor(orchestration): publish the qualified V2 alignment tree
+
+    it("injects thread-scoped MCP configuration without logging the credential", () => {
+      const threadId = ThreadId.make("thread-claude-mcp");
+      const mcpSession: McpProviderSessionConfig = {
+        environmentId: EnvironmentId.make("environment-claude-mcp"),
+        threadId,
+        providerSessionId: "mcp-session-claude",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer secret-claude-token",
+        capabilities: new Set(["preview"] as const),
+        connectors: [],
+      };
+      const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+        mcpSession,
+        readOnlySandbox: false,
+        allowedTools: ["Read"],
+      });
+      assert.deepEqual(overrides, {
+        scientAwareness: buildScientAwareness(new Set(["preview"]), CLAUDE_SCIENT_TOOL_PROJECTION),
+        allowedTools: ["Read", "mcp__scient__*"],
+        mcpServers: {
+          scient: {
+            type: "http",
+            url: "http://127.0.0.1:43123/mcp",
+            headers: {
+              Authorization: "Bearer secret-claude-token",
+            },
+            timeout: ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
+          },
+        },
+      });
+
+      const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-4-6",
+        },
+        nativeThreadId: "native-thread-claude-mcp",
+        resume: false,
+        cwd: "/workspace",
+        ...overrides,
+        environment: {},
+      });
+      assert.equal(options.env?.T3_CODE_MCP_AUTHORIZATION, undefined);
+      assert.isObject(options.systemPrompt);
+      const systemPrompt = options.systemPrompt as {
+        readonly type: string;
+        readonly preset: string;
+        readonly append?: string;
+      };
+      assert.equal(systemPrompt.type, "preset");
+      assert.equal(systemPrompt.preset, "claude_code");
+      assert.include(systemPrompt.append ?? "", "Use `delegate_task`");
+      assert.include(systemPrompt.append ?? "", "mcp__scient__preview_status");
+      assert.notInclude(systemPrompt.append ?? "", "scient_pdf_build");
+      const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
+      assert.equal(logged.hasMcpServers, true);
+      assert.notInclude(JSON.stringify(logged), "secret-claude-token");
+    });
+  });
 });

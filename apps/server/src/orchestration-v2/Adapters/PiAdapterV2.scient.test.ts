@@ -2167,6 +2167,7 @@ describe("PiAdapterV2 restored upstream cases", () => {
       getInputFd: () => Sink.drain,
       getOutputFd: () => Stream.empty,
     });
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("offers an explicit empty value for extension input dialogs", () =>
     Effect.gen(function* () {
@@ -2202,16 +2203,19 @@ describe("PiAdapterV2 restored upstream cases", () => {
       assert.isUndefined(response["cancelled"]);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("persists current xAI capacity text for the thread error banner", () =>
     expectModelFailure("The model is currently at capacity due to high demand."),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("persists extension-normalized xAI capacity text for the thread error banner", () =>
     expectModelFailure(
       "Provider overloaded: The model is currently at capacity due to high demand.",
     ),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("keeps the unexplained stdout-close message when the process has not exited", () =>
     Effect.gen(function* () {
@@ -2238,6 +2242,7 @@ describe("PiAdapterV2 restored upstream cases", () => {
       assert.equal(error.detail, "pi process closed stdout");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("keeps the exit-code diagnosis when stdin breaks while exit is still pending", () =>
     Effect.gen(function* () {
@@ -2282,6 +2287,7 @@ describe("PiAdapterV2 restored upstream cases", () => {
       assert.equal(error.detail, "pi process exited with code 1");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("waits for a slow Pi resume without starting a replacement", () =>
     Effect.gen(function* () {
@@ -2309,6 +2315,7 @@ describe("PiAdapterV2 restored upstream cases", () => {
       yield* fake.takeRequest("prompt");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("retires a timed-out lifecycle process before a late switch can race replacement", () =>
     Effect.gen(function* () {
@@ -2353,6 +2360,7 @@ describe("PiAdapterV2 restored upstream cases", () => {
       );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect(
     "uses the lifecycle deadline for fresh sessions and drops replaced native metadata",
@@ -2399,6 +2407,7 @@ describe("PiAdapterV2 restored upstream cases", () => {
         assert.isNull(replacement.nativeConversationHeadRef);
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+  // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
   it.effect("replaces a native session when the first resume's state refresh fails", () =>
     Effect.gen(function* () {
