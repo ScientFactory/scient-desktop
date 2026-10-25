@@ -1,16 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Folder identities and private scratch folders.
-/**
- * A manual Overleaf sync (coordinator contract sections 3 to 6, 8 and 9; steps
- * 3b and 4). It prepares reviews, applies a confirmed one to the folder, adopts
- * the applier's result into the connection, then sends it to Overleaf once:
- * verified, recorded first, never resent. Recovery finishes an interrupted
- * apply and settles earlier sends by positive evidence only; it never sends.
- *
- * Lock order: the connection's operation reservation (in memory, refused rather
- * than queued), then the checkout barrier's application section, then the
- * store's compare-and-set, then the file layer's own locks. Fetching Overleaf
- * happens before the section is taken.
- */
+/** A manual Overleaf sync: prepare a review, apply it, adopt the result, then send
+ * once (verified, recorded first, never resent). Recovery settles by positive
+ * evidence only and never sends. Lock order: operation reservation, checkout
+ * application section, store CAS, then file locks; fetch before the section. */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -654,21 +646,10 @@ export class OverleafCoordinator extends Context.Service<
       readonly keptRevision: string;
       readonly currentRevision: string | null;
     }) => Effect.Effect<OverleafRestoreResult, OverleafCoordinatorError>;
-    /**
-     * Puts back in the folder what Overleaf had before one accepted send (design
-     * section 4.3): for every path the send changed (its parent tree against the
-     * tree it sent), the parent's bytes, or absence. A path whose file is no longer
-     * what the send left there is skipped and reported. Displaced bytes are kept.
-     * Like a restore it never publishes and never moves the base: the caller syncs
-     * next, and the restored files go out as ordinary local changes.
-     *
-     * The caller saves the folder's open editors, in every window, before calling,
-     * and does not call if a save fails; this operation reads only the disk.
-     *
-     * A path kept only on this computer, recorded (`localOnlyPaths`) or asked for
-     * with this request (`keepOnlyHere`, the decision the caller's next sync
-     * carries), is never written: it is skipped as `kept-only-here`.
-     */
+    /** Puts back what Overleaf had before one accepted send: the parent's bytes or
+     * absence per changed path, skipping paths no longer as the send left them.
+     * Never publishes or moves the base; displaced bytes are kept. The caller must
+     * save open editors first; local-only paths are skipped as `kept-only-here`. */
     readonly undo: (input: {
       readonly connectionId: string;
       readonly requestId: string;
@@ -810,16 +791,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     { readonly input: OverleafInventoryInput; readonly digest: string }
   >();
 
-  /**
-   * Whether building `review` again now would give the same review: the connection
-   * record, the checkout and credential epochs and Overleaf's head are those it was
-   * built on, and the folder, captured exactly as the review captured it, holds the
-   * same files with the same bytes (and the same new, local-only, skipped and
-   * missing ones). The review is a function of those alone, so then it stands as
-   * it is; otherwise it is built again. The record and both epochs are read again
-   * after the capture, as a build reads them after its own: one renewed while the
-   * folder was read makes the review stale, as a build would.
-   */
+  /** Whether rebuilding `review` now would give the same review: record, checkout
+   * and credential epochs, Overleaf head and captured folder bytes must all match
+   * those it was built on. Record and epochs are re-read after the capture, so a
+   * renewal during the folder read makes the review stale. */
   const unchangedSince = Effect.fn("OverleafCoordinator.unchangedSince")(function* (input: {
     readonly review: OverleafReview;
     readonly connection: OverleafConnectionDocument;
@@ -950,14 +925,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     }
   });
 
-  /**
-   * Writes the refs `next` needs, then replaces the document; refs it no longer needs
-   * go after. What the repository holds decides, not the previous document's list: a
-   * required ref found missing (one a record from before it was required never got)
-   * is written again, and a failure to write it fails the replacement. The one
-   * exception is an accepted attempt's ref, kept only so Undo stays possible, whose
-   * object Git confirms is gone: nothing can pin it again, so it never blocks.
-   */
+  /** Writes the refs `next` needs, replaces the document, then drops unneeded refs.
+   * A required ref found missing is rewritten and its failure fails the replace,
+   * except an accepted attempt's undo-only ref whose object Git confirms is gone. */
   const replaceWithPins = Effect.fn("OverleafCoordinator.replaceWithPins")(function* (
     repo: string,
     previous: OverleafConnectionDocument,
@@ -1081,11 +1051,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           ),
     );
     if (link.kind !== "sync-apply") {
-      // A restore or an undo keeps the bytes it displaced (never released
-      // automatically), never moves the base, and sends nothing. What it wrote takes
-      // part in the sync again unless it stays local-only on purpose (the link's
-      // set); restored conflict material is tracked again. One the applier could
-      // not finish leaves its groups for review beside those already recorded.
+      // A restore/undo keeps displaced bytes (never auto-released), never moves
+      // the base and sends nothing. Its writes rejoin the sync unless local-only;
+      // an unfinished applier leaves its groups for review.
       const intent = yield* repos.readTree({ repo, tree: link.intentTree });
       // An undo's plan keys the applier's base by blob ID, so a path its write reached
       // has the intent's blob there: durable evidence, the same in recovery. A write
@@ -1169,11 +1137,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         .map(([path, oid]) => ({ path, oid })),
     });
     const candidate = yield* repos.readTree({ repo, tree: link.intentTree });
-    // Where the apply actually put each held file. A record not at a path of the
-    // result comes from a version 1 link, which named files where they were before
-    // the apply: the result's renames from the base say where they went. An apply
-    // that did not finish every unit may have left a file where it was, so its
-    // record keeps that path too until a review finds the file.
+    // Where the apply put each held file. Version 1 links named pre-apply paths:
+    // renames from the base say where they went. An unfinished apply may have
+    // left a file in place, so its record keeps that path until review finds it.
     const resultPaths = new Set(candidate.map((entry) => entry.path));
     let applied: ReadonlyArray<{ readonly from: string; readonly to: string }> | null = null;
     const placed: OverleafMarkerRecord[] = [];
@@ -1559,11 +1525,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     if (blocked !== null) return outcome({ _tag: "blocked", reason: blocked });
     const { publicationTree, remoteCommit, remoteTree } = review.binding;
     if (publicationTree === remoteTree) return outcome({ _tag: "none" });
-    // Outside the held files, the folder must hold exactly what is sent, over the whole
-    // publication domain (contract section 5): every path the plan read or wrote, so an
-    // explicit deletion must still be absent. Held files are work in progress and are
-    // not compared. What is sent is built from the repository's objects, never read
-    // from the folder after this.
+    // Outside held files, the folder must hold exactly what is sent over the
+    // whole publication domain, so an explicit deletion must still be absent.
+    // What is sent is built from repository objects, never re-read from the folder.
     const plan = review.applyPlan;
     const domain = [
       ...new Set([
@@ -1664,16 +1628,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     return { _tag: "recorded", attemptNumber, candidateCommit, recorded } satisfies Staged;
   });
 
-  /**
-   * Admits a recorded attempt and sends it once, outside the application section: the
-   * network is never awaited while holding the checkout (contract section 9). Admission
-   * is a short section of its own, deciding from what it finds there: the same checkout
-   * (every key of its chain) at the same epoch as at verification, the same physical
-   * folders, and the reviewed credential. Anything else (a pull, switch or restore that
-   * ran or is running, a checkout replaced or removed, a renewed credential) records
-   * `not-sent`. Changes after admission are later local changes; they never alter what
-   * is sent.
-   */
+  /** Admits a recorded attempt and sends it once outside the application section;
+   * the network is never awaited while holding the checkout. Admission requires
+   * the same checkout chain/epoch, physical folders and credential as verified;
+   * anything else records `not-sent`. Later changes never alter what is sent. */
   const send = Effect.fn("OverleafCoordinator.publish")(function* (input: {
     readonly repo: string;
     readonly review: OverleafReview;
@@ -2612,11 +2570,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   connectionId: input.connectionId,
                   limit: "kept-copies",
                 });
-              // Files it writes join the managed set and files it removes leave it, so
-              // undoing a rename at the limit fits. A removal leaves for certain only
-              // where every capture reads the path anyway (the base, a forced
-              // conflict); elsewhere only once the applier has done it, so the worst
-              // case keeps it.
+              // Writes join and removals leave the managed set, so undoing a rename
+              // at the limit fits. A removal leaves for certain only where every
+              // capture reads it anyway; elsewhere only once the applier has done it.
               const retired = plan.removed.filter((path) => connection.managedPaths.includes(path));
               const managedAfter = unique([
                 ...connection.managedPaths.filter(
@@ -2696,11 +2652,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       }),
     );
 
-  // A bulk change of a checkout first settles an apply left pending in it, when
-  // nothing else holds that connection (owner decision 3); otherwise it refuses.
-  // It fails closed: a connection it cannot read could be one with work pending
-  // here, so an unreadable record refuses every bulk change until it is
-  // quarantined or repaired.
+  // A bulk checkout change first settles a pending apply when nothing else holds
+  // that connection, otherwise it refuses. It fails closed: an unreadable record
+  // refuses every bulk change until quarantined or repaired.
   yield* barrier.settleBeforeBulk((section) =>
     Effect.gen(function* () {
       const refuse = new CheckoutBarrier.CheckoutRecoveryRequiredError({ checkout: section.root });

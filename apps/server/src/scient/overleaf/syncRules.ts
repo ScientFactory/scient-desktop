@@ -350,29 +350,10 @@ export interface HeldFile {
   readonly links: ReadonlyArray<string>;
 }
 
-/**
- * The files one sync holds back because they have conflict marks: each file is
- * held whole, every path it has in the base, the folder and on Overleaf, linked
- * by renames on either side. Held are the files that get new marks (`fresh`), the
- * recorded ones whose file still has marks, and any other file with a conflict
- * (`conflicted`: Scient's own labelled marks, or a whole conflict block), unless
- * the person or agent chose to send it as it is (`released`).
- *
- * A recorded file is looked for at its folder path, its other recorded paths and
- * where a rename in the folder took it; it is held where one of them has marks.
- * Finding it proves less than it seems. Git sees a rename only from the base,
- * which may no longer have the file (Overleaf deleted it, or an apply did not
- * finish), and a clean file at a recorded path may be a new one put there after
- * the marked file moved, even over another marked file. So a record found clean
- * or found nowhere is taken as settled only when no file is held at all; while
- * any is, recorded or not, each held file keeps the record's paths. Without this,
- * a marked file moved in the folder sent its rename, or its marks, to Overleaf,
- * or replaced Overleaf's version of the file still in conflict.
- *
- * A release is checked against the result: a released file whose path another
- * held file still keeps (it may be that file's former name) cannot be sent as it
- * is, and is reported in `unreleasable` instead of `released`.
- */
+/** Files held back for conflict marks, each whole across base/folder/Overleaf paths
+ * linked by renames: fresh, still-marked recorded, and other conflicted files,
+ * unless released. While any file is held, a record found clean/nowhere is not
+ * settled; a released path still kept by another held file is `unreleasable`. */
 export function heldFiles(input: {
   readonly recorded: ReadonlyArray<MarkerRecord>;
   /** Folder paths where this sync writes new conflict material. */
