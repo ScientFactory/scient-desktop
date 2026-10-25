@@ -1,8 +1,13 @@
+// SCIENT-FORK:START restored-behavior-guards
+import * as Cause from "effect/Cause";
+// SCIENT-FORK:END restored-behavior-guards
+
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Cause from "effect/Cause";
+// SCIENT-FORK:START scient-renderer-retry
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
+// SCIENT-FORK:END scient-renderer-retry
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -157,6 +162,8 @@ describe("ElectronProtocol", () => {
     }).pipe(Effect.provide(layerProtocol)),
   );
 
+  // SCIENT-FORK:START scient-renderer-retry - upstream's snap dropped its only retry guard.
+  // regression: 31dfe3596e Fix Electron dev and packaged renderer startup (#3557)
   it.effect("retries transient renderer target failures", () =>
     Effect.gen(function* () {
       let handler: ((request: Request) => Promise<Response>) | undefined;
@@ -188,6 +195,7 @@ describe("ElectronProtocol", () => {
     }).pipe(Effect.provide(layerProtocol)),
   );
 
+  // regression: 78552a8c61 chore(deps): upgrade @effect/tsgo to 0.46.1 (#16360) - sole guard of the retry limit and last-failure rejection
   it.effect("rejects with the last renderer target failure after 50ms and 150ms retries", () =>
     Effect.gen(function* () {
       let handler: ((request: Request) => Promise<Response>) | undefined;
@@ -231,59 +239,9 @@ describe("ElectronProtocol", () => {
       assert.equal(netFetchMock.mock.calls.length, 3);
     }).pipe(Effect.provide(layerProtocol)),
   );
+  // SCIENT-FORK:END scient-renderer-retry
 
-  it.effect("preserves protocol registration failures", () =>
-    Effect.gen(function* () {
-      const cause = new Error("protocol registration failed");
-      handleMock.mockImplementationOnce(() => {
-        throw cause;
-      });
-
-      const protocol = yield* ElectronProtocol.ElectronProtocol;
-      const error = yield* Effect.scoped(
-        protocol.registerDesktopProtocol({
-          scheme: "t3code-dev",
-          targetOrigin: new URL("http://127.0.0.1:3773/"),
-          clerkFrontendApiHostname: undefined,
-        }),
-      ).pipe(Effect.flip);
-
-      assert.instanceOf(error, ElectronProtocol.ElectronProtocolRegistrationError);
-      assert.equal(error.scheme, "t3code-dev");
-      assert.strictEqual(error.cause, cause);
-      assert.equal(error.message, 'Failed to register Electron protocol scheme "t3code-dev".');
-    }).pipe(Effect.provide(layerProtocol)),
-  );
-
-  it.effect("preserves protocol unregistration failures", () =>
-    Effect.gen(function* () {
-      const cause = new Error("protocol unregistration failed");
-      unhandleMock.mockImplementationOnce(() => {
-        throw cause;
-      });
-
-      const protocol = yield* ElectronProtocol.ElectronProtocol;
-      const exit = yield* Effect.exit(
-        Effect.scoped(
-          protocol.registerDesktopProtocol({
-            scheme: "t3code",
-            targetOrigin: new URL("http://127.0.0.1:3773/"),
-            clerkFrontendApiHostname: undefined,
-          }),
-        ),
-      );
-
-      assert.equal(exit._tag, "Failure");
-      if (exit._tag === "Failure") {
-        const error = Cause.squash(exit.cause);
-        assert.instanceOf(error, ElectronProtocol.ElectronProtocolUnregistrationError);
-        assert.equal(error.scheme, "t3code");
-        assert.strictEqual(error.cause, cause);
-        assert.equal(error.message, 'Failed to unregister Electron protocol scheme "t3code".');
-      }
-    }).pipe(Effect.provide(layerProtocol)),
-  );
-
+  // SCIENT-FORK:START scient-desktop-csp
   it.effect(
     "keeps executable sources host-restricted while allowing runtime network resources",
     () =>
@@ -349,4 +307,63 @@ describe("ElectronProtocol", () => {
         ]);
       }).pipe(Effect.provide(layerProtocol)),
   );
+  // SCIENT-FORK:END scient-desktop-csp
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: 9d5ca2cb7c [codex] Structure Electron protocol teardown failures (#3310)
+  it.effect("preserves protocol unregistration failures", () =>
+    Effect.gen(function* () {
+      const cause = new Error("protocol unregistration failed");
+      unhandleMock.mockImplementationOnce(() => {
+        throw cause;
+      });
+
+      const protocol = yield* ElectronProtocol.ElectronProtocol;
+      const exit = yield* Effect.exit(
+        Effect.scoped(
+          protocol.registerDesktopProtocol({
+            scheme: "t3code",
+            targetOrigin: new URL("http://127.0.0.1:3773/"),
+            clerkFrontendApiHostname: undefined,
+          }),
+        ),
+      );
+
+      assert.equal(exit._tag, "Failure");
+      if (exit._tag === "Failure") {
+        const error = Cause.squash(exit.cause);
+        assert.instanceOf(error, ElectronProtocol.ElectronProtocolUnregistrationError);
+        assert.equal(error.scheme, "t3code");
+        assert.strictEqual(error.cause, cause);
+        assert.equal(error.message, 'Failed to unregister Electron protocol scheme "t3code".');
+      }
+    }).pipe(Effect.provide(layerProtocol)),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
+
+  // SCIENT-FORK:START restored-behavior-guards
+  // regression: 9d5ca2cb7c [codex] Structure Electron protocol teardown failures (#3310)
+  it.effect("preserves protocol registration failures", () =>
+    Effect.gen(function* () {
+      const cause = new Error("protocol registration failed");
+      handleMock.mockImplementationOnce(() => {
+        throw cause;
+      });
+
+      const protocol = yield* ElectronProtocol.ElectronProtocol;
+      const error = yield* Effect.scoped(
+        protocol.registerDesktopProtocol({
+          scheme: "t3code-dev",
+          targetOrigin: new URL("http://127.0.0.1:3773/"),
+          clerkFrontendApiHostname: undefined,
+        }),
+      ).pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronProtocol.ElectronProtocolRegistrationError);
+      assert.equal(error.scheme, "t3code-dev");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message, 'Failed to register Electron protocol scheme "t3code-dev".');
+    }).pipe(Effect.provide(layerProtocol)),
+  );
+  // SCIENT-FORK:END restored-behavior-guards
 });

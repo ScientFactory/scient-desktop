@@ -544,6 +544,7 @@ describe("switching from a system runtime to the Scient-managed one", () => {
       ),
   );
 
+  // regression: e2fc205c51 feat(droid): custom models and setup say what will happen, and document it
   it.effect.each(providers)(
     "offers $name the switch beside a newer system runtime, as a decision that names both releases",
     (provider) =>
@@ -568,6 +569,7 @@ describe("switching from a system runtime to the Scient-managed one", () => {
       ),
   );
 
+  // regression: e2fc205c51 feat(droid): custom models and setup say what will happen, and document it
   it.effect.each(providers)(
     "names both versions before $name switches from an older system runtime",
     (provider) =>

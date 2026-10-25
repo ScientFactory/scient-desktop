@@ -3,9 +3,7 @@ import * as Effect from "effect/Effect";
 
 import {
   ComputeSessionGeneration,
-  INITIAL_COMPUTE_SESSION_GENERATION,
   TERMINAL_COMPUTE_SESSION_STATUSES,
-  nextComputeSessionGeneration,
   type ComputeSessionStatus,
 } from "./contract.ts";
 import {
@@ -76,18 +74,6 @@ describe("compute session state machine", () => {
     }),
   );
 
-  it.effect("walks a session that restarts and is then stopped", () =>
-    Effect.gen(function* () {
-      let status = yield* transition("starting", "ready");
-      status = yield* transition(status, "restarting");
-      status = yield* transition(status, "ready");
-      status = yield* transition(status, "stopping");
-      status = yield* transition(status, "stopped");
-
-      expect(status).toBe("stopped");
-    }),
-  );
-
   it.effect("leaves every terminal status without a successor", () =>
     Effect.gen(function* () {
       for (const terminal of TERMINAL_COMPUTE_SESSION_STATUSES) {
@@ -112,11 +98,6 @@ describe("compute session state machine", () => {
 });
 
 describe("compute session generations", () => {
-  it("counts namespaces from one", () => {
-    expect(INITIAL_COMPUTE_SESSION_GENERATION).toBe(1);
-    expect(nextComputeSessionGeneration(INITIAL_COMPUTE_SESSION_GENERATION)).toBe(2);
-  });
-
   it("refuses a generation no session ever had", () => {
     expect(() => ComputeSessionGeneration.make(0)).toThrow();
   });

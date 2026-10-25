@@ -274,6 +274,8 @@ it("acknowledges an early failure wake at its event time, not newer metadata", a
   });
 });
 
+// Unloaded, blank and streaming answers share one "not loaded" branch, tabled above.
+// regression: a495ed55e0 chore(upstream): merge t3 through 21da3061aa
 it.each([{ rows: [] }, { rows: feed("") }, { rows: feed("Still streaming", true) }])(
   "does not use a wake to acknowledge an unloaded or unsettled answer",
   async ({ rows }) => {

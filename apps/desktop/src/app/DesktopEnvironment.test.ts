@@ -2,8 +2,10 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
+// SCIENT-FORK:START restored-sole-guards
+import * as Option from "effect/Option";
+// SCIENT-FORK:END restored-sole-guards
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
@@ -14,9 +16,9 @@ const defaultInput = {
   platform: "darwin",
   processArch: "arm64",
   appVersion: "0.0.22",
-  appPath: "/Applications/Scient.app/Contents/Resources/app.asar",
+  appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
   isPackaged: false,
-  resourcesPath: "/Applications/Scient.app/Contents/Resources",
+  resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
@@ -39,6 +41,74 @@ const makeEnvironment = (
 ) => DesktopEnvironment.DesktopEnvironment.pipe(Effect.provide(layerEnvironment(overrides, env)));
 
 describe("DesktopEnvironment", () => {
+  it.effect("uses the packaged Windows server sidecar as the backend root", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        platform: "win32",
+        isPackaged: true,
+        appPath: "/install/resources/app.asar",
+        resourcesPath: "/install/resources",
+      });
+
+      assert.equal(environment.appRoot, "/install/resources/app.asar");
+      assert.equal(environment.serverRoot, "/install/resources/server.asar");
+      assert.equal(
+        environment.backendEntryPath,
+        "/install/resources/server.asar/apps/server/dist/bin.mjs",
+      );
+      assert.equal(
+        environment.clientAssetsDir,
+        "/install/resources/server.asar/apps/server/dist/client",
+      );
+    }),
+  );
+
+  it.effect("keeps implicit development state separate from production state", () =>
+    Effect.gen(function* () {
+      const development = yield* makeEnvironment(
+        {},
+        { VITE_DEV_SERVER_URL: "http://localhost:5173" },
+      );
+      // SCIENT-FORK:START desktop-state-isolation — an unpackaged build is always development,
+      // so production needs a packaged build, and state lives under ~/.scient-next.
+      const production = yield* makeEnvironment({ isPackaged: true });
+
+      assert.equal(development.stateDir, "/Users/alice/.scient-next/scient-next-dev");
+      assert.equal(production.stateDir, "/Users/alice/.scient-next/userdata");
+      // SCIENT-FORK:END desktop-state-isolation
+    }),
+  );
+
+  // SCIENT-FORK:START desktop-state-isolation
+  it.effect("never opens production state from an unpackaged direct launch", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        { isPackaged: false },
+        { SCIENT_NEXT_HOME: "/tmp/scient-next" },
+      );
+
+      assert.equal(environment.isDevelopment, true);
+      assert.equal(environment.stateDir, "/tmp/scient-next/scient-next-dev");
+      assert.equal(environment.userDataDirName, "scient-next-dev");
+    }),
+  );
+
+  it.effect("keeps the Scient app identity fixed", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        {},
+        {
+          T3CODE_DESKTOP_APP_USER_MODEL_ID: " com.t3tools.t3code.dev.local ",
+          VITE_DEV_SERVER_URL: "http://localhost:5173",
+        },
+      );
+
+      assert.equal(environment.appUserModelId, "com.scientfactory.scient.next.dev");
+    }),
+  );
+  // SCIENT-FORK:END desktop-state-isolation
+  // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+  // regression: aa219be713 port desktop app to Effect (#2546) - sole guard: renaming the logs directory passed every other desktop test
   it.effect("derives state paths and development identity inside Effect", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
@@ -112,100 +182,10 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.otlpProtocol, "http/protobuf");
     }),
   );
+  // SCIENT-FORK:END restored-sole-guards
 
-  it.effect("stores production state under userdata in an explicit home", () =>
-    Effect.gen(function* () {
-      const environment = yield* makeEnvironment(
-        { isPackaged: true },
-        {
-          SCIENT_NEXT_HOME: "/tmp/scient-next",
-        },
-      );
-
-      assert.equal(environment.isDevelopment, false);
-      assert.equal(environment.stateDir, "/tmp/scient-next/userdata");
-      assert.equal(environment.logDir, "/tmp/scient-next/userdata/logs");
-      assert.equal(environment.browserArtifactsDir, "/tmp/scient-next/userdata/browser-artifacts");
-      assert.equal(environment.serverSettingsPath, "/tmp/scient-next/userdata/settings.json");
-      assert.equal(environment.otlpProtocol, "http/json");
-    }),
-  );
-
-  it.effect("never opens production state from an unpackaged direct launch", () =>
-    Effect.gen(function* () {
-      const environment = yield* makeEnvironment(
-        { isPackaged: false },
-        { SCIENT_NEXT_HOME: "/tmp/scient-next" },
-      );
-
-      assert.equal(environment.isDevelopment, true);
-      assert.equal(environment.stateDir, "/tmp/scient-next/scient-next-dev");
-      assert.equal(environment.userDataDirName, "scient-next-dev");
-    }),
-  );
-
-  it.effect("uses the packaged Windows server sidecar as the backend root", () =>
-    Effect.gen(function* () {
-      const environment = yield* makeEnvironment({
-        platform: "win32",
-        isPackaged: true,
-        appPath: "/install/resources/app.asar",
-        resourcesPath: "/install/resources",
-      });
-
-      assert.equal(environment.appRoot, "/install/resources/app.asar");
-      assert.equal(environment.serverRoot, "/install/resources/server.asar");
-      assert.equal(
-        environment.backendEntryPath,
-        "/install/resources/server.asar/apps/server/dist/bin.mjs",
-      );
-      assert.equal(
-        environment.clientAssetsDir,
-        "/install/resources/server.asar/apps/server/dist/client",
-      );
-    }),
-  );
-
-  it.effect("uses the stable desktop entry as the packaged Linux portal identity", () =>
-    Effect.gen(function* () {
-      const environment = yield* makeEnvironment({
-        platform: "linux",
-        isPackaged: true,
-        appPath: "/tmp/.mount_t3code/resources/app.asar",
-        resourcesPath: "/tmp/.mount_t3code/resources",
-      });
-
-      assert.equal(environment.linuxDesktopEntryName, "scient.desktop");
-    }),
-  );
-
-  it.effect("keeps implicit development state separate from production state", () =>
-    Effect.gen(function* () {
-      const development = yield* makeEnvironment(
-        {},
-        { VITE_DEV_SERVER_URL: "http://localhost:5173" },
-      );
-      const production = yield* makeEnvironment({ isPackaged: true });
-
-      assert.equal(development.stateDir, "/Users/alice/.scient-next/scient-next-dev");
-      assert.equal(production.stateDir, "/Users/alice/.scient-next/userdata");
-    }),
-  );
-
-  it.effect("keeps the Scient app identity fixed", () =>
-    Effect.gen(function* () {
-      const environment = yield* makeEnvironment(
-        {},
-        {
-          T3CODE_DESKTOP_APP_USER_MODEL_ID: " com.t3tools.t3code.dev.local ",
-          VITE_DEV_SERVER_URL: "http://localhost:5173",
-        },
-      );
-
-      assert.equal(environment.appUserModelId, "com.scientfactory.scient.next.dev");
-    }),
-  );
-
+  // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+  // regression: aa219be713 port desktop app to Effect (#2546) - sole guard: dropping the bare ~ expansion passed every other desktop test
   it.effect("resolves picker defaults without nullish sentinels", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment();
@@ -225,4 +205,21 @@ describe("DesktopEnvironment", () => {
       );
     }),
   );
+  // SCIENT-FORK:END restored-sole-guards
+
+  // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+  // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103) - sole guard: giving packaged builds the development desktop entry passed every other desktop test
+  it.effect("uses the stable desktop entry as the packaged Linux portal identity", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        platform: "linux",
+        isPackaged: true,
+        appPath: "/tmp/.mount_t3code/resources/app.asar",
+        resourcesPath: "/tmp/.mount_t3code/resources",
+      });
+
+      assert.equal(environment.linuxDesktopEntryName, "scient.desktop");
+    }),
+  );
+  // SCIENT-FORK:END restored-sole-guards
 });

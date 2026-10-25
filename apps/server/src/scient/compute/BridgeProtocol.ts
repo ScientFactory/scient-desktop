@@ -136,7 +136,6 @@ export const HelloPayload = Schema.Struct({
   requiredCapabilities: Schema.Array(ComputeCapability),
   ownerToken: Schema.NonEmptyString.check(Schema.isMaxLength(MaxOwnerTokenLength)),
 });
-export type HelloPayload = typeof HelloPayload.Type;
 
 export const HelloAckPayload = Schema.Struct({
   ownerToken: Schema.NonEmptyString.check(Schema.isMaxLength(MaxOwnerTokenLength)),
@@ -209,7 +208,6 @@ export const KernelReadyPayload = Schema.Struct({
   protocolVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   capabilities: Schema.Array(ComputeCapability),
 });
-export type KernelReadyPayload = typeof KernelReadyPayload.Type;
 
 export const ExecutePayload = Schema.Struct({
   code: Schema.String.check(Schema.isMaxLength(MaxCodeLength), utf8Bound(MaxCodeLength)),
@@ -343,7 +341,6 @@ export type InterruptPayload = typeof InterruptPayload.Type;
 export const InterruptResultPayload = Schema.Struct({
   result: Schema.Literals(["interrupted", "terminal", "rejected", "timeout"]),
 });
-export type InterruptResultPayload = typeof InterruptResultPayload.Type;
 
 export const InspectVariablesPayload = Schema.Struct({});
 export type InspectVariablesPayload = typeof InspectVariablesPayload.Type;
@@ -371,7 +368,6 @@ export type RestartPayload = typeof RestartPayload.Type;
 export const RestartedPayload = Schema.Struct({
   kernelPid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
 });
-export type RestartedPayload = typeof RestartedPayload.Type;
 
 export const ShutdownPayload = Schema.Struct({});
 export type ShutdownPayload = typeof ShutdownPayload.Type;

@@ -22,7 +22,6 @@ const automationHostSource = NodeFS.readFileSync(
   new URL("../documentExport/documentHost.tsx", import.meta.url),
   "utf8",
 );
-const surfaceStyles = NodeFS.readFileSync(new URL("./scient-latex.css", import.meta.url), "utf8");
 
 function mountedPropNames(): ReadonlyArray<string> {
   const mount = panelSource.match(/<ScientLatexSurface\b([\s\S]*?)\/>/u);
@@ -39,6 +38,7 @@ function declaredPropNames(): ReadonlyArray<string> {
 }
 
 describe("Scient LaTeX file-preview seam", () => {
+  // regression: c8699e134b feat(documents): add visual LaTeX authoring and reusable templates
   it("does not mount collapsed diagnostics over the Visual document", () => {
     expect(surfaceSource).toContain(
       '(diagnostics.length > 0 || status.state === "failed") && diagnosticsOpen',
@@ -56,8 +56,12 @@ describe("Scient LaTeX file-preview seam", () => {
     expect([...mountedPropNames()].sort()).toEqual([...declaredPropNames()].sort());
   });
 
+  // regression: 3e1b6f1c5f fix(latex): build included sources from their document root
   it("resolves a document root before starting a build and offers known roots when inference is incomplete", () => {
     expect(surfaceSource).toContain("useLatexDocumentResolution({");
+    expect(surfaceSource).toContain(
+      'resolution.result?._tag === "resolved" ? resolution.result.rootRelativePath : null',
+    );
     expect(surfaceSource).toContain("resolvedRootRelativePath === null");
     expect(surfaceSource).toContain('resolution.result?._tag === "unresolved"');
     expect(surfaceSource).toContain('aria-label="Choose LaTeX document to compile"');
@@ -83,6 +87,7 @@ describe("Scient LaTeX file-preview seam", () => {
     );
   });
 
+  // regression: c8699e134b feat(documents): add visual LaTeX authoring and reusable templates
   it("opens successful agent builds on their source while carrying the resolved root", () => {
     expect(automationHostSource).toContain('case "documentLatexPresent"');
     expect(automationHostSource).toContain(
@@ -92,6 +97,7 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(automationHostSource).toContain("latexRootRelativePath: request.input.rootSourcePath");
   });
 
+  // regression: c8699e134b feat(documents): add visual LaTeX authoring and reusable templates
   it("mounts source-derived writing independently of the compiled viewer", () => {
     expect(surfaceSource).toContain("<LatexProjectVisualEditor");
     expect(surfaceSource).toContain('const showVisual = activePreview === "visual";');
@@ -103,6 +109,7 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).not.toContain("coordinator.setSuspended");
   });
 
+  // regression: c8699e134b feat(documents): add visual LaTeX authoring and reusable templates
   it("keeps source ownership separate from the root-keyed build target", () => {
     expect(surfaceSource).toContain("sourceRelativePath: props.relativePath");
     expect(surfaceSource).toContain("relativePath: resolvedRootRelativePath");
@@ -152,6 +159,7 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(projectSource).toContain("useMarkdownPersistenceLease({");
   });
 
+  // regression: 37ff60dca0 feat(latex): ship verified SyncTeX navigation runtime
   it("passes truthful source and current PDF page context to forward SyncTeX", () => {
     // The inherited editor does not expose its cursor on main. Zero is
     // SyncTeX's specified unknown-column value, and avoids guessing visual
@@ -168,6 +176,7 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).toContain("onPageChange: pdfPageChange");
   });
 
+  // regression: c8699e134b feat(documents): add visual LaTeX authoring and reusable templates
   it("keeps PDF and Split navigation separate from writing", () => {
     expect(surfaceSource).toContain('if (mode !== "split") return;');
     expect(surfaceSource).toContain('if (splitPreview === "pdf") handleForwardSync(position);');
@@ -190,8 +199,12 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).not.toMatch(/from "~\/components\/ChatMarkdown"/u);
   });
 
+  // regression: dff1da7e13 fix(web): align LaTeX split interaction
   it("uses the hand cursor only for enabled buttons", () => {
-    expect(surfaceStyles).toContain(".scient-latex-surface button:not(:disabled)");
+    const surfaceStyles = NodeFS.readFileSync(
+      new URL("./scient-latex.css", import.meta.url),
+      "utf8",
+    );
     expect(surfaceStyles).toMatch(
       /\.scient-latex-surface button:not\(:disabled\) \{\s*cursor: pointer;/u,
     );
@@ -206,6 +219,7 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).not.toMatch(/^export \{/mu);
   });
 
+  // regression: c8699e134b feat(documents): add visual LaTeX authoring and reusable templates
   it("counts this file's queued or failed save before the project retires its recovery copy", () => {
     // The project editor clears its stored recovery copy when nothing is
     // pending. A failed or queued save of the open file must hold that back.

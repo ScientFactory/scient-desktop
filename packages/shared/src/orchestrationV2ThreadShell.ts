@@ -5,6 +5,7 @@ import type {
   ProviderInstanceId,
   ThreadId,
   ScientCompletedAnswer,
+  ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { RuntimeRequestId, TurnId, orchestrationV2RunWorkStartedAt } from "@t3tools/contracts";
@@ -20,10 +21,17 @@ import {
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
 } from "./orchestrationV2ThreadError.ts";
-import { threadPullRequestsOf } from "./threadPullRequests.ts";
 
+/**
+ * `pullRequestsOf` is the caller's forge-aware reader (server or client
+ * `threadPullRequestsOf`): older payloads stored one linked pull request,
+ * keyed by its forge, and this package cannot depend on the forge definitions.
+ */
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
+  pullRequestsOf: (
+    thread: OrchestrationV2ThreadProjection["thread"],
+  ) => ReadonlyArray<ThreadPullRequestLink>,
 ): OrchestrationV2ThreadShell {
   const providerSession =
     projection.providerSessions
@@ -98,7 +106,7 @@ export function threadShellFromProjection(
     interactionMode: projection.thread.interactionMode,
     branch: projection.thread.branch,
     worktreePath: projection.thread.worktreePath,
-    pullRequests: threadPullRequestsOf(projection.thread),
+    pullRequests: pullRequestsOf(projection.thread),
     ...(projection.thread.linkedPullRequest === undefined
       ? {}
       : { linkedPullRequest: projection.thread.linkedPullRequest }),

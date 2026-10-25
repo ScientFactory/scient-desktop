@@ -186,7 +186,7 @@ function projectOverrideWrites(
     current: ProjectSettingsOverrides,
     settings: ServerSettings,
     projectId: ProjectId,
-  ) => ProjectSettingsOverrides | null,
+  ) => NonNullable<ServerSettingsPatch["projectSettingsOverrides"]>[ProjectId],
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
   const writes = new Map<EnvironmentId, ScopedServerWrite>();

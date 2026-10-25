@@ -8,6 +8,8 @@ import {
 import type {
   EnvironmentId,
   ProjectId,
+  PullRequestFilterOptions,
+  PullRequestFilterOptionsInput,
   PullRequestListInput,
   PullRequestListStatsInput,
   PullRequestListEntry,
@@ -18,7 +20,7 @@ import type {
 import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "@t3tools/client-runtime/thread-pull-requests";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useLayoutEffect } from "react";
@@ -308,6 +310,11 @@ const usePullRequestStatsQuery = createMergedEnvironmentQuery(
   pullRequestEnvironment.listStats,
 );
 
+const usePullRequestFilterOptionsQuery = createMergedEnvironmentQuery(
+  "web-pull-requests:filter-options",
+  pullRequestEnvironment.filterOptions,
+);
+
 const usePullRequestTurnRefreshQuery = createMergedEnvironmentQuery(
   "web-pull-requests:turn-refreshes",
   ({ environmentId }: EnvironmentQueryTarget<Readonly<Record<string, never>>>) =>
@@ -375,4 +382,38 @@ export function usePullRequestListStats(
           result.stats.map((stat) => ({ ...stat, environmentId })),
         );
   return { stats, isPending: query.isPending, refresh: query.refresh };
+}
+
+export function mergePullRequestFilterOptionsView(
+  values: ReadonlyArray<readonly [EnvironmentId, PullRequestFilterOptions]>,
+  queryError: string | null,
+) {
+  const labels: PullRequestFilterOptions["labels"][number][] = [];
+  const authors: PullRequestFilterOptions["authors"][number][] = [];
+  const errors = new Set<string>();
+  if (queryError !== null) errors.add(queryError);
+  let truncated = false;
+  for (const [, options] of values) {
+    labels.push(...options.labels);
+    authors.push(...options.authors);
+    truncated ||= options.truncated;
+    if (options.partialFailure !== undefined) errors.add(options.partialFailure);
+  }
+  return {
+    labels,
+    authors,
+    truncated,
+    error: errors.size === 0 ? null : [...errors].join("\n"),
+  };
+}
+
+export function usePullRequestFilterOptions(
+  targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestFilterOptionsInput>>,
+) {
+  const query = usePullRequestFilterOptionsQuery(targets);
+  return {
+    ...mergePullRequestFilterOptionsView(query.values, query.error),
+    isPending: query.isPending,
+    refresh: query.refresh,
+  };
 }

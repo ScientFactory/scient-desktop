@@ -1306,7 +1306,7 @@ describe("Droid key broker and the endpoint's transport", () => {
       yield* Effect.addFinalizer(() => Effect.promise(proxy.close));
       const direct = connection("openai-completions", "direct", slow.origin);
       const proxied = connection("openai-completions", "proxied", "http://models.example/v1");
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
       yield* withBroker(
         {

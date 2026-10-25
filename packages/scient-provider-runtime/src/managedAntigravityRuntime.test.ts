@@ -2,12 +2,11 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-
+import type { ManagedRuntimeChecksum } from "./managedRuntimeArtifact.ts";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { resolveReviewedAntigravityArtifact } from "./antigravityManifest.ts";
 import { ManagedAntigravityRuntime } from "./managedAntigravityRuntime.ts";
-import type { ManagedRuntimeChecksum } from "./managedRuntimeArtifact.ts";
 
 const temporaryRoots: string[] = [];
 
@@ -29,6 +28,7 @@ describe("ManagedAntigravityRuntime", () => {
     );
   });
 
+  // regression: fd84026972 feat(provider): add managed Antigravity integration (#133)
   it("verifies, activates, reloads, repairs, and removes the reviewed release", async () => {
     const artifact = resolveReviewedAntigravityArtifact({ platform: "darwin", arch: "arm64" });
     expect(artifact).toBeDefined();
@@ -103,6 +103,7 @@ describe("ManagedAntigravityRuntime", () => {
     expect(await runtime.readState()).toBeUndefined();
   });
 
+  // regression: fd84026972 feat(provider): add managed Antigravity integration (#133)
   it("never activates an artifact when SHA-512 verification fails", async () => {
     const artifact = resolveReviewedAntigravityArtifact({ platform: "darwin", arch: "arm64" });
     expect(artifact).toBeDefined();

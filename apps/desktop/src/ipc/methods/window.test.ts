@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
+// SCIENT-FORK:START scient-window-ipc
 import * as NodeEvents from "node:events";
+// SCIENT-FORK:END scient-window-ipc
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FileSystem from "effect/FileSystem";
@@ -21,6 +23,7 @@ vi.mock("electron", () => ({
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+// SCIENT-FORK:START scient-window-ipc
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
@@ -29,10 +32,11 @@ import {
   getRelayTelemetryEnabled,
   getWindowFullscreenState,
   pasteAsText,
-  reloadMainWindow,
   pickProjectFavicon,
-  probeRemoteEditors,
+  reloadMainWindow,
   revealWindow,
+  // SCIENT-FORK:END scient-window-ipc
+  probeRemoteEditors,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -183,7 +187,9 @@ describe("getLocalEnvironmentBootstraps", () => {
 });
 
 describe("getRelayTelemetryEnabled", () => {
+  // SCIENT-FORK:START scient-window-ipc
   it.effect("keeps relay tracing disabled by Scient policy regardless of ambient opt-in", () =>
+    // SCIENT-FORK:END scient-window-ipc
     Effect.gen(function* () {
       assert.isFalse(
         yield* getRelayTelemetryEnabled.handler().pipe(
@@ -192,6 +198,7 @@ describe("getRelayTelemetryEnabled", () => {
           }),
         ),
       );
+      // SCIENT-FORK:START scient-window-ipc
       assert.isFalse(
         yield* getRelayTelemetryEnabled
           .handler()
@@ -208,7 +215,79 @@ describe("getRelayTelemetryEnabled", () => {
   );
 });
 
+describe("reloadMainWindow", () => {
+  it.effect("reloads only the requesting main renderer, with the selected cache policy", () => {
+    const reload = vi.fn();
+    const reloadIgnoringCache = vi.fn();
+    const contents = Object.assign(new NodeEvents.EventEmitter(), {
+      id: 42,
+      isDestroyed: () => false,
+      reload,
+      reloadIgnoringCache,
+      send: vi.fn(),
+    });
+    const window = {
+      webContents: contents,
+      isDestroyed: () => false,
+    } as unknown as Electron.BrowserWindow;
+    return Effect.gen(function* () {
+      assert.isFalse(yield* reloadMainWindow.handler(true, { sender: { id: 99 } }));
+      assert.equal(reload.mock.calls.length, 0);
+      assert.equal(reloadIgnoringCache.mock.calls.length, 0);
+
+      assert.isTrue(yield* reloadMainWindow.handler(false, { sender: { id: 42 } }));
+      assert.equal(reload.mock.calls.length, 1);
+      contents.emit("did-finish-load");
+      assert.equal(contents.listenerCount("will-prevent-unload"), 0);
+      assert.isTrue(yield* reloadMainWindow.handler(true, { sender: { id: 42 } }));
+      assert.equal(reloadIgnoringCache.mock.calls.length, 1);
+      contents.emit("did-start-navigation");
+      contents.emit("will-prevent-unload");
+      assert.deepEqual(contents.send.mock.calls, [["desktop:reload-blocked"]]);
+      assert.equal(contents.listenerCount("will-prevent-unload"), 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeed(Option.some(window)) }),
+      ),
+    );
+  });
+});
+// SCIENT-FORK:END scient-window-ipc
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "finds remote editors installed without PATH launchers",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-remote-editors-" });
+      for (const app of ["Cursor", "Visual Studio Code", "WebStorm"]) {
+        const executable = path.join(
+          home,
+          "Applications",
+          `${app}.app`,
+          app === "WebStorm" ? "Contents/MacOS/webstorm" : "Contents/Resources/app/bin/code",
+        );
+        yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+        yield* fs.writeFileString(executable, "#!/bin/sh\n");
+        yield* fs.chmod(executable, 0o755);
+      }
+      const editors = yield* probeRemoteEditors.handler(undefined).pipe(
+        Effect.provideService(HostProcess.Environment, {
+          HOME: home,
+          PATH: path.join(home, "empty"),
+        }),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+      );
+      assert.include(editors, "cursor");
+      assert.include(editors, "vscode");
+      assert.include(editors, "webstorm");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// SCIENT-FORK:START scient-window-ipc - fix guards upstream's snap dropped; no other test covers them.
 describe("getWindowFullscreenState", () => {
+  // regression: 0418301de7 Fix macOS fullscreen titlebar spacing (#4019)
   it.effect("reads the current native window state", () => {
     const window = { isFullScreen: () => true } as Electron.BrowserWindow;
 
@@ -224,7 +303,31 @@ describe("getWindowFullscreenState", () => {
   });
 });
 
+describe("revealWindow", () => {
+  // regression: bb86c24139 fix(desktop): raise the window when a thread notification is clicked … (#12567)
+  it.effect("reveals the main window only when it asks", () => {
+    const window = { webContents: { id: 42 } } as unknown as Electron.BrowserWindow;
+    const reveal = vi.fn(() => Effect.void);
+    return Effect.gen(function* () {
+      yield* revealWindow.handler(undefined, { sender: { id: 99 } });
+      assert.equal(reveal.mock.calls.length, 0);
+      yield* revealWindow.handler(undefined, { sender: { id: 42 } });
+      assert.deepEqual(reveal.mock.calls, [[window]]);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          main: Effect.succeedSome(window),
+          reveal,
+        }),
+      ),
+    );
+  });
+});
+// SCIENT-FORK:END scient-window-ipc
+
+// SCIENT-FORK:START restored-sole-guards - upstream's snap dropped these; mutating the guarded checks left every other desktop test green.
 describe("pasteAsText", () => {
+  // regression: 68c2277f50 feat(composer): fold large pastes into text attachments (#11442) - sole guard of the sender-ID check
   it.effect(
     "pastes into the focused guest only after the main renderer acknowledges the menu action",
     () => {
@@ -268,64 +371,6 @@ describe("pasteAsText", () => {
   );
 });
 
-describe("reloadMainWindow", () => {
-  it.effect("reloads only the requesting main renderer, with the selected cache policy", () => {
-    const reload = vi.fn();
-    const reloadIgnoringCache = vi.fn();
-    const contents = Object.assign(new NodeEvents.EventEmitter(), {
-      id: 42,
-      isDestroyed: () => false,
-      reload,
-      reloadIgnoringCache,
-      send: vi.fn(),
-    });
-    const window = {
-      webContents: contents,
-      isDestroyed: () => false,
-    } as unknown as Electron.BrowserWindow;
-    return Effect.gen(function* () {
-      assert.isFalse(yield* reloadMainWindow.handler(true, { sender: { id: 99 } }));
-      assert.equal(reload.mock.calls.length, 0);
-      assert.equal(reloadIgnoringCache.mock.calls.length, 0);
-
-      assert.isTrue(yield* reloadMainWindow.handler(false, { sender: { id: 42 } }));
-      assert.equal(reload.mock.calls.length, 1);
-      contents.emit("did-finish-load");
-      assert.equal(contents.listenerCount("will-prevent-unload"), 0);
-      assert.isTrue(yield* reloadMainWindow.handler(true, { sender: { id: 42 } }));
-      assert.equal(reloadIgnoringCache.mock.calls.length, 1);
-      contents.emit("did-start-navigation");
-      contents.emit("will-prevent-unload");
-      assert.deepEqual(contents.send.mock.calls, [["desktop:reload-blocked"]]);
-      assert.equal(contents.listenerCount("will-prevent-unload"), 0);
-    }).pipe(
-      Effect.provide(
-        Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeed(Option.some(window)) }),
-      ),
-    );
-  });
-});
-
-describe("revealWindow", () => {
-  it.effect("reveals the main window only when it asks", () => {
-    const window = { webContents: { id: 42 } } as unknown as Electron.BrowserWindow;
-    const reveal = vi.fn(() => Effect.void);
-    return Effect.gen(function* () {
-      yield* revealWindow.handler(undefined, { sender: { id: 99 } });
-      assert.equal(reveal.mock.calls.length, 0);
-      yield* revealWindow.handler(undefined, { sender: { id: 42 } });
-      assert.deepEqual(reveal.mock.calls, [[window]]);
-    }).pipe(
-      Effect.provide(
-        Layer.mock(ElectronWindow.ElectronWindow)({
-          main: Effect.succeedSome(window),
-          reveal,
-        }),
-      ),
-    );
-  });
-});
-
 describe("pickProjectFavicon", () => {
   const pickerLayer = (
     pickFiles: () => Effect.Effect<Array<string>>,
@@ -339,6 +384,7 @@ describe("pickProjectFavicon", () => {
       DesktopAppSettings.layerTest(settings),
     );
 
+  // regression: 44e4a7071d feat(desktop): choose external project icons (#7823) - sole guard of the picker options
   it.effect("opens a single-image picker from the project directory", () =>
     Effect.gen(function* () {
       const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
@@ -365,6 +411,7 @@ describe("pickProjectFavicon", () => {
     }),
   );
 
+  // regression: cba7dd7781 feat(desktop): allow disabling the local environment (#9194) - sole guard of the disabled-environment check
   it.effect("does not open a picker while the local environment is off", () =>
     Effect.gen(function* () {
       const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
@@ -382,34 +429,4 @@ describe("pickProjectFavicon", () => {
     }),
   );
 });
-
-it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-  "finds remote editors installed without PATH launchers",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-remote-editors-" });
-      for (const app of ["Cursor", "Visual Studio Code", "WebStorm"]) {
-        const executable = path.join(
-          home,
-          "Applications",
-          `${app}.app`,
-          app === "WebStorm" ? "Contents/MacOS/webstorm" : "Contents/Resources/app/bin/code",
-        );
-        yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
-        yield* fs.writeFileString(executable, "#!/bin/sh\n");
-        yield* fs.chmod(executable, 0o755);
-      }
-      const editors = yield* probeRemoteEditors.handler(undefined).pipe(
-        Effect.provideService(HostProcess.Environment, {
-          HOME: home,
-          PATH: path.join(home, "empty"),
-        }),
-        Effect.provideService(HostProcess.Platform, "darwin"),
-      );
-      assert.include(editors, "cursor");
-      assert.include(editors, "vscode");
-      assert.include(editors, "webstorm");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
+// SCIENT-FORK:END restored-sole-guards

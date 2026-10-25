@@ -57,9 +57,7 @@ describe("threadRoutes", () => {
 
   it.each([
     { status: "cached", source: "server thread" },
-    { status: "synchronizing", source: "server thread" },
     { status: "cached", source: "draft" },
-    { status: "synchronizing", source: "draft" },
   ] as const)(
     "keeps available $source visible while the shell is $status",
     ({ status, source }) => {
@@ -75,6 +73,7 @@ describe("threadRoutes", () => {
     },
   );
 
+  // SCIENT-FORK:START — Scient keeps loading until authoritative detail for an unlisted thread arrives.
   it("waits for authoritative detail when a new fork or archived source is absent from the sidebar", () => {
     expect(
       resolveThreadRouteRenderState({
@@ -95,6 +94,7 @@ describe("threadRoutes", () => {
       }),
     ).toBe("loading");
   });
+  // SCIENT-FORK:END
 
   it("opens an unlisted server thread once its detail arrives, without waiting for the shell", () => {
     const route = {
@@ -141,6 +141,7 @@ describe("threadRoutes", () => {
     ).toBe("ready");
   });
 
+  // SCIENT-FORK:START — unlisted-thread detail decides missing, deleted and archived outcomes.
   it.each(["missing", "deleted", "archived"] as const)(
     "waits for detail before resolving an unlisted thread confirmed as %s",
     (outcome) => {
@@ -184,6 +185,7 @@ describe("threadRoutes", () => {
       ).toBe(outcome === "archived" ? "ready" : "missing");
     },
   );
+  // SCIENT-FORK:END
 
   it("waits for the live shell before redirecting a deleted thread", () => {
     expect(

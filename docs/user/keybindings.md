@@ -212,8 +212,8 @@ editor's **Inspect** mode selects one visible element and reveals its color toke
 
 The command palette searches settings, active thread titles, projects, branches, user messages, and
 final agent responses across connected environments. A setting result opens its exact control or
-section. Message search begins after two characters and keeps the matching thread's project, branch,
-and machine context visible.
+section. Message search needs at least one word of three or more letters, or two for Chinese,
+Japanese, and Korean, and keeps the matching thread's project, branch, and machine context visible.
 
 ## Edit the JSON directly
 
@@ -308,8 +308,8 @@ and **Escape** to close find.
 The command palette searches settings, active thread titles, projects, branches, user messages, and
 final agent responses across connected environments. A setting result opens its exact control or
 section. Message matches show one labeled excerpt while keeping the thread's project, branch, and
-machine context visible. Message search begins after two characters and uses SQLite's ASCII
-case-insensitive matching.
+machine context visible. Message search finds threads whose messages contain all your words, and
+needs at least one word of three or more letters, or two for Chinese, Japanese, and Korean.
 
 The full command list and the current defaults are shown in **Settings** → **Shortcuts**, which
 always matches the build you are running. Use that rather than a copied list.

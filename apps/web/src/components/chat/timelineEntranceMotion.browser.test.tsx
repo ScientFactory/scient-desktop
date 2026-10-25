@@ -14,6 +14,7 @@ import { userEvent } from "vitest/browser";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { motionClock } from "./motionClock";
 import { showStreamedAnswersNow, streamingTextAppearing } from "./useStreamingBlockEntrance";
+import { waitForMeasuredRow } from "../../../test/listMeasurement";
 
 const env = EnvironmentId.make("entrance-motion-tests");
 const date = "2026-09-29T00:00:00.000Z";
@@ -330,7 +331,7 @@ it("drops an answer's appearing state when its row unmounts mid-reveal", async (
   expect(streamingTextAppearing(answer.message.id)).toBe(false);
 });
 
-it("closes a finished turn's working header gradually, so the answer slides up", async () => {
+it("closes a finished turn's working header gradually, so the answer slides up", async (context) => {
   await using _fixture = _createFixture();
   await _setupFixture0(_fixture);
 
@@ -361,6 +362,10 @@ it("closes a finished turn's working header gradually, so the answer slides up",
   const animation = exit()!;
   animation.pause();
   animation.currentTime = 160;
+  // The answer moves once the list has measured the header at its held size.
+  const list = _fixture.listRef.current!;
+  const headerRow = list.getState().data.find((row: { kind: string }) => row.kind === "working");
+  await waitForMeasuredRow(list, (headerRow as { id: string }).id, context.signal);
   await advanceClock(_fixture, 64);
   expect(header()).not.toBeNull();
   const midway = answerTop();

@@ -1222,6 +1222,7 @@ describe("ManagedRuntimeCatalog service", () => {
 });
 
 describe("latest qualified repair selection", () => {
+  // regression: e434651620 merge(upstream): align T3 through 468ade3049
   it.each(
     policies.map(({ provider, resolve }) => ({
       caseTitle: `repairs latest for ${provider} and never downgrades a newer compatible receipt offline`,

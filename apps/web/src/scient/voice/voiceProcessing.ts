@@ -23,7 +23,7 @@ import {
 } from "./voiceTranscriptCorrectionClient.ts";
 import type { VoiceWavClip } from "./voiceWavEncoder.ts";
 
-export const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
+const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
 
 export type VoiceJobPhase = "transcribing" | "correcting";
 

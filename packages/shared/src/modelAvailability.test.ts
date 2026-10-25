@@ -3,6 +3,7 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 import { resolveAutomaticModel, resolveSelectableModel } from "./model.ts";
 
 describe("known unavailable models", () => {
+  // regression: 8b55e253a2 fix(models): exclude known unavailable models from selection
   const unavailable = {
     slug: "anthropic/claude",
     name: "Claude",

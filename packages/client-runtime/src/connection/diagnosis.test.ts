@@ -1,5 +1,7 @@
+// SCIENT-FORK:START
 import { ConnectionBlockedError } from "./model.ts";
 import { connectionDiagnosisText } from "./diagnosis.ts";
+// SCIENT-FORK:END
 import {
   RelayEnvironmentEndpointUnavailableError,
   type RelayProtectedError,
@@ -53,9 +55,11 @@ const results = (state: SupervisorConnectionState, via?: "relay" | "direct") =>
   diagnose(state, via)?.hops.map((hop) => `${hop.hop}:${hop.result}`);
 
 describe("presentConnectionDiagnosis", () => {
+  // SCIENT-FORK:START
   it("tells a working tunnel apart from Scient not answering", () => {
     expect(diagnose(backoff(unavailable("origin_unreachable")))?.headline).toBe(
       "Tunnel works, but Scient on Mac mini did not answer",
+      // SCIENT-FORK:END
     );
     expect(results(backoff(unavailable("origin_unreachable")), "direct")).toEqual([
       "device:ok",
@@ -85,7 +89,9 @@ describe("presentConnectionDiagnosis", () => {
         cause: new TypeError("Failed to fetch"),
       }),
     );
+    // SCIENT-FORK:START
     expect(diagnose(backoff(failure))?.headline).toBe("This device can't reach the relay");
+    // SCIENT-FORK:END
     expect(results(backoff(failure))).toEqual([
       "device:ok",
       "relay:failed",
@@ -103,7 +109,9 @@ describe("presentConnectionDiagnosis", () => {
       }),
     );
     const diagnosis = diagnose(backoff(failure));
+    // SCIENT-FORK:START
     expect(diagnosis?.headline).toBe("The relay returned an error");
+    // SCIENT-FORK:END
     expect(diagnosis?.steps.join(" ")).not.toContain("this device");
   });
 
@@ -142,6 +150,7 @@ describe("presentConnectionDiagnosis", () => {
     });
     expect(diagnosis?.facts.map(([label]) => label)).not.toContain("HTTP status");
   });
+  // SCIENT-FORK:START
 
   it.each(["not_linked", "tunnel_not_enabled"] as const)(
     "does not offer activation commands for an unavailable cloud link (%s)",
@@ -173,4 +182,5 @@ describe("presentConnectionDiagnosis", () => {
     expect(text).toContain("Cause: tunnel_down");
     expect(text).toContain("Attempts: 3");
   });
+  // SCIENT-FORK:END
 });

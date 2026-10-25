@@ -364,6 +364,10 @@ describe("managed provider runtime update workflow", () => {
       ),
     );
     // Discovery, artifact qualification and publication: the same for every provider.
+    // The import-closure table below proves module coverage; the workflow itself and the
+    // catalog scripts are not imported by any qualification root, so they are pinned here.
+    // regression: 6c33a9c183 fix(provider-runtime): authenticate catalog publication (#228)
+    // regression: c30f48f25f fix(providers): complete qualified managed runtime updates and latest repair
     expect(everyProvider).toEqual({
       condition: undefined,
       pathspecs: [

@@ -88,26 +88,23 @@ describe("Python Toolkit catalog", () => {
     expect(result.missingRequirements).toEqual(["SciPy"]);
   });
 
-  it.each(
-    PYTHON_TOOLKIT_CATALOG.flatMap((toolkit) =>
-      toolkit.packageRequirements.map((requirement) => ({ toolkit, requirement })),
-    ),
-  )(
-    "does not hide a missing $requirement.name behind other installed toolkits",
-    ({ toolkit, requirement }) => {
-      const complete = PYTHON_TOOLKIT_CATALOG.flatMap((item) => item.packageRequirements).map(
-        (item) => ({ name: item.name, version: item.minimumVersion ?? "99.0" }),
-      );
-      const observed = verification({
-        packages: complete.filter((item) => item.name !== requirement.name),
-      });
-      expect(assessPythonToolkit(toolkit, observed)).toMatchObject({
-        readiness: "missing-requirement",
-        missingRequirements: [requirement.displayName],
-      });
-      expect(observed.readiness).toBe("ready");
-    },
-  );
+  it("does not hide any missing catalog package behind other installed toolkits", () => {
+    const complete = PYTHON_TOOLKIT_CATALOG.flatMap((item) => item.packageRequirements).map(
+      (item) => ({ name: item.name, version: item.minimumVersion ?? "99.0" }),
+    );
+    for (const toolkit of PYTHON_TOOLKIT_CATALOG) {
+      for (const requirement of toolkit.packageRequirements) {
+        const observed = verification({
+          packages: complete.filter((item) => item.name !== requirement.name),
+        });
+        expect(assessPythonToolkit(toolkit, observed), requirement.name).toMatchObject({
+          readiness: "missing-requirement",
+          missingRequirements: [requirement.displayName],
+        });
+        expect(observed.readiness).toBe("ready");
+      }
+    }
+  });
 
   it("does not call a Toolkit ready when the runtime itself cannot start compute", () => {
     const result = assessPythonToolkit(

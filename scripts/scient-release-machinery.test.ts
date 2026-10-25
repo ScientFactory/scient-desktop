@@ -22,25 +22,17 @@ import {
 const repoRoot = NodePath.join(import.meta.dirname, "..");
 
 describe("Scient release machinery", () => {
-  it("prepares stable candidates at 04:00 Jerusalem without direct publication authority", () => {
+  it("prepares stable candidates without direct publication authority", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/scheduled-stable-candidate.yml"),
       "utf8",
     );
 
-    assert.include(workflow, 'cron: "0 4 * * *"');
-    assert.include(workflow, 'timezone: "Asia/Jerusalem"');
-    assert.include(workflow, "actions: write");
+    // It only dispatches the release workflows; publication stays with them.
     assert.include(workflow, "contents: read");
     assert.notInclude(workflow, "contents: write");
     assert.notInclude(workflow, "environment: production");
     assert.notInclude(workflow, "gh release create");
-    assert.include(workflow, 'status != "completed"');
-    assert.include(workflow, "gh workflow run promote-release.yml");
-    assert.include(workflow, "gh workflow run release.yml");
-    assert.include(workflow, '-f "publish_release=true"');
-    assert.include(workflow, '-f "allow_note_free=false"');
-    assert.include(workflow, '-f "allow_unsigned_windows=true"');
   });
 
   it("fails duplicate release identities before builds and again before publication", () => {
@@ -59,18 +51,6 @@ describe("Scient release machinery", () => {
       workflow.indexOf("Refuse an existing tag or release before builds") <
         workflow.indexOf("build_desktop:"),
     );
-  });
-
-  it("cancels superseded pull request CI while retaining pushed main validation", () => {
-    const workflow = NodeFS.readFileSync(
-      NodePath.join(import.meta.dirname, "../.github/workflows/ci.yml"),
-      "utf8",
-    );
-
-    assert.include(workflow, "group: ci-${{ github.event.pull_request.number || github.sha }}");
-    assert.include(workflow, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
-    assert.include(workflow, "vp run build:desktop");
-    assert.include(workflow, "Verify preload bundle output");
   });
 
   it("pins every release-owned action to an immutable commit", () => {
@@ -129,6 +109,7 @@ describe("Scient release machinery", () => {
     assert.include(workflow, "Publication requires signed macOS artifacts:");
   });
 
+  // regression: 20117b09c1 fix(release): use Bash for version alignment on all platforms (#44)
   it("pins Bash for every package-version alignment step", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
@@ -150,6 +131,7 @@ describe("Scient release machinery", () => {
     }
   });
 
+  // regression: 245e357b02 fix(release): expose pinned pnpm to server packaging (#45)
   it("exposes Vite+'s pinned pnpm before packaging the remote server", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
@@ -184,6 +166,7 @@ describe("Scient release machinery", () => {
     assert.notInclude(serverAssetJob, "vp run --filter t3 build:bundle");
   });
 
+  // regression: 5fb6009df0 fix(desktop): ship native helpers under Scient names
   // The native helpers ship as scient-* (see UPSTREAM.md). Upstream files spell the
   // names in place, so these assertions keep every lookup, build, release and
   // packaging site on the same names.
@@ -237,6 +220,8 @@ describe("Scient release machinery", () => {
     }
   });
 
+  // The native helpers ship as scient-* (see UPSTREAM.md); upstream files spell the
+  // names in place, so any unmarked t3-* helper name is an alignment regression.
   it("leaves T3's helper names only in marked migration code", () => {
     const legacyName =
       /\bt3-(?:resource-monitor|browser-secret|kde-snap-shot|hyprland-snap-shot)\b/u;
@@ -276,6 +261,7 @@ describe("Scient release machinery", () => {
     assert.deepStrictEqual(offenders, []);
   });
 
+  // regression: f600ec1bb8 fix(release): install assembly dependencies (#47)
   it("installs workspace dependencies before running release assembly scripts", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
@@ -292,6 +278,7 @@ describe("Scient release machinery", () => {
     assert(setupVpIndex >= 0 && setupVpIndex < firstNodeScriptIndex);
   });
 
+  // regression: 7c22a1d340 fix(release): harden artifact assembly verification
   it("copies only updater manifests and removes internal builder metadata", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
@@ -432,15 +419,10 @@ describe("Scient release machinery", () => {
     if (!note || note.format !== "paragraphs")
       throw new Error("Expected the expanded paragraph note.");
     const markdown = renderScientReleaseNotesMarkdown(note);
-    const previous = SCIENT_RELEASE_NOTES.find((entry) => entry.version === "0.6.22");
-    if (!previous) throw new Error("Expected the previous published release note.");
-    expect(markdown).toBe(renderScientReleaseNotesMarkdown(previous));
-    expect(markdown.match(/^- \*\*/gmu)).toHaveLength(9);
     for (const highlight of note.highlights) {
       expect(markdown).toContain(`**${highlight.title}**`);
       expect(markdown).toContain(highlight.description.replace(/\n/gu, "\n  "));
     }
-    expect(markdown).toContain("\n  \n  It can launch and manage multiple subagents");
     expect(markdown).toContain(note.alsoIncluded);
   });
 

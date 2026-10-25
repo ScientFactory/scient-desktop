@@ -691,7 +691,7 @@ const EnvironmentOrchestrationThreadHistoryErrors = [
 
 // SCIENT-FORK:START — exported so the server's CLI HTTP surface can compose the
 // orchestration group (apps/server/src/bin.test.ts).
-export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
+class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
       headers: OrchestrationProtocolHeaders,
@@ -838,7 +838,7 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
 // SCIENT-FORK:START — Scient-owned HTTP groups are appended after the inherited
 // environment API groups; they live in scient/environmentHttpGroups.ts.
 export { ScientThreadQueueOperationError };
-export const {
+const {
   EnvironmentScientProjectHttpApi,
   EnvironmentScientSourcesHttpApi,
   EnvironmentScientLatexHttpApi,

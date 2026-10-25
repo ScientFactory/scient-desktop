@@ -15,6 +15,13 @@ export const hostArch = NodeOS.arch();
 const POWERSHELL = "powershell.exe";
 const POWERSHELL_ARGS = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"];
 
+// pnpm ships native binaries as well as JavaScript entries that need the pinned Node.
+export function packageManagerInvocation(entry, args, nodePath) {
+  return /\.[cm]?js$/iu.test(entry)
+    ? { command: nodePath, args: [entry, ...args] }
+    : { command: entry, args };
+}
+
 export function runPowerShell(
   script,
   { timeout = 60_000, spawnSync = NodeChildProcess.spawnSync } = {},

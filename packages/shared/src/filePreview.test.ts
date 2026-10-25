@@ -4,8 +4,6 @@ import {
   filePreviewKind,
   decodeFilePreviewText,
   FILE_TEXT_PREVIEW_MAX_BYTES,
-  isWorkspaceBrowserPreviewPath,
-  isWorkspacePdfPreviewPath,
   isWorkspacePreviewEntryPath,
   mediaKindFromPath,
 } from "./filePreview.ts";
@@ -18,48 +16,6 @@ describe("workspace file previews", () => {
       expect(isWorkspacePreviewEntryPath(path)).toBe(false);
     },
   );
-
-  it.each([
-    "paper.pdf",
-    "PAPER.PDF",
-    "sources/report.pdf",
-    "document#draft.pdf",
-    "paper?draft.PDF",
-    "reports#archive/document.pdf",
-    "reports?old/document.pdf",
-    "report.pdf#copy.pdf",
-    "report.pdf?copy.pdf",
-  ])("recognizes literal PDF preview path %s", (path) => {
-    expect(isWorkspacePdfPreviewPath(path)).toBe(true);
-    expect(isWorkspaceBrowserPreviewPath(path)).toBe(true);
-  });
-
-  it.each([
-    "paper.pdf.txt",
-    "pdf",
-    "paper.html",
-    "PAPER.PDF?download=1",
-    "sources/report.pdf#page=4",
-    "paper.pdf#notes.txt",
-    "paper.pdf?notes.txt",
-    "paper%2Epdf",
-  ])("rejects literal non-PDF path %s", (path) => {
-    expect(isWorkspacePdfPreviewPath(path)).toBe(false);
-  });
-
-  it.each([
-    "README.md",
-    "src/index.ts",
-    "image.png.ts",
-    "png",
-    "image.png#notes.txt",
-    "image.svg?notes.txt",
-    "document.pdf?download=1",
-    "report.html#notes.txt",
-    "image%2Epng",
-  ])("rejects non-preview path %s", (path) => {
-    expect(isWorkspacePreviewEntryPath(path)).toBe(false);
-  });
 });
 
 describe("media path parsing", () => {

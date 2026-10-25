@@ -148,6 +148,6 @@ export function shouldCompactBeforeSend(input: {
     !input.multipleModels &&
     input.resumeCompactionTokens !== null &&
     !input.keepFullHistory &&
-    input.messageText.trim().toLowerCase() !== "/compact"
+    !/^\/compact(?:\s|$)/i.test(input.messageText.trim())
   );
 }

@@ -1,12 +1,12 @@
+// SCIENT-FORK:START
 import { toolGroupAction } from "./presentation.js";
+// SCIENT-FORK:END
 import { describe, expect, it } from "vite-plus/test";
 
 import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import {
-  commandDetailRepeatsCommand,
-  extractCommandOutputText,
   resolveWorkEntryToolPresentation,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
@@ -81,6 +81,7 @@ describe("workEntryIndicatesToolFailure", () => {
     expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
   });
 
+  // SCIENT-FORK:START
   it("keeps explicitly stopped tools neutral even when partial output resembles an error", () => {
     const entry = {
       ...base,
@@ -94,6 +95,7 @@ describe("workEntryIndicatesToolFailure", () => {
     expect(workEntryIndicatesToolFailure({ ...entry, toolLifecycleStatus: "failed" })).toBe(true);
   });
 
+  // SCIENT-FORK:END
   it("does not treat error text in a command as rendered failure", () => {
     const entry = {
       ...base,
@@ -179,6 +181,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     ).toBe("Failed to click in the preview browser");
   });
 
+  // SCIENT-FORK:START
   it.each([
     ["preview_type", "Typing in the preview browser", "Typed in the preview browser"],
     [
@@ -211,6 +214,7 @@ describe("resolveWorkEntryToolPresentation", () => {
       resolveWorkEntryToolPresentation({ ...entry, toolLifecycleStatus: "completed" })?.displayName,
     ).toBe(completed);
   });
+  // regression: a892edfa6b fix: brand owned agent tools as Scient
   it.each(["inProgress", "completed", "failed", "declined", "stopped"] as const)(
     "preserves historical tool identity and lifecycle after the Scient cutover: %s",
     (toolLifecycleStatus) => {
@@ -230,12 +234,28 @@ describe("resolveWorkEntryToolPresentation", () => {
     },
   );
 
+  // SCIENT-FORK:END
+  it.each([
+    ["https://github.com/acme/web/pull/7", "PR #7"],
+    ["https://gitlab.com/acme/web/-/merge_requests/7", "MR #7"],
+  ])("names a linked change request with its host's term (%s)", (url, target) => {
+    expect(
+      resolveWorkEntryToolPresentation({
+        label: "T3-code.link_pull_request",
+        toolLifecycleStatus: "completed",
+        toolData: { arguments: { url } },
+      })?.displayName,
+    ).toMatch(new RegExp(` ${target}$`));
+  });
+
   it("does not brand unknown tools or another server's matching tool name", () => {
     for (const label of [
       "mcp__github__preview_click",
+      // SCIENT-FORK:START
       "mcp__github__scient_thread_read",
       "scient.toString",
       "scient.unknown_tool",
+      // SCIENT-FORK:END
       "t3-code.unknown_tool",
       "t3-code.toString",
       "Search files",
@@ -250,69 +270,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     ).toBeNull();
   });
 });
-
-describe("command work-log details", () => {
-  it("extracts Claude result blocks and projected output", () => {
-    expect(
-      extractCommandOutputText({
-        result: {
-          content: [
-            { type: "text", text: "first" },
-            { type: "text", text: "second" },
-          ],
-        },
-      }),
-    ).toBe("first\nsecond");
-    expect(extractCommandOutputText({ rawOutput: { content: "projected summary" } })).toBe(
-      "projected summary",
-    );
-  });
-
-  it("treats an ingestion-truncated echo of a long command as a repeat", () => {
-    const command = `git add -A && git commit -m "${"x".repeat(200)}"`;
-    const truncated = `Bash: ${command}`.slice(0, 177) + "...";
-    expect(
-      commandDetailRepeatsCommand({
-        detail: truncated,
-        command,
-        rawCommand: null,
-        toolName: "Bash",
-        data: { toolName: "Bash", command },
-      }),
-    ).toBe(true);
-    expect(
-      commandDetailRepeatsCommand({
-        detail: "Bash: printf hello...",
-        command: "printf goodbye",
-        rawCommand: null,
-        toolName: "Bash",
-        data: { toolName: "Bash", command: "printf goodbye" },
-      }),
-    ).toBe(false);
-  });
-
-  it("treats ACP command echoes as synthetic even without a tool kind", () => {
-    expect(
-      commandDetailRepeatsCommand({
-        detail: "pnpm test",
-        command: "pnpm test",
-        rawCommand: null,
-        toolName: undefined,
-        data: { toolCallId: "tool-1", command: "pnpm test" },
-      }),
-    ).toBe(true);
-    expect(
-      commandDetailRepeatsCommand({
-        detail: "pnpm test",
-        command: "pnpm test",
-        rawCommand: null,
-        toolName: undefined,
-        data: { command: "pnpm test" },
-      }),
-    ).toBe(false);
-  });
-});
-
+// SCIENT-FORK:START
 describe("toolGroupAction", () => {
   it.each(["Edit", "Write", "MultiEdit"])(
     "groups structured native %s calls as edits without changed-file metadata",
@@ -334,3 +292,4 @@ describe("toolGroupAction", () => {
     },
   );
 });
+// SCIENT-FORK:END

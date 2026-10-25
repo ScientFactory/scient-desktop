@@ -11,7 +11,9 @@ import {
   type ModelSelection,
   type OrchestrationV2ThreadProjection,
   type ServerConfig,
+  // SCIENT-FORK:START — full provider snapshot for Scient's model availability check.
   type ServerProvider,
+  // SCIENT-FORK:END
 } from "@t3tools/contracts";
 import {
   v2Now,
@@ -19,6 +21,7 @@ import {
 } from "../../../../packages/client-runtime/src/state/orchestrationV2TestFixtures";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
+import { sendApprovalFeedback } from "@t3tools/client-runtime/state/thread-requests";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -182,6 +185,7 @@ beforeEach(() => {
   state.draft = { text: "Keep my draft", attachments: [], modelSelection: undefined };
   state.projection = null;
   state.serverConfig = {
+    // SCIENT-FORK:START — a sendable selection needs a ready provider that lists the model.
     providers: [
       {
         instanceId: ProviderInstanceId.make("codex"),
@@ -205,6 +209,7 @@ beforeEach(() => {
         skills: [],
       } satisfies ServerProvider,
     ],
+    // SCIENT-FORK:END
     environment: { capabilities: {} },
   } as unknown as ServerConfig;
   state.pendingRequests = {
@@ -225,6 +230,43 @@ beforeEach(() => {
 });
 
 describe("mobile task permissions", () => {
+  it("consumes an approval reply without queueing a parent message", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState();
+    const requests = useSelectedThreadRequests();
+    const approval = { ...state.pendingRequests.approvals[0]!, supportsFeedback: true };
+    const messageId = await composer.onSendMessage(undefined, async (text) =>
+      (await sendApprovalFeedback(approval, text, requests.onRespondToApproval))
+        ? "responded"
+        : false,
+    );
+    expect(messageId).toBeNull();
+    expect(state.approve).toHaveBeenCalledWith({
+      environmentId: "secondary",
+      input: {
+        threadId: "thread",
+        requestId: "approval",
+        decision: "decline",
+        feedback: "Keep my draft",
+      },
+    });
+    expect(state.enqueue).not.toHaveBeenCalled();
+    expect(state.clearDraft).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a draft changed during an approval reply and never sends it to the parent", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState();
+    const beforeDispatch = async () => {
+      state.draft = { ...state.draft, text: "New feedback" };
+      return "responded" as const;
+    };
+    expect(await composer.onSendMessage(undefined, beforeDispatch)).toBeNull();
+    expect(state.enqueue).not.toHaveBeenCalled();
+    expect(state.clearDraft).not.toHaveBeenCalled();
+    expect(state.draft.text).toBe("New feedback");
+  });
+
   it("keeps a connected read-only task's draft instead of queueing it with another environment's grant", async () => {
     const composer = useThreadComposerState();
     expect(await composer.onSendMessage()).toBeNull();

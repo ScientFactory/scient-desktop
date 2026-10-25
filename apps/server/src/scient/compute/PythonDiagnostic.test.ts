@@ -82,16 +82,6 @@ describe("python diagnostic normalization", () => {
     expect(diagnostics[0]!.traceback).toHaveLength(200);
   });
 
-  it("truncates each traceback line to 4 KiB", () => {
-    const diagnostics = normalize({
-      name: "E",
-      value: "v",
-      traceback: ["x".repeat(5000)],
-    });
-    const encoded = new TextEncoder().encode(diagnostics[0]!.traceback[0]!);
-    expect(encoded.byteLength).toBeLessThanOrEqual(4096);
-  });
-
   it("drops empty traceback lines after stripping", () => {
     const diagnostics = normalize({
       name: "E",

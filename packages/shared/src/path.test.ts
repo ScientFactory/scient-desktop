@@ -46,8 +46,10 @@ describe("workspaceRelativeFilePath", () => {
     // regression: #16354 a `..` that leaves the root is a host path, not a workspace path
     ["/repo/project/../other/notes.md", "/repo/project", null],
     ["C:\\repo\\project\\src\\..\\..\\notes.md", "C:\\repo\\project", null],
+    // SCIENT-FORK:START
     // Scient's lexical display helper canonicalizes contained paths; host I/O retains raw paths.
     ["/repo/project/docs/a/../b.md", "/repo/project", "docs/b.md"],
+    // SCIENT-FORK:END
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);
   });

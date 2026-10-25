@@ -2302,7 +2302,7 @@ function attachCreatedThreadSummaries(
 }
 
 // SCIENT-FORK:START — exported for tests of the post-handoff setup row.
-export const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
+const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
 // SCIENT-FORK:END
 
 export type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRows>[0];
@@ -2390,7 +2390,8 @@ function replaceStreamingMessageRows(
     return null;
   }
   const replacements = new Map<ChatMessage, Extract<TimelineEntry, { kind: "message" }>>();
-  for (const [index, entry] of timelineEntries.entries()) {
+  for (let index = 0; index < timelineEntries.length; index += 1) {
+    const entry = timelineEntries[index]!;
     const previousEntry = previousEntries[index]!;
     if (entry === previousEntry) continue;
     if (

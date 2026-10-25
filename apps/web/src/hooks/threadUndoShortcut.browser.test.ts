@@ -115,17 +115,14 @@ it("does not suppress held repeats after a menu paste hands input back", () => {
   expect(next).not.toHaveBeenCalled();
 });
 
-it.each(["palette", "model picker", "keybinding capture", "document editor"] as const)(
+it.each(["palette", "model picker", "keybinding capture"] as const)(
   "leaves undo to an open %s",
   (owner) => {
     using app = setup();
     const undo = app.notice();
     if (owner === "palette") app.root.dataset.commandPalette = "";
     else if (owner === "model picker") app.root.dataset.modelPickerContent = "";
-    else {
-      app.root.dataset.keybindingCapture = "";
-      if (owner === "document editor") app.root.dataset.documentShortcutHost = "";
-    }
+    else app.root.dataset.keybindingCapture = "";
     const editorUndo = vi.fn();
     app.input.addEventListener("keydown", editorUndo);
     expect(press().defaultPrevented).toBe(false);

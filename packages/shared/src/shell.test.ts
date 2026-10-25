@@ -1,4 +1,3 @@
-import * as TestClock from "effect/testing/TestClock";
 // @effect-diagnostics nodeBuiltinImport:off -- The synchronous shell probe runs real commands with isolated config files.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
@@ -8,6 +7,9 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
+// SCIENT-FORK:START
+import * as TestClock from "effect/testing/TestClock";
+// SCIENT-FORK:END
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -489,6 +491,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       }),
   );
 
+  // SCIENT-FORK:START
   it.effect("keeps cached misses until expiry while allowing explicit paths", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -512,6 +515,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
     ),
   );
 
+  // SCIENT-FORK:END
   it.effect("probes only listed PATH names and relists a directory that changes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -866,7 +866,6 @@ export {
   makeProviderSession,
   makeThreadCreatedEvent,
   makeProviderThread,
-  makeBrowserAccessProject,
   makeProviderAdapter,
   makeTestLayer,
   TestLegacyImporterLayer,

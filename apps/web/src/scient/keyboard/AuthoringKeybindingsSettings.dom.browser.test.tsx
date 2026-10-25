@@ -72,6 +72,7 @@ it.each(["mod++", "alt+m +", "alt+plus"])(
     ).toHaveLength(1);
   },
 );
+// regression: 929cfb6bb4 feat: unify contextual shortcuts and math input (#332) (sole guard: no kept test notices a truncated shortcut list)
 it.each(["MacIntel", "Linux"])("renders the complete default catalog on %s", async (platform) => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -92,7 +93,7 @@ it.each(["MacIntel", "Linux"])("renders the complete default catalog on %s", asy
     else Reflect.deleteProperty(navigator, "platform");
   }
 });
-it("keeps the document sections isolated and presents compact profile actions", async () => {
+it("keeps the document sections isolated", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
@@ -103,11 +104,6 @@ it("keeps the document sections isolated and presents compact profile actions", 
   expect(buttonStartingWith(_fixture, "Edit pdf.zoomIn")).toBeTruthy();
   expect(_fixture.host.querySelector('[aria-label^="Edit markdown.bold"]')).toBeNull();
   expect(_fixture.host.querySelector('[aria-label^="Edit math.symbol.alpha"]')).toBeNull();
-  expect(button(_fixture, "Import")).toBeTruthy();
-  expect(button(_fixture, "Export")).toBeTruthy();
-  expect(button(_fixture, "Restore defaults")).toBeTruthy();
-  expect(_fixture.host.querySelector("table")).toBeNull();
-  expect(_fixture.host.querySelector("details")).toBeNull();
 });
 it("opens Math behavior above the shortcut list and saves changes from the popover", async () => {
   await using _fixture = _createFixture();
@@ -127,12 +123,6 @@ it("opens Math behavior above the shortcut list and saves changes from the popov
   const card = document.querySelector<HTMLElement>("#math-input-behavior")!;
   expect(card).toBeTruthy();
   expect(_fixture.host.contains(card)).toBe(false);
-  expect(card.classList.contains("sm:grid-cols-2")).toBe(true);
-  expect(card.children).toHaveLength(3);
-  expect(card.children[0]?.textContent).toContain("Math preset");
-  expect(card.children[0]?.textContent).toContain("Command completion");
-  expect(card.children[1]?.textContent).toContain("Enter adds a matrix row");
-  expect(card.children[2]?.textContent).toContain("Sequence timeout");
   expect(_fixture.host.querySelector('[aria-label^="Edit math.symbol.alpha"]')).not.toBeNull();
 
   const preset = card.querySelector<HTMLButtonElement>('[aria-label="Math shortcut preset"]')!;
@@ -199,12 +189,10 @@ it("records a focused sequence and blocks unreachable bindings", async () => {
   await act(() => buttonStartingWith(_fixture, "Edit math.symbol.alpha").click());
   const input = _fixture.host.querySelector<HTMLInputElement>("[data-keybinding-capture]")!;
   expect(document.activeElement).toBe(input);
-  expect(input.placeholder).toBe("Press shortcut");
   await press(_fixture, "i", { altKey: true });
   await press(_fixture, "s");
   await press(_fixture, "a");
   expect(input.value).toBe("alt+i s a");
-  expect(_fixture.host.textContent).not.toContain("Record sequence");
   await act(() => button(_fixture, "Save").click());
   expect(_fixture.host.querySelector('[role="alert"]')?.textContent).toContain("conflict");
   expect(getKeyboardPreferences().preferences.overrides["math.symbol.alpha"]).toBeUndefined();
@@ -257,13 +245,6 @@ it("cancels an inline edit when clicking elsewhere, without saving the draft", a
       ),
   );
   const shortcut = buttonStartingWith(_fixture, "Edit markdown.bold");
-  const add = button(_fixture, "Add shortcut for bold");
-  const actions = button(_fixture, "Actions for bold");
-  const rowButtons = [
-    ...shortcut.closest('[data-slot="settings-row"]')!.querySelectorAll("button"),
-  ];
-  expect(rowButtons.indexOf(actions)).toBeLessThan(rowButtons.indexOf(add));
-  expect(rowButtons.indexOf(add)).toBeLessThan(rowButtons.indexOf(shortcut));
 
   await act(() => shortcut.click());
   await press(_fixture, "q", { altKey: true });

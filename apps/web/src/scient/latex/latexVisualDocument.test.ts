@@ -20,6 +20,7 @@ import {
   updateLatexVisualLayoutSource,
   prepareLatexDocumentTitle,
   latexVisualBlockSourceEdit,
+  latexVisualNodeSourceRange,
 } from "./latexVisualDocument";
 
 const text = (value: string): JSONContent => ({ type: "text", text: value });
@@ -1177,5 +1178,50 @@ describe("title creation uses lossless document boundary facts", () => {
         invertLatexSourcePatches(source, prepared.edit.patches),
       ),
     ).toBe(source);
+  });
+});
+
+// Split view reveals a Visual word selection in Source through these model-to-source maps;
+// the browser scenario (latexSplitTemplates) keeps one prose row of each gesture.
+describe("Visual word selections map to their authored source", () => {
+  const modelSize = (node: JSONContent): number =>
+    node.type === "text"
+      ? (node.text?.length ?? 0)
+      : node.content || ["paragraph", "heading"].includes(node.type ?? "")
+        ? 2 + (node.content ?? []).reduce((total, child) => total + modelSize(child), 0)
+        : 1;
+  const modelPosition = (node: JSONContent, word: string, at = 0): number | null => {
+    if (node.type === "text") {
+      const index = node.text?.indexOf(word) ?? -1;
+      return index < 0 ? null : at + index;
+    }
+    let position = at + 1;
+    for (const child of node.content ?? []) {
+      const found = modelPosition(child, word, position);
+      if (found !== null) return found;
+      position += modelSize(child);
+    }
+    return null;
+  };
+  const projection = projectLatexVisualDocument(hebrewTemplate);
+  it.each([
+    ["an abstract", "מסמך", "latexScientific"],
+    ["a \\textbf wrapper", "מודגש", "paragraph"],
+    ["combining vowel marks", "שָׁלוֹם", "paragraph"],
+    ["a \\textenglish ASCII run", "Mixed", "paragraph"],
+    ["a nested list item", "הזחה", "bulletList"],
+    ["a section heading", "ומשפטים", "heading"],
+    ["a theorem-like environment", "מתקיים", "latexScientific"],
+    ["a framed figure's body", "חיצוני", "latexScientific"],
+  ])("maps a word in %s", (_name, word, type) => {
+    // The word's first appearance, as a reader meets it.
+    const owner = projection.blocks
+      .map((block) => ({ block, at: modelPosition(block.node, word) }))
+      .find((candidate) => candidate.at !== null)!;
+    expect(owner.block.node.type).toBe(type);
+    const at = owner.at!;
+    const range = latexVisualNodeSourceRange(owner.block, at, at + word.length, projection.setup!);
+    expect(range && hebrewTemplate.slice(range.from, range.to)).toBe(word);
+    expect(range?.precise).toBe(true);
   });
 });

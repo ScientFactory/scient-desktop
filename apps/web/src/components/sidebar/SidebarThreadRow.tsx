@@ -7,7 +7,7 @@ import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
-import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
+import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -1356,10 +1356,10 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
                           ) : topStatus.icon === "done" ? (
                             <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
                           ) : null}
-                          {/* The label alone is the live region: a role="status"
-                            wrapper around the ticking duration would make
-                            screen readers announce every second. */}
-                          <span role="status">{topStatus.label}</span>
+                          {/* Not a live region: a collapsed sidebar is inert, so
+                            BackgroundThreadAnnouncer and the open thread's
+                            timeline speak status changes instead. */}
+                          {topStatus.label}
                           {status === "working" ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
@@ -1595,6 +1595,8 @@ const SidebarSearchResultRowBody = memo(function SidebarSearchResultRowBody(prop
   resultId: string;
   searchMatch: EnvironmentThreadSearchMatch | null;
   searchQuery: string;
+  /** The query `searchMatch` was found for, which lags `searchQuery` while a search runs. */
+  searchMatchQuery?: string;
   onHighlight: () => void;
   onSelect: () => void;
   onFileDropThreads: (threadRef: ScopedThreadRef, files: File[]) => void;
@@ -1735,7 +1737,7 @@ const SidebarSearchResultRowBody = memo(function SidebarSearchResultRowBody(prop
                 match={{
                   source: props.searchMatch.source,
                   snippet: props.searchMatch.snippet,
-                  query: props.searchQuery,
+                  query: props.searchMatchQuery ?? props.searchQuery,
                 }}
               />
             ) : null}

@@ -226,18 +226,21 @@ describe("resolvePathLinkTarget", () => {
     );
   });
 
+  // SCIENT-FORK:START
   it("keeps a POSIX directory name that ends in a backslash", () => {
     expect(resolvePathLinkTarget("notes.txt", "/tmp/project\\")).toBe("/tmp/project\\/notes.txt");
     expect(resolvePathLinkTarget("notes.txt", "/tmp/project/")).toBe("/tmp/project/notes.txt");
     expect(resolvePathLinkTarget("notes.txt", "C:\\repo\\")).toBe("C:\\repo\\notes.txt");
   });
 
+  // SCIENT-FORK:END
   it("keeps Windows absolute paths with forward slashes unchanged", () => {
     expect(
       resolvePathLinkTarget("C:/Users/julius/project/src/main.ts:12", "C:\\Users\\julius\\project"),
     ).toBe("C:/Users/julius/project/src/main.ts:12");
   });
 
+  // regression: #13408 terminal links kept a trailing colon
   it("keeps the line and column of a compiler diagnostic", () => {
     const [link] = extractTerminalLinks("/Users/julius/project/main.c:10:5: error: expected ';'");
     expect(resolvePathLinkTarget(link?.text ?? "", "/Users/julius/project")).toBe(

@@ -74,7 +74,7 @@ const rtlNames = [
 ];
 
 describe("file tree bidi labels", () => {
-  it.each([320, 120, 72])("keeps whole-name visual order and raw paths at %ipx", async (width) => {
+  it.each([320, 72])("keeps whole-name visual order and raw paths at %ipx", async (width) => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 

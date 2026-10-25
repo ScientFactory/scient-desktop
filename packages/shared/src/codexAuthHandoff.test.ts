@@ -23,7 +23,9 @@ const authorizationUrl = () => {
 };
 const input = {
   authorizationUrl: authorizationUrl(),
+  // SCIENT-FORK:START
   returnUrl: "http://127.0.0.1:3773/welcome#agents:remote-environment",
+  // SCIENT-FORK:END
   environmentId: EnvironmentId.make("remote-environment"),
   instanceId: ProviderInstanceId.make("work-codex"),
   flowId: "flow-one",
@@ -31,12 +33,14 @@ const input = {
 const callbackUrl = `http://127.0.0.1:54213/auth/callback?state=${"a".repeat(43)}&code=one-time-code&client_id=oaiapp_test`;
 
 describe("Codex desktop handoff", () => {
+  // SCIENT-FORK:START
   it("opens Scient desktop through the scheme it registers", () => {
     expect(codexAuthHandoffUrl(input)).toMatch(/^scient:\/\/auth\/codex\?request=/u);
     expect(codexAuthHandoffUrl(input, true)).toMatch(/^scient-next-dev:\/\/auth\/codex\?request=/u);
     const upstreamLink = codexAuthHandoffUrl(input).replace(/^scient:/u, "t3code:");
     expect(readCodexAuthHandoff(upstreamLink, false)).toBeUndefined();
   });
+  // SCIENT-FORK:END
   it("keeps the return route, account, and environment with the code in a fragment", () => {
     expect(readCodexAuthHandoff(codexAuthHandoffUrl(input), false)).toEqual(input);
     const delivery = codexAuthDeliveryUrl(input, callbackUrl);
@@ -60,12 +64,14 @@ describe("Codex desktop handoff", () => {
         false,
       ),
     ).toBeUndefined();
+    // SCIENT-FORK:START
     expect(
       readCodexAuthHandoff(
         codexAuthHandoffUrl({ ...input, returnUrl: "https://app.t3.codes/welcome" }),
         false,
       ),
     ).toBeUndefined();
+    // SCIENT-FORK:END
     expect(
       readCodexAuthHandoff(
         codexAuthHandoffUrl({

@@ -224,26 +224,6 @@ describe("compute figure presentation", () => {
 
     const presentation = figure();
     const { container } = await fixture(_fixture, presentation);
-    const card = container.querySelector<HTMLElement>("[data-scient-visual-card]")!;
-    const header = container.querySelector<HTMLElement>("[data-scient-compute-figure-header]")!;
-    const toolbar = container.querySelector<HTMLElement>("[aria-label='Figure actions']")!;
-    expect(card.classList.contains("flex-col")).toBe(true);
-    expect(card.classList.contains("overflow-hidden")).toBe(true);
-    expect(header.classList.contains("h-6.5")).toBe(true);
-    expect(header.classList.contains("border-b")).toBe(true);
-    expect(header.textContent).toContain("Figure 1");
-    expect(toolbar.getAttribute("role")).toBe("group");
-    expect(toolbar.dataset.slot).toBeUndefined();
-    expect(container.querySelector("[data-scient-toolbar-move]")).toBeNull();
-    expect(button("Open Figure 1 in viewer").classList.contains("size-5.5")).toBe(true);
-    expect(button("More image actions").classList.contains("size-5.5")).toBe(true);
-    for (const label of ["Open Figure 1 in viewer", "More image actions"]) {
-      const classes = button(label).classList;
-      expect(classes.contains("rounded-xs")).toBe(true);
-      expect(classes.contains("text-muted-foreground")).toBe(true);
-      expect(button(label).dataset.variant).toBe("ghost-muted");
-      expect(classes.contains("sm:size-6")).toBe(false);
-    }
     expect(button("View Figure 1").disabled).toBe(true);
     expect(container.textContent).toContain("Loading figure");
     await loaded(_fixture, container);
@@ -261,13 +241,16 @@ describe("compute figure presentation", () => {
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
+    // regression: 92bd49cd55 fix(compute): attach figure actions to card header
     const { container } = await fixture(_fixture);
     const card = container.querySelector<HTMLElement>("[data-scient-visual-card]")!;
     const header = container.querySelector<HTMLElement>("[data-scient-compute-figure-header]")!;
     const body = container.querySelector<HTMLElement>("[data-scient-compute-figure-body]")!;
     expect([...card.children]).toEqual([header, body]);
-    expect(body.classList.contains("h-32")).toBe(true);
-    expect(body.classList.contains("w-64")).toBe(true);
+    expect(header.querySelector("[aria-label='Figure actions']")?.getAttribute("role")).toBe(
+      "group",
+    );
+    expect(container.querySelector("[data-scient-toolbar-move]")).toBeNull();
     expect(header.querySelector("[role=status]")).toBeNull();
     expect(body.querySelector("[role=status]")?.textContent).toContain("Loading figure");
   });

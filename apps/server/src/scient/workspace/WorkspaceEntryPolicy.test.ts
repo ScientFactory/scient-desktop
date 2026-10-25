@@ -25,6 +25,7 @@ const internalOwner = (reasonCode: string): WorkspaceEntryDisposition => ({
 });
 
 describe("workspaceEntryDisposition", () => {
+  // regression: 4d231554f5 feat(server): define workspace entry visibility policy
   it.each([
     ["README.md", ordinaryFiles("workspace.project-material")],
     [".env", ordinaryFiles("workspace.project-material")],
@@ -75,6 +76,7 @@ describe("workspaceEntryDisposition", () => {
     );
   });
 
+  // regression: 4d231554f5 feat(server): define workspace entry visibility policy
   it("defaults unknown in-workspace material to visible and Files-owned", () => {
     expect(workspaceEntryDisposition(".unknown/cache/history.json")).toEqual(
       ordinaryFiles("workspace.project-material"),

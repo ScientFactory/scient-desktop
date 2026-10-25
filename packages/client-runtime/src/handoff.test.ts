@@ -1,17 +1,22 @@
 import {
+  ContextHandoffId,
   ProviderInstanceId,
   RunId,
+  // SCIENT-FORK:START
   OrchestrationV2ContextTransfer,
   OrchestrationV2TurnItem,
   ThreadId,
+  // SCIENT-FORK:END
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
+// SCIENT-FORK:START
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import {
   isForkInitializationHandoff,
+  // SCIENT-FORK:END
   resolveHandoffEndpoints,
   resolvePendingHandoff,
   type HandoffTimelineRun,
@@ -79,6 +84,7 @@ describe("handoff endpoints shared by web and mobile", () => {
   });
 });
 
+// SCIENT-FORK:START
 const decodeTransfer = Schema.decodeUnknownSync(OrchestrationV2ContextTransfer);
 const decodeItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const now = DateTime.makeUnsafe("2026-10-04T00:00:00Z");
@@ -226,12 +232,74 @@ describe("frozen fork initialization provenance", () => {
   });
 });
 
+// SCIENT-FORK:END
 const projection = {
-  runs: [{ ...run("source", 1, from, "source"), startedAt: "2026-10-11T00:00:00Z" }],
+  runs: [
+    {
+      ...run("source", 1, from, "source"),
+      status: "completed",
+      contextHandoffId: null,
+      startedAt: "2026-10-11T00:00:00Z",
+    },
+  ],
   visibleTurnItems: [{ item: { type: "user_message" } }],
 } as unknown as OrchestrationV2ThreadProjection;
 
 describe("pending context handoff", () => {
+  it.each([from, to])("removes the preview while the handoff to %s starts", (instanceId) => {
+    const selection = { instanceId, model: "destination" };
+    const providers = [
+      { instanceId: from, requiresNewThreadForModelChange: true },
+    ] as unknown as ServerProvider[];
+    const starting = {
+      ...projection,
+      runs: [
+        ...projection.runs,
+        {
+          ...projection.runs[0]!,
+          ...run("target", 2, instanceId, "destination"),
+          status: "starting" as const,
+          startedAt: null,
+          contextHandoffId: ContextHandoffId.make("handoff"),
+        },
+      ],
+    };
+
+    expect(resolvePendingHandoff(projection, selection, providers)).not.toBeNull();
+    expect(resolvePendingHandoff(starting, selection, providers)).toBeNull();
+    expect(
+      resolvePendingHandoff(starting, { instanceId: from, model: "source" }, providers),
+    ).toEqual({
+      from: [selection],
+      to: { instanceId: from, model: "source" },
+    });
+  });
+
+  it.each(["preparing", "queued", "failed", "cancelled", "rolled_back"] as const)(
+    "keeps the preview when an unstarted handoff run is %s",
+    (status) => {
+      const selection = { instanceId: to, model: "destination" };
+      const unstarted = {
+        ...projection,
+        runs: [
+          ...projection.runs,
+          {
+            ...projection.runs[0]!,
+            ...run("target", 2, to, "destination"),
+            status,
+            startedAt: null,
+            contextHandoffId: ContextHandoffId.make("handoff"),
+          },
+        ],
+      };
+
+      expect(resolvePendingHandoff(unstarted, selection, [])).toEqual({
+        from: [{ instanceId: from, model: "source" }],
+        to: selection,
+      });
+    },
+  );
+
   it("appears on selection, updates the destination, and disappears on returning", () => {
     expect(resolvePendingHandoff(projection, { instanceId: to, model: "first" }, [])).toEqual({
       from: [{ instanceId: from, model: "source" }],

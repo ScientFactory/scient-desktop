@@ -62,8 +62,6 @@ export interface ScientVoiceComposerControlProps {
   readonly readyModelOnly?: boolean;
 }
 
-export { EMPTY_TRANSCRIPT_MESSAGE } from "./voiceProcessing.ts";
-
 function formatModelSize(byteSize: number): string {
   return `~${Math.round(byteSize / 1024 / 1024)} MiB`;
 }

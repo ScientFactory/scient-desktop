@@ -46,8 +46,10 @@ describe("environmentBootstrap", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+    // SCIENT-FORK:START
     vi.stubEnv("VITE_HTTP_URL", "");
     vi.stubEnv("VITE_WS_URL", "");
+    // SCIENT-FORK:END
     installTestBrowser("http://localhost/");
   });
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  // SCIENT-FORK:START
   WS_METHODS,
   ProjectWriteFileError,
   ProjectReadFileError,
@@ -11,6 +12,7 @@ import {
   type ProjectFileWatchEvent,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
+  // SCIENT-FORK:END
   ProjectId,
   ProjectReadFileInput,
   ProjectReadFileResult,
@@ -20,7 +22,9 @@ import {
 } from "@t3tools/contracts";
 import { vi } from "vite-plus/test";
 import * as Crypto from "effect/Crypto";
+// SCIENT-FORK:START
 import * as Cause from "effect/Cause";
+// SCIENT-FORK:END
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -28,6 +32,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+// SCIENT-FORK:START
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { RpcClientError } from "effect/rpc";
@@ -44,6 +49,7 @@ import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
+// SCIENT-FORK:END
 import type { RpcSession } from "../rpc/session.ts";
 import type { EnvironmentProject } from "./models.ts";
 import { createProjectEnvironmentAtoms } from "./projectCommands.ts";
@@ -53,20 +59,23 @@ const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
 }));
-const sessions = Atom.family((_id: EnvironmentId) =>
-  Atom.make<AsyncResult.AsyncResult<AuthSessionState>>(
-    AsyncResult.success({
-      authenticated: true,
-      auth: {
-        policy: "remote-reachable" as const,
-        bootstrapMethods: [],
-        sessionMethods: [],
-        sessionCookieName: "test",
-      },
-      scopes: [AuthFilesystemReadScope, AuthFilesystemWriteScope],
-      permissions: [AuthFilesystemReadScope, AuthFilesystemWriteScope],
-    }),
-  ),
+const sessions = Atom.family(
+  (_id: EnvironmentId) =>
+    // SCIENT-FORK:START
+    Atom.make<AsyncResult.AsyncResult<AuthSessionState>>(
+      AsyncResult.success({
+        authenticated: true,
+        auth: {
+          policy: "remote-reachable" as const,
+          bootstrapMethods: [],
+          sessionMethods: [],
+          sessionCookieName: "test",
+        },
+        scopes: [AuthFilesystemReadScope, AuthFilesystemWriteScope],
+        permissions: [AuthFilesystemReadScope, AuthFilesystemWriteScope],
+      }),
+    ),
+  // SCIENT-FORK:END
 );
 const PROJECT_ID = ProjectId.make("scratch");
 const PROJECT = {
@@ -75,12 +84,14 @@ const PROJECT = {
   workspaceRoot: "/scratch",
 } as EnvironmentProject;
 
+// SCIENT-FORK:START
 const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")(function* () {
   const metadataRequests: string[][] = [];
   const file = { byteLength: 5, path: "/repo/foo" };
   const fileEvents = yield* Queue.unbounded<ProjectFileWatchEvent>();
   const readResponse = { wait: Effect.void as Effect.Effect<void>, missing: false };
   const supervisor = EnvironmentSupervisor.of({
+    // SCIENT-FORK:END
     target: { environmentId: ENVIRONMENT_ID },
     session: yield* SubscriptionRef.make(
       Option.some({
@@ -97,6 +108,7 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
                       byteLength: 0,
                       contents: "",
                       truncated: false,
+                      // SCIENT-FORK:START
                       revision: "missing",
                       exists: false,
                     }
@@ -107,6 +119,7 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
                       revision: "read",
                       truncated: false,
                     },
+                // SCIENT-FORK:END
               );
             }),
           [WS_METHODS.projectsWriteFile]: () =>
@@ -114,6 +127,7 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
               file.byteLength = 10;
               return { relativePath: "foo" };
             }),
+          // SCIENT-FORK:START
           [WS_METHODS.projectsRenameFile]: (input: {
             cwd: string;
             destinationRelativePath: string;
@@ -126,14 +140,18 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
               };
             }),
           [WS_METHODS.projectsSubscribeFileChanges]: () => Stream.fromQueue(fileEvents),
+          // SCIENT-FORK:END
           [WS_METHODS.filesystemGetMetadata]: (input: { paths: string[] }) =>
             Effect.sync(() => {
               metadataRequests.push(input.paths);
               return {
-                entries: input.paths.map((path) =>
-                  !readResponse.missing && (path === file.path || path === "/repo/./foo")
-                    ? { kind: "file" as const, byteLength: file.byteLength }
-                    : null,
+                // SCIENT-FORK:START
+                entries: input.paths.map(
+                  (path) =>
+                    !readResponse.missing && (path === file.path || path === "/repo/./foo")
+                      ? { kind: "file" as const, byteLength: file.byteLength }
+                      : null,
+                  // SCIENT-FORK:END
                 ),
               };
             }),
@@ -144,6 +162,7 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
       ...AVAILABLE_CONNECTION_STATE,
       phase: "connected" as const,
     }),
+    // SCIENT-FORK:START
   } as EnvironmentSupervisor["Service"]);
   const runtime = Atom.runtime(
     Layer.mergeAll(
@@ -153,6 +172,7 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
         followStream: (_environmentId, stream) =>
           Stream.provideService(stream, EnvironmentSupervisor, supervisor),
       } as EnvironmentRegistry["Service"]),
+      // SCIENT-FORK:END
       Layer.succeed(
         Crypto.Crypto,
         Crypto.make({
@@ -181,13 +201,16 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
         sessionMethods: [],
         sessionCookieName: "test",
       },
+      // SCIENT-FORK:START
       scopes: [AuthFilesystemReadScope, AuthFilesystemWriteScope],
       permissions: [AuthFilesystemReadScope, AuthFilesystemWriteScope],
+      // SCIENT-FORK:END
     }),
   );
   const openScratch = Effect.promise(() =>
     commands.openScratch.run(registry, { environmentId: ENVIRONMENT_ID, input: {} }),
   );
+  // SCIENT-FORK:START
   return {
     registry,
     storedProject,
@@ -198,12 +221,15 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
     file,
     fileEvents,
   };
+  // SCIENT-FORK:END
 });
 
 describe("writeFile metadata", () => {
   it.effect("preserves optional read results without seeding metadata for an absent file", () =>
     Effect.gen(function* () {
+      // SCIENT-FORK:START
       const h = yield* makeMetadataHarness();
+      // SCIENT-FORK:END
       h.readResponse.missing = true;
       const input = { cwd: "/repo", relativePath: "foo", allowMissing: true };
       expect.soft(decodeReadFileInput(input)).toEqual(input);
@@ -217,7 +243,9 @@ describe("writeFile metadata", () => {
         byteLength: 0,
         contents: "",
         truncated: false,
+        // SCIENT-FORK:START
         revision: "missing",
+        // SCIENT-FORK:END
         exists: false,
       });
       const metadata = h.commands.fileMetadata({
@@ -231,6 +259,7 @@ describe("writeFile metadata", () => {
     }).pipe(Effect.scoped),
   );
 
+  // SCIENT-FORK:START
   it.effect("reuses a current file read without another metadata request", () =>
     Effect.gen(function* () {
       const h = yield* makeMetadataHarness();
@@ -256,6 +285,7 @@ describe("writeFile metadata", () => {
   it.effect("does not restore old metadata from a read completed after a write", () =>
     Effect.gen(function* () {
       const h = yield* makeMetadataHarness();
+      // SCIENT-FORK:END
       const threadId = ThreadId.make("stale-read-thread");
       h.registry.mount(h.commands.fileMetadataThread({ environmentId: ENVIRONMENT_ID, threadId }));
       const metadata = h.commands.fileMetadata({
@@ -298,7 +328,9 @@ describe("writeFile metadata", () => {
 
   it.effect("refreshes retained canonical and original paths after an aliased write", () =>
     Effect.gen(function* () {
+      // SCIENT-FORK:START
       const h = yield* makeMetadataHarness();
+      // SCIENT-FORK:END
       const threadId = ThreadId.make("write-metadata-thread");
       h.registry.mount(h.commands.fileMetadataThread({ environmentId: ENVIRONMENT_ID, threadId }));
       const atoms = ["/repo/foo", "/repo/./foo"].map((path) =>
@@ -334,6 +366,7 @@ describe("writeFile metadata", () => {
       ]);
     }).pipe(Effect.scoped),
   );
+  // SCIENT-FORK:START
 
   it.effect("refreshes the old and negatively cached destination paths after renaming a file", () =>
     Effect.gen(function* () {
@@ -418,12 +451,15 @@ describe("writeFile metadata", () => {
       }
     }).pipe(Effect.scoped),
   );
+  // SCIENT-FORK:END
 });
 
 describe("openScratch", () => {
   it.effect("resolves once the created project reaches the client store", () =>
     Effect.gen(function* () {
+      // SCIENT-FORK:START
       const { registry, storedProject, openScratch } = yield* makeMetadataHarness();
+      // SCIENT-FORK:END
       const opening = yield* Effect.forkChild(openScratch);
       yield* Effect.yieldNow;
       registry.set(storedProject, PROJECT);
@@ -432,6 +468,7 @@ describe("openScratch", () => {
     }).pipe(Effect.scoped),
   );
 });
+// SCIENT-FORK:START
 
 const target = {
   environmentId: EnvironmentId.make("test-environment"),
@@ -1069,3 +1106,4 @@ describe("ordered project file commands", () => {
       }),
   );
 });
+// SCIENT-FORK:END

@@ -286,7 +286,7 @@ describe("retiring the project's recovery copy", () => {
 
   async function _setupFixture0(_fixture: _Fixture) {
     _fixture.stack.use(await _fixtureRender(null, { router: false }));
-    _fixture.cleanup.use(fakeTimers());
+    _fixture.stack.use(fakeTimers());
     analyticsBegin.mockClear();
     analyticsFinish.mockClear();
     cwd = `/synthetic-retirement-${(workspace += 1)}`;

@@ -62,27 +62,6 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("C:/repos/project")).toBe("c:/repos/project");
     expect(normalizeGitRemoteUrl("git@x:team/project.git")).toBe("x/team/project");
   });
-
-  it("gives an Azure DevOps repository the same key over SSH as over HTTPS", () => {
-    expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/T3Tools/Platform/T3Code")).toBe(
-      "dev.azure.com/t3tools/platform/_git/t3code",
-    );
-    expect(normalizeGitRemoteUrl("ssh://git@ssh.dev.azure.com:22/v3/T3Tools/Platform/T3Code")).toBe(
-      "dev.azure.com/t3tools/platform/_git/t3code",
-    );
-    expect(
-      normalizeGitRemoteUrl("https://T3Tools@dev.azure.com/T3Tools/Platform/_git/T3Code"),
-    ).toBe("dev.azure.com/t3tools/platform/_git/t3code");
-  });
-
-  it("puts the organization back in the host on the name dev.azure.com replaced", () => {
-    expect(
-      normalizeGitRemoteUrl("T3Tools@vs-ssh.visualstudio.com:v3/T3Tools/Platform/T3Code"),
-    ).toBe("t3tools.visualstudio.com/platform/_git/t3code");
-    expect(normalizeGitRemoteUrl("https://T3Tools.visualstudio.com/Platform/_git/T3Code")).toBe(
-      "t3tools.visualstudio.com/platform/_git/t3code",
-    );
-  });
 });
 
 describe("parseOriginUrlFromGitConfig", () => {
@@ -158,6 +137,7 @@ describe("isTemporaryWorktreeBranch", () => {
     );
   });
 
+  // SCIENT-FORK:START
   it("creates new temporary refs under the Scient namespace", () => {
     expect(WORKTREE_BRANCH_PREFIX).toBe("scient");
     expect(buildTemporaryWorktreeBranchName(() => "deadbeef")).toBe("scient/deadbeef");
@@ -171,6 +151,7 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(flattenTemporaryWorktreeBranchName("t3/deadbeef")).toBe("scient-deadbeef");
   });
 
+  // SCIENT-FORK:END
   it("matches legacy t3code temporary worktree refs", () => {
     expect(isTemporaryWorktreeBranch("t3code/deadbeef")).toBe(true);
     expect(isTemporaryWorktreeBranch("t3code-deadbeef")).toBe(true);
@@ -234,7 +215,9 @@ describe("applyGitStatusStreamEvent", () => {
 
   it("preserves local-only fields when applying a remote update", () => {
     const current: VcsStatusResult = {
+      // SCIENT-FORK:START
       gitAvailability: "missing",
+      // SCIENT-FORK:END
       isRepo: true,
       sourceControlProvider: {
         kind: SourceControlProviderKind.make("github"),

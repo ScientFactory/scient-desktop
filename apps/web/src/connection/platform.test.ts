@@ -28,6 +28,7 @@ import {
   provisionDesktopSshEnvironment,
   secondaryRegistrationsToRetainAfterTopologyRead,
 } from "./platform.ts";
+import { APP_VERSION } from "../branding.ts";
 
 const TARGET: DesktopSshEnvironmentTarget = {
   alias: "devbox",
@@ -157,10 +158,12 @@ describe("desktop SSH pairing", () => {
       const provisioned = yield* Fiber.join(retry);
 
       expect(provisioned.bearerToken).toBe("bearer-token");
+      // SCIENT-FORK:START
       expect(ensure).toHaveBeenCalledExactlyOnceWith(TARGET, {
         issuePairingToken: true,
         boundedWait: true,
       });
+      // SCIENT-FORK:END
       expect(exchange).toHaveBeenCalledExactlyOnceWith(
         SSH_BOOTSTRAP.httpBaseUrl,
         "abandoned-token",
@@ -227,6 +230,41 @@ describe("desktop SSH pairing", () => {
     }),
   );
 
+  const failPairing = (serverVersion: string, message: string) => {
+    const bridge = makeBridge([]);
+    const fetchDescriptor = bridge.fetchSshEnvironmentDescriptor;
+    vi.spyOn(bridge, "fetchSshEnvironmentDescriptor").mockImplementation(async (url) => ({
+      ...(await fetchDescriptor(url)),
+      serverVersion,
+    }));
+    vi.spyOn(bridge, "bootstrapSshBearerSession").mockRejectedValue(new Error(message));
+    return provisionDesktopSshEnvironment(bridge, TARGET).pipe(Effect.flip);
+  };
+  const PAIRING_500 =
+    "[ssh_http:500] SSH remote API request failed during bootstrap-bearer-session.";
+
+  it.effect("blocks with both versions when a server on another build rejects pairing", () =>
+    Effect.gen(function* () {
+      const error = yield* failPairing("0.0.46-nightly.20261004.2652", PAIRING_500);
+
+      expect(error).toBeInstanceOf(ConnectionBlockedError);
+      expect(error.detail).toContain("0.0.46-nightly.20261004.2652");
+      expect(error.detail).toContain(APP_VERSION);
+    }),
+  );
+
+  it.effect("keeps retrying pairing failures that are not a version mismatch", () =>
+    Effect.gen(function* () {
+      expect(yield* failPairing(APP_VERSION, PAIRING_500)).toBeInstanceOf(ConnectionTransientError);
+      expect(
+        yield* failPairing(
+          "0.0.46-nightly.20261004.2652",
+          "SSH remote API request failed during bootstrap-bearer-session.",
+        ),
+      ).toBeInstanceOf(ConnectionTransientError);
+    }),
+  );
+
   it.effect("reconnects with the saved token while it holds every standard scope", () =>
     Effect.gen(function* () {
       const calls: string[] = [];
@@ -240,10 +278,12 @@ describe("desktop SSH pairing", () => {
       });
 
       expect(prepared.bearerToken).toBe("saved-token");
+      // SCIENT-FORK:START
       expect(ensure).toHaveBeenCalledExactlyOnceWith(TARGET, {
         issuePairingToken: false,
         boundedWait: true,
       });
+      // SCIENT-FORK:END
       expect(calls).toEqual(["ensure", "descriptor", "session"]);
     }),
   );

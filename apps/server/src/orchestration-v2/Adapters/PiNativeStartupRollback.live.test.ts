@@ -7,7 +7,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Scope from "effect/Scope";
-import { piInstanceStateRoot } from "../../provider/pi/PiSessionFile.ts";
+import { piInstanceStateRoot } from "@t3tools/provider-pi/testing";
 import { makeScientPiAdapterV2 } from "../../provider/PiDriverComposition.ts";
 import { makePiRpcConnection, PiRpcError } from "@t3tools/provider-pi/testing";
 import { binary, ensure, fixture, json, layer } from "./PiNativeTestHarness.ts";

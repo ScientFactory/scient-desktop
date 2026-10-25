@@ -2545,6 +2545,20 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             (file) => file.startsWith("scient-extension-") || file === ".session.lock",
           );
         assert.equal(privateFiles().length, 2);
+        const cleanupWatchReady = yield* Deferred.make<void>();
+        const cleanup = yield* h.fs
+          .watch(root, {
+            onReady: () => {
+              Deferred.doneUnsafe(cleanupWatchReady, Effect.void);
+            },
+          })
+          .pipe(
+            Stream.filter(() => privateFiles().length === 0),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* Effect.raceFirst(Deferred.await(cleanupWatchReady), Fiber.join(cleanup));
         yield* h.runtime.startTurn(h.input);
         yield* peer.promptDelivered();
         yield* peer.emit([{ type: "agent_start" }]);
@@ -2565,9 +2579,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           assert.equal(terminal.status, closePath === "user-stop" ? "interrupted" : "failed");
           assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
         }
-        yield* Effect.gen(function* () {
-          while (privateFiles().length > 0) yield* Effect.sleep("10 millis");
-        }).pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+        yield* Fiber.join(cleanup);
         assert.deepEqual(privateFiles(), []);
         assert.equal(peer.state.shutdowns, 1);
         if (closePath !== "owner-close") {
@@ -2606,7 +2618,10 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         });
         const filters = h.peer.state.frames.filter((frame) => frame.type === "set_event_filter");
         assert.equal(filters.length, scenario.filters);
-        if (filters.length) assert.deepEqual(filters[0]?.events, [...OMP_KNOWN_EVENT_TYPES]);
+        if (filters.length) {
+          assert.deepEqual(filters[0]?.events, [...OMP_KNOWN_EVENT_TYPES]);
+          assert.equal(filters[0]?.messageUpdates, "delta");
+        }
         assert.equal(h.runtime.providerSession.status, "ready");
         yield* h.send(1, "Quiet text turn", []);
         assert.equal(

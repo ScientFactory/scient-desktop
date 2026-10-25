@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveScientRichFenceKind } from "./ScientRichFence";
 
 describe("resolveScientRichFenceKind", () => {
+  // regression: 7b01e05457 feat: render interactive Vega-Lite charts in chat
   it.each([
     ["mermaid", "mermaid"],
     ["MERMAID", "mermaid"],

@@ -100,35 +100,34 @@ NodeTest.test("immutable Git diffs permit only modified notes and existing focus
   NodeAssert.equal(detect(commit()), false, "no catalog change");
 });
 
-NodeTest.test("focused qualification gates every full lane and preserves required contexts", () => {
-  const workflow = NodeFS.readFileSync(new URL("../workflows/ci.yml", import.meta.url), "utf8");
-  const jobs = new Map(
-    [...workflow.matchAll(/^  ([\w-]+):\n([\s\S]*?)(?=^  [\w-]+:\n|(?![\s\S]))/gm)].map((m) => [
-      m[1],
-      m[2],
-    ]),
-  );
-  for (const [id, body] of jobs) {
-    if (["pull_request", "merge_group", "push", "release_notes"].includes(id)) continue;
-    NodeAssert.match(body, /needs:.*release_notes/, id);
-    if (!["test", "test_web_reused", "test_server_reused"].includes(id))
-      NodeAssert.match(body, /if:.*needs.release_notes.outputs.qualified != 'true'/, id);
-  }
-  for (const id of ["test_web_reused", "test_server_reused"])
-    NodeAssert.match(jobs.get(id), /if:.*needs.release_notes.outputs.qualified == 'true' \|\|/, id);
-  const focused = jobs.get("release_notes");
-  NodeAssert.match(focused, /qualified: \$\{\{ steps.complete.outputs.qualified \}\}/);
-  for (const command of [
-    "vp fmt --check",
-    "vp lint",
-    "typecheck",
-    "install --with-deps --only-shell chromium",
-    "test src/scient/releaseNotes",
-  ])
-    NodeAssert.ok(focused.indexOf(command) < focused.indexOf('echo "qualified=true"'), command);
-  NodeAssert.ok(!focused.includes("continue-on-error") && !focused.includes("always()"));
-  NodeAssert.match(
-    jobs.get("test"),
-    /if: needs.queue_ci.outputs.reused != 'true' && needs.release_notes.outputs.qualified != 'true'/,
-  );
-});
+NodeTest.test(
+  "release-note qualification supplements full CI and preserves required contexts",
+  () => {
+    const workflow = NodeFS.readFileSync(new URL("../workflows/ci.yml", import.meta.url), "utf8");
+    const jobs = new Map(
+      [...workflow.matchAll(/^  ([\w-]+):\n([\s\S]*?)(?=^  [\w-]+:\n|(?![\s\S]))/gm)].map((m) => [
+        m[1],
+        m[2],
+      ]),
+    );
+    for (const [id, body] of jobs) {
+      if (["pull_request", "merge_group", "push", "release_notes"].includes(id)) continue;
+      NodeAssert.match(body, /needs:.*release_notes/, id);
+      NodeAssert.doesNotMatch(body, /if:.*needs.release_notes.outputs.qualified/, id);
+    }
+    for (const id of ["test_web_reused", "test_server_reused"])
+      NodeAssert.match(jobs.get(id), /if:.*needs.queue_ci.outputs.reused == 'true'/, id);
+    const focused = jobs.get("release_notes");
+    NodeAssert.match(focused, /qualified: \$\{\{ steps.complete.outputs.qualified \}\}/);
+    for (const command of [
+      "vp fmt --check",
+      "vp lint",
+      "typecheck",
+      "install --with-deps --only-shell chromium",
+      "test src/scient/releaseNotes",
+    ])
+      NodeAssert.ok(focused.indexOf(command) < focused.indexOf('echo "qualified=true"'), command);
+    NodeAssert.ok(!focused.includes("continue-on-error") && !focused.includes("always()"));
+    NodeAssert.match(jobs.get("check"), /if: needs.queue_ci.outputs.reused != 'true'/);
+  },
+);

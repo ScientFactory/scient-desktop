@@ -269,8 +269,9 @@ it.live("filtered fork record reads never load the inherited messages they exclu
           SELECT payload_json FROM orchestration_v2_projection_messages
           WHERE message_id = ${answer.id}
         `;
-      // A shared answer that cannot be decoded: reading it would fail.
-      yield* sql`UPDATE orchestration_v2_projection_messages SET payload_json = '{'
+      // A shared answer that cannot be decoded: reading it would fail. It stays valid
+      // JSON, which the message search index triggers read on every update.
+      yield* sql`UPDATE orchestration_v2_projection_messages SET payload_json = '{}'
           WHERE message_id = ${answer.id}`;
       const users = yield* store.getThreadRecords(child.thread.id, ["messages"], {
         messageRoles: ["user"],

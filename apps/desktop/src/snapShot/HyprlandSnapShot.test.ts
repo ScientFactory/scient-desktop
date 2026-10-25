@@ -86,6 +86,7 @@ it("updates explicitly and removes only its helper", async () => {
   expect((await setup.state()).status).toBe("not-installed");
   expect(await NodeFSP.readFile(unrelated, "utf8")).toBe("keep");
 });
+// SCIENT-FORK:START scient-native-helper-names
 it("installs under the Scient name and replaces a helper installed under T3's name", async () => {
   const executable = hyprlandCaptureExecutable(paths);
   expect(NodePath.basename(executable)).toBe("scient-hyprland-snap-shot");
@@ -102,6 +103,7 @@ it("installs under the Scient name and replaces a helper installed under T3's na
   await setup.perform("remove-hyprland-helper");
   expect(await NodeFSP.readdir(NodePath.dirname(executable))).toEqual([]);
 });
+// SCIENT-FORK:END scient-native-helper-names
 it("does not overwrite a linked executable", async () => {
   const executable = hyprlandCaptureExecutable(paths);
   await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });

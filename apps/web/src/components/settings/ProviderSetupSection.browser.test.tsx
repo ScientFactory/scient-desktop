@@ -81,7 +81,9 @@ vi.mock(import("../../localApi"), async (original) => ({
 }));
 
 import { ProviderSetupSection } from "./ProviderSetupSection";
+// SCIENT-FORK:START - unverified native auth case below.
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
+// SCIENT-FORK:END
 
 const environmentId = EnvironmentId.make("remote-google");
 const instanceId = ProviderInstanceId.make("antigravity_work");

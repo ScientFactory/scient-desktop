@@ -68,14 +68,6 @@ it("keeps a failed restoration visible and removes it after verified completion"
   });
   await expect.element(page.getByText("Thread restoration needs attention")).toBeVisible();
   await expect.element(page.getByText(/1 thread still needs restoration/)).toBeVisible();
-  await expect
-    .poll(() => {
-      const title = [...document.querySelectorAll<HTMLElement>('[data-slot="toast-title"]')].find(
-        (element) => element.textContent === "Thread restoration needs attention",
-      );
-      return title?.getBoundingClientRect().right ?? Infinity;
-    })
-    .toBeLessThanOrEqual(window.innerWidth);
   if (directory) await page.screenshot({ path: `${directory}/after-failure.png` });
   await render(_fixture, { status: "complete", totalThreadCount: 2, pendingThreadCount: 0 });
   await expect

@@ -59,7 +59,9 @@ function runRemoteUpdatesTest(
         encoded: Stream.empty,
         handleControlForSource: () => Effect.void,
         removeControlSource: () => Effect.void,
+        // SCIENT-FORK:START scient-backend-health
         publishHealth: () => Effect.void,
+        // SCIENT-FORK:END scient-backend-health
         publishUpdateReport: (report) =>
           Effect.sync(() => {
             reports.push(report);

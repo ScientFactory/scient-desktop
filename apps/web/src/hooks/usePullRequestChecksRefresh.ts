@@ -13,7 +13,13 @@ export function usePullRequestChecksRefresh(input: {
     enabled: input.enabled,
     intervalMs:
       input.checks.length === 0 ||
-      input.checks.some((check) => check.status === "pending" || check.status === "action-required")
+      input.checks.some(
+        (check) =>
+          // SCIENT-FORK:START — Legacy wire status stays pending for terminal warnings.
+          check.outcome !== "warning" &&
+          // SCIENT-FORK:END
+          (check.status === "pending" || check.status === "action-required"),
+      )
         ? 45_000
         : 60_000,
   });

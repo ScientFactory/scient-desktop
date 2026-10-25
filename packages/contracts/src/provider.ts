@@ -76,7 +76,7 @@ export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 // does not hold it natively (a fork, or a session that lost its history). It is
 // budgeted against the model's context window by its producer, so it is bounded
 // here only by a transport ceiling, never by the user-input limit.
-export const PROVIDER_CONTEXT_PREAMBLE_MAX_CHARS = 4_000_000;
+const PROVIDER_CONTEXT_PREAMBLE_MAX_CHARS = 4_000_000;
 // SCIENT-FORK:END
 
 export const ProviderSendTurnInput = Schema.Struct({

@@ -51,6 +51,7 @@ describe("desktop Codex callback helper", () => {
     });
     expect(received).toBe(expected);
   });
+  // SCIENT-FORK:START scient-codex-auth-handoff
   it("returns web to the exact instance and environment without putting the code in its query", async () => {
     const authorizationUrl = request(await freePort());
     const expected = callback(authorizationUrl);
@@ -58,6 +59,7 @@ describe("desktop Codex callback helper", () => {
       authorizationUrl,
       returnUrl:
         "http://localhost:3773/settings/providers?environmentId=remote-one&instanceId=work",
+      // SCIENT-FORK:END scient-codex-auth-handoff
       environmentId: EnvironmentId.make("remote-one"),
       instanceId: ProviderInstanceId.make("work"),
       flowId: "flow-one",

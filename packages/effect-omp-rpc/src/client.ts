@@ -34,6 +34,7 @@ import {
   OMP_KNOWN_EVENT_TYPES,
   OMP_RPC_PROTOCOL_V2,
   OmpEventFilterResult,
+  type OmpMessageUpdates,
   OmpNegotiateResult,
   OmpRpcAvailableCommands,
   OmpRpcAvailableModels,
@@ -141,9 +142,12 @@ export interface OmpRpcClient {
    * Restrict which session events OMP writes (`null` forwards everything).
    * Pass `OMP_KNOWN_EVENT_TYPES` to pin the set this client understands. OMP
    * releases before 18.3 reject the command with an `OmpRpcCommandError`.
+   * `messageUpdates: "delta"` is ignored by releases without the projection;
+   * they leave `messageUpdates` out of the result.
    */
   readonly setEventFilter: (
     events: ReadonlyArray<string> | null,
+    options?: { readonly messageUpdates?: OmpMessageUpdates },
   ) => Effect.Effect<OmpEventFilterResult, OmpRpcError>;
   readonly setHostTools: (
     tools: ReadonlyArray<OmpHostToolDefinition>,
@@ -995,9 +999,13 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
         "Invalid switch_session response.",
       ),
     setSubagentSubscription: (level) => command({ type: "set_subagent_subscription", level }),
-    setEventFilter: (filter) =>
+    setEventFilter: (filter, options) =>
       commandData(
-        { type: "set_event_filter", events: filter === null ? null : [...filter] },
+        {
+          type: "set_event_filter",
+          events: filter === null ? null : [...filter],
+          ...(options?.messageUpdates ? { messageUpdates: options.messageUpdates } : {}),
+        },
         decodeEventFilter,
         "Invalid set_event_filter response.",
       ),

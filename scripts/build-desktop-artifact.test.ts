@@ -1,3 +1,28 @@
+// SCIENT-FORK:START
+import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START
+import {
+  resolveDesktopBuildIconAssets,
+  resolveDesktopWebAssetBrand,
+} from "./build-desktop-artifact.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START
+import {
+  createStagePatchedDependencies,
+  resolveFffNativeDependencies,
+  resolveClerkPasskeyNativeArtifacts,
+  InvalidMockUpdateServerPortError,
+  resolveDesktopRuntimeDependencies,
+  resolveResourceMonitorRustTargets,
+  resourceMonitorExecutableName,
+  resolveGitHubPublishConfig,
+  resolveMockUpdateServerPort,
+  resolveMockUpdateServerUrl,
+  stageResourceMonitor,
+  stageLinuxCaptureHelper,
+} from "./build-desktop-artifact.ts";
+// SCIENT-FORK:END
 // @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -21,7 +46,6 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { windowsSystemTar } from "./lib/windows-tar.ts";
 
 import {
@@ -33,23 +57,17 @@ import {
   parseWslRuntimeArchiveMembers,
   readWorkspaceConfig,
   createBuildConfig,
-  createStagePatchedDependencies,
   createStageWorkspaceConfig,
   DESKTOP_EXTRA_RESOURCES,
   LINUX_CAPTURE_EXTRA_RESOURCES,
   LINUX_FILE_EXCLUSIONS,
   LINUX_BROWSER_SECRET_EXTRA_RESOURCES,
   MAC_FILE_EXCLUSIONS,
-  LinuxDesktopBuildPrerequisitesMissingError,
-  MacDesktopBuildPrerequisitesMissingError,
-  resolveFffNativeDependencies,
-  resolveClerkPasskeyNativeArtifacts,
   DesktopBuildPackageVersionMismatchError,
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
-  InvalidMockUpdateServerPortError,
   InvalidDesktopBuildVersionError,
   UnsupportedDesktopBuildArchitectureError,
   MacPasskeySigningConfigurationResolutionError,
@@ -57,28 +75,15 @@ import {
   packWindowsServerAsar,
   validatePackagedComputeBridges,
   validatePackagedDesktopRuntimeResources,
-  preflightLinuxDesktopBuild,
-  preflightMacDesktopBuild,
   preflightWindowsDesktopBuild,
   renderMacPasskeyEntitlements,
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
-  resolveDesktopRuntimeDependencies,
   resolveServerRuntimeDependencies,
   resolveMergedStageDependencies,
   resolveBuildOptions,
-  resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
   resolveDesktopUpdateChannel,
-  resolveDesktopWebAssetBrand,
-  resolveResourceMonitorRustTargets,
-  resourceMonitorExecutableName,
-  resolveGitHubPublishConfig,
-  resolveMockUpdateServerPort,
-  resolveMockUpdateServerUrl,
-  resolvePackageManagerUserAgent,
-  stageResourceMonitor,
-  stageLinuxCaptureHelper,
   stageWslRuntimeArchive,
   bundlesWslRuntime,
   STAGE_INSTALL_ARGS,
@@ -113,6 +118,11 @@ import {
   WSL_RUNTIME_ARCHIVE_NAME,
   WSL_RUNTIME_EXTRA_RESOURCES,
   wslRuntimeArchiveTarTarget,
+  LinuxDesktopBuildPrerequisitesMissingError,
+  MacDesktopBuildPrerequisitesMissingError,
+  preflightLinuxDesktopBuild,
+  preflightMacDesktopBuild,
+  resolvePackageManagerUserAgent,
 } from "./build-desktop-artifact.ts";
 import {
   WINDOWS_VOICE_FILES,
@@ -330,6 +340,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
 
 const isCursorSdkPlatformPackagesMissingError = Schema.is(CursorSdkPlatformPackagesMissingError);
 
+// regression: 3405a64dd8 bump effect to latest beta (#1866)
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it.effect("rejects overlapping builds from another process until restoration finishes", () =>
     Effect.gen(function* () {
@@ -592,10 +603,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  // SCIENT-FORK:START
+  // regression: daac13c872 feat(desktop): add isolated Beta release channel
   it("resolves the dedicated nightly updater channel from nightly versions", () => {
     assert.equal(resolveDesktopUpdateChannel("0.0.17-nightly.20260413.42"), "nightly");
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
   });
+  // SCIENT-FORK:END
 
   it.effect("packages real Beta with the isolated feed and the existing app identity", () =>
     Effect.gen(function* () {
@@ -649,6 +663,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "Scient");
   });
 
+  // SCIENT-FORK:START
+  // regression: 409ff90a14 Nightly release channel (#2012)
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
       macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
@@ -662,11 +678,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     });
   });
+  // SCIENT-FORK:END
 
+  // SCIENT-FORK:START
+  // regression: 20117b09c1 fix(release): use Bash for version alignment on all platforms (#44)
   it("switches the bundled splash and favicon branding for nightly versions", () => {
     assert.equal(resolveDesktopWebAssetBrand("0.0.17"), "production");
     assert.equal(resolveDesktopWebAssetBrand("0.0.17-nightly.20260413.42"), "nightly");
   });
+  // SCIENT-FORK:END
 
   it.effect("accepts matching stable and nightly package versions", () =>
     Effect.gen(function* () {
@@ -715,6 +735,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  // SCIENT-FORK:START
+  // regression: 477795697d refactor: resolve host process state through Effect (#2959)
   it.effect("resolves GitHub desktop publish config from Effect config", () =>
     Effect.gen(function* () {
       const latestConfig = yield* resolveGitHubPublishConfig("latest").pipe(
@@ -755,6 +777,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       });
     }),
   );
+  // SCIENT-FORK:END
 
   it.effect("omits update feeds for pull request preview builds", () =>
     Effect.gen(function* () {
@@ -806,6 +829,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  // SCIENT-FORK:START
+  // regression: 37a08d3121 fix(desktop): local desktop builds no longer crash when a GitHub token is in the shell (#19277)
   it.effect("disables electron-builder publish detection for local builds", () =>
     Effect.gen(function* () {
       const local = yield* createBuildConfig(
@@ -821,7 +846,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.isNull(local.publish);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
+  // SCIENT-FORK:END
 
+  // SCIENT-FORK:START
+  // regression: 683aa87096 build(desktop): bundle the main process and stage only its native externals (#11410)
   it("stages only the desktop main-process externals", () => {
     assert.deepStrictEqual(
       resolveDesktopRuntimeDependencies(
@@ -856,6 +884,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       },
     );
   });
+  // SCIENT-FORK:END
 
   it("omits bundled workspace packages from staged server dependencies", () => {
     assert.deepStrictEqual(
@@ -879,6 +908,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
   });
 
+  // SCIENT-FORK:START
+  // regression: a6edad1974 [codex] Filter staged desktop patched dependencies (#2945)
   it("carries only staged dependency patch metadata into staged desktop installs", () => {
     assert.deepStrictEqual(
       createStagePatchedDependencies(
@@ -912,6 +943,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       {},
     );
   });
+  // SCIENT-FORK:END
 
   it("installs optional native dependencies for the target desktop architecture", () => {
     assert.deepStrictEqual(STAGE_INSTALL_ARGS, ["install", "--prod"]);
@@ -1574,6 +1606,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // SCIENT-FORK:START
+  // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
   it("unpacks native binaries while keeping their JavaScript and metadata archived", () => {
     for (const file of [
       "node_modules/@napi-rs/keyring/keyring.win32-x64-msvc.node",
@@ -1601,6 +1635,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
     }
   });
+  // SCIENT-FORK:END
 
   it("stages only the externals of both bundles in merged packages", () => {
     assert.deepStrictEqual(
@@ -1898,6 +1933,83 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  // regression: 082358f9ef fix(desktop): check artifact build prerequisites (#8975)
+  it.effect("reports every missing Linux desktop build prerequisite with an install command", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
+          [];
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as {
+              readonly command: string;
+              readonly args: ReadonlyArray<string>;
+            };
+            commands.push(childProcess);
+            const fails =
+              childProcess.command === "cargo" ||
+              childProcess.command === "rustc" ||
+              childProcess.command === "pkg-config";
+            return Effect.succeed(mockProcess(fails ? 1 : 0));
+          }),
+        );
+
+        const error = yield* preflightLinuxDesktopBuild("arm64").pipe(
+          Effect.provide(spawner),
+          Effect.flip,
+        );
+
+        assert.instanceOf(error, LinuxDesktopBuildPrerequisitesMissingError);
+        assert.deepStrictEqual(error.missing, ["cargo", "rust-target", "libsecret"]);
+        assert.include(error.message, "Rust compiler and Cargo (cargo, rustc)");
+        assert.include(error.message, "Requested Rust standard library");
+        assert.include(
+          error.message,
+          "sudo apt-get install cargo rustc libsecret-1-dev pkg-config",
+        );
+        assert.include(error.message, "rustup target add aarch64-unknown-linux-gnu");
+        assert.isTrue(
+          commands.some(
+            (command) =>
+              command.command === "rustc" && command.args.includes("aarch64-unknown-linux-gnu"),
+          ),
+        );
+      }),
+    ),
+  );
+
+  // regression: 082358f9ef fix(desktop): check artifact build prerequisites (#8975)
+  it.effect("reports missing macOS tools and Rust targets before building", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as {
+              readonly command: string;
+              readonly args: ReadonlyArray<string>;
+            };
+            const fails =
+              childProcess.command === "rustc" ||
+              (childProcess.command === "xcrun" && childProcess.args.includes("iconutil"));
+            return Effect.succeed(mockProcess(fails ? 1 : 0));
+          }),
+        );
+        const error = yield* preflightMacDesktopBuild("universal").pipe(
+          Effect.provide(spawner),
+          Effect.flip,
+        );
+
+        assert.instanceOf(error, MacDesktopBuildPrerequisitesMissingError);
+        assert.deepStrictEqual(error.missing, ["rust", "iconutil"]);
+        assert.deepStrictEqual(error.rustTargets, ["aarch64-apple-darwin", "x86_64-apple-darwin"]);
+        assert.include(error.message, "xcode-select --install");
+        assert.include(error.message, "rustup target add aarch64-apple-darwin x86_64-apple-darwin");
+      }),
+    ),
+  );
+
   it.effect(
     "keeps target and WSL native files while excluding the other Windows architecture",
     () =>
@@ -1970,6 +2082,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ),
   );
 
+  // SCIENT-FORK:START
+  // regression: 25dcee00a6 perf(ci): speed up release builds and Windows packaging (#7975)
   it.effect("stages a cached resource monitor without invoking Cargo", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2011,81 +2125,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }),
     ),
   );
-
-  it.effect("reports every missing Linux desktop build prerequisite with an install command", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
-          [];
-        const spawner = Layer.succeed(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make((command) => {
-            const childProcess = command as unknown as {
-              readonly command: string;
-              readonly args: ReadonlyArray<string>;
-            };
-            commands.push(childProcess);
-            const fails =
-              childProcess.command === "cargo" ||
-              childProcess.command === "rustc" ||
-              childProcess.command === "pkg-config";
-            return Effect.succeed(mockProcess(fails ? 1 : 0));
-          }),
-        );
-
-        const error = yield* preflightLinuxDesktopBuild("arm64").pipe(
-          Effect.provide(spawner),
-          Effect.flip,
-        );
-
-        assert.instanceOf(error, LinuxDesktopBuildPrerequisitesMissingError);
-        assert.deepStrictEqual(error.missing, ["cargo", "rust-target", "libsecret"]);
-        assert.include(error.message, "Rust compiler and Cargo (cargo, rustc)");
-        assert.include(error.message, "Requested Rust standard library");
-        assert.include(
-          error.message,
-          "sudo apt-get install cargo rustc libsecret-1-dev pkg-config",
-        );
-        assert.include(error.message, "rustup target add aarch64-unknown-linux-gnu");
-        assert.isTrue(
-          commands.some(
-            (command) =>
-              command.command === "rustc" && command.args.includes("aarch64-unknown-linux-gnu"),
-          ),
-        );
-      }),
-    ),
-  );
-
-  it.effect("reports missing macOS tools and Rust targets before building", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const spawner = Layer.succeed(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make((command) => {
-            const childProcess = command as unknown as {
-              readonly command: string;
-              readonly args: ReadonlyArray<string>;
-            };
-            const fails =
-              childProcess.command === "rustc" ||
-              (childProcess.command === "xcrun" && childProcess.args.includes("iconutil"));
-            return Effect.succeed(mockProcess(fails ? 1 : 0));
-          }),
-        );
-        const error = yield* preflightMacDesktopBuild("universal").pipe(
-          Effect.provide(spawner),
-          Effect.flip,
-        );
-
-        assert.instanceOf(error, MacDesktopBuildPrerequisitesMissingError);
-        assert.deepStrictEqual(error.missing, ["rust", "iconutil"]);
-        assert.deepStrictEqual(error.rustTargets, ["aarch64-apple-darwin", "x86_64-apple-darwin"]);
-        assert.include(error.message, "xcode-select --install");
-        assert.include(error.message, "rustup target add aarch64-apple-darwin x86_64-apple-darwin");
-      }),
-    ),
-  );
+  // SCIENT-FORK:END
 
   it.effect("reports missing Windows toolchain capabilities before building", () =>
     Effect.scoped(
@@ -2218,6 +2258,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  // SCIENT-FORK:START
+  // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
   it.effect("builds and stages native capture helpers for each Linux architecture", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2286,6 +2328,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }),
     ),
   );
+  // SCIENT-FORK:END
 
   // The fixture's t3code.exe is a text placeholder, not an executable. These
   // cases reach the native-load probe, so pin only that host-platform check to
@@ -2538,6 +2581,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
   });
 
+  // regression: 3653cb22ff fix(desktop): address the browser import review left over from the stack (#9516)
   it.effect("builds the Linux browser secret helper for a concrete architecture", () => {
     const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
     const spawnerLayer = Layer.succeed(
@@ -3170,6 +3214,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  // SCIENT-FORK:START
+  // regression: ad117235b5 feat(desktop): add signal macOS DMG installer background (#6201)
   it.effect("uses the nightly DMG background for nightly macOS builds", () =>
     Effect.gen(function* () {
       const config = yield* createBuildConfig(
@@ -3188,7 +3234,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
+  // SCIENT-FORK:END
 
+  // regression: fa9f936ef5 fix(desktop): sign Windows native addons (#8206)
   it.effect("configures Windows executable metadata and native signing extensions", () =>
     Effect.gen(function* () {
       const config = yield* createBuildConfig(
@@ -3209,6 +3257,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  // SCIENT-FORK:START
+  // regression: 49c0d96edf Reduce idle work and disk churn with native resource diagnostics (#2679)
   it("stages the resource monitor as an external executable resource", () => {
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
       "aarch64-apple-darwin",
@@ -3223,6 +3273,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resourceMonitorExecutableName("mac"), "scient-resource-monitor");
     assert.equal(resourceMonitorExecutableName("win"), "scient-resource-monitor.exe");
   });
+  // SCIENT-FORK:END
 
   it.effect.each(["valid", "digest", "arch", "source", "missing", "inventory", "PE"] as const)(
     "stages exact-source Windows publication and voice prerequisites: %s",
@@ -3631,6 +3682,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  // SCIENT-FORK:START
+  // regression: 85fe62d402 Stage fff native binaries in desktop builds (#3109)
   it("promotes target fff binaries to direct staged dependencies", () => {
     assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.10.3"), {
       "@ff-labs/fff-bin-darwin-arm64": "0.10.3",
@@ -3651,7 +3704,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "@ff-labs/fff-bin-linux-arm64-musl": "0.10.3",
     });
   });
+  // SCIENT-FORK:END
 
+  // SCIENT-FORK:START
+  // regression: 3e01c4bc57 Migrate desktop auth to Clerk bridge (#3092)
   it("resolves target Clerk passkey native artifacts", () => {
     assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("mac", "universal"), [
       {
@@ -3671,18 +3727,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ]);
     assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("linux", "x64"), []);
   });
+  // SCIENT-FORK:END
 
+  // SCIENT-FORK:START
+  // regression: 409ff90a14 Nightly release channel (#2012)
   it("falls back to the default mock update port when the configured port is blank", () => {
     assert.equal(resolveMockUpdateServerUrl(undefined), "http://localhost:3000");
     assert.equal(resolveMockUpdateServerUrl(4123), "http://localhost:4123");
   });
+  // SCIENT-FORK:END
 
+  // regression: 18a41388eb Fix desktop native optional dependency packaging (#3816)
   it("derives the electron-builder package manager user agent from packageManager", () => {
     assert.equal(resolvePackageManagerUserAgent("pnpm@11.10.0"), "pnpm/11.10.0");
     assert.equal(resolvePackageManagerUserAgent(" yarn@4.9.2 "), "yarn/4.9.2");
     assert.equal(resolvePackageManagerUserAgent("pnpm"), "pnpm");
   });
 
+  // SCIENT-FORK:START
+  // regression: 409ff90a14 Nightly release channel (#2012)
   it.effect("normalizes mock update server ports from env-style strings", () =>
     Effect.gen(function* () {
       assert.equal(yield* resolveMockUpdateServerPort(undefined), undefined);
@@ -3691,7 +3754,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(yield* resolveMockUpdateServerPort("4123"), 4123);
     }),
   );
+  // SCIENT-FORK:END
 
+  // SCIENT-FORK:START
+  // regression: 409ff90a14 Nightly release channel (#2012)
   it.effect("rejects non-numeric or out-of-range mock update ports", () =>
     Effect.gen(function* () {
       const invalidPorts = ["abc", "12.5", "0", "65536"];
@@ -3701,7 +3767,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }
     }),
   );
+  // SCIENT-FORK:END
 
+  // SCIENT-FORK:START
+  // regression: 60dc4af916 [codex] Structure desktop build script failures (#3452)
   it("classifies invalid configured ports with the decoder's number grammar", () => {
     const cause = new Error("invalid configured port");
 
@@ -3722,7 +3791,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       cause,
     );
   });
+  // SCIENT-FORK:END
 
+  // SCIENT-FORK:START
+  // regression: 477795697d refactor: resolve host process state through Effect (#2959)
   it.effect("resolves default platform and architecture from host references", () =>
     Effect.gen(function* () {
       const resolved = yield* resolveBuildOptions({
@@ -3762,6 +3834,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.arch, "arm64");
     }),
   );
+  // SCIENT-FORK:END
 
   it.effect("rejects universal builds on Linux and Windows before staging binaries", () =>
     Effect.gen(function* () {

@@ -1,15 +1,21 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  makeProviderSettingsSchema,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
+import { UNKNOWN_SOURCE_CONTROL_CLIENT } from "@t3tools/client-runtime/source-control-clients";
+import * as Schema from "effect/Schema";
 
 import {
   filterAvailableSettingsSearchItems,
   getSettingsSearchTargetScope,
   getThreadAutoSettlementSearchAvailability,
   isSettingsSearchScopeAvailable,
-  searchableSetting,
   searchSettings,
-  SETTINGS_SECTION_LABELS,
   SETTINGS_SEARCH_ITEMS,
+  sourceControlHostSearchItems,
+  sourceControlHostSettingsSearchId,
   type SettingsSearchItem,
 } from "./settingsSearch";
 
@@ -44,40 +50,7 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
   },
 ];
 
-describe("settings sidebar order", () => {
-  it("finds the canonical Scient command and its former t3 name", () => {
-    expect(searchableSetting("cli-command").title).toBe("scient command");
-    const items = SETTINGS_SEARCH_ITEMS.filter((item) => item.id === "cli-command").map((item) => ({
-      ...item,
-      desktopOnly: false,
-    }));
-    expect(searchSettings("scient command", items).map((item) => item.id)).toEqual(["cli-command"]);
-    expect(searchSettings("t3", items).map((item) => item.id)).toEqual(["cli-command"]);
-  });
-
-  it("keeps integrations prominent, Documents after Scientific Computing, then keybindings", () => {
-    const paths = Object.keys(SETTINGS_SECTION_LABELS);
-
-    expect(paths.indexOf("/settings/integrations")).toBe(paths.indexOf("/settings/projects") + 1);
-    expect(paths.indexOf("/settings/documents")).toBe(
-      paths.indexOf("/settings/scientific-computing") + 1,
-    );
-    expect(paths.indexOf("/settings/keybindings")).toBe(paths.indexOf("/settings/documents") + 1);
-  });
-
-  it("shows Shortcuts without changing the existing route", () => {
-    expect(SETTINGS_SECTION_LABELS["/settings/keybindings"]).toBe("Shortcuts");
-    expect(searchSettings("keybindings").some((item) => item.id === "keybindings")).toBe(true);
-  });
-});
-
 describe("searchSettings", () => {
-  it("does not offer the withheld privacy-policy link", () => {
-    expect(SETTINGS_SEARCH_ITEMS.map((item) => item.id)).not.toContain("privacy-policy");
-    expect(searchSettings("privacy policy")).toEqual([]);
-    expect(searchSettings("diagnostics")[0]).toMatchObject({ id: "diagnostics" });
-  });
-
   it("matches titles, sections, and remembered setting details", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
@@ -110,13 +83,6 @@ describe("searchSettings", () => {
         .slice(0, 2)
         .map((item) => item.id),
     ).toEqual(["network-access", "connections-environment"]);
-  });
-
-  it.each(["font weight", "text thickness"])("finds interface typography by %s", (query) => {
-    expect(searchSettings(query)[0]).toMatchObject({
-      id: "interface-font",
-      to: "/settings/appearance",
-    });
   });
 
   it("hides desktop-only settings from browser search", () => {
@@ -169,16 +135,6 @@ describe("searchSettings", () => {
     });
   });
 
-  it("ranks keybinding commands after other settings", () => {
-    const ids = searchSettings("model").map((item) => item.id);
-    const commandIndex = ids.indexOf("keybinding-modelPicker.toggle");
-    expect(commandIndex).toBeGreaterThan(-1);
-    for (const id of ["custom-models", "default-model", "text-generation-model"]) {
-      expect(ids.indexOf(id)).toBeGreaterThan(-1);
-      expect(commandIndex).toBeGreaterThan(ids.indexOf(id));
-    }
-  });
-
   it("sends commands without a default binding to the section", () => {
     expect(searchSettings("thread.stop")[0]).toMatchObject({
       id: "keybinding-thread.stop",
@@ -191,79 +147,12 @@ describe("searchSettings", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
-
-  it("routes Scientific Computing to its dedicated settings page", () => {
-    expect(searchSettings("scientific computing")[0]).toMatchObject({
-      id: "scientific-computing",
-      to: "/settings/scientific-computing",
-    });
-  });
-
-  it("finds Word export by the words people look for it with", () => {
-    for (const query of ["word export", "pandoc", "docx", "export"]) {
-      expect(searchSettings(query)[0], query).toMatchObject({
-        id: "word-export",
-        to: "/settings/documents",
-      });
-    }
-    expect(searchSettings("word wrap")[0]?.id).toBe("word-wrap");
-  });
-
-  it("finds the Documents page by format, engine, and template", () => {
-    for (const [query, id] of [
-      ["documents", "documents"],
-      ["latex", "latex-installation"],
-      ["tinytex", "latex-installation"],
-      ["template", "new-document-template"],
-    ] as const) {
-      expect(searchSettings(query)[0], query).toMatchObject({ id, to: "/settings/documents" });
-    }
-    // Markdown shortcuts lead; the Documents page still answers.
-    expect(searchSettings("markdown").some((item) => item.id === "documents")).toBe(true);
-  });
-
-  it("routes compiler status into technical details and installation into actionable tools", () => {
-    for (const query of [
-      "compiler status",
-      "available compilers",
-      "compiler versions",
-      "executable paths",
-    ]) {
-      expect(searchSettings(query)[0], query).toMatchObject({
-        id: "latex-compilers",
-        to: "/settings/documents",
-        targetId: "latex-compilers",
-      });
-    }
-    for (const query of ["install latex", "additional compilers", "tinytex"]) {
-      expect(searchSettings(query)[0], query).toMatchObject({
-        id: "latex-installation",
-        to: "/settings/documents",
-        targetId: "latex-installation",
-      });
-    }
-    expect(searchSettings("default latex compiler")[0]).toMatchObject({
-      id: "new-document-compiler",
-      targetId: "new-document-compiler",
-    });
-  });
-
-  it("routes compilation modes to the Documents picker", () => {
-    for (const query of ["autocompile", "auto-compile", "pdf compilation"]) {
-      expect(searchSettings(query)[0], query).toMatchObject({
-        id: "latex-compilation",
-        to: "/settings/documents",
-        targetId: "latex-compilation",
-      });
-    }
-  });
 });
 
 describe("settings search targets", () => {
-  it("keeps the safety-held telemetry export action out of settings search", () => {
-    expect(searchSettings("OpenTelemetry export")).toEqual([]);
-    expect(SETTINGS_SEARCH_ITEMS.map((item) => item.id)).not.toContain("telemetry-export");
-  });
+  // SCIENT-FORK:START — Scient holds telemetry export out of settings search; its case lives in
+  // settingsSearch.scient.test.ts.
+  // SCIENT-FORK:END
 
   it("keeps environment-wide settings out of project scopes", () => {
     const updates = getSettingsSearchTargetScope("provider-update-checks")!;
@@ -345,5 +234,48 @@ describe("auto-settlement search availability", () => {
         environmentIds: selected.map((entry) => entry.environmentId),
       }).isTargetAvailable,
     ).toBe(true);
+  });
+});
+
+describe("source control host search items", () => {
+  const definition = {
+    ...UNKNOWN_SOURCE_CONTROL_CLIENT,
+    kind: SourceControlProviderKind.make("example"),
+    label: "Example",
+    searchKeywords: ["sample"],
+    settings: makeProviderSettingsSchema({ apiToken: Schema.String }),
+  };
+
+  it("lists a host by its label, its keywords, and its settings fields", () => {
+    const items = sourceControlHostSearchItems([UNKNOWN_SOURCE_CONTROL_CLIENT, definition]);
+    expect(items.map((item) => item.title)).toEqual(["Example credentials"]);
+    expect(searchSettings("sample apitoken", items).map((item) => item.id)).toEqual([
+      sourceControlHostSettingsSearchId("example"),
+    ]);
+  });
+
+  it("lists a host with credentials by its accounts, token and CLI", () => {
+    const items = sourceControlHostSearchItems([
+      {
+        ...definition,
+        credentials: {
+          cliName: "ex",
+          cliLabel: "Example CLI",
+          loginCommand: "ex login",
+          tokenEnvVar: "EX_TOKEN",
+          tokenAccess: "access",
+          newTokenUrl: (host) => `https://${host}/tokens`,
+        },
+      },
+    ]);
+    expect(items.map((item) => item.title)).toEqual(["Example accounts and token"]);
+    expect(searchSettings("ex switch accounts", items)).toHaveLength(1);
+  });
+
+  it("finds the built-in hosts by their own words", () => {
+    expect(searchSettings("codeberg").map((item) => item.id)).toContain("source-control");
+    expect(searchSettings("ghes").map((item) => item.id)).toContain(
+      sourceControlHostSettingsSearchId("github"),
+    );
   });
 });

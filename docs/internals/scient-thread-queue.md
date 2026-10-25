@@ -107,6 +107,12 @@ attempt identity; a provider-start failure restores held retryable queue work. N
 and recovery never promise exactly-once execution inside an external provider. Do not replay an
 ambiguous accepted provider start simply because a client lost its response.
 
+Stop also stops the thread's app-owned delegated subtree, including work beneath completed
+tasks. Public commands cannot opt out of that cleanup. V2 records the delegated Stop in its
+outbox; a server caller that walks the subtree synchronously marks only its current thread's
+dispatch internally, so it does not enqueue a duplicate walk. MCP task cancellation keeps that
+walk under the caller's dispatch-mode limit.
+
 ## Legacy recovery boundary
 
 Startup imports retained queue JSON and `scient_thread_queue` data through V2

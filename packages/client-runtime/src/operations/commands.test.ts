@@ -1,7 +1,9 @@
+// SCIENT-FORK:START
 import { PlanId } from "@t3tools/contracts";
 import { mergeThreadBack } from "./commands.ts";
 import { reorderQueuedRun } from "./commands.ts";
 import { promoteQueuedRun } from "./commands.ts";
+// SCIENT-FORK:END
 import {
   CheckpointId,
   CheckpointRef,
@@ -18,12 +20,15 @@ import {
   ThreadId,
   TurnItemId,
   WS_METHODS,
+  // SCIENT-FORK:START
   WsRpcGroup,
+  // SCIENT-FORK:END
   type OrchestrationV2Command,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
   type ProjectMutation,
 } from "@t3tools/contracts";
+// SCIENT-FORK:START
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -31,6 +36,7 @@ import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+// SCIENT-FORK:END
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import {
@@ -44,19 +50,23 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
   archiveThread,
+  // SCIENT-FORK:START
   cancelQueuedRun,
   editQueuedRun,
   forkThreadFromRun,
+  // SCIENT-FORK:END
   interruptThreadTurn,
   revertThreadCheckpoint,
   resumeThreadQueue,
   startThreadTurn,
 } from "./commands.ts";
 
+// SCIENT-FORK:START
 const dispatchCommandRpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
 if (dispatchCommandRpc === undefined) throw new Error("Missing registered dispatch RPC");
 const decodeDispatchCommand = Schema.decodeUnknownEffect(dispatchCommandRpc.payloadSchema);
 
+// SCIENT-FORK:END
 const layerTestCrypto = Layer.succeed(
   Crypto.Crypto,
   Crypto.make({
@@ -80,8 +90,10 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projectionRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
   readonly advertiseThreadStop?: boolean;
+  // SCIENT-FORK:START
   readonly advertiseQueuedRunStart?: boolean;
   readonly advertiseThreadQueueExplicitSend?: boolean;
+  // SCIENT-FORK:END
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -129,12 +141,14 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
       environment: {
         capabilities: {
           repositoryIdentity: true,
+          // SCIENT-FORK:START
           ...(input.advertiseThreadQueueExplicitSend === undefined
             ? {}
             : { threadQueueExplicitSend: input.advertiseThreadQueueExplicitSend }),
           ...(input.advertiseQueuedRunStart === undefined
             ? {}
             : { queuedRunStart: input.advertiseQueuedRunStart }),
+          // SCIENT-FORK:END
           ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
           ...(input.advertiseServerResolvedCommandContext === false
             ? {}
@@ -159,6 +173,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
+  // SCIENT-FORK:START
   for (const advertiseServerResolvedCommandContext of [true, false]) {
     it.effect.each(
       (["auto", "queue", "steer", "restart", "start"] as const).map((dispatchMode) => ({
@@ -196,14 +211,17 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provide(layerTestCrypto)),
     );
   }
+  // SCIENT-FORK:END
   it.effect("distinguishes sending a selected queued message from resuming queue order", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
+      // SCIENT-FORK:START
       const supervisor = yield* makeSupervisor({
         commands,
         projects: [],
         advertiseQueuedRunStart: true,
       });
+      // SCIENT-FORK:END
       const threadId = ThreadId.make("thread-1");
       yield* resumeThreadQueue({
         commandId: CommandId.make("send-selected"),
@@ -222,6 +240,7 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  // SCIENT-FORK:START
   it.effect.each([undefined, false, true])(
     "negotiates selected queued starts when the host advertises %s",
     (advertiseQueuedRunStart) =>
@@ -274,6 +293,7 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  // SCIENT-FORK:END
   it.effect("preserves caller command ids for idempotent V2 commands", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
@@ -351,11 +371,13 @@ describe("V2 environment commands", () => {
         runtimeMode: "full-access",
         interactionMode: "default",
         titleSeed: "Continue here",
+        // SCIENT-FORK:START
         selectedScientSkillNames: ["pdf-authoring"],
         sourceProposedPlan: {
           threadId: ThreadId.make("thread-plan"),
           planId: PlanId.make("plan-1"),
         },
+        // SCIENT-FORK:END
         bootstrap: {
           createThread: {
             projectId: ProjectId.make("project-1"),
@@ -374,10 +396,12 @@ describe("V2 environment commands", () => {
         threadId: v2ThreadId,
         title: "Continue here",
         generateTitle: true,
+        // SCIENT-FORK:START
         initialMessage: {
           selectedScientSkillNames: ["pdf-authoring"],
           sourcePlanRef: { threadId: "thread-plan", planId: "plan-1" },
         },
+        // SCIENT-FORK:END
         workspaceStrategy: {
           type: "existing_worktree",
           worktreePath: "/workspace/project-worktrees/feature",
@@ -542,6 +566,7 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  // SCIENT-FORK:START
   it.effect.each([
     "waiting",
     "completed",
@@ -621,8 +646,10 @@ describe("V2 environment commands", () => {
   it.effect(
     "forwards native extraction revision and selected queued-run start without changing command identity",
     () =>
+      // SCIENT-FORK:END
       Effect.gen(function* () {
         const commands: OrchestrationV2Command[] = [];
+        // SCIENT-FORK:START
         const supervisor = yield* makeSupervisor({
           commands,
           projects: [],
@@ -759,6 +786,7 @@ describe("V2 environment commands", () => {
         expect(commands[5]).not.toHaveProperty("attachments");
         expect(commands[5]).not.toHaveProperty("context");
         expect(commands[5]).not.toHaveProperty("selectedScientSkillNames");
+        // SCIENT-FORK:END
       }).pipe(Effect.provide(layerTestCrypto)),
   );
 

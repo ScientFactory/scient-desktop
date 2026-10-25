@@ -1300,6 +1300,54 @@ describe("Oh My Pi RPC client commands", () => {
     ),
   );
 
+  it.effect("requests delta-only message updates and reads whether the agent applied them", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* negotiate(harness.stdout, harness.stdin);
+        const projected = yield* harness.client
+          .setEventFilter(OMP_KNOWN_EVENT_TYPES, { messageUpdates: "delta" })
+          .pipe(Effect.forkScoped);
+        const written = decodeFrame(yield* Queue.take(harness.stdin));
+        expect(written).toMatchObject({
+          type: "set_event_filter",
+          events: OMP_KNOWN_EVENT_TYPES,
+          messageUpdates: "delta",
+        });
+        yield* harness.respond(
+          { id: String(written.id), type: "set_event_filter" },
+          { events: OMP_KNOWN_EVENT_TYPES, messageUpdates: "delta" },
+        );
+        expect(yield* Fiber.join(projected)).toEqual({
+          events: OMP_KNOWN_EVENT_TYPES,
+          messageUpdates: "delta",
+        });
+
+        // A release without the projection ignores the option and omits the echo.
+        const older = yield* harness.client
+          .setEventFilter(OMP_KNOWN_EVENT_TYPES, { messageUpdates: "delta" })
+          .pipe(Effect.forkScoped);
+        const olderFrame = decodeFrame(yield* Queue.take(harness.stdin));
+        yield* harness.respond(
+          { id: String(olderFrame.id), type: "set_event_filter" },
+          { events: OMP_KNOWN_EVENT_TYPES },
+        );
+        expect(yield* Fiber.join(older)).toEqual({ events: OMP_KNOWN_EVENT_TYPES });
+
+        const unchanged = yield* harness.client
+          .setEventFilter(OMP_KNOWN_EVENT_TYPES)
+          .pipe(Effect.forkScoped);
+        const unchangedFrame = decodeFrame(yield* Queue.take(harness.stdin));
+        expect(unchangedFrame).not.toHaveProperty("messageUpdates");
+        yield* harness.respond(
+          { id: String(unchangedFrame.id), type: "set_event_filter" },
+          { events: OMP_KNOWN_EVENT_TYPES },
+        );
+        yield* Fiber.join(unchanged);
+      }),
+    ),
+  );
+
   it("derives the known event types from the event schema", () => {
     expect(OMP_KNOWN_EVENT_TYPES).toEqual(
       expect.arrayContaining([

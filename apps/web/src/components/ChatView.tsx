@@ -1,3 +1,4 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { readThreadProjection } from "../state/entities";
 import { deriveTimelineEntriesFromVisibleTurnItemsWithState } from "../session-logic";
 import { Button } from "./ui/button";
@@ -73,6 +74,7 @@ import {
 } from "../scient/chat/ScientRevertDialogDiagnostics";
 import { scientFilePanelProps } from "../scient/fileSurfaces/scientFilePanelProps";
 import { deriveAgentPanelModel } from "../scient/chat/useAgentPanelModel";
+import { ThreadOpenRecorder } from "../scient/chat/ThreadOpenRecorder";
 import { tokenLimitBannerItems, deriveTokenLimitNotice } from "../scient/chat/tokenLimitNotice";
 import { resolveStaleDraftDefaultModelSelection } from "../lib/chatThreadActions";
 
@@ -96,6 +98,7 @@ import { resolveDraftHeroState } from "./ChatView.logic";
 
 import { WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
+import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnouncement";
 import {
   deriveThreadPendingBackgroundTasks,
   deriveWorkspaceMutationId,
@@ -193,8 +196,7 @@ import {
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
-import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
+import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
 import { type SetStateAction, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -2437,7 +2439,7 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:END
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
-  const activeProjectRepository = sourceControlRepositorySelector(
+  const activeProjectRepository = sourceControlClients.repositorySelector(
     activeProject?.repositoryIdentity,
   );
   const {
@@ -4015,11 +4017,22 @@ function ChatViewContent(props: ChatViewProps) {
                 }
                 isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
                 awaitingUser={
-                  !paintOnlyDisplayedTimeline &&
-                  (activePendingApproval !== null ||
-                    activePendingUserInput !== null ||
-                    // A secret request has no runtime request; the shell carries it.
-                    activeThreadShell?.hasPendingUserInput === true)
+                  paintOnlyDisplayedTimeline
+                    ? null
+                    : activePendingApproval !== null
+                      ? "approval"
+                      : activePendingUserInput !== null ||
+                          // A secret request has no runtime request; the shell carries it.
+                          activeThreadShell?.hasPendingUserInput === true
+                        ? "input"
+                        : null
+                }
+                awaitingRequestId={
+                  paintOnlyDisplayedTimeline
+                    ? null
+                    : (activePendingApproval?.requestId ??
+                      activePendingUserInput?.requestId ??
+                      null)
                 }
                 activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
                 worktreeSetup={paintOnlyDisplayedTimeline ? null : worktreeSetup}
@@ -4055,6 +4068,17 @@ function ChatViewContent(props: ChatViewProps) {
                 listRef={legendListRef}
                 runs={paintOnlyDisplayedTimeline ? [] : (serverProjection?.runs ?? [])}
                 latestRun={paintOnlyDisplayedTimeline ? null : activeActivityRun}
+                announcedRun={
+                  paintOnlyDisplayedTimeline
+                    ? null
+                    : announcedRun(activeActivityRun, serverProjection?.runs ?? [])
+                }
+                // The detail's own run: activeLatestRun falls back to the shell's run while the
+                // detail loads, which would make that incomplete frame look current.
+                detailBehindShell={
+                  !paintOnlyDisplayedTimeline &&
+                  isDetailBehindShell(serverLatestRun, activeThreadShell?.latestRun ?? null)
+                }
                 runningRunId={paintOnlyDisplayedTimeline ? null : activeRunningTurnId}
                 turnDiffSummaries={
                   paintOnlyDisplayedTimeline ? EMPTY_HELD_TURN_DIFF_SUMMARIES : turnDiffSummaries
@@ -4065,6 +4089,7 @@ function ChatViewContent(props: ChatViewProps) {
                 routeThreadKey={displayedTimelineKey}
                 displayThreadKey={displayedTimelineKey}
                 paintOnly={paintOnlyDisplayedTimeline}
+                announceTurnStatus={!isProviderSubagent}
                 onOpenTurnDiff={
                   paintOnlyDisplayedTimeline ? noopHeldTurnDiff : onOpenTurnDiffStable
                 }
@@ -4847,7 +4872,9 @@ function ChatViewContent(props: ChatViewProps) {
       {/* SCIENT-FORK:END */}
       <LinkPullRequestDialogHost />
       {/* SCIENT-FORK:START — useAcknowledgeAnswer is the automatic visit writer; upstream's
-          ThreadVisitWatermark would mark a background window or an unloaded answer read. */}
+          ThreadVisitWatermark would mark a background window or an unloaded answer read.
+          Opens still rank threads in search, recorded without moving the watermark. */}
+      <ThreadOpenRecorder threadRef={routeThreadRef} />
       {/* SCIENT-FORK:END */}
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
       {/* SCIENT-FORK:START — the fork dialog. */}

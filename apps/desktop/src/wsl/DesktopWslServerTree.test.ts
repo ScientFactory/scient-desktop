@@ -37,9 +37,11 @@ const layerEnvironment = (input: {
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
+          // SCIENT-FORK:START scient-wsl-runtime-cache
           // Scient deliberately does not inherit T3CODE_HOME. Configure the
           // owned desktop state root through its authoritative identity seam.
           SCIENT_NEXT_HOME: input.baseDir,
+          // SCIENT-FORK:END scient-wsl-runtime-cache
           T3CODE_MODE: "desktop",
         }),
       ),
@@ -148,6 +150,7 @@ describe("DesktopWslServerTree", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  // SCIENT-FORK:START scient-wsl-runtime-cache
   it.effect(
     "rebuilds an old same-version cache with Linux Cursor helpers and preserves executable mode",
     () =>
@@ -211,6 +214,7 @@ describe("DesktopWslServerTree", () => {
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
+  // SCIENT-FORK:END scient-wsl-runtime-cache
 
   it.effect("serializes concurrent extraction callers and publishes one complete tree", () =>
     withTempDir((tempDir) =>
@@ -293,8 +297,10 @@ describe("DesktopWslServerTree", () => {
         });
         yield* fileSystem.writeFileString(path.join(serverRoot, "apps/server/dist/bin.mjs"), "x");
 
+        // SCIENT-FORK:START scient-wsl-runtime-cache
         // SCIENT_NEXT_HOME is set to tempDir, so the desktop state dir resolves
         // to <tempDir>/userdata.
+        // SCIENT-FORK:END scient-wsl-runtime-cache
         const treeRoot = path.join(tempDir, "userdata", "wsl-server-tree");
         yield* fileSystem.makeDirectory(path.join(treeRoot, "1.0.0"), { recursive: true });
         yield* fileSystem.makeDirectory(path.join(treeRoot, "1.2.3.partial"), { recursive: true });

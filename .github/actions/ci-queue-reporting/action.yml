@@ -1,0 +1,122 @@
+# SCIENT-FORK:START — preserve every report before queue reuse can suppress CI.
+name: Preserve reused CI reports
+description: Re-publish only the suites recorded by the exact-content qualification receipt.
+inputs:
+  web_reports:
+    required: true
+    description: Whether the source ran the three web shards.
+  server_reports:
+    required: true
+    description: Whether the source ran the eight server shards and transfer scenario.
+runs:
+  using: composite
+  steps:
+    - name: Preserve thread-transfer-result.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: thread-transfer-results
+        path: ${{ runner.temp }}/ci-queue-reuse/thread-transfer-result.json
+        if-no-files-found: error
+        retention-days: 30
+        overwrite: true
+    - name: Preserve vitest-web-1.json
+      if: inputs.web_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-web-1-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-1.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-web-2.json
+      if: inputs.web_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-web-2-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-2.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-web-3.json
+      if: inputs.web_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-web-3-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-web-3.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-server-1.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-server-1-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-1.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-server-2.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-server-2-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-2.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-server-3.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-server-3-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-3.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-server-4.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-server-4-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-4.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-server-5.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-server-5-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-5.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-server-6.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-server-6-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-6.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-server-7.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-server-7-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-7.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    - name: Preserve vitest-server-8.json
+      if: inputs.server_reports == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vitest-server-8-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-queue-reuse/vitest-server-8.json
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+# SCIENT-FORK:END

@@ -12,7 +12,6 @@ import {
 import {
   OrchestrationSearchThreadsResult as ModernSearchThreadsResult,
   OrchestrationThreadSearchMatch as ModernThreadSearchMatch,
-  OrchestrationThreadSearchSource,
 } from "./threadSearch.ts";
 
 const decodeResult = Schema.decodeUnknownSync(OrchestrationSearchThreadsResult);
@@ -29,12 +28,6 @@ const legacyMatch = {
 };
 
 describe("Scient nullable thread search contracts", () => {
-  it("selects the same nullable schema objects through public exports", () => {
-    expect(PublicContracts.OrchestrationThreadSearchMatch).toBe(OrchestrationThreadSearchMatch);
-    expect(PublicContracts.OrchestrationSearchThreadsResult).toBe(OrchestrationSearchThreadsResult);
-    expect(OrchestrationThreadSearchMatch.fields.source).toBe(OrchestrationThreadSearchSource);
-  });
-
   it("round-trips nullable history and project-scoped matches without changing their wire fields", () => {
     const wire = {
       matches: [

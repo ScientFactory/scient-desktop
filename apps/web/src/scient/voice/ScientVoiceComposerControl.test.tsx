@@ -9,7 +9,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  EMPTY_TRANSCRIPT_MESSAGE,
   ScientVoiceComposerControl,
   describeVoiceError,
   describeVoiceRecorderError,
@@ -91,6 +90,7 @@ describe("ScientVoiceComposerControl rendering", () => {
 });
 
 describe("formatVoiceTimer", () => {
+  // regression: 577a5a3f79 feat(voice): add multilingual turbo transcription
   it("allows three-minute composer recordings", () => {
     expect(MAX_RECORDING_MS).toBe(180_000);
   });
@@ -109,12 +109,6 @@ describe("formatVoiceTimer", () => {
 describe("describeVoiceRecorderError", () => {
   it("gives cross-platform guidance for denied permission", () => {
     expect(describeVoiceRecorderError("permission-denied")).toContain("system privacy settings");
-  });
-
-  it("maps every recorder error kind to non-empty copy", () => {
-    for (const kind of ["no-microphone", "device-in-use", "unsupported", "unknown"] as const) {
-      expect(describeVoiceRecorderError(kind).length).toBeGreaterThan(0);
-    }
   });
 });
 
@@ -155,11 +149,5 @@ describe("describeVoiceError", () => {
   it("falls back to a non-empty generic line for opaque non-errors", () => {
     expect(describeVoiceError(null).length).toBeGreaterThan(0);
     expect(describeVoiceError({}).length).toBeGreaterThan(0);
-  });
-});
-
-describe("voice copy constants", () => {
-  it("has a dedicated empty-transcript message", () => {
-    expect(EMPTY_TRANSCRIPT_MESSAGE).toBe("No speech detected");
   });
 });

@@ -6,29 +6,10 @@ const { createHash } = require("node:crypto");
 const { validateResult } = require("./thread-transfer-report.cjs");
 
 const WORKFLOW = ".github/workflows/ci.yml";
-const REQUIRED = [
-  "check",
-  "test_workspaces",
-  "compute_changes",
-  "windows_packaging_changes",
-  "test",
-  "test_web",
-  "test_server",
-  "transfer-report",
-  "rust",
-  "mobile_native_changes",
-  "release_smoke",
-];
-const CONDITIONAL = {
-  compute_native: ["compute_changes", "changed"],
-  windows_packaging: ["windows_packaging_changes", "changed"],
-  remote_server_packaging: ["windows_packaging_changes", "changed"],
-  linux_packaging: ["windows_packaging_changes", "linux_changed"],
-  mobile_native_static_analysis: ["mobile_native_changes", "changed"],
-};
+const { jobFailures } = require("./ci-check.cjs");
 // The main ruleset lands at most this many queue entries in one push (max_entries_to_merge).
 const MAX_QUEUE_SEGMENTS = 4;
-const SCHEMA = 2;
+const SCHEMA = 3;
 const RECEIPT_KEYS = [
   "schemaVersion",
   "event",
@@ -41,6 +22,7 @@ const RECEIPT_KEYS = [
   "baseSha",
   "treeSha",
   "reusedFrom",
+  "reports",
 ];
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_REPORT = 64 * 1024 * 1024;
@@ -107,27 +89,27 @@ async function writeReceipt({ github, context, core, needs, env = process.env })
   } else {
     throw new Error("Not a pull request or the main merge queue");
   }
+  const failures = jobFailures(needs, {
+    eventName: context.eventName,
+    qualifyingPr: true,
+    receipt: true,
+  });
+  assert(failures.length === 0, `CI qualification is missing: ${failures.join(", ")}`);
   let reusedFrom = null;
-  if (needs.queue_ci?.outputs?.reused === "true") {
+  const reused = needs.queue_ci?.outputs?.reused === "true";
+  if (reused) {
     assert(context.eventName === "merge_group", "Only queue runs reuse qualification");
-    assert(needs.queue_ci.result === "success", "Reuse probe did not succeed");
-    for (const job of ["test", "transfer-report"])
-      assert(needs[job]?.result === "success", "A required CI job did not succeed");
     reusedFrom = Number(needs.queue_ci.outputs.source_run_id);
     assert(positive(reusedFrom), "Reused qualification source is missing");
-  } else {
-    assert(
-      REQUIRED.every((job) => needs[job]?.result === "success"),
-      "A required CI job did not succeed",
-    );
-    for (const [job, [gate, output]] of Object.entries(CONDITIONAL)) {
-      assert(
-        needs[job]?.result === "success" ||
-          (needs[job]?.result === "skipped" && needs[gate]?.outputs?.[output] === "false"),
-        `Native qualification is missing: ${job}`,
-      );
-    }
   }
+  const reports = Object.fromEntries(
+    ["web", "server"].map((suite) => [
+      suite,
+      reused
+        ? needs.queue_ci.outputs[`${suite}_reports`] === "true"
+        : needs[`test_${suite}`]?.result === "success",
+    ]),
+  );
   const commit = await commitOf(github, context.repo, who.headSha);
   if (
     context.eventName === "pull_request" &&
@@ -148,6 +130,7 @@ async function writeReceipt({ github, context, core, needs, env = process.env })
     baseSha,
     treeSha: commit.tree,
     reusedFrom,
+    reports,
   };
   fs.mkdirSync(directory(env), { recursive: true });
   fs.writeFileSync(path.join(directory(env), "receipt.json"), JSON.stringify(receipt) + "\n");
@@ -224,7 +207,10 @@ function checkReceipt(receipt, expected) {
       [receipt.headSha, receipt.workflowSha, receipt.baseSha, receipt.treeSha].every((sha) =>
         SHA.test(sha),
       ) &&
-      (receipt.reusedFrom === null || positive(receipt.reusedFrom)),
+      (receipt.reusedFrom === null || positive(receipt.reusedFrom)) &&
+      receipt.reports &&
+      Object.keys(receipt.reports).length === 2 &&
+      ["web", "server"].every((suite) => typeof receipt.reports[suite] === "boolean"),
     "Qualification receipt differs",
   );
 }
@@ -406,15 +392,21 @@ async function restore({ github, context, core, env = process.env, archiveReader
     if (push)
       assert(source.receipt.workflowSha === who.workflowSha, "Qualification receipt differs");
     const staged = new Map();
-    const transfer = await source.download(
-      "thread-transfer-results",
-      "thread-transfer-result.json",
-      64 * 1024,
-    );
-    validateResult(transfer);
-    staged.set("thread-transfer-result.json", transfer);
-    for (const suite of ["web", "server"]) {
-      for (const shard of [1, 2, 3]) {
+    if (source.receipt.reports.server) {
+      const transfer = await source.download(
+        "thread-transfer-results",
+        "thread-transfer-result.json",
+        64 * 1024,
+      );
+      validateResult(transfer);
+      staged.set("thread-transfer-result.json", transfer);
+    }
+    for (const [suite, count] of [
+      ["web", 3],
+      ["server", 8],
+    ]) {
+      if (!source.receipt.reports[suite]) continue;
+      for (let shard = 1; shard <= count; shard++) {
         const filename = `vitest-${suite}-${shard}.json`;
         const report = await source.download(
           `vitest-${suite}-${shard}-attempt-${source.run.run_attempt}`,
@@ -443,6 +435,8 @@ async function restore({ github, context, core, env = process.env, archiveReader
       `https://github.com/${who.repository}/actions/runs/${source.run.id}`,
     );
     core.setOutput("source_event", source.run.event);
+    for (const suite of ["web", "server"])
+      core.setOutput(`${suite}_reports`, String(source.receipt.reports[suite]));
     core.setOutput("candidate", "true");
   } catch (error) {
     try {

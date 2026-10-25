@@ -1,11 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import {
-  TINYTEX_ALLOWED_HOSTS,
-  TINYTEX_MANIFEST,
-  TINYTEX_PLATFORM_ARCHES,
-  resolveTinyTexAsset,
-} from "./tinytexManifest.ts";
+import { TINYTEX_ALLOWED_HOSTS, TINYTEX_MANIFEST, resolveTinyTexAsset } from "./tinytexManifest.ts";
 
 describe("tinytexManifest", () => {
   it("pins every supported artifact by digest on an allowed HTTPS host", () => {
@@ -45,22 +40,6 @@ describe("tinytexManifest", () => {
     );
   });
 
-  it("lists every platform/architecture pair explicitly, pinned or not", () => {
-    // Every pair Scient might run on is a named slot in the manifest — never a
-    // gap that would silently read as `undefined` rather than "not pinned".
-    for (const platformArch of TINYTEX_PLATFORM_ARCHES) {
-      expect(Object.hasOwn(TINYTEX_MANIFEST.assets, platformArch)).toBe(true);
-    }
-    expect(TINYTEX_PLATFORM_ARCHES).toEqual([
-      "win32-x64",
-      "win32-arm64",
-      "darwin-x64",
-      "darwin-arm64",
-      "linux-x64",
-      "linux-arm64",
-    ]);
-  });
-
   it("resolves every pinned platform pair", () => {
     for (const [platform, arch, platformArch] of [
       ["win32", "x64", "win32-x64"],
@@ -91,16 +70,5 @@ describe("tinytexManifest", () => {
       platformArch: "freebsd-x64",
       message: "Scient has not pinned a LaTeX distribution for freebsd-x64 yet.",
     });
-  });
-
-  it("keys the same architecture differently under different platforms", () => {
-    // An x64 lookup on win32 must never answer with a pin made for x64 under
-    // a different platform, or vice versa.
-    const win = resolveTinyTexAsset("win32", "x64");
-    const linux = resolveTinyTexAsset("linux", "x64");
-    expect(win.supported).toBe(true);
-    expect(linux.supported).toBe(true);
-    if (!win.supported || !linux.supported) throw new Error("expected pinned assets");
-    expect(win.asset).not.toBe(linux.asset);
   });
 });

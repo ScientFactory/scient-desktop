@@ -29,6 +29,7 @@ import {
   type ServerConfig,
 } from "@t3tools/contracts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
+import { threadPullRequestsOf } from "@t3tools/client-runtime/thread-pull-requests";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -200,8 +201,8 @@ function makeTransport(input?: { active?: boolean }) {
       },
     ],
     threads: [
-      threadShellFromProjection(other),
-      ...(input?.active ? [threadShellFromProjection(projection)] : []),
+      threadShellFromProjection(other, threadPullRequestsOf),
+      ...(input?.active ? [threadShellFromProjection(projection, threadPullRequestsOf)] : []),
     ],
     archivedThreads: [],
   };
@@ -722,7 +723,7 @@ describe("ThreadRouteView canonical detail admission", () => {
             _fixture.transport.urls.filter((url) => url.includes(`/threads/${ref.threadId}`)),
           ).toEqual([]);
           const startedShell = {
-            ...threadShellFromProjection(projection),
+            ...threadShellFromProjection(projection, threadPullRequestsOf),
             latestUserMessageAt: projection.thread.createdAt,
           };
           yield* inAct(

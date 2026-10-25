@@ -14,9 +14,9 @@ vi.mock("./ui/scroll-area", () => ({
   ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
+// Two rows cover both values of each flag; the flags take independent branches.
 it.each([
   [true, true],
-  [false, true],
   [false, false],
 ] as const)(
   "preserves workflow history while gating current-workspace script reads (historical=%s, tokens=%s)",

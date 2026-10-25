@@ -289,6 +289,7 @@ jobs:
             ':(glob)apps/server/src/*.ts' \
             apps/server/src/auth \
             apps/server/src/scient/threadSections \
+            apps/server/src/sourceControl/sourceControlDefinitions.ts \
             apps/server/src/sourceControl/sourceControlHostSecrets.ts \
             apps/server/src/scient/providerLifecycle/codexSubscriptionSharingPolicy.ts \
             apps/server/src/provider/Drivers/AntigravitySkills.ts \
@@ -313,6 +314,7 @@ jobs:
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
+            packages/source-control-definitions \
             packages/source-control-forgejo \
             packages/source-control-gitcafe \
             packages/source-control-github \
@@ -371,6 +373,7 @@ jobs:
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
+            packages/source-control-definitions \
             packages/source-control-forgejo \
             packages/source-control-gitcafe \
             packages/source-control-github \
@@ -389,6 +392,7 @@ jobs:
             apps/server/src/provider \
             apps/server/src/scient/providerLifecycle \
             apps/server/src/scient/threadSections \
+            apps/server/src/sourceControl/sourceControlDefinitions.ts \
             apps/server/src/sourceControl/sourceControlHostSecrets.ts \
             apps/server/src/usage/usageAccountingSettingsSecrets.ts \
             packages/provider-acp-registry \
@@ -411,6 +415,7 @@ jobs:
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
+            packages/source-control-definitions \
             packages/source-control-forgejo \
             packages/source-control-gitcafe \
             packages/source-control-github \
@@ -468,6 +473,7 @@ jobs:
             apps/server/src/scient/providerLifecycle/codexSubscriptionSharingPolicy.ts \
             apps/server/src/scient/providerLifecycle/managedRuntimeVersion.ts \
             apps/server/src/scient/threadSections/settingsPrecondition.ts \
+            apps/server/src/sourceControl/sourceControlDefinitions.ts \
             apps/server/src/sourceControl/sourceControlHostSecrets.ts \
             apps/server/src/usage/usageAccountingSettingsSecrets.ts \
             packages/effect-omp-rpc \
@@ -482,6 +488,7 @@ jobs:
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
+            packages/source-control-definitions \
             packages/source-control-forgejo \
             packages/source-control-gitcafe \
             packages/source-control-github \

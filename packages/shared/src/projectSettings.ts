@@ -9,6 +9,7 @@ import {
   resolveProjectProviderInstanceEnabled,
   type ResolvedServerSettings,
   type ServerSettings,
+  type ServerSettingsPatch,
   type T3ProjectFile,
   type ThreadEnvMode,
   type WorktreeCleanupRules,
@@ -215,12 +216,16 @@ export function clearProjectSettingsOverrides(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
   projectId: ProjectId,
   keys: readonly ProjectScopedServerSettingKey[],
-): ProjectSettingsOverrides | null {
-  const current = settings.projectSettingsOverrides[projectId];
-  if (current === undefined) return null;
-  const next = { ...current };
+): NonNullable<ServerSettingsPatch["projectSettingsOverrides"]>[ProjectId] {
+  // SCIENT-FORK:START — a `null` entry keeps saved title instructions for clients that cannot see
+  // them, so clearing them must say so even when nothing else remains.
+  const next = { ...settings.projectSettingsOverrides[projectId] };
   for (const key of keys) delete next[key];
-  return Object.keys(next).length === 0 ? null : next;
+  const entry = keys.includes("threadTitleInstructions")
+    ? { ...next, threadTitleInstructions: null }
+    : next;
+  return Object.keys(entry).length === 0 ? null : entry;
+  // SCIENT-FORK:END
 }
 
 export function resolveWorktreeCleanup(
