@@ -383,14 +383,9 @@ export const ScientOverleafUndoableSends = Schema.Struct({
 });
 export type ScientOverleafUndoableSends = typeof ScientOverleafUndoableSends.Type;
 
-/**
- * An undo (design section 4.3). `undone` lists what it set out to put back and
- * every path it left alone, with why; `outcome` is how its apply ended (null when
- * every path was skipped and nothing was written), and `sync` the sync that
- * followed it, which sends what was put back and records the request's per-file
- * decisions. An apply that stopped partway or replanned is not synced
- * (`not-synced`, `undo-incomplete`): nothing was sent.
- */
+/** An undo: what it put back and every path left alone with why; `outcome` is how
+ * its apply ended (null if nothing was written) and `sync` the sync that followed.
+ * A partway/replanned apply is not synced (`not-synced`): nothing was sent. */
 export const ScientOverleafUndoResult = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("undone"),

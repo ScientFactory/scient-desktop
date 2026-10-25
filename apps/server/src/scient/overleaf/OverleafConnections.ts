@@ -1,16 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Folder identities and the folder walk.
-/**
- * Connecting, disconnecting and relinking a folder, and reading a connection's
- * status without going online (coordinator contract sections 2, 4 and 7; step 5).
- *
- * Connect validates the folder and that no other connection overlaps it,
- * prepares the retention folder, reads the Overleaf project once and records an
- * empty base. It writes no manuscript file and sends nothing; the first sync
- * does both. Disconnect archives the connection with its history and kept
- * copies; reconnecting the same folder to the same project reactivates that
- * archive, so its history survives. Relink records a moved folder or a renewed
- * workspace binding and keeps the base.
- */
+/** Connect/disconnect/relink a folder and read status offline. Connect writes no
+ * manuscript file and sends nothing; the first sync does both. Disconnect archives
+ * with history and kept copies; reconnecting the same folder/project reactivates it.
+ * Relink records a moved folder or renewed binding and keeps the base. */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -461,11 +453,9 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
               other.folder.identity.fileId === folderIdentity.fileId;
             const sameFolder = sameDirectory || (otherChain !== null && otherChain[0] === chain[0]);
             if (other.state === "archived") {
-              // An archive is reactivated only for its own project and only for the very
-              // directory it recorded: a replacement made at the same path would inherit
-              // the archive's base and its first sync would delete Overleaf's files. One
-              // whose owner is unknown or another project's is left alone, and a new
-              // connection starts.
+              // Reactivate an archive only for its own project and recorded directory:
+              // a replacement at the same path would inherit its base and its first
+              // sync would delete Overleaf's files. Otherwise start a new connection.
               if (
                 sameDirectory &&
                 other.remote.projectId === input.projectId &&

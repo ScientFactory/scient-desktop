@@ -1,11 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
-/**
- * The new-file rule (pr-c-design sections 5 and 7): a review selects new files
- * by default, a rule skips some at every sync without remembering them, only a
- * deliberate deselection is kept only on this computer, and a file kept only
- * here can be sent. Real folders, the real applier, and a real local bare
- * repository for Overleaf wherever something is sent.
- */
+/** New-file rule: reviews select new files by default, rules skip some without
+ * remembering them, and only a deliberate deselection stays local-only; a
+ * local-only file can still be sent. Real folders, applier and bare repo. */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 

@@ -1,11 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
-/**
- * Undo of an accepted send (design section 4.3, engine addition 3): it puts back
- * in the folder what Overleaf had before that send, as a recorded local intent
- * that never publishes, and an ordinary sync then sends it. Real folders, a real
- * private repository and the real applier; real Git for Overleaf wherever the
- * undo is published or Overleaf's history matters.
- */
+/** Undo of an accepted send puts back Overleaf's earlier bytes as a recorded
+ * local intent that never publishes; an ordinary sync then sends it. Real
+ * folders, private repository and applier. */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 

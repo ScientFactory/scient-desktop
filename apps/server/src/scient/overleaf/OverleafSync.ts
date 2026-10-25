@@ -1,24 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real paths of thread checkouts.
-/**
- * The Overleaf service that routes and agent tools call (step 5). It puts the
- * coordinator behind the workspace authority and the stored token, and adds the
- * product's sync rule (pr-c-design.md section 4): only a conflict stops a sync.
- * A sync prepares a review with the default selections and, when it has no
- * conflict without a choice, confirms it at once with its acknowledgements. A
- * review rebuilt because the folder changed is confirmed the same way, and an
- * out-of-date push starts one new sync. The engine's own rules are unchanged:
- * everything still goes through the exact review that was built.
- *
- * Editors first (pr-c-design.md sections 4.3 and 6): every operation that may
- * write the folder saves the folder's open editors in every window before it
- * reads anything, holding the connection from the save to its end.
- *
- * Authority (contract rules 2 and 3, pr-c-design.md section 6): a request names
- * the caller's workspace or thread, which the server resolves. A connection is
- * used only while its own checkout is still the binding it recorded, and only by
- * callers in the same host project; a caller in another worktree acts on the
- * linked copy, and the result says so.
- */
+/** The Overleaf service for routes/agent tools: coordinator behind workspace
+ * authority and the stored token. Only a conflict stops a sync; editors are saved
+ * in every window before any folder write, holding the connection throughout.
+ * A connection is used only in its recorded checkout by its host project. */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -345,13 +329,9 @@ export type OverleafSyncOutcome =
       readonly stage: "before-prepare" | "before-apply";
     } & OverleafSyncProgress);
 
-/**
- * What an undo did (pr-c-design.md section 4.3): the coordinator's result, and
- * the sync that followed it, which sends what was put back and records the
- * request's per-file decisions. An undo whose apply stopped partway (`attention`)
- * or wrote nothing because the folder changed (`replan`) is not synced: nothing
- * is sent until the files are checked and a sync is asked for.
- */
+/** What an undo did: the coordinator result plus the sync that followed, which
+ * sends what was put back. An undo whose apply stopped partway or replanned is
+ * not synced: nothing is sent until a sync is asked for. */
 export type OverleafUndoOutcome =
   | (Extract<OverleafCoordinator.OverleafUndoResult, { _tag: "undone" }> & {
       readonly sync:
@@ -563,16 +543,10 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       Effect.orElseSucceed(() => false),
     );
 
-  /**
-   * Saves the linked folder's open editors in every window, then runs `body`, holding
-   * the connection from before the save to the end (pr-c-design.md sections 4.3 and
-   * 6). Every operation that may write the folder goes through here: a sync, a
-   * preview or recovery (either may finish an interrupted apply), a kept-copy
-   * restore and an undo. The folder saved is the one the link names inside the hold,
-   * so a relink can't move it between the save and the operation's own reads. A
-   * failed save refuses with the files and windows that stopped it, before anything
-   * is read or written.
-   */
+  /** Saves the linked folder's open editors in every window, then runs `body`,
+   * holding the connection from before the save to the end. The folder is read
+   * inside the hold, so a relink cannot move it mid-operation; a failed save
+   * refuses before anything is read or written. */
   const savingEditorsFirst = <A, E, R>(connectionId: string, body: Effect.Effect<A, E, R>) =>
     OverleafCoordinator.reserveOverleafConnection(reservations, connectionId, (owner) =>
       Effect.gen(function* () {
@@ -841,14 +815,9 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     );
   });
 
-  /**
-   * Runs a sync-like operation (a sync, or an undo and the sync after it). One per
-   * connection here: claimed before anything else, and never replaced by a
-   * competitor, so cancel always reaches the running one. The connection is held for
-   * the whole operation, from saving the folder's editors on, gaps included: a
-   * disconnect or relink can't slip in between its steps. Its own coordinator calls
-   * run under this hold.
-   */
+  /** Runs one sync-like operation per connection, claimed first and never replaced
+   * by a competitor, so cancel reaches the running one. The connection is held
+   * for the whole operation including gaps; its coordinator calls run under it. */
   const claimingSync = <A, E, R>(
     connectionId: string,
     body: (running: { readonly operationId: string; cancelled: boolean }) => Effect.Effect<A, E, R>,
@@ -1143,18 +1112,10 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     return yield* engine(guard, coordinator.undoableSends({ connectionId: input.connectionId }));
   });
 
-  /**
-   * Puts back what Overleaf had before one accepted send (pr-c-design.md section
-   * 4.3), then syncs, so the restored files go out as ordinary local changes and
-   * only a conflict stops. Editors are saved first and the connection is held from
-   * there to the end of the sync. The sync follows an undo that put nothing back
-   * or whose apply completed, so the request's per-file decisions are recorded as
-   * any sync records them (a file kept only here stays here). An apply that
-   * stopped partway or replanned is never published: it is not synced. It has its own
-   * receipt, derived from the request's, so a repeated request never applies or
-   * syncs twice. A refusal the sync meets after the undo
-   * wrote the folder comes back as its result, never hiding the undo.
-   */
+  /** Puts back what Overleaf had before one accepted send, then syncs so restored
+   * files go out as local changes. Editors are saved first and the connection is
+   * held throughout. A partway/replanned apply is never synced; a repeated
+   * request (own derived receipt) never applies or syncs twice. */
   const undo = Effect.fn("OverleafSync.undo")(function* (input: {
     readonly caller: OverleafCaller;
     readonly connectionId: string;
