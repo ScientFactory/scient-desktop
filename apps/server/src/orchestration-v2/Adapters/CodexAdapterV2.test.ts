@@ -141,6 +141,44 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 });
 
 describe("CodexAdapterV2 runtime policy", () => {
+  it.effect.each([undefined, false, true])(
+    "selects native collaboration modes without prompt overrides with hasT3Mcp=%s",
+    (hasT3Mcp) =>
+      Effect.gen(function* () {
+        for (const interactionMode of ["plan", "default"] as const) {
+          for (const reasoningEffort of [undefined, "high"] as const) {
+            const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+              nativeThreadId: "native-mode-switch",
+              codexInput: [{ type: "text", text: "test" }],
+              runtimePolicy: { runtimeMode: "full-access", interactionMode, cwd: null },
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5.4",
+                ...(reasoningEffort === undefined
+                  ? {}
+                  : { options: [{ id: "reasoningEffort", value: reasoningEffort }] }),
+              },
+              ...(hasT3Mcp === undefined ? {} : { hasT3Mcp }),
+            });
+
+            assert.deepEqual(params.collaborationMode, {
+              mode: interactionMode,
+              settings: {
+                model: "gpt-5.4",
+                ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
+              },
+            });
+            assert.equal(params.effort, reasoningEffort);
+            // SCIENT-FORK: Scient awareness rides every turn; only orchestration needs the MCP server.
+            assert.equal(
+              params.additionalContext?.t3_code_orchestration_01 !== undefined,
+              hasT3Mcp === true,
+            );
+          }
+        }
+      }),
+  );
+
   it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
     Effect.gen(function* () {
       const build = (
@@ -236,37 +274,6 @@ describe("CodexAdapterV2 runtime policy", () => {
         params.additionalContext?.t3_code_orchestration_01?.value ?? "",
         "Use `delegate_task`",
       );
-      assert.include(
-        // SCIENT-FORK: Scient's authored paragraphs pack scheduling with delegation.
-        params.additionalContext?.t3_code_orchestration_01?.value ?? "",
-        "structured object, never as JSON text",
-      );
-    }),
-  );
-
-  it.effect("adds T3 plan-mode developer instructions when the T3 MCP server is attached", () =>
-    Effect.gen(function* () {
-      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
-        nativeThreadId: "native-plan-with-t3-mcp",
-        codexInput: [{ type: "text", text: "plan this task" }],
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "plan",
-          cwd: null,
-        },
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.4",
-        },
-        hasT3Mcp: true,
-      });
-
-      assert.equal(params.collaborationMode?.mode, "plan");
-      assert.include(
-        params.collaborationMode?.settings.developer_instructions ?? "",
-        "request_user_input",
-      );
-      assert.include(params.additionalContext?.scient_awareness?.value ?? "", "preview_status");
     }),
   );
 
@@ -911,6 +918,7 @@ function codexReplayPreamble(input: {
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
           summary: "detailed",
+          collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
         },
       },
     },
@@ -1949,6 +1957,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 model: "gpt-5.4",
                 ...turnPolicies[turnModes[index]!],
                 summary: "detailed",
+                collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
               },
             },
           },

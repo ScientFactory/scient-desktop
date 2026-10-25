@@ -27,7 +27,6 @@ const fixture = vi.hoisted(() => ({
     activityRunStatus?: string | null;
     status: string;
   }>,
-  preload: vi.fn(() => Promise.resolve([])),
   importConversation: vi.fn(),
   environments: [] as Array<{
     environmentId: EnvironmentId;
@@ -74,7 +73,6 @@ vi.mock("../../state/environments", async (original) => ({
 vi.mock("@tanstack/react-router", async (original) => ({
   ...(await original<typeof import("@tanstack/react-router")>()),
   useNavigate: () => fixture.navigate,
-  useRouter: () => ({ preloadRoute: fixture.preload }),
   useLocation: () => false,
 }));
 vi.mock("../../state/threads", async (original) => {

@@ -2507,7 +2507,7 @@ it.effect.each(
                         new ProjectSetupScriptRunner.ProjectSetupScriptOperationError({
                           threadId: "child",
                           worktreePath: "/repo-worktrees/feature",
-                          operation: "writeCommand",
+                          operation: "openTerminal",
                           cause: "setup failed",
                         }),
                       )

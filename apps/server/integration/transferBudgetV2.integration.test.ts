@@ -17,11 +17,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadBoundedSnapshot,
-  OrchestrationV2ThreadDetailSnapshot,
-  OrchestrationV2HttpThreadDetailSnapshot,
   OrchestrationV2ThreadHistoryPage,
-  THREAD_SNAPSHOT_FORMAT_HEADER,
-  COMPACT_THREAD_SNAPSHOT_FORMAT,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2GetShellSnapshotError,
@@ -29,6 +25,7 @@ import {
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2ShellStreamItem,
 } from "@t3tools/contracts";
+import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -79,12 +76,6 @@ import {
   turnEvents,
 } from "./TransferBudgetV2Fixture.integration.ts";
 
-const decodeThreadSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot)),
-);
-const decodeHttpThreadSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2HttpThreadDetailSnapshot)),
-);
 const decodeBoundedSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
 );
@@ -251,7 +242,6 @@ const synchronized = (queue: Queue.Queue<StreamItem>) =>
 it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
   Effect.gen(function* () {
     const runs: TransferBudgetRun[] = [];
-    const legacyMeasurements: string[] = [];
     for (const provider of [
       ProviderDriverKind.make("codex"),
       ProviderDriverKind.make("claudeAgent"),
@@ -280,29 +270,10 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
           const address = Context.get(server, HttpServer.HttpServer).address;
           if (!("port" in address)) return yield* Effect.die("Expected TCP server");
           const base = `http://127.0.0.1:${address.port}`;
-          const legacyThreadSnapshot = yield* measureHttpGet({
-            url: `${base}/api/orchestration/threads/${THREAD_ID}`,
-            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION) },
-          });
-          assert.equal(legacyThreadSnapshot.status, 200);
-          const legacyThread = yield* decodeThreadSnapshot(
-            Buffer.from(legacyThreadSnapshot.decodedBody).toString(),
-          );
-          legacyMeasurements.push(
-            `| ${provider} | ${legacyThreadSnapshot.decodedBodyBytes} | ${legacyThreadSnapshot.encodedBodyBytes} | ${legacyThreadSnapshot.wireBytes} |`,
-          );
-          yield* Effect.log("Legacy default full-snapshot measurement", {
-            provider,
-            rawJsonBytes: legacyThreadSnapshot.decodedBodyBytes,
-            encodedBodyBytes: legacyThreadSnapshot.encodedBodyBytes,
-            wireBytes: legacyThreadSnapshot.wireBytes,
-          });
+          // Startup reads the bounded snapshot with the shared client's opt-ins.
           const threadSnapshot = yield* measureHttpGet({
-            url: `${base}/api/orchestration/threads/${THREAD_ID}`,
-            headers: {
-              [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION),
-              [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT,
-            },
+            url: `${base}/api/orchestration/threads/${THREAD_ID}/bounded?compactTurnItems=1&dedupeBodies=1&compactIds=1`,
+            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION) },
           });
           assert.equal(
             threadSnapshot.status,
@@ -310,14 +281,14 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
             Buffer.from(threadSnapshot.decodedBody).toString(),
           );
           assert.equal(threadSnapshot.contentEncoding, "gzip");
-          const decodedThread = yield* decodeHttpThreadSnapshot(
+          const decodedThread = yield* decodeBoundedSnapshot(
             Buffer.from(threadSnapshot.decodedBody).toString(),
+          ).pipe(
+            Effect.map((snapshot) => ({
+              ...snapshot,
+              projection: boundedSnapshotProjection(snapshot),
+            })),
           );
-          assert.equal(decodedThread.snapshotSequence, legacyThread.snapshotSequence);
-          assert.deepEqual(decodedThread.projection, legacyThread.projection);
-          assert.isTrue("snapshotFormat" in decodedThread);
-          if ("snapshotFormat" in decodedThread)
-            assert.equal(decodedThread.snapshotFormat, COMPACT_THREAD_SNAPSHOT_FORMAT);
           assert.equal(decodedThread.projection.messages.length, TRANSFER_HISTORY_TURN_COUNT * 2);
           assert.equal(
             decodedThread.projection.turnItems.length,
@@ -428,7 +399,7 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
           assert.isTrue(historyPage.hasMoreHistory);
           return {
             provider,
-            startupTransport: "full-compact-http-with-live-cursor",
+            startupTransport: "bounded-compact-http-with-live-cursor",
             threadSnapshot,
             shellSnapshot,
             measuredTurnWebSocket,
@@ -452,15 +423,7 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
       runs.push(run);
     }
     const fs = yield* FileSystem.FileSystem;
-    const report = `${formatTransferBudgetReport(runs)}
-## Legacy default response comparison
-
-The same full endpoint without negotiation is retained for old clients. Its decoded projection and cursor match the compact response exactly (20 messages; 80 timeline items including 50 commands and 10 MCP results). These legacy measurements are outside the modern codec budget; the old default exceeds the 5,000 B snapshot ceiling.
-
-| Provider | Raw JSON bytes | Gzip body bytes | HTTP wire bytes |
-| --- | ---: | ---: | ---: |
-${legacyMeasurements.join("\n")}
-`;
+    const report = formatTransferBudgetReport(runs);
     for (const [path, contents] of [
       [process.env.T3CODE_TRANSFER_BUDGET_REPORT_PATH, report],
       [process.env.T3CODE_TRANSFER_BUDGET_RESULT_PATH, formatTransferBudgetResult(runs)],

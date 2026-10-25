@@ -697,6 +697,10 @@ export const layerWithOptions = (
             // secrets:use) are appended here, before connector delivery is planned.
             const connectorPlan = yield* planConnectors(true);
             // SCIENT-FORK:END
+            const subagent = yield* projectionStore.getThread(threadId).pipe(
+              Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
+              Effect.orElseSucceed(() => false),
+            );
             const existing = yield* mcpSessions.read(threadId);
             if (existing !== undefined) {
               // Reserve before async validation so release cannot revoke between validation and reservation.
@@ -715,6 +719,8 @@ export const layerWithOptions = (
                 resolved !== undefined &&
                 resolved.thread.threadId === threadId &&
                 resolved.thread.providerInstanceId === providerInstanceId &&
+                // A credential issued while the lineage read failed is replaced once it works.
+                (resolved.thread.subagent === true) === subagent &&
                 // Reuse binds the whole explicit policy, including owned Scient operations.
                 resolved.capabilities.size === capabilities.size &&
                 (!capabilities.has("skills:read") || resolved.skillScope !== undefined) &&
@@ -757,6 +763,7 @@ export const layerWithOptions = (
               providerInstanceId,
               browserToolsAvailable,
               capabilities,
+              subagent,
               ...(capabilities.has("skills:read")
                 ? {
                     skillScope: {

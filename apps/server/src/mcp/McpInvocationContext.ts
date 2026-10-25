@@ -11,6 +11,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import type { AgentSkillScope } from "../scient/operations/AgentInvocationContext.ts";
+import * as Fiber from "effect/Fiber";
 
 /** Authenticated external-provider transport grants, owned by the MCP host. */
 const ALL_MCP_CAPABILITIES = [
@@ -44,6 +45,8 @@ export interface McpThreadCaller {
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
+  /** A delegated child task; its parent owns the work it hands back. */
+  readonly subagent?: boolean;
 }
 
 export interface McpClientCaller {
@@ -84,6 +87,15 @@ export type {
   AgentSkillDescriptor as McpScientSkillDescriptor,
   AgentSkillScope as McpScientSkillScope,
 } from "../scient/operations/AgentInvocationContext.ts";
+/**
+ * `McpSchema.EnabledWhen` for tools a delegated child must not see or call.
+ * EnabledWhen only receives the MCP client profile, so read the T3 caller from the request fiber.
+ */
+export const hiddenFromSubagents = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.thread?.subagent !== true;
+};
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"
   ? PreviewAutomationUnavailableError

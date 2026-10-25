@@ -27,6 +27,7 @@ export interface McpCredentialRequest {
    */
   readonly connectors?: ReadonlyArray<McpCredentialConnector>;
   // SCIENT-FORK:END
+  readonly subagent?: boolean;
 }
 
 // SCIENT-FORK:START Scient Extensions connectors
@@ -153,6 +154,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           threadId: ThreadId.make(request.threadId),
           providerSessionId,
           providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
+          subagent: request.subagent === true,
         },
         client: undefined,
         capabilities: new Set<McpInvocationContext.McpCapability>(

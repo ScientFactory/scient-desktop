@@ -5,12 +5,19 @@ import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
+// Hermes copies the string on every `trim()`, even when nothing changes.
+// Returning the original keeps repeated IDs shared after decode.
+const trim = (value: string) => {
+  const trimmed = value.trim();
+  return trimmed.length === value.length ? value : trimmed;
+};
+
 export const TrimmedString = Schema.String.pipe(
   Schema.decodeTo(
     Schema.String,
     SchemaTransformation.transformEffect({
-      decode: (value) => Effect.succeed(value.trim()),
-      encode: (value) => Effect.succeed(value.trim()),
+      decode: (value) => Effect.succeed(trim(value)),
+      encode: (value) => Effect.succeed(trim(value)),
     }),
   ),
 );

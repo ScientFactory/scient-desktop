@@ -2230,10 +2230,21 @@ code {
   /* SCIENT-FORK:END */
 }
 
+/* Top-aligned so wrapped rows share a first line, and the outer columns sit
+   flush with the surrounding prose. */
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
   text-align: start;
+  vertical-align: top;
+}
+
+.chat-markdown :is(th, td):first-child {
+  padding-inline-start: 0;
+}
+
+.chat-markdown :is(th, td):last-child {
+  padding-inline-end: 0;
 }
 
 .chat-markdown thead th {
@@ -2452,6 +2463,22 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
   background-position: center bottom;
   background-repeat: no-repeat;
   background-size: calc(100% - 1rem) 1px;
+}
+
+/* Outer cells sit flush with the prose, so their line runs to the outer edge. */
+.chat-markdown :is(thead th, tbody td):is(:first-child, :last-child) {
+  background-size: calc(100% - 0.5rem) 1px;
+}
+.chat-markdown :is(thead th, tbody td):first-child:last-child {
+  background-size: 100% 1px;
+}
+.chat-markdown :is(thead th, tbody td):first-child,
+.chat-markdown table[dir="rtl"] :is(thead th, tbody td):last-child {
+  background-position: left bottom;
+}
+.chat-markdown :is(thead th, tbody td):last-child,
+.chat-markdown table[dir="rtl"] :is(thead th, tbody td):first-child {
+  background-position: right bottom;
 }
 /* SCIENT-FORK:END */
 

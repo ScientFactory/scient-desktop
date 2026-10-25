@@ -5,7 +5,11 @@ import { useEffect } from "react";
 import { toastManager } from "../../components/ui/toast";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { useThreadSectionCatalogs } from "./catalog";
-import { loadedThreadEnvironmentsKeyAtom } from "./loadedEnvironments";
+import {
+  loadedThreadEnvironmentsKeyAtom,
+  omittedSectionsKeyAtom,
+  UNKNOWN_OMITTED_SECTIONS,
+} from "./loadedEnvironments";
 import type { SectionOccupancy } from "./logic";
 
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
@@ -17,7 +21,8 @@ const NO_OCCUPANCY: SectionOccupancy = new Map();
 /**
  * Record occupancy even with cleanup disabled so enabling later is safe. Judge empty only after
  * holding the owning environment's live list for a minute; other environments' threads cannot
- * establish its occupancy. Removals remain undoable.
+ * establish its occupancy. A shell that leaves older settled threads out counts their sections;
+ * one that does not say which sections they hold is never judged. Removals remain undoable.
  */
 export function useEmptySectionCleanup(input: {
   readonly threads: ReadonlyArray<{
@@ -29,21 +34,30 @@ export function useEmptySectionCleanup(input: {
   const { catalogs, restoreAll, sweepEmpty } = useThreadSectionCatalogs();
   const configs = useAtomValue(environmentServerConfigsAtom);
   const loadedKey = useAtomValue(loadedThreadEnvironmentsKeyAtom);
+  const omittedKey = useAtomValue(omittedSectionsKeyAtom);
   // Stable keys, so ordinary thread activity doesn't restart the timers.
   const environmentsKey = catalogs
     .map((catalog) => catalog.environmentId)
     .toSorted()
     .join("\n");
+  const omittedLines = omittedKey.length > 0 ? omittedKey.split("\n") : [];
   const occupancyKey = [
-    ...new Set(
-      input.threads.flatMap((thread) =>
+    ...new Set([
+      ...input.threads.flatMap((thread) =>
         thread.archivedAt === null && thread.sectionId != null
           ? [`${thread.environmentId}\t${thread.sectionId}`]
           : [],
       ),
-    ),
+      ...omittedLines.filter((line) => !line.endsWith(`\t${UNKNOWN_OMITTED_SECTIONS}`)),
+    ]),
   ]
     .toSorted()
+    .join("\n");
+  /** Environments whose shell left threads out without naming their sections. */
+  const unjudgeableKey = omittedLines
+    .flatMap((line) =>
+      line.endsWith(`\t${UNKNOWN_OMITTED_SECTIONS}`) ? [line.split("\t")[0]!] : [],
+    )
     .join("\n");
   /** Environment → its catalog's occupancy. */
   const occupancyByEnvironment = (() => {
@@ -78,6 +92,9 @@ export function useEmptySectionCleanup(input: {
 
   useEffect(() => {
     const loaded = new Set(loadedKey.length > 0 ? loadedKey.split("\n") : []);
+    for (const id of unjudgeableKey.length > 0 ? unjudgeableKey.split("\n") : []) {
+      loaded.delete(id);
+    }
     const timers: ReturnType<typeof setTimeout>[] = [];
     let current = true;
     for (const line of cleanupKey.length > 0 ? cleanupKey.split("\n") : []) {
@@ -118,5 +135,5 @@ export function useEmptySectionCleanup(input: {
         clearInterval(timer);
       }
     };
-  }, [cleanupKey, loadedKey, occupancyByEnvironment, restoreAll, sweepEmpty]);
+  }, [cleanupKey, loadedKey, occupancyByEnvironment, restoreAll, sweepEmpty, unjudgeableKey]);
 }

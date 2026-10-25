@@ -218,6 +218,7 @@ vi.mock("../state/entities", () => {
     // SCIENT-FORK:END
   };
 });
+vi.mock("../state/olderSettledShelf", () => ({ readUnloadedThreadCount: () => 0 }));
 vi.mock("../state/presentation", () => ({
   environmentSummaries: { connectedEnvironmentIdsAtom: "connected-environment-ids" },
 }));

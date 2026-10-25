@@ -28,7 +28,10 @@ import {
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
+import {
+  createInboxReturnTracker,
+  isThreadWorking,
+} from "@t3tools/client-runtime/state/thread-inbox";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
   nextShownOrder,
@@ -50,9 +53,11 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
+  ProjectId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 
 import { FolderIcon, FoldersIcon, PlusIcon, SettingsIcon } from "lucide-react";
 import {
@@ -61,6 +66,7 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -132,6 +138,7 @@ import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
+import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
@@ -157,7 +164,6 @@ import {
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
   isSidebarNestedLinkClick,
-  isSidebarThreadWorking,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planSidebarThreadDrop,
@@ -324,6 +330,9 @@ interface SidebarThreadPartitionInput {
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly workingShelfEnabled: boolean;
+  // Snooze wakes, the queued-turn grace and the Working shelf's exit grace depend
+  // on the clock, so the minute tick, the precise snooze-wake tick and the inbox
+  // tracker's expiry version are inputs: a new key repartitions.
   readonly clockKey: string;
 }
 
@@ -397,6 +406,10 @@ function useSidebarThreads(input: {
           ),
         );
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  const inboxReturnsVersion = useSyncExternalStore(
+    inboxReturns.subscribe,
+    inboxReturns.getSnapshot,
+  );
   const nowMinute = useNowMinute();
   // Minute-quantized clocks would delay second-precise snooze wakes by up to a minute.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
@@ -436,23 +449,35 @@ function useSidebarThreads(input: {
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
-    clockKey: `${nowMinute}:${snoozeWakeTick}`,
+    clockKey: `${nowMinute}:${snoozeWakeTick}:${inboxReturnsVersion}`,
   });
   const partitionNextWakeAt = partition.snoozedThreads[0]?.snoozedUntil ?? null;
   if (partitionNextWakeAt !== nextSnoozeWakeAt) setNextSnoozeWakeAt(partitionNextWakeAt);
 
   const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
     partition;
+  // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
+  const olderSettledShelf = useOlderSettledShelf({
+    scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
+    expanded: settledShelfExpanded,
+    visibleCount: settledVisibleCount,
+  });
+  const listedSettledThreads = settledThreads.filter(olderSettledShelf.isListed);
+  useOlderSettledShelfGrowth(olderSettledShelf, listedSettledThreads);
+  const settledCount =
+    settledThreads.length + olderSettledShelf.unloadedCount(partition.visibleThreads);
   const visibleSettledThreads = (() => {
-    if (settledThreads.length <= settledVisibleCount) return settledThreads;
-    const visible = settledThreads.slice(0, settledVisibleCount);
-    if (routeRowThreadKey !== null) {
-      const routeThread = settledThreads
-        .slice(settledVisibleCount)
-        .find((thread) => threadShellKey(thread) === routeRowThreadKey);
+    const visible = listedSettledThreads.slice(0, settledVisibleCount);
+    if (
+      routeRowThreadKey !== null &&
+      !visible.some((thread) => threadShellKey(thread) === routeRowThreadKey)
+    ) {
+      const routeThread = settledThreads.find(
+        (thread) => threadShellKey(thread) === routeRowThreadKey,
+      );
       if (routeThread !== undefined) visible.push(routeThread);
     }
-    return visible;
+    return visible.length === settledThreads.length ? settledThreads : visible;
   })();
   const renderedSettledThreads = settledShelfExpanded
     ? visibleSettledThreads
@@ -493,7 +518,9 @@ function useSidebarThreads(input: {
       ...settledThreads,
     ],
     settledVisibleCount,
-    hiddenSettledCount: settledThreads.length - visibleSettledThreads.length,
+    settledCount,
+    olderSettledShelf,
+    hiddenSettledCount: Math.max(0, settledCount - visibleSettledThreads.length),
     showMoreSettled: () =>
       setSettledTail((current) => ({
         scopeKey: current.scopeKey,
@@ -528,20 +555,15 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const { threads, scopedProjectKeys, serverConfigs, optimisticDrop, workingShelfEnabled } = input;
   const preciseNow = new Date().toISOString();
   const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
-  inboxReturns.observe(workingShelfEnabled ? threads : null);
+  const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
   const working: EnvironmentThreadShell[] = [];
-  // SCIENT-FORK:START — the Sections view replaces the Status layout, so it
-  // must see every inbox thread in normal order. The Working beta only moves
-  // rows between `active` and `working`; it never removes a thread from a
-  // section or reorders it there.
-  const sectionInbox: EnvironmentThreadShell[] = [];
-  const inbox = (thread: EnvironmentThreadShell) => {
-    sectionInbox.push(thread);
-    return workingShelfEnabled && isSidebarThreadWorking(thread) ? working : active;
-  };
-  // SCIENT-FORK:END
+  const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
+    workingShelfEnabled &&
+    (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
+      ? working
+      : active;
   const snoozed: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const draggable = new Set<string>();
@@ -566,7 +588,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
         ? pinned
         : optimisticDrop.section === "settled"
           ? settled
-          : inbox(projected)
+          : inbox(projected, true)
       ).push(
         optimisticDrop.clearsSnooze
           ? projected
@@ -591,7 +613,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   // Capability gates dragging only; mixed server versions must preserve the same pinned order across clients.
   const sortedPinned = sortPinnedThreadsForSidebar(pinned);
   const sortedActive = workingShelfEnabled
-    ? sortInboxThreadsByReturn(active, inboxReturns.returnedAt)
+    ? sortInboxThreadsByReturn(active, inboxObservation.returnedAt)
     : sortThreadsForSidebar(active);
   return {
     pinnedThreads:
@@ -613,8 +635,9 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
             getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
           }),
     workingThreads: sortWorkingThreadsBySend(working),
-    // SCIENT-FORK:START — Sections keep the full inbox in normal order.
-    sectionActiveThreads: sortThreadsForSidebar(sectionInbox),
+    // SCIENT-FORK:START — the Sections view replaces the Status layout, so it sees every inbox
+    // thread in normal order; the Working beta only moves rows between active and working.
+    sectionActiveThreads: sortThreadsForSidebar([...active, ...working]),
     // SCIENT-FORK:END
     snoozedThreads: snoozed.toSorted(
       (left, right) =>
@@ -622,6 +645,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
         firstValidTimestampMs(right.snoozedUntil ?? null),
     ),
     settledThreads: sortSettledThreads(settled),
+    visibleThreads: visible,
     snoozeNow: preciseNow,
   };
 }
@@ -649,6 +673,23 @@ function sidebarSectionsOrder(input: {
   };
 }
 // SCIENT-FORK:END
+
+/** The sidebar's scope per environment: the scoped projects there, or every project. */
+function olderSettledScopes(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  scopedProjectKeys: ReadonlySet<string> | null,
+): ReadonlyArray<OlderSettledScope> {
+  if (scopedProjectKeys === null) {
+    return environmentIds.map((environmentId) => ({ environmentId, projectIds: null }));
+  }
+  return environmentIds.flatMap((environmentId) => {
+    const prefix = `${environmentId}:`;
+    const projectIds = [...scopedProjectKeys].flatMap((key) =>
+      key.startsWith(prefix) ? [ProjectId.make(key.slice(prefix.length))] : [],
+    );
+    return projectIds.length === 0 ? [] : [{ environmentId, projectIds }];
+  });
+}
 
 function isOptimisticDropReleased(input: {
   readonly optimisticDrop: SidebarOptimisticDrop;
@@ -926,7 +967,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [searchHighlightKey, setSearchHighlightKey] = useState<string | null>(null);
   const searchEnvironmentIds = useConnectedEnvironmentIds();
-  const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
@@ -1004,6 +1044,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
           ),
         );
+  const threadSearch = useThreadSearch(
+    searchEnvironmentIds,
+    threadSearchQuery,
+    scopedProjectGroup === null
+      ? {}
+      : {
+          projectIds: scopedProjectGroup.memberProjectRefs.map(
+            (projectRef) => projectRef.projectId,
+          ),
+        },
+  );
   useEffect(() => {
     const nextKey = resolveSidebarProjectScopeKey({
       groups: projectGroups,
@@ -1094,6 +1145,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     snoozeNow,
     searchableThreads,
     settledVisibleCount,
+    settledCount,
+    olderSettledShelf,
     hiddenSettledCount,
     showMoreSettled,
     settledShelfExpanded,
@@ -1772,7 +1825,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         activeThreads.length +
         workingThreads.length +
         snoozedThreads.length +
-        settledThreads.length ===
+        settledCount ===
       0
     ) {
       return [];
@@ -3182,9 +3235,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         snoozedThreads.length === 0 && "mt-auto",
                         SECTION_HEADER_OFFSET_CLASS,
                       )}
-                      label={
-                        settledShelfExpanded ? "Settled" : `Settled (${settledThreads.length})`
-                      }
+                      label={settledShelfExpanded ? "Settled" : `Settled (${settledCount})`}
                       dragging={state.dragging}
                       isDropTarget={state.isDropTarget}
                       toggle={{ expanded: settledShelfExpanded, onToggle: toggleSettledShelf }}
@@ -3206,11 +3257,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     <li className="list-none">
                       <button
                         type="button"
-                        onClick={showMoreSettled}
-                        className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                        disabled={olderSettledShelf.loading}
+                        onClick={() => {
+                          olderSettledShelf.retry();
+                          showMoreSettled();
+                        }}
+                        className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground disabled:cursor-default"
                       >
                         <PlusIcon aria-hidden className="size-4 shrink-0" />
-                        Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
+                        {olderSettledShelf.loading
+                          ? "Loading"
+                          : olderSettledShelf.failed
+                            ? "Could not load older threads. Retry"
+                            : `Show ${Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more`}
                       </button>
                     </li>
                   ) : null
@@ -3467,9 +3526,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
                                 )}
                                 label={
-                                  settledShelfExpanded
-                                    ? "Settled"
-                                    : `Settled (${settledThreads.length})`
+                                  settledShelfExpanded ? "Settled" : `Settled (${settledCount})`
                                 }
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
@@ -3506,11 +3563,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       <li className="list-none">
                         <button
                           type="button"
-                          onClick={showMoreSettled}
-                          className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                          disabled={olderSettledShelf.loading}
+                          onClick={() => {
+                            olderSettledShelf.retry();
+                            showMoreSettled();
+                          }}
+                          className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground disabled:cursor-default"
                         >
                           <PlusIcon aria-hidden className="size-4 shrink-0" />
-                          Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
+                          {olderSettledShelf.loading
+                            ? "Loading"
+                            : olderSettledShelf.failed
+                              ? "Could not load older threads. Retry"
+                              : `Show ${Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more`}
                         </button>
                       </li>
                     ) : null}
@@ -3525,7 +3590,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             activeThreads.length +
             workingThreads.length +
             snoozedThreads.length +
-            settledThreads.length ===
+            settledCount ===
             0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (

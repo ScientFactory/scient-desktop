@@ -411,7 +411,8 @@ approved environment authority. Reading a complete terminal result from a
 direct app-owned child also acknowledges that child's completion delivery.
 This is separate from the narrow `scient_thread_read` history reader.
 
-Agents mention another thread as `[title](t3-thread://v1/<threadId>)`. The
+Agents mention another thread as `[title](t3-thread://v1/<threadId>)`. Thread
+results carry this ready-made as `link`, so agents never format the id. The
 link carries only the id. Clients first resolve it in the message's environment,
 then use a unique match in another enabled environment. Ambiguous matches stay
 unresolved. Web and desktop show the resolved thread’s current title. Mobile

@@ -602,5 +602,36 @@
     "rules": ["t3-command"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
+  },
+  {
+    "path": "apps/server/src/provider/ScientAgentCopy.ts",
+    "rules": ["inherited-brand", "bare-t3", "t3-connect"],
+    "kind": "rewritten-agent-copy",
+    "reason": "The rename table that turns upstream agent copy into Scient copy; it quotes the upstream sentences it replaces."
+  },
+  {
+    "path": "apps/server/src/provider/ScientProviderInstructions.ts",
+    "line": "To wait for a background command or Monitor you started (tests, a build), call \\`t3_background_wait\\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.",
+    "rules": ["inherited-brand", "bare-t3"],
+    "kind": "rewritten-agent-copy",
+    "reason": "Verbatim copy of upstream's private Claude background-wait note; agents receive it only through scientAgentCopy (ScientAgentCopy.test.ts)."
+  },
+  {
+    "path": "apps/server/src/mcp/toolkits/orchestrator/tools.ts",
+    "rules": ["inherited-brand", "bare-t3", "t3-connect"],
+    "kind": "rewritten-agent-copy",
+    "reason": "Upstream MCP tool copy kept verbatim; ScientMcpProtocol's tools/list rewrites every description and title through ScientAgentCopy.ts. ScientAgentCopy.test.ts fails on any T3 name an agent would see."
+  },
+  {
+    "path": "apps/server/src/mcp/toolkits/pullRequests/tools.ts",
+    "rules": ["bare-t3"],
+    "kind": "rewritten-agent-copy",
+    "reason": "Upstream MCP tool copy kept verbatim; ScientMcpProtocol's tools/list rewrites every description and title through ScientAgentCopy.ts. ScientAgentCopy.test.ts fails on any T3 name an agent would see."
+  },
+  {
+    "path": "packages/contracts/src/orchestratorMcp.ts",
+    "rules": ["bare-t3", "t3-connect"],
+    "kind": "rewritten-agent-copy",
+    "reason": "Upstream MCP schema descriptions kept verbatim; ScientMcpProtocol's tools/list rewrites them through ScientAgentCopy.ts. ScientAgentCopy.test.ts fails on any T3 name an agent would see."
   }
 ]

@@ -41,3 +41,42 @@ export const frozenPlacementEnvironmentsKeyAtom = Atom.make((get): string | null
     .toSorted()
     .join("\n");
 }).pipe(Atom.withLabel("scient-sections-frozen-placement-environments"));
+
+/** What a shell snapshot says about the older settled threads it left out. */
+type OmittedThreads = {
+  readonly counts: ReadonlyArray<{ readonly count: number }>;
+  /** Per section, the left-out threads it holds; absent from servers that do not count them. */
+  readonly sectionCounts?: ReadonlyArray<{ readonly sectionId: string; readonly count: number }>;
+};
+
+/** Marks an environment whose shell left threads out without naming their sections. */
+export const UNKNOWN_OMITTED_SECTIONS = "*";
+
+/**
+ * `${environmentId}\t${sectionId}` lines for the sections that hold threads a shell left out, or
+ * `${environmentId}\t*` when the shell left threads out but did not name their sections.
+ */
+function omittedSectionLines(environmentId: string, omitted: OmittedThreads | undefined): string[] {
+  if (omitted === undefined || omitted.counts.every(({ count }) => count === 0)) return [];
+  if (omitted.sectionCounts === undefined) {
+    return [`${environmentId}\t${UNKNOWN_OMITTED_SECTIONS}`];
+  }
+  return omitted.sectionCounts.flatMap(({ sectionId, count }) =>
+    count > 0 ? [`${environmentId}\t${sectionId}`] : [],
+  );
+}
+
+/**
+ * Sections occupied by threads the live shells left out (older settled threads), as sorted
+ * `omittedSectionLines`. The loaded threads alone cannot show that such a section is empty.
+ */
+export const omittedSectionsKeyAtom = Atom.make((get): string => {
+  const catalog = get(environmentCatalog.catalogValueAtom);
+  const lines: string[] = [];
+  for (const environmentId of enabledEnvironmentIds(catalog)) {
+    const shell = get(environmentShell.stateValueAtom(environmentId));
+    if (shell.status !== "live" || Option.isNone(shell.snapshot)) continue;
+    lines.push(...omittedSectionLines(environmentId, shell.snapshot.value.olderSettled));
+  }
+  return lines.toSorted().join("\n");
+}).pipe(Atom.withLabel("scient-sections-omitted-sections"));

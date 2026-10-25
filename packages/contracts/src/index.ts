@@ -1,5 +1,4 @@
 export * from "./baseSchemas.ts";
-export * from "./orchestrationV2SnapshotWire.ts";
 export * from "./assistantCitations.ts";
 export * from "./fileCitations.ts";
 export * from "./composerContext.ts";

@@ -24,9 +24,7 @@ export interface TimelineHttpMeasurement {
 
 export interface TransferBudgetRun {
   readonly provider: ProviderDriverKind;
-  readonly startupTransport:
-    | "bounded-compact-http-with-live-cursor"
-    | "full-compact-http-with-live-cursor";
+  readonly startupTransport: "bounded-compact-http-with-live-cursor";
   readonly threadSnapshot: HttpTransferMeasurement;
   readonly measuredTurnWebSocket: WebSocketTransferTotals;
   readonly shellSnapshot: HttpTransferMeasurement;
@@ -252,11 +250,7 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     "",
     "## Detailed measurements",
     "",
-    ...[...new Set(runs.map((run) => run.startupTransport))].map((transport) =>
-      transport === "bounded-compact-http-with-live-cursor"
-        ? "Startup measures the shared client's bounded compact HTTP snapshot and live cursor. Earlier pages are requested separately and verified to reconstruct the complete retained history."
-        : "Startup measures the shared client's full compact HTTP snapshot and live cursor. The complete projection is checked against the default legacy response on the same endpoint.",
-    ),
+    "Startup measures the shared client's bounded compact HTTP snapshot and live cursor. Earlier pages are requested separately and verified to reconstruct the complete retained history.",
     "",
     "| Provider | Phase | Metric | Observed | Budget | Result |",
     "| --- | --- | --- | ---: | ---: | --- |",

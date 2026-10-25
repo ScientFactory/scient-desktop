@@ -1,9 +1,13 @@
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  turnItemUpdateCanEndBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
   CommandId,
+  isOrchestrationV2WorkActive,
   type ThreadId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
@@ -14,10 +18,12 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -294,6 +300,9 @@ export const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
+  // A shell merge or close sends no event, and the branch lookup caches an open pull request for
+  // a minute, so these threads' next lookup reads the host fresh.
+  const shellClosedThreads = new Set<ThreadId>();
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -487,7 +496,8 @@ export const make = Effect.gen(function* () {
       if (cwd === undefined) {
         return yield* Effect.die(new Error("thread project not found"));
       }
-      return yield* git.branchPullRequest({ cwd, branch: thread.branch });
+      const refresh = group.filter((member) => shellClosedThreads.delete(member.id)).length > 0;
+      return yield* git.branchPullRequest({ cwd, branch: thread.branch }, { refresh });
     });
 
     yield* Effect.forEach(
@@ -526,9 +536,35 @@ export const make = Effect.gen(function* () {
             }),
       ),
     );
-  const worker = yield* makeDrainableWorker((threadId: ThreadId | undefined) =>
-    runSweep(null, threadId),
-  );
+  // A thread that just stopped must not wait behind a full sweep or another thread's host
+  // reads: clients hold it in Working only briefly, so a late settle makes it appear and then vanish.
+  const fullSweeps = yield* makeDrainableWorker(() => runSweep(null));
+  const threadSweeps = yield* FiberSet.make<void>();
+  const threadSweepSlots = yield* Semaphore.make(8);
+  // One sweep per thread at a time; events during a running sweep coalesce into one more pass.
+  const threadSweepStates = new Map<ThreadId, "queued" | "running" | "rerun">();
+  const sweepThread = (
+    threadId: ThreadId,
+  ): Effect.Effect<void, Effect.Error<ReturnType<typeof runSweep>>> =>
+    Effect.sync(() => threadSweepStates.set(threadId, "running")).pipe(
+      Effect.andThen(runSweep(null, threadId)),
+      threadSweepSlots.withPermits(1),
+      Effect.andThen(
+        Effect.suspend(() => {
+          if (threadSweepStates.get(threadId) === "rerun") return sweepThread(threadId);
+          threadSweepStates.delete(threadId);
+          return Effect.void;
+        }),
+      ),
+    );
+  const enqueueThread = (threadId: ThreadId) =>
+    Effect.suspend(() => {
+      const state = threadSweepStates.get(threadId);
+      if (state === "running") threadSweepStates.set(threadId, "rerun");
+      if (state !== undefined) return Effect.void;
+      threadSweepStates.set(threadId, "queued");
+      return sweepThread(threadId).pipe(FiberSet.run(threadSweeps), Effect.asVoid);
+    });
 
   // Skip settle scripts in shared checkouts where other threads may still work.
   const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
@@ -543,35 +579,40 @@ export const make = Effect.gen(function* () {
       if (thread.settledOverride !== "settled") return;
       const settledAtMs = toMillis(thread.settledAt);
       if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
-      const run = yield* projectScripts.runForThread({
-        threadId,
-        projectId: thread.projectId,
-        worktreePath,
-        trigger: "settle",
-        startCommand: (write) =>
-          threadCommands.withLock(
-            threadId,
-            Effect.gen(function* () {
-              const current = yield* projections.getThread(threadId).pipe(
-                // A failed lifecycle read cannot admit a cleanup command.
-                Effect.option,
-              );
-              if (
-                Option.isNone(current) ||
-                current.value.settledOverride !== "settled" ||
-                toMillis(current.value.settledAt) !== settledAtMs ||
-                current.value.projectId !== thread.projectId ||
-                current.value.worktreePath !== worktreePath
-              )
-                return false;
-              yield* write;
-              return true;
-            }),
-          ),
-        observeCompletion: {},
-      });
-      if (run.status === "superseded") return;
       settleActionRunAt.set(threadId, settledAtMs);
+      // The command starts after the shell is ready, so a refused or failed start returns the receipt.
+      const releaseReceipt = Effect.sync(() => {
+        if (settleActionRunAt.get(threadId) === settledAtMs) settleActionRunAt.delete(threadId);
+      });
+      const run = yield* projectScripts
+        .runForThread({
+          threadId,
+          projectId: thread.projectId,
+          worktreePath,
+          trigger: "settle",
+          startCommand: (write) =>
+            threadCommands.withLock(
+              threadId,
+              Effect.gen(function* () {
+                const current = yield* projections.getThread(threadId).pipe(
+                  // A failed lifecycle read cannot admit a cleanup command.
+                  Effect.option,
+                );
+                if (
+                  Option.isNone(current) ||
+                  current.value.settledOverride !== "settled" ||
+                  toMillis(current.value.settledAt) !== settledAtMs ||
+                  current.value.projectId !== thread.projectId ||
+                  current.value.worktreePath !== worktreePath
+                )
+                  return yield* releaseReceipt.pipe(Effect.as(false));
+                yield* write;
+                return true;
+              }),
+            ),
+          observeCompletion: {},
+        })
+        .pipe(Effect.onError(() => releaseReceipt));
       if (run.status === "started" && run.completion) {
         yield* run.completion.pipe(Effect.forkDetach);
       }
@@ -596,16 +637,41 @@ export const make = Effect.gen(function* () {
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
       case "provider-session.detached":
-        return worker.enqueue(event.threadId);
+      case "run.background-work-cancelled":
+        return enqueueThread(event.threadId);
+      // Sweep only when the work can have ended: progress updates cannot settle anything.
+      case "subagent.updated":
+        return isOrchestrationV2WorkActive(event.payload.status)
+          ? Effect.void
+          : enqueueThread(event.threadId);
+      case "provider-thread.updated":
+        return backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])
+          ? Effect.void
+          : enqueueThread(event.threadId);
+      case "turn-item.updated": {
+        const item = event.payload;
+        if (
+          item.type === "command_execution" &&
+          !isOrchestrationV2WorkActive(item.status) &&
+          sourceControlDefinitions.definitions.some(
+            (definition) => definition.changeRequestCloseCommand?.test(item.input) === true,
+          )
+        ) {
+          shellClosedThreads.add(event.threadId);
+        }
+        return turnItemUpdateCanEndBackgroundWork(item)
+          ? enqueueThread(event.threadId)
+          : Effect.void;
+      }
       case "provider-session.updated":
         return event.payload.status !== "starting" && event.payload.status !== "running"
-          ? worker.enqueue(event.threadId)
+          ? enqueueThread(event.threadId)
           : Effect.void;
       case "run.updated":
         return ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
           event.payload.status,
         )
-          ? worker.enqueue(event.threadId)
+          ? enqueueThread(event.threadId)
           : Effect.void;
       default:
         return Effect.void;
@@ -622,8 +688,8 @@ export const make = Effect.gen(function* () {
     let lastSettlementSettings = autoSettlementSettingsKey(initialSettings);
     yield* forkParked(
       Effect.gen(function* () {
-        yield* worker.enqueue(undefined);
-        yield* worker.drain;
+        yield* fullSweeps.enqueue(undefined);
+        yield* fullSweeps.drain;
       }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.asVoid),
     );
     yield* forkParked(
@@ -633,7 +699,7 @@ export const make = Effect.gen(function* () {
           return Effect.void;
         }
         lastSettlementSettings = key;
-        return worker.enqueue(undefined);
+        return fullSweeps.enqueue(undefined);
       }),
     );
     yield* forkParked(Stream.runForEach(mergedPullRequests, (event) => runSweep(event)));
@@ -646,7 +712,10 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return { start, drain: worker.drain } satisfies ThreadSettlementServiceV2["Service"];
+  return {
+    start,
+    drain: Effect.andThen(fullSweeps.drain, FiberSet.awaitEmpty(threadSweeps)),
+  } satisfies ThreadSettlementServiceV2["Service"];
 });
 
 export const layer = Layer.effect(ThreadSettlementServiceV2, make);

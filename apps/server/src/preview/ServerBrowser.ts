@@ -1285,7 +1285,9 @@ const make = Effect.gen(function* () {
   const assertTabCapacity = (agentSessionId: string) => {
     if (atTabLimit(agentSessionId))
       throw new BrowserControlInterrupted(
-        `Too many server browser tabs are open (${AGENT_TAB_LIMIT} per agent session, ${SERVER_TAB_LIMIT} per server). Close one with t3_preview_close or reuse one from preview_status tabs.`,
+        // SCIENT-FORK:START Scient names the close tool scient_preview_close.
+        `Too many server browser tabs are open (${AGENT_TAB_LIMIT} per agent session, ${SERVER_TAB_LIMIT} per server). Close one with scient_preview_close or reuse one from preview_status tabs.`,
+        // SCIENT-FORK:END
         "tabLimit",
       );
   };

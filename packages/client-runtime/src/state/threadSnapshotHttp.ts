@@ -9,7 +9,7 @@ import * as ManagedRelay from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import {
   executeAuthenticatedEnvironmentHttpRequest,
-  withCompactThreadSnapshotHeaders,
+  withOrchestrationProtocolHeader,
 } from "./environmentHttpAuth.ts";
 
 // Long enough for a slow but alive server to finish. On a cold open a timeout makes the socket
@@ -53,7 +53,7 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
     request: ({ client, headers }) =>
       client.threadSnapshot({
         params: { threadId: input.threadId },
-        headers: withCompactThreadSnapshotHeaders(headers),
+        headers: withOrchestrationProtocolHeader(headers),
       }),
   });
 });

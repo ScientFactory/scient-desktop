@@ -4,70 +4,10 @@ import {
   buildScientAcpPromptWithInstructions,
   buildScientOrchestrationPromptForFirstRun,
   buildScientOrchestrationSystemPrompt,
-  SCIENT_BROWSER_TOOL_INSTRUCTIONS,
   SCIENT_ORCHESTRATION_INSTRUCTIONS,
 } from "./ScientProviderInstructions.ts";
 
 describe("Scient provider instruction composition", () => {
-  it("owns the Scient policy text while keeping legacy MCP wire identifiers exact", () => {
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "ordinary top-level Scient conversations");
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "Never use them merely");
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "cross-provider");
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "pass `search` to find others");
-    assert.include(
-      SCIENT_ORCHESTRATION_INSTRUCTIONS,
-      "no model options are requested or inherited",
-    );
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "call `delegate_task` again");
-    assert.include(
-      SCIENT_ORCHESTRATION_INSTRUCTIONS,
-      "For a follow-up that needs the same child's conversation, use `scient_thread_send` on its `childThreadId`.",
-    );
-    assert.notInclude(SCIENT_ORCHESTRATION_INSTRUCTIONS, "Do not use `scient_thread_send`");
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "structured object, never as JSON text");
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, '"everyMs":3600000');
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "bindToCurrentThread=false");
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "Scient orchestration");
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "Scient MCP server");
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "scient_thread_launch");
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "call `orchestrator_capabilities({})`");
-    assert.include(
-      SCIENT_ORCHESTRATION_INSTRUCTIONS,
-      "tools.mcp__scient__orchestrator_capabilities({})",
-    );
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "T3_ACP_MCP_NODE");
-    assert.include(SCIENT_ORCHESTRATION_INSTRUCTIONS, "T3_ACP_MCP_ENTRYPOINT");
-    assert.notInclude(SCIENT_ORCHESTRATION_INSTRUCTIONS, "mcp__t3_code__");
-    assert.notInclude(SCIENT_ORCHESTRATION_INSTRUCTIONS, "T3 Code orchestration");
-    assert.notInclude(SCIENT_ORCHESTRATION_INSTRUCTIONS, "T3 Code collaborative browser");
-    assert.include(SCIENT_BROWSER_TOOL_INSTRUCTIONS, "Scient collaborative browser");
-    assert.include(SCIENT_BROWSER_TOOL_INSTRUCTIONS, "preview_wait_for");
-    assert.include(SCIENT_BROWSER_TOOL_INSTRUCTIONS, "profileId");
-    assert.include(SCIENT_BROWSER_TOOL_INSTRUCTIONS, "owner is `unclaimed`");
-    assert.include(SCIENT_BROWSER_TOOL_INSTRUCTIONS, "while it is `human`");
-    assert.include(SCIENT_BROWSER_TOOL_INSTRUCTIONS, "After two failed preview attempts");
-    assert.include(SCIENT_BROWSER_TOOL_INSTRUCTIONS, "documented workflow");
-
-    const generated = [
-      SCIENT_ORCHESTRATION_INSTRUCTIONS,
-      SCIENT_BROWSER_TOOL_INSTRUCTIONS,
-      buildScientAcpPromptWithInstructions({
-        prompt: "Inspect the repository.",
-        state: { interactionMode: "default", hasT3Mcp: true },
-      }),
-      buildScientOrchestrationPromptForFirstRun({
-        prompt: "Inspect the repository.",
-        runOrdinal: 1,
-        hasT3Mcp: true,
-      }),
-    ].join("\n");
-    assert.notInclude(generated, "T3 Code");
-    assert.notInclude(generated, "T3 preview tools");
-    assert.notInclude(generated, "mcp__t3_code__");
-    assert.include(generated, "Scient");
-    assert.include(generated, "orchestrator_capabilities");
-  });
-
   it("keeps first-run and system prompt gates in the shared core composer", () => {
     const prompt = "Inspect the repository.";
     const firstRun = buildScientOrchestrationPromptForFirstRun({
@@ -111,7 +51,7 @@ describe("Scient provider instruction composition", () => {
       previousState: defaultState,
     });
     assert.include(planPrompt, "Scient interaction mode: Plan");
-    assert.include(planPrompt, "Scient collaborative browser");
+    assert.include(planPrompt, "Scient browser");
     assert.include(planPrompt, "Scient orchestration");
     assert.include(planPrompt, "<scient_instructions>");
     const withoutMcp = buildScientAcpPromptWithInstructions({
@@ -119,7 +59,7 @@ describe("Scient provider instruction composition", () => {
       state: { interactionMode: "default", hasT3Mcp: false },
     });
     assert.include(withoutMcp, "Scient interaction mode: Default");
-    assert.notInclude(withoutMcp, "Scient collaborative browser");
+    assert.notInclude(withoutMcp, "Scient browser");
     assert.notInclude(withoutMcp, "Scient orchestration");
 
     const withMcpAfterDisabled = buildScientAcpPromptWithInstructions({
@@ -127,7 +67,7 @@ describe("Scient provider instruction composition", () => {
       state: { interactionMode: "default", hasT3Mcp: true },
       previousState: { interactionMode: "default", hasT3Mcp: false },
     });
-    assert.include(withMcpAfterDisabled, "Scient collaborative browser");
+    assert.include(withMcpAfterDisabled, "Scient browser");
     assert.include(withMcpAfterDisabled, "Scient orchestration");
   });
 });

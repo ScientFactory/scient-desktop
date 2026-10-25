@@ -3,8 +3,6 @@ import * as Option from "effect/Option";
 import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-  COMPACT_THREAD_SNAPSHOT_FORMAT,
-  THREAD_SNAPSHOT_FORMAT_HEADER,
 } from "@t3tools/contracts";
 import * as Result from "effect/Result";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
@@ -35,14 +33,6 @@ export function withOrchestrationProtocolHeader(
   return {
     ...headers,
     [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-  };
-}
-
-/** Opt into reference compression; the response codec also accepts older full responses. */
-export function withCompactThreadSnapshotHeaders(headers: EnvironmentHttpAuthHeaders) {
-  return {
-    ...withOrchestrationProtocolHeader(headers),
-    [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT,
   };
 }
 

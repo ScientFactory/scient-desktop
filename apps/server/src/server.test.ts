@@ -39,13 +39,10 @@ import {
   MessageId,
   ExternalLauncherCommandNotFoundError,
   OrchestrationV2ShellSnapshot,
-  OrchestrationV2HttpThreadBoundedSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2TurnItem,
   OrchestrationV2SubagentJson,
   OrchestrationV2TurnItemJson,
-  COMPACT_THREAD_SNAPSHOT_FORMAT,
-  THREAD_SNAPSHOT_FORMAT_HEADER,
   OrchestrationV2ThreadHistoryPage,
   TerminalNotRunningError,
   TextGenerationError,
@@ -335,25 +332,13 @@ const SUCCESSFUL_GIT_EXECUTION = {
   stderrTruncated: false,
 };
 const decodeTransferThreadSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2HttpThreadBoundedSnapshot)),
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
 );
 const decodeLegacyThreadBoundedSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
 );
-const encodeTurnItemJson = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem));
 const decodeQueueOperationError = Schema.decodeUnknownEffect(ScientThreadQueueOperationError);
 const decodeQueueSnapshot = Schema.decodeUnknownEffect(ScientThreadQueueSnapshot);
-const decodeSnapshotWireAssertions = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      snapshotFormat: Schema.optionalKey(Schema.String),
-      projection: Schema.Struct({
-        turnItems: Schema.Array(Schema.Unknown),
-        visibleTurnItems: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
-      }),
-    }),
-  ),
-);
 const decodeTransferHistoryPage = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage)),
 );
@@ -1974,7 +1959,6 @@ const assertBrowserApiCorsPreflightHeaders = (
     "dpop",
     "range",
     "traceparent",
-    THREAD_SNAPSHOT_FORMAT_HEADER,
     ORCHESTRATION_PROTOCOL_HEADER,
   ]);
 };
@@ -5982,7 +5966,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "dpop",
         "range",
         "traceparent",
-        THREAD_SNAPSHOT_FORMAT_HEADER,
         ORCHESTRATION_PROTOCOL_HEADER,
       ]);
     }).pipe(Effect.provide(NodeHttpServerTest)),
@@ -11821,127 +11804,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  it.effect("negotiates compact HTTP snapshots without changing local or inherited history", () =>
-    Effect.gen(function* () {
-      const app = yield* buildAppUnderTest();
-      const source = yield* seedV2StreamThread(app);
-      yield* app.v2.eventSink.write({
-        events: transferV2TurnEvents(ProviderDriverKind.make("codex"), 0, false),
-      });
-      const sourceProjection = yield* app.v2.threads.getThreadProjection(transferV2ThreadId);
-      const sourceRun = sourceProjection.runs[0];
-      assertTrue(sourceRun !== undefined);
-      const targetThreadId = ThreadId.make("http-compact-inherited-target");
-      const created = transferV2ThreadCreated(ProviderDriverKind.make("codex"));
-      yield* app.v2.eventSink.write({
-        events: [
-          {
-            ...created,
-            id: EventId.make("http-compact-inherited-target-created"),
-            threadId: targetThreadId,
-            payload: {
-              ...source.thread,
-              id: targetThreadId,
-              lineage: {
-                parentThreadId: transferV2ThreadId,
-                relationshipToParent: "fork",
-                rootThreadId: transferV2ThreadId,
-              },
-              forkedFrom: { type: "run", threadId: transferV2ThreadId, runId: sourceRun.id },
-            },
-          },
-        ],
-      });
-      yield* app.v2.eventSink.write({
-        events: transferV2TurnEvents(ProviderDriverKind.make("codex"), 1, false).map((event) => {
-          switch (event.type) {
-            case "run.created":
-              return {
-                ...event,
-                threadId: targetThreadId,
-                payload: { ...event.payload, threadId: targetThreadId },
-              };
-            case "run.updated":
-              return {
-                ...event,
-                threadId: targetThreadId,
-                payload: { ...event.payload, threadId: targetThreadId },
-              };
-            case "message.updated":
-              return {
-                ...event,
-                threadId: targetThreadId,
-                payload: { ...event.payload, threadId: targetThreadId },
-              };
-            case "turn-item.updated":
-              return {
-                ...event,
-                threadId: targetThreadId,
-                payload: { ...event.payload, threadId: targetThreadId },
-              };
-            default:
-              throw new Error(`Unexpected transcript fixture event ${event.type}`);
-          }
-        }),
-      });
-      const headers = {
-        cookie: yield* getAuthenticatedSessionCookieHeader(),
-        [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-      };
-      const url = `${yield* getHttpServerUrl()}/api/orchestration/threads/${targetThreadId}/bounded`;
-      const legacyResponse = yield* measureHttpGet({ url, headers });
-      const compactResponse = yield* measureHttpGet({
-        url,
-        headers: { ...headers, [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT },
-      });
-      assert.equal(legacyResponse.status, 200);
-      assert.equal(compactResponse.status, 200);
-      const legacyText = Buffer.from(legacyResponse.decodedBody).toString("utf8");
-      const compactText = Buffer.from(compactResponse.decodedBody).toString("utf8");
-      const legacy = yield* decodeLegacyThreadBoundedSnapshot(legacyText);
-      const compact = yield* decodeTransferThreadSnapshot(compactText);
-      assertTrue("snapshotFormat" in compact);
-      const { snapshotFormat, ...expanded } = compact;
-      assert.equal(snapshotFormat, COMPACT_THREAD_SNAPSHOT_FORMAT);
-      assert.deepEqual(expanded, legacy);
-      const legacyJson = yield* decodeSnapshotWireAssertions(legacyText);
-      const compactJson = yield* decodeSnapshotWireAssertions(compactText);
-      assert.notProperty(legacyJson, "snapshotFormat");
-      assert.equal(compactJson.snapshotFormat, COMPACT_THREAD_SNAPSHOT_FORMAT);
-      let references = 0;
-      let inheritedInline = 0;
-      for (const [index, row] of legacy.projection.visibleTurnItems.entries()) {
-        const legacyRow = legacyJson.projection.visibleTurnItems[index];
-        const wireRow = compactJson.projection.visibleTurnItems[index];
-        assertTrue(legacyRow !== undefined && wireRow !== undefined);
-        assert.notProperty(legacyRow, "itemIndex");
-        assert.deepEqual(legacyRow.item, encodeTurnItemJson(row.item));
-        if ("itemIndex" in wireRow) {
-          references += 1;
-          assert.equal(row.visibility, "local");
-          assert.notProperty(wireRow, "item");
-          const { itemIndex: referenceIndex, ...referenceMetadata } = wireRow;
-          const { item: legacyItem, ...legacyMetadata } = legacyRow;
-          assertTrue(typeof referenceIndex === "number");
-          assert.deepEqual(referenceMetadata, legacyMetadata);
-          assert.deepEqual(compactJson.projection.turnItems[referenceIndex], legacyItem);
-        } else if (row.visibility === "inherited") {
-          inheritedInline += 1;
-          assert.deepEqual(wireRow, legacyRow);
-        }
-      }
-      assert.isAbove(references, 0);
-      assert.isAbove(inheritedInline, 0);
-      assert.deepEqual(
-        legacy.projection.runs.map((run) => run.id),
-        [RunId.make("run-1")],
-      );
-      assert.isTrue(
-        legacy.projection.visibleTurnItems.some((row) => row.sourceThreadId === transferV2ThreadId),
-      );
-    }).pipe(Effect.provide(NodeHttpServerTest)),
-  );
-
   it.effect("pages the complete V2 transcript after a bounded HTTP cold open", () =>
     Effect.gen(function* () {
       const app = yield* buildAppUnderTest();
@@ -14655,11 +14517,10 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
             return yield* Effect.scoped(
               Effect.gen(function* () {
                 const threadSnapshot = yield* measureHttpGet({
-                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}/bounded`,
+                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}/bounded?compactTurnItems=1&dedupeBodies=1&compactIds=1`,
                   headers: {
                     cookie,
                     [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-                    [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT,
                   },
                 });
                 yield* Effect.logInfo(
@@ -14909,11 +14770,10 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                 for (const events of transferV2LongTurnThreadBatches(provider))
                   yield* app.v2.eventSink.write({ events });
                 const longTurnColdOpen = yield* measureHttpGet({
-                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_V2_LONG_TURN_THREAD_ID}/bounded`,
+                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_V2_LONG_TURN_THREAD_ID}/bounded?compactTurnItems=1&dedupeBodies=1&compactIds=1`,
                   headers: {
                     cookie,
                     [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-                    [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT,
                   },
                 });
                 assert.equal(longTurnColdOpen.status, 200);

@@ -55,10 +55,12 @@ import {
   type Dispatch,
   type RefObject,
   type SetStateAction,
+  use,
   useEffect,
   useRef,
   useState,
 } from "react";
+import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "../../hooks/useStableCallback";
 
 /**
@@ -711,7 +713,9 @@ export function useComposerStash(input: {
     if (stashMenuClosesOn.prompt !== prompt || composerMenuOpen) setIsStashMenuOpen(false);
   }
 
+  const backgroundThread = use(BackgroundThreadContext);
   useEffect(() => {
+    if (backgroundThread) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
@@ -741,6 +745,7 @@ export function useComposerStash(input: {
     return () => window.removeEventListener("keydown", handler, true);
   }, [
     activePendingProgress,
+    backgroundThread,
     isComposerModelPickerOpen,
     keybindings,
     pendingUserInputs.length,

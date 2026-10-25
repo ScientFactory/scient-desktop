@@ -6,6 +6,7 @@ import { McpProtocol, type Tool } from "effect/ai";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
+import { scientAgentToolCopy } from "../provider/ScientAgentCopy.ts";
 import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
 import { listAvailableScientOperations } from "../scient/operations/AgentOperationDispatcher.ts";
 import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
@@ -70,14 +71,17 @@ export function makeScientToolListLayer(
             if (!scientOperationCatalog.forTool(tool.name) && !hostNames.has(tool.name))
               return yield* Effect.die(new Error(`Undeclared MCP tool ownership: ${tool.name}`));
           }
+          // Upstream tool text is renamed here, at the one listing every agent reads.
           const filtered = {
             ...listed,
-            tools: listed.tools.filter((tool) => {
-              const operation = scientOperationCatalog.forTool(tool.name);
-              return operation === undefined
-                ? hostNames.has(tool.name) && (!deviceNames.has(tool.name) || hasDeviceAccess)
-                : ids.has(operation.id);
-            }),
+            tools: listed.tools
+              .filter((tool) => {
+                const operation = scientOperationCatalog.forTool(tool.name);
+                return operation === undefined
+                  ? hostNames.has(tool.name) && (!deviceNames.has(tool.name) || hasDeviceAccess)
+                  : ids.has(operation.id);
+              })
+              .map(scientAgentToolCopy),
           };
           // RPC middleware erases the handler success type to an opaque marker.
           // This middleware is attached only to ListTools, checked above, and returns

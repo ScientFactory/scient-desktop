@@ -52,14 +52,11 @@ import {
 } from "./baseSchemas.ts";
 import {
   OrchestrationV2ShellSnapshot,
+  OrchestrationV2ThreadBoundedSnapshot,
+  OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadTranscript,
 } from "./orchestrationV2.ts";
-import {
-  OrchestrationV2HttpThreadBoundedSnapshot,
-  OrchestrationV2HttpThreadDetailSnapshot,
-  THREAD_SNAPSHOT_FORMAT_HEADER,
-} from "./orchestrationV2SnapshotWire.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
 import {
   PullRequestDiffInput,
@@ -93,7 +90,6 @@ const OrchestrationProtocolHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
   dpop: Schema.optionalKey(Schema.String),
   [ORCHESTRATION_PROTOCOL_HEADER]: Schema.Literal(ORCHESTRATION_PROTOCOL_VERSION_TEXT),
-  [THREAD_SNAPSHOT_FORMAT_HEADER]: Schema.optionalKey(Schema.String),
 });
 
 const OptionalDpopProofHeaders = Schema.Struct({
@@ -683,17 +679,20 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
 
 const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
   omitIdleSubagents: Schema.optionalKey(Schema.String),
+  omitOlderSettled: Schema.optionalKey(Schema.String),
 });
 
 const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
   compactTurnItems: Schema.optionalKey(Schema.String),
   dedupeBodies: Schema.optionalKey(Schema.String),
+  compactIds: Schema.optionalKey(Schema.String),
 });
 
 const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
   cursor: TrimmedNonEmptyString,
   throughEntryId: Schema.optional(TrimmedNonEmptyString),
   view: Schema.optional(Schema.Literals(["conversation", "activity"])),
+  compactIds: Schema.optionalKey(Schema.String),
 });
 
 const EnvironmentOrchestrationThreadHistoryErrors = [
@@ -718,7 +717,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
     HttpApiEndpoint.get("threadSnapshot", "/api/orchestration/threads/:threadId", {
       headers: OrchestrationProtocolHeaders,
       params: EnvironmentOrchestrationThreadSnapshotParams,
-      success: OrchestrationV2HttpThreadDetailSnapshot,
+      success: OrchestrationV2ThreadDetailSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
@@ -735,7 +734,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
       headers: OrchestrationProtocolHeaders,
       params: EnvironmentOrchestrationThreadSnapshotParams,
       query: EnvironmentOrchestrationThreadBoundedSnapshotQuery,
-      success: OrchestrationV2HttpThreadBoundedSnapshot,
+      success: OrchestrationV2ThreadBoundedSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
