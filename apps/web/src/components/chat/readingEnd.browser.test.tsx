@@ -398,27 +398,25 @@ it("reveals the latest message after very tall notes", async (context) => {
   // below the rendered window.
   await render(_fixture, key, [...entries, prompt, ...tallNotes], running);
   await advanceClock(_fixture, 192);
-  // The latest message lands below the last note. Wait until that is far past the rendered
-  // window: every rendered note measured at its current, very tall height (a slow runner
-  // lays a note's text out late, and a note measured short pulls the landing place into
-  // the window), and the last note's end several viewports below the reader. Fake time
-  // does not lay out or measure. The list is virtualized: a note outside the rendered
-  // window keeps its measurement (sizeAtIndex reads only measured sizes).
+  // The latest message lands right below the last note, and the reveal holds the reader at
+  // that note's first lines, so the last note alone decides whether the latest message
+  // arrives outside the rendered window. Wait for that, in the list's own coordinates
+  // (the ones it mounts rows by): the last note rendered, its text laid out (a slow runner
+  // lays it out late, and a note measured short pulls the landing place into the window),
+  // its measurement its current height, and its end more than two viewports below the
+  // window. The notes above are not waited on: the follow carries the reader past them, a
+  // note never rendered is never measured, and when one is measured later the list keeps
+  // the content in view in place, so the reader and the landing place move together.
   await vi.waitFor(() => {
     const state = _fixture.listRef.current!.getState();
     const viewportHeight = node(_fixture).clientHeight;
-    for (const note of tallNotes) {
-      const index = state.indexByKey(note.id)!;
-      // Every note must have a real measurement (never an estimate); only the on-screen
-      // height check needs the note to be rendered.
-      const size = state.sizeAtIndex(index) ?? 0;
-      expect(size, note.id).toBeGreaterThan(viewportHeight * 2);
-      const rendered = state.elementAtIndex(index);
-      if (rendered?.isConnected)
-        expect(size, note.id).toBeCloseTo(rendered.getBoundingClientRect().height, 0);
-    }
     const last = state.indexByKey(tallNotes.at(-1)!.id)!;
-    const landing = state.positionAtIndex(last) + (state.sizeAtIndex(last) ?? 0);
+    const rendered = state.elementAtIndex(last);
+    expect(rendered?.isConnected, "last note rendered").toBe(true);
+    const size = state.sizeAtIndex(last) ?? 0;
+    expect(size, "last note laid out").toBeGreaterThan(viewportHeight * 2);
+    expect(size, "last note measured").toBeCloseTo(rendered!.getBoundingClientRect().height, 0);
+    const landing = state.positionAtIndex(last) + size;
     expect(
       landing - (state.scroll + viewportHeight),
       "latest lands below the window",
