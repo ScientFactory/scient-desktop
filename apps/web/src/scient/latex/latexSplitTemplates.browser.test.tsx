@@ -1,5 +1,6 @@
 import { act, fakeTimers, render as _fixtureRender, type Screen } from "../../../test/render";
 import { waitForTestReceipt } from "../../../test/receipt";
+import { advanceTestClock } from "../../../test/testClock";
 import { useState, type ReactNode } from "react";
 
 import type { Editor as ProseEditor } from "@tiptap/core";
@@ -117,6 +118,10 @@ async function mount(_fixture: _Fixture, input: string, name: string, context: T
   _fixture.host.dataset.testid = "split-browser-host";
   _fixture.host.setAttribute("data-latex-split", "true");
   document.body.append(_fixture.host);
+  // A test past its deadline keeps running and never reaches its own disposal: its
+  // editors would stay on the page under the next test's locators and push its host
+  // below the viewport. Disposal also runs when the test finishes, whatever its body does.
+  context.onTestFinished(() => _fixture[Symbol.asyncDispose]());
   _fixture.root0 = _fixture.stack.use(
     await _fixtureRender(null, { container: _fixture.host, router: false }),
   );
@@ -326,11 +331,14 @@ async function selectWordWithoutJumping(
   { lateVisibilityReports = 0 } = {},
 ) {
   // SCIENT-FORK:START — on Linux Chromium, publishing a native selection in the 26-code
-  // literal field moves the reader 25px (the word 418.7 -> 393.9px on screen) on about
-  // every second CI run; macOS never does, even from CI's start position. That defect is
-  // fixed separately; until then only this case skips, and only on Linux.
-  if (name === "26-code" && navigator.userAgent.includes("Linux")) {
-    context.skip("Known Linux-only selection publish scroll; fixed separately.");
+  // literal field moved the reader 25px (the word 418.7 -> 393.9px on screen) on about
+  // every second CI run; macOS never does, even from CI's start position. Tracked in
+  // reviews/ci-flaky-tests-20261024/FOLLOWUP-26code-linux-jump.md. Only the ordinary
+  // 26-code case skips, only on Linux; the late-visibility-report case runs everywhere.
+  if (name === "26-code" && !lateVisibilityReports && navigator.userAgent.includes("Linux")) {
+    context.skip(
+      "Known Linux-only 26-code selection publish scroll; see FOLLOWUP-26code-linux-jump.",
+    );
   }
   // SCIENT-FORK:END
   await using _fixture = _createFixture();
@@ -348,7 +356,8 @@ async function selectWordWithoutJumping(
       .toBeTruthy();
   }
   const scroll = _fixture.host.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
-  using _late = lateVisibilityReports ? delayVisibilityReports(lateVisibilityReports) : null;
+  // On the fixture, so a test past its deadline stops holding the next test's reports.
+  if (lateVisibilityReports) _fixture.cleanup.use(delayVisibilityReports(lateVisibilityReports));
   await scrollToWord(state.visual, word, context);
   // Exposing an offscreen block can request another font before hit measurement.
   const target = wordPosition(state.visual.view.dom, word, false).element;
@@ -428,6 +437,8 @@ async function selectWordWithoutJumping(
     const afterGesture = scroll.scrollTop;
     expect(Math.abs(wordTop() - beforeTop), "native selection scroll").toBeLessThanOrEqual(2);
     // Publish the gesture's queued source reveal without advancing recurring editor services.
+    // Not once this test is past its deadline: the installed clock may be the next test's.
+    context.signal.throwIfAborted();
     await act(() => vi.runOnlyPendingTimersAsync());
     await vi.waitFor(() => expect(state.reveals).toHaveLength(1));
     const mapped = state.reveals[0]!;
@@ -550,7 +561,7 @@ it("a Source interaction cancels a queued Visual reveal before it can replace So
     );
     _fixture.host.dispatchEvent(new CustomEvent("scient-latex-source-interaction"));
   });
-  await act(() => vi.advanceTimersByTimeAsync(32));
+  await advanceTestClock(context.signal, 32);
   expect(state.reveals).toHaveLength(0);
   expect(state.source().getViewState().selections).toEqual(before);
 });
@@ -634,17 +645,22 @@ it.for([
 function _createFixture() {
   const stack = new AsyncDisposableStack();
   const cleanup = new AsyncDisposableStack();
+  // Disposed by the body's `await using` and when the test finishes: once.
+  let disposed: Promise<void> | undefined;
+  const dispose = async () => {
+    try {
+      await cleanup.disposeAsync();
+    } finally {
+      await stack.disposeAsync();
+    }
+  };
   return {
     host: undefined! as HTMLDivElement,
     stack,
     cleanup,
     root0: undefined! as Screen,
-    async [Symbol.asyncDispose]() {
-      try {
-        await cleanup.disposeAsync();
-      } finally {
-        await stack.disposeAsync();
-      }
+    [Symbol.asyncDispose]() {
+      return (disposed ??= dispose());
     },
   };
 }
