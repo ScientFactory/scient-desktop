@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { actionableDecisions, type OverleafFileDecision } from "./overleafModel";
+import { actionableDecisions, newFilesToSend, type OverleafFileDecision } from "./overleafModel";
 
 const review = {
   additions: [
@@ -58,5 +58,20 @@ describe("actionableDecisions", () => {
       ["main.aux", "send"],
     ]);
     expect(actionableDecisions(encoded, decisions)).toBe(decisions);
+  });
+});
+
+describe("newFilesToSend", () => {
+  it("counts an undone decision by the rule, not by the earlier sync's selection", () => {
+    const encoded = {
+      additions: [
+        { path: "plot.pdf", size: 10, selected: false, skippedBecause: null },
+        { path: "main.aux", size: 10, selected: false, skippedBecause: "build-output" },
+      ],
+    };
+    const decisions = new Map<string, OverleafFileDecision>([["plot.pdf", "keep"]]);
+    expect(newFilesToSend(encoded, decisions)).toBe(0);
+    decisions.delete("plot.pdf");
+    expect(newFilesToSend(encoded, decisions)).toBe(1);
   });
 });
