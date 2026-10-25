@@ -3,7 +3,10 @@ import { useLayoutEffect, useRef, type RefObject } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { observeResize } from "~/lib/observeResize";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
-import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
+import {
+  CHAT_TIMELINE_ANCHOR_OFFSET,
+  type TimelineListMeasurementState,
+} from "./timelineScrollAnchoring";
 import { isTimelineScrollTarget } from "./timelineScrollTarget";
 import { motionClock } from "./motionClock";
 import { streamingRevealActive, subscribeStreamingReveal } from "./useStreamingBlockEntrance";
@@ -36,6 +39,30 @@ export function promptResponseLastIndex(
     if (row?.kind === "message" && row.message.role === "user") return index - 1;
   }
   return rows.length - 1;
+}
+
+/**
+ * Where a row outside the rendered window sits on screen, from the list's
+ * measured positions rather than its element, so the reveal can scroll toward
+ * it (which mounts it) instead of waiting for it to mount. A row never rendered
+ * has no measured size yet: it is placed from its position (or right after the
+ * row before it) with the list's estimate.
+ */
+export function placeUnmountedRow(
+  state: Pick<TimelineListMeasurementState, "scroll" | "positionAtIndex" | "sizeAtIndex">,
+  index: number,
+  viewportTop: number,
+): { top: number; bottom: number } | null {
+  const previous = index > 0 ? index - 1 : undefined;
+  const position =
+    state.positionAtIndex(index) ??
+    (previous === undefined
+      ? undefined
+      : (state.positionAtIndex(previous) ?? NaN) + (state.sizeAtIndex(previous) ?? NaN));
+  const size = state.sizeAtIndex(index) ?? ESTIMATED_ROW_SIZE;
+  if (position === undefined || !Number.isFinite(position)) return null;
+  const top = viewportTop + position - state.scroll;
+  return { top, bottom: top + size };
 }
 
 /**
@@ -186,19 +213,9 @@ export function useBoundedAnswerFollow({
             top: element.getBoundingClientRect().top,
             rect: element.getBoundingClientRect(),
           };
-        // A row never rendered has no measured size yet: place it from its
-        // position (or right after the row before it) with the list's estimate.
-        const previous = index > 0 ? index - 1 : undefined;
-        const position =
-          measuredState.positionAtIndex(index) ??
-          (previous === undefined
-            ? undefined
-            : (measuredState.positionAtIndex(previous) ?? NaN) +
-              (measuredState.sizeAtIndex(previous) ?? NaN));
-        const size = measuredState.sizeAtIndex(index) ?? ESTIMATED_ROW_SIZE;
-        if (position === undefined || !Number.isFinite(position)) return null;
-        const top = viewportRect.top + position - measuredState.scroll;
-        return { element: null, top, rect: { top, bottom: top + size } };
+        const placed = placeUnmountedRow(measuredState, index, viewportRect.top);
+        if (!placed) return null;
+        return { element: null, top: placed.top, rect: placed };
       };
       // How far the conversation's real end is below its resting place above
       // the composer, never past the scroll range (nor into reserved space).
