@@ -1,9 +1,6 @@
 /**
- * Conversation import over HTTP: the `scientConversationImport` group
- * (create-upload, preview, import, cancel) and the signed upload route the
- * file itself streams through. Every endpoint requires
- * `SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE`; the upload route is authorized
- * by its signed, single-use URL, which only `createUpload` issues.
+ * Require import scope on every endpoint. Only authorized createUpload issues the single-use signed
+ * URL that admits the exact upload bytes.
  */
 import { EnvironmentHttpApi, SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";

@@ -56,13 +56,8 @@ export interface DesktopSettings {
   readonly wslBackendEnabled: boolean;
   readonly wslDistro: string | null;
   readonly voiceSelectedModelId: VoiceModelId | null;
-  // When true (and wslBackendEnabled is also true) the desktop runs only
-  // the WSL backend as the primary, and the Windows-side Node backend is
-  // not started. Designed for users who develop entirely inside WSL and
-  // don't want a second backend process running. Defaults to false so
-  // existing setups stay on the parallel-backends behavior. Changing
-  // this requires a desktop restart because the pool's primary spec is
-  // chosen once at layer init.
+  // WSL-only primary mode avoids a second Windows backend; default false preserves parallel setups.
+  // Requires restart because the pool chooses its primary spec at layer initialization.
   readonly wslOnly: boolean;
 }
 
@@ -547,7 +542,7 @@ const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (inp
 });
 
 /** @public */
-/** @public Service construction is part of the canonical Effect module API. */
+
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;

@@ -15,11 +15,8 @@ export interface ResolveLinkTargetInput {
 }
 
 /**
- * The target a click resolves to. "app" only comes back when the preference
- * asks for it, the runtime can honour it, the URL is one the in-app browser
- * can load and is not a sign-in, and the click carried no modifier — the
- * modifier is the one-gesture way out when the default is in-app, mirroring
- * how change-request links already treat it.
+ * Modifiers always escape the in-app browser default for this gesture.
+ * In-app routing also requires runtime support, a loadable URL and no sign-in.
  */
 export function resolveLinkTarget(input: ResolveLinkTargetInput): BrowserLinkTarget {
   if (input.event.metaKey || input.event.ctrlKey || input.event.button === 1) return "system";
@@ -33,15 +30,8 @@ export function resolveLinkTarget(input: ResolveLinkTargetInput): BrowserLinkTar
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
- * A page that signs the user in to an account, or the local page such a
- * sign-in returns to. It always opens in the system browser, whatever the
- * preference: that is where the user's accounts, passwords and passkeys are,
- * and its address bar shows whose page is asking.
- *
- * Recognized by what OAuth itself puts in the URL (a client asking for a
- * code, or a PKCE challenge), and by the two local pages an agent's sign-in
- * helper serves on a loopback address: `/launch`, a short link that redirects
- * to the provider, and `/callback` carrying the provider's answer.
+ * Sign-in URLs stay in the system browser, where accounts/passkeys and a visible origin already exist.
+ * OAuth code/PKCE parameters and loopback /launch or /callback identify provider sign-in flows.
  */
 export function isSignInUrl(url: string): boolean {
   let parsed: URL;
@@ -76,11 +66,7 @@ export function isWebUrl(url: string): boolean {
   }
 }
 
-/**
- * Before hydration the snapshot is the schema default ("system"), so a link clicked in the
- * first moments after launch would ignore a persisted "app" — opening is asynchronous anyway,
- * so waiting costs nothing the user can see.
- */
+/** Before hydration, the default "system" would ignore a saved "app" link target. */
 export async function resolveBrowserLinkTargetPreference(): Promise<BrowserLinkTarget> {
   await ensureClientSettingsHydrated();
   return getClientSettings().browserLinkTarget;

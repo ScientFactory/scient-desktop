@@ -11,11 +11,8 @@ import {
 import { isProviderSignInStartingHere } from "./providerSignInStarting";
 
 /**
- * What this window did about the operation's sign-in page, for a setup view.
- * `opening` is `null` until it opens the page. `startedHere` says this window
- * started the operation and is about to open it; when both are unset, another
- * client started the sign-in, or this window lost track of it (a full quit).
- * While mounted, the view also receives opening failures instead of a toast.
+ * Distinguish an opening owned by this window from another client's sign-in or lost local
+ * ownership. Mounted setup views own their opening failures instead of also emitting a toast.
  */
 export function useProviderSignInBrowser(
   key: ProviderSignInKey,

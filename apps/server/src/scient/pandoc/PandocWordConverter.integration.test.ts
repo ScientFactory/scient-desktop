@@ -1,11 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Local integration: builds attack fixtures on disk and copies review artifacts.
 /**
- * LOCAL INTEGRATION TESTS against the real, managed Pandoc 3.11 binary.
- *
- * They run only when `SCIENT_PANDOC_BINARY` names the pinned binary (for
- * example the one the Pandoc qualification downloaded) and are skipped
- * otherwise; nothing here downloads Pandoc. Set `SCIENT_PANDOC_FIXTURE_OUT`
- * to a directory to keep the fixture `.docx` files for review in Word.
+ * Run only with SCIENT_PANDOC_BINARY naming the pinned binary; never download implicitly.
+ * SCIENT_PANDOC_FIXTURE_OUT keeps docx artifacts for manual Word review.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";

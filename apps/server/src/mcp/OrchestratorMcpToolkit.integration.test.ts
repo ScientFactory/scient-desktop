@@ -991,12 +991,8 @@ describe("orchestrator MCP toolkit", () => {
           yield* Effect.gen(function* () {
             const orchestrator = yield* Orchestrator.OrchestratorV2;
             // SCIENT-FORK:START — offers/waits must not depend on CPU speed (CI flake fix)
-            // task_cancel stops a task's runs before it disposes the task's
-            // completion delivery (a failed stop must keep it). In between, the
-            // stopped run of an always-wake task can claim and offer a delivery,
-            // which the dispose then withdraws. The continuation consumer drops
-            // offers whose delivery is gone, so no live delivery may be offered;
-            // withdrawn offers are discarded.
+            // Cancellation stops runs before disposing delivery, allowing a stopped run to offer meanwhile.
+            // Consumers discard withdrawn offers; assert only that no live delivery remains offered.
             const expectNoLiveOffers = (threadId: ThreadId) =>
               Effect.gen(function* () {
                 yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();

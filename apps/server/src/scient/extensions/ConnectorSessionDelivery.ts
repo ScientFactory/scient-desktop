@@ -1,13 +1,6 @@
 /**
- * Computes which Scient connectors one provider session receives when its MCP
- * credential is prepared, and records the thread's delivery receipt.
- *
- * delivered = eligible (connected ∧ enabled ∧ allowed for the project, decided
- *             by ConnectorRuntime) ∧ the driver can carry remote HTTP MCP
- *             ∧ no provider-native MCP server already uses the name.
- *
- * Without a ConnectorRuntime in context nothing is delivered; without a
- * receipts store nothing is recorded. See docs/internals/scient-extensions.md.
+ * Deliver only eligible connectors to drivers supporting remote HTTP MCP, excluding provider-native
+ * name collisions. Missing runtime means no delivery; missing receipt store means no recording.
  */
 import type {
   ExtensionDeliveryEntry,
@@ -194,13 +187,9 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * The tracker one credential carries to its adapter, created once when the
-   * credential is issued and shared by every session that reuses it. Running
-   * it starts a registration and takes the next sequence; the returned
-   * reporter applies that registration's settled outcome to this runtime's
-   * receipt store unless a registration that started later already reported.
-   * The ordering state and the latest outcome live here, with the credential,
-   * so replacing or evicting the thread's receipt cannot reset them.
+   * Keep registration sequence/latest outcome with the credential across receipt
+   * eviction/replacement. A later-started registration that has reported must win over an older
+   * completion.
    */
   const registrationTrackerFor = (credential: {
     readonly threadId: ThreadId;

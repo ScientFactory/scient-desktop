@@ -22,6 +22,7 @@ import { Argument, Flag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
+import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
@@ -379,11 +380,9 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     Option.getOrUndefined(
       resolveOptionPrecedence(
         explicitBaseDir,
-        // The inherited bootstrap field is private IPC, but it still carries
         // SCIENT-FORK:START — Scient-facing copy.
-        // a Scient-owned state path. Ignore it in Scient so a direct
+        // Ignore private bootstrap state paths so direct launches cannot enter legacy state.
         // SCIENT-FORK:END
-        // server launch cannot be redirected into legacy state.
         SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled
           ? Option.none()
           : Option.fromUndefinedOr(bootstrap?.t3Home),
@@ -491,13 +490,23 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     () => 443,
   );
   const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
-  const host = Option.getOrElse(
-    resolveOptionPrecedence(
-      normalizedFlags.host,
-      Option.fromUndefinedOr(env.host),
-      Option.fromUndefinedOr(bootstrap?.host),
-    ),
-    () => (mode === "desktop" ? "127.0.0.1" : undefined),
+  const explicitHost = resolveOptionPrecedence(
+    normalizedFlags.host,
+    Option.fromUndefinedOr(env.host),
+    Option.fromUndefinedOr(bootstrap?.host),
+  );
+  // A background service exists to be reached from other devices, so it
+  // listens on private networks unless `service.env` sets `T3CODE_HOST`.
+  // Clients then learn its LAN address and prefer it over T3 Connect.
+  const privateNetworkOnly =
+    Option.isNone(explicitHost) &&
+    mode === "web" &&
+    (yield* resolveServiceLauncherMode().pipe(
+      Effect.map((launcher) => launcher.managed),
+      Effect.orElseSucceed(() => false),
+    ));
+  const host = Option.getOrElse(explicitHost, () =>
+    privateNetworkOnly ? "0.0.0.0" : mode === "desktop" ? "127.0.0.1" : undefined,
   );
   const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
@@ -547,10 +556,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     traceMaxBytes: env.traceMaxBytes,
     traceMaxFiles: env.traceMaxFiles,
     // SCIENT-FORK: Scient's fail-closed safety envelope stays authoritative
-    // and gates the endpoints upstream resolved. The resolution above already
-    // honors upstream's OpenTelemetry kill switch (OTEL_SDK_DISABLED /
-    // T3CODE_OTEL_SDK_DISABLED), per-signal Off, and the standard OTEL_*
-    // endpoint/header/protocol variables, so this only ever removes more.
+    // and can only remove endpoints after OTEL kill switches, per-signal Off,
+    // and standard environment-variable precedence have resolved.
     otlpTracesUrl:
       SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled || env.scientNextSafetyEnvelope
         ? undefined
@@ -580,6 +587,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ...derivedPaths,
     serverTracePath,
     host,
+    ...(privateNetworkOnly ? { privateNetworkOnly } : {}),
     staticDir,
     devUrl,
     ...(devAuthToken === undefined ? {} : { devAuthToken }),

@@ -91,11 +91,6 @@
       "purpose": "Keep automatic Pi and Oh My Pi metadata markers out of the model picker until discovery supplies a model."
     },
     {
-      "path": "apps/mobile/src/components/ProviderIcon.tsx",
-      "anchor": "props.provider === \"omp\"",
-      "purpose": "Show the Oh My Pi mark in the mobile provider icon."
-    },
-    {
       "path": "apps/server/src/mcp/McpHttpServer.ts",
       "anchor": "export const layerMcpTransport",
       "purpose": "Let Oh My Pi's Scient tool tests serve the authenticated MCP transport with a subset of toolkits."

@@ -1,10 +1,6 @@
 /**
- * Durable state of one manual Overleaf connection, and the rules every
- * replacement of it must keep. The coordinator owns transitions; this module
- * owns the record's shape and the evidence-preservation invariants that a
- * transition can never break, whatever caused it.
- *
- * Ephemeral reviews are deliberately absent: they never survive a restart.
+ * Connection replacements must preserve durable evidence regardless of transition cause. Reviews
+ * are ephemeral and must never survive restart as replayable authority.
  */
 import * as Schema from "effect/Schema";
 

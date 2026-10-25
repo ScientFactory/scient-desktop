@@ -1,10 +1,6 @@
 /**
- * Oh My Pi reports a model failure as turn data, not as an RPC error. The
- * assistant message ends with `stopReason` `"error"` or `"aborted"` and an
- * `errorMessage`; a session retry that gives up ends with
- * `auto_retry_end{success:false, finalError}`; and OMP 18.3+ closes every
- * prompt with `prompt_result{status}`. This module turns what the runtime saw
- * into the single terminal outcome Scient reports for the turn.
+ * OMP reports model failures in turn data, not RPC errors. Combine assistant stop/error, exhausted
+ * retry, and prompt_result evidence into one terminal outcome.
  */
 import type { OmpTarget } from "./OmpTarget.ts";
 
@@ -62,20 +58,9 @@ const firstText = (...values: ReadonlyArray<string | undefined>) =>
   values.find((value) => value !== undefined && value.trim().length > 0);
 
 /**
- * The terminal outcome of a turn. The first matching rule wins:
- *
- * 1. no confirmed terminal (drain unconfirmed, process exit) → unknown
- * 2. aborted → failed, `stopReason: "abort"`. The adapter's Stop owner maps
- *    user-requested aborts to interruption; otherwise the abort is a failure.
- * 3. a model error → failed, `stopReason: "error"`, detail from the retry's
- *    final error, then the message's error, then the prompt result's
- * 4. a session retry gave up → failed, as above
- * 5. `stopReason: "length"` → completed, keeping the stop reason
- * 6. otherwise (stop, toolUse, a recovered retry) → completed
- *
- * `prompt_result.status` is authoritative for rules 2–4 when present; the
- * assistant message and retry frames supply the detail, and decide alone on
- * OMP releases without a prompt status.
+ * Without confirmed terminal evidence, report unknown. A confirmed abort is failed; the Stop owner
+ * maps user-requested aborts to interruption. prompt_result status is authoritative when present;
+ * older versions use assistant/retry frames. Preserve length as completed and prefer retry error detail.
  */
 export const classifyOmpTurnOutcome = (
   target: OmpTarget,

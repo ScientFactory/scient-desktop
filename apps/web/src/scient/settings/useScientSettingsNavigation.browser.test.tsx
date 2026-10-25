@@ -3,7 +3,7 @@ import { render as _fixtureRender, type Screen, act } from "../../../test/render
 import { expect, it, vi } from "vite-plus/test";
 import { useScientSettingsNavigation } from "./useScientSettingsNavigation";
 import type { SettingsPath } from "../../components/settings/settingsSearch";
-import settingsRouteSource from "../../routes/settings.tsx?raw";
+import settingsRouteSource from "../../routes/_chat.settings.tsx?raw";
 
 type ObserveSettingsSectionVisibility =
   typeof import("./settingsSectionVisibility").observeSettingsSectionVisibility;
@@ -11,7 +11,6 @@ type ObserveSettingsSectionVisibility =
 const mocks = vi.hoisted(() => ({
   resolvedPath: "/settings/general",
   navigate: vi.fn(),
-  preload: vi.fn(() => Promise.resolve([])),
   closeMobile: vi.fn(),
   mobile: false,
   scroll: vi.fn(() => true),
@@ -27,7 +26,6 @@ vi.mock("./settingsSectionVisibility", async (importOriginal) => {
 vi.mock("@tanstack/react-router", async (_actualRouter) => ({
   ...(await _actualRouter<typeof import("@tanstack/react-router")>()),
   useNavigate: () => mocks.navigate,
-  useRouter: () => ({ preloadRoute: mocks.preload }),
   useRouterState: () => mocks.resolvedPath,
 }));
 vi.mock("../../components/settings/settingsLayout", () => ({
@@ -235,7 +233,7 @@ it("keeps the Settings page-root contract and scopes observer cleanup to navigat
   await _setupFixture0(_fixture);
 
   // This cross-file DOM contract must survive upstream changes to the route shell.
-  expect(settingsRouteSource).toMatch(/<SidebarInset\b[^>]*\bdata-settings-page-layout\b/);
+  expect(settingsRouteSource).toMatch(/<div\b[^>]*\bdata-settings-page-layout\b/);
   _fixture.container.setAttribute("data-settings-page-layout", "");
   await render(_fixture, "/settings/general");
   expect(mocks.observe).toHaveBeenCalledWith({

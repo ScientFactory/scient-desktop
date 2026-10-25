@@ -37,15 +37,8 @@ export interface ProviderInstanceRegistryShape {
   readonly getInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ScientProviderInstance | undefined>;
-  /**
-   * Recreate one configured instance from its unchanged authoritative config.
-   *
-   * Normal hot reload remains settings-driven. This narrow escape hatch is
-   * for dependencies that deliberately live outside settings, such as an
-   * app-private provider runtime that was atomically installed or updated.
-   * Unknown ids are a no-op. The old instance scope closes before the fresh
-   * instance is created, preserving the registry's one-live-instance rule.
-   */
+  /** Rebuild for dependencies outside settings, such as app-private runtime updates.
+   * Unknown ids are a no-op; close the old scope before creating the replacement. */
   readonly rebuildInstance: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
   /**
    * Every available (driver-registered, successfully created) instance,
@@ -58,38 +51,10 @@ export interface ProviderInstanceRegistryShape {
    * directly into `ProviderRegistry` output.
    */
   readonly listUnavailable: Effect.Effect<ReadonlyArray<ServerProvider>>;
-  /**
-   * Push notification stream emitted whenever the registry's contents
-   * change — instance added, removed, or rebuilt. The payload is `void`
-   * because consumers always want to re-pull `listInstances` /
-   * `listUnavailable` together.
-   *
-   * NOTE: because `Stream.fromPubSub` defers `PubSub.subscribe` until the
-   * stream starts running, forking a consumer via
-   * `Stream.runForEach(...).pipe(Effect.forkScoped)` races the next
-   * publish — the forked fiber may not have subscribed yet when the
-   * publish lands. Hot-reload consumers that must not miss a publish
-   * should use `subscribeChanges` below instead, which acquires the
-   * subscription synchronously in the caller's fiber before the consumer
-   * loop is forked.
-   */
+  /** streamChanges subscribes on consumption; use subscribeChanges before forking to avoid missing the next publish. */
   readonly streamChanges: Stream.Stream<void>;
-  /**
-   * Acquire a subscription to the registry's change channel synchronously
-   * in the caller's fiber. Returns a `PubSub.Subscription<void>` whose
-   * lifetime is scoped to the provided `Scope` (the subscription is
-   * released when the scope closes). Consumers typically `yield*` this
-   * in the same fiber that forks their consumer loop, then drain with
-   * `PubSub.take(subscription)` inside `Effect.forever`. Because the
-   * subscription is registered with the PubSub before this `yield*`
-   * returns, no subsequent publish can land in a gap.
-   *
-   * This exists because the `ProviderInstanceRegistry` publishes on a
-   * PubSub and `Stream.fromPubSub` defers subscription until the stream
-   * starts executing — a consumer that `forkScoped`s the stream
-   * consumption can miss a publish that lands in the narrow window
-   * between "fiber scheduled" and "fiber starts running".
-   */
+  /** Subscribe in the caller's fiber before forking the consumer.
+   * Stream.fromPubSub subscribes only on consumption, leaving a publish race. */
   readonly subscribeChanges: Effect.Effect<PubSub.Subscription<void>, never, Scope.Scope>;
 }
 
@@ -114,11 +79,7 @@ interface RegistryState {
 const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
   Equal.equals(a, b);
 
-/**
- * An explicit false on either the envelope or the raw config blob wins (most
- * restrictive) — old settings files can carry both flags with conflicting
- * values, and a user's disable must never be silently undone.
- */
+/** Conflicting saved flags must preserve any explicit disable. */
 const resolveEntryEnabled = (entry: ProviderInstanceConfig, typedConfig: unknown): boolean => {
   const rawConfigEnabled = providerInstanceConfigEnabledFlag(entry.config);
   if (entry.enabled === false || rawConfigEnabled === false) {
@@ -255,9 +216,7 @@ const makeReconcile = <R>(input: {
         nextRaw.map(([raw]) => ProviderInstanceId.make(raw)),
       );
 
-      // 1. Close scopes for instances that disappeared or whose config
-      //    changed. Do this BEFORE creating replacements so ids map 1-to-1
-      //    to live scopes at all times.
+      // Close changed/removed scopes before replacements to preserve one live scope per id.
       const removedIds: Array<ProviderInstanceId> = [];
       const replacedIds = new Set<ProviderInstanceId>();
       for (const [instanceId, live] of previousEntries) {

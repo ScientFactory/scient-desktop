@@ -1052,11 +1052,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             // A failed or cancelled switch must leave ensureThread able to reset
             // whatever transcript the native process may have partially loaded.
             fresh = false;
-            // Since OMP 18.6.3 a switch fails when none of the conversation's saved
-            // models can be restored, rather than continue on another model. Binding
-            // the thread's own selection keeps the native conversation. Only the
-            // unknown-pair rejection is certain to precede any session change, so
-            // only it falls back to the plain switch, the previous behavior.
+            // Bind the thread's own model to preserve native conversation on switches. Only
+            // unknown-pair rejection proves no session mutation and permits plain-switch fallback;
+            // other failures may already have changed state.
             const bound =
               modelSelection &&
               modelSelection.model !== "default" &&

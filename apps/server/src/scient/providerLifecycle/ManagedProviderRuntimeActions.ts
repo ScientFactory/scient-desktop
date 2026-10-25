@@ -504,11 +504,9 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
         : isDownload
           ? candidateArtifact
           : undefined;
-    // A download puts the managed copy in use, unless the user already selected
-    // it: then it is the runtime in use and maintaining it replaces nothing.
-    // Otherwise (no copy, or a legacy copy that was never selected) look at
-    // the system runtime now, whatever was seen when this instance was built.
-    // A disabled instance's tool is never run: its system runtime stays unknown.
+    // After download, inspect the system runtime now unless managed was already selected; stale
+    // instance-construction evidence cannot describe what activation replaces. Never run a disabled
+    // instance's tool, leaving its system state unknown.
     const replacesUnselected = isDownload && !hasCustomRuntime && managed?.selected !== true;
     const probeAllowed = input.configuredRuntimeProbeAllowed !== false;
     if (replacesUnselected && probeAllowed)

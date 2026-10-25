@@ -1,36 +1,41 @@
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, it } from "@effect/vitest";
+
 import { buildRuntimeInstructions } from "./runtimeInstructions.ts";
 
 describe("buildRuntimeInstructions", () => {
-  // Every harness name takes the same interpolation path.
-  it.each(["Codex"])("identifies the %s harness and describes media embedding", (harness) => {
-    const instructions = buildRuntimeInstructions({ harness });
-    expect(instructions).toContain(`running in T3 Code through the ${harness} harness.`);
-    expect(instructions).toContain("embed images and videos");
-    expect(instructions).toContain("Markdown with absolute file paths");
-    expect(instructions).not.toContain("undefined");
+  it("links PRs the agent creates, takes over, or pushes to, and no others", () => {
+    const instructions = buildRuntimeInstructions({ harness: "Codex" });
+
+    assert.include(instructions, "Link each PR you create, take over, or push to");
+    assert.include(instructions, "one link_pull_request per PR");
+    assert.include(instructions, "Skip PRs you only read or review");
+    assert.include(instructions, "If linking fails, say so.");
+    assert.notInclude(instructions, "git log -1");
+    assert.notInclude(instructions, "work on");
+    // Listing linked PRs as an end-of-work check found nothing to add in audited threads.
+    assert.notInclude(instructions, "list_thread_pull_requests");
   });
 
-  it("uses the host product in agent wake-up instructions without renaming the MCP server", () => {
-    const instructions = buildRuntimeInstructions({ harness: "Codex", productName: "Scient" });
-    expect(instructions).toContain("running in Scient through the Codex harness.");
-    expect(instructions).toContain("Scient wakes you when checks finish");
-    expect(instructions).toContain("MCP server named t3-code exposes link_pull_request");
-    expect(instructions).toContain("As a delegated child task, do not watch or poll PRs");
-    expect(instructions).not.toContain("T3 Code");
-  });
+  it("waits on a PR only with the watch, never with a poll loop", () => {
+    const instructions = buildRuntimeInstructions({ harness: "Codex" });
 
-  it("lets a host replace product identity and product policy without changing formatting", () => {
-    const instructions = buildRuntimeInstructions({
-      harness: "Cursor",
-      model: "model-1",
-      productName: "Host Product",
-      pullRequestLinkingInstructions: "<host_policy>Link through the host.</host_policy>",
-    });
-    expect(instructions).toContain(
-      "running in Host Product through the Cursor harness, as model-1.",
+    assert.notInclude(instructions, "Creation, pending checks, or a merge ask alone is not enough");
+    assert.include(instructions, "Links and watches persist across pushes.");
+    // The wake message itself carries the do-not-re-watch rule.
+    assert.notInclude(instructions, "On a wake");
+    assert.include(
+      instructions,
+      "Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch",
     );
-    expect(instructions).toContain("<host_policy>Link through the host.</host_policy>");
-    expect(instructions).not.toContain("<pull_request_linking>");
+    assert.notInclude(instructions, "merge it now");
+    assert.include(instructions, "Otherwise act now or hand back.");
+    assert.include(instructions, "then watch and end your turn");
+    assert.include(instructions, "never watch, even if the brief says babysit");
+    assert.include(
+      instructions,
+      "After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>.",
+    );
+    assert.include(instructions, "Never wait with sleep");
+    assert.include(instructions, "call unwatch_pull_request");
   });
 });

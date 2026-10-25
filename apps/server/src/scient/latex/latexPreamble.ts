@@ -1,20 +1,7 @@
 /**
- * Reads which packages a document asks for out of the document itself, before
- * anything has been compiled.
- *
- * The reactive resolver — compile, read the missing file out of the
- * transcript, fetch it, compile again — is correct and unavoidable for a
- * package another package pulls in, but it is a terrible way to start. LaTeX
- * takes an emergency stop at the *first* input it cannot find, so a preamble
- * naming eight packages the distribution does not carry costs eight compiles
- * and eight `tlmgr` runs, each of which is a process, a repository round trip,
- * and a rebuild of the distribution's file index. Reading the preamble first
- * turns that into one fetch.
- *
- * Nothing here decides anything: it turns source text into names, bounded and
- * deduplicated, and the caller decides which of them are worth fetching.
- * Nothing here reads files either — the caller supplies the bounded heads it
- * already reads for root resolution.
+ * LaTeX stops at the first missing input, so pre-read bounded preamble heads to batch initial
+ * package fetches instead of paying one compile/network/index rebuild per package. Return names
+ * only; callers own file reads and fetch policy.
  */
 
 /** Longer than any real preamble's package list; a generated file is not one. */
@@ -77,11 +64,8 @@ export function latexPreamblePackages(source: string): ReadonlyArray<string> {
 }
 
 /**
- * The files this source pulls in, as workspace-relative paths would be written
- * in the document: forward slashes, `.tex` supplied when the author left it
- * off, and never a parent walk or an absolute path — a caller resolves these
- * against the root document's own directory and must not be handed something
- * that leaves it.
+ * Emit only forward-slash relative include paths with optional tex suffix. Callers resolve against
+ * the root directory; never hand them absolute or parent-walking dependencies.
  */
 export function latexPreambleIncludes(source: string): ReadonlyArray<string> {
   const targets: string[] = [];

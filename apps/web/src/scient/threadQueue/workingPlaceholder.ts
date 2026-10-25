@@ -1,10 +1,6 @@
 /**
- * Busy-state composer placeholder for Scient's thread queue. Pure and
- * Scient-owned so the composer seam stays a single marked branch. The hint is
- * derived from T3's own `composerSubmissionIntentForEnter` so the advertised
- * keys cannot drift from the real Enter/modifier behavior, including the
- * configurable follow-up ("queue"/"steer") and send-shortcut settings. See
- * `docs/internals/scient-thread-queue.md`.
+ * Derive key hints from the real composer submission-intent policy so queue/steer, follow-up, and
+ * send-shortcut settings cannot drift from behavior. See docs/internals/scient-thread-queue.md.
  */
 
 import {
@@ -33,11 +29,8 @@ const actionLabelForIntent = (
 };
 
 /**
- * Returns the placeholder to show while the agent is working, or `null` when
- * the composer should keep its regular placeholder. Desktop hint keys mirror
- * the actual submission intents; mobile falls back to a short status line
- * because Enter does not submit there (the send button already reads
- * "Queue message" while running).
+ * Desktop hints must mirror actual submission keys. Mobile Enter does not submit, so use status
+ * text and let its send button communicate Queue message.
  */
 export function resolveComposerWorkingPlaceholder(
   input: ComposerWorkingPlaceholderInput,

@@ -3,34 +3,22 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import {
   EnvironmentId,
   ProjectId,
-  PULL_REQUEST_FILTER_MAX_LABEL_GROUPS,
-  PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH,
-  setPullRequestFilterLabel,
   type PullRequestFilterOptionKind,
   type PullRequestFilterOptionsInput,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useRef, useState } from "react";
-import { FlatList, Platform, View, type TextInputInstance } from "react-native";
+import { useState } from "react";
+import { FlatList, Platform } from "react-native";
 
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { SearchField } from "../../components/ui/SearchField";
 import { SelectionRow } from "../../components/ui/SelectionRow";
-import { SheetHeader } from "../../components/ui/SheetHeader";
-import { Toolbar } from "../../components/ui/Toolbar";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useDebouncedValue } from "../../state/queries";
-import {
-  createNativeMailSearchToolbarItem,
-  NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
-} from "../layout/native-mail-search-toolbar";
 import { pullRequestFilterChoices, pullRequestLabelColors } from "./pullRequestList";
+import { PullRequestLabelDot } from "./PullRequestLabelDot";
+import { PullRequestSearchSheet } from "./PullRequestSearchSheet";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 
 export type PullRequestFilterSearchParams = {
@@ -52,14 +40,10 @@ const optionsFamily = Atom.family((key: string) => {
   }[] = JSON.parse(key);
   return Atom.make((get) => {
     const results = targets.map((target) => get(composerPullRequests.filterOptions(target)));
-    const values = results.flatMap((result) => Option.toArray(AsyncResult.value(result)));
     return {
-      values,
+      values: results.flatMap((result) => Option.toArray(AsyncResult.value(result))),
       waiting: results.some((result) => result.waiting),
-      failed:
-        results.some(AsyncResult.isFailure) ||
-        values.some((result) => result.partialFailure !== undefined),
-      truncated: values.some((result) => result.truncated),
+      failed: results.some(AsyncResult.isFailure),
     };
   });
 });
@@ -71,31 +55,23 @@ export function PullRequestFilterSearchScreen({
   const { kind, environmentId, environmentIds, suggestions, labelColors } = route.params;
   const listControls = usePullRequestListControls();
   const controls = listControls.controlsFor(environmentId);
-  const integratedSearch = useNativeMailSearchToolbar();
-  const searchRef = useRef<TextInputInstance>(null);
   const [query, setQuery] = useState("");
-  const typed = query.trim();
-  const queryTooLong = typed.length > PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH;
+  const typed = query.trim().slice(0, 100);
   const sent = useDebouncedValue(typed, 250);
   // Until the search catches up with the typing, the host's answers are for older text.
   const settled = sent === typed;
   const key = JSON.stringify(
-    settled && !queryTooLong
-      ? environmentIds.map((id) => ({
-          environmentId: EnvironmentId.make(id),
-          input: {
-            kind,
-            ...(controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {}),
-            ...(sent ? { query: sent } : {}),
-          },
-        }))
-      : [],
+    environmentIds.map((id) => ({
+      environmentId: EnvironmentId.make(id),
+      input: {
+        kind,
+        ...(controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {}),
+        ...(sent ? { query: sent } : {}),
+      },
+    })),
   );
   const hosted = useAtomValue(optionsFamily(key));
   const selectedLabels = controls.filters.labels?.flat() ?? [];
-  const labelLimitReached =
-    kind === "labels" &&
-    (controls.filters.labels?.length ?? 0) >= PULL_REQUEST_FILTER_MAX_LABEL_GROUPS;
   const author = controls.filters.author;
   const selected = kind === "labels" ? selectedLabels : author ? [author] : [];
   const rows = pullRequestFilterChoices({
@@ -112,7 +88,6 @@ export function PullRequestFilterSearchScreen({
     ...pullRequestLabelColors(hosted.values.flatMap((options) => options.labels)),
     ...labelColors,
   };
-  const hasIncompleteResult = settled && !hosted.waiting && (hosted.failed || hosted.truncated);
   const isSelected = (value: string) =>
     selected.some((held) => held.toLowerCase() === value.toLowerCase());
   const choose = (value: string) => {
@@ -124,157 +99,79 @@ export function PullRequestFilterSearchScreen({
       navigation.goBack();
       return;
     }
-    const labels = setPullRequestFilterLabel(controls.filters.labels, value, !isSelected(value));
-    if (labels === controls.filters.labels) return;
+    const labels = isSelected(value)
+      ? selectedLabels.filter((label) => label.toLowerCase() !== value.toLowerCase())
+      : [...selectedLabels, value].slice(0, 10);
     listControls.setControls(environmentId, {
       ...controls,
-      filters: { ...controls.filters, labels },
+      filters: {
+        ...controls.filters,
+        labels: labels.length ? labels.map((label) => [label]) : undefined,
+      },
     });
   };
   const placeholder = kind === "labels" ? "Search labels" : "Search authors";
-  const list = (
-    <FlatList
-      data={rows}
-      keyExtractor={(value) => value.toLowerCase()}
-      className="flex-1"
-      contentInsetAdjustmentBehavior="automatic"
-      automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
-      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={{
-        paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: integratedSearch ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET + 16 : 16,
-      }}
-      ListHeaderComponent={
-        queryTooLong || hasIncompleteResult || labelLimitReached ? (
-          <View className="gap-2 pb-3">
-            {queryTooLong ? (
-              <Text accessibilityRole="alert" className="text-sm text-foreground-muted">
-                Search supports up to {PULL_REQUEST_FILTER_OPTION_MAX_QUERY_LENGTH} characters.
-              </Text>
-            ) : null}
-            {hasIncompleteResult && hosted.failed ? (
-              <Text accessibilityRole="alert" className="text-sm text-foreground-muted">
-                {rows.length
-                  ? "Some hosts or repositories couldn't be searched. Results are incomplete."
-                  : "Couldn't search the hosts. Try again in a moment."}
-              </Text>
-            ) : null}
-            {hasIncompleteResult && hosted.truncated ? (
-              <Text accessibilityRole="alert" className="text-sm text-foreground-muted">
-                More matches are available; refine your search.
-              </Text>
-            ) : null}
-            {labelLimitReached ? (
-              <Text className="text-sm text-foreground-muted">
-                Select up to {PULL_REQUEST_FILTER_MAX_LABEL_GROUPS} label filters. Clear one to
-                choose another.
-              </Text>
-            ) : null}
-          </View>
-        ) : undefined
-      }
-      renderItem={({ item, index }) => {
-        const checked = isSelected(item);
-        return (
-          <SelectionRow
-            title={item}
-            role={kind === "labels" ? "checkbox" : "radio"}
-            selected={checked}
-            disabled={labelLimitReached && !checked}
-            isFirst={index === 0}
-            isLast={index === rows.length - 1}
-            leading={
-              kind === "labels" ? (
-                // Uncolored labels keep the dot's room so every name starts at the same edge.
-                <View
-                  className="size-2.5 rounded-full"
-                  style={{ backgroundColor: colors[item.toLowerCase()] ?? "transparent" }}
-                />
-              ) : undefined
-            }
-            onPress={() => choose(item)}
-          />
-        );
-      }}
-      ListEmptyComponent={
-        queryTooLong || hasIncompleteResult ? undefined : hosted.waiting || !settled ? (
-          <AppActivityIndicator className="my-8" />
-        ) : (
-          <EmptyState
-            title={kind === "labels" ? "No matching labels" : "No matching authors"}
-            detail={
-              kind === "labels"
-                ? "Search the labels of the repositories this list covers."
-                : "Search people by name or handle on the repositories' hosts."
-            }
-            variant="plain"
-          />
-        )
-      }
-    />
-  );
-  const title = kind === "labels" ? "Filter by label" : "Filter by author";
-  if (Platform.OS === "android") {
-    return (
-      <View className="flex-1 bg-sheet" collapsable={false}>
-        <AndroidScreenHeader title={title} hideBottomBorder onBack={() => navigation.goBack()} />
-        <View className="bg-header px-4 pb-3 pt-1">
-          <SearchField
-            inputRef={searchRef}
-            accessibilityLabel={placeholder}
-            clearAccessibilityLabel={
-              kind === "labels" ? "Clear label search" : "Clear author search"
-            }
-            onChangeText={setQuery}
-            placeholder={placeholder}
-            value={query}
-          />
-        </View>
-        {list}
-      </View>
-    );
-  }
   return (
-    <View className="flex-1 bg-sheet">
-      <SheetHeader
-        title={title}
-        onClose={() => navigation.goBack()}
-        accessibilityLabel={kind === "labels" ? "Close label filter" : "Close author filter"}
-      />
-      <NativeStackScreenOptions
-        options={{
-          unstable_headerToolbarItems: integratedSearch
-            ? () => [
-                createNativeMailSearchToolbarItem({
-                  placeholder,
-                  onSearchTextChange: setQuery,
-                  showsSearchDismissButton: true,
-                  searchTextChangeId: "pr-filter-option-search",
-                }),
-              ]
-            : undefined,
-          headerSearchBarOptions: integratedSearch
-            ? undefined
-            : {
-                placeholder,
-                allowToolbarIntegration: true,
-                autoCapitalize: "none",
-                hideNavigationBar: false,
-                obscureBackground: false,
-                onChangeText: (event) => setQuery(event.nativeEvent.text),
-                onCancelButtonPress: () => setQuery(""),
-              },
-        }}
-      />
-      {integratedSearch ? null : (
-        <Toolbar placement="bottom">
-          <Toolbar.SearchBarSlot />
-        </Toolbar>
+    <PullRequestSearchSheet
+      title={kind === "labels" ? "Filter by label" : "Filter by author"}
+      placeholder={placeholder}
+      closeAccessibilityLabel={kind === "labels" ? "Close label filter" : "Close author filter"}
+      clearAccessibilityLabel={kind === "labels" ? "Clear label search" : "Clear author search"}
+      searchTextChangeId="pr-filter-option-search"
+      query={query}
+      onQueryChange={setQuery}
+    >
+      {({ paddingBottom }) => (
+        <FlatList
+          data={rows}
+          keyExtractor={(value) => value.toLowerCase()}
+          className="flex-1"
+          contentInsetAdjustmentBehavior="automatic"
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom }}
+          renderItem={({ item, index }) => (
+            <SelectionRow
+              title={item}
+              role={kind === "labels" ? "checkbox" : "radio"}
+              selected={isSelected(item)}
+              isFirst={index === 0}
+              isLast={index === rows.length - 1}
+              leading={
+                kind === "labels" ? (
+                  <PullRequestLabelDot color={colors[item.toLowerCase()] ?? null} />
+                ) : undefined
+              }
+              onPress={() => choose(item)}
+            />
+          )}
+          ListEmptyComponent={
+            hosted.waiting || !settled ? (
+              <AppActivityIndicator className="my-8" />
+            ) : (
+              <EmptyState
+                title={
+                  hosted.failed
+                    ? "Couldn't search the host"
+                    : kind === "labels"
+                      ? "No matching labels"
+                      : "No matching authors"
+                }
+                detail={
+                  hosted.failed
+                    ? "The host didn't answer. Try again in a moment."
+                    : kind === "labels"
+                      ? "Search the labels of the repositories this list covers."
+                      : "Search people by name or handle on the repositories' hosts."
+                }
+                variant="plain"
+              />
+            )
+          }
+        />
       )}
-      {list}
-    </View>
+    </PullRequestSearchSheet>
   );
 }

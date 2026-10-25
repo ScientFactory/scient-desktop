@@ -1,12 +1,7 @@
 /**
- * Incremental server-sent events parser shared by every connector boundary that
- * reads an upstream event stream (the admission probe and the proxy redactor),
- * so both accept exactly the same streams.
- *
- * Lines end in CRLF, CR or LF, mixed freely and split across chunks; a CRLF
- * whose LF arrives in the next chunk is one line ending. Each event is bounded
- * by its own raw upstream bytes, terminators included; the byte of a CRLF split
- * after a dispatch is charged to the event it ends, never to the next one.
+ * Probe and redactor must parse identical SSE streams. Treat split CRLF as one terminator and
+ * charge all its raw bytes to the ending event, never the next one, so chunk boundaries cannot
+ * bypass event limits.
  */
 
 /** One dispatched event: fields as received (data lines not yet joined). */

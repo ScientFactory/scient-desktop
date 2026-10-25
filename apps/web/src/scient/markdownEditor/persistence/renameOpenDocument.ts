@@ -119,12 +119,8 @@ export type RenameOpenDocumentResult =
     };
 
 /**
- * Renames an open document by moving it in place: the editor, its undo history,
- * caret and saving stay; only the path changes.
- *
- * Phases: freeze (editors and the session hold), destination preflight, server
- * rename, commit (the session moves), the caller's view update, and the views'
- * acknowledgement. The hold is released last, whatever happens.
+ * Hold editors/session through rename, session commit, view update, and acknowledgement; release
+ * last on every path so path changes retain the editor, undo history, caret, and save ownership.
  */
 export async function renameOpenDocument(input: {
   readonly lease: MarkdownPersistenceLease;

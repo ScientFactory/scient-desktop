@@ -2,7 +2,6 @@ import { useComposerAttachmentActions } from "./use-composer-attachment-actions"
 import * as Dialog from "../components/ui/Dialog";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "./session";
-import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -29,7 +28,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
-import { pastedTextDisposition } from "@t3tools/client-runtime/text-paste";
+import { nextPastedTextFileName, pastedTextDisposition } from "@t3tools/client-runtime/text-paste";
 import {
   parseCodexFeedbackCommand,
   submitCodexFeedback,
@@ -88,9 +87,7 @@ import {
 import { Atom } from "effect/reactivity";
 import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { appendPreparedComposerDraftAttachments } from "./composer-attachment-admission";
-import { prepareQueuedRunEditAttachments } from "../lib/queuedEditAttachmentPreparation";
-
+import { prepareTurnAttachments } from "../lib/attachmentUpload";
 import { DEFAULT_FOLLOW_UP_BEHAVIOR } from "../lib/followUpBehavior";
 import { mobilePreferencesAtom } from "./preferences";
 import { environmentThreadDetails } from "./threads";
@@ -137,44 +134,26 @@ export function appendReviewCommentToDraft(input: {
     return;
   }
   if (input.attachments && input.attachments.length > 0) {
-    const admission = appendPreparedComposerDraftAttachments(threadKey, input.attachments, {
+    const rejectedCount = appendComposerDraftAttachments(threadKey, input.attachments, {
       appendReference: true,
     });
-    const rejectedCount = admission.rejectedCount;
     if (rejectedCount > 0) {
       setPendingConnectionError(
-        admission.limitError ??
-          `${rejectedCount} comment attachment${rejectedCount === 1 ? " was" : "s were"} not added. Messages can contain at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+        `${rejectedCount} comment attachment${rejectedCount === 1 ? " was" : "s were"} not added. Messages can contain at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
       );
     }
   }
 }
 
-// SCIENT-FORK:START — the React Compiler cannot compile a `??` inside a try block.
-function attachmentLimitMessage(limitError: string | null | undefined): string {
-  return (
-    limitError ?? `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`
-  );
-}
-// SCIENT-FORK:END
-
-/**
- * Resolved per call rather than captured, so a callback created before the
- * edit began still writes to the right place.
- */
+/** Resolve per call so callbacks created before editing still target the current draft. */
 function activeComposerDraftKey(thread: {
   readonly environmentId: EnvironmentId;
   readonly id: ThreadId;
 }): string {
-  return resolveActiveComposerDraftKey(scopedThreadKey(thread.environmentId, thread.id));
-}
-
-// SCIENT-FORK:START — the extracted intake hook uses the same live queued-edit owner.
-function resolveActiveComposerDraftKey(threadKey: string): string {
+  const threadKey = scopedThreadKey(thread.environmentId, thread.id);
   const edit = getQueuedRunEdit(threadKey);
   return edit === null ? threadKey : queuedEditDraftKey(threadKey, edit.runId);
 }
-// SCIENT-FORK:END
 
 export function useThreadDraftForThread(input: {
   readonly environmentId?: EnvironmentId;
@@ -216,6 +195,20 @@ export function useThreadComposerState() {
   });
   const [isSavingQueuedEdit, setIsSavingQueuedEdit] = useState(false);
   const savingQueuedEditRef = useRef(false);
+  const pastedTextFileNamesRef = useRef<{ threadKey: string | null; names: Set<string> }>({
+    threadKey: null,
+    names: new Set(),
+  });
+  const reservePastedTextFileName = (threadKey: string, existingNames: ReadonlyArray<string>) => {
+    if (pastedTextFileNamesRef.current.threadKey !== threadKey) {
+      pastedTextFileNamesRef.current = { threadKey, names: new Set() };
+    }
+    const names = pastedTextFileNamesRef.current.names;
+    for (const name of existingNames) names.add(name);
+    const nextName = nextPastedTextFileName([...names]);
+    names.add(nextName);
+    return nextName;
+  };
 
   useEffect(() => {
     ensureComposerDraftsLoaded();
@@ -242,7 +235,6 @@ export function useThreadComposerState() {
   const selectedThreadMessages = selectedThreadProjection?.projection.messages;
   const selectedThreadAttempts = selectedThreadProjection?.projection.attempts;
   const selectedThreadNodes = selectedThreadProjection?.projection.nodes;
-  const selectedThreadContextTransfers = selectedThreadProjection?.projection.contextTransfers;
   const checkpointSummaries = useAtomValue(
     selectedThreadDetailRef === null
       ? EMPTY_CHECKPOINT_SUMMARIES_ATOM
@@ -262,7 +254,6 @@ export function useThreadComposerState() {
         : [];
     const feed = buildThreadFeed(selectedThreadVisibleTurnItems, {
       anchoredMessages: pendingCreation,
-      contextTransfers: selectedThreadContextTransfers,
       attempts: selectedThreadAttempts,
       nodes: selectedThreadNodes,
       checkpointSummaries,
@@ -459,7 +450,6 @@ export function useThreadComposerState() {
     const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, edit.runId));
     const text = draft.text.trim();
     if (text.length === 0) {
-      // The server rejects an empty queued message, attachments or not.
       Dialog.alert("Add a message", "A queued message cannot be left empty.");
       return;
     }
@@ -477,10 +467,9 @@ export function useThreadComposerState() {
     setIsSavingQueuedEdit(true);
     const capabilities = selectedEnvironmentRuntime?.serverConfig?.environment.capabilities;
     const prepared = await settlePromise(() =>
-      prepareQueuedRunEditAttachments({
+      prepareTurnAttachments({
         environmentId: thread.environmentId,
         attachments: draft.attachments,
-        edit,
         supportsImageUploads: capabilities?.attachmentUploads === true,
       }),
     );
@@ -511,11 +500,10 @@ export function useThreadComposerState() {
         threadId: thread.id,
         runId: edit.runId,
         text,
-        selectedScientSkillNames: collectSelectedScientSkillNames(text),
         edit: {
           messageId: edit.messageId,
           attachments: payload.attachments,
-          context: payload.context ?? null,
+          ...(payload.context ? { context: payload.context } : {}),
         },
       },
     });
@@ -548,9 +536,7 @@ export function useThreadComposerState() {
     if (!selectedThreadShell) {
       return null;
     }
-    // The server has not created this thread yet. Queuing a follow-up against
-    // its id would strand the message: if the creation is rejected the thread
-    // never appears and the drain drops the orphan. The composer disables its
+    // Before thread creation succeeds, follow-ups could become orphaned and be dropped by the drain.
     if (selectedThreadCreation !== null) {
       return null;
     }
@@ -580,10 +566,7 @@ export function useThreadComposerState() {
     if (text.length === 0 && attachments.length === 0) {
       return null;
     }
-    // A send-failure restore appends with allowOverflow so it never drops the
-    // user's files, which can leave the draft over the cap. Sending it anyway
-    // would enqueue a message that outbox recovery rejects forever, so block
-    // here until the user removes attachments.
+    // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject indefinitely.
     if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       Dialog.alert(
         "Too many attachments",
@@ -681,12 +664,9 @@ export function useThreadComposerState() {
       }
     }
 
-    // Resolved here rather than at drain time: the outbox can deliver minutes
-    // later, and the choice belongs to the moment the user pressed send.
-    // Steering travels as "auto" so a turn that ends in the meantime degrades
-    // to a queued run on the server instead of failing the delivery and
-    // bouncing the message back into the draft.
-    // A redirect declined approvals to steer the waiting turn, not to queue behind it.
+    // Resolve at send time because outbox delivery may be delayed.
+    // Steering uses "auto" so an ended turn queues a run instead of restoring the draft.
+    // An approval redirect must steer the waiting turn instead of queueing behind it.
     const activeTurnDefault = beforeDispatch !== undefined ? "steer" : followUpBehavior;
     const followUpAction = resolveComposerDispatchMode({
       running: activeThreadBusy && canSteerActiveTurn,
@@ -728,10 +708,7 @@ export function useThreadComposerState() {
     enqueuePromise.then(
       () => scheduleUnusedComposerAttachmentCleanup(attachments),
       (error: unknown) => {
-        // Restore text via merge (idempotent) but attachments via the uncapped
-        // append: the merge path slots existing attachments first and truncates
-        // at the send limit, which would silently drop this message's images if
-        // the user attached new ones while the write was in flight.
+        // Restore with uncapped append; capped merge could drop attachments added during the failed write.
         void mergeComposerDraftContent(threadKey, {
           text,
           context: draft.context,
@@ -756,21 +733,11 @@ export function useThreadComposerState() {
     setComposerDraftText(threadKey, value);
   };
 
-  const {
-    onPickDraftMedia,
-    onPickDraftFiles,
-    onNativePasteImages,
-    onNativePasteText,
-    // SCIENT-FORK:START - one owner reserves native and clipboard paste names before I/O.
-    reservePastedTextFileName,
-    // SCIENT-FORK:END
-  } = useComposerAttachmentActions({
-    draftKey: selectedThreadKey,
-    // SCIENT-FORK:START — an event captured before edit entry resolves the live owner.
-    resolveDraftKey: resolveActiveComposerDraftKey,
-    // SCIENT-FORK:END
-    serverConfig: selectedEnvironmentRuntime?.serverConfig,
-  });
+  const { onPickDraftMedia, onPickDraftFiles, onNativePasteImages, onNativePasteText } =
+    useComposerAttachmentActions({
+      draftKey: selectedThreadShell ? activeComposerDraftKey(selectedThreadShell) : null,
+      serverConfig: selectedEnvironmentRuntime?.serverConfig,
+    });
 
   const onPasteIntoDraft = async () => {
     if (!selectedThreadShell) {
@@ -782,7 +749,7 @@ export function useThreadComposerState() {
     const result = await pasteComposerClipboard({
       existingCount: countComposerDraftAttachmentsAfterSelection(threadKey, insertion),
     });
-    const pasteAdmission = appendPreparedComposerDraftAttachments(threadKey, result.images, {
+    const rejectedPasteCount = appendComposerDraftAttachments(threadKey, result.images, {
       appendReference: true,
       insertion,
     });
@@ -824,15 +791,16 @@ export function useThreadComposerState() {
             ),
             maxBytes,
           });
-          const admission = appendPreparedComposerDraftAttachments(threadKey, [attachment], {
-            appendReference: true,
-            insertion,
-          });
-          if (admission.rejectedCount > 0) {
+          if (
+            appendComposerDraftAttachments(threadKey, [attachment], {
+              appendReference: true,
+              insertion,
+            }) > 0
+          ) {
             await removePersistedComposerAttachmentFile(attachment.fileUri);
-            // SCIENT-FORK:START — the limit fallback is a helper for the compiler.
-            setPendingConnectionError(attachmentLimitMessage(admission.limitError));
-            // SCIENT-FORK:END
+            setPendingConnectionError(
+              `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+            );
           }
         } catch (error) {
           setPendingConnectionError(
@@ -853,10 +821,9 @@ export function useThreadComposerState() {
     }
     if (result.error) {
       setPendingConnectionError(result.error);
-    } else if (pasteAdmission.rejectedCount > 0) {
+    } else if (rejectedPasteCount > 0) {
       setPendingConnectionError(
-        pasteAdmission.limitError ??
-          `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+        `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
       );
     }
   };

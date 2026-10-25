@@ -1,3 +1,4 @@
+import { pullRequestChecksRefreshIntervalMs } from "@t3tools/client-runtime/pull-request-checks";
 import type { PullRequestCheck } from "@t3tools/contracts";
 
 import { useLiveRefresh } from "./useLiveRefresh";
@@ -11,16 +12,12 @@ export function usePullRequestChecksRefresh(input: {
   useLiveRefresh(input.refresh, {
     key: input.key,
     enabled: input.enabled,
-    intervalMs:
-      input.checks.length === 0 ||
-      input.checks.some(
-        (check) =>
-          // SCIENT-FORK:START — Legacy wire status stays pending for terminal warnings.
-          check.outcome !== "warning" &&
-          // SCIENT-FORK:END
-          (check.status === "pending" || check.status === "action-required"),
-      )
-        ? 45_000
-        : 60_000,
+    intervalMs: pullRequestChecksRefreshIntervalMs(
+      // SCIENT-FORK:START — Legacy wire status stays pending for terminal warnings.
+      input.checks.map((check) =>
+        check.outcome === "warning" ? { ...check, status: "neutral" as const } : check,
+      ),
+      // SCIENT-FORK:END
+    ),
   });
 }

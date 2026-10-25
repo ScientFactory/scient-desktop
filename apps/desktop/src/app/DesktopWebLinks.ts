@@ -20,11 +20,8 @@ export const isWebLink = (value: string) => {
 export const isWebPageFile = (path: string) => /\.x?html?$/i.test(path);
 
 /**
- * Web links and HTML files macOS opens with Scient once it is the default
- * browser, plus Scient prompt and thread links on every platform. Files
- * arrive as file:// URLs. They can
- * arrive before the app is ready (the link that launched it) or while the web
- * app reloads, so they wait until the renderer says it is listening.
+ * OS links can arrive before startup or during renderer reload; queue them until the renderer listens.
+ * macOS default-browser files arrive as file:// URLs; Scient prompt/thread schemes work on every platform.
  */
 export class DesktopWebLinks extends Context.Service<
   DesktopWebLinks,

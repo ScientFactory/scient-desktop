@@ -44,11 +44,9 @@ export const setConfigOptionInventory = (
 };
 
 /**
- * Confirmed config writes: each is fed its own response and the config updates
- * in the order they arrived (see `confirmConfigWrite`). They run one at a time:
- * an update names no request, so "the first update after my response" is this
- * write's report only while no other write is in flight, and the request sent
- * while a write is active is known to be its own.
+ * Serialize confirmed writes: updates carry no request ID, so first-update-after-response belongs
+ * to this write only with no competing write in flight. Preserve wire arrival order, not fiber
+ * scheduling order.
  */
 export const makeAcpConfirmedConfigWrites = Effect.fn(
   "confirmedConfigWrites.makeAcpConfirmedConfigWrites",
@@ -127,32 +125,10 @@ export const makeAcpConfirmedConfigWrites = Effect.fn(
   });
 
   /**
-   * Sends one confirmed write and settles it from what the agent reports.
-   *
-   * Droid answers `set_config_option` with `{}` and then publishes one
-   * `config_option_update` with the state it applied, for model, reasoning
-   * effort and autonomy writes alike (verified against Droid 0.183.0,
-   * 0.200.0, 0.213.0 and 0.230.0). So the first update that arrives after
-   * the write's response is its own: a matching value confirms, another
-   * value fails at once. The order is the arrival order on the wire (the
-   * response hook and the update handler both run in the reader), not the
-   * order in which this fiber resumes, so an update right behind the
-   * response counts.
-   *
-   * An update before the response is never this write's report (an earlier
-   * write's, or the agent's own change): it neither confirms nor fails the
-   * write. The response is recognized by the request's id, so the answer to
-   * another request (a running prompt's) is not taken for it. Without a
-   * response and a report after it, the write fails when the confirmation
-   * timeout ends.
-   *
-   * The connection stays usable only when the agent settled the write: it
-   * reported the applied value (the requested one or another), or refused
-   * the request with a JSON-RPC error. Any other end of a write that was
-   * sent (the timeout, an interruption, an answer that is not a valid one,
-   * any other failure) leaves the agent's settings unknown, and its late
-   * report would pass for the next write's. The runtime is retired then: the
-   * process is closed and nothing more is sent to it.
+   * Confirm only the first update after this request's response, by wire arrival order;
+   * earlier/unrelated responses cannot decide it. Matching/different applied state or JSON-RPC
+   * refusal settles the write. Any other sent-write exit leaves settings unknown: retire the
+   * process so late reports cannot confirm a successor.
    */
   const confirmConfigWrite = Effect.fn("confirmedConfigWrites.confirmConfigWrite")(function* (
     requestPayload: EffectAcpSchema.SetSessionConfigOptionRequest,

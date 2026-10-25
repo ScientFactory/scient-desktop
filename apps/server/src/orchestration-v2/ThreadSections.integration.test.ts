@@ -76,7 +76,7 @@ it.effect("sets and clears native sections without changing activity or lifecycl
         sectionId,
       };
       const receipt = yield* orchestrator.dispatch(command);
-      assert.deepEqual(yield* orchestrator.dispatch(command), receipt);
+      assert.deepEqual(yield* orchestrator.dispatch(command), { ...receipt, replayed: true });
       const projection = yield* store.getThreadProjection(threadId);
       assert.deepEqual(projection.thread, { ...before.thread, sectionId });
       assert.deepEqual(projection.runs, before.runs);

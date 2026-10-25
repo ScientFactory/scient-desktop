@@ -2819,7 +2819,7 @@ describe("ScientMarkdownEditorView", () => {
     expect(document.querySelector("[aria-label='Image source']")).toBeNull();
 
     const input = await openImageDetails(view);
-    expect(document.activeElement).toBe(input);
+    await expect.element(input).toHaveFocus();
     await changeImageDetail(input, "different.png");
     expect(controller.session.session.draftSource).toBe(source);
     expect(onUserSourceChange).not.toHaveBeenCalled();

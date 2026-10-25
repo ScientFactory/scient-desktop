@@ -140,7 +140,6 @@ vi.mock(import("../../state/entities"), async (original) => ({
 vi.mock(import("./settingsLayout"), async (original) => ({
   ...(await original()),
   useSettingsSearchTargetId: () => state.searchTargetId,
-  // The real row reads write permission and overrides from live environment state.
   SettingsRow: (({
     id,
     title,
@@ -165,7 +164,6 @@ vi.mock(import("./settingsLayout"), async (original) => ({
     </div>
   )) as never,
 }));
-// Its own data flows are covered by its suite; this one is about the panel.
 vi.mock(import("./UsageProviderSettings"), async (original) => ({
   ...(await original()),
   UsageProviderSettings: (() => null) as never,
@@ -330,6 +328,7 @@ describe("EnvironmentProviderSettings routing", () => {
 
   // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped these; mutating the
   // refresh input, update instance and favorite instance left every other test green.
+
   // regression: 133f57a832 test(web): provider, usage and relationship tests run in a real browser (#20914) (sole guard)
   const refreshButton = () => page.getByRole("button", { name: /^Refresh provider status/ });
   it("routes refresh and provider update commands to the selected environment", async () => {

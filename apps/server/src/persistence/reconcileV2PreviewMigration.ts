@@ -9,28 +9,9 @@ import PullRequestFilesViewed from "./Migrations/056_PullRequestFilesViewed.ts";
 import AutoSettleDisabledAt from "./Migrations/057_ProjectionThreadsAutoSettleDisabledAt.ts";
 import ThreadSections from "./Migrations/058_ProjectionThreadSections.ts";
 
-// Published V2 previews shipped the orchestration schema as migration 53, then
-// 54. Scient's ledger is three ids ahead of upstream's at that point, so those
-// previews must be lifted onto Scient's immutable sequence before this build can
-// migrate them. Upstream's version of this file addressed upstream's numbering;
-// on Scient those ids name entirely different migrations, so the rewrites below
-// are stated against Scient's ids and verified by
-// `reconcileV2PreviewMigration.test.ts`.
-//
-//   preview ledger                     -> composed ledger
-//   53 OrchestrationV2                 -> 53-55 Scient prerequisites (run here)
-//                                         56 PullRequestFilesViewed (run here)
-//                                         57 AutoSettleDisabledAt   (run here)
-//                                         58 ThreadSections        (run here)
-//                                         59 OrchestrationV2       (relabelled)
-//   53 PullRequestFilesViewed          -> 56 PullRequestFilesViewed (relabelled)
-//   54 OrchestrationV2                 -> 53-55, 57-58 prerequisites (run here)
-//                                         59 OrchestrationV2       (relabelled)
-//   55 RemoveRedundantProjectionIndexes-> 60 RemoveRedundant…       (relabelled)
-//
-// A ledger without `OrchestrationV2` at exactly 53 or 54 is not a preview
-// ledger and is left untouched. Only ids this build has never recorded are
-// written, so a current Scient database can never match.
+// Published V2 previews used ids 53/54; Scient's immutable sequence places V2 at 59.
+// Run missing prerequisites and relabel preview entries to their Scient ids.
+// Only exact 53/54 OrchestrationV2 ledgers qualify; current Scient ledgers stay untouched.
 const COMPOSED_PULL_REQUEST_FILES_VIEWED = 56;
 const COMPOSED_AUTO_SETTLE_DISABLED_AT = 57;
 const COMPOSED_ORCHESTRATION_V2 = 59;

@@ -87,11 +87,8 @@ const isChunk = (value: unknown): value is Record<string, unknown> =>
   isRecord(value) && value.type === "rpc_chunk";
 
 /**
- * Reassemble one parsed stdout value using OMP v18.2.8 chunk invariants:
- * safe integers, chunk ids of 1–128 characters, count of at least 2, sequential
- * indexes, a 256 KiB decoded chunk cap, and a declared length between the
- * physical ceiling and the reassembly ceiling. A fatal frame poisons the
- * decoder. An interrupting value is not returned as a successful frame.
+ * Bound chunk IDs/count/decoded size/declared length and require sequential safe indexes. A fatal
+ * or interrupting frame poisons reassembly rather than yielding a successful partial value.
  */
 export const pushOmpFrame = (
   state: OmpFrameDecoderState,

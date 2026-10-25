@@ -163,6 +163,7 @@ describe("ElectronProtocol", () => {
   );
 
   // SCIENT-FORK:START scient-renderer-retry - upstream's snap dropped its only retry guard.
+
   // regression: 31dfe3596e Fix Electron dev and packaged renderer startup (#3557)
   it.effect("retries transient renderer target failures", () =>
     Effect.gen(function* () {
@@ -310,6 +311,7 @@ describe("ElectronProtocol", () => {
   // SCIENT-FORK:END scient-desktop-csp
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: 9d5ca2cb7c [codex] Structure Electron protocol teardown failures (#3310)
   it.effect("preserves protocol unregistration failures", () =>
     Effect.gen(function* () {
@@ -342,6 +344,7 @@ describe("ElectronProtocol", () => {
   // SCIENT-FORK:END restored-behavior-guards
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: 9d5ca2cb7c [codex] Structure Electron protocol teardown failures (#3310)
   it.effect("preserves protocol registration failures", () =>
     Effect.gen(function* () {

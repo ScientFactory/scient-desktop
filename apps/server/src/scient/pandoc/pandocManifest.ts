@@ -1,21 +1,7 @@
 /**
- * The one Pandoc release Scient is willing to install, pinned by digest.
- *
- * Word export runs the official Pandoc binary as a separate program. Scient
- * downloads it on first use into app-owned state, exactly as it installs
- * TinyTeX for LaTeX: nothing resolves a "latest" pointer at runtime, so an
- * upstream re-tag cannot change what this app runs. Bumping the release means
- * re-pinning every digest below and re-running the Pandoc qualification.
- *
- * Pandoc publishes no checksum file; the sizes and SHA-256 digests here are
- * the release's GitHub upload digests, re-checked by hashing the downloaded
- * archives during qualification (macOS arm64 downloaded and run; the other
- * archives' layouts come from the release build scripts of the same tag and
- * are proven on each platform by the `--version` check after unpacking).
- *
- * Every platform/architecture pair Scient might run on has a slot, pinned or
- * not: upstream ships no Windows Arm64 build, so that pair is `null` and is
- * reported as unavailable rather than handed the x64 binary.
+ * Pin exact release sizes/digests; never resolve latest at runtime. Repin and requalify every
+ * target on upgrades, verifying version after unpack. Unsupported targets such as Windows Arm64
+ * stay unavailable rather than receiving another architecture's binary.
  */
 import * as Context from "effect/Context";
 

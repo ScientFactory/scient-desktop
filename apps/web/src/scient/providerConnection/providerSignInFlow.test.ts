@@ -82,12 +82,9 @@ let clock = 0;
 const settle = () => vi.runAllTimersAsync();
 
 /**
- * The server, as the connection manager runs it: `current` is its operation for
- * the instance, which the client's replies and snapshots may lag behind. The
- * claim is granted once per operation, to the request id stamped on the current
- * operation while it waits on a primary page, with that page's URL. `failures`
- * answers with transport errors first; `hold` defers the next answer until the
- * test releases it, and decides it then.
+ * Grant page claims from the server's current operation, not lagging client snapshots. Bind one
+ * claim to operation/request/URL and decide deferred replies only when released so tests expose
+ * stale-claim races.
  */
 function makeServer() {
   const granted = new Set<string>();

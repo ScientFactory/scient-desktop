@@ -1,25 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * The shared checkout barrier (Overleaf coordinator contract, section 9).
- *
- * Two kinds of section exclude each other on one checkout: an Overleaf
- * application section, and a bulk mutation of the checkout (checkpoint restore,
- * pull, switching branch, removing the worktree). A bulk request closes new
- * application admission at once, waits for running ones to settle, then runs.
- * Bulk sections of one checkout run one at a time; a bulk change the owning
- * fiber makes inside its own section (a provider checkout calling the Git
- * driver) runs within it. Another fiber, a forked child included, waits its
- * turn, so a section that awaits such a fiber's same-checkout change waits for
- * itself. Every bulk section advances the checkout's epoch as it starts and
- * again as it ends, even when it fails, so a plan made against an earlier epoch
- * is stale.
- *
- * A checkout is a Git working tree's top folder, found by its physical
- * identity: two paths to one folder are one checkout. A checkout inside another
- * (a submodule, a nested repository) belongs to both: a bulk change of the
- * outer one also waits for and suspends applications inside the inner one,
- * because a recursive checkout or pull rewrites it too. Arbitrary shell writers,
- * external Git commands and other server profiles are outside the barrier.
+ * Bulk requests close application admission immediately and fence nested physical checkouts.
+ * Advance epochs on start/end even on failure. Same-fiber nesting may reuse ownership; awaiting
+ * another fiber's same-checkout mutation deadlocks. External writers/profiles are outside this
+ * barrier.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";

@@ -268,6 +268,7 @@ describe("resolveWorkflowOpening", () => {
 });
 
 // SCIENT-FORK:START
+
 // regression: a2ca89aa10 feat: native subagent & workflow observability (#5219)
 it("formats plain counters", () => {
   expect(formatSubagentTokenCount(950)).toBe("950");
@@ -278,6 +279,7 @@ it("formats plain counters", () => {
 // SCIENT-FORK:END
 
 // SCIENT-FORK:START
+
 // regression: a2ca89aa10 feat: native subagent & workflow observability (#5219)
 it("formatSubagentModelLabel compacts ids and appends effort", () => {
   expect(formatSubagentModelLabel("claude-sonnet-5[1m]", "high")).toBe("sonnet-5[1m] · high");

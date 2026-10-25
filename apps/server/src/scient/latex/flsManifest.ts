@@ -1,24 +1,7 @@
 /**
- * Reads which files a compile actually opened out of the engine's own recorder
- * output.
- *
- * `latexmk` runs the engine with `-recorder`, which writes `<jobname>.fls` next
- * to the other aux files; Tectonic exposes the same boundary as Make rules.
- * Those engine-produced lists are the only
- * trustworthy answer to "what was this PDF built from" — a preamble scan sees
- * one level of `\input` and no `.bib`, no image, no class file, and no file a
- * package pulled in — which is what makes it the right basis for deciding
- * whether a published PDF still matches its sources.
- *
- * Nothing here reads a file or decides anything: it turns recorder text into
- * workspace-relative paths, and the caller decides what to do with them. Two
- * whole categories are dropped on the way out, because neither is an input the
- * user can edit:
- *   - anything outside the workspace root — the TeX distribution's own class,
- *     package, and font files, which change only when the distribution does;
- *   - anything inside the build work directory — the `.aux`, `.out`, and `.toc`
- *     files this very run wrote and then read back, which are outputs wearing
- *     an `INPUT` label and would make every document permanently out of date.
+ * Use engine recorder inputs for full dependency evidence; preamble scans miss images/bib/package
+ * dependencies. Exclude distribution files and build-directory outputs mislabeled INPUT, or
+ * generated aux files would make every PDF perpetually stale.
  */
 
 /** Above this the manifest is not evidence, it is a liability; see `truncated`. */
@@ -106,11 +89,8 @@ function resolveAgainst(base: string, target: string): string {
 }
 
 /**
- * `target` expressed relative to `root`, or `null` when it does not live under
- * it. Windows drive paths compare case-insensitively because a recorder may
- * print a different spelling of the drive and directory names. POSIX paths do
- * not: `/Workspace` and `/workspace` can be different directories, and folding
- * their case would admit a sibling tree as if it were inside the workspace.
+ * Windows recorder paths compare case-insensitively, but POSIX paths must not. Folding POSIX case
+ * could falsely admit a sibling tree as workspace content.
  */
 function relativeInside(root: string, target: string): string | null {
   const base = root.endsWith("/") ? root : `${root}/`;
@@ -224,12 +204,9 @@ export function parseTectonicMakefileRules(input: {
       let absolutePath = resolveAgainst(input.compileDirectory, dependency);
       const workRelative = relativeInside(workDirectory, absolutePath);
       if (workRelative !== null) {
-        // Tectonic reports project inputs as if they lived under `--outdir`
-        // (for example `out/sections/intro.tex`) even though it read them from
-        // the compile directory. With `--keep-intermediates`, run-owned files
-        // are Make targets rather than dependencies, so every word on this
-        // side is a source input and can be rebased without an extension
-        // blacklist that would silently omit a legitimate `.out`/`.aux` file.
+        // Tectonic reports sources under outdir despite reading compile cwd. Rebase all
+        // dependencies: keep-intermediates separates outputs as Make targets, and extension
+        // blacklists would drop legitimate aux/out source files.
         absolutePath = resolveAgainst(input.compileDirectory, workRelative);
       }
       const relativePath = relativeInside(workspaceRoot, absolutePath);

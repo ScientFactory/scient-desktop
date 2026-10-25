@@ -172,12 +172,8 @@ function hostEnvironment(): Record<string, string> {
 }
 
 /**
- * Waits for a process to be gone, rather than asking whether it is gone yet.
- *
- * Nothing here removes a process synchronously.  `cancelProcessTree` signals
- * and returns, and a kernel orphaned by a bridge that was killed outright is
- * removed by ipykernel's own parent poller, which checks about once a second.
- * Asking immediately would be testing the scheduler, not the behaviour.
+ * Kernel cleanup is asynchronous, including ipykernel's parent poller after bridge death. Wait for
+ * process disappearance; an immediate liveness check tests scheduling rather than cleanup behavior.
  */
 const awaitProcessGone = (pid: number, within = "10 seconds" as const) =>
   ProcessObservers.use((observers) => observers.awaitGone(pid)).pipe(

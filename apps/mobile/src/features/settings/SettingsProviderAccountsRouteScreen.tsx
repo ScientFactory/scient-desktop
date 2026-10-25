@@ -4,9 +4,6 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-// SCIENT-FORK:START — native account writes that cannot verify sign-in.
-import { providerAuthPresentation } from "@t3tools/client-runtime/provider-auth-presentation";
-// SCIENT-FORK:END
 import {
   AuthProvidersManageScope,
   type ProviderAuthResponse,
@@ -126,9 +123,6 @@ function ProviderAccount({
   const signedIn =
     provider.auth.status === "authenticated" ||
     (provider.auth.status === "unknown" && state?.phase === "succeeded");
-  // SCIENT-FORK:START — native account writes that cannot verify sign-in.
-  const unverifiedAuth = providerAuthPresentation(provider, state);
-  // SCIENT-FORK:END
   const isDiscovering =
     provider.driver === "acpRegistry" &&
     !active &&
@@ -205,15 +199,11 @@ function ProviderAccount({
             ? state.message
             : signedIn
               ? "Signed in."
-              : // SCIENT-FORK:START — show the native write's own result.
-                unverifiedAuth.unverifiedMessage
-                ? unverifiedAuth.unverifiedMessage
-                : // SCIENT-FORK:END
-                  isDiscovering
-                  ? "Discovering sign-in methods…"
-                  : needsExternalSetup
-                    ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
-                    : "Connect this provider."}
+              : isDiscovering
+                ? "Discovering sign-in methods…"
+                : needsExternalSetup
+                  ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
+                  : "Connect this provider."}
         </Text>
         {signedIn && !active && provider.auth.email?.trim() ? (
           <ProviderAccountEmail key={provider.auth.email} email={provider.auth.email} />
@@ -352,11 +342,7 @@ function ProviderAccount({
           onPress={chooseMethod}
         />
       ) : null}
-      {!active &&
-      // SCIENT-FORK:START — native accounts can sign out without a verified status.
-      (signedIn || unverifiedAuth.canClearCredentials) &&
-      // SCIENT-FORK:END
-      (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
+      {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
         <SettingsActionRow
           icon="person.crop.circle"
           label="Sign out"

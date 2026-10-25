@@ -206,12 +206,9 @@ describe("python bridge location", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  // The build stages the bridge by spelling its destination out again, because
-  // a build script that imported this module would drag its dependency graph
-  // into every build. That duplication is only safe if something notices when
-  // the two halves stop agreeing, and nothing else would: the publish gate
-  // checks its own constant, so a rename here would pass every lane and ship an
-  // app whose compute silently reports no runtime.
+  // Build scripts duplicate the staged bridge path to avoid importing runtime dependencies. Guard
+  // both constants together: the publish gate checks only its own spelling and could miss a broken
+  // runtime lookup.
   it("agrees with the build about where a packaged bridge goes", () => {
     expect(SCIENT_COMPUTE_BRIDGES.map((bridge) => bridge.asset)).toContain(
       `dist/${STAGED_BRIDGE_DIRECTORY}/${BRIDGE_SCRIPT_NAME}`,

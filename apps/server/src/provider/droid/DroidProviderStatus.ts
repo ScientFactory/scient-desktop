@@ -1,29 +1,8 @@
 /**
- * What Scient shows as Droid's status between full probes.
- *
- * A full probe starts a Droid session (status, models and skills share it;
- * Droid runs SessionStart hooks and, signed out, mints a pairing code), so it
- * runs only on explicit triggers: startup or enable, a settings or binary
- * change, the user's refresh, sign-in completion, and recovery after a failed
- * probe (waiting twice as long after each recovery that fails, up to an hour). The periodic check runs `droid --version` only: it notices a removed,
- * broken or replaced binary and a failed probe, and then runs one full probe.
- * Signed out it never probes: it shows the version that answers now, or that
- * the binary no longer runs, over the last probe's result.
- * It cannot notice sign-in, sign-out or key changes made outside Scient, or
- * new models and skills; the next explicit trigger picks those up.
- *
- * A rejected Factory account found during use (a session start or a turn)
- * shows as signed out until the next probe that succeeds, because Droid's
- * probe accepts an invalid key (verified against Droid 0.228.0 and 0.229.0).
- * This is Droid's own overlay rather than the shared `auth.status`
- * (`requiresReauthentication`) path into `ProviderRegistry`: that path only
- * applies to providers offering an assisted sign-in and clears only after a
- * sign-in or sign-out through it. The case Droid needs most is an invalid
- * `FACTORY_API_KEY`, where Droid offers no sign-in (the key is owned by the
- * environment), so the shared path would drop the failure and could never
- * clear it once the key is fixed.
- *
- * @module DroidProviderStatus
+ * Full probes run SessionStart hooks and can mint pairing codes, so periodic checks stay
+ * version-only and signed-out state never probes. Usage-proven account rejection must persist until
+ * successful verification: Droid probes can accept invalid keys, and the assisted-sign-in overlay
+ * cannot represent environment-owned keys.
  */
 import type { ServerProvider } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";

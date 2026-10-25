@@ -1,11 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- opt-in native qualification CLI.
 /**
- * Runs an external Compute corpus through the real Scient gateway, durable
- * service, selected native runtime, retained-output store, and cleanup path.
- *
- * This is intentionally opt-in: it executes arbitrary corpus code and may use
- * licensed runtimes. It never installs software or mutates the selected
- * runtime.
+ * Opt in explicitly: the corpus executes arbitrary code and may use licensed runtimes.
+ * Qualification must not install software or mutate the selected runtime.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";

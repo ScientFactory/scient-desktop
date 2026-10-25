@@ -1,26 +1,8 @@
 /**
- * Discovers this server's build driver and the standalone compiler binaries
- * it can run. Probes are bounded subprocesses; missing or broken executables
- * are normal on a fresh machine. Driver and compiler facts share a cached,
- * single-flight observation so status polling never launches a build.
- *
- * PATH keeps its original precedence: latexmk, then Tectonic. Managed TinyTeX
- * is an optional addition for a compiler that the document needs but PATH
- * cannot provide, or the fallback when no system driver is available.
- *
- * The first `latexmk` on PATH is not always one that runs: MiKTeX's needs a
- * Perl it does not ship, and a computer with MiKTeX ahead of TeX Live on PATH
- * would otherwise report no LaTeX at all. When the bare name fails, every
- * `latexmk` on PATH is tried by its own path, then (on Windows) the folders
- * MiKTeX and TeX Live install into, which also covers a PATH this process
- * inherited before the distribution was installed. One found that way is run
- * with its own folder leading PATH, so it drives its own distribution's
- * engines. On Windows only `latexmk.exe` counts: builds start the driver
- * without a shell, so a `.cmd`/`.bat` launcher could be found but never run.
- *
- * Discovery can take several bounded probes, longer than one status request
- * waits, so it runs once in a fiber of its own: a caller that gives up stops
- * waiting, not discovering, and the next caller reads the finished answer.
+ * Probe read-only, cached/single-flight, in the service scope so abandoned callers do not cancel
+ * discovery. Preserve system precedence but try later latexmk paths when the first is broken
+ * (MiKTeX may lack Perl). Windows requires directly spawnable exe; prepend its own bin for matching
+ * engines.
  */
 import {
   ScientLatexCompiler,
@@ -550,12 +532,9 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Joins the discovery already running, or starts one in the service's own
-   * scope. `cached` accepts a fresh cache, rechecked at the moment a caller
-   * would start a discovery, since one may have finished after the caller
-   * last looked. `refresh` needs a discovery that began after it was asked
-   * for: one that joins an older run follows it with a `follow-up`, which
-   * joins or starts a run without asking for another.
+   * Recheck the cache before starting discovery because another run may just have finished. Refresh
+   * requires a run begun after the request; join one follow-up after an older run without
+   * recursively demanding another refresh.
    */
   const discover = (
     mode: "cached" | "refresh" | "follow-up",

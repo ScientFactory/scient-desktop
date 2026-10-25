@@ -40,11 +40,8 @@ function countLines(text: string): number {
 }
 
 /**
- * Whether `text` is already this function's output for `bounds`: a head and
- * a tail within the character bounds, joined by one omission line exactly as
- * `omissionLine` writes it, and no longer than such output can be. A cut
- * by characters splits a line in two and the omission line adds one more, so
- * the head and tail together may hold two lines beyond the line bounds.
+ * A character cut can split a line and adds an omission line, so valid prior bounded output may
+ * contain two lines beyond the head/tail line bounds.
  */
 function isBoundedOutput(text: string, lines: ReadonlyArray<string>, bounds: TextBounds): boolean {
   const maxLines = bounds.headLines + bounds.tailLines + 2;
@@ -60,12 +57,8 @@ function isBoundedOutput(text: string, lines: ReadonlyArray<string>, bounds: Tex
 }
 
 /**
- * Bounds `text` by lines, then by characters. The kept head and tail are
- * joined by one "[… N lines omitted …]" line; `omittedLines` counts the whole
- * or partial lines removed and `omittedChars` the characters removed. Text
- * this function already bounded is returned as it is, with nothing further
- * omitted, so bounding is idempotent: an exported and re-imported text keeps
- * its own omission line and the counts recorded with it.
+ * Bounding must be idempotent so export/reimport preserves its omission line and recorded counts
+ * rather than omitting already-bounded content again.
  */
 export function boundText(text: string, bounds: TextBounds): ConversationBoundedText {
   const normalized = text.replace(/\r\n?/gu, "\n");

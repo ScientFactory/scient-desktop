@@ -664,6 +664,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   // SCIENT-FORK:START
+
   // regression: 409ff90a14 Nightly release channel (#2012)
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
@@ -736,6 +737,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   // SCIENT-FORK:START
+
   // regression: 477795697d refactor: resolve host process state through Effect (#2959)
   it.effect("resolves GitHub desktop publish config from Effect config", () =>
     Effect.gen(function* () {
@@ -830,6 +832,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   // SCIENT-FORK:START
+
   // regression: 37a08d3121 fix(desktop): local desktop builds no longer crash when a GitHub token is in the shell (#19277)
   it.effect("disables electron-builder publish detection for local builds", () =>
     Effect.gen(function* () {
@@ -849,6 +852,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START
+
   // regression: 683aa87096 build(desktop): bundle the main process and stage only its native externals (#11410)
   it("stages only the desktop main-process externals", () => {
     assert.deepStrictEqual(
@@ -909,6 +913,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   // SCIENT-FORK:START
+
   // regression: a6edad1974 [codex] Filter staged desktop patched dependencies (#2945)
   it("carries only staged dependency patch metadata into staged desktop installs", () => {
     assert.deepStrictEqual(
@@ -1607,6 +1612,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   // SCIENT-FORK:START
+
   // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
   it("unpacks native binaries while keeping their JavaScript and metadata archived", () => {
     for (const file of [
@@ -2083,6 +2089,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   // SCIENT-FORK:START
+
   // regression: 25dcee00a6 perf(ci): speed up release builds and Windows packaging (#7975)
   it.effect("stages a cached resource monitor without invoking Cargo", () =>
     Effect.scoped(
@@ -2259,6 +2266,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   // SCIENT-FORK:START
+
   // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103)
   it.effect("builds and stages native capture helpers for each Linux architecture", () =>
     Effect.scoped(
@@ -2430,10 +2438,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ),
   );
 
-  // SCIENT-FORK: Scient bundles one fixed-name, digest-verified WSL resource;
-  // upstream's version-named archive lookup is not the shipped artifact owner.
-  // Architecture rejection above and checksum/missing-resource tests below
-  // exercise the retained validator without introducing a second archive format.
+  // SCIENT-FORK: A fixed-name digest-verified WSL resource is the only shipped artifact owner.
+  // Retained architecture/checksum/missing-resource checks must not introduce another archive format.
   // SCIENT-FORK-END
 
   it.effect("rejects a Windows package missing its expected WSL runtime", () =>
@@ -3215,6 +3221,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   // SCIENT-FORK:START
+
   // regression: ad117235b5 feat(desktop): add signal macOS DMG installer background (#6201)
   it.effect("uses the nightly DMG background for nightly macOS builds", () =>
     Effect.gen(function* () {
@@ -3258,6 +3265,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   // SCIENT-FORK:START
+
   // regression: 49c0d96edf Reduce idle work and disk churn with native resource diagnostics (#2679)
   it("stages the resource monitor as an external executable resource", () => {
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
@@ -3683,6 +3691,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   // SCIENT-FORK:START
+
   // regression: 85fe62d402 Stage fff native binaries in desktop builds (#3109)
   it("promotes target fff binaries to direct staged dependencies", () => {
     assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.10.3"), {
@@ -3707,6 +3716,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START
+
   // regression: 3e01c4bc57 Migrate desktop auth to Clerk bridge (#3092)
   it("resolves target Clerk passkey native artifacts", () => {
     assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("mac", "universal"), [
@@ -3730,6 +3740,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START
+
   // regression: 409ff90a14 Nightly release channel (#2012)
   it("falls back to the default mock update port when the configured port is blank", () => {
     assert.equal(resolveMockUpdateServerUrl(undefined), "http://localhost:3000");
@@ -3745,6 +3756,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   // SCIENT-FORK:START
+
   // regression: 409ff90a14 Nightly release channel (#2012)
   it.effect("normalizes mock update server ports from env-style strings", () =>
     Effect.gen(function* () {
@@ -3757,6 +3769,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START
+
   // regression: 409ff90a14 Nightly release channel (#2012)
   it.effect("rejects non-numeric or out-of-range mock update ports", () =>
     Effect.gen(function* () {
@@ -3770,6 +3783,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START
+
   // regression: 60dc4af916 [codex] Structure desktop build script failures (#3452)
   it("classifies invalid configured ports with the decoder's number grammar", () => {
     const cause = new Error("invalid configured port");
@@ -3794,6 +3808,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START
+
   // regression: 477795697d refactor: resolve host process state through Effect (#2959)
   it.effect("resolves default platform and architecture from host references", () =>
     Effect.gen(function* () {

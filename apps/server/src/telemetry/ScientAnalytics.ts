@@ -158,7 +158,7 @@ export const disabledAnalyticsService: AnalyticsService["Service"] = {
   deleteData: Effect.succeed(false),
 };
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const analyticsConfig = yield* AnalyticsEnvConfig;
   if (!analyticsConfig.enabled) {

@@ -889,16 +889,12 @@ describe("CodexAdapterV2 post-settle continuation (GuidanceCompaction)", () => {
           assert.equal(packet.collaborationMode.mode, "default");
           assert.equal(packet.collaborationMode.settings.model, "gpt-5.4");
           assert.equal(packet.collaborationMode.settings.reasoning_effort, "high");
-          assert.match(
-            packet.collaborationMode.settings.developer_instructions ?? "",
-            /^<collaboration_mode>[\s\S]*<\/collaboration_mode>$/,
+          const contextKeys = Object.keys(packet.additionalContext);
+          assert.deepEqual(contextKeys.slice(-2), ["t3_code_runtime", "scient_awareness"]);
+          assert.isNotEmpty(contextKeys.slice(0, -2));
+          assert.isTrue(
+            contextKeys.slice(0, -2).every((key) => key.startsWith("t3_code_orchestration_")),
           );
-          assert.deepEqual(Object.keys(packet.additionalContext), [
-            "t3_code_orchestration_01",
-            "t3_code_orchestration_02",
-            "t3_code_runtime",
-            "scient_awareness",
-          ]);
           const orchestration = Object.entries(packet.additionalContext)
             .filter(([key]) => key.startsWith("t3_code_orchestration_"))
             .sort(([left], [right]) => left.localeCompare(right))
@@ -906,7 +902,6 @@ describe("CodexAdapterV2 post-settle continuation (GuidanceCompaction)", () => {
             .join("\n\n");
           assert.equal(orchestration, SCIENT_ORCHESTRATION_INSTRUCTIONS.trim());
           assert.include(orchestration, "delegate_task");
-          assert.include(orchestration, "structured object, never as JSON text");
           const awareness = packet.additionalContext.scient_awareness?.value ?? "";
           for (const required of [
             "preview_status",
@@ -2159,7 +2154,6 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
           const orchestration = orchestrationEntries.map(([, entry]) => entry.value).join("\n\n");
           assert.equal(orchestration, SCIENT_ORCHESTRATION_INSTRUCTIONS.trim());
           assert.include(orchestration, "delegate_task");
-          assert.include(orchestration, "structured object, never as JSON text");
         } else {
           assert.isEmpty(orchestrationEntries);
         }
@@ -4423,28 +4417,6 @@ describe("Codex restored Policy", () => {
     );
     // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
-    it.effect("omits default-mode collaboration settings without the T3 MCP server", () =>
-      Effect.gen(function* () {
-        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
-          nativeThreadId: "native-default-without-t3-mcp",
-          codexInput: [{ type: "text", text: "implement this task" }],
-          runtimePolicy: {
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            cwd: null,
-          },
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("codex"),
-            model: "gpt-5.4",
-          },
-          hasT3Mcp: false,
-        });
-
-        assert.isUndefined(params.collaborationMode);
-      }),
-    );
-    // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
-
     it.effect("keeps Codex in plan mode without referencing unavailable T3 MCP tools", () =>
       Effect.gen(function* () {
         const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
@@ -4966,6 +4938,7 @@ describe("Codex restored ResumeReasoning", () => {
                       approvalsReviewer: "user",
                       sandboxPolicy: { type: "dangerFullAccess" },
                       summary: "detailed",
+                      collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
                       additionalContext: {
                         t3_code_runtime: {
                           kind: "application",

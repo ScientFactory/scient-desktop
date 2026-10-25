@@ -4,21 +4,9 @@ import * as Schema from "effect/Schema";
 import { ComputeSessionStatus, type ComputeSessionGeneration } from "./contract.ts";
 
 /**
- * Lifecycle transitions a session may take.
- *
- * `stopping` is reachable from `starting` and `restarting` because a user may
- * abandon a session that is still coming up, and abandoning it must not have to
- * wait for it to succeed first.
- *
- * The three terminal states are genuinely terminal. A session that stopped,
- * failed to start, or was lost is a finished record; continuing work means a
- * new session with a new namespace, which is what a user asking to "restart a
- * dead session" actually gets. Reviving a record would leave its executions
- * attributed to a namespace that no longer exists.
- *
- * Activity (`idle`, `busy`, `unresponsive`) has no table: every change between
- * those three is legal, including `unresponsive` back to `busy` when a late
- * heartbeat arrives while work continues.
+ * Allow Stop during startup/restart without waiting for success. Terminal records never revive; new
+ * namespaces need new sessions or history attribution becomes false. Activity can recover from
+ * unresponsive when late heartbeat arrives during work.
  */
 const ALLOWED_SESSION_TRANSITIONS: Readonly<
   Record<ComputeSessionStatus, ReadonlySet<ComputeSessionStatus>>
@@ -63,13 +51,8 @@ export function transitionComputeSessionStatus(
 }
 
 /**
- * Whether a command written against one namespace may still run.
- *
- * `stale` and `ahead` are separated because they mean different things and
- * deserve different answers: a stale command comes from a client that has not
- * yet seen a restart and is told the session moved on, while an ahead command
- * cannot be explained by a client observing the truth and is a defect worth
- * reporting rather than a message worth showing.
+ * Separate stale from ahead generation: stale is a user-visible moved session; ahead cannot reflect
+ * observed truth and indicates a defect requiring a different report.
  */
 export type ComputeGenerationCheck =
   | { readonly _tag: "current" }

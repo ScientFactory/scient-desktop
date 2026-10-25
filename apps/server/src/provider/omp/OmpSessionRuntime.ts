@@ -438,29 +438,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   /** Tool calls the open turn reported, in a published frame or argument stream, by their tool. */
   const turnToolCalls = new Map<string, string>();
   /**
-   * Background jobs that may still report, by job id (`details.async.jobId`):
-   * the call that started each and the turn it belongs to (none when its frames
-   * were not the open turn's). OMP ends a run only once its calls returned, but
-   * since 18.10.2 a call that returned with a background job running
-   * (`details.async.state` "running") keeps sending `tool_execution_update`
-   * frames, carrying the job id, until the job's last one, even after its run
-   * and turn ended. So:
-   *
-   * - A job's frame is shown only in the turn its job belongs to. A frame of a
-   *   job not seen yet is the open run's own call reporting before it returned.
-   * - An update without a job id is the open run's, unless an earlier turn's
-   *   running job holds its call id: a model can give a later call an earlier
-   *   call's id, and the two cannot be told apart.
-   * - A job is forgotten at its last frame (completed, failed or cancelled). A
-   *   settled session ends the doubt over its call id, since OMP then runs no
-   *   job, but not its own frames: a cancelled job can still report, and some
-   *   cancelled jobs never send a last frame.
-   * - Only the jobs heard from most recently are kept, settled or not, so a job
-   *   that went quiet ages out even while another keeps the session busy.
-   *
-   * A call that never went to the background can still report after it
-   * returned, without a job id: an aborted foreground bash call returns before
-   * its cleanup's last frame (`failedToolCallIds`).
+   * Attribute background frames by job/owning turn; reused call IDs without job IDs are ambiguous
+   * while older jobs run. Settlement clears ambiguity, not late cancelled frames; age by recent
+   * reports even if unsettled. Foreground failure cleanup can also arrive late without a job ID.
    */
   const backgroundJobs = new Map<
     string,
@@ -469,13 +449,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   /** Jobs whose last frame came before their call returned, so its end does not revive them. */
   const settledJobIds = new Set<string>();
   /**
-   * Calls that ended with an error, oldest first. Their updates without a job
-   * id show only in a turn that has the call itself, under the same tool: OMP
-   * names its call's tool in every frame, so a later call that reuses the id
-   * for another tool keeps the failed call's cleanup out. A later call of the
-   * same tool cannot be told apart, and is shown, since its own output carries
-   * no job id either. Settlement does not end this, since nothing tells when
-   * such a call's cleanup is done.
+   * Show failed-call cleanup only under the same call/tool; different tools can reuse IDs.
+   * Same-tool reuse is indistinguishable, so allow it. Settlement cannot clear this guard because
+   * cleanup has no terminal signal.
    */
   const failedToolCallIds = new Set<string>();
   const rememberFailedCall = (toolCallId: string) => {
@@ -698,11 +674,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       : Effect.void;
 
   /**
-   * A user turn is decided by its own prompt, never by an idle session alone.
-   * OMP events carry no run id, so a background wake-up racing a new message
-   * looks like that message's run. OMP queues the message into such a run and
-   * reports its prompt_result once the message's work yields; older releases
-   * have no prompt_result, and the acknowledgement is all a turn can wait for.
+   * OMP events have no run ID: background wakeups can race a new prompt. The prompt's own result
+   * decides its turn; older versions without prompt_result can only wait for acknowledgement, never
+   * infer completion from idle alone.
    */
   const awaitingOwnPrompt = () =>
     !autonomousTurn && (turn.requestId === undefined || (reportsPromptResults && !promptReported));
@@ -1318,14 +1292,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       });
       return;
     }
-    // Subagent frames are not the run's: they report with or without an
-    // open turn. In OMP 18.3.1 a `task` spawn runs as a detached background
-    // job by default (task/index.ts, `async.enabled` pinned on for RPC in
-    // tools/settings.ts), an abort does not cancel it
-    // (AgentSession.abort), and a run can end terminal while it still runs.
-    // Its frames and closing `subagent_lifecycle` then arrive after the
-    // turn settled, up to `session_settled` (docs/rpc.md). The adapter
-    // attributes them to the turn that started the task.
+    // OMP task subagents can outlive their run and survive abort. Attribute late frames and
+    // lifecycle closure to the spawning turn, including frames after turn settlement until
+    // session_settled.
     if (event.type === "subagent_lifecycle" || event.type === "subagent_progress") {
       const id = subagentId(event) ?? "activity";
       const status = subagentStatus(event);

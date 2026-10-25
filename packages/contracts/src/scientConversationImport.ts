@@ -23,28 +23,9 @@ import {
 } from "./scientConversationExport.ts";
 
 /**
- * Portable conversation import contracts: the `.scic` file identity, the
- * staged-import lifecycle a client drives, the preview it shows, and the
- * confirm call that turns a validated package into a new thread.
- *
- * Lifecycle, all keyed by one server-issued `ConversationImportId`:
- *
- * 1. `createUpload` admits the declared size against the per-import limit and
- *    the server's staging quota, creates the import's staging area, and
- *    returns a signed, single-use upload URL.
- * 2. The client streams the file bytes to that URL.
- * 3. `preview` validates the package once (later calls reuse the result),
- *    stages its attachments, and describes it. Preview makes no durable change.
- * 4. `import` (confirm) creates a new independent thread from the staged
- *    package; `cancel` discards it. Unconfirmed imports expire on the server.
- *
- * Every endpoint, including the signed-URL issuance in `createUpload`, requires
- * `SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE`: each stages files on, or writes a
- * thread to, the server.
- *
- * Nothing in a package is authority: every ID it carries is external and is
- * replaced on import, and the thread is labelled "Imported — unverified".
- * See docs/internals/scient-conversation-export-import-proposal.md.
+ * Every endpoint requires import scope, including single-use upload issuance. Package IDs are
+ * external data, never authority: replace them and label imported history unverified. Unconfirmed
+ * staging expires; only confirm creates a thread.
  */
 
 const ShortText = (max: number) => TrimmedNonEmptyString.check(Schema.isMaxLength(max));

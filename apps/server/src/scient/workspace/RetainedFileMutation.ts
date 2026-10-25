@@ -147,14 +147,10 @@ export interface RetainedMutationInput {
   readonly destination?: string;
   readonly guardMaxBytes?: number;
   /**
-   * Other paths, relative to `cwd`, published together with this one, as they
-   * must stand when this file becomes visible: a regular file with `revision`,
-   * or for a null revision nothing at all. A folder stands there only with
-   * `directory`, and then holds nothing but the paths in `only` when given (a
-   * folder the group removes). On the way, no link, and a file only where it is
-   * one of these paths or this one. A change before then skips the mutation, so
-   * a group never lands half-applied. Kept in the record, so recovery after a
-   * crash checks them too.
+   * Peer guards must hold when publication becomes visible and remain in crash records for
+   * recovery. Null revision means absence, never directory/link; explicit directories may contain
+   * only listed paths. Ancestor/path changes skip the group rather than publishing against stale
+   * peers.
    */
   readonly peerGuards?: ReadonlyArray<{
     readonly path: string;
@@ -1009,11 +1005,9 @@ async function run(
     }
     return true;
   };
-  // A crash between recording `publishing` and making the native call leaves the
-  // record there. A lease outlives a dying server only until its call retires, so
-  // what stands now is final: the call either ran or never will. Untouched, the
-  // step is prepared again and every check runs afresh; run, recovery goes on from
-  // where the call left it; anything else stays for review below.
+  // After the native lease retires, a publishing record's call either ran or never will. Reprepare
+  // untouched steps with fresh guards, resume confirmed calls, and leave every ambiguous state for
+  // review.
   if (record.phase === "publishing") {
     const ran = await publicationRan();
     if (ran === false) await save({ phase: "prepared", sourceMutation: false });

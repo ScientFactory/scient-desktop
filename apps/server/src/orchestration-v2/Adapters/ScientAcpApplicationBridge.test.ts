@@ -17,7 +17,7 @@ describe("Scient ACP application bridge", () => {
     const runtime = scientAcpProviderBridge.runtimeInstructions?.({ harness: "ACP" });
 
     assert.include(prompt, "Scient interaction mode: Default");
-    assert.include(prompt, "Scient collaborative browser");
+    assert.include(prompt, "## Scient browser");
     assert.include(prompt, "Scient orchestration");
     assert.include(runtime, "running in Scient through the ACP harness");
     assert.notInclude(runtime, "T3 Code");

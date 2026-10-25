@@ -5,32 +5,14 @@ import type { ComputeExecutionId } from "./contract.ts";
 import { Count } from "./primitives.ts";
 
 /**
- * Who runs next, as a pure function of who is waiting.
- *
- * One namespace can run one thing at a time: a kernel executing two statements
- * concurrently would interleave their effects on shared state, so an ordering
- * is not a scheduling nicety but the only way dependent code means anything.
- * That ordering is the part of a session easiest to get subtly wrong -- a cancel
- * that removes the wrong entry, a position that drifts from what a user was
- * shown, a restart that leaves work queued against a namespace that no longer
- * exists -- so it lives here, as a total reducer with no clock, no I/O, and no
- * Effect except where a caller genuinely has to be refused.
- *
- * A queue only ever holds entries for the session's current namespace: a
- * restart drains it, and a command written against an older generation is
- * refused before it can be admitted. So no entry carries a generation --
- * duplicating that guarantee here would put it somewhere it could disagree with
- * the record.
+ * Serialize one namespace so dependent code cannot interleave shared-state effects. Reject stale
+ * generations before queue admission and drain on restart; entries need no second generation field
+ * that could disagree with the session record.
  */
 
 /**
- * How many executions may wait behind the running one.
- *
- * A bound rather than a stream: unbounded queueing turns a stuck kernel into
- * unbounded memory and hands a user a backlog they can no longer reason about.
- * Sixteen is a working session's depth -- deep enough that a burst of cells does
- * not bounce, shallow enough that the queue is still something a person can
- * read.
+ * Bound pending executions so a stuck kernel cannot grow memory/backlog without limit. Allow a
+ * useful cell burst while keeping the queue small enough to inspect.
  */
 export const MAXIMUM_PENDING_COMPUTE_EXECUTIONS = 16;
 
@@ -42,12 +24,8 @@ export interface ComputeQueueState {
 export const EMPTY_COMPUTE_QUEUE: ComputeQueueState = { active: null, pending: [] };
 
 /**
- * A queue that is already as full as it is allowed to get.
- *
- * Typed because it is the one queue outcome a user has to be told about, and
- * because the number they have to be told is the limit rather than the message.
- * A caller that refused with a string would leave a client unable to say
- * "sixteen already waiting" without parsing prose.
+ * Return the numeric queue limit in a typed refusal; clients must not parse prose to explain how
+ * many executions are already waiting.
  */
 export class ComputeQueueFullError extends Schema.TaggedError<ComputeQueueFullError>()(
   "ComputeQueueFullError",
@@ -126,12 +104,8 @@ export function startNextComputeExecution(state: ComputeQueueState): {
 }
 
 /**
- * Clears the running execution.
- *
- * Ignores an identifier that is not the active one. A completion for something
- * this queue does not think is running is a late report about a namespace that
- * has moved on, and treating it as an error would turn a harmless race into a
- * failed command.
+ * Ignore completion IDs that are no longer active. Late reports after namespace movement are
+ * expected races, not reasons to fail another command.
  */
 export function finishComputeExecution(
   state: ComputeQueueState,
@@ -142,12 +116,8 @@ export function finishComputeExecution(
 }
 
 /**
- * Removes an execution, and says where it was removed from.
- *
- * The distinction is the caller's whole decision: a pending execution is
- * cancelled by forgetting it, while an active one is still inside a runtime and
- * has to be interrupted. Collapsing them would either leak a running
- * computation or send a signal on behalf of code that never started.
+ * Distinguish removed pending work from active work: pending cancels by forgetting, active requires
+ * runtime interruption. Collapsing them leaks running code or signals work that never started.
  */
 export function cancelComputeExecution(
   state: ComputeQueueState,
@@ -170,13 +140,8 @@ export function cancelComputeExecution(
 }
 
 /**
- * Empties the queue for a restart or a shutdown, and reports what it held.
- *
- * Queued code was written against a namespace that is about to stop existing,
- * so running it afterwards would execute it against state its author never saw.
- * The cancelled entries are returned rather than dropped: an execution that
- * disappears without a terminal record is a hole in the history this service
- * exists to keep.
+ * Queued code targets the ending namespace and must not run after restart. Return drained entries
+ * for terminal cancellation records rather than silently leaving holes in durable history.
  */
 export function drainComputeQueue(state: ComputeQueueState): {
   readonly state: ComputeQueueState;

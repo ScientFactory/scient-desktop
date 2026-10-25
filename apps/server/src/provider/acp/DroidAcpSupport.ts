@@ -26,26 +26,9 @@ import type { CustomModelReasoning } from "../../customModelCapabilities.ts";
 import type { DroidRequestLimitBreach } from "../droid/DroidKeyBroker.ts";
 
 /**
- * Droid ACP support — helpers for the Factory Droid CLI's standard-ACP
- * surface (`droid exec --output-format acp`).
- *
- * Protocol facts encoded here were verified against a real `@factory/cli`
- * 0.200.0 binary by `DroidAcpCliProbe.test.ts`; anything version-sensitive
- * is asserted there so drift surfaces as a failing probe instead of silent
- * misconfiguration.
- *
- * Verified behaviors this module relies on:
- * - `droid exec` ignores `-m`/`-r` in ACP mode; model/effort/mode selection
- *   must go through `session/set_config_option`.
- * - The model inventory lives in the `model` select option (`category:
- *   "model"`); reasoning ladders live in `reasoning_effort` (`category:
- *   "thought_level"`) and change with the selected model.
- * - Model writes use `set_config_option` requests, confirmed through the
- *   `config_option_update` Droid publishes after its `{}` answer (0.183.0,
- *   0.200.0, 0.213.0 and 0.230.0). Droid 0.202 ignores notifications.
- * - Modes are exposed both as a `modes` block and an `autonomy_level`
- *   select option with ids `normal | spec | auto-low | auto-medium |
- *   auto-high`.
+ * Droid ACP ignores -m/-r: select through config requests, then await post-ack async confirmation.
+ * Effort ladders belong only to the selected model; modes also appear as autonomy_level. Keep
+ * version-sensitive assumptions pinned by DroidAcpCliProbe.test.ts.
  */
 
 /** Compatibility marker advertised by genuine Droid ACP agents. */
@@ -95,11 +78,9 @@ export interface DroidAcpRuntimeInput extends Omit<
   /** Per-process Droid settings overlay. It holds broker capabilities; never log its contents. */
   readonly runtimeSettingsPath?: string;
   /**
-   * `disabled` removes tool definitions from Scient custom-model requests and
-   * makes Droid refuse every tool call before it runs. Droid still lists its
-   * tools to Factory-hosted models; it cannot withhold them in ACP mode. Only
-   * the custom-models factory can enforce it (overlay hook and broker); the
-   * plain factory refuses it rather than start Droid with tools.
+   * Droid still advertises tools to Factory-hosted models in ACP. Only the custom-model overlay
+   * hook/broker can enforce disabled tools; the plain factory must refuse rather than launch with
+   * tools enabled.
    */
   readonly modelTools?: "disabled";
 }
@@ -135,11 +116,8 @@ export type DroidAcpRuntime = AcpSessionRuntime.AcpSessionRuntime["Service"] & {
    */
   readonly upstreamRetrying?: Effect.Effect<number>;
   /**
-   * In a process started without tools, after `start`: whether Droid will
-   * refuse tool calls. It does when it runs the overlay's hook, which an
-   * organization policy can disable. That holds for every model: a Scient
-   * custom model is offered no tools, but its endpoint can still answer with
-   * a tool call, and only the hook refuses that.
+   * An organization policy can disable the overlay hook. Verify tool-call refusal after startup
+   * even when the custom endpoint was offered no tools, because it can still return a tool call.
    */
   readonly backgroundToolGuard?: () => Effect.Effect<DroidToolGuard>;
 };
@@ -150,11 +128,8 @@ const MIN_REDACTED_CREDENTIAL_CHARS = 8;
 const DROID_BROKER_CAPABILITY = /scient-cap-[A-Za-z0-9_-]{16,}/g;
 
 /**
- * Takes one Droid instance's configured credentials out of text Scient shows
- * or stores from Droid (an error, or a chunk of what Droid writes):
- * `FACTORY_API_KEY`, the instance's environment values marked sensitive, and
- * the key broker's capabilities (a custom model's own key never reaches
- * Droid). Exact values in the text it is given, and nothing more.
+ * Redact only exact configured credentials and broker capabilities from shown/stored Droid text. A
+ * custom model's own key must never reach Droid.
  */
 export function makeDroidCredentialRedactor(input: {
   readonly environment?: NodeJS.ProcessEnv | undefined;
@@ -297,11 +272,9 @@ export const makeDroidAcpRuntime = Effect.fn("DroidAcpSupport.makeDroidAcpRuntim
                 ),
               }),
       authenticateMeta: DROID_HEADLESS_AUTH_META,
-      // Every write waits for Droid's own report of the new value. Droid answers
-      // `set_config_option` with `{}` and then publishes the applied state in a
-      // `config_option_update` (0.183.0, 0.200.0, 0.213.0, 0.230.0); an empty
-      // acknowledgement must never stand in for that report, least of all for
-      // autonomy, and nothing reported before the answer counts.
+      // Droid answers config writes with {} before publishing applied state. Wait for a
+      // config_option_update after that answer; neither an empty acknowledgement nor earlier
+      // evidence confirms autonomy or another write.
       configOptionTransport: "request-confirmed",
     }).pipe(
       Layer.provide(
@@ -340,11 +313,8 @@ export interface DroidDiscoveredModel {
 }
 
 /**
- * Extracts a compact `Nx`-style cost label from a Droid model option's
- * `description`. The real CLI annotates each model with its Factory token
- * rate (e.g. "0.5x Factory token rate", "12x Factory token rate"); only a
- * leading multiplier is treated as a cost label so prose descriptions
- * degrade to no badge rather than a wrong number.
+ * Accept only a leading Factory rate multiplier as a cost badge; prose descriptions must degrade to
+ * no badge rather than an invented number.
  */
 export function droidCostMultiplierLabel(
   description: string | null | undefined,
@@ -406,12 +376,8 @@ function effortLevelsFromOption(
 }
 
 /**
- * Builds the live model inventory from one config-options snapshot. The
- * snapshot's effort ladder describes only the *currently selected* model
- * (`modelOption.currentValue`), so it is attached to that entry alone;
- * every other model stays with an empty ladder until a selection refreshes
- * it — Droid validates efforts per model, so copying the ladder to all
- * entries would advertise invalid choices.
+ * A config snapshot's effort ladder belongs only to its selected model. Leave other ladders empty
+ * until selected, or the picker would advertise efforts Droid rejects.
  */
 export function buildDroidModelsFromConfigOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
@@ -566,20 +532,10 @@ const requireOfferedDroidModel = Effect.fn("DroidAcpSupport.requireOfferedDroidM
 });
 
 /**
- * Applies model first, then reasoning effort: Droid validates effort values
- * against the selected model, so the order is a protocol requirement, not a
- * preference. The effort is validated against the live ladder before writing
- * so a stale picker choice fails with an explicit error instead of an opaque
- * agent-side one. Managed models also validate inherited effort against
- * provider evidence when no explicit effort is requested.
- *
- * A Scient model's configured default is a wish: for a model ID it knows,
- * Droid keeps its own ladder and applies its nearest level (verified against
- * Droid 0.213.0 and 0.230.0: `gpt-5.2` configured with Minimal or Max runs at
- * Low). The session then runs at Droid's level and the replacement is
- * returned. The composer dispatches the default like any other level, so a
- * request for it is the same wish; any other level was picked in the
- * conversation and must be applied as asked.
+ * Apply model before effort and validate against its live ladder. A configured default is a wish:
+ * Droid may choose its nearest supported level, which must be returned. Explicit conversation
+ * choices other than that default must be applied exactly; inherited managed efforts still need
+ * evidence.
  */
 const configureDroidModelAndEffort = Effect.fn("DroidAcpSupport.configureDroidModelAndEffort")(
   function* (input: {
@@ -787,20 +743,9 @@ export function resolveDroidAutonomyModeId(runtimeMode: RuntimeMode): string {
 // ── Live discovery over a started runtime ───────────────────────────────
 
 /**
- * Discovers Droid models and per-model reasoning-effort ladders over a
- * started runtime. The caller owns the runtime lifecycle and any overall
- * timeout; discovery never starts or stops sessions itself.
- *
- * Each model is briefly selected so its own ladder can be read, then the
- * originally selected model and its reasoning level are restored. Restoration runs in an `ensuring`
- * finalizer, so even a caller timeout (which interrupts this effect) cannot
- * leave an unrelated model selected. A model whose ladder cannot be observed
- * stays listed with empty efforts — a missing ladder must not hide an
- * otherwise usable model.
- *
- * A Scient model also gets its configured level written, as a thread would,
- * because only Droid's answer says whether it runs that level (one more write
- * per Scient model with reasoning).
+ * Discovery must restore model/effort in a finalizer even after caller timeout; never own the
+ * caller's session lifecycle. Keep models with unobserved ladders listed with empty efforts. Write
+ * Scient defaults too, because only Droid's applied answer establishes the actual level.
  */
 export const discoverDroidModels = Effect.fn("DroidAcpSupport.discoverDroidModels")(function* (
   runtime: DroidModelEffortRuntime,
@@ -855,11 +800,8 @@ export const discoverDroidModels = Effect.fn("DroidAcpSupport.discoverDroidModel
   });
 
   return yield* Effect.forEach(initialModels, observeLadder, { concurrency: 1 }).pipe(
-    // Restoration runs on every exit path — including a caller timeout that
-    // interrupts this effect — so the walk cannot leave an unrelated model
-    // or level selected. A failing restore fails the walk; the probe then
-    // degrades to the snapshot inventory with unknown ladders rather than
-    // wrong ones.
+    // Restore on every exit, including interruption. A failed restore fails discovery so callers
+    // fall back to unknown ladders rather than reporting incorrect model/effort evidence.
     Effect.onExit(() => restore),
   );
 });
@@ -940,11 +882,9 @@ function droidConfiguresEffort(
 }
 
 function droidMetadataAllowsEffort(metadata: CustomModelReasoning, effort: string): boolean {
-  // Stale known evidence remains evidence. Never translate Droid sentinels
-  // (such as `none`) into API levels. Off is a choice only for adaptive
-  // (Messages) thinking, where Droid then sends no thinking at all (verified
-  // against Droid 0.213.0 and 0.230.0); for effort APIs it omits the
-  // parameter, which is the model's default, not off.
+  // Keep stale known evidence and never translate Droid sentinels into API levels. Off means no
+  // thinking only for adaptive Messages; effort APIs omit the parameter and use the model default
+  // instead.
   if (effort === "off") return metadata.supported === true && metadata.mode === "adaptive";
   return metadata.supported !== false && metadata.levels.some((level) => level === effort);
 }

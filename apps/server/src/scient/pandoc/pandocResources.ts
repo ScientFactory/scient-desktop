@@ -1,27 +1,7 @@
 /**
- * The security pass between Pandoc's read and write passes. Pandoc's
- * `--sandbox` alone is not enough (Pandoc qualification, REPORT §5): citeproc
- * runs outside the sandbox and reads `bibliography` or fetches a `csl` named in
- * document metadata, raw OpenXML (including `INCLUDEPICTURE` field codes) is
- * copied verbatim into `document.xml`, and a `data:` URI of any type becomes an
- * embedded part. So before the write pass Scient:
- *
- * - keeps only presentational metadata and reports the file-reading keys it
- *   deleted (`bibliography`, `csl`, `citation-abbreviations`, `reference-doc`,
- *   `resource-path`);
- * - drops every `RawBlock` and `RawInline` (an HTML `<br>` becomes a line break);
- * - resolves every `Image` itself: bundle assets by id, `data:` URIs only when
- *   the bytes are an image, captured relative paths for workspace-file export,
- *   or live relative paths only inside the allowlisted roots for other callers
- *   (lexically and after `realpath`), regular files under the size cap whose
- *   magic bytes are an image; no URL scheme, absolute, drive, or UNC path is
- *   ever read. Anything else becomes a visible placeholder in the
- *   `Scient Placeholder` style and a warning;
- * - keeps only web, mail, and in-document links; other destinations keep
- *   their text.
- *
- * The walk is generic over the JSON tree, so a node kind Scient does not model
- * cannot carry a raw block or an image past it.
+ * Pandoc sandbox excludes neither citeproc reads nor raw OpenXML/data embedding. Strip resource
+ * metadata/raw nodes and resolve only verified allowlisted images; otherwise emit placeholders.
+ * Walk unknown node kinds too, and restrict links so unmodeled trees cannot smuggle resource reads.
  */
 import {
   DOCUMENT_ASSET_URL_PREFIX,

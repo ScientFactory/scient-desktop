@@ -1,28 +1,7 @@
 /**
- * Select a declared compiler and check whether the default pdfLaTeX lane can
- * process the document. Only fixed engine names become invocation flags.
- *
- * Without a directive, `latexCommand.ts` uses `latexmk -pdf` unless an
- * unconditional Unicode-font package requires XeLaTeX. Explicit
- * `% !TEX program = …` declarations select the compiler through latexmk.
- * Explicit pdfLaTeX still reports incompatible `fontspec`/`unicode-math` loads.
- *
- * Two kinds of finding, and they are not equally strong. The magic comment is
- * an author's declaration — they wrote down which engine this document is for
- * — so selection honors it. A package load is an inference, and the
- * inference is wrong for every document that guards the load behind an engine
- * test. Pandoc's default template is exactly that document: it loads `iftex`
- * and then `\ifPDFTeX … \else \usepackage{unicode-math} \usepackage{fontspec}
- * \fi`, which compiles perfectly under pdfLaTeX because pdfLaTeX never reaches
- * the branch. So a document that shows any engine-conditional idiom — one of
- * the guard packages, or one of the conditionals they define — has its
- * package-load verdict suppressed and lets the compile decide. This gate reads
- * text, not TeX; it cannot evaluate the branch, and refusing a document it
- * merely failed to understand is worse than letting the engine answer.
- *
- * Pure and read-only: selection uses source text already held by the caller.
- * `LatexBuildService.ts` selects the compiler from the bounded preamble heads
- * before running the existing build and publication pipeline.
+ * Honor declared engines before weaker package inference, accepting only fixed invocation flags.
+ * Suppress Unicode-package inference when engine guards exist: text scanning cannot evaluate
+ * branches, and refusing conditional pdfLaTeX-compatible templates would be dishonest.
  */
 
 import { stripLatexComments } from "./latexPreamble.ts";
@@ -88,11 +67,8 @@ const ENGINE_ONLY_PACKAGES: ReadonlySet<string> = new Set(["fontspec", "unicode-
 const ENGINE_GUARD_PACKAGES: ReadonlySet<string> = new Set(["iftex", "ifxetex", "ifluatex"]);
 
 /**
- * The conditionals those packages define, in every casing they are written in
- * — `\ifPDFTeX` and `\ifpdftex` are the same macro spelled the two ways the
- * documentation and the wild both use. `\ifpdf` is deliberately absent: it
- * tests PDF *output mode*, not the engine, and a document branching on it says
- * nothing about which engine it wants.
+ * Do not treat ifpdf as an engine test: it selects PDF output mode. Recognize the documented casing
+ * variants of actual engine conditionals.
  */
 const ENGINE_CONDITIONAL_PATTERN = /\\if(?:pdftex|xetex|luatex|tutex)\b/iu;
 
@@ -126,13 +102,8 @@ function magicCommentVerdict(text: string): LatexEngineUnsupported | null {
 }
 
 /**
- * Whether this text branches on the engine anywhere: it loads one of the guard
- * packages, or it uses one of their conditionals. Either is enough — a
- * template can load `iftex` in one file and branch in another, and both halves
- * mean the same thing about the document as a whole.
- *
- * Comment-stripped, like the package scan, so a commented-out `\ifPDFTeX` in a
- * note to a co-author cannot switch the refusal off.
+ * Guard packages and conditionals can live in different files; either proves engine branching for
+ * the document. Strip comments first so a co-author note cannot disable the refusal.
  */
 function hasEngineConditional(text: string): boolean {
   const stripped = stripLatexComments(text);
@@ -166,16 +137,8 @@ function packageLoadVerdict(text: string): LatexEngineUnsupported | null {
 }
 
 /**
- * The verdict for one document: `{ supported: true }` when nothing here asks
- * for another engine, or a refusal naming exactly what was found.
- *
- * Order carries meaning. Magic comments are checked across every text handed
- * in first, so a document that both declares `% !TEX program = xelatex` and
- * loads `fontspec` is reported by the directive that named the engine on
- * purpose rather than the package that merely implies it — and so a document
- * that declares an engine is still refused however much `iftex` machinery it
- * also carries. Only then does the engine-conditional check run, and only the
- * weaker package-load inference is suppressed by it.
+ * Check all authored engine directives before package inference. Engine guards suppress only the
+ * weaker package verdict, never an explicit incompatible declaration.
  */
 export function evaluateLatexEngineGate(input: LatexEngineGateInput): LatexEngineVerdict {
   const texts = [input.rootText, ...(input.includedTexts ?? [])];

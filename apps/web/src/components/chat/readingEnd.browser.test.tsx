@@ -16,8 +16,8 @@ import { MessagesTimeline } from "./MessagesTimeline";
 import { readerAtReadingEnd, readingEndGapOnScreen, withReadingEnd } from "./readerScrollPolicy";
 import { readTimelinePosition, rememberTimelinePosition } from "./timelineScrollAnchoring";
 
-// Real-Chromium geometry for DF-047 and the #396 follow-ups: where the bottom
-// is, how a sent prompt's response is revealed, and which layout keeps the end.
+// Real Chromium geometry guards reading-end placement and sent-response reveal across layout
+// changes.
 
 const env = EnvironmentId.make("reading-end-tests");
 const COMPOSER_INSET = 100;

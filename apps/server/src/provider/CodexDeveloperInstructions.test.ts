@@ -1,4 +1,3 @@
-import { buildCodexDeveloperInstructions } from "./CodexDeveloperInstructions.ts";
 import * as NodeAssert from "node:assert/strict";
 
 import type { McpCapability } from "../mcp/McpInvocationContext.ts";
@@ -42,17 +41,13 @@ describe("buildCodexAdditionalContext", () => {
   });
 });
 
-describe("buildCodexDeveloperInstructions", () => {
-  it("appends runtime info after the mode instructions", () => {
+describe("Codex runtime context", () => {
+  it("names Scient, the Codex harness, the model and the effort", () => {
     const instructions = runtimeInstructions({
       model: "gpt-5.3-codex",
       reasoningEffort: "high",
     });
 
-    NodeAssert.match(
-      buildCodexDeveloperInstructions("default"),
-      /^<collaboration_mode># Collaboration Mode: Default/,
-    );
     NodeAssert.match(instructions, /Scient/);
     NodeAssert.match(instructions, /Codex harness/);
     NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
@@ -69,37 +64,46 @@ describe("buildCodexDeveloperInstructions", () => {
   });
 });
 
-describe("T3 browser developer instructions", () => {
+describe("Scient browser awareness", () => {
   const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
 
-  it("prefers the product-native preview tools in both collaboration modes", () => {
-    {
-      const instructions = toolInstructions(runtime, true);
-      NodeAssert.match(instructions, /Scient browser/);
-      NodeAssert.match(instructions, /preview_status/);
-      NodeAssert.match(instructions, /preview_open/);
-      NodeAssert.match(
-        instructions,
-        /Use another browser system only when these tools are unavailable/,
-      );
-    }
+  it("prefers the product-native preview tools when preview is granted", () => {
+    const instructions = toolInstructions(runtime, true);
+    NodeAssert.match(instructions, /Scient browser/);
+    NodeAssert.match(instructions, /preview_status/);
+    NodeAssert.match(instructions, /preview_open/);
+    NodeAssert.match(
+      instructions,
+      /Use another browser system only when these tools are unavailable/,
+    );
   });
 
   it("omits the browser block entirely when the preview tools are not attached", () => {
-    for (const mode of ["default", "plan"] as const) {
-      const instructions = toolInstructions(runtime, false);
-      NodeAssert.doesNotMatch(instructions, /preview_status/);
-      NodeAssert.doesNotMatch(instructions, /preview_open/);
-      NodeAssert.doesNotMatch(instructions, /Scient collaborative browser/);
-      NodeAssert.doesNotMatch(instructions, /Do not switch to global browser skills/);
-      NodeAssert.match(buildCodexDeveloperInstructions(mode), /<collaboration_mode>/);
-      NodeAssert.match(buildCodexDeveloperInstructions(mode), /<\/collaboration_mode>/);
-    }
+    const instructions = toolInstructions(runtime, false);
+    NodeAssert.doesNotMatch(instructions, /preview_status/);
+    NodeAssert.doesNotMatch(instructions, /preview_open/);
+    NodeAssert.doesNotMatch(instructions, /Scient browser/);
   });
+});
 
-  it("tracks the turn's MCP configuration rather than defaulting to on", () => {
-    NodeAssert.match(toolInstructions(runtime, true), /preview_open/);
-    NodeAssert.doesNotMatch(toolInstructions(runtime, false), /preview_open/);
+describe("Codex orchestration context", () => {
+  it("routes subagents native first, delegate_task for the rest", () => {
+    const orchestration = Object.entries(buildCodexAdditionalContext({ model: "gpt-6.1-sol" }))
+      .filter(([key]) => key.startsWith("t3_code_orchestration_"))
+      .map(([, entry]) => entry.value)
+      .join("\n");
+
+    NodeAssert.ok(orchestration.includes("use your native tool when the child uses your provider"));
+    NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
+    NodeAssert.ok(orchestration.includes("A native type running another provider's model"));
+    NodeAssert.ok(
+      orchestration.includes("Every new delegate review or re-check is a new `delegate_task`"),
+    );
+    NodeAssert.ok(orchestration.includes("never a `scient_thread_send`"));
+    NodeAssert.ok(!orchestration.includes("inheritedOptions"));
+    NodeAssert.ok(!orchestration.includes("Prefer native"));
+    // The ACP terminal fallback is ACP-only; Codex agents never need it.
+    NodeAssert.ok(!orchestration.includes("acp-mcp-call"));
   });
 });
 

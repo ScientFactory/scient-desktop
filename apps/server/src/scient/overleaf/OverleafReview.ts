@@ -1,13 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Captured bytes are staged in a private folder for Git.
 /**
- * The review of one manual Overleaf sync (implementation plan sections 4.1 to
- * 4.4, coordinator contract section 5).
- *
- * From a captured folder and a freshly fetched Overleaf head, this builds the
- * merge, the conflict decisions, the candidate tree, both change lists, the
- * warnings and the exact plan the applier would run. It writes nothing to the
- * folder and sends nothing. A review is immutable: different choices or
- * different inputs produce a new review with a new digest.
+ * Reviews write/send nothing. Different inputs or choices must produce a new immutable
+ * review/digest so confirmation cannot authorize a changed applier plan.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -333,11 +327,8 @@ function respelling(before: Iterable<string>, after: Iterable<string>) {
 }
 
 /**
- * A path the applier would check that reaches something on disk this review did not
- * read, and what it reaches, or null. Unchecked, local-only and skipped entries are
- * listed but never read; a walked folder is read entry by entry, so only another
- * spelling of it is refused; and nothing below a skipped entry was listed at all.
- * Matching is by collision key, so the same spelling and another one both count.
+ * An applier check must address something the review read or found absent. Collision keys include
+ * alternate spellings; unchecked/skipped paths cannot silently become readable reviewed inputs.
  */
 function unreviewedOccupant(paths: Iterable<string>, inventory: OverleafInventory) {
   const unread = new Map<string, string>();
@@ -477,11 +468,8 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     ...[...remote.keys()].filter((path) => !inventory.captured.has(path)),
   ]);
   if (alias !== null) return refused({ reason: "path-alias", ...alias });
-  // Every path the applier touches is in the base, Overleaf's tree or the capture; the
-  // target is drawn from the last two. Two spellings of one path among them are one
-  // file on a disk that ignores letter case or Unicode form: the applier cannot carry
-  // out the change between them, or keep its base whole if interrupted, whether or not
-  // Git saw a rename. It stays a typed refusal (contract section 5), not a workaround.
+  // Case/Unicode aliases may be one disk file even when Git reports separate paths. Refuse the plan
+  // rather than attempting changes the applier cannot preserve safely through interruption.
   const respelled = respelling(base.keys(), [...remote.keys(), ...inventory.captured.keys()]);
   if (respelled !== null) return refused({ reason: "alias-rename", ...respelled });
 
@@ -545,11 +533,8 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     renames,
     trees: { base, local, remote, merged },
   }).toSorted((left, right) => byPath(left.paths.join("\0"), right.paths.join("\0")));
-  // The applier also checks the paths conflict groups add: names kept from an
-  // interrupted apply, and names Git makes up for a file meeting a folder. Every path
-  // it can check must be one this review read, or empty on disk; anything else would
-  // make it read a file nobody reviewed and stop partway. Checked before any choice
-  // applies: the target is drawn from the capture, Overleaf's tree and the merge.
+  // Conflict-generated and retained names also need reviewed-or-empty paths. Check before applying
+  // choices so an unexpected file cannot cause an unreviewed read or stop a group partway.
   const applied = new Set([
     ...base.keys(),
     ...remote.keys(),

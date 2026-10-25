@@ -1,14 +1,7 @@
 /**
- * Provider-native plugin and MCP server inventory reported outside the status
- * probe: by live provider sessions and by bounded inventory enrichment. The
- * registry keeps the last report per instance generation in memory and
- * overlays it on every snapshot it publishes, so probes that cannot see this
- * inventory never erase it. It is never written to the provider status
- * cache: the next session or enrichment reports it again.
- *
- * Every field is ordered per scope (machine plugins, machine MCP servers, and
- * each workspace's plugins) by when its read began, so a slow read can never
- * replace the result of one that began later.
+ * Keep the last native inventory per instance generation so status probes cannot erase fields they
+ * cannot observe. Order each machine/workspace scope by read start time, preventing slow reads from
+ * replacing newer results; never persist this overlay in the status cache.
  */
 import type { ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";

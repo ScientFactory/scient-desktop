@@ -23,14 +23,9 @@ import {
 } from "./scientConversationOrigin.ts";
 
 /**
- * Conversation export contracts: the versioned conversation snapshot, the
- * source-neutral document bundle every readable-output writer consumes, and
- * the HTTP surface a client uses to request an export.
- *
- * The snapshot is captured on the server from durable projections at a known
- * sequence; readable formats (Markdown, PDF, Word) are functions of a document
- * bundle built from it, and a transfer file is the snapshot serialized with its
- * attachments. See docs/internals/scient-conversation-export.md.
+ * Capture snapshots from durable server projections at a known sequence. Derive readable formats
+ * from the same bundle and serialize transfer files with that snapshot's attachments; client
+ * timeline state is not authority.
  */
 
 const ShortText = (max: number) => Schema.String.check(Schema.isMaxLength(max));
@@ -130,12 +125,9 @@ const referenceBase = {
 } as const;
 
 /**
- * The export projection of Scient's inline message references: composer
- * context chips and captured quotes. Each supported kind keeps an explicit set
- * of display fields; installation-local identities (environment, thread, and
- * message ids, absolute workspace roots, document revisions, editor positions)
- * and open payloads are never carried. Unsupported kinds are dropped, their
- * label kept as plain text, and counted in a `records-skipped` warning.
+ * Export typed display fields only, never installation-local IDs/roots/revisions/positions or open
+ * payloads. Unsupported references retain labels as plain text and contribute records-skipped
+ * warnings.
  */
 export const ConversationInlineReference = Schema.Union([
   /** An image or file chip bound to one of the message's attachments. */

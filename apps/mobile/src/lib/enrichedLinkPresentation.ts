@@ -12,13 +12,7 @@ import {
   formatComposerContextHref,
   parseComposerContextHref,
 } from "@t3tools/shared/composerContextReferences";
-import {
-  hasThreadLinks,
-  // SCIENT-FORK:START — stored environment-qualified links are thread links too.
-  parseEnvironmentQualifiedThreadLinkHref,
-  // SCIENT-FORK:END
-  parseThreadLinkHref,
-} from "@t3tools/shared/threadLinks";
+import { hasThreadLinks, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 
 export function enrichedContextLinkPresentation(
   href: string,
@@ -42,11 +36,7 @@ export function enrichedContextLinkPresentation(
 export function enrichedThreadLinkPresentation(
   href: string,
 ): { accent?: string; icon: ContextChipIconRef } | undefined {
-  // SCIENT-FORK:START — stored environment-qualified links are thread links too.
-  if (!parseThreadLinkHref(href) && !parseEnvironmentQualifiedThreadLinkHref(href)) {
-    return undefined;
-  }
-  // SCIENT-FORK:END
+  if (!parseThreadLinkHref(href)) return undefined;
   const presentation = contextChipPresentation("thread");
   return {
     ...(presentation.accent ? { accent: presentation.accent } : {}),
@@ -69,13 +59,6 @@ export function threadChipTargets(
   const targets = new Map<string, ThreadChipTarget>();
   if (hasThreadLinks(markdown)) {
     for (const [, href = ""] of markdown.matchAll(/\]\((t3-thread:\/\/v1\/[^\s)]+)\)/g)) {
-      // SCIENT-FORK:START — qualified links keep their recorded environment and ID, like navigation.
-      const qualified = parseEnvironmentQualifiedThreadLinkHref(href);
-      if (qualified) {
-        targets.set(href, { href, ...qualified, link: false });
-        continue;
-      }
-      // SCIENT-FORK:END
       const threadId = parseThreadLinkHref(href);
       if (threadId) targets.set(href, { href, environmentId, threadId, link: true });
     }

@@ -4,7 +4,7 @@ import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/cont
 import { Atom, AsyncResult } from "effect/reactivity";
 import { useEffect, useRef } from "react";
 
-import { composerAttachmentLimitError, prepareTurnAttachments } from "../lib/attachmentUpload";
+import { prepareTurnAttachments } from "../lib/attachmentUpload";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 import { isFileBackedComposerAttachment } from "../lib/composerImages";
 import {
@@ -17,7 +17,6 @@ import {
 import { appAtomRegistry } from "./atom-registry";
 import { useServerConfigs } from "./entities";
 import { flattenQueuedThreadMessages, threadOutboxManager } from "./thread-outbox";
-import { queuedEditDraftKey, queuedRunEditsAtom } from "./queued-run-edit";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
 import {
   ComposerDraftPersistenceError,
@@ -73,25 +72,6 @@ export function useComposerAttachmentUploadWorker() {
     const queue = createComposerAttachmentUploadQueue({
       onChange: (states) => appAtomRegistry.set(composerAttachmentUploadsAtom, states),
       upload: async ({ environmentId, attachment }, signal, onProgress) => {
-        const queued = flattenQueuedThreadMessages(
-          appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
-        );
-        const edits = appAtomRegistry.get(queuedRunEditsAtom);
-        for (const [key, draft] of Object.entries(appAtomRegistry.get(composerDraftsAtom))) {
-          if (
-            composerDraftEnvironmentId(key, queued, draft) !== environmentId ||
-            !draft.attachments.some((candidate) => candidate.id === attachment.id)
-          )
-            continue;
-          const edit = Object.entries(edits).find(
-            ([threadKey, edit]) => queuedEditDraftKey(threadKey, edit.runId) === key,
-          )?.[1];
-          const error = composerAttachmentLimitError({
-            attachments: draft.attachments,
-            ...(edit ? { retainedAttachments: edit.existingAttachments } : {}),
-          });
-          if (error) throw new Error(error);
-        }
         const release = isFileBackedComposerAttachment(attachment)
           ? retainComposerAttachmentFileForPreview(attachment)
           : undefined;
@@ -117,9 +97,7 @@ export function useComposerAttachmentUploadWorker() {
                 }
               }
               if (!retained) return "abandon";
-              // The reference is already in the in-memory draft, and Send copies it into the
-              // outbox, which saves on its own. A failed draft save only costs a re-upload after
-              // a restart, so it must not fail an upload the server already accepted.
+              // Draft-save failure only costs re-upload after restart; the outbox saves references independently, so preserve accepted uploads.
               await flushComposerDrafts().catch((error: unknown) => {
                 if (!(error instanceof ComposerDraftPersistenceError)) throw error;
                 console.warn("[composer-attachments] could not save the uploaded reference", error);
@@ -129,7 +107,6 @@ export function useComposerAttachmentUploadWorker() {
           }),
         );
         release?.();
-        // The upload queue owns retry and failure reporting, so a failed upload rethrows to it.
         if (AsyncResult.isFailure(prepared)) throw squashAtomCommandFailure(prepared);
         return prepared.value.status === "ready";
       },

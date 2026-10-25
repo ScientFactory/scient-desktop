@@ -369,13 +369,7 @@ export function developmentBootstrapConfig({
   };
 }
 
-/**
- * The package name of a dev bundle. Electron files the app's storage key in
- * the macOS keychain under it ("<name> Safe Storage"), and macOS lets only the
- * app that created an entry read it without asking. One name per bundle
- * identity gives every candidate an entry of its own; a name shared by all of
- * them made each new candidate ask for the login password.
- */
+/** Each dev bundle needs its own keychain storage name; sharing one prompts for the login password. */
 export function developmentBootstrapPackageName(bundleIdSuffix) {
   return `scient-next-dev-${bundleIdSuffix || "local"}`;
 }
@@ -694,9 +688,7 @@ function buildMacLauncher(electronBinaryPath) {
     (!isDevelopment || hasValidDevelopmentCodeIdentity(targetAppBundlePath))
   ) {
     if (isDevelopment) {
-      // The launcher also handles protocol activations outside the dev runner,
-      // so refresh its fallback environment on every launch. Never let a value
-      // captured by an older parent app override the live dev-runner environment.
+      // Protocol activations bypass the dev runner, so refresh the fallback environment on every launch.
       writeDevelopmentBootstrapEnvironment();
     }
     registerMacLauncherBundle(targetAppBundlePath);
@@ -707,10 +699,7 @@ function buildMacLauncher(electronBinaryPath) {
   if (isDevelopment) assertForegroundSigning(targetAppBundlePath);
   // Build and sign beside the current bundle; it is replaced only on success.
   replaceAppBundleAtomically(targetAppBundlePath, (stagedAppBundlePath) => {
-    // verbatimSymlinks keeps the framework's relative symlinks intact
-    // (e.g. Resources -> Versions/Current/Resources). Without it cpSync
-    // rewrites them to absolute paths into node_modules, which escape the
-    // bundle and crash sandboxed helper processes (icudtl.dat not found).
+    // Without verbatimSymlinks, cpSync makes framework symlinks point outside the bundle and crashes helpers.
     NodeFS.cpSync(sourceAppBundlePath, stagedAppBundlePath, {
       recursive: true,
       verbatimSymlinks: true,

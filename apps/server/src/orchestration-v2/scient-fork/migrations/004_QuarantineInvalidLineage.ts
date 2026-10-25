@@ -1,18 +1,7 @@
 /**
- * Scient migration 4: quarantine-invalid-lineage.
- *
- * Migration 3 was exercised by local development builds before the Phase B
- * migration design was finalized. This follow-up migration is therefore the
- * authoritative compatibility repair: databases that already recorded
- * migration 3 still receive it, while fresh databases converge through the
- * same path.
- *
- * Rows that cannot be decoded by the active lineage and recovery read models
- * are preserved in a dedicated evidence table and removed from active
- * recovery. Deletion is keyed by SQLite rowid rather than thread_id because a
- * nullable TEXT PRIMARY KEY can contain NULL (and even multiple NULL rows).
- *
- * SCIENT-OWNED.
+ * Databases that already recorded migration 3 still need this compatibility repair. Preserve
+ * undecodable rows as evidence outside active recovery; delete by rowid because a nullable TEXT
+ * PRIMARY KEY can contain multiple NULLs.
  */
 import { ThreadForkAttachmentCopy } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";

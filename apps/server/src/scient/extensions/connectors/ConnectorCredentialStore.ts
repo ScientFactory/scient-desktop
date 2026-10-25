@@ -1,11 +1,7 @@
 /**
- * The port through which Extensions holds connector credential material. Its
- * shape mirrors the agreed Secrets vault API (docs/internals/scient-extensions.md,
- * "Secrets integration"). Until the vault lands it is implemented over
- * `ServerSecretStore` with entries `connector-<uuid>.bin` holding a versioned
- * envelope, so the vault migration can move them by that prefix.
- *
- * Material never appears in logs, errors or RPC results.
+ * Keep credential envelopes under connector-<uuid>.bin for vault migration. Material must never
+ * appear in logs, errors, or RPC results; see the Secrets contract in
+ * docs/internals/scient-extensions.md.
  */
 import { ExtensionsError, VaultSecretRef } from "@t3tools/contracts";
 import * as Context from "effect/Context";

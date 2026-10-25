@@ -117,11 +117,8 @@ export const DocumentBindingChangeKind = Schema.Literals([
 export type DocumentBindingChangeKind = typeof DocumentBindingChangeKind.Type;
 
 /**
- * Notification payload for the binding-change seam. It carries binding identity
- * and the observable state, never producer-specific detail: a consumer either
- * uses the snapshot directly or re-reads the authoritative binding through
- * `getDescriptor`. Delivery may be coalesced, so the persisted binding stays
- * authoritative.
+ * Binding notifications may be coalesced. Treat the persisted binding as authoritative and carry no
+ * producer-specific detail across this consumer seam.
  */
 export const DocumentBindingChange = Schema.Struct({
   changeKind: DocumentBindingChangeKind,

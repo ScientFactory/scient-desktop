@@ -1,12 +1,3 @@
-/**
- * The decisions of an Overleaf sync, as pure functions over file trees. No
- * Git, no filesystem, no clock. These are the rules that were explored
- * exhaustively as a model before any of this was written; each one names the
- * failure it prevents.
- *
- * A tree is a map from manuscript path to the Git blob id of the file there.
- */
-
 export type FileTree = ReadonlyMap<string, string>;
 
 /** A file that kept its identity while its path changed, on either side. */
@@ -35,11 +26,8 @@ const changePaths = (change: FileChange): ReadonlyArray<string> =>
   change.kind === "renamed" ? [change.from, change.to] : [change.path];
 
 /**
- * All paths of the files that `paths` belong to. A file keeps its identity
- * across a rename on either side, so everything decided "per file" is decided
- * for its old and new paths together. Deciding per path let a failed write to
- * a locally renamed file advance the base for its old name, and the next sync
- * removed a collaborator's edit.
+ * Treat old/new rename paths as one file identity. Per-path advancement after a failed renamed-file
+ * write can advance the old base and delete collaborator edits on the next sync.
  */
 export function closeOverRenames(
   paths: Iterable<string>,

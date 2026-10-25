@@ -262,14 +262,21 @@
   },
   {
     "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "? \"Sign in to T3 Connect to manage this environment.\"",
+    "line": ": \"Your session does not have permission to manage T3 Connect access.\";",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
     "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "? \"Your session does not have permission to manage T3 Connect access.\"",
+    "line": "? \"Sign in to make this environment available to your other devices through T3 Connect.\"",
+    "rules": ["t3-connect"],
+    "kind": "dormant-cloud",
+    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
+  },
+  {
+    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
+    "line": ": \"Send activity to mobile notifications and Live Activities without T3 Connect.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
@@ -348,13 +355,6 @@
     "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
     "line": "description=\"This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again.\"",
     "rules": ["t3-connect", "t3-command"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
-    "path": "apps/web/src/components/settings/SavedEnvironmentRows.tsx",
-    "line": "description=\"Send activity to mobile notifications and Live Activities without T3 Connect.\"",
-    "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
@@ -581,5 +581,57 @@
     "rules": ["bare-t3"],
     "kind": "internal",
     "reason": "Upstream process-teardown diagnostic carried only in the internal termination error payload; users see the generic teardown error."
+  },
+  {
+    "path": "apps/web/src/components/settings/BetaSettingsPanel.tsx",
+    "line": "description=\"Share a thread with a guest who watches it live in their browser and sends messages you approve. Sign in to T3 Connect to use guest links.\"",
+    "rules": ["t3-connect"],
+    "kind": "dormant-cloud",
+    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
+  },
+  {
+    "path": "apps/web/src/components/settings/BetaSettingsPanel.tsx",
+    "line": "approve. Needs T3 Connect: sign in and link this machine in{\" \"}",
+    "rules": ["t3-connect"],
+    "kind": "dormant-cloud",
+    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
+  },
+  {
+    "path": "apps/web/src/components/settings/settingsSearch.ts",
+    "line": "searchTerms: [\"beta share guest invite link teammate watch t3 connect tunnel\"],",
+    "rules": ["t3-command"],
+    "kind": "dormant-cloud",
+    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
+  },
+  {
+    "path": "apps/server/src/provider/ScientAgentCopy.ts",
+    "rules": ["inherited-brand", "bare-t3", "t3-connect"],
+    "kind": "rewritten-agent-copy",
+    "reason": "The rename table that turns upstream agent copy into Scient copy; it quotes the upstream sentences it replaces."
+  },
+  {
+    "path": "apps/server/src/provider/ScientProviderInstructions.ts",
+    "line": "To wait for a background command or Monitor you started (tests, a build), call \\`t3_background_wait\\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.",
+    "rules": ["inherited-brand", "bare-t3"],
+    "kind": "rewritten-agent-copy",
+    "reason": "Verbatim copy of upstream's private Claude background-wait note; agents receive it only through scientAgentCopy (ScientAgentCopy.test.ts)."
+  },
+  {
+    "path": "apps/server/src/mcp/toolkits/orchestrator/tools.ts",
+    "rules": ["inherited-brand", "bare-t3", "t3-connect"],
+    "kind": "rewritten-agent-copy",
+    "reason": "Upstream MCP tool copy kept verbatim; ScientMcpProtocol's tools/list rewrites every description and title through ScientAgentCopy.ts. ScientAgentCopy.test.ts fails on any T3 name an agent would see."
+  },
+  {
+    "path": "apps/server/src/mcp/toolkits/pullRequests/tools.ts",
+    "rules": ["bare-t3"],
+    "kind": "rewritten-agent-copy",
+    "reason": "Upstream MCP tool copy kept verbatim; ScientMcpProtocol's tools/list rewrites every description and title through ScientAgentCopy.ts. ScientAgentCopy.test.ts fails on any T3 name an agent would see."
+  },
+  {
+    "path": "packages/contracts/src/orchestratorMcp.ts",
+    "rules": ["bare-t3", "t3-connect"],
+    "kind": "rewritten-agent-copy",
+    "reason": "Upstream MCP schema descriptions kept verbatim; ScientMcpProtocol's tools/list rewrites them through ScientAgentCopy.ts. ScientAgentCopy.test.ts fails on any T3 name an agent would see."
   }
 ]

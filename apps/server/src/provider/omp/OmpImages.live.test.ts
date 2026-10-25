@@ -24,11 +24,8 @@ import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
 import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
 
 /**
- * Live proof of decision 6 against a real `omp` (opt in with
- * OMP_QUALIFY_BINARY): a small image reaches the model inline, and an image
- * too large for the RPC frame reaches it through OMP's `read` tool. The model
- * is a local OpenAI-compatible stub that records each request; no paid
- * provider is contacted and the key is synthetic.
+ * Opt in with OMP_QUALIFY_BINARY. A local model stub proves small inline and oversized read-tool
+ * image delivery without contacting paid providers or using real keys.
  */
 const binary = ompQualifyBinary;
 

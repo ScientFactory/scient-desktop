@@ -14,11 +14,8 @@ import { usePendingProviderSignInKeys } from "./providerSignInRequests";
 import { claimProviderSignInPage } from "./providerSignInCommands";
 
 /**
- * Mounted once for the app. Lends the opener the server's claim command, and
- * watches the provider snapshots of each environment in which this client is
- * starting a sign-in, so its page opens even when the start reply is lost or the
- * view that started it is gone. Nothing is observed while no sign-in started
- * here is pending, or before the command is registered.
+ * Watch pending sign-ins at app scope so lost replies or unmounted setup views cannot lose their
+ * page. Observe only environments with starts owned by this window and a registered claim command.
  */
 export function ProviderSignInPageCoordinator() {
   const claim = useAtomCommand(claimProviderSignInPage, {

@@ -140,11 +140,9 @@ async function editor(
     ["xhigh", "Extra-high"],
   ]);
   const optionLabel = (value: string) => optionLabels.get(value) ?? value;
-  // Base UI's Select opens on the animation frame after the trigger's mousedown, so a
-  // finished click does not mean an open menu. On a busy runner that frame came after the
-  // next step: Escape went to a menu not yet open (which then opened and stayed open), or
-  // the following click found it open and toggled it closed. Click once (a second click
-  // would toggle a pending open closed) and wait for the open menu.
+  // Base UI Select opens on a later animation frame, so a completed click does not prove readiness.
+  // Click once and wait for the open menu; another click can cancel a pending open and early Escape
+  // can miss it.
   const openMenu = async (label: string) => {
     await userEvent.click(control(label));
     await vi.waitFor(() => {

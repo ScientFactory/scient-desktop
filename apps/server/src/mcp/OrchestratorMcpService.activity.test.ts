@@ -696,7 +696,6 @@ it("cross-project reads require a user attachment and writes retain caller autho
     expect(staleDelete.code).toBe("parent_not_active");
     expect(sentInputs).toHaveLength(2);
 
-    // A background item keeps only its owning instance live, even after a switch.
     const backgroundTasks = [
       {
         taskId: "background-subagent",
@@ -742,7 +741,6 @@ it("cross-project reads require a user attachment and writes retain caller autho
       .pipe(Effect.flip);
     expect(mismatched.code).toBe("parent_not_active");
 
-    // A fresh active run wins over the earlier inactive projection and empty roster.
     parentShell = liveThreadShell(parentThreadId);
     const restarted = yield* service.sendToThread(makeScope(), {
       threadId: childThreadId,

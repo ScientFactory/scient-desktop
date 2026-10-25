@@ -60,6 +60,7 @@ describe("DesktopEarlyElectronStartup", () => {
   });
 
   // SCIENT-FORK:START desktop-state-isolation
+
   // regression: 6f04a5cffb fix(desktop): Niri/Hyprland - Linux secret storage backend (#2916)
   it("preserves absolute root paths when resolving early settings", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({

@@ -7,13 +7,6 @@ import * as Effect from "effect/Effect";
 import { ConversationExportService } from "../conversationExport/ConversationExportService.ts";
 import { captureConversationBundle } from "./ConversationPdfCapture.ts";
 
-/**
- * The conversation half of PDF export: the export dialog's options (work log,
- * reasoning, time zone) select a snapshot, the conversation package
- * turns it into a document bundle, and the bundle is captured for the
- * document page. The client then prints the capture on its desktop and
- * publishes it with `documents.publishDocumentPdf`.
- */
 export const prepareConversationPdf = Effect.fn("ConversationPdfPreparation.prepare")(function* (
   request: ScientConversationExportRequest,
 ) {

@@ -20,17 +20,9 @@ const remove = (env: NodeJS.ProcessEnv, name: string): void => {
 };
 
 /**
- * The environment of every Oh My Pi child process: the provider-neutral agent
- * environment (`agentProcessEnvironment`: the login environment minus Scient's
- * internals, the instance environment on top, loopback exempt from any proxy),
- * then without the session directory Scient sets per process. Scient adds
- * nothing back: its generated extensions receive their secrets in bootstrap
- * files (`OmpExtensionBootstrap`), never here. An instance home is expanded
- * against the caller's host home directory, not the child environment's HOME.
- * An instance home or profile replaces its inherited counterparts, so OMP's
- * own precedence (a named profile beats the agent directory) cannot silently
- * override the instance setting. OMP spawns never merge the server's environment
- * (`extendEnv: false`).
+ * Never merge host env back after sanitization. Use bootstrap files for secrets; expand instance
+ * homes against host HOME. Instance home/profile must replace inherited counterparts so OMP's
+ * profile precedence cannot override the configured instance.
  */
 export const ompProcessEnvironment = (input: {
   readonly homeDirectory: string;

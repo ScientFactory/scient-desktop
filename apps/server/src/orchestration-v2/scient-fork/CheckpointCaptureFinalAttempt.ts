@@ -1,15 +1,7 @@
 /**
- * The last checkpoint capture attempt for an answered run. A completed answer
- * leaves its run `waiting` until the capture commits, and a waiting run blocks
- * the thread's queue and Send. Git failures already record an `error`
- * checkpoint and complete the run. A capture that fails for any other reason
- * (a failed database commit, a missing or mismatched capture target) was only
- * retried, and after the last attempt the run stayed `waiting` until restart.
- * The last attempt now completes the run with an `error` checkpoint instead,
- * without touching the workspace, so the queue continues. If that settlement
- * itself fails (for example on a busy database), the effect stays retryable
- * past its attempt limit until the settlement commits or the run is no longer
- * waiting, so a transient failure cannot strand the run.
+ * A waiting capture blocks the queue and Send. On the final attempt, settle non-Git failures as an
+ * error checkpoint without touching the workspace; if settlement itself fails, keep retrying past
+ * the limit until committed or no longer waiting.
  */
 import {
   CommandId,

@@ -139,11 +139,9 @@ export interface OmpRpcClient {
     level: "off" | "progress" | "events",
   ) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
   /**
-   * Restrict which session events OMP writes (`null` forwards everything).
-   * Pass `OMP_KNOWN_EVENT_TYPES` to pin the set this client understands. OMP
-   * releases before 18.3 reject the command with an `OmpRpcCommandError`.
-   * `messageUpdates: "delta"` is ignored by releases without the projection;
-   * they leave `messageUpdates` out of the result.
+   * OMP before 18.3 rejects event filtering. Older releases may ignore messageUpdates delta and
+   * omit it from results; preserve full-frame fallback rather than treating absence as
+   * confirmation.
    */
   readonly setEventFilter: (
     events: ReadonlyArray<string> | null,

@@ -75,18 +75,7 @@ export type ProviderEnvironmentAccess =
   | { readonly kind: "unavailable" }
   | { readonly kind: "error" };
 
-/**
- * The patch for one instance's project override, following the envelope
- * replacement rule for `projectSettingsOverrides`: the returned entry
- * replaces the project's whole override set.
- * `value: undefined` resets that single instance back to inheriting the
- * environment's enablement, leaving any other overridden keys untouched.
- *
- * `providerInstances` is always sent explicitly, even as `{}`, because the
- * server keeps a stored `providerInstances` map when an incoming entry omits
- * the key (so older clients that don't know the field cannot wipe it by editing
- * another setting).
- */
+/** Send providerInstances even when empty; omission preserves the stored map for older clients. */
 
 export function buildProviderInstanceOverridePatch(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,

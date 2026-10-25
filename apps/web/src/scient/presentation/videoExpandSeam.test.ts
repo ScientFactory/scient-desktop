@@ -5,8 +5,8 @@ import { expect, it } from "vite-plus/test";
 
 const source = (path: string) => NodeFS.readFileSync(new URL(path, import.meta.url), "utf8");
 
-// Upstream replaced the video Expand button (#9253); a merge once brought it
-// back. A video keeps its own full-screen control and open link.
+// A video keeps its native full-screen control and open link.
+
 // regression: 010d58e874 fix(chat): Stop reaches answers that left the screen
 it("gives answer videos no Expand action", () => {
   expect(source("../../components/media/MediaVideoPlayer.tsx")).not.toContain("onExpand");

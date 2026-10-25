@@ -69,13 +69,7 @@ interface PiSpawn {
   readonly env: NodeJS.ProcessEnv;
 }
 
-/**
- * Fakes the two processes `checkPiProviderStatus` runs: the `--version` health
- * probe and the ephemeral `--mode rpc` discovery session. The RPC session
- * answers each request PiProvider actually sends (`get_state`,
- * `get_available_models`, `get_commands`) from `answer`, so the snapshot is
- * produced by the real transport and the real response routing.
- */
+/** The fake RPC session answers real transport requests so discovery exercises response routing. */
 function makePiProbeSpawner(input: {
   readonly version: string;
   readonly rawVersion?: boolean;

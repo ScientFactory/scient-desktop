@@ -1,13 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- uploads and attachment copies stream through Node files with hashing.
 /**
- * The import staging area: receives `.scic` uploads, validates them, serves
- * previews, runs confirm and cancel, and removes what it staged. It
- * implements the staging side of `ConversationImporter.ts`, whose header is
- * the contract (areas, lease, attempts and receipts, completions).
- *
- * Staging writes only under `<stateDir>/conversation-imports/`: it creates no
- * thread, copies nothing into a thread's attachments, and starts no provider.
- * Only a confirmed import reaches the importer.
+ * Staging owns only its private area; only confirmed imports may reach the importer. It must never
+ * create threads, publish thread attachments, or start providers itself.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -882,11 +876,8 @@ const makeEffect = Effect.fn("ConversationImportStaging.make")(function* (
     );
 
   /**
-   * Validation, in a fiber staging owns. A refused file ends the import; a
-   * failure that may pass on a retry (no room yet, a read error) keeps the
-   * upload, so the next preview validates it again. It holds the one slot
-   * until its output is settled on disk, cleanup included, and counts every
-   * file still there.
+   * Keep retryable uploads for revalidation. Hold the single validation slot through durable
+   * settlement and cleanup, counting every remaining file so failed cleanup cannot bypass quota.
    */
   const validate = Effect.fn("ConversationImportStaging.validate")(
     function* (

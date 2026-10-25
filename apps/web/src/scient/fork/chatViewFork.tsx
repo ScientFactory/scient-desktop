@@ -445,11 +445,9 @@ export function ScientChatForkDialog(input: {
 }
 
 /**
- * A fork normally applies its PDF positions when it is created. If they are
- * still waiting (for example the app reloaded before the fork's folder was
- * known), hold that fork's panel until they are applied, because a PDF reader
- * records its own position as soon as it opens. Other threads, and later
- * folder changes, never hide or remount the panel.
+ * Hold only the fork's panel until deferred PDF positions apply: opening a reader records its own
+ * position immediately and could overwrite them. Other threads/later folder changes must not
+ * remount the panel.
  */
 export function useForkPdfContinuityPending(
   activeThreadRef: ScopedThreadRef | null,

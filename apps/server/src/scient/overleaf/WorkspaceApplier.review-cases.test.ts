@@ -1,8 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Cases from the independent reviews of #486, restored after #353 moved the
- * applier onto the shared file layer. The applier publishes only through the
- * native helper, so these run where that helper qualifies.
+ * The applier publishes only through the native helper; run these review cases only where that
+ * helper qualifies.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeModule from "node:module";
@@ -550,9 +549,8 @@ describe.skipIf(!canPublish)("WorkspaceApplier review cases", () => {
       );
     });
 
-    // #486 kept such a unit out of conflict after a crash. Since #353 a failure inside
-    // the native publication retires its record for review, so the unit is reported;
-    // what must hold is that nothing changed and nothing later is overwritten.
+    // Failure inside native publication leaves review evidence. Assert that nothing changed and
+    // later content is never overwritten, even when the unit is now reported as conflicted.
     it.live.each(["intent", "prepared"] as const)(
       "changes nothing and keeps a later edit after a failure at %s",
       (at) => {

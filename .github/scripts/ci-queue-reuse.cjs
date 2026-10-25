@@ -306,13 +306,9 @@ async function pushSegments(probe) {
 }
 
 /**
- * A queue entry merges one PR onto its base. Its passing PR run qualifies it only when that run
- * tested this exact content against this exact base, from a workflow at that tested commit, and
- * the PR head already holds that content. Every change gate compares the event's base with the
- * tested commit, so equal base and content give every gate the same input. Because the merge is
- * then the PR head's tree, a path-limited history read (Compute recipe sealing) follows the PR
- * head, never the merge commit, whose timestamp differs between the PR's test merge and the
- * queue's. Anything else, including a PR from a fork, runs normal CI.
+ * Reuse PR CI only for identical base/content, workflow at the tested commit, and content already
+ * on the PR head. Path-limited recipe history must follow that head: test/queue merge timestamps
+ * differ. Forks and every other case run normal CI.
  */
 async function queueSegments(probe) {
   const { github, repo, who, context } = probe;

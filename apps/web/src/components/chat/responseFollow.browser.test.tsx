@@ -25,15 +25,9 @@ import { useQueuedDeliveryFollow, useResponseFollow } from "./responseFollow";
 import { deriveTimelineWorking } from "./timelineWorkingState";
 import { CHAT_TIMELINE_ANCHOR_OFFSET, readTimelinePosition } from "./timelineScrollAnchoring";
 
-/*
- * The send follow as ChatView wires it: the controller (chat/responseFollow.ts)
- * owns the follow and reads V2 runs and messages; the timeline runs it. The
- * harness below calls the controller exactly as ChatView does: a send at the
- * end starts it, Scroll to end and a thread switch clear it, and a queued
- * delivery is decided by the controller itself. Tests feed V2 state only.
- *
- * Motion reads `motionClock`, which these tests drive: every frame advances
- * it by 16ms, so the follow and the answer reveal move by known amounts.
+/**
+ * Mirror ChatView's V2 controller wiring so tests establish prompt-owned follow behavior. Drive
+ * motionClock per controlled frame so response reveal and follow use the same deterministic time.
  */
 
 const env = EnvironmentId.make("response-follow-tests");
@@ -380,15 +374,9 @@ it("drops the follow from the saved position when it ends, with nothing else to 
   await render(_fixture, key, entries, [...runs, run("run-10", "message-10", "running")]);
   await playUntil(_fixture, () => toEnd(_fixture) <= 1);
   expect(readTimelinePosition(key)?.followingPromptId).toBe("message-10");
-  // Nothing but the follow's end may save the position again. Scrolls and
-  // resizes save it too, and arrive in real rendering steps, at no fixed point
-  // among the fake frames: a slow machine delivers the follow's own last
-  // scrolls after it has ended. So the answer is measured first, the finished
-  // turn's working header (which closes on real time) stays open, and the
-  // scrolls are held back from every reader: the timeline's own scroll capture
-  // (React's listener on the root, ahead of any listener the host could add),
-  // and Legend's `scroll` and `scrollend` listeners, each of which reports a
-  // scroll to the bookkeeping. Window capture runs before all of them.
+  // Isolate the follow's final position save from late real scroll/resize events. Measure first,
+  // hold the real-time working header open, and intercept scrolls at window capture before React
+  // and Legend bookkeeping; fake frames do not determine when those events arrive.
   await waitForMeasuredRow(_fixture.listRef.current!, "entry-11", context.signal);
   const host = _fixture.host!;
   const holdScroll = (event: Event) => event.stopPropagation();

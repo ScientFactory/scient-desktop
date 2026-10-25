@@ -159,11 +159,9 @@ function keepsEditorSnapshot(
 }
 
 /**
- * One file of the document. The open file's session belongs to the surface;
- * every other LaTeX file gets its own here, the same one any other view of
- * that file would get, so a file never has two savers. A file of another kind
- * (`\input{data.txt}`) is saved by the generic file editor when it is opened
- * on its own, so here it is shown and never written.
+ * Reuse one document session per file so multiple views never become competing savers. The surface
+ * owns its open file; non-LaTeX inputs are displayed read-only here and saved by their generic
+ * editor.
  */
 function ProjectFileSession(props: {
   owner: Props;

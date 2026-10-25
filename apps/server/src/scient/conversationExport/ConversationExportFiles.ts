@@ -1,10 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- ZIP packaging streams attachment files into the export file.
 /**
- * The server-owned temporary location for produced export files. Each export
- * gets its own directory, read by clients through a signed asset URL that
- * expires with it. Directories older than the retention period are removed on
- * a timer, and the whole location is cleared when the server starts, so an
- * export never outlives a restart.
+ * Signed export URLs expire with their temporary directories. Clear exports on startup as well as
+ * retention expiry so no export survives a server restart.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";

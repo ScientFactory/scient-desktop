@@ -8,7 +8,13 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { RuntimeRequestId, TurnId, orchestrationV2RunWorkStartedAt } from "@t3tools/contracts";
+import {
+  RuntimeRequestId,
+  TurnId,
+  idleCompactionOf,
+  orchestrationV2RunWorkStartedAt,
+  pendingGuestMessageCount,
+} from "@t3tools/contracts";
 
 import {
   deriveBlockedOnThreadWait,
@@ -131,6 +137,16 @@ export function threadShellFromProjection(
       projection.turnItems.some(
         (item) => item.runId === latestRun.id && item.type === "run_interrupt_request",
       ),
+    latestRunSilent:
+      latestRun != null &&
+      projection.messages.some(
+        (message) =>
+          message.id === latestRun.userMessageId && idleCompactionOf(message) !== undefined,
+      ) &&
+      !projection.turnItems.some(
+        (item) =>
+          item.runId === latestRun.id && item.type === "compaction" && item.status === "failed",
+      ),
     activeRunId: activeRun?.id ?? null,
     blockedOnThreadWait: deriveBlockedOnThreadWait({
       activeRun,
@@ -154,6 +170,7 @@ export function threadShellFromProjection(
             createdAt: pendingRuntimeRequest.createdAt,
             blocking: pendingRuntimeRequest.responseCapability.type !== "message",
           }),
+    pendingGuestMessageCount: pendingGuestMessageCount(projection.thread.guestShare),
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
     latestVisibleMessage: null,

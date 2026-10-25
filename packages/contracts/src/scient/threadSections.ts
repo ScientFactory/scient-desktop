@@ -3,14 +3,9 @@ import * as Schema from "effect/Schema";
 import { NonNegativeInt, ThreadSectionId, TrimmedNonEmptyString } from "../baseSchemas.ts";
 
 /**
- * A named group the user files threads into. Sections are independent of the
- * lifecycle shelves (pinned, active, snoozed, settled); a thread belongs to at
- * most one. Each environment's server settings hold the catalog of its own
- * sections, and a thread's section id resolves only against the catalog of
- * the thread's environment, so every client connected to that environment
- * sees the same sections. Membership is stored on each thread, so removing a
- * catalog entry leaves its threads' IDs intact: they read as unsectioned, and
- * restoring the entry brings them back.
+ * Section identity belongs to the thread's own environment. Removing catalog entries preserves
+ * membership IDs so Undo/restoration reconnects threads; missing sections display as unsectioned
+ * without rewriting history.
  */
 /** A physical project: the environment it lives on and its id there. */
 export const ThreadSectionProjectRef = Schema.Struct({
@@ -33,11 +28,8 @@ export const ThreadSection = Schema.Struct({
    */
   environmentIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   /**
-   * The projects the section was created for: the sidebar's selected project,
-   * plus the projects of any threads filed into it on creation. A sidebar
-   * scoped to one project lists a section once that project has threads in
-   * it; while the section has no threads anywhere, it is listed only in these
-   * projects (and under All projects).
+   * Creation projects keep empty sections visible until threads determine placement. Once occupied
+   * anywhere, project-scoped visibility follows actual threads rather than this creation hint.
    */
   createdInProjects: Schema.optionalKey(Schema.Array(ThreadSectionProjectRef)),
 });

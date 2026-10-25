@@ -252,6 +252,7 @@ function setup() {
 
 describe("PreviewView", () => {
   // SCIENT-FORK:START — restore the original behavior guard.
+
   // regression: 72d673a855 feat(desktop): remember recently used sites in the Browser panel (#5270)
   it("records a history visit with the normalized requested url on submit", async () => {
     setup();
@@ -267,6 +268,7 @@ describe("PreviewView", () => {
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START — restore the original behavior guard.
+
   // regression: f4c394323d Add background preview capture and picture-in-picture support (#4397)
   it("opens and closes a thread-scoped floating preview for the active tab", async () => {
     setup();

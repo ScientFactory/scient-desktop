@@ -275,6 +275,7 @@ describe("DesktopClientSettings", () => {
   );
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: aa219be713 port desktop app to Effect (#2546)
   it.effect("loads defaults from empty client settings documents", () =>
     withClientSettings(

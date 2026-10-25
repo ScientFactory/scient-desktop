@@ -117,11 +117,8 @@ export function useChatFileLinkOpening(input: {
     openMarkdownFileInPreview,
     openEnvironmentHtmlInPreview,
   } = input;
-  // Asks the environment that owns the files what a link means; see
-  // resolveEnvironmentFileLink on the server. `location` is where the link
-  // opens when it opens as written: the client's own placement, except for a
-  // home-relative link, which opens where the environment says it is. When
-  // the environment could not be asked, the link opens as the client placed it.
+  // Only the owning environment can expand home-relative links. Use its location when opening as
+  // written; fall back to client placement only if it cannot be asked.
   const planFileLinkOpen = async (
     askedPath: string,
     clientPath: string,
@@ -147,12 +144,8 @@ export function useChatFileLinkOpening(input: {
       location: linkOpenLocation({ resolution, askedPath, clientPath, workspaceRoot: cwd }),
     };
   };
-  // Opens the file a chat link means. A link whose location does not exist
-  // opens the one workspace file it meant, when there is exactly one; without
-  // a single answer it opens as written and the file panel offers the choices.
-  // `panelPath` is the client's placement of the link: a workspace locator or
-  // a host path. For a link authored from the home folder it is that authored
-  // `~/` spelling instead, which only the environment can place.
+  // Resolve a missing link only to a unique workspace match; otherwise open as written so the panel
+  // can offer choices. Preserve authored ~/ spelling until the owning environment places it.
   const openLinkInPanel = (
     panelPath: string,
     line: number | undefined,

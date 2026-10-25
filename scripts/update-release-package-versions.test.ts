@@ -127,6 +127,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
   );
 
   // SCIENT-FORK:START
+
   // regression: 8c2d33abde [codex] Structure release package updater failures (#3468)
   it.effect("preserves manifest read context and the filesystem cause", () =>
     Effect.gen(function* () {
@@ -151,6 +152,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START
+
   // regression: 8c2d33abde [codex] Structure release package updater failures (#3468)
   it.effect("preserves manifest decode context and the schema cause", () =>
     Effect.gen(function* () {
@@ -178,6 +180,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START
+
   // regression: 8c2d33abde [codex] Structure release package updater failures (#3468)
   it.effect("preserves manifest write context and the filesystem cause", () =>
     Effect.gen(function* () {

@@ -1,10 +1,7 @@
 /**
- * Dispatches provider-native plugin and MCP server actions to the provider
- * that owns them. Each action is admitted against the latest provider
- * snapshot, then validated, dispatched, and verified through one instance
- * generation's own seam, so a rebuilt, disabled, or removed instance is never
- * changed on its successor's behalf. Scient never predicts the outcome.
- * See docs/internals/scient-extensions.md.
+ * Admit, mutate, and verify through the same live instance generation. Rebuilt/disabled/removed
+ * instances cannot authorize changes to successors; report provider evidence rather than predicting
+ * success.
  */
 import {
   ExtensionsError,

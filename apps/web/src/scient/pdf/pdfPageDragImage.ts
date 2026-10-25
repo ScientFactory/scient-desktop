@@ -18,11 +18,8 @@ const STACK = [
 let stopFollow: (() => void) | null = null;
 
 /**
- * Lifts copies of the dragged pages out of the sidebar. Each starts where its page is and
- * glides to the pointer, the grabbed page first and the others trailing behind it, until
- * they sit as one stack under the pointer; the stack then follows the pointer. `grabbed`
- * is listed first in `canvases`. `onActive` is told once the cards are up and again when
- * the drag ends, dropped anywhere or cancelled.
+ * The first canvas is the grabbed page; trailing cards converge under the pointer. `onActive`
+ * reports both lift and finish, including drops outside the sidebar and cancelled drags.
  */
 export function startPdfPageDragFollow(input: {
   readonly transfer: DataTransfer;

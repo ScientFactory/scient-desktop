@@ -1,23 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Durable replacement needs file and directory fsync.
 /**
- * Private on-disk state for manual Overleaf connections, under
- * `stateDir/overleaf`:
- *
- * - `connections/<id>.json`: one document per connection, replaced durably and
- *   only by compare-and-set on its revision;
- * - `receipts/<connection>/<request>.json`: idempotency records, created once;
- * - `quarantine/`: unreadable documents moved aside with their bytes intact;
- * - `retained/<connection>/`: the applier's application directory when this
- *   tree shares the checkout's volume (otherwise `.scient-overleaf` beside the
- *   checkout; see `OverleafRetentionVault.ts`);
- * - `lease.sqlite`: the process lease.
- *
- * Every mutation first holds the process lease, an exclusive SQLite lock held
- * for the service's lifetime. A second server process sharing this directory is
- * refused (`OverleafStateLockedError`) rather than waiting or stealing. The
- * lease is taken lazily, at the first mutation that needs it, so a process that
- * started while an older one was still exiting acquires it later instead of
- * losing writable access for its lifetime. Reads need no lease.
+ * Mutations require a lifetime exclusive SQLite process lease; refuse competing servers rather than
+ * wait/steal. Acquire lazily so overlap during old-server exit does not permanently disable writes.
+ * Reads need no lease; preserve unreadable state as quarantine evidence.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -420,11 +405,8 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     return { dev: String(stat.dev), ino: String(stat.ino) };
   };
   /**
-   * The lock protects the file this connection opened. If that file or the
-   * state root was replaced, another process may lock the replacement, so the
-   * old lease is dropped and the lock is taken again on what is there now.
-   * A replacement between this check and the write that follows is not
-   * detected; that window is the boundary of this protection.
+   * Reacquire when the locked file/state root is replaced or another process could lock its
+   * successor. A swap between this check and the write remains outside this protection.
    */
   const ensureLease = Effect.gen(function* () {
     const held = lease;
@@ -717,7 +699,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   });
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const layer = Layer.effect(
   OverleafStateStore,
   Effect.gen(function* () {

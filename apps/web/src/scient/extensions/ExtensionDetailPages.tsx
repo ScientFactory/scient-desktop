@@ -324,12 +324,8 @@ const AGENT_TILE_CLASS = "flex w-[4.5rem] flex-col items-center gap-1.5 py-1 tex
 const WORKS_WITH_OPEN_DELAY_MS = 200;
 
 /**
- * A limited agent's tile tells why on hover, keyboard focus, or a tap. The
- * tooltip opens from inside the card, so the card stays open with it.
- *
- * A press pins the reason open and the next press unpins it. Hover or focus
- * only shows it, so a tap that lands just after focus (or a hover) opened it
- * pins it rather than closing it again.
+ * A press pins the reason even if hover/focus just opened it; otherwise a tap following focus would
+ * immediately close the explanation. Keep the tooltip inside the card's open scope.
  */
 function LimitedAgentTile({
   entry,
@@ -371,11 +367,8 @@ function LimitedAgentTile({
 }
 
 /**
- * How many agents can use this service. Hovering it, or pressing it (click,
- * tap, Enter), opens a card of their logos above it, scrolling sideways when
- * they don't fit. Opened from the keyboard, focus moves into the card so Tab
- * reaches a limited agent's reason. Agents that can't use it are left out of
- * the card; the count already says so.
+ * Move keyboard focus into the card so Tab can reach limited agents' reasons; omit unusable agents
+ * because the count already communicates their absence.
  */
 function WorksWithValue() {
   const { inventory, providers } = useExtensionsEnvironment();

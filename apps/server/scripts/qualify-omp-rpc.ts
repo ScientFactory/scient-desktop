@@ -10,13 +10,8 @@ import { makeOmpExecutableGate, OmpExecutableGate } from "../src/provider/omp/Om
 import { qualifyManagedOmpRuntime } from "../src/scient/providerLifecycle/OmpManagedRuntimeActions.ts";
 
 /**
- * Runs the app's managed-activation check against an installed Oh My Pi
- * executable: the RPC v2 handshake, the reported version, and `get_state`, in
- * an isolated home with no session, tools, extensions, skills or rules. The
- * managed-runtime catalog qualification calls this before a release can be
- * published, so a binary that only answers `--version` never reaches clients.
- *
- *   node apps/server/scripts/qualify-omp-rpc.ts --binary <path> --version <x.y.z>
+ * Qualification must complete RPC v2 handshake, version, and get_state in an isolated home;
+ * --version alone cannot qualify a release binary.
  */
 function argument(name: string): string | undefined {
   const index = process.argv.indexOf(name);

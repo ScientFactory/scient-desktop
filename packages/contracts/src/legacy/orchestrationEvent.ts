@@ -112,17 +112,9 @@ export const ThreadTitleState = Schema.Struct({
 export type ThreadTitleState = typeof ThreadTitleState.Type;
 
 // SCIENT-FORK:START — Scient-owned conversation-fork command (additive union member).
-// Forks the origin thread at a completed turn boundary into a NEW independent
-// thread. The origin is never mutated. `createdAt` is intentionally absent: the
-// decider stamps fork/lineage events with server time (like thread.delete),
-// while re-emitted prefix events preserve their original message timestamps.
-// Workspace substrate choice, made explicitly at fork time (the product "always
-// asks"): "new-worktree" provisions a fresh worktree branched from the fork
-// point; "local" reuses the origin thread's workspace.
-// Provider continuity is explicit instead of being folded into a vague overall
-// "fidelity" label. Exact-boundary forks start a fresh provider session and
-// inject the retained transcript once with the first post-fork turn. This avoids
-// leaking messages after the selected boundary from provider-native tip forks.
+// Origin stays immutable; server time stamps new lineage while copied messages retain timestamps.
+// Workspace choice stays explicit. Start a fresh provider session and inject only retained history
+// once, avoiding native tip forks that can leak messages beyond the selected boundary.
 const OrchestrationForkProviderModeWire = Schema.Literals(["transcript-bootstrap", "cold-start"]);
 export const OrchestrationForkProviderMode = OrchestrationForkProviderModeWire.pipe(
   Schema.decodeTo(
@@ -412,12 +404,9 @@ export const ThreadRevertedPayload = Schema.Struct({
 
 // SCIENT-FORK:START — immutable fork lineage plus explicit provider behavior.
 /**
- * One completed logical turn copied into a fork's immutable transcript.
- *
- * Copied transcript turns are not native turns in the destination provider
- * session, so they deliberately carry no provider/checkpoint count. The
- * remapped identities are sufficient for resolving later forks of a fork
- * without walking ancestor threads or inventing provider history.
+ * Copied transcript turns are not native provider turns and carry no checkpoint/provider counts.
+ * Remapped identities must support recursive forks without ancestor walks or invented native
+ * history.
  */
 export const ThreadForkCopiedBoundary = Schema.Struct({
   turnId: TurnId,

@@ -104,11 +104,8 @@ export const ConnectorSummary = Schema.Struct({
   status: ConnectorStatus,
   enabled: Schema.Boolean,
   /**
-   * Generation of the credential behind this connector. Increases whenever that
-   * credential changes (every sign-in, replacement, sign-out, or a refresh
-   * failure or revocation that loses it), even when `auth` looks identical.
-   * Anything derived from the credential (such as a tool list) belongs to one
-   * revision.
+   * Credential generation changes even if auth presentation is identical. Tool lists and other
+   * derived evidence bind that revision, not merely connected status.
    */
   authRevision: NonNegativeInt,
   /** Projects whose sessions receive this connector. Shared model with Secrets. */

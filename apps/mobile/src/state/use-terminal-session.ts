@@ -15,7 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { useMemo } from "react";
 
-import { useEnvironmentQuery, useEnvironmentSubscription } from "./query";
+import { useEnvironmentQuery } from "./query";
 import { terminalEnvironment } from "./terminal";
 import { useEnvironmentScope } from "./session";
 
@@ -55,8 +55,7 @@ export function useAttachedTerminalSession(input: {
         }),
   );
   const output = attach.data?.output ?? EMPTY_TERMINAL_BUFFER_STATE.output;
-  // Installed native binaries still accept initialBuffer. Keep materialization
-  // at this mobile boundary until the native streaming API is released.
+  // Keep initialBuffer materialization at the mobile boundary until native streaming ships.
   const buffer = useMemo(() => terminalOutputText(output), [output]);
 
   return useMemo(() => {
@@ -82,7 +81,7 @@ export function useKnownTerminalSessions(input: {
   readonly threadId: ThreadId | null;
 }) {
   const canRead = useEnvironmentScope(input.environmentId, AuthTerminalReadScope);
-  const metadata = useEnvironmentSubscription(
+  const metadata = useEnvironmentQuery(
     input.environmentId === null || !canRead
       ? null
       : terminalEnvironment.metadata({

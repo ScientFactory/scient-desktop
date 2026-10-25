@@ -45,11 +45,9 @@ const inside = (path: Path.Path, root: string, candidate: string) => {
 };
 
 /**
- * The converter receives this map and never opens a workspace image itself.
- * Each image is read through a handle bound to the file its path check saw
- * (`verifiedWorkspaceRead.ts`). Where that is not possible (Windows), a
- * caller that sets `requireVerifiedReads` is refused; otherwise the image is
- * left out, as PDF export leaves it out there, and the document still converts.
+ * Converters must use captured verified image handles, never reopen workspace paths. If
+ * verification is unavailable, requireVerifiedReads refuses; otherwise omit the image while
+ * allowing conversion.
  */
 export const captureWordImages = Effect.fn("scient.pandoc.captureWordImages")(function* (
   references: ReadonlyArray<string>,

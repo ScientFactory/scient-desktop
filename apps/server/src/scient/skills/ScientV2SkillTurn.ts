@@ -15,14 +15,8 @@ import { prepareScientSkillTurn } from "./ScientSkillInvocation.ts";
 import * as ScientSkillSession from "./ScientSkillSession.ts";
 
 /**
- * The V2 counterpart of V1's `ProviderService.sendTurn` skill block.
- *
- * V1 read `selectedScientSkillNames` off the `thread.turn-start-requested` event
- * payload. V2 persists the same snapshot on the turn's user message and reads it
- * back here, so both engines build one provider turn from one selection set.
- *
- * Everything below is the shared `prepareScientSkillTurn` contract: explicit
- * names are the only selection authority, and serialized provider text is not.
+ * Explicit names on the persisted user message are the sole skill-selection authority; serialized
+ * provider text cannot select skills. Prepare each turn from that one snapshot.
  */
 export const prepareScientV2SkillScope = Effect.fnUntraced(function* (input: {
   readonly threadId: ThreadId;

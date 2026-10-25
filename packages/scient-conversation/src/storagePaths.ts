@@ -61,27 +61,15 @@ const TRAILING_PUNCTUATION = String.raw`.,;:)\]!'_`;
 const AFTER_TRAILING_PUNCTUATION = String.raw`\s|$|[*${"`"}<>"')\]|~]`;
 
 /**
- * Where a root ends: at a path separator, at the end of the text, before a
- * character that cannot continue a path segment (space, `*`, `<`, a backtick,
- * a double quote, …), or before a run of trailing punctuation followed by
- * whitespace, the end, or a formatting delimiter. So `/data` matches in
- * `/data/x`, `**\/data**`, `<code>/data</code>`, "(see /data),", and
- * "in /data." but not in `/database`, `/data.bak`, `/data#archive`,
- * `/data_/x`, or `/data(backup)/x`.
- *
- * Redaction is intentionally conservative: an unusual sibling path that shares
- * a storage root's exact prefix and ends in a formatting delimiter (`/data_*`)
- * may be over-redacted. That is accepted because real storage roots are long
- * and specific.
+ * Match storage roots only at path/formatting boundaries, not inside sibling names. Conservative
+ * over-redaction of unusual siblings ending in a formatting delimiter is acceptable; leaking a real
+ * storage path is not.
  */
 const ROOT_END = String.raw`(?=[\\/]|$|[^${PATH_CONTINUATION}]|[${TRAILING_PUNCTUATION}]+(?:${AFTER_TRAILING_PUNCTUATION}))`;
 
 /**
- * A matcher for each root that accepts either separator, so `C:\Users\a` and
- * `C:/Users/a` are both found, and that ends only at a path boundary. Match
- * without case on every platform: macOS volumes may be case-insensitive, and
- * over-redaction is safer than leaking a storage path whose spelling differs
- * from the configured root. Longer roots are tried first.
+ * Match both separators and ignore case on every platform: macOS can be case-insensitive, and
+ * over-redaction is safer than leaking alternate spelling. Try longer roots first.
  */
 function rootPatterns(roots: ReadonlyArray<string>): ReadonlyArray<RegExp> {
   return [...new Set(roots)]

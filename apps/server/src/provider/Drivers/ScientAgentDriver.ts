@@ -65,14 +65,9 @@ export type ScientAgentDriverEnv =
   | ServerSettingsService;
 
 /**
- * Scient Agent, ScientFactory's agent. It runs through the same adapter, RPC
- * client and Scient tool bridge as Oh My Pi, as a separate product: this
- * driver gives it its own executable, a config root inside Scient's state
- * directory, and its own session and extension folders. It never reads an
- * Oh My Pi home, and an Oh My Pi conversation cannot resume in it.
- *
- * One instance for now. Managed installation uses qualified ScientFactory
- * releases; a configured executable remains usable before the first release.
+ * Scient Agent must use its own config/session/extension roots and cannot resume OMP conversations.
+ * Share transport/tool bridge behavior, not OMP homes. Managed installs use qualified Scient
+ * releases; configured executables remain usable independently.
  */
 export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, ScientAgentDriverEnv> = {
   driverKind: DRIVER_KIND,

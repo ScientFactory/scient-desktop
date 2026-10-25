@@ -46,16 +46,9 @@ function versionCore(version: string): string {
 }
 
 /**
- * The skew a user can act on: the connected server runs an older T3 Code than
- * this client (or than `clientVersion`, the version this client is about to
- * update to), so the server is the side that needs updating.
- *
- * Two builds on the same Beta or Nightly channel compare their full versions,
- * including the date and run.
- * Other combinations compare their core `major.minor.patch` only, so a stable
- * build and a nightly build with the same core do not cause an update warning.
- * A server ahead of the client does not need an update. Versions that do not
- * parse as semver fall back to plain string inequality.
+ * Only an older server needs updating. Same-channel Beta/Nightly builds compare full versions;
+ * other combinations compare core versions to avoid stable/nightly warnings for the same release.
+ * Unparseable versions fall back to string inequality.
  */
 export function resolveVersionMismatch(
   serverVersion: string | null | undefined,

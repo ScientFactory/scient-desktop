@@ -118,11 +118,9 @@ export function tryAcquireLock(path, owner, { ownerState }) {
 }
 
 /**
- * Removes the stale record only while holding `<path>.reclaim`, so two
- * controllers that both saw the same dead owner cannot each remove a lock the
- * other has since taken. The guard is held for a few file operations and is
- * never removed by anyone else: one left by a crashed controller blocks until
- * a person deletes it (the caller reports the path).
+ * Hold path.reclaim while removing a stale record so competing controllers cannot delete a newly
+ * acquired lock. Never remove another reclaim guard: a crashed guard requires manual deletion at
+ * the reported path.
  */
 function reclaimStaleLock(path, stale) {
   const reclaimPath = `${path}.reclaim`;

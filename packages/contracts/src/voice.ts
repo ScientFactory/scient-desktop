@@ -1,10 +1,5 @@
-// Engine-neutral wire contract for local voice transcription.
-//
-// This is the serializable boundary between the renderer/host IPC layer and the
-// host-independent transcription core (`@scientfactory/scient-voice`). It is
-// LOCAL-ONLY today — only the `local` engine ships — but every shape is kept
-// engine-neutral (results carry `engine`) so another implementation can be
-// added later without coupling the composer to Electron or whisper.cpp.
+// Keep the wire contract engine-neutral and serializable so the composer does not depend on
+// Electron or whisper.cpp. Only local ships today; result engine identity still remains explicit.
 
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";

@@ -26,13 +26,9 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
 ].map((driver) => ProviderDriverKind.make(driver));
 
 /**
- * Shipped Scient writer policy; the caller supplies environment or project enablement.
- *
- * The model is the chosen instance's cheap default, unless `defaultModelSelection`
- * (the thread default) is one of that same instance's custom models. A custom
- * model usually means a backend that may refuse the built-in default, and the
- * thread default, with its options, is known to work there. Matching is by
- * instance ID, so another account of the same driver never borrows it.
+ * Use a selected instance's custom thread default when available: its backend may reject built-in
+ * defaults. Match instance ID, never driver alone, so another account cannot borrow model/options
+ * authority.
  */
 export function fallbackScientTextGenerationModelSelection(
   providerInstances: ServerSettings["providerInstances"],
