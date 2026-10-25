@@ -295,27 +295,13 @@ async function scrollToWord(editor: ProseEditor, word: string, context: TestCont
   // A scroll event can precede lazy-block layout and leave readiness briefly stale.
   await waitForTestReceipt(context.signal, visible.promise);
 }
+// One row per way a word is selected and owned: prose, a table cell, a title field, a
+// footnote's own editor, the literal code field, and the English column template.
+// latexVisualDocument.test.ts maps words in every other block kind of template 26.
 const WORD_CASES = [
   ["26", template26, "פסקה"],
-  ["26-abstract", template26, "מסמך"],
-  ["26-abstract-line-end", template26, "ניסוי"],
-  ["26-rtl-line-start", template26, "זו"],
-  ["26-rtl-line-end", template26, "לתצוגה"],
-  ["26-bold", template26, "מודגש"],
-  ["26-italic", template26, "נטוי"],
-  ["26-vowels", template26, "שָׁלוֹם"],
-  ["26-mixed-english", template26, "Mixed"],
-  ["26-nested-list", template26, "הזחה"],
-  ["26-heading", template26, "ומשפטים"],
   ["26-table", template26, "ראשונה"],
-  ["26-caption", template26, "וחצים"],
   ["26-title", template26, "נוספים"],
-  ["26-author", template26, "מחבר"],
-  ["26-date", template26, "אוקטובר"],
-  ["26-proof", template26, "הוספת"],
-  ["26-theorem", template26, "מתקיים"],
-  ["26-description", template26, "ונוסחאות"],
-  ["26-figure-body", template26, "חיצוני"],
   ["26-footnote", template26, "ובה"],
   ["26-code", template26, "return"],
   ["28", template28, "Early"],
@@ -566,9 +552,10 @@ it("a Source interaction cancels a queued Visual reveal before it can replace So
   expect(state.source().getViewState().selections).toEqual(before);
 });
 
+// A grid environment nested in display math (cases takes the same path) and a displayed
+// alignment's own rows.
 it.for([
   ["matrix", "pmatrix", "4", "4"],
-  ["cases", "cases", "0", "x\\geq0,"],
   ["aligned", "x-y", "−", null],
 ] as const)(
   "template 26: clicking inside %s reveals its authored cell",
