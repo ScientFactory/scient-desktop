@@ -5798,11 +5798,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         return id === undefined ? [] : [id];
       });
     /**
-     * Every file a conversation names: its own records, and what it shows from
-     * its history. With `releasable`, tool pages and system-message files
-     * count only when it accepts their minting conversation's attachment
-     * segment: a tool's output can name any file, so it cannot make a live
-     * conversation's file releasable.
+     * Every file a conversation names, including what it shows from its history. With
+     * `releasable`, tool pages and system-message files count only for an accepted minting
+     * segment: a tool's output can name any file, so it cannot make a live file releasable.
      */
     const namedFiles = Effect.fn("ProjectionStore.namedFiles")(function* (
       threadId: ThreadId,
@@ -5839,13 +5837,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       ];
     });
     /**
-     * Files the deleted conversations of a thread's lineage name (tool pages and
-     * system-message files only when minted in the lineage or by a conversation
-     * that is gone) that no live conversation names: none in the lineage
-     * (messages, question answers, tool pages, system messages, shown history),
-     * and no message, question answer, tool page or fork's shared files
-     * anywhere else. Names compare without case: on a case-insensitive disk an
-     * alias names the same file.
+     * Files the lineage's deleted conversations name (tool pages and system-message files only when
+     * minted in the lineage or by a gone conversation) that no live conversation or fork share
+     * names anywhere. Names compare without case: on a case-insensitive disk an alias is the same file.
      */
     const getReleasableFiles = Effect.fn("ProjectionStore.getReleasableFiles")(
       function* (threadId: ThreadId) {

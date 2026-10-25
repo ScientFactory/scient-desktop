@@ -232,12 +232,9 @@ const ForkHistorySearchRequest = Schema.Struct({
 });
 
 /**
- * The messages a fork shows from the conversations it was forked from, as the
- * fork shows them (frozen when the original was rewritten or deleted), filed
- * under the fork. They are not the fork's own rows, so the message index never
- * attributes them to it; a separate query keeps `messageHitsQuery`'s plan
- * free of a sort. Rows carry the original message's rowid (0 once only the
- * frozen copy is left) and merge with the index hits before ranking.
+ * Messages a fork shows from its history (frozen once the original changes), filed under the fork.
+ * The message index never attributes them to it, and a separate query keeps `messageHitsQuery`
+ * free of a sort. Rows carry the original's rowid (0 once only the frozen copy is left).
  */
 const forkHistoryHitsQuery = (
   sql: SqlClient.SqlClient,

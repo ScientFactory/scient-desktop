@@ -178,7 +178,7 @@ describe("DesktopPreReadyPlatform", () => {
   });
 
   // SCIENT-FORK:START desktop-state-isolation
-  // regression: 7733bc839e fix(desktop): make Linux URL handlers discoverable with the app icon (#8673)
+  // regression: 7733bc839e fix(desktop): make Linux URL handlers discoverable with the app icon
   it.effect("still prepares the portal entry when the bundled icon cannot be copied", () => {
     vi.stubEnv("VITE_DEV_SERVER_URL", "");
     vi.stubEnv("XDG_DATA_HOME", "/xdg");
@@ -280,7 +280,7 @@ describe("DesktopPreReadyPlatform", () => {
       }),
   );
   // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
-  // regression: 299404a754 feat(desktop): add cross-platform window capture (#8103) - sole guard: letting a desktop-entry write failure escape passed every other desktop test
+  // regression: 299404a754 feat(desktop): add cross-platform window capture - sole guard: letting a desktop-entry write failure escape passed every other desktop test
   it.effect("keeps startup available when the early desktop entry cannot be written", () => {
     getSwitchValueMock.mockReturnValue("");
     mkdirSyncMock.mockImplementation(() => {
@@ -296,7 +296,7 @@ describe("DesktopPreReadyPlatform", () => {
   // SCIENT-FORK:END restored-sole-guards
 
   // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
-  // regression: 181e45110f test(desktop): cover password store through startup (#10287) - sole guard: overriding an explicit --password-store switch passed every other desktop test
+  // regression: 181e45110f test(desktop): cover password store through startup - sole guard: overriding an explicit --password-store switch passed every other desktop test
   it.effect("preserves an explicit Linux password-store switch", () => {
     hasSwitchMock.mockImplementation((switchName) => switchName === "password-store");
     getSwitchValueMock.mockReturnValue(" basic ");
