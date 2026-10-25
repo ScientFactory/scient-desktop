@@ -113,7 +113,17 @@ export async function render(
 /** Fake timers for one test: `using _timers = fakeTimers()`. */
 export function fakeTimers(config?: Parameters<typeof vi.useFakeTimers>[0]): Disposable {
   vi.useFakeTimers(config);
-  return { [Symbol.dispose]: () => void vi.useRealTimers() };
+  // A timed-out test's body can unwind after the next test has installed its own clock
+  // (test/scientBrowserSetup.ts restores native timers between them): dispose only the
+  // clock this call installed. Each install replaces the faked globals with new ones.
+  const faked = () => [globalThis.setTimeout, globalThis.Date, globalThis.requestAnimationFrame];
+  const installed = faked();
+  return {
+    [Symbol.dispose]: () => {
+      if (vi.isFakeTimers() && faked().every((value, index) => value === installed[index]))
+        vi.useRealTimers();
+    },
+  };
 }
 
 /** Replaces one global for one test and restores exactly that global on dispose. */

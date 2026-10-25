@@ -181,8 +181,11 @@ that passes locally can still race there.
   on them: put `fakeTimers()` on the fixture stack that outlives the unmount.
 - A test past its deadline keeps running, and the fake clock is shared. Drive
   it through `advanceTestClock(signal, ms)` (`test/testClock.ts`), which stops
-  once the test's `signal` aborts; `vi.waitFor` and `expect.poll` stop retrying
-  then too.
+  once the test's `signal` aborts. `vi.waitFor`, `vi.waitUntil` and
+  `expect.poll` belong to the test that started them and stop (without moving
+  the clock) once it aborts or another test starts; a fake clock a timed-out
+  test left installed is removed before the next test, and its late
+  `fakeTimers()` dispose leaves the next test's clock alone.
 - Prove a flaky-test fix under CI-like slowness and a targeted probe (a delayed
   observer, grammar load or visibility report): fail before, pass after, under
   the same condition. `SCIENT_TEST_CPU_THROTTLE=<rate>` slows each test page's
