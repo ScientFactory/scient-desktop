@@ -599,7 +599,7 @@ owned-main catch-up `49bab4df24d8332bbe0546ae660794dcfd85bd94` retains frozen
 owned main `7753f54630c66f5fc2a9df4585bf34b8afad12ed`. Full Stage C browser and
 server runs each had one failure, resolved with affected-file verification;
 post-catch-up affected tests, static checks, root build and isolated desktop
-smoke pass. Exact-head CI, owner visual/agent-rule acceptance, merge and release
+smoke pass. Owner visual review of `d0f3b04a3a` is approved. Exact-head CI, merge and release
 remain separate pending steps. The
 [previous receipt](docs/internals/t3-upstream-sync-20261024-d53873b6a4.md)
 retains its own boundaries and evidence. Native V2, scientific capabilities,
