@@ -2164,8 +2164,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect.each(
     [
       { label: "missing", contents: null },
-      // A malformed manifest takes the missing manifest's fallback (orElseSucceed).
       { label: "nonmatching", contents: '{"other.js":{"file":"assets/other-AbCd0123.js"}}' },
+      // regression: 27e6cc27fe perf(server): cache and stream static web assets (#9669)
+      { label: "malformed", contents: "{not-json" },
     ].map((manifest) => ({
       caseTitle: `revalidates hash-like static filenames with a ${manifest.label} manifest`,
       manifest,
