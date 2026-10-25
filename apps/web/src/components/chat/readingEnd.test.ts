@@ -5,7 +5,7 @@ import {
   shouldRevealArrivedPrompt,
 } from "./readerScrollPolicy";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
-import { boundedAnswerScrollDelta } from "./useBoundedAnswerFollow";
+import { boundedAnswerScrollDelta, placeUnmountedRow } from "./useBoundedAnswerFollow";
 
 // Viewport 0..600, reading margin at the anchor offset.
 const view = { viewportTop: 0, viewportBottom: 600 };
@@ -132,5 +132,28 @@ describe("end control transitions", () => {
     expect(savedPositionIsAtEnd({ atEnd: false })).toBe(false);
     expect(savedPositionIsAtEnd({ atEnd: true })).toBe(true);
     expect(savedPositionIsAtEnd(null)).toBe(true);
+  });
+});
+
+describe("placeUnmountedRow", () => {
+  // Rows 0..2 measured far below the rendered window; row 3 never rendered.
+  const positions = [0, 9000, 18000];
+  const sizes = [9000, 9000, 9000];
+  const state = {
+    scroll: 1000,
+    positionAtIndex: (index: number) => positions[index],
+    sizeAtIndex: (index: number) => sizes[index],
+  };
+
+  it("places a row outside the rendered window from its measured position", () => {
+    expect(placeUnmountedRow(state, 2, 50)).toEqual({ top: 17050, bottom: 26050 });
+  });
+
+  it("places a row never rendered right after the row before it, at the estimated size", () => {
+    const placed = placeUnmountedRow(state, 3, 50);
+    expect(placed?.top).toBe(26050);
+    expect(placed!.bottom).toBeGreaterThan(placed!.top);
+    // Nothing known about it or the row before it: it cannot be placed yet.
+    expect(placeUnmountedRow(state, 5, 50)).toBeNull();
   });
 });
