@@ -238,7 +238,8 @@ replace the newer build's record. Only the 100 most recently saved records are
 kept. Quote metadata follows the saved copy's identity.
 Attachments retain the existing read-only experience.
 
-The worker rebuilds from the base PDF context, retaining the catalog, metadata,
+The worker (`pdfEdit.worker.ts`, a listener around `createPdfEditor` in
+`pdfEditor.ts`, which the Node tests call directly) rebuilds from the base PDF context, retaining the catalog, metadata,
 attachments and original page references. Removed-page destinations are rebound
 to a surviving page. Copied pages rebind explicit and named internal links to
 inserted targets; external links and non-link annotations retain their objects.

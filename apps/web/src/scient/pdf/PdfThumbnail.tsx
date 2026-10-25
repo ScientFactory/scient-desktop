@@ -44,26 +44,6 @@ function startDragScroll(container: HTMLElement) {
   stopDragScroll = stop;
 }
 
-/**
- * Reports the dragged pages once the drag has started, so they fade after the browser has
- * begun it, and clears them when it ends: dropped here, elsewhere, or cancelled.
- */
-function trackPageDrag(
-  pages: readonly string[],
-  report?: (pages: readonly string[] | null) => void,
-) {
-  if (!report) return;
-  const frame = requestAnimationFrame(() => report(pages));
-  const end = () => {
-    cancelAnimationFrame(frame);
-    document.removeEventListener("dragend", end, true);
-    document.removeEventListener("drop", end, true);
-    report(null);
-  };
-  document.addEventListener("dragend", end, true);
-  document.addEventListener("drop", end, true);
-}
-
 export function PdfThumbnail(props: {
   readonly active: boolean;
   readonly pageNumber: number;
@@ -82,8 +62,8 @@ export function PdfThumbnail(props: {
   ) => void;
   readonly onMove: (boundary: number, pages: readonly string[]) => void;
   /** True while this page is among the dragged ones; it stays in place, faded. */
-  readonly dragged?: boolean;
-  readonly onDragState?: (pages: readonly string[] | null) => void;
+  readonly dragged: boolean;
+  readonly onDragState: (pages: readonly string[] | null) => void;
   readonly children?: React.ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -253,10 +233,10 @@ export function PdfThumbnail(props: {
               canvases: [grabbed, ...others],
               count: props.dragPages.length,
               pointer: { x: event.clientX, y: event.clientY },
+              onActive: (active) => props.onDragState(active ? props.dragPages : null),
             });
           }
           if (container) startDragScroll(container);
-          trackPageDrag(props.dragPages, props.onDragState);
         }}
         onDragEnd={() => {
           suppressClick.current = performance.now() + 250;

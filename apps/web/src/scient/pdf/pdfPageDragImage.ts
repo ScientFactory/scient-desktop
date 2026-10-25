@@ -21,13 +21,15 @@ let stopFollow: (() => void) | null = null;
  * Lifts copies of the dragged pages out of the sidebar. Each starts where its page is and
  * glides to the pointer, the grabbed page first and the others trailing behind it, until
  * they sit as one stack under the pointer; the stack then follows the pointer. `grabbed`
- * is listed first in `canvases`.
+ * is listed first in `canvases`. `onActive` is told once the cards are up and again when
+ * the drag ends, dropped anywhere or cancelled.
  */
 export function startPdfPageDragFollow(input: {
   readonly transfer: DataTransfer;
   readonly canvases: readonly HTMLCanvasElement[];
   readonly count: number;
   readonly pointer: { readonly x: number; readonly y: number };
+  readonly onActive?: (active: boolean) => void;
 }) {
   stopFollow?.();
   const grabbed = input.canvases[0];
@@ -37,14 +39,6 @@ export function startPdfPageDragFollow(input: {
   const layer = document.createElement("div");
   layer.className = "scient-pdf-page-drag-layer";
   layer.setAttribute("aria-hidden", "true");
-  const grabbedBounds = grabbed.getBoundingClientRect();
-  const scale = CARD_WIDTH / Math.max(1, grabbedBounds.width);
-  // Keep the point that was grabbed under the pointer.
-  const hold = {
-    x: (input.pointer.x - grabbedBounds.left) * scale,
-    y: (input.pointer.y - grabbedBounds.top) * scale,
-  };
-  const sizes: number[] = [];
   const cards = input.canvases.slice(0, STACK.length).map((source, index) => {
     const bounds = source.getBoundingClientRect();
     const card = document.createElement("div");
@@ -59,15 +53,20 @@ export function startPdfPageDragFollow(input: {
     card.append(canvas);
     card.style.width = `${bounds.width}px`;
     card.style.transform = `translate(${bounds.left}px, ${bounds.top}px)`;
-    sizes.push(bounds.width);
     layer.append(card);
-    return card;
+    return { card, bounds, shrink: CARD_WIDTH / Math.max(1, bounds.width) };
   });
+  // Keep the point that was grabbed under the pointer.
+  const lead = cards[0]!;
+  const hold = {
+    x: (input.pointer.x - lead.bounds.left) * lead.shrink,
+    y: (input.pointer.y - lead.bounds.top) * lead.shrink,
+  };
   if (input.count > 1) {
     const badge = document.createElement("span");
     badge.className = "scient-pdf-page-drag-count";
     badge.textContent = `${input.count} pages`;
-    cards[0]?.append(badge);
+    lead.card.append(badge);
   }
   document.body.append(layer);
 
@@ -76,9 +75,8 @@ export function startPdfPageDragFollow(input: {
     y = input.pointer.y;
   const place = () => {
     frame = 0;
-    cards.forEach((card, index) => {
+    cards.forEach(({ card, shrink }, index) => {
       const offset = STACK[index]!;
-      const shrink = CARD_WIDTH / Math.max(1, sizes[index]!);
       card.style.transform = `translate(${x - hold.x + offset.x}px, ${y - hold.y + offset.y}px) rotate(${offset.rotate}deg) scale(${shrink})`;
     });
   };
@@ -90,7 +88,10 @@ export function startPdfPageDragFollow(input: {
     if (!frame) frame = requestAnimationFrame(place);
   };
   // Starting from the pages' own places, so the move to the pointer is animated.
-  frame = requestAnimationFrame(() => requestAnimationFrame(place));
+  frame = requestAnimationFrame(() => {
+    input.onActive?.(true);
+    frame = requestAnimationFrame(place);
+  });
   const stop = () => {
     cancelAnimationFrame(frame);
     document.removeEventListener("dragover", track, true);
@@ -98,6 +99,7 @@ export function startPdfPageDragFollow(input: {
     document.removeEventListener("dragend", stop, true);
     layer.remove();
     if (stopFollow === stop) stopFollow = null;
+    input.onActive?.(false);
   };
   document.addEventListener("dragover", track, true);
   document.addEventListener("drop", stop, true);
