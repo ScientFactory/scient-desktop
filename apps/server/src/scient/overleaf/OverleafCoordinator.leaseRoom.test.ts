@@ -1,12 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
-/**
- * Each write an apply makes takes one native lease, which binds at most 256
- * folders. A sync with a write that could not be leased is refused before
- * anything is written, never stopped part way through. (300 new files into one
- * folder, which once stopped at file 236, is the `incoming 300` case of
- * `OverleafSync.bench.ts`; `WorkspaceFileMutations.lease.test.ts` keeps
- * the lease from growing with the records a folder keeps.)
- */
+/** Each apply write takes one native lease binding at most 256 folders; a sync
+ * with an unleaseable write is refused before anything is written, never stopped
+ * part way through. */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 

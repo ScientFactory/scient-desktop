@@ -394,16 +394,10 @@ const decodeVersion1 = Schema.decodeUnknownExit(
 );
 const validateDocument = Schema.decodeUnknownExit(OverleafConnectionDocument);
 
-/**
- * Reads a stored document: the current version, or a version 1 document upgraded.
- * Version 1 tracked no renames, so each recorded path is its file's only known
- * path, in the folder and on Overleaf. A kept copy of conflict material, and a
- * pending apply's held file, have their other paths unknown (null): a restore
- * holds such a copy at every path Overleaf has. A pending apply's recorded paths are where its files were before
- * it; adoption finds where the apply put them (`OverleafCoordinator`). The upgrade
- * is in memory; the next replacement writes the current version. Null when the
- * text is neither, or the upgrade breaks a document rule.
- */
+/** Reads the current version, or upgrades version 1 in memory: v1 paths are the
+ * file's only known paths, with null for kept-copy/held-file other paths. Null
+ * when neither version parses or the upgrade breaks a document rule. The next
+ * replacement writes the current version. */
 export function decodeOverleafConnectionDocument(text: string): OverleafConnectionDocument | null {
   const current = decodeCurrent(text);
   if (Exit.isSuccess(current)) return current.value;

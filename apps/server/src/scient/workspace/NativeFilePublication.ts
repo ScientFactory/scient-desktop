@@ -206,13 +206,9 @@ function parseResult(value: string): NativeFilePublicationResult {
     );
   }
 }
-/**
- * Replies already given, by the helper binary (path, device, inode, size and
- * change time) and the root's canonical path and volume. Every answer but one
- * describes the helper alone; that one (`atomicCreateMetadata`) describes the
- * root's volume. A replaced helper, a root reached through a link, or a root
- * now on another volume asks the helper again.
- */
+/** Helper replies already given, keyed by helper identity and the root's canonical
+ * path/volume; `atomicCreateMetadata` alone describes the root's volume. A
+ * replaced helper, linked root, or new volume asks the helper again. */
 const knownCapabilities = new Map<string, typeof Capabilities.Type>();
 const capabilitiesKey = async (helperPath: string, rootPath: string | undefined) => {
   try {
@@ -379,16 +375,10 @@ function directoryArguments({ binding, operation, name }: NativeFileDirectoryReq
   ];
 }
 
-/**
- * A lease binding of a directory on itself (root and parent alike), observed in
- * this process rather than by a helper run: its canonical path names a
- * directory, not a link, with this device and inode. Only on POSIX hosts, where
- * the helper reports the same `fstat` identity. Taking the lease binds every
- * directory again natively (walking from `/` without following links) and is
- * refused if any identity differs, so this saves one process per directory and
- * no check. Anything unusual (another spelling of the path, no directory there,
- * Windows) asks the helper, which answers or fails as it always did.
- */
+/** A directory's lease binding observed in-process (POSIX only): canonical path,
+ * device and inode of a real directory. Taking the lease re-binds natively and
+ * refuses any differing identity, so no check is saved; anything unusual or
+ * Windows asks the helper. */
 export async function observedDirectoryBinding(
   helperPath: string,
   directory: string,
@@ -415,14 +405,9 @@ export async function observedDirectoryBinding(
   return bindNativeFilePublicationParent(helperPath, directory, "");
 }
 
-/**
- * Private retention folders the helper found private in this process, each by
- * its change time, device and inode as they stood before the helper looked.
- * Only the helper can read an access list (macOS ACLs, Linux POSIX ACLs); mode
- * bits alone accept a folder 0700 that an ACL opens to everyone. Any change to
- * a folder's owner, mode or ACL moves its change time, so a folder that still
- * stands exactly as it did then is still what the helper found.
- */
+/** Private retention folders the helper found private, keyed by ctime/device/inode
+ * before it looked. Only the helper can read ACLs, so mode bits alone never
+ * suffice; any owner/mode/ACL change moves ctime and forces a re-check. */
 const validatedPrivate = new Map<string, string>();
 const privateKey = async (directory: string) => {
   try {

@@ -1,14 +1,6 @@
-/**
- * Saving a linked folder's open editors before an Overleaf operation reads it
- * (pr-c-design.md sections 1, 4.3 and 6). `OverleafSync` calls it first in every
- * operation that may write the folder (sync, preview, recovery, kept-copy
- * restore, undo), for the agent tools and the screens alike; anything but
- * `saved` stops the operation before it changes a file, and the result names
- * the file that could not be saved.
- *
- * This is the one seam between the Overleaf service and the editor-save request
- * (`EditorFlush`), which asks every open window of this server to save.
- */
+/** Saves a linked folder's open editors in every window before an Overleaf
+ * operation reads it; anything but `saved` stops the operation before it
+ * changes a file. The one seam to the editor-save request (`EditorFlush`). */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
