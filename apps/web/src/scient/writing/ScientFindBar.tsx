@@ -47,13 +47,6 @@ export interface ScientFindBarController {
 const findIconClassName = "size-3.5";
 const findInputClassName = "h-7";
 
-/**
- * The find and replace strip shared by the document editors, shown under the
- * writing bar. One row while searching;
- * expanding the replace chevron reveals a second slim row aligned under the
- * find field. All controls are dock-sized so the bar reads as one chrome
- * family with the editing dock above it.
- */
 export function ScientFindBar({
   controller,
   snapshot,

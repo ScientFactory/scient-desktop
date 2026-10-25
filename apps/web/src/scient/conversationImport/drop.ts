@@ -37,12 +37,8 @@ function singleDroppedFile(event: DragEvent): File | null {
 }
 
 /**
- * Makes one dropped `.scic` anywhere in the window an import, ahead of every
- * other drop target (the chat column and composer attach files, sidebar rows
- * attach to their thread). Handlers run in the capture phase, so such a drag
- * never reaches those targets; any other dropped file keeps its current
- * owner. A single `.md` dropped where nothing else takes it is imported too.
- * `onDragChange` reports the drag so the app can show where it will go.
+ * Capture .scic drops before attachment targets so imports cannot become attachments. Other files
+ * retain their existing drop owner; import .md only when no other target accepts it.
  */
 export function installConversationImportDropTarget(
   target: Window,

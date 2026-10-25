@@ -1,11 +1,7 @@
 /**
- * Word capture refuses authored styles/settings outside its supported subset.
- * The shared Pele renderer separately disables resources and sanitizes its SVG.
- *
- * Only CSS-bearing constructs are read — `style`, `classDef`, `linkStyle`,
- * and `cssClass` statements, and configuration decoded from front
- * matter and `%%{init}%%` — so label text that mentions `url(` or a web
- * address exports normally.
+ * Inspect CSS-bearing statements and decoded configuration, not labels that merely mention URLs.
+ * Refuse unsupported authored settings; resource disabling and SVG sanitization also remain the
+ * renderer's responsibility.
  */
 
 import { fetchesInCss } from "../diagrams/cssResources";
@@ -14,11 +10,8 @@ import { fromYaml } from "@t3tools/shared/schemaYaml";
 import * as Schema from "effect/Schema";
 
 /**
- * Why the diagram's styling statements could fetch a resource, or null when
- * they cannot. Each statement ends at a newline or an unquoted `;`, except
- * that the declarations of a style list some diagram types read to the end
- * of the line (`fill:red; background:url(…)`) stay part of it. Labels in
- * later statements are not inspected.
+ * Some diagram styles consume semicolon-separated declarations to end of line; keep those
+ * declarations in the styling statement without inspecting labels in later statements.
  */
 export function mermaidStyleFetchRisk(source: string): string | null {
   return mermaidCssStatements(source).some(fetchesInCss)

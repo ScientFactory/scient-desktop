@@ -17,11 +17,9 @@ export const inlineTableEnter: Command = (state, dispatch, view) => {
 };
 
 /**
- * GFM cells are textblocks themselves (inline*), not paragraph containers.
- * prosemirror-tables' edge handler starts above the textblock, so it skips
- * these cells. Adapt only that boundary; native caret movement within a cell
- * and the upstream table map, selections, Tab, and structural commands stay
- * in charge. No navigation transaction changes the document.
+ * GFM cells are inline textblocks, which prosemirror-tables' parent-level edge handler skips. Adapt
+ * only that boundary; navigation must not mutate document contents or replace native/upstream table
+ * behavior.
  */
 export function inlineTableArrow(direction: ArrowDirection, extend = false): Command {
   return (state, dispatch, view) => {

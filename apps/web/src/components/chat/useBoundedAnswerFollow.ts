@@ -39,12 +39,8 @@ export function promptResponseLastIndex(
 }
 
 /**
- * How far the reveal may scroll now. Growth is revealed only while the sent
- * prompt's text keeps room above it. When traces and tool rows push the
- * latest message below the fold, the reveal continues past the prompt just
- * far enough to show that message's first lines, and never scrolls the
- * message itself above the reading margin: the answer is read from its
- * beginning, not followed to its end.
+ * Reveal only the answer's beginning, never follow its text past the reading margin. If trace rows
+ * push it below the fold, scroll beyond the prompt only far enough to expose its first lines.
  */
 export function boundedAnswerScrollDelta(input: {
   promptTextTop: number;
@@ -73,19 +69,9 @@ export function boundedAnswerScrollDelta(input: {
 }
 
 /**
- * After an eligible send, reveals the prompt and then the start of its
- * response. The response's latest assistant message is the target, so the
- * reveal moves past progress notes and trace runs to the message the agent is
- * writing now. For a later prompt (`followResponse`), the whole response is
- * followed at a calmer pace, keeping the view at the conversation's end, until
- * the prompt reaches the top margin. It stops once the prompt's own run has
- * ended and its last message is revealed, or when the reader scrolls back up.
- * Scrolling down, clicks, text selection and scrolling inside nested output
- * never cancel it. It moves only while there is something to reveal, and
- * otherwise rests until the content, the view or a reveal changes.
- *
- * Returns a reader for the prompt it is following right now (not cancelled,
- * not finished), for saving with the reading position.
+ * Follow belongs to one prompt's V2 run and ends only after its last message is revealed or the
+ * reader scrolls up. Downward/nested scrolling, selection, and clicks do not cancel it. Rest
+ * without pending reveal work; save only an active follow owner.
  */
 export function useBoundedAnswerFollow({
   listRef,

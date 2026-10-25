@@ -7,12 +7,9 @@ import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalSt
 import type { SectionRef } from "./logic";
 
 /**
- * "New thread in this section" opens an ordinary draft. The draft already
- * knows the thread id it will create, so the section is remembered here and
- * filed once that thread exists on the server. A section belongs to one
- * environment, so a draft moved to another environment before it was sent is
- * not filed. Entries outlive a restart and expire after a week, so an
- * abandoned draft leaves nothing behind for long.
+ * Remember the section by the draft's future thread ID, but file only after server creation in the
+ * same environment. Persist across restart with expiry so abandoned drafts do not retain intent
+ * forever.
  */
 const STORAGE_KEY = "scient:sidebar:pending-new-thread-sections";
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;

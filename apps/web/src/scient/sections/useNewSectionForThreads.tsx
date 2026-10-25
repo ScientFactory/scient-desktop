@@ -49,12 +49,9 @@ export interface CreatedSections {
 }
 
 /**
- * Creates a section and files `threadRefs` into it: the one step behind the
- * shared creation popover. A section belongs to one environment, so threads
- * from several environments get a section of that name on each of theirs; a
- * section with no threads is created on `environmentId`. Nothing is filed on
- * an environment whose section could not be created. Filing reports its own
- * failures and offers Undo.
+ * Create separately for each selected environment and file nothing where creation failed. With no
+ * threads, use environmentId; filing failures and Undo remain the filing operation's
+ * responsibility.
  */
 export async function createSectionAndFile(input: {
   readonly name: string;

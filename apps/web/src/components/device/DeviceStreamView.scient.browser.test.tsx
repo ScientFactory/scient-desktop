@@ -205,7 +205,6 @@ const reconnect = (_fixture: _Fixture) =>
       .click(),
   );
 
-// Restored from the upstream-deleted DeviceStreamView.browser.test.tsx.
 // regression: dca7b59bea feat(devices): add simulator and emulator support (#10677)
 it("removes MJPEG requests while hidden and reconnects when shown", async () => {
   await using _fixture = _createFixture();

@@ -21,13 +21,9 @@ beforeAll(async () => {
 const BROWSER_WAIT_TIMEOUT_MS = 5_000;
 const DEFAULT_INTERVAL_MS = 50;
 
-// Under fake timers every vi.waitFor, vi.waitUntil and expect.poll retry advances the
-// clock. At its deadline Vitest aborts a test's signal but does not stop its body, and the
-// fake clock is whichever is installed: soon the next test's. So a wait belongs to the
-// test running when it starts. It stops (rejects, clears its timers) when that test's
-// signal aborts or another test starts, and checks that before every advance. Vitest's
-// own waitFor cannot do this: its retry interval keeps running after an outer abort, and
-// advances fake time before it looks at a callback that is still pending.
+// Vitest aborts a timed-out test's signal without stopping its body, and retries can advance the
+// next test's fake clock. Bind each wait to its starting test and stop before every advance on
+// abort or replacement; Vitest's own waitFor advances before checking pending callbacks.
 let testSignal: AbortSignal | undefined;
 // The test whose body installed the current fake clock (undefined: a hook outside any test).
 let fakeClockOwner: AbortSignal | undefined;
@@ -197,13 +193,9 @@ vi.waitUntil = ((callback, options) => {
   );
 }) as typeof vi.waitUntil;
 
-// expect.poll, on the same ownership as the waits above. Vitest's own poll loop advances
-// fake time after every failed attempt, including one whose callback or matcher settled
-// after its test had ended: on the next test's clock. So the loop is Vitest's
-// (vitest/dist poll: the chain, the matchers, expect.element's flags, the "not awaited"
-// check, the error and its cause), run here: it checks its test after the callback
-// settles, after the matcher settles, after the pause, and before every advance, and once
-// the test is gone it rejects with the test's abort reason and moves no clock.
+// A poll callback or matcher can settle after its test ends, when another test owns the fake clock.
+// Preserve Vitest's chain/matcher behavior but check ownership after each await and before every
+// advance; reject with the original abort reason without moving another test's time.
 const POLL_UNSUPPORTED = new Set([
   "matchSnapshot",
   "toMatchSnapshot",

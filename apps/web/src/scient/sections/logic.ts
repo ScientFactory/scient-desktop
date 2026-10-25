@@ -9,12 +9,8 @@ import * as Schema from "effect/Schema";
 import { manualOrderForPlacement } from "./automaticPlacement";
 
 /**
- * Pure rules for user-defined thread sections: catalog edits, grouping the
- * sidebar by section, and resolving drags in the Sections view. A section
- * belongs to one environment: its catalog entry lives in that environment's
- * server settings, and a thread's `sectionId` resolves only against the
- * catalog of the thread's own environment. Section ids are unique within one
- * catalog, so the sidebar names a section by both (`sectionGroupId`).
+ * Section IDs are unique only within their owning environment's catalog. Resolve a thread against
+ * its own environment and use environment-plus-ID group keys in the combined sidebar.
  */
 
 export const SidebarViewMode = Schema.Literals(["status", "sections"]);
@@ -286,15 +282,9 @@ function mergeEnvironmentIds(
 }
 
 /**
- * One pass of the optional empty-section cleanup over one environment's
- * catalog. `occupancy` is which sections hold that environment's sidebar
- * threads (active, pinned, snoozed or settled), as this client sees them.
- *
- * Seeing a section occupied is always trustworthy: it records the
- * environment on the section and clears its empty stamp. Seeing it empty is
- * not, unless this client holds the environment's complete thread list; only
- * then (`judge`) is a section stamped empty, or removed once stamped at least
- * `afterDays` ago. Null when nothing changes.
+ * Observed occupancy is trustworthy, but emptiness is not unless this client holds the complete
+ * environment thread list. Only then stamp/delete after the retention period; an occupied section
+ * clears its empty stamp.
  */
 export function sweepEmptySections(input: {
   readonly sections: readonly ThreadSection[];
@@ -500,13 +490,8 @@ function sectionGroupIdOf(
 }
 
 /**
- * Which section groups a sidebar scoped to one project lists (null: every
- * section, for All projects). A section is listed where it has threads: any
- * unarchived thread of the scope, on any shelf. A section with no threads is
- * listed in the projects it was created for, so a new section stays in view
- * to be filled; one without that record lists only under All projects. "No
- * threads" is only concluded once this client holds the section's
- * environment's thread list; until then its threads may simply not be visible yet.
+ * A new empty section stays visible in its creation projects. Conclude no threads only with that
+ * environment's complete list; otherwise unloaded threads may still place it elsewhere.
  */
 export function sectionGroupIdsInProjectScope(input: {
   readonly layouts: readonly EnvironmentSectionLayout[];
@@ -567,13 +552,8 @@ export function mergeListedGroupOrder(
 }
 
 /**
- * Pinned and active threads grouped by section, with one General (threads
- * without a known section, including new ones) placed as
- * `combinedSectionLayoutOrder` describes. Every listed section shows, even
- * empty, since each is a drop target; `listedGroupIds` (null: all) hides the
- * rest, see `sectionGroupIdsInProjectScope`. Each group keeps the Status
- * view's order: pinned first, then active. Snoozed and settled threads stay
- * on their own shelves.
+ * Keep listed sections visible even when empty because they are drop targets. Preserve Status
+ * ordering (pinned then active); snoozed/settled threads remain on their own shelves.
  */
 export function groupThreadsBySection<T extends SectionMember>(input: {
   readonly layouts: readonly EnvironmentSectionLayout[];
@@ -698,12 +678,8 @@ function droppedAsPinned(item: Extract<SectionsListItem, { kind: "thread" }>): b
 }
 
 /**
- * A section's full row order after a drop, from the order the list showed:
- * a collapsed section shows only some of its rows (or none), so the dropped
- * row is placed before the shown row it landed above, else after the one it
- * landed below, else at the top. A drop on the section's header is always at
- * the top, whatever the collapsed section still shows; the slot above the next
- * header is at the end, including every hidden row.
+ * Collapsed sections hide rows, so insert relative to the shown neighbor while preserving full
+ * order. Header drops go first; the slot above the next header goes after all hidden rows.
  */
 export function expandSectionDropOrder(input: {
   /** The section's rows as shown, with the dropped row in place. */
@@ -729,11 +705,8 @@ export function expandSectionDropOrder(input: {
 }
 
 /**
- * Where a lifted row lands if dropped over `overId`: the section whose header
- * precedes the slot (with that section's rows in their new order), the settled
- * shelf, or nowhere (the snoozed shelf is never a destination). A header targets
- * its own section unless the explicit upper slot selects the preceding section
- * (see `sectionsDropIndex`).
+ * A header targets its own section unless the explicit upper slot selects the preceding one.
+ * Snoozed is never a drop destination.
  */
 export function resolveSectionsDropTarget(
   items: readonly SectionsListItem[],

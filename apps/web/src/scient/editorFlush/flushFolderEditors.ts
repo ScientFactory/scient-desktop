@@ -64,14 +64,9 @@ const targetOf = (target: MarkdownPersistenceTarget): MarkdownPersistenceTarget 
 });
 
 /**
- * Saves every editor this window holds for a file in the requested folder,
- * through each editor's own save pipeline, and names every file it could not
- * save. The server places files by physical identity (`locate`). A file it
- * cannot place fails when its editor holds unsaved text. Right before
- * answering, every editor in the folder, or not known to be outside it
- * (including one opened while the server was being asked), is checked again
- * at once; if any holds unsaved text the whole save runs once more, then such
- * files fail.
+ * Locate editor files by physical identity and fail unsaved files that cannot be placed. Recheck
+ * all in-folder/unknown editors, including newly opened ones, before answering; repeat saves once,
+ * then report any remaining unsaved files.
  */
 export async function flushFolderEditors(
   environmentId: EnvironmentId,

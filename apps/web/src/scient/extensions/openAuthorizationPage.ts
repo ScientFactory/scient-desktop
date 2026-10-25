@@ -9,11 +9,8 @@ export type SignInOpening =
   | { readonly outcome: "not-started" };
 
 /**
- * Opens a sign-in page whose URL the server returns. Browsers block tabs opened
- * after an await, so the web build reserves one before asking the server and
- * closes it again when no URL arrives. A blocked or closed reservation, or a
- * desktop launch that fails, returns the URL so the caller can offer it as a
- * link. The desktop app opens the system browser.
+ * Browsers block tabs opened after await, so reserve before requesting the URL and close unused
+ * reservations. Return a fallback link if the reservation or desktop launch fails.
  */
 export async function openAuthorizationPage(
   requestUrl: () => Promise<string | null>,

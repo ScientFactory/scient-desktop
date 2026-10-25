@@ -38,12 +38,9 @@ export interface StickyModelSelection {
 }
 
 /**
- * The model a new chat in `project` opens on, following the new-thread flow
- * step by step: the new draft takes the sticky selection, then the
- * new-thread override (the project's default, else the environment's, else
- * what the chat in view carries); the composer's own resolution then picks
- * the instance and model as it does for that draft. Null only when no
- * provider can run a chat here.
+ * Resolve the destination project's model through the same sticky selection, new-thread overrides,
+ * and composer resolution as an ordinary new draft; otherwise import can choose a different
+ * provider.
  */
 export function newChatModelSelection(input: {
   /** The environment's provider statuses; undefined while it is not connected. */

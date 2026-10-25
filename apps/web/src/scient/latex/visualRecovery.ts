@@ -136,11 +136,9 @@ function nodeText(node: unknown): string {
 }
 
 /**
- * What a person wrote in a snapshot: text, and the writing that rich blocks
- * keep in attributes (formulas, statement bodies, captions, cells, raw source).
- * Repeated values and block boundaries are kept. If nothing readable can be
- * extracted from a snapshot that has content, the snapshot itself is returned.
- * Tolerates malformed input.
+ * Preserve repeated values, boundaries, and attribute-held writing when extracting recovery text.
+ * If content exists but cannot be read, return the snapshot itself rather than silently offering
+ * empty recovery.
  */
 export function readableSnapshotText(snapshot: unknown): string {
   if (!snapshot || typeof snapshot !== "object") return "";
@@ -260,18 +258,9 @@ const LIVE_FIELD = "live-field:";
 const UNSTORED = "unstored:";
 
 /**
- * Decide what a document does with stored unsaved work when it opens.
- *
- * A typing snapshot is reinstalled only over the exact source it was typed on.
- * Anything else that differs from the file is moved to the parked list and
- * offered for an explicit choice, which frees the live draft slots so the user
- * can keep writing. The original is removed only after its parked copy is
- * stored, and only if it is still the record that was read. Work that cannot
- * be parked is offered from its live slot instead; the caller keeps the editor
- * read-only until it is resolved, then calls this again.
- *
- * Only persisted records are considered. This window's unwritten checkpoint is
- * the live draft of the current session and is left alone.
+ * Reinstall typing only over its exact base; otherwise park before conditional removal and ask
+ * explicitly. If parking fails, keep the live draft and editor read-only. Ignore this window's
+ * unwritten live checkpoint; it still belongs to the active session.
  */
 export function readStartupRecovery(
   key: string,

@@ -15,17 +15,9 @@ const SYNCHRONIZED_GRACE_MS = 60 * 1000;
 const NO_OCCUPANCY: SectionOccupancy = new Map();
 
 /**
- * Keeps each environment's catalog occupancy current and runs the optional
- * cleanup (Settings → General → Organization), which deletes sections that
- * have held no sidebar threads for the configured number of days. Each
- * environment has its own setting, and its sections are judged only by its
- * own threads, since no other environment's thread can be in them.
- *
- * Occupancy is recorded as soon as membership changes: seeing a thread in a
- * section clears its empty stamp. That runs whether or not cleanup is on, so
- * turning it on later is safe. Judging a section empty waits until this
- * client has held the environment's live thread list for a minute. Removals
- * can be undone.
+ * Record occupancy even with cleanup disabled so enabling later is safe. Judge empty only after
+ * holding the owning environment's live list for a minute; other environments' threads cannot
+ * establish its occupancy. Removals remain undoable.
  */
 export function useEmptySectionCleanup(input: {
   readonly threads: ReadonlyArray<{

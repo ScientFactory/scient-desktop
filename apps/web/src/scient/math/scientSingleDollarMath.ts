@@ -1,18 +1,7 @@
 /**
- * Guarded single-dollar `$...$` math, recognized at the micromark tokenizer —
- * the only altitude where recognition can be both safe and complete. The
- * tokenizer sees raw source before emphasis fragments a span (`$a*b*c$`
- * arrives whole), markdown's escape construct has already consumed `\$`
- * before this construct ever runs, and a rejected candidate unwinds without
- * disturbing surrounding structure, so links and prices cannot be corrupted
- * the way parser-level `singleDollarTextMath` corrupts them.
- *
- * The construct emits the same `mathText`/`mathTextSequence`/`mathTextData`
- * tokens as `micromark-extension-math`, so `mdast-util-math` (registered by
- * remark-math) converts accepted spans to `inlineMath` nodes with no further
- * wiring. Content is consumed as one contiguous `mathTextData` token — the
- * mdast buffer ignores standalone `space` tokens, and this construct never
- * produces the padding shapes the upstream resolver exists for.
+ * Tokenize raw source before emphasis so rejected dollar spans unwind safely and escapes stay
+ * consumed. Emit upstream math token shapes for mdast compatibility; keep content in one
+ * mathTextData token because its buffer ignores standalone spaces.
  */
 
 /** micromark character codes: null is EOF, negatives are virtual (line endings, tabs). */
@@ -75,11 +64,8 @@ const HTML_TAG_LIKE_PATTERN = /<\/?[a-zA-Z][^<>]*>/;
 const INTERPOLATION_SIGNAL_PATTERN = /[\\^_+\-*=<>|]/;
 const BARE_BRACKET_GROUP_PATTERN = /^!?\[[^\][]*\]$/;
 const DOMAIN_LIKE_PATTERN = /^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+){2,}$/u;
-// A TeX backslash starts a control word (two-plus letters: `\alpha`, `\to`)
-// or a control symbol (`\%`, `\$`, `\,`). A backslash followed by a single
-// alphanumeric — `\n`, `\t`, `\E`, `\1` — is a string escape or regex
-// backreference, the signature of `echo -e "$a\n$b"` glue; KaTeX rejects
-// those anyway, so such spans could only ever show the literal fallback.
+// Single-alphanumeric backslash escapes signal shell/regex glue rather than TeX control
+// words/symbols, and KaTeX rejects them; leave such spans literal.
 const STRING_ESCAPE_PATTERN = /\\(?![a-zA-Z]{2,})[a-zA-Z0-9]/;
 const TEX_CONTROL_WORD_PATTERN = /\\[a-zA-Z]{2,}/;
 // A call with a multi-letter or dotted name (`foo(1)`, `el.fadeOut(200)`) is
@@ -159,20 +145,9 @@ function isWhitespaceCode(code: Code): boolean {
 }
 
 /**
- * Whether an accepted candidate reads as TeX rather than prose or code.
- * Shell identifiers (`$PATH$`) and identifier paths (`$HOME/bin:` between two
- * shell variables) stay text; content must end the way formulas end (an
- * alphanumeric, `)]}`, `!`, `'`, `%`), which rejects the glued-variable class
- * (`$src/$dst`, `$a=$b`, `awk '$1==$NF'`); interpolation-shaped content
- * starting with `(` or `{` needs a TeX operator (`$(a+b)^2$` has one,
- * `$(pwd)$` and `${row}$` do not); spaced prose needs an operator or control
- * sequence; a colon needs a strong TeX signal (`f: X \to Y` has one,
- * `HOME/bin:` does not); markdown structure is never math content — the `](`
- * inline-link and `][` reference-link boundaries, bare reference labels
- * (`[foo]`, but `[0,1]` intervals stay math), footnote references (`[^1]`),
- * and HTML-tag or autolink shapes (`</b>`, `<https://…>`); and bare
- * domain-like content (`www.x.test`) is prose. Compact spans — `$42$`,
- * `$1/2$`, `$f(x)$`, `$a*b*c$` — are math.
+ * Require plausible TeX endings and signals for interpolation, spaced prose, and colons. Shell
+ * variables/paths, Markdown link/reference/HTML boundaries, and domains must stay text; compact
+ * formulas and numeric intervals remain eligible.
  */
 export function isPlausibleScientSingleDollarTex(content: string): boolean {
   content = content.replaceAll(SCIENT_MATH_TABLE_PIPE, "|");
@@ -232,11 +207,8 @@ function scientSingleDollarMathText(): Construct {
   return { name: "scientMathTextSingleDollar", tokenize, previous };
 
   /**
-   * Mirrors `micromark-extension-math`: not after an unescaped dollar. This
-   * hook only helps micromark decide whether a position can break text at
-   * all — when several constructs share a code, an attempt runs them all
-   * regardless of their individual `previous` hooks — so the real Scient
-   * guards live at the start of `tokenize`, where they always execute.
+   * Micromark may try all constructs sharing a code regardless of individual previous hooks. Keep
+   * real guards inside tokenize so they always execute.
    */
   function previous(this: TokenizeContext, code: Code): boolean {
     if (code === CODE_DOLLAR) {

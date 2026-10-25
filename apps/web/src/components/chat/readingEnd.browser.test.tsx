@@ -16,8 +16,8 @@ import { MessagesTimeline } from "./MessagesTimeline";
 import { readerAtReadingEnd, readingEndGapOnScreen, withReadingEnd } from "./readerScrollPolicy";
 import { readTimelinePosition, rememberTimelinePosition } from "./timelineScrollAnchoring";
 
-// Real-Chromium geometry for DF-047 and the #396 follow-ups: where the bottom
-// is, how a sent prompt's response is revealed, and which layout keeps the end.
+// Real Chromium geometry guards reading-end placement and sent-response reveal across layout
+// changes.
 
 const env = EnvironmentId.make("reading-end-tests");
 const COMPOSER_INSET = 100;
@@ -398,15 +398,10 @@ it("reveals the latest message after very tall notes", async (context) => {
   // below the rendered window.
   await render(_fixture, key, [...entries, prompt, ...tallNotes], running);
   await advanceClock(_fixture, 192);
-  // The latest message lands right below the last note, and the reveal holds the reader at
-  // that note's first lines, so the last note alone decides whether the latest message
-  // arrives outside the rendered window. Wait for that, in the list's own coordinates
-  // (the ones it mounts rows by): the last note rendered, its text laid out (a slow runner
-  // lays it out late, and a note measured short pulls the landing place into the window),
-  // its measurement its current height, and its end more than two viewports below the
-  // window. The notes above are not waited on: the follow carries the reader past them, a
-  // note never rendered is never measured, and when one is measured later the list keeps
-  // the content in view in place, so the reader and the landing place move together.
+  // Wait for the last note's text/layout and current measured height in list coordinates, with its
+  // end over two viewports away. Earlier notes may never mount; later measurement preserves visible
+  // content, moving reader and landing together, so waiting for all notes cannot establish this
+  // boundary.
   await vi.waitFor(() => {
     const state = _fixture.listRef.current!.getState();
     const viewportHeight = node(_fixture).clientHeight;

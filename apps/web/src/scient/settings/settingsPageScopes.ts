@@ -1,14 +1,9 @@
 import type { SettingsScopeSearch } from "~/components/settings/settingsScope";
 
 /**
- * How Scient's settings pages meet the scope picker.
- *
- * Providers, Documents and Extensions install tools per server, so their
- * picker chooses one environment rather than an aggregate. Documents holds no
- * project settings at all: its preferences live on this device and its tools
- * on one server, so it offers no project choice, and an offline environment
- * hides only its server tools, never the whole page. Extensions belong to one
- * server too; its connectors list that server's projects themselves.
+ * Tool settings choose one server environment, never an aggregate. Document preferences remain
+ * device-local and visible offline; hide only offline server tools. Documents has no project scope,
+ * while connector grants list their server's own projects.
  */
 const SINGLE_ENVIRONMENT_SETTINGS_PATHS: Readonly<Record<string, true>> = {
   "/settings/providers": true,

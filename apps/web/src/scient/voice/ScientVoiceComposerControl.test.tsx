@@ -1,9 +1,5 @@
-// The repo has no jsdom/@testing-library/react (default test env is `node`), so
-// DOM click-through isn't available. We render with `react-dom/server` — the
-// same approach the neighbouring composer tests use — to assert the
-// support-gated rendering, and cover the interaction/branching logic through
-// the component's exported pure helpers. `window.desktopBridge.voice` and
-// `getUserMedia` are stubbed per the mocking requirement.
+// The Node test environment has no DOM runner; use server rendering for support gating and pure
+// helpers for interaction branches. Stub desktop voice and getUserMedia at the boundary.
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";

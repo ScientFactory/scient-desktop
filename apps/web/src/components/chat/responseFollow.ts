@@ -21,11 +21,9 @@ type PromptMessage = Pick<ChatMessage, "id" | "runId">;
 const NO_RUNS: readonly PromptRun[] = [];
 
 /**
- * The run answering a prompt: the run its listed message belongs to now (its
- * own run, or the run a steer or a queued prompt promoted to a steer went
- * into), else the run it started (its userMessageId) while it is not listed
- * with one yet. A promoted prompt's own queued run is cancelled at promotion;
- * the receiving run is the one that answers it.
+ * A promoted steer is answered by the receiving run, not its cancelled queued run. Prefer the
+ * listed message's actual run, falling back to its initiating run only until that association
+ * arrives.
  */
 function promptRun(
   promptId: string,
@@ -89,12 +87,8 @@ interface FollowIntent {
 }
 
 /**
- * The one owner of the send follow: which prompt's response the view
- * follows in this thread, if any. A send at the end, a queued delivery at
- * the end, and a reader coming back to a thread they left while following
- * start it; scrolling up, Scroll to end, a thread switch, the response
- * settling, or the prompt's send failing end it. Settling is judged from the
- * prompt's own V2 run, never from the thread looking busy.
+ * Settle follow from the prompt's own V2 run, never thread-wide busy state. Reader navigation and
+ * failed/settled sends end ownership; returning to a thread may resume only the follow left there.
  */
 export function useResponseFollow(input: {
   threadKey: string | null;
@@ -150,11 +144,9 @@ export function useResponseFollow(input: {
 }
 
 /**
- * A queued prompt the server delivers while the reader is at the end gets the
- * same follow as a send. Delivery is V2's own word for it (the delivered
- * prompt's input intent), so it holds however the projection's updates were
- * batched, and whichever of the send's receipt and the delivery comes first:
- * the decision runs again when the latest prompt becomes a delivered one.
+ * Re-evaluate when the latest prompt becomes delivered. V2 input intent establishes delivery
+ * regardless of projection batching or receipt order, so at-end queued delivery earns the same
+ * follow as Send.
  */
 export function useQueuedDeliveryFollow(input: {
   threadKey: string | null;

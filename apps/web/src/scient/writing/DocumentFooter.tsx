@@ -6,13 +6,8 @@ import { formatWordCount, type DocumentWordCount } from "./documentCounts";
 import "./documentFooter.css";
 
 /**
- * The strip under a document editor. It shows only what follows the caret:
- * on the left the options of the selected object (a table, an equation, a
- * heading), on the right where the caret is and the word count.
- *
- * It is always present and always the same height, so selecting something
- * never moves the document. Document commands, page and zoom controls, and
- * save or build state do not belong here.
+ * Keep footer height fixed so selection changes never move the document. Document commands, zoom,
+ * and save/build state belong outside caret context.
  */
 export function DocumentFooter(props: {
   /** Names the strip for assistive technology, for example "Document status". */
