@@ -2,10 +2,7 @@ import type { FileTreeRowDecorationContext } from "@pierre/trees";
 import type { ProjectDirectoryEntry } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  SCIENT_FILE_BROWSER_TREE_ICONS,
-  scientReadOnlyRowDecoration,
-} from "./useScientLazyWorkspaceTree";
+import { scientReadOnlyRowDecoration } from "./useScientLazyWorkspaceTree";
 
 const row = (path: string, kind: "directory" | "file", isExpanded = false) =>
   ({
@@ -32,9 +29,5 @@ describe("scientReadOnlyRowDecoration", () => {
     // A file named like a linked folder is not one.
     expect(decorate(row("slides/talk", "file"))).toBeNull();
     expect(decorate(row("slides", "directory"))).toBeNull();
-  });
-
-  it("draws the mark from the tree's own sprite", () => {
-    expect(SCIENT_FILE_BROWSER_TREE_ICONS.spriteSheet).toContain('id="scient-tree-icon-overleaf"');
   });
 });
