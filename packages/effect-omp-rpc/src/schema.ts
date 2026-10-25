@@ -124,6 +124,9 @@ export const OmpRpcState = Schema.Struct({
   sessionId: Schema.optional(Schema.String),
   sessionName: Schema.optional(Schema.String),
   messageCount: Schema.optional(Schema.Finite),
+  // SCIENT-FORK: optional observations preserve compatibility with older OMP.
+  contextUsage: Schema.optional(Schema.Unknown),
+  todoPhases: Schema.optional(Schema.Unknown),
 });
 export type OmpRpcState = typeof OmpRpcState.Type;
 
@@ -218,11 +221,23 @@ export const OmpRpcEvent = Schema.Struct({
   aborted: maybeBoolean,
   willRetry: maybeBoolean,
   content: maybeUnknown,
+  // SCIENT-FORK: desktop presentation fields from open RPC observations.
+  timeout: maybeNumber,
+  notifyType: maybeString,
+  source: maybeString,
+  from: maybeString,
+  to: maybeString,
+  reason: maybeString,
+  usage: maybeUnknown,
 });
 export type OmpRpcEvent = typeof OmpRpcEvent.Type;
 
 export const OmpAgentMessage = Schema.Struct({
   role: Schema.String,
+  // SCIENT-FORK: usage is an open record; validate counters at the presentation boundary.
+  usage: maybeUnknown,
+  model: maybeString,
+  provider: maybeString,
   responseId: maybeString,
   timestamp: maybeNumber,
   /** A `custom` message's kind, for example `async-result` for a background job's result. */
@@ -430,6 +445,8 @@ export const OmpExtensionUiRequest = Schema.Struct({
   widgetLines: maybeUnknown,
   widgetPlacement: maybeString,
   notifyType: maybeString,
+  // SCIENT-FORK: dialog deadlines are supplied in milliseconds.
+  timeout: maybeNumber,
 });
 export type OmpExtensionUiRequest = typeof OmpExtensionUiRequest.Type;
 
@@ -509,6 +526,7 @@ export type OmpSubagentFrame = typeof OmpSubagentFrame.Type;
 
 const OmpLifecycleEvent = Schema.Struct({
   type: Schema.Literals([
+    "cache_warming_end",
     "auto_compaction_start",
     "auto_compaction_end",
     "compaction_end",
@@ -529,6 +547,12 @@ const OmpLifecycleEvent = Schema.Struct({
     "thinking_level_changed",
     "command_output",
   ]),
+  // SCIENT-FORK: billing and notice metadata must survive known-event decoding.
+  usage: maybeUnknown,
+  source: maybeString,
+  from: maybeString,
+  to: maybeString,
+  reason: maybeString,
   aborted: maybeBoolean,
   willRetry: maybeBoolean,
   output: maybeString,
