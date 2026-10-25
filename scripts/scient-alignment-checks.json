@@ -133,7 +133,7 @@
           "src/mcp/TaskCancelNativeSubagent.integration.test.ts"
         ],
         "web-browser": [
-          "src/components/chat/ComposerPrimaryActions.browser.test.tsx",
+          "src/components/chat/ComposerPrimaryActions.scient.browser.test.tsx",
           "src/scient/chat/useStopGeneration.browser.test.tsx",
           "src/scient/chat/StopGenerationAcknowledgement.browser.test.tsx"
         ]
@@ -223,7 +223,7 @@
         ],
         "web-unit": ["src/scient/threadQueue/disposition.test.ts"],
         "web-browser": [
-          "src/components/chat/ComposerPrimaryActions.browser.test.tsx",
+          "src/components/chat/ComposerPrimaryActions.scient.browser.test.tsx",
           "src/scient/threadQueue/queueShortcuts.browser.test.tsx"
         ]
       },
