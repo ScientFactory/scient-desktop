@@ -338,7 +338,7 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
 
   // Crash probes must distinguish unpublished steps from confirmed publication. A create killed
   // after its macOS clone call lacks durable ownership proof and stays for review. Windows' moved
-  // stage already has its public file ID journaled, so ID plus planned bytes can prove completion.
+  // stage and Linux's staged create journal their public file ID, so ID plus bytes prove completion.
   const shapes = [
     {
       name: "an edit",
