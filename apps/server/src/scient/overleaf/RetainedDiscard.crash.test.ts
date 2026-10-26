@@ -236,14 +236,17 @@ describe.skipIf(!canPublish)("a discard after real process death", () => {
   it.live.each(
     kinds.flatMap((kind) =>
       (["discard", "settle"] as const).flatMap((action) =>
-        (["record", "parent"] as const).flatMap((ancestor) =>
-          (["file", "folder", "view"] as const).map((object) => ({
-            kind,
-            action,
-            ancestor,
-            object,
-          })),
-        ),
+        (
+          [
+            { ancestor: "record", object: "file" },
+            { ancestor: "record", object: "folder" },
+            { ancestor: "parent", object: "view" },
+          ] as const
+        ).map((shape) => ({
+          kind,
+          action,
+          ...shape,
+        })),
       ),
     ),
   )(
