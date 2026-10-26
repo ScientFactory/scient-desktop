@@ -4,7 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeUtil from "node:util";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { windowsNativeFile } from "../workspace/WindowsNativeFile.ts";
+import { windowsNativeFlags } from "../workspace/WindowsNativeFile.ts";
 
 const run = NodeUtil.promisify(NodeChildProcess.execFile);
 export type OverleafFileAvailability = "available" | "online-only-file" | "helper-unavailable";
@@ -50,10 +50,18 @@ const macFlags: OverleafFileFlagReader = async (paths) => {
 
 const windowsFlags: OverleafFileFlagReader = async (paths) => {
   const flags: number[] = [];
+  let batch: string[] = [],
+    length = 0;
   for (const path of paths) {
-    const info = await windowsNativeFile(path, "flags");
-    flags.push(info.code === 0 ? info.flags : info.code === 2 || info.code === 3 ? 0 : NaN);
+    if (batch.length && (batch.length >= STAT_BATCH || length + path.length > 24_000)) {
+      flags.push(...(await windowsNativeFlags(batch)));
+      batch = [];
+      length = 0;
+    }
+    batch.push(path);
+    length += path.length + 3;
   }
+  if (batch.length) flags.push(...(await windowsNativeFlags(batch)));
   return flags;
 };
 
