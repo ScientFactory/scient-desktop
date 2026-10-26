@@ -440,6 +440,12 @@ static int copy_metadata(Context *context, const wchar_t *source, const wchar_t 
   CloseHandle(input);
   return error;
 }
+/* Group C must remove by the held directory handle, never by a reconstructed path. */
+int platform_remove(Context *context, const char *name, int directory,
+                    Entry *before, Flush *flush, int *applied) {
+  (void)context; (void)name; (void)directory; (void)before; (void)flush; (void)applied;
+  return ERROR_NOT_SUPPORTED;
+}
 /* Native FileLinkInformation is class 11, not Win32's unrelated class 11. */
 int platform_operation(Context *context, const char *operation, const char *source,
                        const char *destination, Entry *before, Entry *after_source,
