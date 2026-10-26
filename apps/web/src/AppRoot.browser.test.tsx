@@ -54,9 +54,6 @@ vi.mock("./state/shell", async () => {
   const { Atom } = await import("effect/reactivity");
   return { environmentShell: { stateAtom: Atom.make({}) } };
 });
-vi.mock(import("./browser/BrowserProfileReporter"), async () => ({
-  BrowserProfileReporter: await makeProbe("browser-profile"),
-}));
 vi.mock(import("./browser/ElectronBrowserHost"), async () => ({
   ElectronBrowserHost: await makeProbe("electron-browser"),
 }));
@@ -97,7 +94,7 @@ describe("AppRoot", () => {
     await using screen = await render(<AppRoot router={router as unknown as AppRouter} />, {
       router: false,
     });
-    const hosts = ["route", "html-pdf", "electron-browser", "browser-profile", "quit-hold"];
+    const hosts = ["route", "html-pdf", "electron-browser", "quit-hold"];
     // SCIENT-FORK:START — the editor flush hosts share the app registry too.
     hosts.push("editor-flush");
     // SCIENT-FORK:END

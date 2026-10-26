@@ -79,13 +79,10 @@ export const reloadMainWindow = DesktopIpc.makeIpcMethod({
     contents.on("will-prevent-unload", blocked);
     contents.on("did-finish-load", finished);
     yield* Effect.forkDetach(Effect.sleep("5 seconds").pipe(Effect.tap(Effect.sync(cleanup))));
-    try {
-      if (ignoreCache) contents.reloadIgnoringCache();
-      else contents.reload();
-    } catch (error) {
-      cleanup();
-      throw error;
-    }
+    // A failed reload call is a defect; release the listeners before it propagates.
+    yield* Effect.sync(() =>
+      ignoreCache ? contents.reloadIgnoringCache() : contents.reload(),
+    ).pipe(Effect.onError(() => Effect.sync(cleanup)));
     return true;
   }),
 });

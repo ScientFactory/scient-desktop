@@ -1,3 +1,4 @@
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -373,7 +374,7 @@ it.live(
             yield* verify;
           }).pipe(Effect.provide(pruning)),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
     ),
 );
 
@@ -440,7 +441,7 @@ it.live("retains files and enqueues no prune when the rollback projection transa
         expect(Option.isNone(yield* outbox.get("failed-prune"))).toBe(true);
         expect(yield* fs.readFileString(file.filename)).toBe("evidence");
       }).pipe(Effect.provide(services));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
   ),
 );
 
@@ -542,7 +543,7 @@ it.live("rechecks a later retained reference and refuses managed reuse after cle
         expect(refused._tag).toBe("Failure");
         expect(dispatched).toBe(false);
       }).pipe(Effect.provide(services));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
   ),
 );
 
@@ -644,6 +645,6 @@ it.effect(
             ),
           );
         }).pipe(Effect.provide(services));
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
     ),
 );

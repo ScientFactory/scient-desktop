@@ -19,6 +19,7 @@ import {
   SourceControlCloneRepositoryResult,
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
+import * as DocumentText from "../../../provider/DocumentText.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
@@ -149,6 +150,7 @@ const ThreadLaunchTool = Tool.make("scient_thread_launch", {
     FileSystem.FileSystem,
     ServerConfig.ServerConfig,
     ServerSettings.ServerSettingsService,
+    DocumentText.DocumentText,
   ],
 })
   .annotate(Tool.Destructive, true)

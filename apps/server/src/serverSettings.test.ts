@@ -53,6 +53,8 @@ import {
 } from "./settingsDirectoryWatch.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
+const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
+
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 const encodeSettingsJson = Schema.encodeEffect(Schema.fromJsonString(ServerSettings));
@@ -595,7 +597,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           );
           const names = yield* fs
             .readDirectory(config.secretsDir)
-            .pipe(Effect.catch(() => Effect.succeed([])));
+            .pipe(Effect.orElseSucceed(() => []));
           assert.isEmpty(names.filter((name) => name.startsWith("custom-model-")));
         }).pipe(Effect.provide(makeServerSettingsLayer()));
       }).pipe(Effect.scoped),
@@ -1661,14 +1663,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         },
       });
       const disabled = yield* serverSettings.updateSettings(off);
-      assert.equal(
-        (disabled.providerInstances[droidId]?.config as Pick<DroidSettings, "cloudSessionSync">)
-          .cloudSessionSync,
-        false,
-      );
+      const disabledConfig = disabled.providerInstances[droidId]?.config as Pick<
+        DroidSettings,
+        "cloudSessionSync"
+      >;
+      assert.equal(disabledConfig.cloudSessionSync, false);
       assert.equal(yield* persistedSync, false);
       // Reset sends the driver's defaults inside the default instance.
-      const { enabled, ...defaultConfig } = yield* Schema.decodeEffect(DroidSettings)({});
+      const { enabled, ...defaultConfig } = yield* decodeDroidSettings({});
       const reset = yield* decodeSettingsPatch({
         providerInstances: {
           [droidId]: {
@@ -1678,15 +1680,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         },
       });
-      assert.equal(
-        (
-          (yield* serverSettings.updateSettings(reset)).providerInstances[droidId]?.config as Pick<
-            DroidSettings,
-            "cloudSessionSync"
-          >
-        ).cloudSessionSync,
-        true,
-      );
+      const resetConfig = (yield* serverSettings.updateSettings(reset)).providerInstances[droidId]
+        ?.config as Pick<DroidSettings, "cloudSessionSync">;
+      assert.equal(resetConfig.cloudSessionSync, true);
       assert.equal(yield* persistedSync, true);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -1822,8 +1818,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       const instanceId = ProviderInstanceId.make("acpRegistry_shared");
-      const results = yield* Effect.all(
-        ["First", "Second"].map((displayName) =>
+      const results = yield* Effect.forEach(
+        ["First", "Second"],
+        (displayName) =>
           serverSettings
             .updateProviderInstance({
               operation: "create",
@@ -1835,7 +1832,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               },
             })
             .pipe(Effect.result),
-        ),
         { concurrency: "unbounded" },
       );
 
@@ -3820,10 +3816,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           return yield* fresh.getSettings;
         }).pipe(Effect.provide(freshSettingsLayer));
         assert.equal(reloaded.sourceControlHosts.bitbucket?.accessToken, "");
-        assert.equal(
-          (reloaded.sourceControlHosts.github?.tokens as Record<string, string>)["ghe.acme.test"],
-          "",
-        );
+        const githubTokens = reloaded.sourceControlHosts.github?.tokens as Record<string, string>;
+        assert.equal(githubTokens["ghe.acme.test"], "");
       }).pipe(Effect.provide(layerSettings));
     },
   );
@@ -4345,10 +4339,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         runOnWorktreeCreate: false,
       };
       const model = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5");
-      const modelJson = yield* Schema.encodeEffect(Schema.fromJsonString(ModelSelection))(model);
-      const scriptsJson = yield* Schema.encodeEffect(
+      const encodeModelSelection = Schema.encodeEffect(Schema.fromJsonString(ModelSelection));
+
+      const modelJson = yield* encodeModelSelection(model);
+      const encodeProjectScripts = Schema.encodeEffect(
         Schema.fromJsonString(Schema.Array(ProjectScript)),
-      )([script]);
+      );
+
+      const scriptsJson = yield* encodeProjectScripts([script]);
       for (const [projectId, modelColumn, envMode, autoPull, scripts] of [
         [legacyProject, modelJson, "worktree", 1, scriptsJson],
         [scriptedProject, null, null, 0, scriptsJson],

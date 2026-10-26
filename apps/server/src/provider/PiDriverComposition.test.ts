@@ -52,10 +52,13 @@ import {
   scientToolProjectionForProvider,
 } from "./ScientToolProjection.ts";
 
+const decodeProviderTurn = Schema.decodeSync(OrchestrationV2ProviderTurn);
+
 const PI = ProviderDriverKind.make("pi");
 const instanceId = ProviderInstanceId.make("pi-scient-composition");
 
 const piVersionSpawner = ChildProcessSpawner.make((_command) =>
+  // oxlint-disable-next-line require-yield -- Keep handle construction deferred inside the spawner's existing Effect generator.
   Effect.gen(function* () {
     const output = new TextEncoder().encode("0.82.0\n");
     return ChildProcessSpawner.makeHandle({
@@ -232,7 +235,7 @@ it("preserves an existing Pi native turn receipt", () => {
   const threadId = ThreadId.make("thread:pi-receipt");
   const providerThreadId = ProviderThreadId.make("provider-thread:pi-receipt");
   const runId = RunId.make("run:pi-receipt");
-  const receipt = Schema.decodeUnknownSync(OrchestrationV2ProviderTurn)({
+  const receipt = decodeProviderTurn({
     id: ProviderTurnId.make("provider-turn:pi-receipt"),
     providerThreadId,
     nodeId: NodeId.make("node:pi-receipt"),

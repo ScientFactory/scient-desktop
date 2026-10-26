@@ -3,6 +3,7 @@ import { makeOmpProcessOwnership } from "../scient-provider/OmpProcessOwnership.
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  type ChatAttachment,
   type ThreadTokenUsageSnapshot,
   type ModelSelection,
   type OmpSettings,
@@ -37,6 +38,11 @@ import {
   ompSessionFilesEqual,
 } from "../../provider/omp/OmpSessionFile.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import * as DocumentText from "../../provider/DocumentText.ts";
+import {
+  isProviderNativeImageAttachment,
+  providerMessageTextWithAttachmentPaths,
+} from "@t3tools/provider-core/server/attachmentPrompt";
 import type { ServerConfig } from "../../config.ts";
 import { withAgentDeviceEnvironment } from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -232,11 +238,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           input.runtimePolicy.approvalPolicy !== undefined ||
           input.runtimePolicy.sandboxPolicy !== undefined
         )
-          return yield* Effect.fail(
-            new NativeSessionOperationError({
-              detail: `${target.name} supports only full access and has no native sandbox.`,
-            }),
-          );
+          return yield* new NativeSessionOperationError({
+            detail: `${target.name} supports only full access and has no native sandbox.`,
+          });
         const { fileSystem: fs, path } = options;
         const scope = yield* Effect.scope;
         const cwd = yield* fs.realPath(input.runtimePolicy.cwd ?? options.serverConfig.cwd);
@@ -249,11 +253,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         const root = yield* fs.realPath(sessionRoot);
         const stateRoot = yield* fs.realPath(options.serverConfig.stateDir);
         if (!sessionFileInsideRoot(stateRoot, root))
-          return yield* Effect.fail(
-            new NativeSessionOperationError({
-              detail: `${target.name} session directory escaped Scient's state directory.`,
-            }),
-          );
+          return yield* new NativeSessionOperationError({
+            detail: `${target.name} session directory escaped Scient's state directory.`,
+          });
         let ownedShutdown: OmpRpcProcess["shutdown"] | undefined;
         const sessionLock = yield* Effect.acquireRelease(
           acquireOmpSessionLock(target, path.join(root, ".session.lock"), locks),
@@ -277,11 +279,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             yield* fs.remove(path.join(root, name), { force: true });
         }
         if (mcp && mcp.providerInstanceId !== options.instanceId)
-          return yield* Effect.fail(
-            new NativeSessionOperationError({
-              detail: "The tool session belongs to another provider instance.",
-            }),
-          );
+          return yield* new NativeSessionOperationError({
+            detail: "The tool session belongs to another provider instance.",
+          });
         const extension = yield* writeOmpExtensionFiles({
           target,
           directory: root,
@@ -386,6 +386,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             closed = true;
           }),
         );
+        // The open, payload and send spans already own catalog refreshes.
         const refreshCatalog = Effect.fnUntraced(function* () {
           const available = yield* client.getModels().pipe(
             Effect.tapError((cause) => {
@@ -521,7 +522,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 (error.code === "unknown_command" || /unknown command/i.test(error.message))
               )
                 statsUnsupported = true;
-              return Effect.succeed(undefined);
+              return Effect.void;
             }),
           );
           const usage = response?.success ? ompStatsUsage(response.data, contextUsage) : undefined;
@@ -991,11 +992,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         });
         const ready = yield* client.ready.pipe(Effect.timeout("8 seconds"));
         if (!ready.supportedProtocolVersions?.includes(OMP_RPC_PROTOCOL_V2))
-          return yield* Effect.fail(
-            new NativeSessionOperationError({
-              detail: `${target.name} did not offer RPC protocol v2.`,
-            }),
-          );
+          return yield* new NativeSessionOperationError({
+            detail: `${target.name} did not offer RPC protocol v2.`,
+          });
         yield* refreshCatalog().pipe(Effect.ignore);
         yield* extension.discardUnconsumed;
         yield* client.setSubagentSubscription("progress");
@@ -1124,30 +1123,24 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         ) {
           const decision = ompCommandDecision(message.text, runtime.catalog());
           if (decision === "mutator")
-            return yield* Effect.fail(
-              new NativeSessionOperationError({
-                detail: `This ${target.name} command changes provider configuration; use the provider settings instead.`,
-              }),
-            );
+            return yield* new NativeSessionOperationError({
+              detail: `This ${target.name} command changes provider configuration; use the provider settings instead.`,
+            });
           if (decision === "unavailable")
-            return yield* Effect.fail(
-              new NativeSessionOperationError({
-                detail: `That command is unavailable in this ${target.name} conversation.`,
-              }),
-            );
+            return yield* new NativeSessionOperationError({
+              detail: `That command is unavailable in this ${target.name} conversation.`,
+            });
           const imageFiles: Array<{ path: string; size: number; mimeType: string }> = [];
-          const files: string[] = [];
+          const attachmentPaths = new Map<ChatAttachment, string>();
           for (const attachment of message.attachments) {
             const stored = resolveAttachmentPath({
               attachmentsDir: options.serverConfig.attachmentsDir,
               attachment,
             });
             if (!stored)
-              return yield* Effect.fail(
-                new NativeSessionOperationError({
-                  detail: `Invalid ${target.name} attachment path.`,
-                }),
-              );
+              return yield* new NativeSessionOperationError({
+                detail: `Invalid ${target.name} attachment path.`,
+              });
             const real = yield* fs.realPath(stored);
             const root = yield* fs.realPath(options.serverConfig.attachmentsDir);
             const info = yield* fs.stat(real);
@@ -1156,24 +1149,20 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 ? PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
                 : PROVIDER_SEND_TURN_MAX_FILE_BYTES;
             if (!sessionFileInsideRoot(root, real) || info.type !== "File")
-              return yield* Effect.fail(
-                new NativeSessionOperationError({
-                  detail: `${target.name} attachment escaped its directory or is not a file.`,
-                }),
-              );
+              return yield* new NativeSessionOperationError({
+                detail: `${target.name} attachment escaped its directory or is not a file.`,
+              });
             if (Number(info.size) > limit)
-              return yield* Effect.fail(
-                new NativeSessionOperationError({
-                  detail: `${target.name} ${attachment.type} attachment exceeds the ${formatOmpBytes(limit)} limit.`,
-                }),
-              );
-            if (attachment.type === "image")
+              return yield* new NativeSessionOperationError({
+                detail: `${target.name} ${attachment.type} attachment exceeds the ${formatOmpBytes(limit)} limit.`,
+              });
+            attachmentPaths.set(attachment, real);
+            if (isProviderNativeImageAttachment(attachment))
               imageFiles.push({
                 path: real,
                 size: Number(info.size),
                 mimeType: attachment.mimeType,
               });
-            else files.push(`[Attachment saved at ${real}]`);
           }
           if (imageFiles.length > 0) {
             const modelRef = selected ?? (yield* client.getState()).model;
@@ -1200,26 +1189,35 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 candidate.provider === modelRef?.provider && candidate.id === modelRef?.id,
             );
             if (!model?.input?.includes("image"))
-              return yield* Effect.fail(
-                new NativeSessionOperationError({
-                  detail:
-                    model?.input === undefined
-                      ? `Couldn't verify image support for the selected ${target.name} model. Text messages still work.`
-                      : `The selected ${target.name} model does not support images.`,
-                  breaksSession: false,
-                }),
-              );
+              return yield* new NativeSessionOperationError({
+                detail:
+                  model?.input === undefined
+                    ? `Couldn't verify image support for the selected ${target.name} model. Text messages still work.`
+                    : `The selected ${target.name} model does not support images.`,
+                breaksSession: false,
+              });
           }
           const { maxFrameBytes } = yield* client.limits;
           let text = message.text;
+          // The frame keeps the attachment lines; a private prompt file holds only the text.
+          const attachmentContext = yield* providerMessageTextWithAttachmentPaths({
+            text: "",
+            attachments: message.attachments,
+            resolveAttachmentPath: (attachment) => attachmentPaths.get(attachment) ?? null,
+            resolveExtractedTextPath: (path) =>
+              DocumentText.resolveExtractedTextPath(path).pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+              ),
+            preserveOverflow: true,
+          });
           const plan = () =>
             planOmpImages({
               images: imageFiles,
               maxFrameBytes,
               buildMessage: (externalImages) =>
                 [
-                  text,
-                  ...files,
+                  ...(text ? [text] : []),
+                  ...(attachmentContext ? [attachmentContext] : []),
                   ...(externalImages.length === 0
                     ? []
                     : [
@@ -1241,11 +1239,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             delivery = plan();
           }
           if ("messageBytes" in delivery)
-            return yield* Effect.fail(
-              new NativeSessionOperationError({
-                detail: `The prompt exceeds ${target.name}'s ${maxFrameBytes}-byte frame limit.`,
-              }),
-            );
+            return yield* new NativeSessionOperationError({
+              detail: `The prompt exceeds ${target.name}'s ${maxFrameBytes}-byte frame limit.`,
+            });
           const images: OmpRpcImage[] = [];
           for (const image of delivery.inline)
             images.push({
@@ -1402,11 +1398,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     : { provider: state.model.provider, modelId: state.model.id }
                   : decodeOmpModelSlug(turnInput.modelSelection.model);
               if (!model)
-                return yield* Effect.fail(
-                  new NativeSessionOperationError({
-                    detail: `${target.name} did not report a default model or the selection is not provider/model.`,
-                  }),
-                );
+                return yield* new NativeSessionOperationError({
+                  detail: `${target.name} did not report a default model or the selection is not provider/model.`,
+                });
               if (model.provider.startsWith("scient_") && client.refreshModels)
                 yield* client.refreshModels();
               const prompt = yield* payload(turnInput.message, {
@@ -1496,12 +1490,12 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     mutated = true;
                     yield* client.setModel(model.provider, model.modelId).pipe(
                       Effect.catchTags({
-                        OmpRpcCommandError: () =>
-                          Effect.gen(function* () {
-                            if (client.refreshModels) yield* client.refreshModels();
-                            yield* refreshCatalog().pipe(Effect.ignore);
-                            yield* client.setModel(model.provider, model.modelId);
-                          }),
+                        // The enclosing operation owns the span for this inline handler.
+                        OmpRpcCommandError: Effect.fnUntraced(function* () {
+                          if (client.refreshModels) yield* client.refreshModels();
+                          yield* refreshCatalog().pipe(Effect.ignore);
+                          yield* client.setModel(model.provider, model.modelId);
+                        }),
                       }),
                     );
                   }
@@ -1639,11 +1633,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             function* (id, response) {
               const question = runtime.lookupQuestion(id);
               if (!question)
-                return yield* Effect.fail(
-                  new NativeSessionOperationError({
-                    detail: `The ${target.name} dialog is no longer pending.`,
-                  }),
-                );
+                return yield* new NativeSessionOperationError({
+                  detail: `The ${target.name} dialog is no longer pending.`,
+                });
               const answer = response.answers?.[id];
               const value = typeof answer === "string" ? answer : undefined;
               if (
@@ -1651,11 +1643,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 question.allowedValues &&
                 !question.allowedValues.includes(value)
               )
-                return yield* Effect.fail(
-                  new NativeSessionOperationError({
-                    detail: `The answer is not one of ${target.name}'s offered choices.`,
-                  }),
-                );
+                return yield* new NativeSessionOperationError({
+                  detail: `The answer is not one of ${target.name}'s offered choices.`,
+                });
               yield* client.extensionUiResponse(
                 question.method === "confirm"
                   ? {

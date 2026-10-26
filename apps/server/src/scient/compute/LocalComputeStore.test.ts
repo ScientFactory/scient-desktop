@@ -952,10 +952,9 @@ describe("LocalComputeStore path safety", () => {
       const failures: ReadonlyArray<LocalComputeStoreError> = yield* use(
         Effect.gen(function* () {
           const store = yield* LocalComputeStore;
-          return yield* Effect.all(
-            unusableSegments.map((segment) =>
-              Effect.flip(store.writeSession(decodeSession({ ...session, sessionId: segment }))),
-            ),
+          return yield* Effect.forEach(
+            unusableSegments.map((segment) => decodeSession({ ...session, sessionId: segment })),
+            (record) => Effect.flip(store.writeSession(record)),
           );
         }),
       );

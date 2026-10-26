@@ -70,6 +70,7 @@ it("keeps the new-chat footer at the bottom of the picker", async () => {
   );
   await _fixture.root0.rerender(
     <ModelPickerContent
+      searchInputRef={{ current: null }}
       environmentId={null}
       activeInstanceId={providers[0]!.instanceId}
       model="model-0"

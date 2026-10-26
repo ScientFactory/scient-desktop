@@ -121,19 +121,37 @@ describe("attachment PDFs open in Scient's reader", () => {
     expect(document.querySelector("embed, iframe")).toBeNull();
   });
 
-  it("keeps the browser's own viewer when nothing durable names the PDF", async () => {
+  it("keeps an unnamed PDF available to save without inventing a reader identity", async () => {
     setup();
-    await using screen = await render(
-      <AttachmentFilePreview
-        name="loose.pdf"
-        mimeType="application/pdf"
-        sizeBytes={10}
-        asset={{ environmentId, attachmentId: "attachment-1" }}
-      />,
-    );
-    await vi.waitFor(() =>
-      expect(screen.container.querySelector('embed[type="application/pdf"]')).not.toBeNull(),
-    );
-    expect(screen.container.querySelector("[data-scient-pdf]")).toBeNull();
+    const original = new Uint8Array([37, 80, 68, 70, 45, 0, 128, 255, 10]);
+    const sourceUrl = URL.createObjectURL(new Blob([original], { type: "application/pdf" }));
+    let savedUrl: string | undefined;
+    let savedName: string | undefined;
+    using _click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      savedUrl = this.href;
+      savedName = this.download;
+    });
+    refresh.mockResolvedValue(sourceUrl);
+    try {
+      await using screen = await render(
+        <AttachmentFilePreview
+          name="paper.pdf"
+          mimeType="application/pdf"
+          sizeBytes={original.length}
+          asset={{ environmentId, attachmentId: "attachment-1" }}
+        />,
+      );
+      expect(screen.container.querySelector("embed, iframe, [data-scient-pdf]")).toBeNull();
+      await screen.getByRole("button", { name: "Save file", exact: true }).click();
+      await vi.waitFor(() => expect(savedName).toBe("paper.pdf"));
+      expect(savedUrl).toMatch(/^blob:/);
+      expect(new Uint8Array(await (await fetch(savedUrl!)).arrayBuffer())).toEqual(original);
+      expect(pdfInputs).toHaveLength(0);
+    } finally {
+      URL.revokeObjectURL(sourceUrl);
+      if (savedUrl) URL.revokeObjectURL(savedUrl);
+    }
   });
 });

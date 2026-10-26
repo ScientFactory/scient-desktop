@@ -239,8 +239,8 @@ export const layer: Layer.Layer<
     });
 
     return CheckpointCaptureServiceV2.of({
-      execute: (input) =>
-        execute(input).pipe(
+      execute: Effect.fn("CheckpointCaptureServiceV2.execute")(function (input) {
+        return execute(input).pipe(
           // SCIENT-FORK:START checkpoint-capture-final-attempt
           settleUncapturedRunOnFinalAttempt(
             { eventSink, ids, projections, makeCheckpointTurnItem },
@@ -253,7 +253,8 @@ export const layer: Layer.Layer<
               ? cause
               : new CheckpointCaptureExecutionError({ ...input, cause }),
           ),
-        ),
+        );
+      }),
     });
   }),
 );

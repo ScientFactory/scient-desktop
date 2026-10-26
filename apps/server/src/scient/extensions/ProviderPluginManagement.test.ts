@@ -160,7 +160,7 @@ describe("ProviderPluginManagement uninstall", () => {
         const notInWorkspace = yield* management
           .act({ ...uninstallLinear, cwd: "/repo" })
           .pipe(Effect.flip);
-        assert.strictEqual(notInWorkspace.reason, "not-found");
+        assert.strictEqual(notInWorkspace.reason, "state-unavailable");
         assert.deepStrictEqual(yield* Ref.get(recorded), []);
       }),
     ),
@@ -603,7 +603,10 @@ describe("ProviderPluginManagement MCP sign-in", () => {
         const unknown = yield* management.act(signIn("ghost")).pipe(Effect.flip);
         assert.strictEqual(unknown.reason, "not-found");
 
-        const gone = yield* makeGeneration({ readMcpServer: () => Effect.succeed(undefined) });
+        const gone = yield* makeGeneration({
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off -- The optional listing result requires undefined, not void.
+          readMcpServer: () => Effect.succeed(undefined),
+        });
         const goneError = yield* (yield* makeHarness({ actions: gone.actions })).management
           .act(signIn("notion"))
           .pipe(Effect.flip);

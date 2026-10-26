@@ -12,13 +12,15 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+// SCIENT-FORK:START
+import { useRetryCachedAssetFailure } from "~/scient/images/useRetryCachedAssetFailure";
+// SCIENT-FORK:END
 
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { cn } from "../../lib/utils";
 import { useRightPanelStore } from "../../rightPanelStore";
-// SCIENT-FORK:START — inline assets and standalone cards share refresh ownership.
+// SCIENT-FORK:START — rooted file resources retain literal path identity.
 import { isAbsolutePath } from "@t3tools/shared/path";
-import { useWorkspaceImageRefresh } from "../../scient/images/useWorkspaceImageRefresh";
 // SCIENT-FORK:END
 import { MediaActions, type MediaActionSource } from "../media/MediaActions";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
@@ -96,10 +98,15 @@ function expandableMarkdownImageProps(
 
 function ChatMarkdownMediaUnavailableLabel(props: {
   readonly alt: string;
-  readonly kind?: "image" | "video" | undefined;
+  readonly kind?: "image" | "video" | "audio" | undefined;
   readonly detail?: string | undefined;
 }) {
-  const label = props.kind === "video" ? "Video unavailable" : "Image unavailable";
+  const label =
+    props.kind === "audio"
+      ? "Audio unavailable"
+      : props.kind === "video"
+        ? "Video unavailable"
+        : "Image unavailable";
   return (
     <span data-thread-find-ignore className="inline-flex items-center gap-1.5">
       <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
@@ -111,7 +118,7 @@ function ChatMarkdownMediaUnavailableLabel(props: {
 export function ChatMarkdownImageFallback(props: {
   readonly alt: string;
   readonly copyMarkdown?: string | undefined;
-  readonly kind?: "image" | "video";
+  readonly kind?: "image" | "video" | "audio";
   readonly actionsSource?: MediaActionSource | undefined;
   readonly detail?: string | undefined;
 }) {
@@ -197,6 +204,7 @@ export function ChatMarkdownImage(props: {
           alt={props.alt}
           data-markdown-copy={props.copyMarkdown}
           decoding="async"
+          loading="lazy"
           draggable={false}
           className={cn(
             CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
@@ -253,6 +261,7 @@ export function ChatMarkdownImage(props: {
             src={src}
             alt={props.alt}
             decoding="async"
+            loading="lazy"
             draggable={false}
             className="invisible absolute inset-0 size-full"
             {...imageEvents(src)}
@@ -332,19 +341,21 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly workspaceMutationId?: string | null | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
-  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
   const resource = props.resource;
-  // SCIENT-FORK:START — standalone cards and inline assets share pending-edit invalidation.
-  useWorkspaceImageRefresh({
-    environmentId: props.environmentId,
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
     resource,
-    workspaceMutationId: props.kind === "video" ? undefined : props.workspaceMutationId,
-    loading: assetUrl._tag === "Loading" || assetUrl.waiting === true,
-    requestRefresh: () => {
-      void refreshAssetUrl().catch(() => undefined);
-    },
-  });
+    props.workspaceMutationId !== undefined &&
+      props.kind !== "video" &&
+      (resource._tag === "media-file" || resource._tag === "workspace-file")
+      ? props.workspaceMutationId
+      : undefined,
+  );
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
+  // SCIENT-FORK:START — reopening retries a cached failure; a cached URL is kept.
+  useRetryCachedAssetFailure(assetUrl);
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — rooted file resources retain literal path identity.
   const path =
     resource._tag === "media-file"
       ? resource.path

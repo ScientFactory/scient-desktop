@@ -159,12 +159,12 @@ describe("Zotero local adapter", () => {
     const wireCodec = Schema.toCodecJson(ZoteroLibraryPage);
     const encoded = Schema.encodeUnknownSync(wireCodec)(page);
 
-    expect(Schema.decodeUnknownSync(wireCodec)(encoded)).toStrictEqual(page);
+    expect(Schema.decodeSync(wireCodec)(encoded)).toStrictEqual(page);
 
     const itemWithoutAttachmentCount = { ...candidate } as Record<string, unknown>;
     delete itemWithoutAttachmentCount.pdfAttachmentCount;
     expect(() =>
-      Schema.decodeUnknownSync(wireCodec)(
+      Schema.decodeSync(wireCodec)(
         JSON.stringify({
           ...page,
           items: [itemWithoutAttachmentCount],

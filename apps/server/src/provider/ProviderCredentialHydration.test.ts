@@ -38,6 +38,8 @@ import {
 } from "./ProviderInstanceRegistryHydration.ts";
 import * as Mutator from "./ProviderInstanceRegistryMutator.ts";
 
+const decodeAntigravitySettings = Schema.decodeSync(AntigravitySettings);
+
 const driverKind = ProviderDriverKind.make("antigravity");
 const first = ProviderInstanceId.make("credential-first");
 const second = ProviderInstanceId.make("credential-second");
@@ -136,7 +138,7 @@ it.effect.each(["remove", "disable"] as const)(
             driverKind,
             metadata: { displayName: "Synthetic credential provider" },
             configSchema: AntigravitySettings,
-            defaultConfig: () => Schema.decodeSync(AntigravitySettings)({}),
+            defaultConfig: () => decodeAntigravitySettings({}),
             create: ({ instanceId, config: providerConfig, enabled }) =>
               Effect.sync(() => {
                 created.push({ instanceId, key: providerConfig.apiKey, enabled });

@@ -24,6 +24,9 @@ import {
 } from "./OpenCodeDriverComposition.ts";
 import { SCIENT_CORE_AWARENESS } from "./ScientAwareness.ts";
 
+const decodeProviderThread = Schema.decodeSync(OrchestrationV2ProviderThread);
+const decodeProviderTurn = Schema.decodeSync(OrchestrationV2ProviderTurn);
+
 it("registers the app-composed OpenCode driver and keeps its provider settings", () => {
   const registered = BUILT_IN_DRIVERS.find(
     (driver) => driver.driverKind === ProviderDriverKind.make("opencode"),
@@ -54,7 +57,7 @@ it("preserves an OpenCode native turn receipt through app start-error mapping", 
   const threadId = ThreadId.make("thread:opencode-receipt");
   const providerThreadId = ProviderThreadId.make("provider-thread:opencode-receipt");
   const runId = RunId.make("run:opencode-receipt");
-  const providerThread = Schema.decodeUnknownSync(OrchestrationV2ProviderThread)({
+  const providerThread = decodeProviderThread({
     id: providerThreadId,
     driver,
     providerInstanceId: ProviderInstanceId.make("opencode"),
@@ -71,7 +74,7 @@ it("preserves an OpenCode native turn receipt through app start-error mapping", 
     createdAt: DateTime.makeUnsafe("2026-10-09T00:00:00.000Z"),
     updatedAt: DateTime.makeUnsafe("2026-10-09T00:00:00.000Z"),
   });
-  const receipt = Schema.decodeUnknownSync(OrchestrationV2ProviderTurn)({
+  const receipt = decodeProviderTurn({
     id: ProviderTurnId.make("provider-turn:opencode-receipt"),
     providerThreadId,
     nodeId: NodeId.make("node:opencode-receipt"),

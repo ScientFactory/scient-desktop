@@ -85,6 +85,8 @@ const decodeOrchestrationThreadShell = Schema.decodeUnknownEffect(OrchestrationT
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const encodeOrchestrationThreadShell = Schema.encodeEffect(OrchestrationThreadShell);
+const decodeProjectUpdatePayload = Schema.decodeUnknownEffect(ProjectUpdatePayload);
 
 it.effect("trims branded ids and retained project fields at decode boundaries", () =>
   Effect.gen(function* () {
@@ -491,7 +493,7 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
     const oldLinkFields = Schema.Struct({
       linkedPullRequest: Schema.optional(ThreadLinkedPullRequest),
     });
-    const newServerWire = yield* Schema.encodeEffect(OrchestrationThreadShell)({
+    const newServerWire = yield* encodeOrchestrationThreadShell({
       ...oldServerShell,
       pullRequests: [
         {
@@ -1241,10 +1243,9 @@ it.effect("writes canonical monograms while recovering legacy icons and project 
       for (const legacy of [legacyWire, { ...fallback, monogram: text }]) {
         assert.deepEqual(yield* decodeStoredProjectIcon(legacy), monogram);
         assert.deepEqual(yield* decodeReceivedProjectIcon(legacy), monogram);
-        assert.deepEqual(
-          yield* Schema.decodeUnknownEffect(ProjectUpdatePayload)({ projectIcon: legacy }),
-          { projectIcon: monogram },
-        );
+        assert.deepEqual(yield* decodeProjectUpdatePayload({ projectIcon: legacy }), {
+          projectIcon: monogram,
+        });
       }
     }
     for (const icon of [

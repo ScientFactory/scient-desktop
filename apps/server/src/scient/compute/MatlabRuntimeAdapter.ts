@@ -415,9 +415,7 @@ export function makeMatlabRuntimeAdapter(
             Effect.map((probe) => matlabProfile(probe, candidate.source)),
             // Discovery already checked the executable. A broken helper or license
             // must remain visible with its actionable verification failure.
-            Effect.catch(() =>
-              Effect.succeed(unavailableProfile(candidate.executable, candidate.source)),
-            ),
+            Effect.orElseSucceed(() => unavailableProfile(candidate.executable, candidate.source)),
           ),
         { concurrency: 1 },
       ),

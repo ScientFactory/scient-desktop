@@ -62,6 +62,7 @@ import * as ProviderTurnControlService from "../ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "../ProviderTurnStartService.ts";
 import * as ProviderTurnStartServiceTestkit from "../ProviderTurnStartService.testkit.ts";
 import * as McpAppModelContext from "../../mcpApps/McpAppModelContext.ts";
+import * as PreviewAgentActivity from "../../preview/PreviewAgentActivity.ts";
 import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
@@ -533,8 +534,11 @@ export function layerWithRegistry<Error>(
     options.providerRegistryLayer ??
     Layer.succeed(ProviderRegistry.ProviderRegistry, {
       ...makeProviderRegistryMock(),
-      setProviderAuthenticationFailure: () =>
-        Effect.die("Unexpected authentication invalidation in recorded provider replay."),
+      setProviderAuthenticationFailure: Effect.fn(
+        "ProviderRegistry.setProviderAuthenticationFailure",
+      )(function () {
+        return Effect.die("Unexpected authentication invalidation in recorded provider replay.");
+      }),
     });
   const layerCommandOutputHubProvided = CommandOutputRecorder.layer.pipe(
     Layer.provide(Layer.merge(layerEventSinkProvided, layerStores)),
@@ -565,6 +569,7 @@ export function layerWithRegistry<Error>(
     Layer.provide(
       Layer.mergeAll(
         McpAppModelContext.layerEmpty,
+        PreviewAgentActivity.layer,
         layerCheckpointServiceProvided,
         layerEventSinkProvided,
         IdAllocator.layer,
@@ -631,7 +636,9 @@ export function layerWithRegistry<Error>(
   const layerThreadTitleRegenerationTest = Layer.succeed(
     ThreadTitleRegenerationService.ThreadTitleRegenerationService,
     ThreadTitleRegenerationService.ThreadTitleRegenerationService.of({
-      execute: () => Effect.void,
+      execute: Effect.fn("ThreadTitleRegenerationService.execute")(function () {
+        return Effect.void;
+      }),
     }),
   );
   const layerOrchestratorProvided = Orchestrator.layer.pipe(

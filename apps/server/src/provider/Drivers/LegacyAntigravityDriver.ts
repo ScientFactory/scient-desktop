@@ -132,7 +132,7 @@ export const LegacyAntigravityDriver = {
     const serverConfig = yield* ServerConfig;
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
-    const serverSettings = yield* ServerSettingsService;
+    yield* ServerSettingsService;
     // Antigravity is intentionally the Google-account/subscription provider.
     // Do not let ambient Gemini/API-key variables silently change billing or
     // make an unauthenticated account appear connected.

@@ -619,23 +619,21 @@ describe("buildOverleafReview", () => {
   );
 
   it.live("refuses a path the applier would check that another path's spelling reaches", () =>
-    Effect.gen(function* () {
-      // A group kept from an interrupted apply names `A.tex`; Overleaf now has `a.tex`.
-      yield* withScenario(
-        {
-          base: { "b.tex": "x" },
-          local: {},
-          remote: { "a.tex": "x", "b.tex": "b" },
-        },
-        ({ review }) =>
-          Effect.gen(function* () {
-            expect(yield* review({ interrupted: [["A.tex", "b.tex"]] })).toEqual({
-              _tag: "refused",
-              refusal: { reason: "path-alias", first: "A.tex", second: "a.tex" },
-            });
-          }),
-      );
-    }),
+    // A group kept from an interrupted apply names `A.tex`; Overleaf now has `a.tex`.
+    withScenario(
+      {
+        base: { "b.tex": "x" },
+        local: {},
+        remote: { "a.tex": "x", "b.tex": "b" },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          expect(yield* review({ interrupted: [["A.tex", "b.tex"]] })).toEqual({
+            _tag: "refused",
+            refusal: { reason: "path-alias", first: "A.tex", second: "a.tex" },
+          });
+        }),
+    ),
   );
 
   it.live("refuses a path the applier would check that reaches something never read", () =>

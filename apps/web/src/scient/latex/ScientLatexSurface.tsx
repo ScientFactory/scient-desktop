@@ -1359,9 +1359,10 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const prepareDocument = async () => {
     if (!target || props.truncated) return null;
     preparing.current += 1;
-    const result = await prepareLatexDocument(target, {
-      ...(persistence ? { selected: persistence } : {}),
-    }).finally(() => {
+    const result = await prepareLatexDocument(
+      target,
+      persistence ? { selected: persistence } : {},
+    ).finally(() => {
       preparing.current -= 1;
     });
     if (!result.ok) {

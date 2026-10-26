@@ -110,7 +110,6 @@ export function environmentPdfSource(input: {
  */
 function attachmentPdfFileName(name: string): string {
   const stem = name
-    // oxlint-disable-next-line no-control-regex -- NUL is one of the characters a file name may not hold.
     .replace(/[\\/\x00]/gu, "_")
     .replace(/\.pdf$/iu, "")
     .trim();

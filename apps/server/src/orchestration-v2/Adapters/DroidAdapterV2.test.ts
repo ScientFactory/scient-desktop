@@ -1090,7 +1090,7 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
       response,
       expected,
     })),
-  )("$caseTitle", ({ name, response, expected }) =>
+  )("$caseTitle", ({ name: _name, response, expected }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const h = yield* harness(false, false, false, undefined, {

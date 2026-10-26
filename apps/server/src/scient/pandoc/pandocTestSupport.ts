@@ -153,10 +153,11 @@ export function managedToolLayer(input: {
         },
       }),
       command: Effect.succeed(input.command),
-      discardUnstartable: (command) =>
-        Effect.sync(() => {
+      discardUnstartable: Effect.fn("PandocManagedTool.discardUnstartable")(function (command) {
+        return Effect.sync(() => {
           input.discarded?.push(command);
-        }),
+        });
+      }),
       scratchRoot: input.scratchRoot,
     }),
   );

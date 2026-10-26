@@ -236,14 +236,6 @@ const commonDevServer = Effect.acquireRelease(
   ({ server }) => closeServer(server),
 );
 
-const commonNonHttpServer = Effect.acquireRelease(
-  openCommonDevServer((socket) => {
-    socket.on("error", () => undefined);
-    socket.once("data", () => socket.end("MYSQL\r\n\r\n"));
-  }),
-  ({ server }) => closeServer(server),
-);
-
 /**
  * Integration tests against a real TCP listener. We provide the Windows host
  * platform with a failing listener probe so the tests exercise configured URLs

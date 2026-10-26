@@ -45,12 +45,29 @@ export class ExtensionsChangeFeed extends Context.Service<
   ExtensionsChangeFeedShape
 >()("t3/scient/extensions/ExtensionsRpcHandlers/ExtensionsChangeFeed") {}
 
-/** The compatibility projection of a provider snapshot, as compared between snapshots. */
+/** Provider capabilities and native inventory; health and discovery timestamps stay out. */
 const providerSupportKey = (providers: ServerProviders): string =>
-  JSON.stringify(connectorProviderSupport(providers));
+  JSON.stringify({
+    support: connectorProviderSupport(providers),
+    native: providers
+      .map((provider) => ({
+        instanceId: provider.instanceId,
+        plugins: provider.plugins?.toSorted((left, right) => left.id.localeCompare(right.id)),
+        mcpServers: provider.mcpServers?.toSorted((left, right) =>
+          left.name.localeCompare(right.name),
+        ),
+        workspaces: provider.workspaceSnapshots
+          ?.map((snapshot) => ({
+            cwd: snapshot.cwd,
+            plugins: snapshot.plugins?.toSorted((left, right) => left.id.localeCompare(right.id)),
+          }))
+          .toSorted((left, right) => left.cwd.localeCompare(right.cwd)),
+      }))
+      .toSorted((left, right) => left.instanceId.localeCompare(right.instanceId)),
+  });
 
 /**
- * One element per provider snapshot whose connector compatibility differs from
+ * One element per provider snapshot whose connector support or native inventory differs from
  * the one before it (starting from `initial`).
  */
 export const providerSupportChanges = (

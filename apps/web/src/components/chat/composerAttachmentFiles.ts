@@ -13,6 +13,7 @@ import type { PersistedComposerImageAttachment } from "../../composerDraftStore"
 import { composerFileDedupKey, composerImageDedupKey } from "../../composerDraftStore";
 import { isHeicImageFile } from "../../lib/imageCompression";
 import { isVideoAttachment, videoMimeType } from "../../types";
+import { isSvgAttachment } from "@t3tools/shared/image";
 
 type ComposerAttachmentFileKind = "image" | "file";
 
@@ -104,6 +105,7 @@ function isDngFile(file: Pick<File, "name" | "type">): boolean {
 export function composerFileAttachmentMimeType(file: Pick<File, "name" | "type">): string {
   // Downstream image detection uses MIME, even for attachments staged as files.
   if (isDngFile(file)) return "image/x-adobe-dng";
+  if (isSvgAttachment({ name: file.name, mimeType: file.type })) return "image/svg+xml";
   return (
     videoMimeType({ name: file.name, mimeType: file.type }) ??
     (file.type || "application/octet-stream")
@@ -113,6 +115,7 @@ export function composerFileAttachmentMimeType(file: Pick<File, "name" | "type">
 export function classifyComposerAttachmentFile(
   file: Pick<File, "name" | "type">,
 ): ComposerAttachmentFileKind {
+  if (isSvgAttachment({ name: file.name, mimeType: file.type })) return "file";
   if (isDngFile(file)) return "file";
   if (isHeicImageFile(file)) {
     return "image";
@@ -123,8 +126,9 @@ export function classifyComposerAttachmentFile(
   if (!file.type.toLowerCase().startsWith("image/")) {
     return "file";
   }
-  // Formats without a native vision path are still useful files for agent tools.
+  // SCIENT-FORK:START — non-vision formats remain file attachments.
   return isProviderSendTurnSupportedImageMimeType(file.type) ? "image" : "file";
+  // SCIENT-FORK:END
 }
 
 export function isPreviewableComposerVideo(
@@ -197,7 +201,11 @@ export function shouldHandleComposerAttachmentPaste(input: {
     input.files.some((file) => {
       if (isDngFile(file)) return true;
       const classification = classifyComposerAttachmentFile(file);
-      return classification === "image" || file.type.toLowerCase().startsWith("image/");
+      return (
+        classification === "image" ||
+        file.type.toLowerCase().startsWith("image/") ||
+        isSvgAttachment({ name: file.name, mimeType: file.type })
+      );
     })
   ) {
     return true;

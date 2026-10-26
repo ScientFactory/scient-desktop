@@ -43,6 +43,8 @@ import * as Option from "effect/Option";
 import { conversationSnapshotProjection } from "./conversationSnapshotProjection.ts";
 import { turnItemMetadataSql } from "../../orchestration-v2/scient-fork/ContextHistorySql.ts";
 
+const isConversationExportError = Schema.is(ScientConversationExportError);
+
 /** A portable snapshot is assembled in memory for its digest and document writers.
  * Refuse beyond this capture allowance before hydration; retained sources remain
  * available through bounded detail pages. Attachment packaging has its own cap. */
@@ -201,8 +203,7 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) =>
           isThreadNotFound(cause)
             ? new ConversationThreadNotFoundError({ threadId })
-            : Schema.is(ScientConversationExportError)(cause) ||
-                isConversationSnapshotReadError(cause)
+            : isConversationExportError(cause) || isConversationSnapshotReadError(cause)
               ? cause
               : new ConversationSnapshotReadError({ cause }),
         ),

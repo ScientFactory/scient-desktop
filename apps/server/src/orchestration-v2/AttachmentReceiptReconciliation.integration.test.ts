@@ -1,3 +1,4 @@
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import { ProviderDriverKind, ProviderSessionId } from "@t3tools/contracts";
@@ -365,7 +366,7 @@ it.live(
             ).toEqual(fresh);
           }).pipe(Effect.provide(recovered)),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
     ),
 );
 
@@ -424,7 +425,7 @@ it.live("retains absent, mismatched and incomplete canonical receipt evidence ac
           }
         }).pipe(Effect.provide(recovered)),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
   ),
 );
 
@@ -508,7 +509,7 @@ it.live(
               expect(yield* fs.readFileString(file.filename)).toBe("evidence");
           }).pipe(Effect.provide(recovered)),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
     ),
 );
 
@@ -585,7 +586,7 @@ it.live(
             }
           }).pipe(Effect.provide(recovered)),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
     ),
 );
 
@@ -645,5 +646,5 @@ it.live(
           ),
         );
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );

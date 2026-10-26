@@ -395,6 +395,7 @@ describe("managed runtime mutation lock ownership", () => {
           notify();
         },
       );
+      // oxlint-disable-next-line eslint/no-unmodified-loop-condition -- The pending promise callbacks change settled while this scheduler awaits filesystem completions.
       while (!settled) {
         const completion = changed.promise;
         if (ready.length > 0) ready.splice(Math.floor(Math.random() * ready.length), 1)[0]!();

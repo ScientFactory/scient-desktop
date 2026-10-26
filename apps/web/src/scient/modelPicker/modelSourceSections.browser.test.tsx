@@ -56,6 +56,7 @@ async function renderPicker(
   );
   await _fixture.root0.rerender(
     <ModelPickerContent
+      searchInputRef={{ current: null }}
       environmentId={null}
       activeInstanceId={instanceId}
       model={input.model}

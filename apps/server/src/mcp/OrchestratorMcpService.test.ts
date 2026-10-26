@@ -25,7 +25,6 @@ import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -548,12 +547,10 @@ describe("OrchestratorMcpService", () => {
               Layer.mock(ProviderSessionManagerV2)({
                 // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
                 resolveMcpInvocationPolicy: () =>
-                  Effect.succeed(
-                    Option.some({
-                      runtimeMode: "full-access" as const,
-                      interactionMode: "default" as const,
-                    }),
-                  ),
+                  Effect.succeedSome({
+                    runtimeMode: "full-access" as const,
+                    interactionMode: "default" as const,
+                  }),
               }),
             ),
             Layer.provide(layerDependencies),
@@ -763,12 +760,10 @@ describe("OrchestratorMcpService", () => {
               Layer.mock(ProviderSessionManagerV2)({
                 // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
                 resolveMcpInvocationPolicy: () =>
-                  Effect.succeed(
-                    Option.some({
-                      runtimeMode: "full-access" as const,
-                      interactionMode: "default" as const,
-                    }),
-                  ),
+                  Effect.succeedSome({
+                    runtimeMode: "full-access" as const,
+                    interactionMode: "default" as const,
+                  }),
               }),
             ),
             Layer.provide(layerDependencies),
@@ -867,12 +862,10 @@ describe("OrchestratorMcpService", () => {
               Layer.mock(ProviderSessionManagerV2)({
                 // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
                 resolveMcpInvocationPolicy: () =>
-                  Effect.succeed(
-                    Option.some({
-                      runtimeMode: "full-access" as const,
-                      interactionMode: "default" as const,
-                    }),
-                  ),
+                  Effect.succeedSome({
+                    runtimeMode: "full-access" as const,
+                    interactionMode: "default" as const,
+                  }),
               }),
             ),
             Layer.provide(layerDependencies),
@@ -1023,12 +1016,10 @@ describe("OrchestratorMcpService", () => {
             Layer.provide(
               Layer.mock(ProviderSessionManagerV2)({
                 resolveMcpInvocationPolicy: () =>
-                  Effect.succeed(
-                    Option.some({
-                      runtimeMode: "approval-required" as const,
-                      interactionMode: "default" as const,
-                    }),
-                  ),
+                  Effect.succeedSome({
+                    runtimeMode: "approval-required" as const,
+                    interactionMode: "default" as const,
+                  }),
               }),
             ),
             Layer.provide(layerDependencies),
@@ -1347,12 +1338,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Layer.mock(ProviderSessionManagerV2)({
                   // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
                   resolveMcpInvocationPolicy: () =>
-                    Effect.succeed(
-                      Option.some({
-                        runtimeMode: "full-access" as const,
-                        interactionMode: "default" as const,
-                      }),
-                    ),
+                    Effect.succeedSome({
+                      runtimeMode: "full-access" as const,
+                      interactionMode: "default" as const,
+                    }),
                 }),
               ),
               Layer.provide(layerDependencies),
@@ -1598,12 +1587,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Layer.mock(ProviderSessionManagerV2)({
                   // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
                   resolveMcpInvocationPolicy: () =>
-                    Effect.succeed(
-                      Option.some({
-                        runtimeMode: "full-access" as const,
-                        interactionMode: "default" as const,
-                      }),
-                    ),
+                    Effect.succeedSome({
+                      runtimeMode: "full-access" as const,
+                      interactionMode: "default" as const,
+                    }),
                 }),
               ),
               Layer.provide(layerDependencies),
@@ -1712,12 +1699,10 @@ describe("OrchestratorMcpService provider resolution", () => {
               Layer.mock(ProviderSessionManagerV2)({
                 // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
                 resolveMcpInvocationPolicy: () =>
-                  Effect.succeed(
-                    Option.some({
-                      runtimeMode: "full-access" as const,
-                      interactionMode: "default" as const,
-                    }),
-                  ),
+                  Effect.succeedSome({
+                    runtimeMode: "full-access" as const,
+                    interactionMode: "default" as const,
+                  }),
               }),
             ),
             Layer.provide(layerDependencies),
@@ -1960,12 +1945,10 @@ describe("OrchestratorMcpService provider resolution", () => {
               Layer.mock(ProviderSessionManagerV2)({
                 // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
                 resolveMcpInvocationPolicy: () =>
-                  Effect.succeed(
-                    Option.some({
-                      runtimeMode: "full-access" as const,
-                      interactionMode: "default" as const,
-                    }),
-                  ),
+                  Effect.succeedSome({
+                    runtimeMode: "full-access" as const,
+                    interactionMode: "default" as const,
+                  }),
               }),
             ),
             Layer.provide(layerDependencies),
@@ -2473,7 +2456,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       let cliInstalled = false;
       const probes = yield* Ref.make(0);
       const dispatched = yield* Ref.make(0);
-      const layerDependencies = Layer.mergeAll(
+      Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           hasReceipt: () => Effect.succeed(false),
@@ -2770,12 +2753,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                   Layer.mock(ProviderSessionManagerV2)({
                     // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
                     resolveMcpInvocationPolicy: () =>
-                      Effect.succeed(
-                        Option.some({
-                          runtimeMode: "full-access" as const,
-                          interactionMode: "default" as const,
-                        }),
-                      ),
+                      Effect.succeedSome({
+                        runtimeMode: "full-access" as const,
+                        interactionMode: "default" as const,
+                      }),
                   }),
                 ),
                 Layer.provide(layerDependencies),
@@ -3156,7 +3137,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Layer.mergeAll(
                   NodeServices.layer,
                   Layer.mock(ProviderSessionManagerV2)({
-                    resolveMcpInvocationPolicy: () => Effect.succeed(Option.none()),
+                    resolveMcpInvocationPolicy: () => Effect.succeedNone,
                   }),
                   Layer.mock(ThreadManagementService.ThreadManagementService)({
                     getThreadShell: () => Effect.succeed(null),
@@ -3239,7 +3220,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Layer.mergeAll(
                   NodeServices.layer,
                   Layer.mock(ProviderSessionManagerV2)({
-                    resolveMcpInvocationPolicy: () => Effect.succeed(Option.none()),
+                    resolveMcpInvocationPolicy: () => Effect.succeedNone,
                   }),
                   Layer.mock(ThreadManagementService.ThreadManagementService)({
                     getThreadShell: (threadId) =>
@@ -3451,12 +3432,10 @@ describe("OrchestratorMcpService provider resolution", () => {
             adapterRegistryLayer([codexInstanceId, peerId]),
             Layer.mock(ProviderSessionManagerV2)({
               resolveMcpInvocationPolicy: () =>
-                Effect.succeed(
-                  Option.some({
-                    runtimeMode: "full-access" as const,
-                    interactionMode: "default" as const,
-                  }),
-                ),
+                Effect.succeedSome({
+                  runtimeMode: "full-access" as const,
+                  interactionMode: "default" as const,
+                }),
             }),
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(SecretRequests.SecretRequests)({}),

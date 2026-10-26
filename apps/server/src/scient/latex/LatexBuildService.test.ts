@@ -2993,7 +2993,7 @@ describe("LatexBuildService", () => {
       yield* Effect.gen(function* () {
         const service = yield* LatexBuildService;
         const inputs = documents.map((name) => harness.inputFor(name));
-        yield* Effect.all(inputs.map((input) => service.requestBuild(input)));
+        yield* Effect.forEach(inputs, (input) => service.requestBuild(input));
         yield* Effect.all([
           Queue.take(harness.started),
           Queue.take(harness.started),
@@ -3005,7 +3005,7 @@ describe("LatexBuildService", () => {
         // and its snapshot can only still be `queued`.
         expect(yield* Ref.get(harness.startCount)).toBe(3);
         expect(Option.isNone(yield* Queue.poll(harness.started))).toBe(true);
-        const waiting = yield* Effect.all(inputs.map((input) => service.status(input)));
+        const waiting = yield* Effect.forEach(inputs, (input) => service.status(input));
         expect(waiting.filter((snapshot) => snapshot.state === "running")).toHaveLength(3);
         expect(waiting.filter((snapshot) => snapshot.state === "queued")).toHaveLength(1);
 
@@ -3013,10 +3013,9 @@ describe("LatexBuildService", () => {
         // The fourth start lands only now: a receipt that a permit had to free
         // up first, not a race the engine happened to lose.
         yield* Queue.take(harness.started);
-        const finished = yield* Effect.all(
-          inputs.map((input) => awaitTerminal(service, input)),
-          { concurrency: "unbounded" },
-        );
+        const finished = yield* Effect.forEach(inputs, (input) => awaitTerminal(service, input), {
+          concurrency: "unbounded",
+        });
         expect(finished.map((snapshot) => snapshot.state)).toEqual([
           "succeeded",
           "succeeded",

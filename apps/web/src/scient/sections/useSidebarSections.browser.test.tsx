@@ -106,6 +106,7 @@ function Probe({ _fixture }: { _fixture: _Fixture }) {
     pinnedThreads: [],
     activeThreads: [],
     routeThreadKey: null,
+    now: "2026-10-26T00:00:00.000Z",
     newThreadContext: {} as never,
     onBeforeNewThread: () => {},
   });

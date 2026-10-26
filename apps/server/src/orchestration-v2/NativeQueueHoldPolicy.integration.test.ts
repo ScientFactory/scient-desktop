@@ -613,26 +613,25 @@ const withNativeQueue = <A, E, R>(
                     Layer.provide(
                       Layer.mergeAll(
                         Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
+                          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
                           getInstance: () => Effect.succeed(undefined),
                         }),
                         Layer.mock(ProjectStore.ProjectStoreV2)({
                           get: (projectId) =>
-                            Effect.succeed(
-                              Option.some({
-                                projectId,
-                                title: name,
-                                workspaceRoot: cwd,
-                                defaultModelSelection: modelSelection,
-                                defaultThreadEnvMode: null,
-                                autoPull: false,
-                                faviconPath: null,
-                                projectIcon: null,
-                                scripts: [],
-                                createdAt: "2026-10-12T00:00:00.000Z",
-                                updatedAt: "2026-10-12T00:00:00.000Z",
-                                deletedAt: null,
-                              }),
-                            ),
+                            Effect.succeedSome({
+                              projectId,
+                              title: name,
+                              workspaceRoot: cwd,
+                              defaultModelSelection: modelSelection,
+                              defaultThreadEnvMode: null,
+                              autoPull: false,
+                              faviconPath: null,
+                              projectIcon: null,
+                              scripts: [],
+                              createdAt: "2026-10-12T00:00:00.000Z",
+                              updatedAt: "2026-10-12T00:00:00.000Z",
+                              deletedAt: null,
+                            }),
                         }),
                       ),
                     ),
@@ -4090,6 +4089,7 @@ it.live(
             Layer.mergeAll(
               ProjectStore.layer.pipe(Layer.provide(databaseLayer)),
               Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
+                // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
                 getInstance: () => Effect.succeed(undefined),
               }),
             ),
@@ -4627,6 +4627,7 @@ it.live(
             Layer.mergeAll(
               ProjectStore.layer.pipe(Layer.provide(databaseLayer)),
               Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
+                // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
                 getInstance: () => Effect.succeed(undefined),
               }),
             ),

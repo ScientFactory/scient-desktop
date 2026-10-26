@@ -415,8 +415,9 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         Effect.flatMap((complete) =>
           complete
             ? probeRuntime(binaryPath).pipe(
-                Effect.flatMap((check) =>
-                  check.healthy ? Effect.succeed(check) : probeRuntime(binaryPath),
+                Effect.filterOrElse(
+                  (check) => check.healthy,
+                  () => probeRuntime(binaryPath),
                 ),
               )
             : Effect.succeed<CodexCapabilityCheck>({

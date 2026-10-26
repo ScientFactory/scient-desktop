@@ -34,7 +34,7 @@ export const withCustomModelKeyHints = Effect.fn("CustomModels.keyHints")(functi
     }
     const stored = yield* secrets
       .get(customModelSecretName(connection.credentialId))
-      .pipe(Effect.catch(() => Effect.succeed(Option.none<Uint8Array>())));
+      .pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
     connections.push({
       ...connection,
       apiKeySuffix: Option.isSome(stored)
@@ -129,7 +129,7 @@ export const prepareCustomModelSave = Effect.fn("CustomModels.prepareSave")(func
   if (key === undefined && credentialId) {
     const stored = yield* secrets
       .get(customModelSecretName(credentialId))
-      .pipe(Effect.catch(() => Effect.succeed(Option.none<Uint8Array>())));
+      .pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
     const usable = Option.isSome(stored) ? usableStoredKey(stored.value) : undefined;
     if (Option.isNone(stored))
       credentialError = "Saved API key is unavailable. Re-enter or remove it.";

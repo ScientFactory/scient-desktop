@@ -175,7 +175,6 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   rangeHeader?: string,
   ifRangeHeader?: string,
   method: "GET" | "HEAD" = "GET",
-  options?: { readonly allowRangesForAnyMimeType?: boolean },
 ) {
   const headers: Record<string, string> = {
     "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range, ETag",
@@ -239,26 +238,23 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   let status = 200;
   let offset = 0n;
   let bytesToRead = fileSize;
-  const supportsRanges = options?.allowRangesForAnyMimeType === true || isMedia;
-  if (supportsRanges) {
-    headers["Accept-Ranges"] = "bytes";
-    const ifRangeMatches =
-      ifRangeHeader === undefined || (etag !== undefined && ifRangeHeader === etag);
-    if (method === "GET" && rangeHeader && ifRangeMatches) {
-      const range = assetByteRange(rangeHeader, fileSize);
-      if (range?._tag === "Unsatisfiable") {
-        return HttpServerResponse.empty({
-          status: 416,
-          headers: { ...headers, "Content-Range": `bytes */${fileSize}` },
-        });
-      }
-      if (range?._tag === "Range") {
-        status = 206;
-        offset = range.offset;
-        bytesToRead = range.bytesToRead;
-        headers["Content-Length"] = String(bytesToRead);
-        headers["Content-Range"] = range.contentRange;
-      }
+  headers["Accept-Ranges"] = "bytes";
+  const ifRangeMatches =
+    ifRangeHeader === undefined || (etag !== undefined && ifRangeHeader === etag);
+  if (method === "GET" && rangeHeader && ifRangeMatches) {
+    const range = assetByteRange(rangeHeader, fileSize);
+    if (range?._tag === "Unsatisfiable") {
+      return HttpServerResponse.empty({
+        status: 416,
+        headers: { ...headers, "Content-Range": `bytes */${fileSize}` },
+      });
+    }
+    if (range?._tag === "Range") {
+      status = 206;
+      offset = range.offset;
+      bytesToRead = range.bytesToRead;
+      headers["Content-Length"] = String(bytesToRead);
+      headers["Content-Range"] = range.contentRange;
     }
   }
   if (method === "HEAD" || bytesToRead === 0n) {
@@ -488,7 +484,6 @@ export const assetRouteHandler = Effect.gen(function* () {
     request.method === "GET" ? request.headers.range : undefined,
     request.headers["if-range"],
     request.method,
-    { allowRangesForAnyMimeType: true },
   ).pipe(
     Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
   );

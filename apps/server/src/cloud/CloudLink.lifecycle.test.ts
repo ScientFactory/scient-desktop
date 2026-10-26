@@ -70,7 +70,7 @@ const idleAwarenessRelay = AgentAwarenessRelay.AgentAwarenessRelay.of({
 // call the service directly.
 const idleReachability = ConnectReachability.ConnectReachability.of({
   check: Effect.die("unused"),
-  latest: Effect.succeed(Option.none()),
+  latest: Effect.succeedNone,
 });
 const idleHttpServer = Layer.mock(HttpServer.HttpServer)({
   address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),

@@ -363,7 +363,7 @@ export const makePiRpcTransport = Effect.fn("PiRpcClient.makeTransport")(functio
             Effect.as(Option.none<PiRpcEvent>()),
           );
         queuedCharacters -= entry.size;
-        return Effect.succeed(Option.some(entry.event));
+        return Effect.succeedSome(entry.event);
       }),
       Stream.filter(Option.isSome),
       Stream.map((value) => value.value),

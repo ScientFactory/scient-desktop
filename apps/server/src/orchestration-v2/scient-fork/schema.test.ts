@@ -1211,8 +1211,8 @@ it.effect("concurrent runners on the same file apply each migration at most once
     `scient-test-concurrent-${NodeCrypto.randomUUID()}.sqlite`,
   );
 
-  return Effect.gen(function* () {
-    yield* Effect.acquireUseRelease(
+  return Effect.suspend(() =>
+    Effect.acquireUseRelease(
       Effect.succeed(tempFile),
       (filename) =>
         Effect.gen(function* () {
@@ -1267,8 +1267,8 @@ it.effect("concurrent runners on the same file apply each migration at most once
             }
           }
         }),
-    );
-  });
+    ),
+  );
 });
 
 // VAL-MIGRATE-09: T3 ledger is isolated
@@ -1776,8 +1776,8 @@ it.effect(
       `scient-test-concurrent-applied-at-${NodeCrypto.randomUUID()}.sqlite`,
     );
 
-    return Effect.gen(function* () {
-      yield* Effect.acquireUseRelease(
+    return Effect.suspend(() =>
+      Effect.acquireUseRelease(
         Effect.succeed(tempFile),
         (filename) =>
           Effect.gen(function* () {
@@ -1880,8 +1880,8 @@ it.effect(
               }
             }
           }),
-      );
-    });
+      ),
+    );
   },
 );
 

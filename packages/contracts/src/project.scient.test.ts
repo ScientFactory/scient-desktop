@@ -26,6 +26,19 @@ const encodeProjectMutation = Schema.encodeSync(ProjectMutation);
 const decodeFileWatchEvent = Schema.decodeUnknownSync(ProjectFileWatchEvent);
 const decodeListDirectoryInput = Schema.decodeUnknownSync(ProjectListDirectoryInput);
 const decodeListDirectoryResult = Schema.decodeUnknownSync(ProjectListDirectoryResult);
+const decodeReadFileError = Schema.decodeUnknownSync(ProjectReadFileError);
+const encodeReadFileError = Schema.encodeSync(ProjectReadFileError);
+const decodeWriteFileError = Schema.decodeUnknownSync(ProjectWriteFileError);
+const encodeWriteFileError = Schema.encodeSync(ProjectWriteFileError);
+const decodeDeleteFileError = Schema.decodeUnknownSync(ProjectDeleteFileError);
+const encodeDeleteFileError = Schema.encodeSync(ProjectDeleteFileError);
+const decodeRenameFileError = Schema.decodeUnknownSync(ProjectRenameFileError);
+const encodeRenameFileError = Schema.encodeSync(ProjectRenameFileError);
+const decodeResolveFileMutationResult = Schema.decodeUnknownSync(ProjectResolveFileMutationResult);
+const encodeResolveFileMutationResult = Schema.encodeSync(ProjectResolveFileMutationResult);
+const decodeListFileVersionsResult = Schema.decodeUnknownSync(ProjectListFileVersionsResult);
+const decodeReadFileResult = Schema.decodeUnknownSync(ProjectReadFileResult);
+const encodeResolveFileMutationInput = Schema.encodeSync(ProjectResolveFileMutationInput);
 
 describe("retained file mutation contracts", () => {
   it("rejects empty mutation identities while allowing callers without an identity", () => {
@@ -55,29 +68,19 @@ describe("retained file mutation contracts", () => {
       retainedPaths: ["/workspace/.scient/retained/one", "/workspace/.scient/retained/two"],
     };
     expect(
-      Schema.decodeUnknownSync(ProjectReadFileError)(
-        Schema.encodeSync(ProjectReadFileError)(new ProjectReadFileError(context)),
-      ),
+      decodeReadFileError(encodeReadFileError(new ProjectReadFileError(context))),
     ).toMatchObject(context);
     expect(
-      Schema.decodeUnknownSync(ProjectWriteFileError)(
-        Schema.encodeSync(ProjectWriteFileError)(new ProjectWriteFileError(context)),
-      ),
+      decodeWriteFileError(encodeWriteFileError(new ProjectWriteFileError(context))),
     ).toMatchObject(context);
     expect(
-      Schema.decodeUnknownSync(ProjectDeleteFileError)(
-        Schema.encodeSync(ProjectDeleteFileError)(new ProjectDeleteFileError(context)),
-      ),
+      decodeDeleteFileError(encodeDeleteFileError(new ProjectDeleteFileError(context))),
     ).toMatchObject(context);
     const rename = new ProjectRenameFileError({
       ...context,
       destinationRelativePath: "renamed.md",
     });
-    expect(
-      Schema.decodeUnknownSync(ProjectRenameFileError)(
-        Schema.encodeSync(ProjectRenameFileError)(rename),
-      ),
-    ).toMatchObject(context);
+    expect(decodeRenameFileError(encodeRenameFileError(rename))).toMatchObject(context);
   });
 
   it.each([
@@ -86,7 +89,7 @@ describe("retained file mutation contracts", () => {
     "mutation_unavailable",
     "mutation_intent_conflict",
   ] as const)("does not invent publication authority while decoding %s", (failure) => {
-    const decode = Schema.decodeUnknownSync(ProjectWriteFileError);
+    const decode = decodeWriteFileError;
     const legacy = decode({
       _tag: "ProjectWriteFileError",
       cwd: "/workspace",
@@ -96,7 +99,7 @@ describe("retained file mutation contracts", () => {
     });
     expect(legacy.publicationOutcome).toBeUndefined();
     for (const publicationOutcome of ["unchanged", "retained-attention"] as const) {
-      const encoded = Schema.encodeSync(ProjectWriteFileError)(
+      const encoded = encodeWriteFileError(
         new ProjectWriteFileError({
           cwd: "/workspace",
           relativePath: "notes.md",
@@ -135,7 +138,7 @@ describe("retained file mutation contracts", () => {
       limitBytes: null,
       attention: null,
     };
-    expect(Schema.decodeUnknownSync(ProjectListFileVersionsResult)(result)).toEqual(result);
+    expect(decodeListFileVersionsResult(result)).toEqual(result);
   });
 
   it("carries durable attention on both authoritative reads and version inventory", () => {
@@ -146,7 +149,7 @@ describe("retained file mutation contracts", () => {
       message: "Review the retained publication.",
     };
     expect(
-      Schema.decodeUnknownSync(ProjectReadFileResult)({
+      decodeReadFileResult({
         relativePath: "notes.md",
         contents: "current",
         byteLength: 7,
@@ -156,7 +159,7 @@ describe("retained file mutation contracts", () => {
       }).publicationAttention,
     ).toEqual(attention);
     expect(
-      Schema.decodeUnknownSync(ProjectListFileVersionsResult)({
+      decodeListFileVersionsResult({
         versions: [],
         retainedBytes: 0,
         limitBytes: null,
@@ -176,25 +179,23 @@ describe("retained file mutation contracts", () => {
         choice: "accept-current" as const,
       };
       const decode = Schema.decodeUnknownSync(ProjectResolveFileMutationInput);
-      expect(decode(Schema.encodeSync(ProjectResolveFileMutationInput)(input))).toEqual(input);
+      expect(decode(encodeResolveFileMutationInput(input))).toEqual(input);
       const result = { recoveryId: input.recoveryId, revision: currentRevision };
-      expect(
-        Schema.decodeUnknownSync(ProjectResolveFileMutationResult)(
-          Schema.encodeSync(ProjectResolveFileMutationResult)(result),
-        ),
-      ).toEqual(result);
+      expect(decodeResolveFileMutationResult(encodeResolveFileMutationResult(result))).toEqual(
+        result,
+      );
       expect(() => decode({ ...input, recoveryId: undefined })).toThrow();
       expect(() => decode({ ...input, currentRevision: undefined })).toThrow();
       expect(() => decode({ ...input, currentRevision: " " })).toThrow();
       expect(() => decode({ ...input, choice: "overwrite" })).toThrow();
       expect(() =>
-        Schema.decodeUnknownSync(ProjectResolveFileMutationResult)({
+        decodeResolveFileMutationResult({
           ...result,
           revision: undefined,
         }),
       ).toThrow();
       expect(() =>
-        Schema.decodeUnknownSync(ProjectResolveFileMutationResult)({
+        decodeResolveFileMutationResult({
           ...result,
           revision: "",
         }),
@@ -204,7 +205,7 @@ describe("retained file mutation contracts", () => {
 
   it("does not extend reviewed absence to source reads or revision-conflict metadata", () => {
     expect(() =>
-      Schema.decodeUnknownSync(ProjectReadFileResult)({
+      decodeReadFileResult({
         relativePath: "notes.md",
         contents: "",
         byteLength: 0,
@@ -213,7 +214,7 @@ describe("retained file mutation contracts", () => {
       }),
     ).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(ProjectWriteFileError)({
+      decodeWriteFileError({
         _tag: "ProjectWriteFileError",
         cwd: "/workspace",
         relativePath: "notes.md",
@@ -231,8 +232,8 @@ describe("retained file mutation contracts", () => {
       failure: "operation_failed" as const,
       reason: "not_found" as const,
     };
-    const decode = Schema.decodeUnknownSync(ProjectReadFileError);
-    const encode = Schema.encodeSync(ProjectReadFileError);
+    const decode = decodeReadFileError;
+    const encode = encodeReadFileError;
     expect(decode(encode(new ProjectReadFileError(input))).currentMissing).toBeUndefined();
     const missing = new ProjectReadFileError({ ...input, currentMissing: true });
     expect(decode(encode(missing))).toMatchObject({ ...input, currentMissing: true });

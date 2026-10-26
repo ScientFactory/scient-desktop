@@ -1,3 +1,4 @@
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ChatAttachmentId, type ChatAttachment } from "@t3tools/contracts";
@@ -19,7 +20,7 @@ import {
 import { claimPendingAttachments } from "./AttachmentClaims.ts";
 
 const layer = ServerConfig.layerTest(process.cwd(), { prefix: "attachment-file-use-" }).pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
 );
 const stored = Effect.fn("test.storedAttachment")(function* (threadId: string, pending = false) {
   const fs = yield* FileSystem.FileSystem;

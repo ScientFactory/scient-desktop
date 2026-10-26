@@ -275,10 +275,8 @@ const make = Effect.fnUntraced(function* (options: { readonly namedProjectsEnabl
       Exit.isSuccess(exit) && Option.isSome(exit.value) ? Duration.infinity : Duration.zero,
   );
   const scratchRoot = probe.pipe(
-    Effect.flatMap((root) =>
-      Option.isNone(root)
-        ? Effect.succeed(root)
-        : verifyScratchRoot.pipe(Effect.map((plain) => (plain ? root : Option.none<string>()))),
+    Effect.filterOrElse(Option.isNone, (root) =>
+      verifyScratchRoot.pipe(Effect.map((plain) => (plain ? root : Option.none<string>()))),
     ),
     Effect.catchCause((cause) =>
       Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
@@ -394,9 +392,9 @@ const make = Effect.fnUntraced(function* (options: { readonly namedProjectsEnabl
     return yield* claimFreeFolder(
       (attempt) =>
         attempt === 1
-          ? Effect.succeed(Option.some(folderFor(id.slice(-8))))
+          ? Effect.succeedSome(folderFor(id.slice(-8)))
           : attempt === 2
-            ? Effect.succeed(Option.some(fullFolder))
+            ? Effect.succeedSome(fullFolder)
             : crypto.randomUUIDv4().pipe(
                 Effect.map((uuid) => Option.some(`${fullFolder}-${uuid.slice(0, 8)}`)),
                 Effect.mapError((cause) => new ScratchFolderError({ folder: fullFolder, cause })),

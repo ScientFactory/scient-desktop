@@ -785,7 +785,7 @@ export const discoverDroidModels = Effect.fn("DroidAcpSupport.discoverDroidModel
             runtime,
             requestedModel: undefined,
             requestedEffort: undefined,
-          }).pipe(Effect.catch(() => Effect.succeed(undefined)));
+          }).pipe(Effect.orElseSucceed(() => undefined));
     const snapshot = buildDroidModelsFromConfigOptions(yield* runtime.getConfigOptions);
     const observed = snapshot.find((entry) => entry.slug === model.slug);
     return {

@@ -39,7 +39,15 @@ const state = vi.hoisted(() => ({
 
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: () => state.canManageProviders,
+  readPreparedConnection: () => null,
   useEnvironmentScope: () => state.canManageProviders,
+}));
+vi.mock("../../state/primaryEnvironment", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { primaryEnvironmentIdAtom: Atom.make(null) };
+});
+vi.mock("../../state/presentation", () => ({
+  environmentPresentations: { presentationAtom: () => null },
 }));
 vi.mock("../../composerDraftStore", async () => {
   const Schema = await import("effect/Schema");

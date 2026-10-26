@@ -51,7 +51,8 @@ const fixture = vi.hoisted(() => ({
   }>,
 }));
 vi.mock("../../env", () => ({ isElectron: true }));
-vi.mock("../../state/desktopUpdate", () => ({
+vi.mock("../../state/desktopUpdate", async (original) => ({
+  ...(await original<typeof import("../../state/desktopUpdate")>()),
   useDesktopUpdateState: () => fixture.updateState,
 }));
 vi.mock("./useUpdateEverything", async (original) => {

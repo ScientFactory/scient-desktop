@@ -164,8 +164,8 @@ const EMPTY_PRICING: UsagePricing = {
 export const layerTest = Layer.succeed(
   UsageService,
   UsageService.of({
-    readSummary: (input) =>
-      Effect.succeed({
+    readSummary: Effect.fn("UsageService.readSummary")(function (input) {
+      return Effect.succeed({
         contractVersion: USAGE_CONTRACT_VERSION,
         readAt: "1970-01-01T00:00:00.000Z",
         timeZone: input.timeZone,
@@ -175,7 +175,8 @@ export const layerTest = Layer.succeed(
         sources: [],
         pricing: EMPTY_PRICING,
         scanDurationMs: 0,
-      }),
+      });
+    }),
     refreshRates: Effect.succeed(EMPTY_PRICING),
   }),
 );
@@ -626,30 +627,27 @@ export const make = Effect.gen(function* () {
     const scans = Effect.forEach(
       scanReaders,
       ({ driver, reader }) =>
-        usageInstances(driver, settings)
-          .pipe(
-            Effect.flatMap((instances) =>
-              reader.scan({ instances, settings, windowStartMs, retentionCutoffMs, awaitRefresh }),
-            ),
-          )
-          .pipe(
-            Effect.flatMap((sources) =>
-              Effect.forEach(sources, ({ volumeId, ...source }) =>
-                Effect.map(
-                  volumeId === undefined
-                    ? Effect.promise(() => readDirectoryVolumeId(source.dir))
-                    : Effect.succeed(volumeId),
-                  (resolved): ScannedDir => ({
-                    ...source,
-                    files: source.files?.map((file) => ({ ...file, malformedRecords: 0 })) ?? null,
-                    provider: reader.provider,
-                    volumeId: resolved,
-                  }),
-                ),
+        usageInstances(driver, settings).pipe(
+          Effect.flatMap((instances) =>
+            reader.scan({ instances, settings, windowStartMs, retentionCutoffMs, awaitRefresh }),
+          ),
+          Effect.flatMap((sources) =>
+            Effect.forEach(sources, ({ volumeId, ...source }) =>
+              Effect.map(
+                volumeId === undefined
+                  ? Effect.promise(() => readDirectoryVolumeId(source.dir))
+                  : Effect.succeed(volumeId),
+                (resolved): ScannedDir => ({
+                  ...source,
+                  files: source.files?.map((file) => ({ ...file, malformedRecords: 0 })) ?? null,
+                  provider: reader.provider,
+                  volumeId: resolved,
+                }),
               ),
             ),
-            Effect.provideContext(readerContext),
           ),
+          Effect.provideContext(readerContext),
+        ),
       { concurrency: "unbounded" },
     );
 

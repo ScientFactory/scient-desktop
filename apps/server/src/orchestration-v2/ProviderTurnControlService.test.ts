@@ -310,7 +310,7 @@ it.effect(
             layerProjection,
             layerSessionManager,
             ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
-              Layer.provide(NodeServices.layer),
+              Layer.provideMerge(NodeServices.layer),
             ),
           ),
         ),
@@ -433,7 +433,7 @@ it.effect(
       const dependencies = Layer.mergeAll(
         Layer.succeed(McpProviderSessions.McpProviderSessions, mcpSessions),
         ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
-          Layer.provide(NodeServices.layer),
+          Layer.provideMerge(NodeServices.layer),
         ),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getProviderControlContext: () =>
@@ -478,7 +478,7 @@ it.effect(
             ),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-          get: () => Effect.succeed(Option.some(runtime)),
+          get: () => Effect.succeedSome(runtime),
         }),
         Layer.succeed(ScientSkillSession.ScientSkillSessionPlanner, {
           resolve: () =>
@@ -778,7 +778,7 @@ it.effect.each([
         const dependencies = Layer.mergeAll(
           McpProviderSessions.layer,
           ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
-            Layer.provide(NodeServices.layer),
+            Layer.provideMerge(NodeServices.layer),
           ),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThreadRecords: () => Ref.get(projection),

@@ -218,7 +218,7 @@ export function makePiDriver<Requirements = never, Extension extends object = {}
         settings: effectiveConfig,
         environment: effectiveEnvironment,
         ...(runtime.makeConnection === undefined ? {} : { makeConnection: runtime.makeConnection }),
-        ...(runtime.adapterOptions ?? {}),
+        ...runtime.adapterOptions,
         ...(continuationRequests === undefined ? {} : { continuationRequests }),
       });
       const textGeneration = yield* makePiTextGeneration(

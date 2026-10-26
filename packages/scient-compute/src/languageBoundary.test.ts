@@ -43,7 +43,6 @@ const profile: ComputeRuntimeProfile = {
 /** Its runtime numbers traceback lines and colours them; Scient shows neither. */
 const stripFrameDecoration = (frame: string): string =>
   frame
-    // eslint-disable-next-line no-control-regex -- matches the runtime's own colour codes.
     .replace(/\u001B\[[0-9;]*m/g, "")
     .replace(/^\s*\d+:\s*/, "")
     .trim();

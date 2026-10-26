@@ -1,5 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -113,12 +114,9 @@ export const captureWordImages = Effect.fn("scient.pandoc.captureWordImages")(fu
   for (const url of references) {
     if (captured.has(url)) continue;
     if (/^(?:data:|[a-z][a-z\d+.-]*:)/iu.test(url) && !/^[a-z]:[\\/]/iu.test(url)) continue;
-    let relative: string;
-    try {
-      relative = decodeURIComponent(url).replaceAll("\\", "/");
-    } catch {
-      continue;
-    }
+    const decoded = Result.try(() => decodeURIComponent(url).replaceAll("\\", "/"));
+    if (Result.isFailure(decoded)) continue;
+    const relative = decoded.success;
     if (
       !relative ||
       relative.includes("\0") ||

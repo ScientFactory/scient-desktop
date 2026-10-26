@@ -71,8 +71,8 @@ receives the attachment directly or a server-local path it can read using its
 available tools. Uploaded files are not automatically executed.
 
 Click a video attachment to play it. If its format cannot play in the app, use
-**Download video**. Sent PDF and HTML attachments open in the file viewer;
-other files keep their filename and can be downloaded.
+**Download video**. Select another attachment to preview it when its format is
+supported, or save the original file to open it elsewhere.
 
 ## Send while the agent is working
 
@@ -380,9 +380,13 @@ row above the composer shows the goal and its progress.
 
 - `/goal` alone shows the current goal. `/goal clear` removes it.
 - Codex also supports `/goal pause` and `/goal resume`. Stopping a Codex goal
-  pauses it.
+  pauses it, and so does Codex ending its work without meeting the goal.
 - Stopping Claude ends the current turn, but the goal stays set. Claude checks it
   again at the end of your next message.
+- Sending a new goal, or `/goal resume`, while the agent works stops the current
+  turn and starts the goal, unless you queue it. `/goal clear` and `/goal pause`
+  stop the turn only when it is working on the goal. Other goal commands wait for
+  the turn to end.
 
 ## Context in your message
 
@@ -437,8 +441,11 @@ files show the copy that was attached to the message.
 ## Attached files
 
 Select a file chip in your draft or a sent message to preview it. Code and JSON use syntax
-highlighting; Markdown, HTML, CSV, and TSV offer rendered and raw views. Audio files have
-playback controls. Large text files show a limited preview; save the file to read it in full.
+highlighting; Markdown, HTML, Mermaid, CSV, and TSV offer rendered and raw views. Audio files have
+playback controls. Supported Office documents, notebooks, archives, fonts and SQLite files
+have read-only previews. A notebook shows its saved cells and outputs; opening it does not
+execute its code or load external chart data. Large text files load indexed pages as you
+scroll; save the original file when you need it outside Scient.
 
 On web and desktop, files open beside the conversation with the same controls as a workspace
 file: a header row with the view toggle, **Copy contents** and **Save file**. On mobile, documents

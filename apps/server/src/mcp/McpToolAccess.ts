@@ -83,30 +83,32 @@ const refuseReadOnlyClient = McpInvocationContext.McpInvocationContext.pipe(
 const writingCaller = refuseReadOnlyClient.pipe(
   Effect.andThen(loadCaller()),
   Effect.tap(assertLiveCaller),
-  Effect.flatMap((context) =>
-    context.scope.thread === undefined
-      ? Effect.succeed(context)
-      : requireInvocationPolicy({ ...context.scope, thread: context.scope.thread }).pipe(
-          Effect.map((policy) => ({
-            ...context,
-            limits: { runtimeMode: policy.runtimeMode, interactionMode: policy.interactionMode },
-          })),
-        ),
+  Effect.filterOrElse(
+    (context) => context.scope.thread === undefined,
+    (context) =>
+      McpInvocationContext.requireThreadScope(context.scope, "This tool").pipe(
+        Effect.flatMap(requireInvocationPolicy),
+        Effect.map((policy) => ({
+          ...context,
+          limits: { runtimeMode: policy.runtimeMode, interactionMode: policy.interactionMode },
+        })),
+      ),
   ),
 );
 
 const orchestratingCaller = refuseReadOnlyClient.pipe(
   Effect.andThen(readCaller()),
   Effect.tap(assertLiveCaller),
-  Effect.flatMap((context) =>
-    context.scope.thread === undefined
-      ? Effect.succeed(context)
-      : requireInvocationPolicy({ ...context.scope, thread: context.scope.thread }).pipe(
-          Effect.map((policy) => ({
-            ...context,
-            limits: { runtimeMode: policy.runtimeMode, interactionMode: policy.interactionMode },
-          })),
-        ),
+  Effect.filterOrElse(
+    (context) => context.scope.thread === undefined,
+    (context) =>
+      McpInvocationContext.requireThreadScope(context.scope, "This tool").pipe(
+        Effect.flatMap(requireInvocationPolicy),
+        Effect.map((policy) => ({
+          ...context,
+          limits: { runtimeMode: policy.runtimeMode, interactionMode: policy.interactionMode },
+        })),
+      ),
   ),
 );
 
@@ -123,7 +125,7 @@ export const readsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A
 export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare((params: P) =>
     requireThreadCaller.pipe(
-      Effect.flatMap(() => writingCaller),
+      Effect.andThen(writingCaller),
       Effect.flatMap(() => handle(params)),
     ),
   );

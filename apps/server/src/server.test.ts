@@ -1,3 +1,4 @@
+import * as DocumentText from "./provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off - HTTP router integration uses native transport boundaries.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
@@ -1059,7 +1060,9 @@ const buildAppUnderTest = (options?: {
                 Effect.succeed(
                   makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
                 ),
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
               getVoiceTranscriptCorrectionForInstance: () =>
                 // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
@@ -1240,8 +1243,6 @@ const buildAppUnderTest = (options?: {
             }),
           ),
         ),
-      )
-      .pipe(
         Layer.provide(
           Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
             getTurnDiff: () =>
@@ -1265,10 +1266,11 @@ const buildAppUnderTest = (options?: {
 
     const appLayer = servedRoutesLayer
       .pipe(
+        Layer.provide(DocumentText.layer),
         Layer.provide(CloudLink.layer),
         Layer.provide(
           Layer.mock(ConnectReachability.ConnectReachability)({
-            latest: Effect.succeed(Option.none()),
+            latest: Effect.succeedNone,
           }),
         ),
         Layer.provide(DirectEndpoints.layer),
@@ -1422,7 +1424,7 @@ const buildAppUnderTest = (options?: {
         Layer.provide(
           Layer.mock(CloudCliTokenManager.CloudCliTokenManager)({
             get: Effect.die(new Error("Unexpected T3 Connect CLI authorization request.")),
-            getExisting: Effect.succeed(Option.none()),
+            getExisting: Effect.succeedNone,
             hasCredential: Effect.succeed(false),
             clear: Effect.void,
             ...options?.layers?.cloudCliTokenManager,
@@ -1452,13 +1454,9 @@ const buildAppUnderTest = (options?: {
         Layer.provideMerge(makeAuthTestLayer()),
         Layer.provideMerge(ServerSecretStore.layer),
         Layer.provide(workspaceAndProjectServicesLayer),
-      )
-      .pipe(
         // Reuse the same fixture owners for dependencies introduced by later layers.
         Layer.provide(gitVcsDriverLayer),
         Layer.provide(serverSettingsLayer),
-      )
-      .pipe(
         // Honour an injected client so relay-route tests can stub the upstream
         // response instead of reaching the network. Without this the option is
         // silently ignored and the cloud seam tests exercise the real client.
@@ -1552,11 +1550,7 @@ const withWsRpcClient = <A, E, R, E2 = never, R2 = never>(
   onMessage?: (message: string) => void,
 ) =>
   makeWsRpcClient.pipe(
-    Effect.flatMap((client) =>
-      Effect.gen(function* () {
-        return yield* f(client);
-      }),
-    ),
+    Effect.flatMap((client) => Effect.suspend<A, E | E2, R | R2>(() => f(client))),
     Effect.provide(wsRpcProtocolLayer(wsUrl, onMessage)),
   );
 
@@ -4416,7 +4410,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       label,
       protocol,
     })),
-  )("$caseTitle", ({ label, protocol }) =>
+  )("$caseTitle", ({ label: _label, protocol }) =>
     Effect.gen(function* () {
       const app = yield* buildAppUnderTest();
       // Observe the exact memoized live auth service; the spy delegates rather
@@ -7957,6 +7951,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 instanceId: instanceIds[1],
                 cwd,
                 fresh: mode === "workspace-fresh",
+                awaitNativeInventory: false,
               });
               return probe(versionCache);
             },

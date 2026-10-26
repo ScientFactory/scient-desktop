@@ -63,6 +63,7 @@ const emitGrokMonitorPostTurnPoll = process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TU
 const emitGrokBackgroundTaskStarted = process.env.T3_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED === "1";
 const emitGrokBackgroundTaskPoll = process.env.T3_ACP_GROK_BACKGROUND_TASK_COMPLETION === "poll";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
+const omitInitializeModelState = process.env.T3_ACP_OMIT_INITIALIZE_MODEL_STATE === "1";
 const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
@@ -726,9 +727,7 @@ const program = Effect.gen(function* () {
               })),
             }
           : {}),
-        // Grok advertises model state before any session exists; the provider
-        // health check reads it from here without authenticating.
-        _meta: { modelState: modelState() },
+        ...(omitInitializeModelState ? {} : { _meta: { modelState: modelState() } }),
         capabilities: {
           session: {
             ...(supportsSessionLifecycle ? { fork: {}, additionalDirectories: {} } : {}),
@@ -1145,21 +1144,20 @@ const program = Effect.gen(function* () {
             },
           });
         });
-        yield* Effect.sleep("1200 millis")
-          .pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                writeJsonRpcNotification("_x.ai/task_completed", {
-                  sessionId: cancelledSessionId,
-                  update: {
-                    sessionUpdate: "task_completed",
-                    task_snapshot: { task_id: "task-bg-1", command: "sleep 30" },
-                  },
-                });
-              }),
-            ),
-          )
-          .pipe(Effect.forkDetach);
+        yield* Effect.sleep("1200 millis").pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              writeJsonRpcNotification("_x.ai/task_completed", {
+                sessionId: cancelledSessionId,
+                update: {
+                  sessionUpdate: "task_completed",
+                  task_snapshot: { task_id: "task-bg-1", command: "sleep 30" },
+                },
+              });
+            }),
+          ),
+          Effect.forkDetach,
+        );
       }
     }),
   );

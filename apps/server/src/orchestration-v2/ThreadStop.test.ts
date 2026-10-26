@@ -31,6 +31,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import { CLAUDE_PROVIDER } from "./Adapters/ClaudeAdapterV2.ts";
@@ -46,6 +47,8 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+
+const decodeDispatchCommand = Schema.decodeEffect(OrchestrationV2RpcSchemas.dispatchCommand.input);
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -639,7 +642,7 @@ it.effect.each([
     ).pipe(
       Layer.provideMerge(
         Layer.merge(
-          NodeServices.layer,
+          DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
           ProjectCloneTracker.layer.pipe(
             Layer.provide(Layer.mock(SourceControlRepositoryService)({})),
           ),
@@ -678,10 +681,7 @@ it.effect.each([
         threadId: parentThreadId,
         stopDelegatedTasks: false,
       };
-      const publicCommand =
-        entry === "decoded"
-          ? yield* Schema.decodeEffect(OrchestrationV2RpcSchemas.dispatchCommand.input)(command)
-          : command;
+      const publicCommand = entry === "decoded" ? yield* decodeDispatchCommand(command) : command;
       yield* ThreadMessageIntake.dispatchCommand(publicCommand);
       // The fixture never starts a provider; keep the real Stop effect and its worker.
       yield* sql`
@@ -1498,6 +1498,25 @@ it.effect.each(["missing session", "completed", "failed", "cancelled", "rebound 
           forkedFrom: { type: "node", nodeId: subagent.id },
         },
       });
+      const childTurnId = ProviderTurnId.make("turn:native-stop-child");
+      yield* projections.apply({
+        id: EventId.make("event:native-child-stop:child-turn"),
+        type: "provider-turn.updated",
+        threadId: childRoot.threadId,
+        nodeId: childRoot.id,
+        occurredAt: now,
+        payload: {
+          id: childTurnId,
+          providerThreadId: ProviderThreadId.make("provider-thread:native-stop-child"),
+          nodeId: childRoot.id,
+          runAttemptId: null,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
       const providerThread = before.providerThreads.find(
         (thread) => thread.id === run.providerThreadId,
       )!;
@@ -1713,6 +1732,10 @@ it.effect.each(["missing session", "completed", "failed", "cancelled", "rebound 
         confirmedStatus,
       );
       assert.isNotNull(settledChild.nodes.find((node) => node.id === childRoot.id)?.completedAt);
+      assert.equal(
+        settledChild.providerTurns.find((turn) => turn.id === childTurnId)?.status,
+        confirmedStatus,
+      );
       assert.equal(settled.subagents.find((task) => task.id === sibling.id)?.status, "running");
       assert.deepEqual(yield* threadState(threadId), stateBefore);
       yield* TestClock.adjust("1 second");

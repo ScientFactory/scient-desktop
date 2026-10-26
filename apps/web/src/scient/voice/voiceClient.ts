@@ -13,8 +13,3 @@ export function getVoiceBridge(): VoiceTranscriptionClient | null {
   if (typeof window === "undefined") return null;
   return window.desktopBridge?.voice ?? null;
 }
-
-/** Whether local voice dictation is available in this runtime. */
-function isVoiceSupported(): boolean {
-  return getVoiceBridge() !== null;
-}

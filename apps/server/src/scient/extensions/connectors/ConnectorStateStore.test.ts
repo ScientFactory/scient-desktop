@@ -15,7 +15,7 @@ import {
 } from "./ConnectorStateStore.ts";
 
 const encodeRecord = Schema.encodeSync(ConnectorRecord);
-const record = Schema.decodeUnknownSync(ConnectorRecord)({
+const record = Schema.decodeSync(ConnectorRecord)({
   connectorId: "con_abcdefgh",
   serverName: "service",
   displayName: "Service",

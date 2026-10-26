@@ -11,7 +11,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import type * as ProjectionStore from "../ProjectionStore.ts";
 import type * as ProjectStore from "../ProjectStore.ts";
 import { readCurrentRunningForkOwner } from "./runningForkSource.ts";
@@ -53,7 +52,7 @@ it.effect("a running fork's owner check reads control records, never the history
         }),
     } as unknown as ProjectionStore.ProjectionStoreV2Shape;
     const projectStore = {
-      get: () => Effect.succeed(Option.none()),
+      get: () => Effect.succeedNone,
     } as unknown as ProjectStore.ProjectStoreV2["Service"];
     // The run is gone from these records: the owner is lost, read without the history.
     const lost = yield* readCurrentRunningForkOwner({ projectionStore, projectStore }, owner).pipe(

@@ -18,7 +18,7 @@ import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-im
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { scientMcpToolTarget } from "@t3tools/shared/scientMcpToolPresentation";
-import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 import { classifyToolActivity } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
@@ -234,10 +234,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
 function workLogEntryIsToolLike(entry: WorkLogPresentationEntry): boolean {

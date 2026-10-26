@@ -324,6 +324,7 @@ export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
   let afterSequence = Infinity;
   let boundaryGeneration = 0;
   const firstCursor = yield* Deferred.make<number>();
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   yield* Effect.acquireRelease(
     analytics.observeCollectionBoundary(async (epoch, phase) => {
       const generation = ++boundaryGeneration;
@@ -335,7 +336,7 @@ export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
       // Invalidating must not delay stopping delivery or remote erasure on a
       // database lookup. Only the ready boundary acquires the next watermark.
       if (phase === "invalidated") return;
-      const cutoff = await Effect.runPromise(
+      const cutoff = await runPromise(
         sink
           .latestSequence()
           .pipe(
@@ -351,7 +352,7 @@ export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
       if (generation !== boundaryGeneration) return;
       afterSequence = cutoff;
       streamEpoch = epoch;
-      await Effect.runPromise(Deferred.succeed(firstCursor, cutoff));
+      await runPromise(Deferred.succeed(firstCursor, cutoff));
     }),
     (unsubscribe) => Effect.sync(unsubscribe),
   );

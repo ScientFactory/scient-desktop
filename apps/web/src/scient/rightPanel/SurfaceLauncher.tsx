@@ -300,6 +300,7 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
     event.stopPropagation();
     entry.onClick();
   });
+  // oxlint-disable-next-line t3code/react-effect-budget -- The launcher's card shortcuts listen while it is shown.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => handleShortcut(event);
     window.addEventListener("keydown", handler, true);

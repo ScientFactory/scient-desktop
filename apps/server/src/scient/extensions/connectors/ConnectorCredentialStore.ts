@@ -160,35 +160,38 @@ const make = Effect.gen(function* () {
         version: envelope.value.version,
       });
     }),
-    replace: (ref, material, expectedVersion) =>
-      writes.withPermits(1)(
-        Effect.gen(function* () {
-          const envelope = yield* readEnvelope(ref);
-          if (Option.isNone(envelope)) {
-            return yield* new ExtensionsError({
-              reason: "not-found",
-              message: "The connector credential no longer exists.",
-            });
-          }
-          if (envelope.value.version !== expectedVersion) {
-            return yield* new SecretVersionConflict({
-              expectedVersion,
-              actualVersion: envelope.value.version,
-            });
-          }
-          const version = envelope.value.version + 1;
-          yield* writeEnvelope(
-            ref,
-            { ...envelope.value, version, material: Buffer.from(material).toString("base64") },
-            false,
-          );
-          return version;
-        }),
-      ),
+    replace: Effect.fn("ConnectorCredentialStore.replace")(
+      function (ref, material, expectedVersion) {
+        return writes.withPermits(1)(
+          Effect.gen(function* () {
+            const envelope = yield* readEnvelope(ref);
+            if (Option.isNone(envelope)) {
+              return yield* new ExtensionsError({
+                reason: "not-found",
+                message: "The connector credential no longer exists.",
+              });
+            }
+            if (envelope.value.version !== expectedVersion) {
+              return yield* new SecretVersionConflict({
+                expectedVersion,
+                actualVersion: envelope.value.version,
+              });
+            }
+            const version = envelope.value.version + 1;
+            yield* writeEnvelope(
+              ref,
+              { ...envelope.value, version, material: Buffer.from(material).toString("base64") },
+              false,
+            );
+            return version;
+          }),
+        );
+      },
+    ),
     // Serialized with `replace`, so a replace that read the entry before the
     // removal cannot write it back afterwards.
-    remove: (ref) =>
-      REF_PATTERN.test(ref)
+    remove: Effect.fn("ConnectorCredentialStore.remove")(function (ref) {
+      return REF_PATTERN.test(ref)
         ? writes.withPermits(1)(
             secrets
               .remove(ref)
@@ -196,9 +199,10 @@ const make = Effect.gen(function* () {
                 Effect.mapError(() => unavailable("A connector credential could not be removed.")),
               ),
           )
-        : Effect.void,
-    recordUse: (use) =>
-      Effect.logInfo("connector credential used", {
+        : Effect.void;
+    }),
+    recordUse: Effect.fn("ConnectorCredentialStore.recordUse")(function (use) {
+      return Effect.logInfo("connector credential used", {
         target: use.target,
         decision: use.decision,
         outcome: use.outcome,
@@ -206,7 +210,8 @@ const make = Effect.gen(function* () {
         threadId: use.scope.thread?.threadId,
         providerSessionId: use.scope.thread?.providerSessionId,
         providerInstanceId: use.scope.thread?.providerInstanceId,
-      }),
+      });
+    }),
   });
 });
 

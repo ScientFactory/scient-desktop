@@ -1,6 +1,11 @@
-import type { DesktopCliCommandState } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
+import {
+  desktopCliCommandStateAtom,
+  getDesktopCliCommandBridge,
+  refreshDesktopCliCommandState,
+} from "~/state/desktopCliCommand";
+import { useEnvironmentQuery } from "~/state/query";
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
@@ -11,29 +16,16 @@ import { searchableSetting } from "./settingsSearch";
  * it off again. Hidden where the desktop build has no launcher to install.
  */
 export function CliCommandSettingsRow() {
-  const bridge = typeof window === "undefined" ? undefined : window.desktopBridge?.cliCommand;
-  const [state, setState] = useState<DesktopCliCommandState | null>(null);
+  const bridge = getDesktopCliCommandBridge();
+  const query = useEnvironmentQuery(bridge ? desktopCliCommandStateAtom : null);
+  const state = query.data;
   const [pending, setPending] = useState(false);
-
-  useEffect(() => {
-    if (!bridge) return;
-    let cancelled = false;
-    void bridge
-      .getState()
-      .then((next) => {
-        if (!cancelled) setState(next);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [bridge]);
 
   const change = (action: "install" | "uninstall") => {
     if (!bridge || pending) return;
     setPending(true);
     void bridge[action]()
-      .then(setState)
+      .then(refreshDesktopCliCommandState)
       .catch((error: unknown) => {
         toastManager.add(
           stackedThreadToast({
@@ -46,10 +38,7 @@ export function CliCommandSettingsRow() {
           }),
         );
         // SCIENT-FORK:START - refresh launcher state after a partial failure.
-        return bridge
-          .getState()
-          .then(setState)
-          .catch(() => undefined);
+        refreshDesktopCliCommandState();
         // SCIENT-FORK:END
       })
       .finally(() => setPending(false));
@@ -76,7 +65,7 @@ export function CliCommandSettingsRow() {
             <Button
               size="sm"
               variant="outline"
-              disabled={pending}
+              disabled={pending || query.isPending}
               onClick={() => change("install")}
             >
               Install scient
@@ -86,7 +75,7 @@ export function CliCommandSettingsRow() {
             <Button
               size="sm"
               variant="outline"
-              disabled={pending}
+              disabled={pending || query.isPending}
               onClick={() => change("uninstall")}
             >
               Remove

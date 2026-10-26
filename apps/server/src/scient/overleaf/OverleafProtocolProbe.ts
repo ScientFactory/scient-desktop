@@ -11,6 +11,8 @@ import type { OverleafGitError } from "./OverleafGitExecutor.ts";
 import { OverleafGitExecutor, type OverleafGitExecuteResult } from "./OverleafGitExecutor.ts";
 import * as Repository from "./OverleafRepository.ts";
 
+const decodeProbeUrl = Schema.decodeOption(Schema.URLFromString);
+
 export interface ProbeObservation {
   readonly name: string;
   readonly status: "passed" | "observed" | "unknown" | "failed" | "unverified";
@@ -48,7 +50,7 @@ export interface ProbeHooks {
 }
 
 export function cloudProbeGitUrl(input: string): string | null {
-  const parsed = Schema.decodeUnknownOption(Schema.URLFromString)(input.trim());
+  const parsed = decodeProbeUrl(input.trim());
   if (Option.isNone(parsed)) return null;
   const url = parsed.value;
   if (
@@ -156,7 +158,7 @@ export const runProtocolProbe = Effect.fn("OverleafProtocolProbe.run")(function*
   readonly prefix: string;
   readonly hooks: ProbeHooks;
 }) {
-  const { repository: repository, git, hooks, token, repo, prefix } = input;
+  const { repository, git, hooks, token, repo, prefix } = input;
   if (!/^scient-probe-[0-9a-f-]{36}$/u.test(prefix))
     return yield* new Repository.OverleafRepositoryError({
       reason: "invalid-tree",

@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   OmpSettings,
+  ChatAttachmentId,
   EnvironmentId,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   MessageId,
@@ -15,6 +16,7 @@ import {
   RunId,
   RunAttemptId,
   ThreadId,
+  type ChatAttachment,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
@@ -368,6 +370,7 @@ const harness = Effect.fnUntraced(function* (
 const imageHarness = Effect.fnUntraced(function* (
   maxFrameBytes = 1_048_576,
   configuration: Partial<Parameters<typeof scriptedOmpRpc>[0]> = {},
+  target = ompTarget,
 ) {
   const peer = scriptedOmpRpc({
     models: [{ provider: "test", id: "selected", input: ["text", "image"], contextWindow: null }],
@@ -375,7 +378,7 @@ const imageHarness = Effect.fnUntraced(function* (
     maxFrameBytes,
     ...configuration,
   });
-  const h = yield* harness(false, { makeProcess: peer.makeProcess });
+  const h = yield* harness(false, { makeProcess: peer.makeProcess, target });
   yield* h.fs.makeDirectory(h.config.attachmentsDir, { recursive: true });
   const image = Effect.fnUntraced(function* (id: string, size: number) {
     const stored = h.path.join(h.config.attachmentsDir, `${id}.png`);
@@ -391,7 +394,7 @@ const imageHarness = Effect.fnUntraced(function* (
   const send = Effect.fnUntraced(function* (
     ordinal: number,
     text: string,
-    attachments: ReadonlyArray<Effect.Success<ReturnType<typeof image>>>,
+    attachments: ReadonlyArray<ChatAttachment>,
   ) {
     yield* h.runtime.startTurn({
       ...h.input,
@@ -893,7 +896,10 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           const h = yield* imageHarness();
           const small = yield* h.send(1, "small", [yield* h.image("small", 600 * 1024)]);
           assert.lengthOf(small.frame.images ?? [], 1);
-          assert.equal(small.frame.message, "small");
+          assert.equal(
+            small.frame.message,
+            `small\n\n[Attached image "small.png" is saved at: ${yield* h.fs.realPath(h.path.join(h.config.attachmentsDir, "small.png"))}]`,
+          );
           assert.isAtMost(small.bytes, 1_048_576);
           assert.equal(Buffer.from(small.frame.images![0]!.data, "base64").length, 600 * 1024);
           for (const [ordinal, size] of [
@@ -919,6 +925,58 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         }),
       ),
   );
+  it.effect.each([ompTarget, scientAgentTarget])(
+    "lists document extraction, SVG files, and captured data for $name",
+    (target) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* imageHarness(1_048_576, {}, target);
+          const document = h.path.join(h.config.attachmentsDir, "report.docx");
+          const svg = h.path.join(h.config.attachmentsDir, "report.svg");
+          yield* h.fs.writeFileString(document, "document bytes");
+          yield* h.fs.writeFileString(`${document}.txt`, "Calibration 946");
+          yield* h.fs.writeFileString(svg, "<svg/>");
+          const captured = {
+            ...(yield* h.image("captured", 1)),
+            source: {
+              kind: "snap-shot" as const,
+              capturedAt: "2026-10-26T00:00:00.000Z",
+              appName: "Editor",
+              windowTitle: "report",
+              accessibleText: "Captured measurement",
+            },
+          };
+          const sent = yield* h.send(1, "Read these", [
+            {
+              type: "file",
+              id: ChatAttachmentId.make("report"),
+              name: "report.docx",
+              mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              sizeBytes: 14,
+            },
+            {
+              type: "file",
+              id: ChatAttachmentId.make("report"),
+              name: "report.svg",
+              mimeType: "image/svg+xml",
+              sizeBytes: 6,
+            },
+            captured,
+          ]);
+          const realDocument = yield* h.fs.realPath(document);
+          assert.include(
+            sent.frame.message ?? "",
+            `${realDocument} (text extracted to: ${realDocument}.txt)`,
+          );
+          assert.include(sent.frame.message ?? "", yield* h.fs.realPath(svg));
+          assert.include(sent.frame.message ?? "", "Untrusted captured-window data");
+          assert.include(sent.frame.message ?? "", "Captured measurement");
+          assert.lengthOf(sent.frame.images ?? [], 1);
+          assert.equal(sent.frame.images![0]!.mimeType, "image/png");
+        }),
+      ),
+  );
+
   it.effect("budgets several native OMP images together against one serialized frame", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -941,7 +999,10 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         const h = yield* imageHarness(2 * 1024 * 1024);
         const sent = yield* h.send(1, "inline", [yield* h.image("wide", 900 * 1024)]);
         assert.lengthOf(sent.frame.images ?? [], 1);
-        assert.equal(sent.frame.message, "inline");
+        assert.equal(
+          sent.frame.message,
+          `inline\n\n[Attached image "wide.png" is saved at: ${yield* h.fs.realPath(h.path.join(h.config.attachmentsDir, "wide.png"))}]`,
+        );
         assert.lengthOf(attachedImagePaths(sent.frame.message), 0);
         assert.isAtMost(sent.bytes, 2 * 1024 * 1024);
         assert.isAbove(sent.bytes, 1_048_576);

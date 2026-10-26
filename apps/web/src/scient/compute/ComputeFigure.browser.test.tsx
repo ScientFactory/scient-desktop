@@ -141,7 +141,8 @@ async function loaded(_fixture: _Fixture, container: HTMLElement) {
   expect(img.naturalHeight).toBe(480);
   _fixture.readyImages.add(img);
   await act(() => {
-    img.src = img.src;
+    const decodedSource = img.src;
+    img.src = decodedSource;
   });
   await vi.waitFor(() => expect(button("View Figure 1", container).disabled).toBe(false));
   return img;

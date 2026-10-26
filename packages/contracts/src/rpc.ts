@@ -774,7 +774,7 @@ const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
-const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, {
+export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, {
   payload: Schema.Struct({
     instanceId: Schema.optional(ProviderInstanceId),
     cwd: Schema.optional(TrimmedNonEmptyString),
@@ -783,6 +783,14 @@ const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, 
     refreshModels: Schema.optional(Schema.Boolean),
     /** Explicit Settings action: bypass the managed catalog's automatic refresh cadence. */
     refreshManagedRuntimeCatalog: Schema.optional(Schema.Boolean),
+    /**
+     * Reply without snapshots, or with only the requested instance's cwd snapshot. Snapshots then
+     * reach the client only through these replies, so another client's scan shows on its next
+     * refresh, at most one TTL later.
+     */
+    workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
+    /** As on `subscribeServerConfig`: add /usage-limits to the replied snapshot. */
+    usageLimitsCommand: Schema.optional(Schema.Boolean),
   }),
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
@@ -2014,6 +2022,8 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
     usageLimitSources: Schema.optional(Schema.Boolean),
     /** Advertise client handling before the server offers /usage-limits, or older clients send it as a prompt. */
     usageLimitsCommand: Schema.optional(Schema.Boolean),
+    /** Omit per-cwd provider snapshots; the client fetches its cwd through `server.refreshProviders`. */
+    workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
   }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),

@@ -37,18 +37,6 @@ export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
   "recordingStop",
 ] as const;
 
-const PREVIEW_AUTOMATION_OPERATIONS = [
-  ...PREVIEW_AUTOMATION_V1_OPERATIONS,
-  "resize",
-  "setColorScheme",
-  // Internal Scient document-host operations. These use the existing
-  // authenticated desktop request rail but are not exposed as preview tools.
-  "documentPdfRender",
-  "documentPdfPresent",
-  "documentLatexPresent",
-  "documentPagePdfRender",
-] as const;
-
 export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
   "resize",

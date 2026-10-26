@@ -255,16 +255,21 @@ export function makeGrokDriver<Requirements = never, Extension extends object = 
         effectiveEnvironment,
         cwd,
       ).pipe(
-        Effect.flatMap((snapshot) =>
-          effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
-            ? readGrokAccount(effectiveEnvironment).pipe(
-                Effect.map(({ email, usageLimits }) => ({
-                  ...snapshot,
-                  auth: email ? { ...snapshot.auth, email } : snapshot.auth,
-                  usageLimits,
-                })),
-              )
-            : Effect.succeed(snapshot),
+        Effect.filterOrElse(
+          (snapshot) =>
+            !(
+              effectiveConfig.enabled &&
+              snapshot.installed &&
+              snapshot.auth.status === "authenticated"
+            ),
+          (snapshot) =>
+            readGrokAccount(effectiveEnvironment).pipe(
+              Effect.map(({ email, usageLimits }) => ({
+                ...snapshot,
+                auth: email ? { ...snapshot.auth, email } : snapshot.auth,
+                usageLimits,
+              })),
+            ),
         ),
         Effect.map(decorateSnapshot),
         Effect.provideService(HttpClient.HttpClient, httpClient),

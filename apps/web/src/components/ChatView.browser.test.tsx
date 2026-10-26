@@ -58,7 +58,10 @@ vi.mock("../state/threads", async (original) => ({
   ...(await original()),
   environmentThreadDetails: lab.details,
 }));
-vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: lab.registry }));
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: lab.registry,
+  subscribeAtomChanges: () => () => undefined,
+}));
 vi.mock("../state/entities", { spy: true });
 vi.mock("../state/session", { spy: true });
 vi.mock("../state/environments", { spy: true });

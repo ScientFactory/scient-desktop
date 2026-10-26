@@ -44,11 +44,12 @@ describe("forgejoComment", () => {
 
 // SCIENT-FORK:START forgejo-warning-outcome — moved here from the server's watch tests, which can
 // no longer import the reader: a warning stays pending on the wire and carries its outcome.
+const decodeForgejoStatus = Schema.decodeSync(ForgejoStatus);
 describe("forgejoChecks", () => {
   it("reads a warning status as pending with a warning outcome", () => {
     const [warning] = forgejoChecks(
       [
-        Schema.decodeSync(ForgejoStatus)({
+        decodeForgejoStatus({
           context: "lint",
           status: "warning",
           description: "finished with warnings",
