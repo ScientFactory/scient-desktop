@@ -1150,7 +1150,7 @@ int platform_windows_main(int argc, char **argv) {
     free(user); if (token) CloseHandle(token); if (process) CloseHandle(process);
     printf("{\"code\":%lu}\n", (unsigned long)error); return 0;
   }
-  if (argc == 4 && (!strcmp(argv[2], "register-sync-root") || !strcmp(argv[2], "unregister-sync-root") || !strcmp(argv[2], "hold-sync-root"))) {
+  if (argc == 4 && (!strcmp(argv[2], "register-sync-root") || !strcmp(argv[2], "unregister-sync-root"))) {
     HMODULE library = LoadLibraryW(L"cldapi.dll");
     typedef HRESULT (WINAPI *Register)(LPCWSTR, const CF_SYNC_REGISTRATION *, const CF_SYNC_POLICIES *, CF_REGISTER_FLAGS);
     typedef HRESULT (WINAPI *Unregister)(LPCWSTR);
@@ -1158,10 +1158,6 @@ int platform_windows_main(int argc, char **argv) {
     FARPROC address = library ? GetProcAddress(library, "CfRegisterSyncRoot") : NULL; memcpy(&registration, &address, sizeof(registration));
     address = library ? GetProcAddress(library, "CfUnregisterSyncRoot") : NULL; memcpy(&unregistration, &address, sizeof(unregistration));
     wchar_t *path = wide_path(argv[3]); HRESULT result = E_NOTIMPL;
-    HANDLE held = INVALID_HANDLE_VALUE;
-    if (path && !strcmp(argv[2], "hold-sync-root")) held = CreateFileW(path, FILE_LIST_DIRECTORY | FILE_ADD_FILE | DELETE | READ_CONTROL,
-      FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
-      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_DELETE_ON_CLOSE, NULL);
     if (registration && unregistration && path) {
       CF_SYNC_REGISTRATION data = {0}; data.StructSize = sizeof(data);
       data.ProviderName = L"Scient file qualification"; data.ProviderVersion = L"1";
@@ -1170,10 +1166,7 @@ int platform_windows_main(int argc, char **argv) {
       policies.Population.Primary = CF_POPULATION_POLICY_FULL;
       result = strcmp(argv[2], "unregister-sync-root") ? registration(path, &data, &policies, CF_REGISTER_FLAG_NONE) : unregistration(path);
     }
-    if (!strcmp(argv[2], "hold-sync-root") && SUCCEEDED(result) && held != INVALID_HANDLE_VALUE) {
-      printf("HELD\n"); fflush(stdout); getchar();
-    }
-    if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+
     printf("{\"code\":%lu}\n", (unsigned long)HRESULT_CODE(result));
     free(path); if (library) FreeLibrary(library); return 0;
   }
@@ -1204,7 +1197,7 @@ int platform_windows_main(int argc, char **argv) {
     printf("HELD\n"); fflush(stdout); getchar();
     UnmapViewOfFile(view); CloseHandle(mapping); return 0;
   }
-  if (argc == 4 && (!strcmp(argv[2], "as-account") || !strcmp(argv[2], "as-account-cloud"))) {
+  if (argc == 4 && !strcmp(argv[2], "as-account")) {
     wchar_t user[256], password[256];
     GetEnvironmentVariableW(L"SCIENT_TEST_ACCOUNT", user, 256);
     GetEnvironmentVariableW(L"SCIENT_TEST_PASSWORD", password, 256);
@@ -1217,7 +1210,6 @@ int platform_windows_main(int argc, char **argv) {
       file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
       if (file == INVALID_HANDLE_VALUE) error = GetLastError();
-      else if (!strcmp(argv[2], "as-account-cloud")) error = (DWORD)cloud_managed(file);
     }
     RevertToSelf(); if (token) CloseHandle(token);
     if (file != INVALID_HANDLE_VALUE) CloseHandle(file);

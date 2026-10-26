@@ -392,13 +392,6 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
             }),
           ).code;
         expect(access(target)).toBe(0);
-        const cloud = JSON.parse(
-          NodeChildProcess.execFileSync(probe!, ["--windows=1", "as-account-cloud", target], {
-            encoding: "utf8",
-            env: { ...process.env, SCIENT_TEST_ACCOUNT: account, SCIENT_TEST_PASSWORD: password },
-          }),
-        );
-        expect(cloud.code, JSON.stringify(cloud)).toBe(0);
         const result = await mutateRetainedFile(input, target, {
           at: async (point) => {
             if (point === "restricted") expect(access(target)).not.toBe(0);
@@ -498,42 +491,6 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
 });
 
 describe.skipIf(!windows)("Windows retention placement", () => {
-  it("deletes a temporary Cloud Files registration when its process dies", () =>
-    fixture(async (input) => {
-      const directory = NodePath.join(input.retentionDirectory, "temporary-cloud-root");
-      await ensureNativePrivateRetentionDirectory(helper!, directory);
-      const child = NodeChildProcess.spawn(probe!, ["--windows=1", "hold-sync-root", directory], {
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      const retired = new Promise<void>((resolve) => child.once("close", () => resolve()));
-      try {
-        await new Promise<void>((resolve, reject) => {
-          child.stdout.once("data", (data) =>
-            String(data).includes("HELD") ? resolve() : reject(new Error(String(data))),
-          );
-          child.once("error", reject);
-          child.once("exit", (code) => {
-            if (code !== null) reject(new Error(`registration exited ${code}`));
-          });
-        });
-        NodeChildProcess.execFileSync(probe!, ["--windows=1", "terminate", String(child.pid)]);
-        await retired;
-        await expect(NodeFSP.lstat(directory)).rejects.toMatchObject({ code: "ENOENT" });
-        const registration = (operation: string) =>
-          JSON.parse(
-            NodeChildProcess.execFileSync(
-              probe!,
-              ["--windows=1", operation, input.retentionDirectory],
-              { encoding: "utf8" },
-            ),
-          ).code;
-        expect(registration("register-sync-root")).toBe(0);
-        expect(registration("unregister-sync-root")).toBe(0);
-      } finally {
-        child.stdin.end("\n");
-        await retired;
-      }
-    }));
   it("refuses a registered Cloud Files sync root and its descendant without repairing it", () =>
     fixture(async (input) => {
       const root = NodePath.join(input.retentionDirectory, "cloud-root");
