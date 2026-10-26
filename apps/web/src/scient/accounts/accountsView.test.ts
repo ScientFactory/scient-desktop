@@ -9,6 +9,7 @@ import {
 import {
   accountCatalogue,
   catalogueDetails,
+  accountIconUrl,
   capturedSignInInput,
   automaticSignIn,
   writableOnePasswordVaults,
@@ -244,4 +245,13 @@ describe("matchExistingProfile", () => {
   ])("returns %s", (_, name, sources, expected) => {
     expect(matchExistingProfile(name, sources)?.profile.name).toBe(expected);
   });
+});
+
+it("finds bundled logos by domain and parent domain, and none for unknown sites", () => {
+  expect(accountIconUrl(["github.com"])).toMatch(/^data:image\//);
+  expect(accountIconUrl(["api.openai.com"])).toMatch(/^data:image\//);
+  expect(accountIconUrl(["https://moodle.huji.ac.il/my"])).toMatch(/^data:image\//);
+  expect(accountIconUrl([], "Postgres database")).toMatch(/^data:image\//);
+  expect(accountIconUrl(["unknown.example"])).toBeUndefined();
+  expect(accountIconUrl([])).toBeUndefined();
 });

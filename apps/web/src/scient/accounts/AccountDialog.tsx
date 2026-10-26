@@ -33,6 +33,7 @@ import { accountsState } from "./accountsState";
 import { useAccountCommand } from "./useAccounts";
 import {
   accountCatalogue,
+  accountIconUrl,
   catalogueDetails,
   KIND_LABELS,
   secretFields,
@@ -536,7 +537,12 @@ export function AccountDialog({
                     .map((entry) => (
                       <DiscoveryListRow
                         key={entry.name}
-                        icon={<ExtensionIcon name={entry.name} />}
+                        icon={
+                          <ExtensionIcon
+                            name={entry.name}
+                            iconUrl={accountIconUrl(entry.site ? [entry.site] : [], entry.name)}
+                          />
+                        }
                         title={entry.name}
                         description={KIND_LABELS[entry.kind]}
                         onClick={() => choose(entry)}

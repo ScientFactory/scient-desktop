@@ -18,6 +18,7 @@ import {
   type BrowserImportSource,
   type DesktopSourceProfileDetails,
 } from "@t3tools/contracts";
+import ACCOUNT_ICONS from "./accountIcons.json";
 
 export function siteMatchesUrl(site: string, url: string): boolean {
   try {
@@ -95,6 +96,39 @@ export function importProfileName(sourceName: string, taken: ReadonlyArray<strin
     name = `${base.slice(0, BROWSER_PROFILE_NAME_MAX_LENGTH - suffix.length)}${suffix}`;
   }
   return name;
+}
+
+/**
+ * Bundled official site logos as inline images, keyed by domain (nothing loads at runtime).
+ * GitHub, GitLab, Hugging Face and Cloudflare come from the Extensions curated icon registry
+ * (apps/server/src/scient/extensions/discover/curatedIcons.json); the rest are the sites' own
+ * favicons. They identify third-party services without affiliation or endorsement.
+ */
+const ICON_BY_DOMAIN: Readonly<Record<string, string>> = ACCOUNT_ICONS;
+
+/** Catalogue names whose logo domain differs from the account's site. */
+const ICON_NAME_ALIASES: Readonly<Record<string, string>> = {
+  moodle: "moodle.org",
+  postgres: "postgresql.org",
+  gcloud: "cloud.google.com",
+};
+
+/** The bundled logo for an account's sites, matched by domain or parent domain, then by name. */
+export function accountIconUrl(sites: ReadonlyArray<string>, name?: string): string | undefined {
+  for (const site of sites) {
+    const host = site
+      .replace(/^https?:\/\//, "")
+      .split("/")[0]!
+      .toLowerCase();
+    for (const [domain, icon] of Object.entries(ICON_BY_DOMAIN)) {
+      if (host === domain || host.endsWith(`.${domain}`)) return icon;
+    }
+  }
+  const lowered = name?.toLowerCase() ?? "";
+  for (const [alias, domain] of Object.entries(ICON_NAME_ALIASES)) {
+    if (lowered.includes(alias)) return ICON_BY_DOMAIN[domain];
+  }
+  return undefined;
 }
 
 export const accountCatalogue = [

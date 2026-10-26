@@ -37,7 +37,7 @@ import { AccountDialog } from "./AccountDialog";
 import { BrowserProfiles, BrowserImportDialog } from "./BrowserProfiles";
 import { PasswordStores, OnePasswordDialog } from "./PasswordStores";
 import { AccountApprovals } from "./AccountApprovals";
-import { KIND_LABELS } from "./accountsView";
+import { KIND_LABELS, accountIconUrl } from "./accountsView";
 
 function AccountRow({
   account,
@@ -61,11 +61,21 @@ function AccountRow({
   const [busy, setBusy] = useState(false);
   const target = { type: "account", accountId: account.accountId } as const;
   const details = account.details;
+  const iconUrl = accountIconUrl("sites" in details ? details.sites : [], account.name);
   return (
     <SettingsRow
       title={
         <span className="flex min-w-0 items-baseline gap-2">
-          <KeyRoundIcon className="size-4 shrink-0 self-center text-muted-foreground" />
+          {iconUrl ? (
+            <span
+              aria-hidden
+              className="flex size-6 shrink-0 items-center justify-center self-center overflow-hidden rounded-md border bg-white p-0.5 [color-scheme:light] dark:border-white/10"
+            >
+              <img alt="" src={iconUrl} className="size-full object-contain" />
+            </span>
+          ) : (
+            <KeyRoundIcon className="size-4 shrink-0 self-center text-muted-foreground" />
+          )}
           <button
             type="button"
             className="truncate text-left outline-none focus-visible:underline"
