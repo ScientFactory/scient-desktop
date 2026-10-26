@@ -21,7 +21,6 @@ import {
   makeCheckoutBarrier,
 } from "../workspace/CheckoutBarrier.ts";
 import {
-  fileExchangeTestHelper,
   filePublicationTestHelper,
   nativePublicationHost,
 } from "../workspace/fileExchange.testkit.ts";
@@ -118,8 +117,7 @@ export const world = (input: {
     yield* write(folder, input.localOnly ?? {});
 
     const helper = yield* Effect.promise(() => filePublicationTestHelper());
-    // The retention probe runs the exchange helper; the applier publishes through the other.
-    const exchangeHelper = (yield* Effect.promise(() => fileExchangeTestHelper())) ?? null;
+    const publicationHelper = helper ?? null;
     const git = yield* OverleafGitExecutor.make({
       runtimeRoot: NodePath.join(root, "runtime"),
       allowLocalProtocols: true,
@@ -264,7 +262,7 @@ export const world = (input: {
       environmentId: "environment-1",
       connectionId: CONNECTION,
       checkoutRoot: checkout,
-      exchangeHelper,
+      publicationHelper,
       expected: null,
     });
     const fileId = (path: string) =>
@@ -293,7 +291,7 @@ export const world = (input: {
 
     const options = {
       stateRoot,
-      exchangeHelper,
+      publicationHelper,
       fetchRemote,
       remoteHead,
       pushRemote,

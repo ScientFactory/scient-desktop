@@ -3,6 +3,7 @@
  * authority and the stored token. Only a conflict stops a sync; editors are saved
  * in every window before any folder write, holding the connection throughout.
  * A connection is used only in its recorded checkout by its host project. */
+import { resolveNativeFilePublicationHelperPath } from "../workspace/NativeFilePublication.ts";
 import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -364,7 +365,7 @@ const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).
 export interface OverleafSyncOptions {
   readonly stateRoot: string;
   readonly environmentId: string;
-  readonly exchangeHelper: string | null;
+  readonly publicationHelper: string | null;
   /** Running threads with their checkout path and lineage; null when they could not be read. */
   readonly activeThreads: Effect.Effect<ReadonlyArray<{
     readonly threadId: string;
@@ -414,7 +415,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const gitUrl = options.gitUrl ?? ((projectId: string) => `https://git.overleaf.com/${projectId}`);
   const coordinator = yield* OverleafCoordinator.make({
     stateRoot: options.stateRoot,
-    exchangeHelper: options.exchangeHelper,
+    publicationHelper: options.publicationHelper,
     reservations,
     volumeUuid,
     ...(options.hooks ? { hooks: options.hooks } : {}),
@@ -464,7 +465,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const connections = yield* makeOverleafConnections({
     stateRoot: options.stateRoot,
     environmentId: options.environmentId,
-    exchangeHelper: options.exchangeHelper,
+    publicationHelper: options.publicationHelper,
     reservations,
     volumeUuid,
     gitUrl,
@@ -1326,7 +1327,12 @@ export const layer = Layer.unwrap(
         return yield* make({
           stateRoot,
           environmentId,
-          exchangeHelper: config.fileExchangePath ?? null,
+          publicationHelper:
+            config.filePublicationHelperPath ??
+            (yield* Effect.promise(() =>
+              resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
+            )) ??
+            null,
           activeThreads,
         });
       }),

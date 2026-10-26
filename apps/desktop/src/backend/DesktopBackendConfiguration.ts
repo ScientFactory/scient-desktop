@@ -32,7 +32,6 @@ import {
 // SCIENT-FORK:START — Scient launch environment and bundled SyncTeX navigator.
 import {
   resolveSyncTexNavigatorPath,
-  resolveFileExchangePath,
   scientPrimaryBackendEnv,
   scientWslBackendEnv,
   WSL_CANDIDATE_ENV_NAMES,
@@ -560,7 +559,6 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       readonly resourceMonitorPath: Option.Option<string>;
       readonly filePublicationHelperPath: Option.Option<string>;
       readonly syncTexNavigatorPath: Option.Option<string>;
-      readonly fileExchangePath: Option.Option<string>;
       readonly cliPath: Option.Option<string>;
       readonly shellEnvironmentPrepared: boolean;
     },
@@ -600,10 +598,6 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       ...Option.match(input.syncTexNavigatorPath, {
         onNone: () => ({}),
         onSome: (syncTexNavigatorPath) => ({ syncTexNavigatorPath }),
-      }),
-      ...Option.match(input.fileExchangePath, {
-        onNone: () => ({}),
-        onSome: (fileExchangePath) => ({ fileExchangePath }),
       }),
       ...buildObservabilityFragment(input.observabilitySettings, environment.safetyEnvelopeEnabled),
     };
@@ -895,10 +889,6 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
-    const fileExchangePath = yield* resolveFileExchangePath().pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
-    );
     // SCIENT-FORK:END
     const cliPath = yield* DesktopCliShim.install.pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -913,7 +903,6 @@ export const make = Effect.gen(function* () {
       shellEnvironmentPrepared,
       // SCIENT-FORK:START — the bundled SyncTeX navigator.
       syncTexNavigatorPath,
-      fileExchangePath,
       // SCIENT-FORK:END
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),

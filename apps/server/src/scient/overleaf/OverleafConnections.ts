@@ -238,8 +238,8 @@ export interface OverleafConnectionsOptions {
   /** `stateDir/overleaf`: the private repositories live here. */
   readonly stateRoot: string;
   readonly environmentId: string;
-  /** The host's exchange helper; null only for the declared development fallback. */
-  readonly exchangeHelper: string | null;
+  /** The host's publication helper; null only for the declared development fallback. */
+  readonly publicationHelper: string | null;
   readonly reservations: OverleafReservations;
   /** Test seam: the Git address of a project. Defaults to Overleaf's. */
   readonly gitUrl?: (projectId: string) => string;
@@ -513,7 +513,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
                   environmentId: options.environmentId,
                   connectionId: id,
                   checkoutRoot: input.checkoutRoot,
-                  exchangeHelper: options.exchangeHelper,
+                  publicationHelper: options.publicationHelper,
                   expected: archive.retention.vaultIdentity,
                 });
                 const next: OverleafConnectionDocument = {
@@ -544,7 +544,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
               environmentId: options.environmentId,
               connectionId: id,
               checkoutRoot: input.checkoutRoot,
-              exchangeHelper: options.exchangeHelper,
+              publicationHelper: options.publicationHelper,
               expected: null,
             })
             .pipe(Effect.tapError(() => removeCreated));
@@ -773,7 +773,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
               environmentId: options.environmentId,
               connectionId: document.connectionId,
               checkoutRoot: input.checkoutRoot,
-              exchangeHelper: options.exchangeHelper,
+              publicationHelper: options.publicationHelper,
               expected: document.retention.vaultIdentity,
             });
             const next: OverleafConnectionDocument = {
