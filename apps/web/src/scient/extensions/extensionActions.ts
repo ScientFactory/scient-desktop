@@ -351,6 +351,17 @@ export function useProviderPluginActions(
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   return {
     ...lock,
+    setEnabled: (enabled: boolean) =>
+      lock.run("enable", () =>
+        act({
+          environmentId,
+          input: {
+            instanceId: provider.instanceId,
+            action: { type: "set-enabled", pluginId: plugin.id, enabled },
+            ...(workspace ? { cwd: workspace } : {}),
+          },
+        }),
+      ),
     uninstall: async () => {
       if (lock.locked || plugin.canUninstall !== true) return;
       const confirmed = await confirmDestructive(

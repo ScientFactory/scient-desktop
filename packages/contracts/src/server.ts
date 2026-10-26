@@ -149,6 +149,9 @@ export const ServerProviderPlugin = Schema.Struct({
   enabled: Schema.Boolean,
   /** Provider-owned capability. Absent means Scient must render this plugin read-only. */
   canUninstall: Schema.optional(Schema.Boolean),
+  canSetEnabled: Schema.optional(Schema.Boolean),
+  sourceLabel: Schema.optional(TrimmedNonEmptyString),
+  scope: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderPlugin = typeof ServerProviderPlugin.Type;
 

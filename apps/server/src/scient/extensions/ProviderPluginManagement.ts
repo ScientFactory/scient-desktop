@@ -202,6 +202,56 @@ export function makeProviderPluginManagement(
     return { providers };
   });
 
+  const setEnabled = Effect.fn("ProviderPluginManagement.setEnabled")(function* (
+    input: ProviderPluginActionInput,
+    pluginId: string,
+    enabled: boolean,
+  ) {
+    const { actions } = yield* admit(input.instanceId);
+    if (!actions?.setEnabled)
+      return yield* failure(
+        "unsupported",
+        "This agent cannot change plugin enablement from Scient.",
+      );
+    const current = yield* untilRetired(
+      actions,
+      "checking the plugin",
+      actions.listPlugins({ cwd: input.cwd }),
+    ).pipe(
+      Effect.mapError(() => failure("state-unavailable", "Could not list the agent's plugins.")),
+    );
+    if (!current.plugins.some((plugin) => plugin.id === pluginId && plugin.canSetEnabled))
+      return yield* failure("unsupported", "This plugin cannot be switched from Scient.");
+    yield* untilRetired(
+      actions,
+      "changing the plugin",
+      actions.setEnabled({ pluginId, enabled, cwd: input.cwd }),
+    ).pipe(
+      Effect.mapError(() => failure("provider-rejected", "The agent did not confirm the change.")),
+    );
+    const listing = yield* untilRetired(
+      actions,
+      "verifying the plugin",
+      actions.listPlugins({ cwd: input.cwd }),
+    ).pipe(
+      Effect.mapError(() =>
+        failure("state-unavailable", "The change was sent, but could not be verified."),
+      ),
+    );
+    if (listing.plugins.find((plugin) => plugin.id === pluginId)?.enabled !== enabled)
+      return yield* failure(
+        "provider-rejected",
+        "The agent still reports a different plugin state.",
+      );
+    return {
+      providers: yield* providerRegistry.recordProviderNativeInventory({
+        instanceId: input.instanceId,
+        reportedBy: actions,
+        inventory: { cwd: input.cwd, ...listing },
+      }),
+    };
+  });
+
   const reserveProcessSlot = Ref.modify(processSlotsRef, (used) =>
     used >= MAX_PENDING_PROVIDER_MCP_SIGN_INS ? [false, used] : [true, used + 1],
   ).pipe(
@@ -390,6 +440,10 @@ export function makeProviderPluginManagement(
               );
             return { providers: yield* providerRegistry.getProviders };
           });
+        case "set-enabled":
+          return writePermit.withPermits(1)(
+            setEnabled(input, input.action.pluginId, input.action.enabled),
+          );
         case "uninstall":
           return writePermit.withPermits(1)(uninstall(input, input.action.pluginId));
         case "mcp-sign-in":

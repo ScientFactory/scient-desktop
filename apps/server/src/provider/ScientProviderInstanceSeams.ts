@@ -79,6 +79,13 @@ export interface ProviderPluginActions {
   readonly readMcpServer: (input: {
     readonly serverName: string;
   }) => Effect.Effect<ServerProviderMcpServer | undefined, ProviderPluginActionFailure>;
+  readonly setEnabled?:
+    | ((input: {
+        readonly pluginId: string;
+        readonly enabled: boolean;
+        readonly cwd?: string | undefined;
+      }) => Effect.Effect<void, ProviderPluginActionFailure>)
+    | undefined;
   readonly uninstall: (input: {
     readonly pluginId: string;
     /** Workspace whose provider inventory lists the plugin. */

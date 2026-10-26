@@ -291,6 +291,11 @@
       "path": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.wake.testkit.ts",
       "anchor": "onNativeInventory",
       "purpose": "Let Claude adapter wake fixtures observe native plugin and MCP inventory reports."
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/ScientAgentDriver.ts",
+      "anchor": "makeScientAgentPluginInventory",
+      "purpose": "Publish and manage Scient Agent native plugins through its exact executable and isolated root."
     }
   ]
 }

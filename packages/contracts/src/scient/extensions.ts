@@ -452,6 +452,11 @@ export const ProviderPluginActionInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   action: Schema.Union([
     Schema.Struct({ type: Schema.Literal("refresh-inventory") }),
+    Schema.Struct({
+      type: Schema.Literal("set-enabled"),
+      pluginId: TrimmedNonEmptyString,
+      enabled: Schema.Boolean,
+    }),
     Schema.Struct({ type: Schema.Literal("uninstall"), pluginId: TrimmedNonEmptyString }),
     Schema.Struct({ type: Schema.Literal("mcp-sign-in"), serverName: TrimmedNonEmptyString }),
   ]),

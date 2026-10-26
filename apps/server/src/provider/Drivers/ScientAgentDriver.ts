@@ -33,7 +33,7 @@ import {
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { makeOmpCustomModelsClientFactory } from "../omp/OmpCustomModels.ts";
-import type { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";
+import { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";
 import { sweepStaleOmpExtensionFiles } from "../omp/OmpExtensionBootstrap.ts";
 import { OMP_ISOLATED_ARGS } from "../omp/OmpRpcProcess.ts";
 import { defaultProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
@@ -45,6 +45,10 @@ import {
 } from "@t3tools/provider-core/server/snapshotSettings";
 import { scientAgentProcessEnvironment, scientAgentTarget } from "../scient/ScientAgentTarget.ts";
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
+import {
+  makeScientAgentPluginInventory,
+  runScientAgentPluginCommand,
+} from "../../scient/extensions/ScientAgentPluginInventory.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 
 const DRIVER_KIND = scientAgentTarget.driverKind;
@@ -260,7 +264,23 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
         ),
       ),
     );
+    const executableGate = yield* OmpExecutableGate;
+    const native = yield* makeScientAgentPluginInventory((cwd, args) =>
+      runScientAgentPluginCommand(
+        launchConfig.binaryPath,
+        processEnv,
+        cwd ?? serverConfig.stateDir,
+        args,
+      ).pipe(
+        Effect.provideService(OmpExecutableGate, executableGate),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      ),
+    ).pipe(Effect.provideService(Path.Path, path));
     return {
+      pluginActions: native.actions,
+      nativeInventoryChanges: native.reports,
       instanceId,
       driverKind: DRIVER_KIND,
       continuationIdentity,

@@ -1055,17 +1055,30 @@ function ProviderPluginDetail({
           name={name}
           tagline={plugin.description}
           actions={
-            plugin.canUninstall === true ? (
-              <Button
-                variant="destructive-outline"
-                disabled={actions.locked}
-                onClick={() => void actions.uninstall()}
-              >
-                Uninstall
-              </Button>
-            ) : (
-              <ManagedBy label={group.label} />
-            )
+            <>
+              {plugin.canSetEnabled ? (
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Switch
+                    checked={plugin.enabled}
+                    disabled={actions.locked}
+                    aria-label={`Use ${name}`}
+                    onCheckedChange={(enabled) => void actions.setEnabled(enabled)}
+                  />
+                  Use plugin
+                </label>
+              ) : null}
+              {plugin.canUninstall === true ? (
+                <Button
+                  variant="destructive-outline"
+                  disabled={actions.locked}
+                  onClick={() => void actions.uninstall()}
+                >
+                  Uninstall
+                </Button>
+              ) : (
+                <ManagedBy label={group.label} />
+              )}
+            </>
           }
         />
       }
@@ -1100,6 +1113,7 @@ function ProviderPluginDetail({
           ],
           fact("Version", plugin.version),
           fact("Marketplace", plugin.marketplace),
+          fact("Source", plugin.sourceLabel),
           fact("Workspace", workspace ? workspaceLabel(workspace) : null),
           ["State", plugin.enabled ? "On" : "Off"],
         ]}

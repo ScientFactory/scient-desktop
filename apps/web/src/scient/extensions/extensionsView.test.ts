@@ -49,7 +49,7 @@ describe("extension audiences", () => {
       ],
       scient.instanceId,
     );
-    expect(groups).toHaveLength(1);
+    expect(groups).toHaveLength(2);
     expect(groups[0]?.plugins).toHaveLength(1);
     expect(groups[0]?.mcpServers).toEqual([]);
     expect(audienceReaches(providerExtensionAudience(claude, plugin), codex)).toBe(false);

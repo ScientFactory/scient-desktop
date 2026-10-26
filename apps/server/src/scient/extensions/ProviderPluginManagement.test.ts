@@ -708,3 +708,33 @@ describe("ProviderPluginManagement MCP sign-in", () => {
     ),
   );
 });
+
+describe("ProviderPluginManagement enablement", () => {
+  it.effect("publishes only verified enablement and rejects an unchanged owner state", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const plugin = { ...linear, canSetEnabled: true };
+        let enabled = true;
+        let accept = false;
+        const { actions } = yield* makeGeneration({
+          listPlugins: () => listing([{ ...plugin, enabled }]),
+          setEnabled: (input) =>
+            Effect.sync(() => {
+              if (accept) enabled = input.enabled;
+            }),
+        });
+        const harness = yield* makeHarness({ actions });
+        const input = {
+          instanceId: INSTANCE_ID,
+          action: { type: "set-enabled" as const, pluginId: plugin.id, enabled: false },
+        };
+        const rejected = yield* harness.management.act(input).pipe(Effect.flip);
+        assert.strictEqual(rejected.reason, "provider-rejected");
+        assert.strictEqual((yield* Ref.get(harness.recorded)).length, 0);
+        accept = true;
+        const result = yield* harness.management.act(input);
+        assert.strictEqual(result.providers[0]?.plugins?.[0]?.enabled, false);
+      }),
+    ),
+  );
+});

@@ -333,10 +333,20 @@ export function ProviderPluginItem({
       target={target}
       name={name}
       audience={providerExtensionAudience(provider, plugin)}
-      tagline={plugin.description ?? `${label} plugin`}
+      tagline={[plugin.description, plugin.sourceLabel ?? `${label} plugin`]
+        .filter(Boolean)
+        .join(" · ")}
       status={plugin.enabled ? null : "Off"}
       trailing={
         <ItemMenu name={name} target={target}>
+          {plugin.canSetEnabled ? (
+            <MenuItem
+              disabled={actions.locked}
+              onClick={() => void actions.setEnabled(!plugin.enabled)}
+            >
+              {plugin.enabled ? "Turn off" : "Turn on"}
+            </MenuItem>
+          ) : null}
           {plugin.canUninstall === true ? (
             <MenuItem
               variant="destructive"

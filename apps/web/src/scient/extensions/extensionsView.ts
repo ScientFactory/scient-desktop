@@ -317,7 +317,12 @@ export function collectProviderExtensionGroups(
       (server) =>
         !selected || audienceReaches(providerExtensionAudience(provider, server), selected),
     );
-    if (visiblePlugins.length === 0 && mcpServers.length === 0 && provider.driver !== "claudeAgent")
+    if (
+      visiblePlugins.length === 0 &&
+      mcpServers.length === 0 &&
+      provider.driver !== "claudeAgent" &&
+      provider.driver !== "scient"
+    )
       continue;
     groups.push({ provider, label: providerLabel(provider), plugins: visiblePlugins, mcpServers });
   }
