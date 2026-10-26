@@ -84,11 +84,12 @@ export const overleafSyncWorld = (input?: {
     const repos = yield* OverleafRepository.make.pipe(
       Effect.provideService(OverleafGitExecutor.OverleafGitExecutor, git),
     );
+    const helper = yield* Effect.promise(() => filePublicationTestHelper());
     const store = yield* OverleafStateStore.make({
       root: stateRoot,
+      publicationHelper: helper,
       volumeUuid: async () => VOLUME,
     });
-    const helper = yield* Effect.promise(() => filePublicationTestHelper());
     const publicationHelper = helper ?? null;
     const files = yield* makeApplierFiles({ root, helper, retainedHooks: {} });
     const applier = yield* makeApplier({
