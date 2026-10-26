@@ -543,6 +543,11 @@ export interface NativeFilePublicationLease {
   readonly runDirectory: (
     request: NativeFileDirectoryRequest,
   ) => Promise<NativeFilePublicationResult>;
+  readonly remove: (
+    directory: string,
+    name: string,
+    operation: "unlink" | "rmdir",
+  ) => Promise<NativeFilePublicationResult>;
   readonly assertHeld: () => void;
 }
 const LeaseReply = Schema.Struct({
@@ -784,6 +789,22 @@ export async function withNativeFilePublicationLease<T>(
         request.operation !== "metadata" && request.operation !== "rmdir",
         request.operation === "mkdir" ? undefined : request.binding.recordIdentity,
       ),
+    remove: async (directory, name, operation) => {
+      const binding = bindings.find(
+        (held) =>
+          (held.mode ?? options.mode) === "exclusive" &&
+          NodePath.join(held.rootPath, held.parentRelativePath) === directory,
+      );
+      if (!binding || !name || name === "." || name === ".." || /[/\\:\0]/u.test(name))
+        throw new NativeFilePublicationError(
+          "Removal needs a held directory and a single name.",
+          null,
+        );
+      return runArguments(
+        ["--remove=1", operation, binding.parentIdentity.dev, binding.parentIdentity.ino, name],
+        binding,
+      );
+    },
     runDirectory: async (request) => runArguments(directoryArguments(request), request.binding),
   };
   try {
@@ -807,4 +828,29 @@ export async function withNativeFilePublicationLease<T>(
         new NativeFilePublicationError("Native publication lease failed to retire.", null)
       );
   }
+}
+
+/** Single-name removal and durability both use the lease holder's original folder handle. */
+export async function removeNativeRetainedEntry(
+  lease: NativeFilePublicationLease,
+  directory: string,
+  name: string,
+) {
+  let result = await lease.remove(directory, name, "unlink");
+  if (result.codeDomain === "errno" && [1, 21].includes(result.code))
+    result = await lease.remove(directory, name, "rmdir");
+  if (result.code !== 0 || result.flush.sourceDirectory !== 0)
+    throw new NativeFilePublicationError(
+      `Retained removal refused (${result.codeDomain}:${result.code}, flush=${result.flush.sourceDirectory}).`,
+      result,
+    );
+  const current = await NodeFSP.stat(directory, { bigint: true });
+  if (
+    String(current.dev) !== result.binding.parent?.dev ||
+    String(current.ino) !== result.binding.parent.ino
+  )
+    throw new NativeFilePublicationError(
+      "Retained folder moved during removal; journal settlement is pending.",
+      result,
+    );
 }

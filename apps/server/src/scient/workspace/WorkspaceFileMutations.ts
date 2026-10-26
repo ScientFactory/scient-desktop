@@ -41,6 +41,7 @@ import {
   ensureNativePrivateRetentionDirectory,
   nativeFilePublicationCapabilities,
   withNativeFilePublicationLease,
+  removeNativeRetainedEntry,
   type NativeFileBinding,
   type NativeFilePublicationLease,
   type NativeFileLeaseBinding,
@@ -523,20 +524,11 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       ((await present(leaf)) || (await present(viewName(target, leaf))))
     );
   };
-  /** Removes `path` only: `unlink` a file/link, single `rmdir` a folder (empty real
-   * folders only; fails harmlessly otherwise). Nothing below the name is visited,
-   * so nothing outside the record is reachable. Already-gone is skipped. */
-  const removeKept = async (path: string): Promise<void> => {
-    try {
-      await NodeFSP.unlink(path);
-    } catch (cause) {
-      if (isNodeError(cause, "ENOENT")) return;
-      // A folder: `unlink` refuses it (EPERM on macOS, EISDIR on Linux).
-      if (!isNodeError(cause, "EPERM") && !isNodeError(cause, "EISDIR")) throw cause;
-      await NodeFSP.rmdir(path).catch((e: NodeJS.ErrnoException) => {
-        if (e.code !== "ENOENT") throw e;
-      });
-    }
+  const removeKept = async (lease: NativeFilePublicationLease, directory: string, name: string) => {
+    const path = NodePath.join(directory, name);
+    await deps.retainedHooks?.removal?.("before", path);
+    await removeNativeRetainedEntry(lease, directory, name);
+    await deps.retainedHooks?.removal?.("after", path);
   };
   /**
    * Removes discarded copies, each before its view (a view made meanwhile is
@@ -544,19 +536,22 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
    * already have happened.
    */
   const removeDiscarded = async (
+    lease: NativeFilePublicationLease,
     directory: string,
     target: string,
     leaves: ReadonlyArray<(typeof retainedFileNames)[number]>,
   ) => {
     for (const leaf of leaves)
-      for (const name of [leaf, viewName(target, leaf)])
-        await removeKept(NodePath.join(directory, name));
-    await syncDirectory(directory);
+      for (const name of [leaf, viewName(target, leaf)]) await removeKept(lease, directory, name);
   };
   /** Finishes a version 2 discard: its removals, then (only then) the mark goes. */
-  const finishDiscard = async (directory: string, record: RetainedRecord) => {
+  const finishDiscard = async (
+    lease: NativeFilePublicationLease,
+    directory: string,
+    record: RetainedRecord,
+  ) => {
     if (record.version !== 2) return;
-    await removeDiscarded(directory, record.target, record.discarding ?? []);
+    await removeDiscarded(lease, directory, record.target, record.discarding ?? []);
     const { discarding: _, ...rest } = record;
     await durableJson(NodePath.join(directory, "record.json"), {
       ...rest,
@@ -811,7 +806,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             if (await legacyDiscardPending(directory, record.target, leaf)) pending.push(leaf);
           if (pending.length > 0) {
             settled = true;
-            await removeDiscarded(directory, record.target, pending);
+            await removeDiscarded(lease, directory, record.target, pending);
           }
         } catch {
           settled = true;
@@ -823,7 +818,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         // As above, one that fails stays marked (and listed) for a later try.
         if ((record.discarding ?? []).length > 0) {
           settled = true;
-          await finishDiscard(directory, record).catch(() => undefined);
+          await finishDiscard(lease, directory, record).catch(() => undefined);
         }
         continue;
       }
@@ -3162,7 +3157,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     return yield* owned(input, resolved.target, (signal) =>
       withParent(
         resolved,
-        async (records) => {
+        async (records, lease) => {
           const match = /^(mutation-[a-f0-9]{64}):(slot|retained|provisional)$/u.exec(
             input.versionId,
           );
@@ -3210,7 +3205,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               generation: found.record.generation + 1,
             };
             await durableJson(NodePath.join(found.directory, "record.json"), marked);
-            await finishDiscard(found.directory, marked);
+            await finishDiscard(lease, found.directory, marked);
             return { versionId: input.versionId };
           }
           // A legacy record: its tombstone is the durable mark, written before the removals.
@@ -3218,7 +3213,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             version: 1,
             discarded: true,
           });
-          await removeDiscarded(found.directory, found.target ?? resolved.target, [
+          await removeDiscarded(lease, found.directory, found.target ?? resolved.target, [
             match[2] as (typeof retainedFileNames)[number],
           ]);
           return { versionId: input.versionId };
