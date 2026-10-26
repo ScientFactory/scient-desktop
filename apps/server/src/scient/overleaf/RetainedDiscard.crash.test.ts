@@ -233,6 +233,110 @@ describe.skipIf(!canPublish)("a discard after real process death", () => {
       }),
   );
 
+  it.live.each(
+    kinds.flatMap((kind) =>
+      (["discard", "settle"] as const).flatMap((action) =>
+        (["record", "parent"] as const).flatMap((ancestor) =>
+          (["file", "folder", "view"] as const).map((object) => ({
+            kind,
+            action,
+            ancestor,
+            object,
+          })),
+        ),
+      ),
+    ),
+  )(
+    "anchors $kind $action of $object when its $ancestor is replaced by a link",
+    ({ kind, action, ancestor, object }) =>
+      fixture(async (h) => {
+        const helper = (await filePublicationTestHelper())!;
+        const version =
+          object === "folder"
+            ? await folderVersion(h, helper, kind)
+            : kind === "current"
+              ? await savedVersion(h)
+              : await legacyVersion(h, helper);
+        const directory =
+          "directory" in version ? version.directory : NodePath.dirname(version.retainedPath);
+        const leaf = version.versionId.split(":")[1]!;
+        const copy = NodePath.join(directory, leaf);
+        const name = object === "view" ? `view-${leaf}.tex` : leaf;
+        const moved = ancestor === "record" ? directory : NodePath.dirname(directory);
+        const held = `${moved}-held`;
+        const redirected =
+          ancestor === "record" ? h.cwd : NodePath.join(h.cwd, NodePath.basename(directory));
+        await NodeFSP.mkdir(redirected, { recursive: true });
+        const victim = NodePath.join(redirected, name);
+        if (object === "folder") await NodeFSP.mkdir(victim);
+        else await NodeFSP.writeFile(victim, "workspace sentinel");
+        if (action === "settle")
+          await markDiscard(kind, { versionId: version.versionId, directory, leaf, copy });
+        let swapped = false;
+        const fresh = await h.run(
+          makeApplierFiles({
+            root: h.root,
+            helper,
+            retainedHooks: {
+              removal: async (when, path) => {
+                if (swapped || when !== "before" || path !== NodePath.join(directory, name)) return;
+                swapped = true;
+                await NodeFSP.rename(moved, held);
+                await NodeFSP.symlink(h.cwd, moved);
+              },
+            },
+          }).pipe(Effect.provide(NodeServices.layer)),
+        );
+        try {
+          await h.run(
+            (action === "discard"
+              ? fresh.discardFileVersion({
+                  cwd: h.cwd,
+                  relativePath: "main.tex",
+                  versionId: version.versionId,
+                })
+              : fresh.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void)
+            ).pipe(Effect.exit),
+          );
+          expect(swapped).toBe(true);
+          expect(await exists(victim)).toBe(true);
+          if (object !== "folder")
+            expect(await NodeFSP.readFile(victim, "utf8")).toBe("workspace sentinel");
+          const original = NodePath.join(
+            held,
+            ancestor === "record" ? "" : NodePath.basename(directory),
+            name,
+          );
+          expect(await exists(original)).toBe(false);
+          const originalDirectory = NodePath.dirname(original);
+          if (kind === "current")
+            expect(await readRetainedRecord(originalDirectory)).toMatchObject({
+              discarding: [leaf],
+            });
+          else
+            expect(
+              JSON.parse(
+                await NodeFSP.readFile(
+                  NodePath.join(originalDirectory, `discard-${leaf}.json`),
+                  "utf8",
+                ),
+              ),
+            ).toMatchObject({ discarded: true });
+          expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("now\n");
+        } finally {
+          if (swapped) {
+            await NodeFSP.unlink(moved);
+            await NodeFSP.rename(held, moved);
+          }
+        }
+        await h.run(fresh.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void));
+        expect(await exists(copy)).toBe(false);
+        expect(await exists(NodePath.join(directory, `view-${leaf}.tex`))).toBe(false);
+        if (kind === "current")
+          expect(await readRetainedRecord(directory)).not.toHaveProperty("discarding");
+      }),
+  );
+
   it.live.each(kinds)("discards an empty kept folder of a %s record", (kind) =>
     fixture(async (h) => {
       const helper = (await filePublicationTestHelper())!;

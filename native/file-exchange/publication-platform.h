@@ -38,6 +38,7 @@ int platform_run_command(int argc, char **argv, int *exit_code, int *signal);
 int platform_private_directory(Context *context, const char *name, Entry *entry);
 int platform_mkdir(Context *context, const char *name, int private_directory, Entry *created,
                    Flush *flush, int *applied);
+int platform_remove(Context *context, const char *name, int directory, Entry *before, Flush *flush, int *applied);
 int platform_operation(Context *context, const char *operation, const char *source,
                        const char *destination, Entry *before, Entry *after_source,
                        Entry *after_destination, Flush *flush, int *applied);

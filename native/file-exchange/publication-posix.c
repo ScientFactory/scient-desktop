@@ -428,6 +428,17 @@ static int flush_entry(int directory, const char *name) {
   close(fd);
   return result;
 }
+int platform_remove(Context *context, const char *name, int directory,
+                    Entry *before, Flush *flush, int *applied) {
+  int error = inspect(context->parent, name, before);
+  if (error) return error;
+  if (!before->present) { flush->source_directory = flush_directory(context->parent); return 0; }
+  if (unlinkat(context->parent, name, directory ? AT_REMOVEDIR : 0)) {
+    if (errno != ENOENT) return errno;
+  } else *applied = 1;
+  flush->source_directory = flush_directory(context->parent);
+  return 0;
+}
 int platform_operation(Context *context, const char *operation, const char *source,
                        const char *destination, Entry *before, Entry *after_source,
                        Entry *after_destination, Flush *flush, int *applied) {

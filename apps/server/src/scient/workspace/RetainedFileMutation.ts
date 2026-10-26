@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   bindNativeFilePublication,
+  removeNativeRetainedEntry,
   bindNativeFilePublicationParent,
   observedDirectoryBinding,
   nativeFilePublicationCapabilities,
@@ -206,6 +207,7 @@ export type MutationPoint =
   | "round-admitted"
   | "done";
 export interface RetainedMutationHooks {
+  readonly removal?: (when: "before" | "after", path: string) => Promise<void>;
   readonly at?: (point: MutationPoint) => Promise<void>;
 }
 /** Why a request was refused before anything changed, where a caller can say more. */
@@ -1258,8 +1260,9 @@ async function run(
         (await fileIdentity(slot)) !== null &&
         (await fileRevision(slot)) !== record.desired
       ) {
-        await NodeFSP.unlink(slot);
-        await syncDirectory(directory);
+        await hooks.removal?.("before", slot);
+        await removeNativeRetainedEntry(lease, directory, "slot");
+        await hooks.removal?.("after", slot);
       }
       if ((await fileIdentity(slot)) === null) {
         if (input.bytes == null) return finish("skipped", "unavailable");

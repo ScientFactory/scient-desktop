@@ -108,6 +108,34 @@ static int lease_main(int argc, char **argv) {
       command[arguments++] = frame + offset;
       offset = (size_t)(end - frame) + 1;
     }
+    if (arguments == 6 && offset == length && !strcmp(command[1], "--remove=1")) {
+      LeaseParent *held = NULL;
+      for (size_t i = 0; i < count; ++i)
+        if (parents[i].exclusive && matches(&parents[i].parent, command[3], command[4])) {
+          held = &parents[i]; break;
+        }
+      if (!held || !name_valid(command[5]) ||
+          (strcmp(command[2], "unlink") && strcmp(command[2], "rmdir"))) {
+        free(frame); error = platform_invalid(); break;
+      }
+      Entry before = {0};
+      Flush flush = {-1, -1, -1, -1};
+      int applied = 0;
+      int removal_error = platform_remove(held->context, command[5],
+        !strcmp(command[2], "rmdir"), &before, &flush, &applied);
+      printf("{\"version\":1,\"outcome\":\"%s\",\"code\":%d,\"codeDomain\":\"%s\","
+             "\"containment\":\"bound-object\",\"binding\":{\"root\":null,\"parent\":",
+             applied ? "applied" : "unchanged", removal_error, platform_domain());
+      entry_json(&held->parent);
+      printf(",\"record\":null},\"sourceBefore\":"); entry_json(&before);
+      printf(",\"sourceAfter\":null,\"destinationAfter\":null,\"flush\":{\"sourceFile\":-1,"
+             "\"destinationFile\":-1,\"sourceDirectory\":%d,\"destinationDirectory\":-1}}\n",
+             flush.source_directory);
+      printf("{\"version\":1,\"commandExit\":0,\"commandSignal\":0,\"code\":0,\"codeDomain\":\"%s\"}\n", platform_domain());
+      free(frame);
+      if (fflush(stdout)) { error = platform_invalid(); break; }
+      continue;
+    }
     int covered = 0;
     if (arguments == 15 && offset == length && !strcmp(command[1], "--protocol=1")) {
       int parent_covered = 0, record_covered = 0;

@@ -80,6 +80,48 @@ describe("retained publication admission", () => {
         expect(await NodeFSP.readFile(target, "utf8")).toBe("captured");
       }));
   if (qualifiedCapture) {
+    it("anchors incomplete-stage cleanup when its private record is replaced by a link", () =>
+      fixture(async (input, target, root) => {
+        const intent = { ...input, kind: "write" as const, bytes: bytes("incoming") };
+        await expect(
+          mutateRetainedFile(intent, target, {
+            at: async (point) => {
+              if (point === "staged") throw new Error("interrupted stage");
+            },
+          }),
+        ).rejects.toThrow("interrupted stage");
+        const directory = NodePath.join(input.retentionDirectory, input.id);
+        await NodeFSP.writeFile(NodePath.join(directory, "slot"), "partial");
+        const outside = NodePath.join(root, "outside");
+        await NodeFSP.mkdir(outside);
+        await NodeFSP.writeFile(NodePath.join(outside, "slot"), "workspace sentinel");
+        let swapped = false;
+        try {
+          await expect(
+            mutateRetainedFile(intent, target, {
+              removal: async (when) => {
+                if (when !== "before") return;
+                swapped = true;
+                await NodeFSP.rename(directory, `${directory}-held`);
+                await NodeFSP.symlink(outside, directory);
+              },
+            }),
+          ).rejects.toThrow();
+          expect(swapped).toBe(true);
+          expect(await NodeFSP.readFile(NodePath.join(outside, "slot"), "utf8")).toBe(
+            "workspace sentinel",
+          );
+          await expect(
+            NodeFSP.lstat(NodePath.join(`${directory}-held`, "slot")),
+          ).rejects.toMatchObject({ code: "ENOENT" });
+          expect(await NodeFSP.readFile(target, "utf8")).toBe("captured");
+        } finally {
+          if (swapped) {
+            await NodeFSP.unlink(directory);
+            await NodeFSP.rename(`${directory}-held`, directory);
+          }
+        }
+      }));
     it("retains the actual removed inode with restrictive permissions and late descriptor writes", () =>
       fixture(async (input, target) => {
         const identity = await fileIdentity(target),

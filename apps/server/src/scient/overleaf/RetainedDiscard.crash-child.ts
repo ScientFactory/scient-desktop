@@ -5,7 +5,6 @@
  * mid-discard. Usage: node RetainedDiscard.crash-child.ts <job.json>
  */
 import * as NodeFSP from "node:fs/promises";
-import * as NodeModule from "node:module";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import { makeApplierFiles } from "./WorkspaceApplier.files.testkit.ts";
@@ -23,22 +22,17 @@ export interface DiscardCrashJob {
 const jobPath = process.argv[2];
 if (jobPath !== undefined) {
   const job: DiscardCrashJob = JSON.parse(await NodeFSP.readFile(jobPath, "utf8"));
-  // The module's mutable default export; `syncBuiltinESMExports` carries changes to imports.
-  const MutableFSP = (NodeFSP as unknown as { default: { unlink: typeof NodeFSP.unlink } }).default;
-  const unlink = MutableFSP.unlink;
-  MutableFSP.unlink = async (path) => {
-    const at = String(path) === job.kill.path;
-    if (at && job.kill.when === "before") process.kill(process.pid, "SIGKILL");
-    await unlink(path);
-    if (at && job.kill.when === "after") process.kill(process.pid, "SIGKILL");
-  };
-  NodeModule.syncBuiltinESMExports();
   await Effect.runPromise(
     Effect.gen(function* () {
       const files = yield* makeApplierFiles({
         root: job.root,
         helper: job.helper,
-        retainedHooks: {},
+        retainedHooks: {
+          removal: async (when, path) => {
+            if (path === job.kill.path && when === job.kill.when)
+              process.kill(process.pid, "SIGKILL");
+          },
+        },
       });
       yield* files.discardFileVersion({
         cwd: job.cwd,
