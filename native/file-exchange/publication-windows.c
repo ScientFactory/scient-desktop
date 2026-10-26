@@ -1083,6 +1083,19 @@ int platform_windows_main(int argc, char **argv) {
     if (file == INVALID_HANDLE_VALUE) return 71;
     printf("HELD\n"); fflush(stdout); getchar(); CloseHandle(file); return 0;
   }
+  if (argc == 4 && !strcmp(argv[2], "hold-map")) {
+    wchar_t *path = wide_path(argv[3]);
+    HANDLE file = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+      NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    free(path);
+    if (file == INVALID_HANDLE_VALUE) return 71;
+    HANDLE mapping = CreateFileMappingW(file, NULL, PAGE_READWRITE, 0, 0, NULL);
+    void *view = mapping ? MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, 0) : NULL;
+    CloseHandle(file);
+    if (!view) { if (mapping) CloseHandle(mapping); return 71; }
+    printf("HELD\n"); fflush(stdout); getchar();
+    UnmapViewOfFile(view); CloseHandle(mapping); return 0;
+  }
   if (argc == 4 && !strcmp(argv[2], "as-account")) {
     wchar_t user[256], password[256];
     GetEnvironmentVariableW(L"SCIENT_TEST_ACCOUNT", user, 256);
