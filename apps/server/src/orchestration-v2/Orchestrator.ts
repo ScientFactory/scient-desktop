@@ -10340,7 +10340,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           owner.id !== command.providerThreadId ||
           owner.appThreadId !== command.threadId ||
           owner.providerSessionId !== target.providerSessionId ||
-          owner.driver !== "claudeAgent" ||
+          !supportsNativeSubagentStop(owner.driver) ||
           owner.nativeThreadRef?.driver !== owner.driver ||
           owner.nativeThreadRef.strength !== "strong" ||
           owner.nativeThreadRef.nativeId === null ||

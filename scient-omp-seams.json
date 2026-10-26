@@ -60,7 +60,7 @@
     {
       "path": "apps/server/src/orchestration-v2/Orchestrator.ts",
       "anchor": "!supportsNativeSubagentStop(subagent.driver)",
-      "purpose": "Admit native child Stop through the shared capability while retaining task and session ownership checks."
+      "purpose": "Admit native child Stop, and settle one whose session was released, through the shared capability while retaining task and session ownership checks."
     },
     {
       "path": "apps/web/src/session-logic.ts",
