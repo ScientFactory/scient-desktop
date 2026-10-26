@@ -7,7 +7,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { filePublicationTestHelper, filePublicationProbeHelper } from "./fileExchange.testkit.ts";
-import { ensureNativePrivateRetentionDirectory } from "./NativeFilePublication.ts";
+import {
+  ensureNativePrivateRetentionDirectory,
+  bindNativeFilePublicationParent,
+  withNativeFilePublicationLease,
+  removeNativeRetainedEntry,
+} from "./NativeFilePublication.ts";
 import {
   bytesRevision,
   fileIdentity,
@@ -205,6 +210,39 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
         expect(result.outcome).toBe("done");
         expect(await security(target)).toBe(policy);
         expect(access(result.retainedPath!)).toBe(5);
+        await NodeFSP.writeFile(target, "original");
+        const crashInput = { ...input, id: "privacy-crash" };
+        const jobPath = NodePath.join(NodePath.dirname(input.cwd), "privacy-crash.json");
+        const job: WindowsCrashJob = {
+          input: crashInput,
+          target,
+          point: "restricted",
+          probe: probe!,
+        };
+        await NodeFSP.writeFile(jobPath, JSON.stringify(job));
+        const killed = NodeChildProcess.spawnSync(
+          process.execPath,
+          [
+            NodePath.join(import.meta.dirname, "WindowsRetainedFileMutation.crash-child.ts"),
+            jobPath,
+          ],
+          { encoding: "utf8" },
+        );
+        expect(killed.status, killed.stderr).toBe(73);
+        const binding = await bindNativeFilePublicationParent(helper!, input.cwd, "");
+        await withNativeFilePublicationLease(
+          helper!,
+          [binding],
+          async () => {
+            expect(access(target)).toBe(5);
+          },
+          { mode: "exclusive" },
+        );
+        expect(
+          (await mutateRetainedFile({ ...crashInput, bytes: undefined }, target)).outcome,
+        ).toBe("skipped");
+        expect(access(target)).toBe(0);
+        expect(await security(target)).toBe(policy);
       } finally {
         NodeChildProcess.execFileSync("net.exe", ["user", account, "/delete"], { stdio: "pipe" });
       }
@@ -243,5 +281,86 @@ describe.skipIf(!windows)("Windows retention placement", () => {
       } finally {
         expect(register("unregister-sync-root")).toBe(0);
       }
+    }));
+});
+
+describe.skipIf(!windows)("Windows folder leases and removals", () => {
+  it("shares a folder across processes and excludes an exclusive holder", () =>
+    fixture(async (input) => {
+      const binding = await bindNativeFilePublicationParent(helper!, input.cwd, "");
+      const tryLease = (mode: "shared" | "exclusive") =>
+        JSON.parse(
+          NodeChildProcess.execFileSync(
+            probe!,
+            [
+              "--lease=1",
+              mode,
+              binding.rootPath,
+              ".",
+              binding.rootIdentity.dev,
+              binding.rootIdentity.ino,
+              binding.parentIdentity.dev,
+              binding.parentIdentity.ino,
+              mode,
+            ],
+            {
+              encoding: "utf8",
+              input: Buffer.alloc(4),
+              env: { ...process.env, SCIENT_LEASE_TRY: "1" },
+            },
+          ),
+        );
+      await withNativeFilePublicationLease(
+        helper!,
+        [binding],
+        async () => {
+          await withNativeFilePublicationLease(
+            helper!,
+            [binding],
+            async () => {
+              expect(tryLease("exclusive")).toMatchObject({ lease: "refused", code: 33 });
+            },
+            { mode: "shared" },
+          );
+        },
+        { mode: "shared" },
+      );
+      await withNativeFilePublicationLease(
+        helper!,
+        [binding],
+        async () => {
+          expect(tryLease("shared")).toMatchObject({ lease: "refused", code: 33 });
+        },
+        { mode: "exclusive" },
+      );
+    }));
+  it("removes only the child junction beneath its pinned directory", () =>
+    fixture(async (input) => {
+      const outside = NodePath.join(NodePath.dirname(input.cwd), "outside");
+      await NodeFSP.mkdir(outside);
+      await NodeFSP.writeFile(NodePath.join(outside, "sentinel"), "keep");
+      await NodeFSP.symlink(outside, NodePath.join(input.cwd, "junction"), "junction");
+      const binding = await bindNativeFilePublicationParent(helper!, input.cwd, "");
+      await withNativeFilePublicationLease(
+        helper!,
+        [binding],
+        async (lease) => {
+          await expect(NodeFSP.rename(input.cwd, `${input.cwd}-old`)).rejects.toThrow();
+          await removeNativeRetainedEntry(lease, input.cwd, "junction");
+        },
+        { mode: "exclusive" },
+      );
+      expect(await NodeFSP.readFile(NodePath.join(outside, "sentinel"), "utf8")).toBe("keep");
+      await expect(NodeFSP.lstat(NodePath.join(input.cwd, "junction"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }));
+  it("refuses an existing broad directory without changing its policy", () =>
+    fixture(async (input) => {
+      const broad = NodePath.join(input.cwd, "broad");
+      await NodeFSP.mkdir(broad);
+      const before = await security(broad);
+      await expect(ensureNativePrivateRetentionDirectory(helper!, broad)).rejects.toThrow();
+      expect(await security(broad)).toBe(before);
     }));
 });

@@ -231,7 +231,8 @@ export async function runWindowsRetainedMutation(
         )
           return result();
         const restored = await command("win-restore-policy");
-        if (!good(restored)) return finish("attention", "recovery");
+        if (!good(restored)) return result();
+        await save({ sourceMutation: false, currentRevision: await fileRevision(target) });
         return finish("skipped", "revision");
       }
       if (record.publication !== "windows-stage-create") {
@@ -268,7 +269,11 @@ export async function runWindowsRetainedMutation(
         return finish("skipped", "revision");
       const resumed = await command("win-resume-stage");
       held = true;
-      if (resumed.code !== 0 || !same(resumed.destinationAfter, record.stagedIdentity))
+      if (
+        resumed.code !== 0 ||
+        !same(resumed.destinationAfter, record.stagedIdentity) ||
+        (await fileRevision(stage)) !== stageRevision
+      )
         return finish("attention", "recovery");
     } else {
       if (previous) return finish("skipped", "unavailable");
