@@ -69,6 +69,20 @@ static wchar_t *wide(const char *text) {
   }
   return result;
 }
+static wchar_t *wide_path(const char *text) {
+  wchar_t *path = wide(text);
+  if (!path) return NULL;
+  size_t length = wcslen(path);
+  if (length >= 3 && path[1] == L':' && (path[2] == L'\\' || path[2] == L'/')) {
+    wchar_t *extended = malloc((length + 5) * sizeof(wchar_t));
+    if (!extended) { free(path); SetLastError(ERROR_NOT_ENOUGH_MEMORY); return NULL; }
+    memcpy(extended, L"\\\\?\\", 4 * sizeof(wchar_t));
+    memcpy(extended + 4, path, (length + 1) * sizeof(wchar_t));
+    free(path); path = extended;
+    for (size_t i = 4; i < length + 4; ++i) if (path[i] == L'/') path[i] = L'\\';
+  }
+  return path;
+}
 static int cloud_tag(DWORD tag) { return (tag & ~0x0000f000UL) == 0x9000001aUL; }
 static int identify(HANDLE handle, Entry *entry) {
   FILE_ID_INFO id;
@@ -706,9 +720,11 @@ static int supported_file(HANDLE file) {
   if (attributes.FileAttributes & (FILE_ATTRIBUTE_OFFLINE | 0x00400000UL)) return 0x20000007;
   if (attributes.FileAttributes & FILE_ATTRIBUTE_ENCRYPTED) return 0x20000002;
   if (standard.NumberOfLinks != 1) return 0x20000003;
-  BYTE streams[65536]; IO_STATUS_BLOCK status;
+  BYTE streams[65536] = {0}; IO_STATUS_BLOCK status;
   NTSTATUS code = nt_query(file, &status, streams, sizeof(streams), (FILE_INFORMATION_CLASS)22 /* FileStreamInformation */);
+  if ((ULONG)code == 0x80000005UL || (ULONG)code == 0xc0000004UL) return 0x20000004;
   if (code < 0) return (int)nt_error(code);
+  if (!status.Information) return 0;
   typedef struct { ULONG next, length; LARGE_INTEGER size, allocation; WCHAR name[1]; } Stream;
   Stream *stream = (Stream *)streams;
   if (stream->next || stream->length != 14 || memcmp(stream->name, L"::$DATA", 14)) return 0x20000004;
@@ -761,8 +777,10 @@ static int restore_policy(Context *context, HANDLE original) {
   free(descriptor); CloseHandle(file); return error;
 }
 static int restrict_policy(HANDLE file) {
+  FILE_ATTRIBUTE_TAG_INFO attributes;
+  if (!GetFileInformationByHandleEx(file, FileAttributeTagInfo, &attributes, sizeof(attributes))) return (int)GetLastError();
   PSECURITY_DESCRIPTOR descriptor = NULL; wchar_t *sid = NULL;
-  int error = current_user_security(&descriptor, &sid, 0);
+  int error = current_user_security(&descriptor, &sid, !!(attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY));
   PACL dacl = NULL; BOOL present, defaulted;
   if (!error && !GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted)) error = (int)GetLastError();
   if (!error) error = (int)SetSecurityInfo(file, SE_FILE_OBJECT,
@@ -794,24 +812,27 @@ static int windows_operation(Context *context, const char *operation, const char
   if (!error) error = identify(context->record, &record);
   int prepare = !strcmp(operation, "win-prepare") || !strcmp(operation, "win-prepare-create") ||
                 !strcmp(operation, "win-prepare-delete");
-  int recover = !strcmp(operation, "win-resume") || !strcmp(operation, "win-resume-stage");
+  int recover = !strcmp(operation, "win-resume") || !strcmp(operation, "win-resume-stage") || !strcmp(operation, "win-resume-captured");
   if (prepare || recover) {
     if (transaction.original || transaction.stage) { error = ERROR_BUSY; goto done; }
     transaction.parent_id = parent; transaction.record_id = record;
     int creation = !strcmp(operation, "win-prepare-create") || !strcmp(operation, "win-resume-stage");
     if (!creation) {
-      error = available_child(context->parent, from);
+      HANDLE original_parent = !strcmp(operation, "win-resume-captured") ? context->record : context->parent;
+      transaction.captured = !strcmp(operation, "win-resume-captured");
+      error = available_child(original_parent, from);
       if (error) goto done;
-      transaction.original = open_relative(context->parent, from,
+      transaction.original = open_relative(original_parent, from,
         GENERIC_READ | DELETE | WRITE_DAC | READ_CONTROL, 0, FILE_SHARE_READ);
       if (transaction.original == INVALID_HANDLE_VALUE) { transaction.original = NULL; error = (int)GetLastError(); goto done; }
       error = identify(transaction.original, &transaction.original_id);
-      if (!error && (strcmp(operation, "win-prepare-delete") || strcmp(transaction.original_id.type, "directory")))
+      if (!error && ((strcmp(operation, "win-prepare-delete") && strcmp(operation, "win-resume") && strcmp(operation, "win-resume-captured")) || strcmp(transaction.original_id.type, "directory")))
         error = supported_file(transaction.original);
       if (!error) error = identify(transaction.original, &transaction.original_id);
       *before = transaction.original_id;
       if (error) goto done;
     }
+    if (recover && transaction.captured) goto done;
     if (recover) {
       transaction.stage = open_relative(context->parent, to, GENERIC_READ | DELETE | READ_CONTROL,
         0, FILE_SHARE_READ);
@@ -829,6 +850,7 @@ static int windows_operation(Context *context, const char *operation, const char
         2, FILE_ATTRIBUTE_NORMAL, descriptor, FILE_SHARE_READ);
       if (transaction.stage == INVALID_HANDLE_VALUE) { transaction.stage = NULL; error = (int)GetLastError(); }
       if (transaction.stage) *applied = -1;
+      if (!error) error = supported_file(transaction.stage);
       HANDLE payload = INVALID_HANDLE_VALUE;
       if (!error) {
         payload = open_relative(context->record, L"payload", GENERIC_READ, 0, FILE_SHARE_READ);
@@ -880,6 +902,15 @@ static int windows_operation(Context *context, const char *operation, const char
     error = private_security(transaction.original, SE_FILE_OBJECT, NULL);
     if (!error) error = rename_handle(transaction.original, context->record, to);
     if (!error) { transaction.captured = 1; *applied = 1; *after_destination = transaction.original_id; }
+  } else if (!strcmp(operation, "win-remove-captured")) {
+    if (!transaction.original || !transaction.captured || strcmp(transaction.original_id.type, "directory")) { error = ERROR_INVALID_HANDLE; goto done; }
+    FILE_DISPOSITION_INFO disposition = { TRUE };
+    if (!SetFileInformationByHandle(transaction.original, FileDispositionInfo, &disposition, sizeof(disposition))) error = (int)GetLastError();
+    else { *applied = 1; CloseHandle(transaction.original); transaction.original = NULL; }
+  } else if (!strcmp(operation, "win-return-captured")) {
+    if (!transaction.original || !transaction.captured) { error = ERROR_INVALID_HANDLE; goto done; }
+    error = rename_handle(transaction.original, context->parent, to);
+    if (!error) { transaction.captured = 0; *applied = 1; *after_destination = transaction.original_id; }
   } else if (!strcmp(operation, "win-install")) {
     if (!transaction.stage) { error = ERROR_INVALID_HANDLE; goto done; }
     *before = transaction.stage_id;
@@ -916,7 +947,7 @@ int platform_windows_main(int argc, char **argv) {
     Register registration = NULL; Unregister unregistration = NULL;
     FARPROC address = library ? GetProcAddress(library, "CfRegisterSyncRoot") : NULL; memcpy(&registration, &address, sizeof(registration));
     address = library ? GetProcAddress(library, "CfUnregisterSyncRoot") : NULL; memcpy(&unregistration, &address, sizeof(unregistration));
-    wchar_t *path = wide(argv[3]); HRESULT result = E_NOTIMPL;
+    wchar_t *path = wide_path(argv[3]); HRESULT result = E_NOTIMPL;
     if (registration && unregistration && path) {
       CF_SYNC_REGISTRATION data = {0}; data.StructSize = sizeof(data);
       data.ProviderName = L"Scient file qualification"; data.ProviderVersion = L"1";
@@ -935,7 +966,7 @@ int platform_windows_main(int argc, char **argv) {
     CloseHandle(process); return result;
   }
   if (argc == 4 && !strcmp(argv[2], "hold-write")) {
-    wchar_t *path = wide(argv[3]);
+    wchar_t *path = wide_path(argv[3]);
     HANDLE file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
       NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
     free(path);
@@ -949,7 +980,7 @@ int platform_windows_main(int argc, char **argv) {
     HANDLE token = NULL; DWORD error = 0;
     if (!LogonUserW(user, L".", password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, &token) ||
         !ImpersonateLoggedOnUser(token)) error = GetLastError();
-    wchar_t *path = wide(argv[3]);
+    wchar_t *path = wide_path(argv[3]);
     HANDLE file = INVALID_HANDLE_VALUE;
     if (!error) {
       file = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -963,13 +994,13 @@ int platform_windows_main(int argc, char **argv) {
 #endif
 
   if (argc != 4 || (strcmp(argv[2], "info") && strcmp(argv[2], "flags") && strcmp(argv[2], "private") && strcmp(argv[2], "security"))) return 64;
-  wchar_t *path = wide(argv[3]);
+  wchar_t *path = wide_path(argv[3]);
   if (!path) return 71;
   WIN32_FIND_DATAW data; memset(&data, 0, sizeof(data));
   HANDLE find = FindFirstFileW(path, &data);
   int error = find == INVALID_HANDLE_VALUE ? (int)GetLastError() : 0;
   if (find != INVALID_HANDLE_VALUE) FindClose(find);
-  if (wcslen(path) == 3 && path[1] == L':') {
+  if ((wcslen(path) == 3 && path[1] == L':') || (wcslen(path) == 7 && path[5] == L':')) {
     data.dwFileAttributes = GetFileAttributesW(path);
     error = data.dwFileAttributes == INVALID_FILE_ATTRIBUTES ? (int)GetLastError() : 0;
   }
@@ -989,15 +1020,19 @@ int platform_windows_main(int argc, char **argv) {
       if (!separator || (slash && slash > separator)) separator = slash;
       if (!separator) error = ERROR_INVALID_NAME;
       else {
-        *separator = 0;
+        char *basename = _strdup(separator + 1);
+        if (!basename) { free(parent); free(path); return 71; }
+        if (separator == parent + 2 && parent[1] == ':') separator[1] = 0;
+        else *separator = 0;
         context = platform_bind_parent(parent, ".", &error);
         if (context) {
-          wchar_t *name = wide(separator + 1);
+          wchar_t *name = wide(basename);
           file = open_relative(context->parent, name, FILE_READ_ATTRIBUTES | READ_CONTROL,
             0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
           free(name);
           if (file == INVALID_HANDLE_VALUE) error = (int)GetLastError();
         }
+        free(basename);
       }
       free(parent);
     }
@@ -1039,14 +1074,14 @@ int platform_windows_flags(int argc, char **argv) {
   if (argc < 2 || argc > 258) return 64;
   printf("[");
   for (int i = 2; i < argc; ++i) {
-    wchar_t *path = wide(argv[i]);
+    wchar_t *path = wide_path(argv[i]);
     DWORD flags = 0, error = ERROR_INVALID_NAME;
     if (path) {
       WIN32_FIND_DATAW data;
       HANDLE find = FindFirstFileW(path, &data);
       error = find == INVALID_HANDLE_VALUE ? GetLastError() : 0;
       if (find != INVALID_HANDLE_VALUE) { flags = data.dwFileAttributes; FindClose(find); }
-      if (wcslen(path) == 3 && path[1] == L':') {
+      if ((wcslen(path) == 3 && path[1] == L':') || (wcslen(path) == 7 && path[5] == L':')) {
         flags = GetFileAttributesW(path);
         error = flags == INVALID_FILE_ATTRIBUTES ? GetLastError() : 0;
       }
