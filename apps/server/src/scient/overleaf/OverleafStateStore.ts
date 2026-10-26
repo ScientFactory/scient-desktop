@@ -4,7 +4,7 @@
  * wait/steal. Acquire lazily so overlap during old-server exit does not permanently disable writes.
  * Reads need no lease; preserve unreadable state as quarantine evidence.
  */
-import { windowsPrivateDirectory } from "../workspace/WindowsNativeFile.ts";
+import { windowsNativeFile, windowsPrivateDirectory } from "../workspace/WindowsNativeFile.ts";
 import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -462,14 +462,34 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     }
     yield* acquireLease;
   });
+  let publicationHelper: Promise<string | undefined> | undefined;
+  const resolvePublicationHelper = () => {
+    if (publicationHelper === undefined)
+      publicationHelper =
+        options.publicationHelper !== undefined
+          ? Promise.resolve(options.publicationHelper)
+          : resolveNativeFilePublicationHelperPath();
+    return publicationHelper;
+  };
+  /**
+   * Re-check on every write: a folder can become sync-managed after the lease
+   * was taken. Windows registrations are not in config files, so the helper
+   * answers for the state root; an absent root is checked when it is created.
+   */
   const cloudGuard = Effect.tryPromise({
-    try: () => overleafCloudRoot(root),
+    try: async () => {
+      if (await overleafCloudRoot(root)) return true;
+      if (HostProcess.Platform.defaultValue() !== "win32") return false;
+      const helper = await resolvePublicationHelper();
+      if (!helper) return false;
+      return (await windowsNativeFile(root, "private", helper)).syncManaged === true;
+    },
     catch: (cause) => new OverleafStateIoError({ operation: "prepare-directory", cause }),
   }).pipe(
-    Effect.flatMap((cloud) =>
-      cloud === null
-        ? Effect.void
-        : Effect.fail(new OverleafRetentionUnavailableError({ reason: "sync-managed-folder" })),
+    Effect.flatMap((managed) =>
+      managed
+        ? Effect.fail(new OverleafRetentionUnavailableError({ reason: "sync-managed-folder" }))
+        : Effect.void,
     ),
   );
   const withLease = <A, E>(effect: Effect.Effect<A, E>) =>
