@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import { ensureNativePrivateRetentionDirectory } from "../workspace/NativeFilePublication.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
 /**
@@ -38,7 +39,8 @@ import { makeApplierFiles } from "./WorkspaceApplier.files.testkit.ts";
 
 export const canApply = await nativePublicationHost();
 const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
-const volumeUuid = async () => VOLUME;
+const volumeUuid = async (path: string) =>
+  HostProcess.Platform.defaultValue() === "win32" ? platformFileIdentity.volume(path) : VOLUME;
 export const CONNECTION = "connection-1";
 const TOKEN = new TextEncoder().encode("test-token");
 export type Point = "linked" | "applied" | "adopted" | "recorded" | "admitting" | "sent";
@@ -272,17 +274,21 @@ export const world = (input: {
       publicationHelper,
       expected: null,
     });
-    const fileId = (path: string) =>
-      Effect.promise(async () => String((await NodeFSP.stat(path, { bigint: true })).ino));
+    const identity = (path: string) =>
+      Effect.promise(async () =>
+        HostProcess.Platform.defaultValue() === "win32"
+          ? (await platformFileIdentity.directory(path))!
+          : { volume: VOLUME, fileId: String((await NodeFSP.stat(path, { bigint: true })).ino) },
+      );
     yield* store.createConnection({
       ...overleafConnectionFixture(CONNECTION),
       checkout: {
         canonicalRoot: checkout,
-        identity: { volume: VOLUME, fileId: yield* fileId(checkout) },
+        identity: yield* identity(checkout),
       },
       folder: {
         relativePath: input.atCheckoutTop ? "" : "paper",
-        identity: { volume: VOLUME, fileId: yield* fileId(folder) },
+        identity: yield* identity(folder),
       },
       base: { commit: synced.commit, tree: synced.tree, generation: 1 },
       completedSyncCount: 1,

@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
+import { filePublicationTestHelper, filePublicationProbeHelper } from "./fileExchange.testkit.ts";
 import { ensureNativePrivateRetentionDirectory } from "./NativeFilePublication.ts";
 import {
   bytesRevision,
@@ -12,9 +14,11 @@ import {
   mutateRetainedFile,
   type RetainedMutationInput,
 } from "./RetainedFileMutation.ts";
+import type { WindowsCrashJob } from "./WindowsRetainedFileMutation.crash-child.ts";
 import { windowsNativeFile } from "./WindowsNativeFile.ts";
 
 const windows = HostProcess.Platform.defaultValue() === "win32";
+const probe = windows ? await filePublicationProbeHelper() : undefined;
 const helper = windows ? await filePublicationTestHelper() : undefined;
 async function fixture(body: (input: RetainedMutationInput, target: string) => Promise<void>) {
   const root = await NodeFSP.realpath(
@@ -94,4 +98,119 @@ describe.skipIf(!windows)("Windows capture and install", () => {
       expect(result.retainedPath).toBeNull();
       expect(await NodeFSP.readFile(target, "utf8")).toBe("incoming");
     }));
+});
+
+async function security(path: string) {
+  return JSON.parse(
+    NodeChildProcess.execFileSync(helper!, ["--windows=1", "security", path], { encoding: "utf8" }),
+  ).security;
+}
+
+describe.skipIf(!windows)("Windows process death and sharing", () => {
+  it.each([
+    "intent",
+    "staged",
+    "prepared",
+    "checked",
+    "restricted",
+    "called",
+    "displaced",
+    "install-intent",
+    "installed",
+    "done",
+  ] as const)("recovers after TerminateProcess at %s without losing the original", (point) =>
+    fixture(async (input, target) => {
+      const original = await fileIdentity(target);
+      const policy = await security(target);
+      const jobPath = NodePath.join(NodePath.dirname(input.cwd), "job.json");
+      const job: WindowsCrashJob = { input, target, point, probe: probe! };
+      await NodeFSP.writeFile(jobPath, JSON.stringify(job));
+      const child = NodeChildProcess.spawnSync(
+        process.execPath,
+        [NodePath.join(import.meta.dirname, "WindowsRetainedFileMutation.crash-child.ts"), jobPath],
+        { encoding: "utf8" },
+      );
+      expect(child.status, child.stderr).toBe(73);
+      const recovered = await mutateRetainedFile({ ...input, bytes: undefined }, target);
+      const live = await NodeFSP.readFile(target, "utf8").catch(() => null);
+      const kept = recovered.retainedPath
+        ? await NodeFSP.readFile(recovered.retainedPath, "utf8")
+        : null;
+      expect([live, kept]).toContain("original");
+      if (live === "original") {
+        expect(await fileIdentity(target)).toEqual(original);
+        expect(await security(target)).toBe(policy);
+      } else {
+        expect(live).toBe("incoming");
+        expect(recovered.retainedIdentity).toEqual(original);
+      }
+    }),
+  );
+  it("refuses a file held for writing by another process", () =>
+    fixture(async (input, target) => {
+      const holder = NodeChildProcess.spawn(probe!, ["--windows=1", "hold-write", target], {
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const retired = new Promise<void>((resolve) => holder.once("close", () => resolve()));
+      try {
+        await new Promise<void>((resolve, reject) => {
+          holder.stdout.once("data", () => resolve());
+          holder.once("error", reject);
+          holder.once("exit", (code) => {
+            if (code !== null) reject(new Error(`writer exited ${code}`));
+          });
+        });
+        await expect(mutateRetainedFile(input, target)).rejects.toMatchObject({
+          message: "file-busy",
+        });
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
+      } finally {
+        holder.stdin.end("\n");
+        await retired;
+      }
+    }));
+  it("preserves explicit permissions and restricts retained bytes before capture", () =>
+    fixture(async (input, target) => {
+      const account = `Scient${NodeCrypto.randomBytes(5).toString("hex")}`;
+      const password = `Scient!${NodeCrypto.randomUUID()}a7`;
+      NodeChildProcess.execFileSync("net.exe", ["user", account, password, "/add"], {
+        stdio: "pipe",
+      });
+      try {
+        NodeChildProcess.execFileSync("icacls.exe", [target, "/grant", `${account}:(R,W)`]);
+        const policy = await security(target);
+        const access = (path: string) =>
+          JSON.parse(
+            NodeChildProcess.execFileSync(probe!, ["--windows=1", "as-account", path], {
+              encoding: "utf8",
+              env: { ...process.env, SCIENT_TEST_ACCOUNT: account, SCIENT_TEST_PASSWORD: password },
+            }),
+          ).code;
+        expect(access(target)).toBe(0);
+        const result = await mutateRetainedFile(input, target, {
+          at: async (point) => {
+            if (point === "restricted") expect(access(target)).not.toBe(0);
+            if (point === "displaced")
+              expect(access(NodePath.join(input.retentionDirectory, "one/retained"))).not.toBe(0);
+          },
+        });
+        expect(result.outcome).toBe("done");
+        expect(await security(target)).toBe(policy);
+        expect(access(result.retainedPath!)).toBe(5);
+      } finally {
+        NodeChildProcess.execFileSync("net.exe", ["user", account, "/delete"], { stdio: "pipe" });
+      }
+    }));
+  it.each(["stream", "hardlink"] as const)(
+    "refuses unsupported %s before changing the target",
+    (kind) =>
+      fixture(async (input, target) => {
+        if (kind === "stream") await NodeFSP.writeFile(`${target}:notes`, "private stream");
+        else await NodeFSP.link(target, `${target}.alias`);
+        await expect(mutateRetainedFile(input, target)).rejects.toThrow(
+          kind === "stream" ? "alternate-data-streams" : "multiple-hard-links",
+        );
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
+      }),
+  );
 });

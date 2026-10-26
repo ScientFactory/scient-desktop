@@ -535,7 +535,10 @@ int platform_remove(Context *context, const char *name, int directory,
   HANDLE child = open_relative(context->parent, component, DELETE | FILE_READ_ATTRIBUTES,
     directory ? FILE_DIRECTORY_FILE : 0, FILE_SHARE_READ);
   free(component);
-  if (child == INVALID_HANDLE_VALUE) return (int)GetLastError();
+  if (child == INVALID_HANDLE_VALUE) {
+    DWORD error = GetLastError();
+    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ? 0 : (int)error;
+  }
   int error = identify(child, before);
   if (!error && directory != !strcmp(before->type, "directory")) error = ERROR_DIRECTORY;
   if (!error) {
@@ -700,7 +703,7 @@ static int save_policy(Context *context, HANDLE original, PSECURITY_DESCRIPTOR *
 static int restore_policy(Context *context, HANDLE original) {
   HANDLE file = open_relative(context->record, L"original-security", GENERIC_READ | READ_CONTROL, 0, FILE_SHARE_READ);
   if (file == INVALID_HANDLE_VALUE) return (int)GetLastError();
-  LARGE_INTEGER size; DWORD received = 0;
+  LARGE_INTEGER size = {0}; DWORD received = 0;
   int error = private_security(file, SE_FILE_OBJECT, NULL);
   if (!error && (!GetFileSizeEx(file, &size) || size.QuadPart <= 0 || size.QuadPart > 65536)) error = ERROR_INVALID_DATA;
   BYTE *descriptor = error ? NULL : malloc((size_t)size.QuadPart);
@@ -845,7 +848,42 @@ static int qualified_volume(HANDLE folder) {
   return 0;
 }
 int platform_windows_main(int argc, char **argv) {
-  if (argc != 4 || (strcmp(argv[2], "info") && strcmp(argv[2], "flags") && strcmp(argv[2], "private"))) return 64;
+#ifdef SCIENT_PUBLICATION_PROBE
+  if (argc == 4 && !strcmp(argv[2], "terminate")) {
+    HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, (DWORD)strtoul(argv[3], NULL, 10));
+    if (!process) return 71;
+    int result = TerminateProcess(process, 73) ? 0 : 71;
+    CloseHandle(process); return result;
+  }
+  if (argc == 4 && !strcmp(argv[2], "hold-write")) {
+    wchar_t *path = wide(argv[3]);
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+      NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    free(path);
+    if (file == INVALID_HANDLE_VALUE) return 71;
+    printf("HELD\n"); fflush(stdout); getchar(); CloseHandle(file); return 0;
+  }
+  if (argc == 4 && !strcmp(argv[2], "as-account")) {
+    wchar_t user[256], password[256];
+    GetEnvironmentVariableW(L"SCIENT_TEST_ACCOUNT", user, 256);
+    GetEnvironmentVariableW(L"SCIENT_TEST_PASSWORD", password, 256);
+    HANDLE token = NULL; DWORD error = 0;
+    if (!LogonUserW(user, L".", password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, &token) ||
+        !ImpersonateLoggedOnUser(token)) error = GetLastError();
+    wchar_t *path = wide(argv[3]);
+    HANDLE file = INVALID_HANDLE_VALUE;
+    if (!error) {
+      file = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+      if (file == INVALID_HANDLE_VALUE) error = GetLastError();
+    }
+    RevertToSelf(); if (token) CloseHandle(token);
+    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+    free(path); printf("{\"code\":%lu}\n", (unsigned long)error); return 0;
+  }
+#endif
+
+  if (argc != 4 || (strcmp(argv[2], "info") && strcmp(argv[2], "flags") && strcmp(argv[2], "private") && strcmp(argv[2], "security"))) return 64;
   wchar_t *path = wide(argv[3]);
   if (!path) return 71;
   WIN32_FIND_DATAW data; memset(&data, 0, sizeof(data));
@@ -894,6 +932,20 @@ int platform_windows_main(int argc, char **argv) {
     else if (cloud) error = cloud;
   }
   if (!error && !strcmp(argv[2], "private")) error = private_security(file, SE_FILE_OBJECT, NULL);
+  if (!error && !strcmp(argv[2], "security")) {
+    PSECURITY_DESCRIPTOR descriptor = NULL; PSID owner, group; PACL dacl;
+    error = (int)GetSecurityInfo(file, SE_FILE_OBJECT,
+      OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+      &owner, &group, &dacl, NULL, &descriptor);
+    wchar_t *text = NULL;
+    if (!error && !ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, SDDL_REVISION_1,
+      OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &text, NULL)) error = (int)GetLastError();
+    printf("{\"code\":%d,\"security\":\"%ls\"}\n", error, text ? text : L"");
+    if (text) LocalFree(text);
+    if (descriptor) LocalFree(descriptor);
+    if (file != context->parent) CloseHandle(file);
+    platform_close(context); free(path); return 0;
+  }
   printf("{\"code\":%d,\"flags\":%lu,\"syncManaged\":%s,\"identity\":", error,
     (unsigned long)data.dwFileAttributes, managed ? "true" : "false");
   if (!error) printf("{\"dev\":\"%s\",\"ino\":\"%s\",\"type\":\"%s\"}", entry.dev, entry.ino, entry.type);
