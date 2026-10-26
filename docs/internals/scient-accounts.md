@@ -59,7 +59,8 @@ account or clearing a field leaves external items in place. Legacy `scient` inpu
 selection still replace a sole linked source; accounts with copies keep propagation on every update.
 
 Keychain copies are generic-password items with service `Scient: <site>` and account equal to the
-sign-in username. Other fields have a field suffix on the service. 1Password copies are Login items
+sign-in username followed by the stable account id in parentheses, preventing collisions between
+accounts. Existing copies retain their stored service and account identity. Other fields have a field suffix on the service. 1Password copies are Login items
 created with the SDK in the selected vault. Connected vaults are offered without a write probe.
 A permission rejection produces one short error naming the vault and remembers it as read-only in
 this connection's encrypted metadata, including across restart; reconnect resets that observation.

@@ -1,5 +1,6 @@
 import type {
   AccountDetails,
+  AccountId,
   AccountSecretSummary,
   AccountValueSource,
   AccountWriteStore,
@@ -10,6 +11,7 @@ export type CopyDestination =
   | Extract<AccountWriteStore, { type: "1password" }>;
 
 export function planSecretStores(
+  accountId: AccountId,
   details: AccountDetails,
   field: string,
   old: AccountSecretSummary | undefined,
@@ -46,7 +48,10 @@ export function planSecretStores(
               "service" in target
                 ? target.service
                 : `Scient: ${site}${field === "password" ? "" : ` (${field})`}`,
-            account: "account" in target ? target.account : username || "Sign-in",
+            account:
+              "account" in target
+                ? target.account
+                : `${(username || "Sign-in").slice(0, 256 - accountId.length - 3)} (${accountId})`,
           }
         : target;
     if (

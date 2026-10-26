@@ -395,6 +395,7 @@ export const layer = Layer.effect(
             old?.source.type !== "scient" &&
             !old?.copies?.length;
           const planned = planSecretStores(
+            accountId,
             input.details,
             field,
             replacingLink ? undefined : old,

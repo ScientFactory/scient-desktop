@@ -1,5 +1,5 @@
 import { it, expect } from "@effect/vitest";
-import { AccountsError } from "@t3tools/contracts";
+import { AccountId, AccountsError } from "@t3tools/contracts";
 import { Effect, Redacted } from "effect";
 import {
   makeHarness,
@@ -56,19 +56,21 @@ it.effect(
 
 it("plans selected stores once, preserving existing copy identities on updates", () => {
   const details = website().details;
+  const accountId = AccountId.make("acc_synthetic01");
   expect(
-    planSecretStores(details, "password", undefined, [
+    planSecretStores(accountId, details, "password", undefined, [
       { type: "scient" },
       { type: "keychain" },
       { type: "1password", vaultId: "vault" },
     ]),
   ).toEqual([
     { type: "scient" },
-    { type: "keychain", service: "Scient: example.com", account: "synthetic-user" },
+    { type: "keychain", service: "Scient: example.com", account: `synthetic-user (${accountId})` },
     { type: "1password", vaultId: "vault" },
   ]);
   expect(
     planSecretStores(
+      accountId,
       details,
       "password",
       {
@@ -78,7 +80,9 @@ it("plans selected stores once, preserving existing copy identities on updates",
       [{ type: "1password", vaultId: "vault" }],
     ),
   ).toEqual([{ type: "scient" }, { type: "1password", reference: "op://vault/item/password" }]);
-  expect(planSecretStores(details, "password", undefined, [{ type: "keychain" }])).toHaveLength(1);
+  expect(
+    planSecretStores(accountId, details, "password", undefined, [{ type: "keychain" }]),
+  ).toHaveLength(1);
 });
 
 it.effect(
@@ -271,3 +275,38 @@ it.effect("compares a current linked password after an earlier autofill cached i
     ).toEqual({ result: "same", accountId });
   }),
 );
+
+it("isolates new Keychain copies for accounts sharing a site and username while retaining stored identities", () => {
+  const firstId = AccountId.make("acc_synthetic01");
+  const secondId = AccountId.make("acc_synthetic02");
+  const details = website().details;
+  const first = planSecretStores(firstId, details, "password", undefined, [
+    { type: "keychain" },
+  ])[0]!;
+  const second = planSecretStores(secondId, details, "password", undefined, [
+    { type: "keychain" },
+  ])[0]!;
+  expect(first).not.toEqual(second);
+  if (first.type !== "keychain") throw new Error("Expected a Keychain copy.");
+  expect(planSecretStores(firstId, details, "password", { source: first }, undefined)).toEqual([
+    first,
+  ]);
+  const legacy = {
+    type: "keychain" as const,
+    service: "Scient: example.com",
+    account: "synthetic-user",
+  };
+  expect(planSecretStores(firstId, details, "password", { source: legacy }, undefined)).toEqual([
+    legacy,
+  ]);
+  const long = planSecretStores(
+    firstId,
+    { ...details, username: "u".repeat(256) },
+    "password",
+    undefined,
+    [{ type: "keychain" }],
+  )[0]!;
+  expect(
+    long.type === "keychain" && long.account.length <= 256 && long.account.endsWith(`(${firstId})`),
+  ).toBe(true);
+});
