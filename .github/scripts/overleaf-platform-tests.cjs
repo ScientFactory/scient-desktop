@@ -14,7 +14,7 @@ const FILES = [
   "src/scient/overleaf/overleafFileAvailability.test.ts",
 ];
 
-function validateReport(report, file) {
+function validateReport(report, files) {
   const results = report.testResults;
   if (
     report.success !== true ||
@@ -22,18 +22,23 @@ function validateReport(report, file) {
     report.numPendingTests !== 0 ||
     report.numTodoTests !== 0 ||
     !Array.isArray(results) ||
-    results.length !== 1
+    results.length !== files.length
   )
-    throw new Error(`Incomplete Overleaf qualification: ${file}`);
-  const result = results[0];
-  if (
-    !result.name.replaceAll("\\", "/").endsWith(`/${file}`) ||
-    result.status !== "passed" ||
-    !Array.isArray(result.assertionResults) ||
-    result.assertionResults.length === 0 ||
-    result.assertionResults.some((test) => test.status !== "passed")
-  )
-    throw new Error(`Missing or skipped Overleaf tests: ${file}`);
+    throw new Error("Incomplete Overleaf qualification");
+  for (const file of files) {
+    const matches = results.filter((result) =>
+      result.name.replaceAll("\\", "/").endsWith(`/${file}`),
+    );
+    const result = matches[0];
+    if (
+      matches.length !== 1 ||
+      result.status !== "passed" ||
+      !Array.isArray(result.assertionResults) ||
+      result.assertionResults.length === 0 ||
+      result.assertionResults.some((test) => test.status !== "passed")
+    )
+      throw new Error(`Missing or skipped Overleaf tests: ${file}`);
+  }
 }
 
 function run() {
@@ -45,16 +50,14 @@ function run() {
   }
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "overleaf-platform-report-"));
   try {
-    for (const [index, file] of FILES.entries()) {
-      const output = path.join(scratch, `${index}.json`);
-      execFileSync("vp", ["test", "run", file, "--reporter=json", `--outputFile=${output}`], {
-        cwd,
-        stdio: "inherit",
-        shell: HostProcess.Platform.defaultValue() === "win32",
-      });
-      validateReport(JSON.parse(fs.readFileSync(output, "utf8")), file);
-      console.log(`Qualified without skips: ${file}`);
-    }
+    const output = path.join(scratch, "results.json");
+    execFileSync("vp", ["test", "run", ...FILES, "--reporter=json", `--outputFile=${output}`], {
+      cwd,
+      stdio: "inherit",
+      shell: HostProcess.Platform.defaultValue() === "win32",
+    });
+    validateReport(JSON.parse(fs.readFileSync(output, "utf8")), FILES);
+    for (const file of FILES) console.log(`Qualified without skips: ${file}`);
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
