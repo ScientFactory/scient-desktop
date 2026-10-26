@@ -146,7 +146,26 @@ export const makeExtensionsRpcHandlers = ({
     [WS_METHODS.extensionsList]: () =>
       observeRpcEffect(WS_METHODS.extensionsList, inventory(), traceAttributes),
     [WS_METHODS.extensionsSubscribeChanges]: () =>
-      observeRpcStream(WS_METHODS.extensionsSubscribeChanges, changeFeed.changes, traceAttributes),
+      observeRpcStream(
+        WS_METHODS.extensionsSubscribeChanges,
+        Stream.unwrap(
+          Effect.gen(function* () {
+            for (const provider of yield* providerRegistry.getProviders) {
+              if (!provider.enabled) continue;
+              const actions = yield* providerRegistry.getProviderPluginActionsForInstance(
+                provider.instanceId,
+              );
+              if (actions?.refreshInventory)
+                yield* actions.refreshInventory({ force: false }).pipe(
+                  Effect.catch(() => Effect.void),
+                  Effect.forkScoped,
+                );
+            }
+            return changeFeed.changes;
+          }),
+        ),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsConnectorAdd]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsConnectorAdd,

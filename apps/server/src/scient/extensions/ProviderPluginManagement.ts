@@ -375,6 +375,21 @@ export function makeProviderPluginManagement(
   return {
     act: (input) => {
       switch (input.action.type) {
+        case "refresh-inventory":
+          return Effect.gen(function* () {
+            const { actions } = yield* admit(input.instanceId);
+            if (actions?.refreshInventory)
+              yield* untilRetired(
+                actions,
+                "refreshing extensions",
+                actions.refreshInventory({ force: true }),
+              ).pipe(
+                Effect.mapError(() =>
+                  failure("state-unavailable", "Could not refresh this agent's extensions."),
+                ),
+              );
+            return { providers: yield* providerRegistry.getProviders };
+          });
         case "uninstall":
           return writePermit.withPermits(1)(uninstall(input, input.action.pluginId));
         case "mcp-sign-in":

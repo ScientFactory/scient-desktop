@@ -1148,7 +1148,7 @@ function ProviderServerDetail({
   readonly server: ServerProviderMcpServer;
 }) {
   const actions = useProviderServerActions(group.provider, group.label, server);
-  const canSignIn = server.canStartSignIn === true;
+  const canSignIn = server.canStartSignIn === true || Boolean(server.connectUrl);
   const status =
     server.status === "connected"
       ? "Connected"
@@ -1168,7 +1168,11 @@ function ProviderServerDetail({
                   disabled={actions.locked}
                   onClick={() => void actions.signIn()}
                 >
-                  {server.status === "connected" ? "Sign in again" : "Sign in"}
+                  {server.connectUrl
+                    ? "Connect on claude.ai"
+                    : server.status === "connected"
+                      ? "Sign in again"
+                      : "Sign in"}
                 </PrimaryAction>
               ) : null}
               <ManagedBy label={group.label} />

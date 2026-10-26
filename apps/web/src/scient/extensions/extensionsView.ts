@@ -317,7 +317,8 @@ export function collectProviderExtensionGroups(
       (server) =>
         !selected || audienceReaches(providerExtensionAudience(provider, server), selected),
     );
-    if (visiblePlugins.length === 0 && mcpServers.length === 0) continue;
+    if (visiblePlugins.length === 0 && mcpServers.length === 0 && provider.driver !== "claudeAgent")
+      continue;
     groups.push({ provider, label: providerLabel(provider), plugins: visiblePlugins, mcpServers });
   }
   return groups;

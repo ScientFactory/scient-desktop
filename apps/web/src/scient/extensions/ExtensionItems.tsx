@@ -391,9 +391,9 @@ export function ProviderServerItem({
       status={MCP_SERVER_STATUS_TEXT[server.status]}
       trailing={
         <ItemMenu name={server.name} target={target}>
-          {server.canStartSignIn === true ? (
+          {server.canStartSignIn === true || server.connectUrl ? (
             <MenuItem disabled={actions.locked} onClick={() => void actions.signIn()}>
-              Sign in
+              {server.connectUrl ? "Connect on claude.ai" : "Sign in"}
             </MenuItem>
           ) : null}
         </ItemMenu>

@@ -65,6 +65,9 @@ export interface ProviderMcpSignInAttempt {
  * changes the configuration that generation was created with.
  */
 export interface ProviderPluginActions {
+  readonly refreshInventory?:
+    | ((input: { readonly force: boolean }) => Effect.Effect<void, ProviderPluginActionFailure>)
+    | undefined;
   /**
    * A fresh listing of the plugins this generation sees, in `cwd` when given.
    * Fails unless the provider listed every plugin source.

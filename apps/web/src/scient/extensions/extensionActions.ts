@@ -379,12 +379,29 @@ export function useProviderServerActions(
   const { environmentId } = useExtensionsEnvironment();
   const lock = useActionLock(JSON.stringify(["provider-server", provider.instanceId, server.name]));
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
+  const waiting = useRef(false);
+  useEffect(() => {
+    const refresh = () => {
+      if (!waiting.current) return;
+      waiting.current = false;
+      void act({
+        environmentId,
+        input: { instanceId: provider.instanceId, action: { type: "refresh-inventory" } },
+      });
+    };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [act, environmentId, provider.instanceId]);
   return {
     ...lock,
     signIn: () =>
       lock.signIn(
         "sign-in",
         async () => {
+          if (server.connectUrl) {
+            waiting.current = true;
+            return server.connectUrl;
+          }
           const result = await act({
             environmentId,
             input: {

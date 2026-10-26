@@ -35,6 +35,12 @@ import { makeClaudeManagedRuntimeResolution } from "../../scient/providerLifecyc
 import { makeClaudeVoiceTranscriptCorrection } from "../../scient/voice/ClaudeVoiceTranscriptCorrection.ts";
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
 // SCIENT-FORK:START — Scient Extensions: live-session provider-native inventory.
+import {
+  makeClaudeAccountInventoryRefresh,
+  probeClaudeAccountServers,
+} from "../../scient/extensions/ClaudeAccountInventory.ts";
+import * as Deferred from "effect/Deferred";
+import type { ProviderPluginActions } from "../ScientProviderInstanceSeams.ts";
 import type { ProviderNativeInventory } from "../ScientProviderInstanceSeams.ts";
 // SCIENT-FORK:END
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -225,6 +231,28 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       PubSub.unbounded<ProviderNativeInventory>({ replay: 1 }),
       PubSub.shutdown,
     );
+    const inventoryState = yield* Ref.make<ProviderNativeInventory>({});
+    const publishInventory = (incoming: ProviderNativeInventory, accountOnly = false) =>
+      Ref.updateAndGet(inventoryState, (current) => ({
+        ...current,
+        ...incoming,
+        ...(incoming.mcpServers
+          ? {
+              mcpServers: [
+                ...(current.mcpServers ?? []).filter((server) =>
+                  accountOnly
+                    ? server.scope !== "claudeai"
+                    : server.scope === "claudeai" &&
+                      !incoming.mcpServers?.some((entry) => entry.scope === "claudeai"),
+                ),
+                ...incoming.mcpServers,
+              ],
+            }
+          : {}),
+      })).pipe(
+        Effect.flatMap((report) => PubSub.publish(nativeInventory, report)),
+        Effect.asVoid,
+      );
     // SCIENT-FORK:END
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
@@ -241,8 +269,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       {
         scopedLimitNames,
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
-        onNativeInventory: (inventory) =>
-          PubSub.publish(nativeInventory, inventory).pipe(Effect.asVoid),
+        onNativeInventory: (inventory) => publishInventory(inventory),
       },
       // SCIENT-FORK:END
     ).pipe(
@@ -270,6 +297,28 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
     // account-specific probes never share auth metadata across instances.
     // A transient miss may reuse the last account once, but its usage windows keep their age.
     const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
+    // SCIENT-FORK:START — account connectors are probed only by Extensions, never health refreshes.
+    const retired = yield* Deferred.make<void>();
+    yield* Effect.addFinalizer(() => Deferred.succeed(retired, undefined));
+    const refreshInventory = yield* makeClaudeAccountInventoryRefresh(
+      Ref.get(lastGoodCapabilities),
+      probeClaudeAccountServers(effectiveConfig, effectiveProcessEnv, serverConfig.stateDir).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
+      (mcpServers) => publishInventory({ mcpServers }, true),
+    );
+    const unsupported = Effect.fail({ message: "Claude manages this operation itself." });
+    const pluginActions: ProviderPluginActions = {
+      refreshInventory,
+      listPlugins: () => unsupported,
+      readMcpServer: () => unsupported,
+      uninstall: () => unsupported,
+      startMcpSignIn: () => unsupported,
+      isRetired: Deferred.isDone(retired),
+      whenRetired: Deferred.await(retired),
+    };
+    // SCIENT-FORK:END
     const capabilitiesProbeCache = yield* Cache.makeWith(
       () =>
         probeClaudeCapabilities(effectiveConfig, effectiveProcessEnv, serverConfig.stateDir).pipe(
@@ -355,6 +404,19 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
               ? Cache.invalidateAll(capabilitiesProbeCache)
               : Effect.void,
           ),
+          // SCIENT-FORK:START — account app access requires verified first-party subscription auth.
+          Effect.flatMap((provider) =>
+            Ref.get(lastGoodCapabilities).pipe(
+              Effect.map((account) => ({
+                ...provider,
+                accountAppsAvailable:
+                  provider.auth.status === "authenticated" &&
+                  account?.apiProvider === "firstParty" &&
+                  Boolean(account.subscriptionType),
+              })),
+            ),
+          ),
+          // SCIENT-FORK:END
           Effect.map(stampIdentity),
         ),
       ),
@@ -504,6 +566,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
             ),
       skillActions,
       // SCIENT-FORK:START — Scient Extensions: live-session provider-native inventory.
+      pluginActions,
       nativeInventoryChanges: Stream.fromPubSub(nativeInventory),
       // SCIENT-FORK:END
       orchestrationAdapter,
