@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
+#include <wchar.h>
 #elif defined(SCIENT_PUBLICATION_PROBE)
 #include <unistd.h>
 #endif
@@ -379,7 +380,7 @@ result:
 }
 #ifdef _WIN32
 int wmain(int argc, wchar_t **wide) {
-  if (_setmode(_fileno(stdin), _O_BINARY) == -1) return 71;
+  if (argc > 1 && !wcscmp(wide[1], L"--lease=1") && _setmode(_fileno(stdin), _O_BINARY) == -1) return 71;
   char **argv = calloc((size_t)argc, sizeof(*argv));
   if (!argv) return 71;
   int allocated = 0, result = 71;
