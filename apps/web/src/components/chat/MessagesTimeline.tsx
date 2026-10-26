@@ -179,7 +179,8 @@ function TimelineListFooter({
   );
 }
 
-const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_TIMELINE_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
 
 const CITED_HISTORY_LOADING: CitedHistory = { _tag: "loading" };
@@ -277,7 +278,7 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
-  skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills?: ReadonlyArray<ServerProviderSkill>;
   runs: ReadonlyArray<HandoffTimelineRun>;
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;

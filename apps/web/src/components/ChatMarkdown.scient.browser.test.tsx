@@ -730,7 +730,9 @@ describe("ChatMarkdown thread find", () => {
     "highlights the indexed occurrences of $query in $text",
     async ({ text, query, count, lineBreaks, user, withTemplate, mathSource, canonicalPhrase }) => {
       setup();
-      const skills = [{ name: "test-t3-app", displayName: "T3 App Testing" }];
+      const skills = [
+        { name: "test-t3-app", displayName: "T3 App Testing", path: "", enabled: true },
+      ];
       using _highlights = clearHighlights();
       const container = document.createElement("div");
       await using _screen = await render(
