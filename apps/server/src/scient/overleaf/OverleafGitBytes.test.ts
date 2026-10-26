@@ -54,11 +54,17 @@ describe("Overleaf Git bytes", () => {
             const result = yield* git.execute({ cwd: repo, args: ["config", "--get", key!] });
             expect(new TextDecoder().decode(result.stdout).trim()).toBe(expected);
           }
+          const lines = (ending: (index: number) => string, bom = "") =>
+            bom +
+            Array.from({ length: 20 }, (_, index) => `line-${index}${ending(index)}`).join("");
+          const textSamples = new Map([
+            ["lf.tex", lines(() => "\n")],
+            ["crlf.tex", lines(() => "\r\n")],
+            ["mixed.tex", lines((index) => (index % 2 === 0 ? "\r\n" : "\n"))],
+            ["bom.tex", lines((index) => (index === 19 ? "" : "\r\n"), "\ufeff")],
+          ]);
           const samples = new Map<string, Uint8Array>([
-            ["lf.tex", bytes("one\ntwo\n")],
-            ["crlf.tex", bytes("one\r\ntwo\r\n")],
-            ["mixed.tex", bytes("one\r\ntwo\nthree\rfour")],
-            ["bom.tex", bytes("\ufeffone\r\ntwo")],
+            ...[...textSamples].map(([name, content]) => [name, bytes(content)] as const),
             ["binary.dat", Uint8Array.from([0, 255, 128, 13, 10, 0, 42])],
           ]);
           const stage = NodePath.join(
@@ -77,21 +83,41 @@ describe("Overleaf Git bytes", () => {
           expect(hashed).toEqual([...samples.values()].map(objectId));
           const entries = [...samples.keys()].map((path, index) => ({ path, oid: hashed[index]! }));
           const base = yield* repos.writeTree({ repo, entries });
-          const localOid = yield* repos.writeBlob({ repo, bytes: bytes("local\r\n") });
-          const remoteOid = yield* repos.writeBlob({ repo, bytes: bytes("\ufeffremote\n") });
-          const local = yield* repos.writeTree({
-            repo,
-            entries: [...entries, { path: "local.tex", oid: localOid }],
-          });
-          const remote = yield* repos.writeTree({
-            repo,
-            entries: [...entries, { path: "remote.tex", oid: remoteOid }],
-          });
+          const localEntries = [];
+          const remoteEntries = [];
+          const expected = new Map(samples);
+          for (const entry of entries) {
+            const content = textSamples.get(entry.path);
+            const localBytes =
+              content === undefined
+                ? Uint8Array.from([0, 254, 128, 13, 10, 0, 42])
+                : bytes(content.replace("line-2", "local-2"));
+            const remoteBytes =
+              content === undefined
+                ? samples.get(entry.path)!
+                : bytes(content.replace("line-17", "remote-17"));
+            expected.set(
+              entry.path,
+              content === undefined
+                ? localBytes
+                : bytes(content.replace("line-2", "local-2").replace("line-17", "remote-17")),
+            );
+            localEntries.push({
+              path: entry.path,
+              oid: yield* repos.writeBlob({ repo, bytes: localBytes }),
+            });
+            remoteEntries.push({
+              path: entry.path,
+              oid: yield* repos.writeBlob({ repo, bytes: remoteBytes }),
+            });
+          }
+          const local = yield* repos.writeTree({ repo, entries: localEntries });
+          const remote = yield* repos.writeTree({ repo, entries: remoteEntries });
           const merged = yield* repos.merge({ repo, base, local, remote });
           const mergedEntries = yield* repos.readTree({ repo, tree: merged.tree });
-          expect(mergedEntries).toHaveLength(samples.size + 2);
+          expect(mergedEntries).toHaveLength(samples.size);
           for (const entry of mergedEntries) {
-            const original = samples.get(entry.path);
+            const original = expected.get(entry.path);
             if (original === undefined) continue;
             expect(entry.oid).toBe(objectId(original));
             const actual = yield* repos.readBlob({ repo, oid: entry.oid, maxBytes: 1024 });
