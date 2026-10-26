@@ -724,6 +724,7 @@ jobs:
   # SCIENT-FORK:START — Windows Overleaf evidence is mandatory, including exact queue reuse.
   overleaf_windows:
     name: Overleaf Windows
+    needs: [release_notes]
     runs-on: windows-2025
     timeout-minutes: 15
     steps:
