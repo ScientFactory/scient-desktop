@@ -105,6 +105,7 @@ export async function runWindowsRetainedMutation(
     originalIdentity: null,
     stageName: `.scient-overleaf-apply-${NodeCrypto.randomUUID()}`,
     originalSecurity: "original-security",
+    originalDescriptor: null,
   };
   if (
     record.target !== target ||
@@ -220,6 +221,13 @@ export async function runWindowsRetainedMutation(
         // Delete has no stage; its original is still opened even if resume reports absent staging.
         if (!same(reply.sourceBefore, record.originalIdentity))
           return finish("attention", "recovery");
+        if (
+          !record.originalDescriptor ||
+          (await NodeFSP.readFile(NodePath.join(directory, "original-security"))).toString(
+            "base64",
+          ) !== record.originalDescriptor
+        )
+          return result();
         const restored = await command("win-restore-policy");
         if (!good(restored)) return finish("attention", "recovery");
         return finish("skipped", "revision");
@@ -325,6 +333,11 @@ export async function runWindowsRetainedMutation(
       await save({
         originalIdentity: prepared.sourceBefore,
         stagedIdentity: prepared.destinationAfter,
+        originalDescriptor: prepared.sourceBefore
+          ? (await NodeFSP.readFile(NodePath.join(directory, "original-security"))).toString(
+              "base64",
+            )
+          : null,
       });
       await point("staged");
       if (stageRevision !== null && (await fileRevision(stage)) !== stageRevision)
