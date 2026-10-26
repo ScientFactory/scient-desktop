@@ -40,6 +40,9 @@ export interface PreviewMoreMenuActions {
 }
 
 interface Props {
+  // SCIENT-FORK:START — allow Scient-owned actions in the preview menu.
+  extraItems?: React.ReactNode;
+  // SCIENT-FORK:END
   enabled: boolean;
   actions: PreviewMoreMenuActions;
   zoomFactor: number;
@@ -76,13 +79,18 @@ export function PreviewMoreMenu({
   nativePictureInPicture,
   profileName,
   move,
+  // SCIENT-FORK:START — pass through Scient-owned menu actions.
+  extraItems,
+  // SCIENT-FORK:END
 }: Props) {
   const zoomLabel = `${Math.round(zoomFactor * 100)}%`;
   const disabled = !enabled;
   return (
     <Menu>
       <MenuTriggerButton />
-      <MenuPopup align="end" sideOffset={6}>
+      {/* SCIENT-FORK:START — keep async action owners mounted when the menu closes. */}
+      <MenuPopup align="end" sideOffset={6} keepMounted={Boolean(extraItems)}>
+        {/* SCIENT-FORK:END */}
         <MenuItem onClick={actions.hardReload} disabled={disabled}>
           Hard reload
         </MenuItem>
@@ -117,6 +125,9 @@ export function PreviewMoreMenu({
             </MenuRadioGroup>
           </MenuSubPopup>
         </MenuSub>
+        {/* SCIENT-FORK:START — mount Scient-owned menu actions. */}
+        {extraItems}
+        {/* SCIENT-FORK:END */}
         <MenuSeparator />
         <MenuItem
           closeOnClick={false}
