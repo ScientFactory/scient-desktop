@@ -21,6 +21,73 @@
     "Scient Accounts",
     "scient_accounts?_"
   ],
-  "upstreamMounts": [],
-  "scientMounts": []
+  "upstreamMounts": [
+    {
+      "path": "apps/server/src/mcp/McpInvocationContext.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: grant account tools to authenticated provider sessions.",
+      "purpose": "Grant account tools to authenticated provider sessions."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: all provider sessions can use user-granted accounts.",
+      "purpose": "All provider sessions can use user-granted accounts."
+    },
+    {
+      "path": "apps/server/src/mcp/McpHttpServer.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: mount account tools on the existing MCP transport.",
+      "purpose": "Mount account tools on the existing MCP transport."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/preview/handlers.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: enforce profile grants at preview discovery and open.",
+      "purpose": "Enforce profile grants at preview discovery and open."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/preview/tools.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: declare profile authorization dependencies and safe denials.",
+      "purpose": "Declare profile authorization dependencies and safe denials."
+    },
+    {
+      "path": "packages/contracts/src/previewAutomation.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: internal account operations use the authenticated browser rail.",
+      "purpose": "Internal account operations use the authenticated browser rail."
+    },
+    {
+      "path": "apps/server/src/preview/ServerBrowser.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: execute account operations over server and desktop CDP sessions.",
+      "purpose": "Execute account operations over server and desktop CDP sessions."
+    }
+  ],
+  "scientMounts": [
+    {
+      "path": "apps/server/src/mcp/ScientOperationCatalog.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: register account operation definitions.",
+      "purpose": "Register account operation definitions."
+    },
+    {
+      "path": "apps/server/src/mcp/ScientMcpInvocation.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: carry the MCP grant into Scient operations.",
+      "purpose": "Carry the MCP grant into Scient operations."
+    },
+    {
+      "path": "packages/shared/src/scientMcpToolPresentation.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: group account operations in the work log.",
+      "purpose": "Group account operations in the work log."
+    },
+    {
+      "path": "packages/scient-operations/src/operation.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: declare the account operation grant.",
+      "purpose": "Declare the account operation grant."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ProviderSessionManager.scient.test.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: keep credential-policy fixtures complete.",
+      "purpose": "Keep Scient credential-reuse fixtures complete when accounts is granted."
+    },
+    {
+      "path": "scient-extensions-seams.json",
+      "anchor": "Accounts reuses Extensions public-address validation and credential-response redaction.",
+      "purpose": "Record the cross-feature mount for Accounts outbound policy reuse."
+    }
+  ]
 }

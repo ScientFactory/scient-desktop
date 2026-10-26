@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Scient Accounts: register account operation definitions.
+import { ScientAccountsToolkit } from "../scient/accounts/agent/tools.ts";
+// SCIENT-FORK:END
 import { makeOperationRegistry } from "@scientfactory/operations";
 import type { Tool } from "effect/ai";
 
@@ -29,6 +32,9 @@ export function makeScientOperationCatalog(tools: ReadonlyArray<Tool.Any>) {
 
 /** Compose existing domain adapters; do not maintain another list of tool names. */
 export const scientTools = [
+  // SCIENT-FORK:START — Scient Accounts: include account tools in discovery.
+  ...Object.values(ScientAccountsToolkit.tools),
+  // SCIENT-FORK:END
   ...Object.values(PreviewToolkit.tools),
   ...Object.values(ScientSourcesToolkit.tools),
   ...Object.values(ScientSkillsToolkit.tools),

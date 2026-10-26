@@ -289,6 +289,11 @@
       "path": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.wake.testkit.ts",
       "anchor": "onNativeInventory",
       "purpose": "Let Claude adapter wake fixtures observe native plugin and MCP inventory reports."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/request.ts",
+      "anchor": "from \"../../extensions/connectors/ConnectorOutbound.ts\"",
+      "purpose": "Accounts reuses Extensions public-address validation and credential-response redaction."
     }
   ]
 }

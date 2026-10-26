@@ -47,6 +47,11 @@ const PREVIEW_AUTOMATION_OPERATIONS = [
   "documentPdfPresent",
   "documentLatexPresent",
   "documentPagePdfRender",
+  // SCIENT-FORK:START — Scient Accounts: internal account operations use the authenticated browser rail.
+  "accountCookies",
+  "accountType",
+  "accountWaitForLoad",
+  // SCIENT-FORK:END
 ] as const;
 
 export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
@@ -59,6 +64,11 @@ export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
   "hover",
   "select",
   "drag",
+  // SCIENT-FORK:START — Scient Accounts: internal account operations use the authenticated browser rail.
+  "accountCookies",
+  "accountType",
+  "accountWaitForLoad",
+  // SCIENT-FORK:END
 ] as const;
 export const PreviewAutomationOperation = Schema.Literals([
   ...PREVIEW_AUTOMATION_SERVER_OPERATIONS,

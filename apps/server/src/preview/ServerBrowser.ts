@@ -52,6 +52,12 @@ import {
 } from "@t3tools/contracts";
 import * as Result from "effect/Result";
 import * as Base64Url from "effect/encoding/Base64Url";
+// SCIENT-FORK:START — Scient Accounts: execute account operations over server and desktop CDP sessions.
+import {
+  readAccountCookies,
+  typeAccountValue,
+} from "../scient/accounts/agent/browserOperations.ts";
+// SCIENT-FORK:END
 import { publishBrowserPdfExport } from "../scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import type { GeneratedDocumentStore } from "../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -1957,6 +1963,15 @@ const make = Effect.gen(function* () {
   const executeTabOperation = async (tab: ServerTab, request: PreviewAutomationRequest) => {
     const input = request.input;
     switch (request.operation) {
+      // SCIENT-FORK:START — Scient Accounts: keep credential fills out of action errors and read HttpOnly cookies.
+      case "accountCookies":
+        return readAccountCookies(tab.cdp, input);
+      case "accountType":
+        return typeAccountValue(tab.page, input);
+      case "accountWaitForLoad":
+        await tab.page.waitForLoadState("load", { timeout: request.timeoutMs });
+        return {};
+      // SCIENT-FORK:END
       case "navigate": {
         const navigateInput = input as PreviewAutomationNavigateInput;
         await recordAction(tab, "navigate", () =>
