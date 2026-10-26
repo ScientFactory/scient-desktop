@@ -3,6 +3,9 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "../baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
 import { ServerProviders } from "../server.ts";
+import { ExtensionAgentStores } from "./extensionAudience.ts";
+export { ExtensionAudience, ExtensionAgentStores } from "./extensionAudience.ts";
+
 import { GrantScope, VaultSecretRef } from "./secrets.ts";
 
 /**
@@ -332,6 +335,7 @@ export const DiscoverRemote = Schema.Struct({
 export type DiscoverRemote = typeof DiscoverRemote.Type;
 
 export const DiscoverEntry = Schema.Struct({
+  agentStores: Schema.optional(ExtensionAgentStores),
   name: TrimmedNonEmptyString,
   version: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),

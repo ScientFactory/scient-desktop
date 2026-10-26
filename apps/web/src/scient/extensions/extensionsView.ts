@@ -8,6 +8,7 @@ import {
   type DiscoverCatalog,
   type DiscoverEntry,
   ExtensionCategory,
+  type ExtensionAudience,
   type ExtensionDeliverySkipReason,
   type ProjectIconColor,
   type ProviderInstanceId,
@@ -294,7 +295,6 @@ export function collectProviderExtensionGroups(
 ): ReadonlyArray<ProviderExtensionGroup> {
   const groups: ProviderExtensionGroup[] = [];
   for (const provider of providers) {
-    if (worksWith !== null && provider.instanceId !== worksWith) continue;
     const plugins: ProviderPluginEntry[] = (provider.plugins ?? []).map((plugin) => ({
       plugin,
       cwd: undefined,
@@ -307,9 +307,18 @@ export function collectProviderExtensionGroups(
         plugins.push({ plugin, cwd: snapshot.cwd });
       }
     }
-    const mcpServers = provider.mcpServers ?? [];
-    if (plugins.length === 0 && mcpServers.length === 0) continue;
-    groups.push({ provider, label: providerLabel(provider), plugins, mcpServers });
+    const selected = providers.find((candidate) => candidate.instanceId === worksWith);
+    const visiblePlugins = selected
+      ? plugins.filter(({ plugin }) =>
+          audienceReaches(providerExtensionAudience(provider, plugin), selected),
+        )
+      : plugins;
+    const mcpServers = (provider.mcpServers ?? []).filter(
+      (server) =>
+        !selected || audienceReaches(providerExtensionAudience(provider, server), selected),
+    );
+    if (visiblePlugins.length === 0 && mcpServers.length === 0) continue;
+    groups.push({ provider, label: providerLabel(provider), plugins: visiblePlugins, mcpServers });
   }
   return groups;
 }
@@ -357,4 +366,88 @@ export function callbackOriginOf(httpBaseUrl: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+export function providerExtensionAudience(
+  provider: ServerProvider,
+  entry: ServerProviderPlugin | ServerProviderMcpServer,
+): ExtensionAudience {
+  if (provider.driver === "claudeAgent" && !("scope" in entry && entry.scope === "claudeai")) {
+    return { layer: "shared" };
+  }
+  return {
+    layer: "agent",
+    driver: provider.driver,
+    instanceId: provider.instanceId,
+    label:
+      provider.driver === "codex"
+        ? "Codex"
+        : provider.driver === "claudeAgent"
+          ? "Claude"
+          : providerLabel(provider),
+    reason:
+      provider.driver === "codex"
+        ? "Uses Codex's own ChatGPT account"
+        : provider.driver === "claudeAgent"
+          ? "Uses Claude's own Claude account"
+          : "Managed by this agent",
+  };
+}
+
+export function audienceReaches(audience: ExtensionAudience, provider: ServerProvider): boolean {
+  switch (audience.layer) {
+    case "scient":
+      return true;
+    case "shared":
+      return provider.driver === "claudeAgent" || provider.driver === "scient";
+    case "agent":
+      return provider.instanceId === audience.instanceId;
+  }
+}
+
+export function audienceLabel(audience: ExtensionAudience): string {
+  switch (audience.layer) {
+    case "scient":
+      return "Works with all your agents";
+    case "shared":
+      return "Works with Claude and Scient Agent";
+    case "agent":
+      return `${audience.label} only`;
+  }
+}
+
+export function audienceSupport(
+  audience: ExtensionAudience,
+  providers: ReadonlyArray<ServerProvider>,
+  connectorSupport: ReadonlyArray<ConnectorProviderSupport>,
+): ReadonlyArray<ConnectorProviderSupport> {
+  return providers.map((provider) => {
+    const supported = audienceReaches(audience, provider);
+    const connector = connectorSupport.find(
+      (entry) => entry.providerInstanceId === provider.instanceId,
+    );
+    if (audience.layer === "scient" && connector) return connector;
+    return {
+      providerInstanceId: provider.instanceId,
+      driver: provider.driver,
+      displayName: providerLabel(provider),
+      status: supported ? "supported" : "unsupported",
+      ...(!supported
+        ? {
+            reason:
+              audience.layer === "agent" ? audience.reason : "Uses Claude Code's plugin format",
+          }
+        : {}),
+    };
+  });
+}
+
+export function preferCuratedStoreEntries<T extends { readonly name: string }>(
+  entries: ReadonlyArray<T>,
+  curated: ReadonlyArray<DiscoverEntry>,
+): ReadonlyArray<T> {
+  const aliases = new Set(
+    curated.flatMap((entry) => (entry.agentStores?.codex ? [entry.agentStores.codex] : [])),
+  );
+  return entries.filter((entry) => !aliases.has(entry.name));
 }

@@ -1,5 +1,4 @@
 import {
-  type ConnectorProviderSupport,
   type ConnectorSummary,
   type ConnectorTestResult,
   type DiscoverCatalog,
@@ -23,15 +22,12 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
+import { WorksWithValue } from "./WorksWith";
 import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
-import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
-import { ScrollArea } from "../../components/ui/scroll-area";
 import { NativeSelect } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { AddConnectorDialog } from "./AddConnectorDialog";
@@ -58,6 +54,7 @@ import {
   type ProviderExtensionGroup,
   type ToolGroups,
   catalogEntries,
+  providerExtensionAudience,
   collectProviderExtensionGroups,
   connectorActions,
   connectorAuthLabel,
@@ -283,160 +280,6 @@ function categoryLabel(entry: DiscoverEntry | undefined, catalog: DiscoverCatalo
         category.charAt(0).toUpperCase() + category.slice(1),
     )
     .join(", ");
-}
-
-/** "All agents", "4 agents": agents with limits can use the service, so they count. */
-function worksWithCount(support: ReadonlyArray<ConnectorProviderSupport>): string {
-  const usable = support.filter((entry) => entry.status !== "unsupported").length;
-  if (usable === support.length) return "All agents";
-  if (usable === 0) return "None of your agents";
-  return `${usable} ${usable === 1 ? "agent" : "agents"}`;
-}
-
-/** An agent's logo with its name below; an amber dot marks one that works with limits. */
-function AgentTileContent({
-  entry,
-  iconUrl,
-}: {
-  readonly entry: ConnectorProviderSupport;
-  readonly iconUrl: string | undefined;
-}) {
-  return (
-    <>
-      <ProviderInstanceIcon
-        driverKind={entry.driver}
-        displayName={entry.displayName}
-        acpRegistryIconUrl={iconUrl}
-        iconClassName="size-7"
-        indicatorBackground="var(--popover)"
-        {...(entry.status === "conditional" ? { statusDotClassName: "bg-warning" } : {})}
-      />
-      <span className="line-clamp-2 w-full text-xs leading-tight text-muted-foreground">
-        {entry.displayName}
-      </span>
-    </>
-  );
-}
-
-const AGENT_TILE_CLASS = "flex w-[4.5rem] flex-col items-center gap-1.5 py-1 text-center";
-
-/** How long the pointer rests on "Works with" before its card opens. */
-const WORKS_WITH_OPEN_DELAY_MS = 200;
-
-/**
- * A press pins the reason even if hover/focus just opened it; otherwise a tap following focus would
- * immediately close the explanation. Keep the tooltip inside the card's open scope.
- */
-function LimitedAgentTile({
-  entry,
-  iconUrl,
-}: {
-  readonly entry: ConnectorProviderSupport;
-  readonly iconUrl: string | undefined;
-}) {
-  const [shown, setShown] = useState<"closed" | "shown" | "pinned">("closed");
-  const reason = entry.reason ?? "Works with limits";
-  return (
-    <Tooltip
-      open={shown !== "closed"}
-      onOpenChange={(next, details) => {
-        // Presses are handled below; everything else shows or hides it.
-        if (details.reason === "trigger-press") return;
-        if (!next) setShown("closed");
-        else setShown((current) => (current === "pinned" ? "pinned" : "shown"));
-      }}
-    >
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            aria-label={`${entry.displayName}: ${reason}`}
-            onClick={() => setShown((current) => (current === "pinned" ? "closed" : "pinned"))}
-            className={cn(
-              AGENT_TILE_CLASS,
-              "cursor-default rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-            )}
-          />
-        }
-      >
-        <AgentTileContent entry={entry} iconUrl={iconUrl} />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{reason}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-/**
- * Move keyboard focus into the card so Tab can reach limited agents' reasons; omit unusable agents
- * because the count already communicates their absence.
- */
-function WorksWithValue() {
-  const { inventory, providers } = useExtensionsEnvironment();
-  const support = inventory?.providerSupport ?? [];
-  if (support.length === 0) {
-    return <span className="text-muted-foreground">No agents reported</span>;
-  }
-  const usable = support.filter((entry) => entry.status !== "unsupported");
-  const count = worksWithCount(support);
-  if (usable.length === 0) return <span>{count}</span>;
-  const iconUrlOf = (entry: ConnectorProviderSupport) =>
-    providers.find((provider) => provider.instanceId === entry.providerInstanceId)?.iconUrl;
-  return (
-    <Popover>
-      <PopoverTrigger
-        openOnHover
-        delay={WORKS_WITH_OPEN_DELAY_MS}
-        closeDelay={120}
-        render={
-          <button
-            type="button"
-            aria-label={`Works with: ${count}`}
-            className={cn(GHOST_LINK_CLASS, "text-foreground")}
-          />
-        }
-      >
-        {count}
-      </PopoverTrigger>
-      {/* Above the count, left edges aligned; below only when there is no room
-          above, and shifted sideways only as far as the viewport needs. */}
-      <PopoverPopup
-        side="top"
-        align="start"
-        sideOffset={8}
-        collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
-        padding="comfortable"
-        aria-label="Agents"
-        initialFocus={(openType) => openType === "keyboard"}
-        className="w-max"
-      >
-        {/* The width limit sits on the content, independent of the positioner's
-            measurements, so the card is measured, and placed, at that width.
-            A wide 4rem fade marks whichever edge still has more agents, so the
-            row reads as scrollable. */}
-        <ScrollArea
-          scrollFade
-          hideScrollbars
-          className="h-auto max-w-[min(396px,calc(100vw-3rem))] [&>[data-slot=scroll-area-viewport]]:[--fade-size:4rem]"
-        >
-          <ul className="flex w-max gap-1">
-            {usable.map((entry) => (
-              <li
-                key={entry.providerInstanceId}
-                data-support={entry.status}
-                className={entry.status === "conditional" ? undefined : AGENT_TILE_CLASS}
-              >
-                {entry.status === "conditional" ? (
-                  <LimitedAgentTile entry={entry} iconUrl={iconUrlOf(entry)} />
-                ) : (
-                  <AgentTileContent entry={entry} iconUrl={iconUrlOf(entry)} />
-                )}
-              </li>
-            ))}
-          </ul>
-        </ScrollArea>
-      </PopoverPopup>
-    </Popover>
-  );
 }
 
 interface DetailRow {
@@ -953,6 +796,7 @@ function ServerDetail({
           catalogOnly ? null : ["Registry name", <Mono key="registry-name">{entry.name}</Mono>],
           catalogOnly ? null : ["Version", entry.version],
           ["Source", entrySourceLabel(entry)],
+          fact("Also available", entry.agentStores?.codex ? "Also in Codex’s store" : null),
         ]}
       />
     </DetailLayout>
@@ -1123,6 +967,7 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
               </Link>
             ) : null,
           ),
+          ["Works with", <WorksWithValue key="works-with" />],
           ["Source", builtIn ? "Built into Scient" : "Plugin bundle"],
           fact("SHA-256", plugin.digest ? <Mono>{plugin.digest}</Mono> : null),
         ]}
@@ -1246,6 +1091,13 @@ function ProviderPluginDetail({
       <AboutCard
         rows={[
           ["Managed by", group.label],
+          [
+            "Works with",
+            <WorksWithValue
+              key="works-with"
+              audience={providerExtensionAudience(group.provider, plugin)}
+            />,
+          ],
           fact("Version", plugin.version),
           fact("Marketplace", plugin.marketplace),
           fact("Workspace", workspace ? workspaceLabel(workspace) : null),
@@ -1336,6 +1188,13 @@ function ProviderServerDetail({
       <AboutCard
         rows={[
           ["Managed by", group.label],
+          [
+            "Works with",
+            <WorksWithValue
+              key="works-with"
+              audience={providerExtensionAudience(group.provider, server)}
+            />,
+          ],
           ["Status", status],
           fact("Tools", server.toolCount === undefined ? null : String(server.toolCount)),
           fact("Scope", server.scope),

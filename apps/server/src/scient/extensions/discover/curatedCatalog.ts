@@ -58,6 +58,7 @@ export interface CuratedServer {
   readonly websiteUrl: string;
   /** Bundled logo: a `data:` URI that passes `isExtensionIconDataUri`. */
   readonly icon: string;
+  readonly agentStores?: DiscoverEntry["agentStores"];
 }
 
 export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
@@ -243,6 +244,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "github",
+    agentStores: { codex: "github" },
     displayName: "GitHub",
     tagline: "Repositories, issues and pull requests",
     description:
@@ -361,6 +363,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "notion",
+    agentStores: { codex: "notion" },
     displayName: "Notion",
     tagline: "Pages, databases and lab notes",
     description:
@@ -424,6 +427,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "linear",
+    agentStores: { codex: "linear" },
     displayName: "Linear",
     tagline: "Issues, projects and cycles",
     description:
@@ -437,6 +441,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "slack",
+    agentStores: { codex: "slack" },
     displayName: "Slack",
     tagline: "Search and post in your workspace",
     description:
@@ -538,6 +543,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "figma",
+    agentStores: { codex: "figma" },
     displayName: "Figma",
     tagline: "Design files, components and variables",
     description:
@@ -638,6 +644,7 @@ export const curatedDiscoverEntry = (
   name: server.registry?.name ?? `${CURATED_NAME_PREFIX}${server.id}`,
   version: server.registry?.version ?? CATALOG_VERIFIED_ON,
   title: server.displayName,
+  ...(server.agentStores ? { agentStores: server.agentStores } : {}),
   description: server.description,
   tagline: server.tagline,
   categories: [...server.categories],

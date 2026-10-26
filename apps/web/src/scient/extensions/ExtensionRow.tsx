@@ -1,10 +1,11 @@
-import { isExtensionIconDataUri } from "@t3tools/contracts";
+import { isExtensionIconDataUri, type ExtensionAudience } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { ProjectMonogram } from "../../components/ProjectMonogram";
 import { cn } from "../../lib/utils";
+import { WorksWithValue } from "./WorksWith";
 import { iconTint } from "./extensionsView";
 
 /** Every place an extension row or button can open. */
@@ -177,7 +178,9 @@ export function ExtensionRow({
   status,
   trailing,
   feedback,
+  audience,
 }: {
+  readonly audience?: ExtensionAudience;
   readonly target: ExtensionTarget;
   readonly name: string;
   readonly iconUrl?: string | undefined;
@@ -210,6 +213,9 @@ export function ExtensionRow({
           {tagline ? <p className="truncate text-xs text-muted-foreground">{tagline}</p> : null}
         </div>
         {trailing ? <div className="relative z-10 shrink-0">{trailing}</div> : null}
+      </div>
+      <div className="relative z-10 px-2 ps-15 text-xs text-muted-foreground">
+        <WorksWithValue audience={audience} />
       </div>
       {feedback ? <div className="grid gap-1 px-2 pb-1 ps-15">{feedback}</div> : null}
     </li>

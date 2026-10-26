@@ -27,6 +27,7 @@ import { ActionError, SignInBlockedNotice } from "./ExtensionsFeedback";
 import { useExtensionsEnvironment } from "./ExtensionsPage";
 import { ExtensionRow, type ExtensionTarget } from "./ExtensionRow";
 import {
+  providerExtensionAudience,
   connectorActions,
   connectorStatusText,
   entryName,
@@ -331,6 +332,7 @@ export function ProviderPluginItem({
     <ExtensionRow
       target={target}
       name={name}
+      audience={providerExtensionAudience(provider, plugin)}
       tagline={plugin.description ?? `${label} plugin`}
       status={plugin.enabled ? null : "Off"}
       trailing={
@@ -384,6 +386,7 @@ export function ProviderServerItem({
     <ExtensionRow
       target={target}
       name={server.name}
+      audience={providerExtensionAudience(provider, server)}
       tagline={server.error ?? mcpServerSummary(server)}
       status={MCP_SERVER_STATUS_TEXT[server.status]}
       trailing={
