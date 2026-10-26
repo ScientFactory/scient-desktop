@@ -19,7 +19,7 @@ const provider = (driver: string, id = driver) =>
     instanceId: ProviderInstanceId.make(id),
   }) as ServerProvider;
 const claude = provider("claudeAgent");
-const scient = provider("scient");
+const scient = { ...provider("scient"), version: "0.1.3", usesClaudePlugins: true };
 const codex = provider("codex");
 const plugin = { id: "test", name: "test", enabled: true, source: "local" as const };
 

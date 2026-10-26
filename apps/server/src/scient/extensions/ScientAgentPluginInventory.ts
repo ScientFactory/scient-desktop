@@ -112,6 +112,12 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
       cwd: string | undefined,
       args: ReadonlyArray<string>,
     ) => Effect.Effect<string, { readonly message: string }>,
+    foreign: (
+      cwd: string | undefined,
+    ) => Effect.Effect<
+      ReadonlyArray<ServerProviderPlugin & { readonly path: string }>,
+      { readonly message: string }
+    > = () => Effect.succeed([]),
   ) {
     const reports = yield* Effect.acquireRelease(
       PubSub.unbounded<ProviderNativeInventory>({ replay: 1 }),
@@ -128,7 +134,15 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
         const data = yield* run(cwd, ["plugin", "list", "--json"]).pipe(
           Effect.flatMap(decodeInstalled),
         );
-        return { plugins: scientAgentInstalledPlugins(data), sequence };
+        const own = scientAgentInstalledPlugins(data);
+        const ownNames = new Set(own.map((plugin) => plugin.name));
+        return {
+          plugins: [
+            ...own,
+            ...(yield* foreign(cwd)).filter((plugin) => !ownNames.has(plugin.name)),
+          ],
+          sequence,
+        };
       },
       Effect.mapError(() => ({ message: "Scient Agent could not list all its plugins." })),
     );
@@ -138,7 +152,8 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
     ) {
       const listing = yield* list(input.cwd);
       const plugin = listing.plugins.find((plugin) => plugin.id === input.pluginId);
-      if (!plugin) return yield* Effect.fail({ message: "This plugin is no longer installed." });
+      if (!plugin || !plugin.canUninstall)
+        return yield* Effect.fail({ message: "This plugin is no longer installed." });
       yield* run(input.cwd, [
         "plugin",
         action,

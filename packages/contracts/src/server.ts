@@ -333,6 +333,7 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   // SCIENT-FORK:START — Scient Extensions native inventory.
   accountAppsAvailable: Schema.optional(Schema.Boolean),
+  usesClaudePlugins: Schema.optional(Schema.Boolean),
   /** Provider-native plugins (global scope). Workspace-scoped plugins live in workspace snapshots. */
   plugins: Schema.optionalKey(Schema.Array(ServerProviderPlugin)),
   /** Provider-native MCP servers as last reported by the provider. */

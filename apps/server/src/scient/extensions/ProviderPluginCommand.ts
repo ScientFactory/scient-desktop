@@ -1,3 +1,4 @@
+import { supportsScientClaudePlugins } from "@t3tools/contracts";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -53,16 +54,33 @@ export const runProviderPluginCommand = Effect.fn("runProviderPluginCommand")(
 );
 
 export const runScientAgentPluginCommand = Effect.fn("runScientAgentPluginCommand")(
-  function* (executable: string, env: NodeJS.ProcessEnv, cwd: string, args: ReadonlyArray<string>) {
+  function* (
+    executable: string,
+    env: NodeJS.ProcessEnv,
+    cwd: string,
+    args: ReadonlyArray<string>,
+    useClaudePlugins = true,
+  ) {
     const resolved =
       (yield* resolveCommandPath(executable, { env, bypassCache: true })) ?? executable;
     const identity = yield* canonicalOmpExecutablePath(resolved);
     const gate = yield* OmpExecutableGate;
     yield* gate.acquireProcess(identity, { target: scientAgentTarget, kind: "one-shot" });
     const info = yield* runProviderPluginCommand(resolved, env, cwd, ["--runtime-info"]);
-    if (!scientAgentTarget.identify(info))
-      return yield* Effect.fail({ message: scientAgentTarget.unsupportedDetail });
-    return yield* runProviderPluginCommand(resolved, env, cwd, args);
+    const runtime = scientAgentTarget.identify(info);
+    if (!runtime) return yield* Effect.fail({ message: scientAgentTarget.unsupportedDetail });
+    return yield* runProviderPluginCommand(
+      resolved,
+      {
+        ...env,
+        SCIENT_AGENT_ENABLE_SOURCES:
+          useClaudePlugins && supportsScientClaudePlugins(runtime.version)
+            ? "claude-plugins"
+            : undefined,
+      },
+      cwd,
+      args,
+    );
   },
   Effect.timeout("65 seconds"),
   Effect.scoped,

@@ -1,4 +1,9 @@
-import { ScientAgentSettings, type ServerProvider, type ServerSettings } from "@t3tools/contracts";
+import {
+  supportsScientClaudePlugins,
+  ScientAgentSettings,
+  type ServerProvider,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
@@ -49,6 +54,7 @@ import {
   makeScientAgentPluginInventory,
   runScientAgentPluginCommand,
 } from "../../scient/extensions/ScientAgentPluginInventory.ts";
+import { readClaudeInstalledPlugins } from "../../scient/extensions/ClaudeInstalledPlugins.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 
 const DRIVER_KIND = scientAgentTarget.driverKind;
@@ -122,12 +128,14 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-    const makeRpcClient = yield* makeOmpCustomModelsClientFactory(
+    const rawRpcClient = yield* makeOmpCustomModelsClientFactory(
       scientAgentTarget,
       serverSettings,
       instanceId,
       serverConfig.stateDir,
     ).pipe(Effect.mapError(failure("Could not prepare Scient Agent custom models.")));
+    const makeRpcClient: typeof rawRpcClient = (options) =>
+      rawRpcClient({ ...options, useClaudePlugins: effectiveConfig.useClaudePlugins });
     const managedRuntime = yield* makeScientAgentManagedRuntimeResolution({
       settings: effectiveConfig,
       baseDir: serverConfig.baseDir,
@@ -160,6 +168,8 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       const { accounts, ...draft } = snapshot;
       return {
         ...stampIdentity(draft),
+        usesClaudePlugins:
+          effectiveConfig.useClaudePlugins && supportsScientClaudePlugins(draft.version),
         connection: {
           methods: [],
           canDisconnect: false,
@@ -265,18 +275,48 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       ),
     );
     const executableGate = yield* OmpExecutableGate;
-    const native = yield* makeScientAgentPluginInventory((cwd, args) =>
-      runScientAgentPluginCommand(
-        launchConfig.binaryPath,
-        processEnv,
-        cwd ?? serverConfig.stateDir,
-        args,
-      ).pipe(
-        Effect.provideService(OmpExecutableGate, executableGate),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-      ),
+    const claudeHome =
+      processEnv.CLAUDE_CONFIG_DIR?.trim() ||
+      path.join(yield* HostProcess.HomeDirectory, ".claude");
+    const native = yield* makeScientAgentPluginInventory(
+      (cwd, args) =>
+        runScientAgentPluginCommand(
+          launchConfig.binaryPath,
+          processEnv,
+          cwd ?? serverConfig.stateDir,
+          args,
+          effectiveConfig.useClaudePlugins,
+        ).pipe(
+          Effect.provideService(OmpExecutableGate, executableGate),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        ),
+      (cwd) =>
+        effectiveConfig.useClaudePlugins
+          ? runScientAgentPluginCommand(
+              launchConfig.binaryPath,
+              processEnv,
+              serverConfig.stateDir,
+              ["--runtime-info"],
+              false,
+            ).pipe(
+              Effect.provideService(OmpExecutableGate, executableGate),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+              Effect.flatMap((info) =>
+                supportsScientClaudePlugins(scientAgentTarget.identify(info)?.version)
+                  ? readClaudeInstalledPlugins(claudeHome, cwd).pipe(
+                      Effect.provideService(Path.Path, path),
+                    )
+                  : Effect.succeed([]),
+              ),
+              Effect.mapError(() => ({
+                message: "Could not read Claude Code's installed plugins.",
+              })),
+            )
+          : Effect.succeed([]),
     ).pipe(Effect.provideService(Path.Path, path));
     return {
       pluginActions: native.actions,

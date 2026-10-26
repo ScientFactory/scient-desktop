@@ -8,6 +8,7 @@ import {
   type DiscoverCatalog,
   type DiscoverEntry,
   ExtensionCategory,
+  supportsScientClaudePlugins,
   type ExtensionAudience,
   type ExtensionDeliverySkipReason,
   type ProjectIconColor,
@@ -378,7 +379,10 @@ export function providerExtensionAudience(
   provider: ServerProvider,
   entry: ServerProviderPlugin | ServerProviderMcpServer,
 ): ExtensionAudience {
-  if (provider.driver === "claudeAgent" && !("scope" in entry && entry.scope === "claudeai")) {
+  if (
+    (provider.driver === "scient" && "marketplace" in entry && Boolean(entry.marketplace)) ||
+    (provider.driver === "claudeAgent" && !("scope" in entry && entry.scope === "claudeai"))
+  ) {
     return { layer: "shared" };
   }
   return {
@@ -405,7 +409,12 @@ export function audienceReaches(audience: ExtensionAudience, provider: ServerPro
     case "scient":
       return true;
     case "shared":
-      return provider.driver === "claudeAgent" || provider.driver === "scient";
+      return (
+        provider.driver === "claudeAgent" ||
+        (provider.driver === "scient" &&
+          supportsScientClaudePlugins(provider.version) &&
+          provider.usesClaudePlugins === true)
+      );
     case "agent":
       return provider.instanceId === audience.instanceId;
   }

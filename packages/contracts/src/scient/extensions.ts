@@ -4,7 +4,11 @@ import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "..
 import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
 import { ServerProviders } from "../server.ts";
 import { ExtensionAgentStores } from "./extensionAudience.ts";
-export { ExtensionAudience, ExtensionAgentStores } from "./extensionAudience.ts";
+export {
+  ExtensionAudience,
+  ExtensionAgentStores,
+  supportsScientClaudePlugins,
+} from "./extensionAudience.ts";
 
 import { GrantScope, VaultSecretRef } from "./secrets.ts";
 
