@@ -231,6 +231,17 @@ export async function runWindowsRetainedMutation(
     }
     return true;
   };
+  const captureOriginal = async () => {
+    const restricted = await command("win-restrict");
+    if (!good(restricted)) return false;
+    await point("restricted");
+    const captured = await command("win-capture", NodePath.basename(target), "retained");
+    await point("called");
+    if (!good(captured) || !same(captured.destinationAfter, record.originalIdentity)) return false;
+    await save({ phase: "displaced", capturedIdentity: record.originalIdentity });
+    await point("displaced");
+    return true;
+  };
   const settlePrune = async () => {
     const removed = await command("win-remove-captured");
     if (good(removed)) return await finish("done");
@@ -277,6 +288,17 @@ export async function runWindowsRetainedMutation(
         const restored = await command("win-restore-policy");
         if (!good(restored)) return result();
         await save({ sourceMutation: false, currentRevision: await fileRevision(target) });
+        if (
+          kind === "prune" &&
+          kept === null &&
+          !(await NodeFSP.readdir(target)).length &&
+          (await peersIntact())
+        ) {
+          await save({ phase: "publishing", sourceMutation: true });
+          await point("checked");
+          if (!(await captureOriginal())) return result();
+          return await settlePrune();
+        }
         return await finish(
           kept === null ? "skipped" : "attention",
           kept === null ? "revision" : "recovery",
@@ -284,10 +306,11 @@ export async function runWindowsRetainedMutation(
       }
       if (
         record.publication === "windows-stage-create" &&
-        record.expectedMutationEpoch &&
         input.bytes === undefined &&
         current === null &&
-        same(staged, record.stagedIdentity)
+        same(staged, record.stagedIdentity) &&
+        (await fileRevision(stage)) === stageRevision &&
+        (record.expectedMutationEpoch !== undefined || !(await peersIntact()))
       ) {
         await save({ sourceMutation: false });
         return await finish("skipped", "revision");
@@ -469,17 +492,7 @@ export async function runWindowsRetainedMutation(
         ...(record.expectedMutationEpoch ? { publicationEpoch: record.expectedMutationEpoch } : {}),
       });
       await point("checked");
-      if (!creation) {
-        const restricted = await command("win-restrict");
-        if (!good(restricted)) return result();
-        await point("restricted");
-        const captured = await command("win-capture", NodePath.basename(target), "retained");
-        await point("called");
-        if (!good(captured) || !same(captured.destinationAfter, record.originalIdentity))
-          return result();
-        await save({ phase: "displaced", capturedIdentity: record.originalIdentity });
-        await point("displaced");
-      }
+      if (!creation && !(await captureOriginal())) return result();
     }
     if (kind === "delete") return await finish("done");
     if (kind === "prune") {

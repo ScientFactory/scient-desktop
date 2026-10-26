@@ -1198,7 +1198,7 @@ int platform_windows_flags(int argc, char **argv) {
     }
     if (i > 2) printf(",");
     if (!error) printf("%lu", (unsigned long)flags);
-    else printf("%d", error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ? 0 : -1);
+    else printf("%d", error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND || error == ERROR_DIRECTORY ? 0 : -1);
   }
   printf("]\n"); return 0;
 }
