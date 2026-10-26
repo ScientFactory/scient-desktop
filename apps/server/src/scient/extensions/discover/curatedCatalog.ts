@@ -294,19 +294,6 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     icon: CURATED_ICONS["context7"],
   },
   {
-    // sign-in: 401 Bearer
-    id: "stack-overflow",
-    displayName: "Stack Overflow",
-    tagline: "Questions and answers from Stack Overflow",
-    description:
-      "Search Stack Overflow questions and answers from your agent. Answers keep their attribution and links.",
-    url: "https://mcp.stackoverflow.com",
-    registry: { name: "com.stackoverflow.mcp/mcp", version: "1.1.3" },
-    categories: ["code"],
-    websiteUrl: "https://stackoverflow.com",
-    icon: CURATED_ICONS["stack-overflow"],
-  },
-  {
     // sign-in: 401 OAuth
     id: "sentry",
     displayName: "Sentry",
@@ -398,30 +385,6 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     websiteUrl: "https://coda.io",
     icon: CURATED_ICONS["coda"],
   },
-  {
-    // sign-in: 401 OAuth
-    id: "box",
-    displayName: "Box",
-    tagline: "Search and read files in Box",
-    description:
-      "Search your Box content and read documents, including AI-assisted answers over files. Access follows your Box permissions.",
-    url: "https://mcp.box.com",
-    categories: ["writing"],
-    websiteUrl: "https://www.box.com",
-    icon: CURATED_ICONS["box"],
-  },
-  {
-    // sign-in: 401 OAuth
-    id: "dropbox",
-    displayName: "Dropbox",
-    tagline: "Search and read files in Dropbox",
-    description:
-      "Find and read files stored in your Dropbox. Access follows the account you authorize.",
-    url: "https://mcp.dropbox.com/mcp",
-    categories: ["writing"],
-    websiteUrl: "https://www.dropbox.com",
-    icon: CURATED_ICONS["dropbox"],
-  },
 
   // ── Communication ───────────────────────────────────────────────────────
   {
@@ -437,31 +400,6 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     categories: ["featured", "communication"],
     websiteUrl: "https://linear.app",
     icon: CURATED_ICONS["linear"],
-  },
-  {
-    // sign-in: 401 OAuth
-    id: "slack",
-    agentStores: { codex: "slack" },
-    displayName: "Slack",
-    tagline: "Search and post in your workspace",
-    description:
-      "Search Slack messages and channels, read threads and send messages. Access follows the workspace you authorize.",
-    url: "https://mcp.slack.com/mcp",
-    categories: ["communication"],
-    websiteUrl: "https://slack.com",
-    icon: CURATED_ICONS["slack"],
-  },
-  {
-    // sign-in: 401 OAuth
-    id: "asana",
-    displayName: "Asana",
-    tagline: "Tasks, projects and goals",
-    description:
-      "Search, create and update Asana tasks and projects. Access follows your Asana workspace permissions.",
-    url: "https://mcp.asana.com/v2/mcp",
-    categories: ["communication"],
-    websiteUrl: "https://asana.com",
-    icon: CURATED_ICONS["asana"],
   },
   {
     // sign-in: 401 OAuth
@@ -542,20 +480,6 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   },
   {
     // sign-in: 401 OAuth
-    id: "figma",
-    agentStores: { codex: "figma" },
-    displayName: "Figma",
-    tagline: "Design files, components and variables",
-    description:
-      "Read Figma design files, components and variables so agents can build from real designs. Access follows your Figma account.",
-    url: "https://mcp.figma.com/mcp",
-    registry: { name: "com.figma.mcp/mcp", version: "1.0.3" },
-    categories: ["design"],
-    websiteUrl: "https://www.figma.com",
-    icon: CURATED_ICONS["figma"],
-  },
-  {
-    // sign-in: 401 OAuth
     id: "canva",
     displayName: "Canva",
     tagline: "Create and edit Canva designs",
@@ -604,18 +528,6 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     categories: ["design"],
     websiteUrl: "https://www.mermaidchart.com",
     icon: CURATED_ICONS["mermaid-chart"],
-  },
-  {
-    // sign-in: 401 OAuth
-    id: "gamma",
-    displayName: "Gamma",
-    tagline: "Presentations and documents from prompts",
-    description:
-      "Generate presentations, documents and web pages in Gamma from an outline. Access follows your Gamma account.",
-    url: "https://mcp.gamma.app/mcp",
-    categories: ["design"],
-    websiteUrl: "https://gamma.app",
-    icon: CURATED_ICONS["gamma"],
   },
 ];
 

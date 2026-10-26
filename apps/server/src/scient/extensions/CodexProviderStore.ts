@@ -88,24 +88,25 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     ReadonlyArray<CodexSchema.V2PluginInstallResponse__AppSummary>
   >();
   let appsFingerprint = "";
-  const readApps = Effect.fn("CodexProviderStore.readApps")(function* (client: Client) {
+  const readApps = Effect.fn("CodexProviderStore.readApps")(function* (
+    client: Client,
+    references: ReadonlyArray<CodexSchema.V2PluginReadResponse__AppSummary>,
+  ) {
+    const ids = [...new Set(references.map((app) => app.id))];
+    if (!ids.length) return [];
+    const installed = yield* client.request("app/installed", {});
+    const states = new Map(installed.apps.map((app) => [app.id, app]));
     const apps: App[] = [];
-    let cursor: string | undefined;
-    const seen = new Set<string>();
-    let pages = 0;
-    do {
-      const page = yield* client.request("app/list", {
-        limit: 100,
-        ...(cursor ? { cursor } : {}),
-        forceRefetch: true,
-      });
-      apps.push(...page.data);
-      pages++;
-      if (apps.length > 20_000 || pages > 200 || (page.nextCursor && seen.has(page.nextCursor)))
-        return yield* fail("Codex did not finish listing its apps.");
-      cursor = page.nextCursor ?? undefined;
-      if (cursor) seen.add(cursor);
-    } while (cursor);
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      const page = yield* client.request("app/read", { appIds: ids.slice(offset, offset + 100) });
+      apps.push(
+        ...page.apps.map((app) => ({
+          ...app,
+          isAccessible: states.has(app.id),
+          isEnabled: states.get(app.id)?.enabled ?? true,
+        })),
+      );
+    }
     return apps;
   });
   const getClient = Effect.fn("CodexProviderStore.getClient")(function* () {
@@ -125,15 +126,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         );
         if (key === appsFingerprint) return;
         appsFingerprint = key;
-        yield* lock
-          .withPermits(1)(
-            readApps(client).pipe(
-              Effect.andThen(PubSub.publish(changes, undefined)),
-              Effect.timeout("30 seconds"),
-              Effect.ignore,
-            ),
-          )
-          .pipe(Effect.forkIn(lifetime));
+        yield* PubSub.publish(changes, undefined);
       }),
     );
     yield* client.handleServerNotification("account/updated", () =>
@@ -289,13 +282,10 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
           return yield* fail("Invalid store cursor.");
         const limit = Math.min(input.limit ?? 30, 50);
         const page = matching.slice(cursor, cursor + limit);
-        const apps = page.some(({ plugin }) => current.installedIds.has(plugin.id))
-          ? yield* readApps(client)
-          : [];
         return {
           entries: yield* Effect.forEach(
             page,
-            (item) => project(item, current.plan, current.installedIds.has(item.plugin.id), apps),
+            (item) => project(item, current.plan, current.installedIds.has(item.plugin.id)),
             { concurrency: 4 },
           ).pipe(
             Effect.timeoutOption("5 seconds"),
@@ -308,7 +298,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
                       item,
                       current.plan,
                       current.installedIds.has(item.plugin.id),
-                      apps,
+                      [],
                       false,
                     ),
                   ),
@@ -332,11 +322,11 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
             ? { marketplacePath: item.marketplacePath }
             : { remoteMarketplaceName: item.marketplace }),
         });
-        const apps = yield* readApps(client);
-        const indexedApps = new Map(apps.map((app) => [app.id, app]));
         const references = new Map(
           [...detail.plugin.apps, ...(pendingAuth.get(id) ?? [])].map((app) => [app.id, app]),
         );
+        const apps = yield* readApps(client, [...references.values()]);
+        const indexedApps = new Map(apps.map((app) => [app.id, app]));
         const summary = yield* project(item, current.plan, current.installedIds.has(id));
         return {
           ...summary,
@@ -394,7 +384,15 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
       Effect.fn("CodexProviderStore.enrichInstalled")(function* (client: Client) {
         const account = (yield* client.request("account/read", { refreshToken: false })).account;
         if (account?.type !== "chatgpt") return plugins;
-        const apps = yield* readApps(client);
+        const references = yield* Effect.forEach(plugins, (plugin) =>
+          client
+            .request("plugin/read", {
+              pluginName: plugin.name,
+              ...(plugin.marketplace ? { remoteMarketplaceName: plugin.marketplace } : {}),
+            })
+            .pipe(Effect.map((detail) => detail.plugin.apps)),
+        );
+        const apps = yield* readApps(client, references.flat());
         return plugins.map((plugin) => ({
           ...plugin,
           apps: apps

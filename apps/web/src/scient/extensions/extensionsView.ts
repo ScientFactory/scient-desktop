@@ -76,7 +76,7 @@ export function connectorStatusText(connector: Pick<ConnectorSummary, "status" |
 }
 
 export interface ConnectorActions {
-  /** `reconnect` repeats sign-in for a connected OAuth connector. */
+  /** The primary action appears only when a grant is needed. */
   readonly signIn: "sign-in" | "reconnect" | null;
   readonly canTest: boolean;
 }
@@ -87,7 +87,7 @@ export interface ConnectorActions {
  */
 export function connectorActions(connector: Pick<ConnectorSummary, "status" | "auth">) {
   const actions: Readonly<Record<ConnectorStatus, ConnectorActions>> = {
-    connected: { signIn: connector.auth.type === "oauth" ? "reconnect" : null, canTest: true },
+    connected: { signIn: null, canTest: true },
     "needs-auth": { signIn: "sign-in", canTest: false },
     "needs-credential": { signIn: null, canTest: false },
   };
@@ -237,6 +237,8 @@ export function iconTint(name: string): ProjectIconColor {
 }
 
 function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {
+  if (provider.driver === "scient" && (!provider.displayName || provider.displayName === "Scient"))
+    return "Scient Agent";
   if (provider.displayName) return provider.displayName;
   return (
     AVAILABLE_PROVIDER_OPTIONS.find((option) => option.value === provider.driver)?.label ??
@@ -479,4 +481,16 @@ export function preferCuratedStoreEntries<T extends { readonly name: string }>(
     curated.flatMap((entry) => (entry.agentStores?.codex ? [entry.agentStores.codex] : [])),
   );
   return entries.filter((entry) => !aliases.has(entry.name));
+}
+
+export function providerServerDisplayName(
+  server: Pick<ServerProviderMcpServer, "name" | "scope">,
+): string {
+  return server.scope === "claudeai" ? server.name.replace(/^claude\.ai\s+/i, "") : server.name;
+}
+
+export function entryNeedsToken(entry: DiscoverEntry | null): boolean {
+  return (
+    entry?.remotes.some((remote) => remote.url === "https://api.githubcopilot.com/mcp/") === true
+  );
 }

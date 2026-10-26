@@ -27,6 +27,7 @@ import { addConnector, startConnectorSignIn } from "./extensionsState";
 import { ActionError, commandFailureMessage, SignInBlockedNotice } from "./ExtensionsFeedback";
 import {
   entryAddTarget,
+  entryNeedsToken,
   installableRemotes,
   validateConnectorUrl,
   validateHeaderName,
@@ -67,7 +68,7 @@ function emptyDraft(entry: DiscoverEntry | null): Draft {
     url: "",
     remoteUrl: entry ? (installableRemotes(entry)[0]?.url ?? "") : "",
     displayName: entry?.title ?? "",
-    authMode: "automatic",
+    authMode: entryNeedsToken(entry) ? "api-key" : "automatic",
     showAdvanced: false,
     clientId: "",
     clientSecret: "",
@@ -176,6 +177,7 @@ export function AddConnectorDialog({
   readonly entry: DiscoverEntry | null;
   readonly callbackOrigin: string | null;
 }) {
+  const github = entryNeedsToken(entry) === true;
   const add = useAtomCommand(addConnector, { reportFailure: false });
   const startSignIn = useAtomCommand(startConnectorSignIn, { reportFailure: true });
   const [draft, setDraft] = useState(() => emptyDraft(entry));
@@ -333,10 +335,25 @@ export function AddConnectorDialog({
                     onChange={(event) => patch({ displayName: event.target.value })}
                   />
                 </div>
+                {github ? (
+                  <p className="text-sm text-muted-foreground">
+                    Use a{" "}
+                    <a
+                      className="underline"
+                      href="https://github.com/settings/personal-access-tokens/new"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      GitHub personal access token
+                    </a>{" "}
+                    with access to the repositories you need.
+                  </p>
+                ) : null}
                 <div className="grid gap-1.5">
                   <Label htmlFor="connector-auth">Authentication</Label>
                   <NativeSelect
                     id="connector-auth"
+                    disabled={github}
                     value={draft.authMode}
                     onChange={(event) =>
                       // A key typed for one mode never rides along with another.
@@ -405,6 +422,7 @@ export function AddConnectorDialog({
                       <Label htmlFor="connector-strategy">Send as</Label>
                       <NativeSelect
                         id="connector-strategy"
+                        disabled={github}
                         value={draft.strategy}
                         onChange={(event) =>
                           patch({ strategy: event.target.value as CredentialStrategy })

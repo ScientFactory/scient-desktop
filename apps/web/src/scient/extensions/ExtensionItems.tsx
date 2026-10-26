@@ -1,3 +1,4 @@
+import { AddConnectorDialog } from "./AddConnectorDialog";
 import type {
   ConnectorSummary,
   ConnectorTestResult,
@@ -10,7 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useAtomCommand } from "../../state/use-atom-command";
 import { actOnProviderPlugin } from "./extensionsState";
@@ -32,9 +33,11 @@ import { useExtensionsEnvironment } from "./ExtensionsPage";
 import { ExtensionRow, type ExtensionTarget } from "./ExtensionRow";
 import {
   providerExtensionAudience,
+  providerServerDisplayName,
   connectorActions,
   connectorStatusText,
   entryName,
+  entryNeedsToken,
   entryTagline,
   pluginGlyph,
   MCP_SERVER_STATUS_TEXT,
@@ -161,9 +164,9 @@ function ConnectorMenuItems({
       <MenuItem disabled={actions.locked || !allowed.canTest} onClick={() => void actions.test()}>
         Test
       </MenuItem>
-      {allowed.signIn ? (
+      {connector.auth.type === "oauth" ? (
         <MenuItem disabled={!actions.canSignIn} onClick={() => void actions.signIn()}>
-          {allowed.signIn === "sign-in" ? "Sign in" : "Reconnect"}
+          {connector.status === "connected" ? "Sign in again" : "Sign in"}
         </MenuItem>
       ) : null}
       <MenuItem
@@ -234,34 +237,55 @@ export function EntryItem({ entry }: { readonly entry: DiscoverEntry }) {
 }
 
 function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
+  const { environmentId, callbackOrigin } = useExtensionsEnvironment();
+  const [showToken, setShowToken] = useState(false);
   const actions = useAddEntry(entry);
   const open = useOpenExtension();
   const target: ExtensionTarget = { kind: "server", name: entry.name };
   const name = entryName(entry);
   return (
-    <ExtensionRow
-      target={target}
-      name={name}
-      iconUrl={entry.iconUrl}
-      tagline={entryTagline(entry)}
-      status={actions.busy === "add" ? "Adding…" : null}
-      trailing={
-        entry.installedConnectorId === undefined ? (
-          <Button
-            size="icon-sm"
-            variant="ghost-muted"
-            aria-label={actions.canAdd ? `Add ${name}` : `Why ${name} can't be added`}
-            disabled={actions.canAdd && actions.locked}
-            onClick={() => (actions.canAdd ? void actions.add() : open(target))}
-          >
-            <PlusIcon aria-hidden />
-          </Button>
-        ) : null
-      }
-      feedback={
-        hasFeedback(actions.feedback, false) ? <ActionFeedback feedback={actions.feedback} /> : null
-      }
-    />
+    <>
+      <ExtensionRow
+        target={target}
+        name={name}
+        iconUrl={entry.iconUrl}
+        tagline={entryTagline(entry)}
+        status={actions.busy === "add" ? "Adding…" : null}
+        trailing={
+          entry.installedConnectorId === undefined ? (
+            <Button
+              size="icon-sm"
+              variant="ghost-muted"
+              aria-label={actions.canAdd ? `Add ${name}` : `Why ${name} can't be added`}
+              disabled={actions.canAdd && actions.locked}
+              onClick={() =>
+                entryNeedsToken(entry)
+                  ? setShowToken(true)
+                  : actions.canAdd
+                    ? void actions.add()
+                    : open(target)
+              }
+            >
+              <PlusIcon aria-hidden />
+            </Button>
+          ) : null
+        }
+        feedback={
+          hasFeedback(actions.feedback, false) ? (
+            <ActionFeedback feedback={actions.feedback} />
+          ) : null
+        }
+      />
+      {showToken ? (
+        <AddConnectorDialog
+          open
+          onOpenChange={setShowToken}
+          environmentId={environmentId}
+          callbackOrigin={callbackOrigin}
+          entry={entry}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -386,7 +410,9 @@ export function ProviderPluginItem({
 
 export function mcpServerSummary(server: ServerProviderMcpServer): string {
   return [
-    "MCP server",
+    server.status === "connected"
+      ? "Connected"
+      : (MCP_SERVER_STATUS_TEXT[server.status] ?? "Connection"),
     server.toolCount === undefined
       ? null
       : `${server.toolCount} ${server.toolCount === 1 ? "tool" : "tools"}`,
@@ -414,7 +440,7 @@ export function ProviderServerItem({
   return (
     <ExtensionRow
       target={target}
-      name={server.name}
+      name={providerServerDisplayName(server)}
       audience={providerExtensionAudience(provider, server)}
       tagline={server.error ?? mcpServerSummary(server)}
       status={MCP_SERVER_STATUS_TEXT[server.status]}

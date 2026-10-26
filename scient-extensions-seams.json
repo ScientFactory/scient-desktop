@@ -114,7 +114,7 @@
     {
       "path": "apps/server/src/provider/Drivers/ClaudeDriver.ts",
       "anchor": "ProviderNativeInventory",
-      "purpose": "Publish Claude's live plugin and MCP server inventory for its exact provider instance."
+      "purpose": "Publish Claude's live plugin and MCP server inventory for its exact provider instance; resolve account capabilities before the cached Extensions account probe."
     },
     {
       "path": "apps/server/src/provider/Drivers/CodexDriver.ts",

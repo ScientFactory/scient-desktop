@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { makeSharedPluginStore } from "./SharedPluginStore.ts";
+import {
+  makeSharedPluginStore,
+  sharedPluginDisplayName,
+  sharedPluginShelfRank,
+} from "./SharedPluginStore.ts";
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const fixture = Effect.gen(function* () {
@@ -195,3 +199,20 @@ it.effect(
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it("ranks reviewed plugins before familiar brands and formats readable slug names", () => {
+  const entries = ["42crunch-api-security-testing", "github", "reviewed"].map((name) => ({
+    name,
+    rank: sharedPluginShelfRank(
+      name,
+      name === "reviewed" ? { state: "done", by: { type: "partner" } } : undefined,
+    ),
+  }));
+  expect(entries.sort((a, b) => a.rank - b.rank).map((entry) => entry.name)).toEqual([
+    "reviewed",
+    "github",
+    "42crunch-api-security-testing",
+  ]);
+  expect(sharedPluginShelfRank("unknown", { state: "pending", by: { type: "anthropic" } })).toBe(2);
+  expect(sharedPluginDisplayName("github-api-pdf-tools")).toBe("GitHub API PDF Tools");
+});

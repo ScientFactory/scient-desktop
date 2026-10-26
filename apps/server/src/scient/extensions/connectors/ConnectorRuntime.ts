@@ -924,10 +924,17 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       : Effect.succeed(checked.href);
   };
 
-  const probeFailure = (result: {
-    readonly type: "not-an-mcp-server" | "unreachable";
-    readonly message: string;
-  }) => extensionsError(result.type, result.message);
+  const probeFailure = (
+    result: {
+      readonly type: "not-an-mcp-server" | "unreachable" | "busy";
+      readonly message: string;
+    },
+    name = "This service",
+  ) =>
+    extensionsError(
+      result.type === "busy" ? "unreachable" : result.type,
+      result.type === "busy" ? `${name} is busy right now. Try again in a minute.` : result.message,
+    );
 
   const tooShort = (what: string) =>
     extensionsError(
@@ -974,6 +981,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       (input.target.type === "registry"
         ? (input.target.name.split("/").pop() ?? input.target.name)
         : new URL(url).hostname);
+    if (curated?.id === "github" && (!input.credential || input.credential.strategy !== "bearer"))
+      return yield* extensionsError("invalid-input", "Add GitHub with a personal access token.");
     const description = input.description ?? curated?.description;
     const connectorId = yield* newConnectorId;
     const owner = { type: "connector", connectorId } as const;
@@ -1013,7 +1022,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       if (probe.type === "auth-required") {
         return yield* extensionsError("sign-in-failed", "The service rejected this credential.");
       }
-      if (probe.type !== "open") return yield* probeFailure(probe);
+      if (probe.type !== "open") return yield* probeFailure(probe, displayName);
       const credentialRef = yield* credentials.put(
         owner,
         entered.strategy,
@@ -1053,7 +1062,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         };
         status = "needs-auth";
       } else {
-        return yield* probeFailure(probe);
+        return yield* probeFailure(probe, displayName);
       }
     }
     const record: ConnectorRecord = {
@@ -1174,7 +1183,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         `${record.displayName} does not require sign-in; it is now connected.`,
       );
     }
-    if (probe.type !== "auth-required") return yield* probeFailure(probe);
+    if (probe.type !== "auth-required") return yield* probeFailure(probe, record.displayName);
     const entry = yield* loadOAuth(record);
     const started = yield* Effect.tryPromise({
       try: () =>
@@ -1189,7 +1198,12 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         }),
       catch: (error) =>
         error instanceof ConnectorOAuthError
-          ? extensionsError(error.reason, error.message)
+          ? extensionsError(
+              error.reason,
+              curatedServerForUrl(record.url) && error.reason === "registration-unsupported"
+                ? "Sign-in is not available for this service right now."
+                : error.message,
+            )
           : extensionsError("sign-in-failed", "Sign-in could not be started."),
     });
     if (!isLive(record.connectorId)) {

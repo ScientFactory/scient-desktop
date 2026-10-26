@@ -108,6 +108,7 @@ function ProviderSection({ group }: { readonly group: ProviderExtensionGroup }) 
       {group.provider.driver === "claudeAgent" && group.provider.accountAppsAvailable !== true ? (
         <MutedLine>claude.ai connectors need a Claude account sign-in.</MutedLine>
       ) : null}
+      {rows.length === 0 ? <MutedLine>None yet.</MutedLine> : null}
       <ExtensionGrid label={title}>
         {expanded ? rows : rows.slice(0, PROVIDER_PREVIEW_ROWS)}
       </ExtensionGrid>

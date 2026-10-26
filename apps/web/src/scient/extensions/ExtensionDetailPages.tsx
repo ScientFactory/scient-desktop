@@ -60,6 +60,8 @@ import {
   connectorAuthLabel,
   connectorSourceLabel,
   entryName,
+  entryNeedsToken,
+  providerServerDisplayName,
   entrySourceLabel,
   entryTagline,
   groupTools,
@@ -610,6 +612,11 @@ function ConnectorDetail({
               </PrimaryAction>
             ) : null}
             <MoreMenu label={`More for ${name} connection`}>
+              {connector.status === "connected" && connector.auth.type === "oauth" ? (
+                <MenuItem disabled={!actions.canSignIn} onClick={() => void actions.signIn()}>
+                  Sign in again
+                </MenuItem>
+              ) : null}
               <MenuItem
                 disabled={actions.locked || !allowed.canTest}
                 onClick={() => void actions.test()}
@@ -743,7 +750,7 @@ function ServerDetail({
               <PrimaryAction
                 icon={DownloadIcon}
                 disabled={!actions.canAdd || actions.locked}
-                onClick={() => void actions.add()}
+                onClick={() => (entryNeedsToken(entry) ? onAddWithOptions() : void actions.add())}
               >
                 {actions.busy === "add" ? "Adding…" : "Add"}
               </PrimaryAction>
@@ -1197,7 +1204,7 @@ function ProviderServerDetail({
       back="installed"
       header={
         <DetailHeader
-          name={server.name}
+          name={providerServerDisplayName(server)}
           tagline={mcpServerSummary(server)}
           actions={
             <>

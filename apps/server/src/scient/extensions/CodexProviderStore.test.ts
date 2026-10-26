@@ -90,11 +90,14 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
                 hooks: [],
               },
             });
-          case "app/list":
+          case "app/installed":
             return Effect.succeed({
-              data: [state.app],
-              ...(state.repeatCursor ? { nextCursor: "repeat" } : {}),
+              apps: state.app.isAccessible
+                ? [{ id: state.app.id, enabled: state.app.isEnabled, callable: true }]
+                : [],
             });
+          case "app/read":
+            return Effect.succeed({ apps: [state.app], missingAppIds: [] });
           case "plugin/install": {
             return decodeInstall(params).pipe(
               Effect.mapError(() => ({ message: "Invalid install parameters" })),
@@ -199,36 +202,37 @@ describe("Codex provider store", () => {
           const entry = yield* store.entry("sample");
           expect(entry.apps[0]?.connected).toBe(true);
           expect(entry.includes).toEqual(["Skill: search", "MCP server: sample"]);
-          expect(fixture.calls.filter((call) => call.method === "app/list").length).toBeGreaterThan(
-            2,
-          );
+          expect(fixture.calls.some((call) => call.method === "app/list")).toBe(false);
+          expect(
+            fixture.calls
+              .filter((call) => call.method === "app/read")
+              .every((call) => JSON.stringify(call.params) === JSON.stringify({ appIds: ["app"] })),
+          ).toBe(true);
         }),
       ),
   );
-  it.effect(
-    "drops account-specific caches and rejects partial stores and repeated app cursors",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fixture = clientFixture([plugin("sample")]);
-          const store = yield* makeCodexProviderStore(
-            () => Effect.succeed(fixture.client),
-            () => Effect.succeed(undefined),
-          );
-          yield* store.search({});
-          fixture.state.account = { type: "apiKey" };
-          expect(yield* store.search({})).toMatchObject({
-            entries: [],
-            message: expect.stringContaining("ChatGPT"),
-          });
-          fixture.state.account = { type: "chatgpt", email: "other@example.com", planType: "plus" };
-          fixture.state.incomplete = true;
-          expect((yield* store.search({}).pipe(Effect.result))._tag).toBe("Failure");
-          fixture.state.incomplete = false;
-          fixture.state.repeatCursor = true;
-          expect((yield* store.entry("sample").pipe(Effect.result))._tag).toBe("Failure");
-        }),
-      ),
+  it.effect("drops account-specific caches and rejects partial stores without paging apps", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = clientFixture([plugin("sample")]);
+        const store = yield* makeCodexProviderStore(
+          () => Effect.succeed(fixture.client),
+          () => Effect.succeed(undefined),
+        );
+        yield* store.search({});
+        fixture.state.account = { type: "apiKey" };
+        expect(yield* store.search({})).toMatchObject({
+          entries: [],
+          message: expect.stringContaining("ChatGPT"),
+        });
+        fixture.state.account = { type: "chatgpt", email: "other@example.com", planType: "plus" };
+        fixture.state.incomplete = true;
+        expect((yield* store.search({}).pipe(Effect.result))._tag).toBe("Failure");
+        fixture.state.incomplete = false;
+        yield* store.entry("sample");
+        expect(fixture.calls.some((call) => call.method === "app/list")).toBe(false);
+      }),
+    ),
   );
   it.effect(
     "never submits a policy-disabled install and closes the child lease with its scope",

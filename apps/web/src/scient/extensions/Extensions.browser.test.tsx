@@ -1203,7 +1203,7 @@ describe("Detail pages", () => {
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     expect(fixture.section("Connection").textContent).toContain("Signed in");
     expect(buttonIn(fixture.section("Connection"), "Sign in")).toBeNull();
-    expect(buttonIn(fixture.section("Connection"), "Reconnect")).not.toBeNull();
+    expect(buttonIn(fixture.section("Connection"), "Reconnect")).toBeNull();
     const toggle = buttonIn(fixture.section("Connection"), "Turn on Linear")!;
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     await userEvent.click(toggle);

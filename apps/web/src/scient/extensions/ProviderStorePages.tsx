@@ -245,12 +245,28 @@ function StoreResults({
 export function ProviderStoreShelves({ query = "" }: { readonly query?: string }) {
   const { providers } = useExtensionsEnvironment();
   const claude = providers.filter(
-    (provider) => provider.enabled && provider.driver === "claudeAgent",
+    (provider) =>
+      provider.enabled &&
+      provider.installed &&
+      provider.status !== "error" &&
+      provider.driver === "claudeAgent",
   );
-  const scient = providers.filter((provider) => provider.enabled && provider.driver === "scient");
+  const scient = providers.filter(
+    (provider) =>
+      provider.enabled &&
+      provider.installed &&
+      provider.status !== "error" &&
+      provider.driver === "scient",
+  );
   const targets = [...claude, ...scient];
   const primary = targets[0];
-  const codex = providers.filter((provider) => provider.enabled && provider.driver === "codex");
+  const codex = providers.filter(
+    (provider) =>
+      provider.enabled &&
+      provider.installed &&
+      provider.status !== "error" &&
+      provider.driver === "codex",
+  );
   return (
     <>
       {primary ? (
