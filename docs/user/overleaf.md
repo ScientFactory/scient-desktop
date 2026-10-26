@@ -241,6 +241,8 @@ header): **Kept by Overleaf sync** lists them, each with **Restore**. A restored
 file is an ordinary change that the next sync sends. If the file changes while
 it is being restored, nothing is written and the menu says so: restore again. In another worktree the
 copies are the main copy's: **Open there** opens the file on the main copy.
+When this environment can reveal local files, **Reveal in Finder**, **Reveal in
+File Explorer**, or **Reveal in Files** shows an available kept copy on disk.
 
 ## Undo
 
