@@ -60,7 +60,7 @@ function atBoundary(order: readonly string[], upper: ReadonlySet<string>, key: s
  * below inactive rows, it is set aside, and later arrivals no longer join beneath it.
  */
 function placeDropped(
-  order: readonly string[],
+  seen: readonly string[],
   upper: Set<string>,
   aside: Set<string>,
   key: string,
@@ -69,8 +69,8 @@ function placeDropped(
   upper.delete(key);
   aside.delete(key);
   if (!eligible) return;
-  const lastUpper = order.findLastIndex((id) => upper.has(id));
-  (order.indexOf(key) <= lastUpper + 1 ? upper : aside).add(key);
+  const lastUpper = seen.findLastIndex((id) => upper.has(id));
+  (seen.indexOf(key) <= lastUpper + 1 ? upper : aside).add(key);
 }
 
 /**
@@ -202,6 +202,48 @@ export function reconcilePlacement(
   return JSON.stringify(next) === JSON.stringify(state) ? state : next;
 }
 
+/**
+ * Each group's order before the layout effect reconciles: the same reconciliation, with known
+ * rows' order keys held for the acknowledgement bridges, and every row held while not `live`.
+ */
+export function displayedPlacementOrders(
+  state: PlacementState,
+  input: readonly PlacementInput[],
+  openKey: string | null,
+  now: number,
+  isFrozen: (key: string) => boolean,
+  live: boolean,
+): ReadonlyMap<string, readonly string[]> {
+  const saved = new Map(
+    state.groups.flatMap((group) => group.rows.map((row) => [row.key, row.orderKey] as const)),
+  );
+  const next = reconcilePlacement(
+    state,
+    input.map((group) => ({
+      ...group,
+      rows: group.rows.map((row) =>
+        saved.has(row.key) ? { ...row, orderKey: saved.get(row.key)! } : row,
+      ),
+    })),
+    openKey,
+    now,
+    live ? isFrozen : () => true,
+  );
+  return new Map(next.groups.map((group) => [group.id, group.order]));
+}
+
+/** `items` in placement order; items outside it keep their relative order at the end. */
+export function sortByPlacement<T>(
+  items: readonly T[],
+  keyOf: (item: T) => string,
+  order: readonly string[],
+): T[] {
+  const rank = new Map(order.map((key, index) => [key, index]));
+  return items.toSorted(
+    (left, right) => (rank.get(keyOf(left)) ?? Infinity) - (rank.get(keyOf(right)) ?? Infinity),
+  );
+}
+
 /** Commit an acknowledged manual drop; pending review demotion must never undo it. */
 export function manuallyPlaceThread(
   state: PlacementState,
@@ -237,7 +279,15 @@ export function manuallyPlaceThread(
     const order = manualOrderForPlacement(group.order, displayedOrder, key);
     const upper = new Set(group.upper);
     const aside = new Set(group.aside);
-    placeDropped(order, upper, aside, key, rows.find((row) => row.key === key)?.eligible === true);
+    // Judged by the rows the user saw; a filter's hidden rows must not set the drop aside.
+    const placed = new Set(order);
+    placeDropped(
+      displayedOrder.filter((id) => placed.has(id)),
+      upper,
+      aside,
+      key,
+      rows.find((row) => row.key === key)?.eligible === true,
+    );
     return {
       ...group,
       rows,
