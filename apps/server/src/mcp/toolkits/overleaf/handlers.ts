@@ -110,6 +110,15 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
               `${error.message} Use the project's link (https://www.overleaf.com/project/<id>) or its 24-character ID.`,
             ),
           );
+        case "helper-unavailable":
+          // A missing or wrong file helper is a filesystem refusal, reported like the others.
+          return Effect.succeed(
+            new ScientOverleafToolError({
+              code: "retention-unavailable",
+              message: error.message,
+              reason: "helper-unavailable",
+            }),
+          );
         case "access-denied":
         case "project-not-found":
         case "unreachable":
