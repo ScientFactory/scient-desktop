@@ -287,6 +287,11 @@
       "path": "apps/server/src/scientServerSettings.ts",
       "anchor": "const selection = fallbackScientTextGenerationModelSelection(",
       "purpose": "Keep Oh My Pi in automatic text-generation provider fallback while implicit Scient Agent remains the last resort."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/ProviderPluginCommand.ts",
+      "anchor": "runScientAgentPluginCommand",
+      "purpose": "Keep native plugin one-shots under the shared executable lease, runtime identity gate, and version-gated Claude plugin source policy."
     }
   ]
 }
