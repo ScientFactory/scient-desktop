@@ -5,6 +5,7 @@ import {
   defaultAccountControls,
   defaultBrowserProfileRecord,
   type AccountSummary,
+  type ProjectId,
 } from "@t3tools/contracts";
 import {
   accountCatalogue,
@@ -21,6 +22,7 @@ import {
   secretFields,
   siteMatchesUrl,
   matchExistingProfile,
+  toggleScope,
 } from "./accountsView";
 
 function website(profileId?: string): AccountSummary {
@@ -254,4 +256,41 @@ it("finds bundled logos by domain and parent domain, and none for unknown sites"
   expect(accountIconUrl([], "Postgres database")).toMatch(/^data:image\//);
   expect(accountIconUrl(["unknown.example"])).toBeUndefined();
   expect(accountIconUrl([])).toBeUndefined();
+});
+
+describe("toggleScope", () => {
+  const a = "project-a" as ProjectId;
+  const b = "project-b" as ProjectId;
+  it.each([
+    [
+      "all → untick a keeps b",
+      { type: "all-projects" },
+      { type: "project", projectId: a },
+      false,
+      { type: "projects", projectIds: [b] },
+    ],
+    [
+      "selected → tick b adds it",
+      { type: "projects", projectIds: [a] },
+      { type: "project", projectId: b },
+      true,
+      { type: "projects", projectIds: [a, b] },
+    ],
+    [
+      "untick All projects leaves none",
+      { type: "all-projects" },
+      { type: "all" },
+      false,
+      { type: "projects", projectIds: [] },
+    ],
+    [
+      "tick All projects",
+      { type: "projects", projectIds: [a] },
+      { type: "all" },
+      true,
+      { type: "all-projects" },
+    ],
+  ] as const)("%s", (_, scope, entry, checked, expected) => {
+    expect(toggleScope(scope, [a, b], entry, checked)).toEqual(expected);
+  });
 });

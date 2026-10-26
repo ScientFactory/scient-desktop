@@ -9,6 +9,8 @@ import {
   resolveBrowserProfiles,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   type AccountDetails,
+  type GrantScope,
+  type ProjectId,
   type AccountStoresStatus,
   type AccountSummary,
   type AccountSaveInput,
@@ -316,3 +318,23 @@ export const KIND_LABELS: Readonly<Record<AccountDetails["kind"], string>> = {
   database: "Database",
   "cli-login": "Command-line login",
 };
+
+/**
+ * The scope after ticking or unticking one entry of the "Available in" menu. Unticking a project
+ * while all projects are allowed keeps every other current project; unticking "All projects"
+ * leaves none.
+ */
+export function toggleScope(
+  scope: GrantScope,
+  projectIds: ReadonlyArray<ProjectId>,
+  entry: { readonly type: "all" } | { readonly type: "project"; readonly projectId: ProjectId },
+  checked: boolean,
+): GrantScope {
+  if (entry.type === "all")
+    return checked ? { type: "all-projects" } : { type: "projects", projectIds: [] };
+  const current = scope.type === "all-projects" ? projectIds : scope.projectIds;
+  const next = checked
+    ? [...new Set([...current, entry.projectId])]
+    : current.filter((id) => id !== entry.projectId);
+  return { type: "projects", projectIds: next };
+}

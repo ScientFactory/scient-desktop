@@ -48,7 +48,7 @@ import { toastManager } from "~/components/ui/toast";
 import { accountsState } from "./accountsState";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountCommand } from "./useAccounts";
-import { AccessChip, ControlsMenu, ScopeDialog } from "./AccountControls";
+import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import {
   importProfileName,
   mergeProfiles,
@@ -356,7 +356,6 @@ export function BrowserProfiles({
   const setControls = useAccountCommand(accountsState.setControls, environmentId);
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
   const removeRecord = useAccountCommand(accountsState.removeProfile, environmentId);
-  const [scopeProfile, setScopeProfile] = useState<BrowserProfileRecord | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [viewingSites, setViewingSites] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -616,7 +615,11 @@ export function BrowserProfiles({
                     Match to browser profile…
                   </MenuItem>
                 )}
-                <MenuItem onClick={() => setScopeProfile(profile.record)}>Available in…</MenuItem>
+                <ScopeSubmenu
+                  environmentId={environmentId}
+                  target={{ type: "profile", profileId: profile.id }}
+                  scope={profile.record.scope}
+                />
                 <MenuItem
                   disabled={settings.browserDefaultProfileId === profile.id}
                   onClick={() =>
@@ -717,21 +720,6 @@ export function BrowserProfiles({
             </DialogPanel>
           </DialogPopup>
         </Dialog>
-      ) : null}
-      {scopeProfile ? (
-        <ScopeDialog
-          environmentId={environmentId}
-          scope={scopeProfile.scope}
-          onClose={() => setScopeProfile(null)}
-          onSave={async (scope) => {
-            if (!canWrite) return;
-            const result = await setControls({
-              target: { type: "profile", profileId: scopeProfile.profileId },
-              scope,
-            });
-            if (result.ok) setScopeProfile(null);
-          }}
-        />
       ) : null}
     </SettingsSection>
   );

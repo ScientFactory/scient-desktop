@@ -32,7 +32,7 @@ import { toastManager } from "~/components/ui/toast";
 import { extensionsInventory } from "~/scient/extensions/extensionsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import { accountsState } from "./accountsState";
-import { AccessChip, ControlsMenu, ScopeDialog } from "./AccountControls";
+import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import { AccountDialog } from "./AccountDialog";
 import { BrowserProfiles, BrowserImportDialog } from "./BrowserProfiles";
 import { PasswordStores, OnePasswordDialog } from "./PasswordStores";
@@ -44,14 +44,12 @@ function AccountRow({
   environmentId,
   canWrite,
   onEdit,
-  onScope,
   onActivity,
 }: {
   account: AccountSummary;
   environmentId: EnvironmentId;
   canWrite: boolean;
   onEdit: () => void;
-  onScope: () => void;
   onActivity: (entries: ReadonlyArray<AccountActivityEntry>) => void;
 }) {
   const controls = useAccountCommand(accountsState.setControls, environmentId);
@@ -160,7 +158,11 @@ function AccountRow({
                 Permission: {account.controls.permission === "full" ? "Full" : "Read only"}
               </MenuItem>
             ) : null}
-            <MenuItem onClick={onScope}>Available in…</MenuItem>
+            <ScopeSubmenu
+              environmentId={environmentId}
+              target={target}
+              scope={account.controls.scope}
+            />
             <MenuItem
               onClick={async () => {
                 setBusy(true);
@@ -188,12 +190,10 @@ function AccountsContent({
 }) {
   const [dialog, setDialog] = useState<"add" | "import" | "1password" | null>(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
-  const [scopeAccount, setScopeAccount] = useState<AccountSummary | null>(null);
   const [activity, setActivity] = useState<ReadonlyArray<AccountActivityEntry> | null>(null);
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const inventory = useEnvironmentQuery(extensionsInventory({ environmentId, input: {} }));
   const setAccess = useAccountCommand(accountsState.setAgentAccess, environmentId);
-  const controls = useAccountCommand(accountsState.setControls, environmentId);
   const firstRun = snapshot.accounts.length === 0 && userProfiles.length === 0;
   const connectorRows = inventory.data?.connectors.map((connector) => (
     <SettingsRow
@@ -273,7 +273,6 @@ function AccountsContent({
               environmentId={environmentId}
               canWrite={canWrite}
               onEdit={() => setEditing(account)}
-              onScope={() => setScopeAccount(account)}
               onActivity={setActivity}
             />
           ))}
@@ -310,21 +309,6 @@ function AccountsContent({
           environmentId={environmentId}
           canWrite={canWrite}
           onClose={() => setDialog(null)}
-        />
-      ) : null}
-      {scopeAccount ? (
-        <ScopeDialog
-          environmentId={environmentId}
-          scope={scopeAccount.controls.scope}
-          onClose={() => setScopeAccount(null)}
-          onSave={async (scope) => {
-            if (!canWrite) return;
-            const result = await controls({
-              target: { type: "account", accountId: scopeAccount.accountId },
-              scope,
-            });
-            if (result.ok) setScopeAccount(null);
-          }}
         />
       ) : null}
       {activity ? (
