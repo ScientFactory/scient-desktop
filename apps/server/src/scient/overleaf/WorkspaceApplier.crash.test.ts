@@ -316,8 +316,8 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
   );
 
   // Crash probes must distinguish unpublished steps from confirmed publication. A create killed
-  // after its native call lacks durable ownership proof and stays for review because another writer
-  // could own the visible file.
+  // after its macOS clone call lacks durable ownership proof and stays for review. Windows' moved
+  // stage already has its public file ID journaled, so ID plus planned bytes can prove completion.
   const shapes = [
     {
       name: "an edit",
@@ -390,7 +390,11 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
       await h.restart();
       await editorReads(h);
       const result = await h.apply("crash");
-      if (shape.point === "called" && "create" in shape) {
+      if (
+        shape.point === "called" &&
+        "create" in shape &&
+        HostProcess.Platform.defaultValue() !== "win32"
+      ) {
         expect(result.outcome).toBe("attention");
         expect(result.interrupted).toHaveLength(1);
         return;
