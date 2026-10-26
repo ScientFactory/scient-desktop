@@ -591,6 +591,17 @@ export function BrowserProfiles({
                       profile.record.source.browser.slice(1)}
                   </MenuItem>
                 ) : null}
+                {profile.record.source?.email && profile.record.source.browser === "chrome" ? (
+                  <MenuItem
+                    onClick={() =>
+                      void readLocalApi()
+                        ?.shell.openExternal("https://passwords.google.com")
+                        .catch(() => undefined)
+                    }
+                  >
+                    Manage passwords in Google
+                  </MenuItem>
+                ) : null}
                 <MenuItem onClick={() => void act(() => clear(profile.id))}>
                   Clear cookies and cache
                 </MenuItem>
