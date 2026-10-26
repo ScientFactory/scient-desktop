@@ -1064,7 +1064,7 @@ int platform_windows_main(int argc, char **argv) {
     HMODULE library = LoadLibraryW(L"fltlib.dll");
     typedef HRESULT (WINAPI *Detach)(LPCWSTR, LPCWSTR, LPCWSTR);
     Detach detach = NULL; FARPROC address = library ? GetProcAddress(library, "FilterDetach") : NULL; memcpy(&detach, &address, sizeof(detach));
-    wchar_t *path = wide_path(argv[3]);
+    wchar_t *path = wide(argv[3]);
     if (!error) {
       HRESULT result = detach && path ? detach(L"CldFlt", path, NULL) : E_NOTIMPL;
       if (result != S_OK && result != (HRESULT)ERROR_FLT_INSTANCE_NOT_FOUND && result != (HRESULT)ERROR_FLT_FILTER_NOT_FOUND) error = (DWORD)result;
