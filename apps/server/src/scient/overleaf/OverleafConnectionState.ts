@@ -5,6 +5,7 @@
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
+import { StoredFileIdentity, platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 
 /**
@@ -55,16 +56,6 @@ const IsoTime = Schema.String.check(
     );
   }),
 );
-/**
- * A folder's identity across remounts: its disk's volume UUID plus its file ID.
- * Never the device number, which macOS can reassign on every mount.
- */
-const VolumeFileIdentity = Schema.Struct({
-  volume: Schema.String.check(
-    Schema.isPattern(/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u),
-  ),
-  fileId: Schema.String.check(Schema.isPattern(/^\d{1,40}$/u)),
-});
 const ManuscriptPath = Schema.String.check(
   Schema.makeFilter((path: string) => manuscriptPathProblem(path) === null),
 );
@@ -298,9 +289,9 @@ const documentFields = {
   binding: Authority,
   checkout: Schema.Struct({
     canonicalRoot: Schema.String.check(Schema.isMaxLength(4_096)),
-    identity: VolumeFileIdentity,
+    identity: StoredFileIdentity,
   }),
-  folder: Schema.Struct({ relativePath: FolderPath, identity: VolumeFileIdentity }),
+  folder: Schema.Struct({ relativePath: FolderPath, identity: StoredFileIdentity }),
   remote: Schema.Struct({
     host: Schema.Literal("www.overleaf.com"),
     projectId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{24}$/u)),
@@ -331,7 +322,7 @@ const documentFields = {
     Schema.isMaxLength(MANAGED_PATH_LIMIT),
   ),
   retention: Schema.Struct({
-    vaultIdentity: VolumeFileIdentity,
+    vaultIdentity: StoredFileIdentity,
     copies: Schema.Array(RetainedCopy).check(Schema.isMaxLength(RETAINED_COPY_LIMIT)),
   }),
   activeApply: Schema.NullOr(ApplyLink),
@@ -376,7 +367,7 @@ const OverleafConnectionDocumentV1 = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   markerPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
   retention: Schema.Struct({
-    vaultIdentity: VolumeFileIdentity,
+    vaultIdentity: StoredFileIdentity,
     copies: Schema.Array(Schema.Struct(retainedCopyFields)).check(
       Schema.isMaxLength(RETAINED_COPY_LIMIT),
     ),
@@ -584,7 +575,7 @@ export function overleafTransitionViolation(
   // Retained copies and an apply intent live in the recorded vault; a fresh one
   // would leave them unreachable. Only an empty, unreferenced vault may be replaced.
   if (
-    !sameJson(previous.retention.vaultIdentity, next.retention.vaultIdentity) &&
+    !platformFileIdentity.equal(previous.retention.vaultIdentity, next.retention.vaultIdentity) &&
     (previous.retention.copies.length > 0 || previous.activeApply !== null)
   )
     return "vault-replaced-while-referenced";
