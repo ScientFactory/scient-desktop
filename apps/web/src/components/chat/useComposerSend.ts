@@ -40,7 +40,6 @@ import {
   settleQueueAdmissionPreview,
   shouldPreviewQueueAdmission,
 } from "~/scient/threadQueue/optimisticQueuePresentation";
-import type { ThreadQueueSendState } from "~/scient/threadQueue/useThreadQueue";
 import { getComposerPromptInjectionState, getComposerProviderState } from "./composerProviderState";
 import { flushComposerDraftPersistence } from "../../composerDraftStore";
 
@@ -192,7 +191,6 @@ type TimelineFollow = ReturnType<typeof useTimelineFollow>;
 export interface ComposerSendInput {
   readonly queueEditsReady: boolean;
   readonly queueContextKeyRef: { readonly current: string | null };
-  readonly threadQueue: ThreadQueueSendState;
   readonly serverProjection: ThreadStructure | null;
   readonly hasHeldQueuedRuns: boolean;
   readonly onForkConversation: () => void;
@@ -350,7 +348,6 @@ export function useComposerSend(input: ComposerSendInput) {
   const {
     queueEditsReady,
     queueContextKeyRef,
-    threadQueue,
     serverProjection,
     hasHeldQueuedRuns,
     onForkConversation,
@@ -479,7 +476,6 @@ export function useComposerSend(input: ComposerSendInput) {
     composerDraftTarget,
     declineApprovalsForSend,
     frameSubmittedMessage,
-    threadQueue,
     clearUsageLimitsFor,
     acknowledgeActiveThreadWoke,
   });
@@ -1439,12 +1435,9 @@ export function useComposerSend(input: ComposerSendInput) {
               shouldPreviewQueueAdmission({
                 ordinaryServerSend: isServerThread && !steerRequested && !directAnnotation,
                 phase,
-                hasWaitingItems: isServerThread
-                  ? serverProjection?.runs.some((run) => run.status === "queued") === true
-                  : threadQueue.items.length > 0,
-                awaitingCompletion: isServerThread
-                  ? hasHeldQueuedRuns
-                  : threadQueue.awaitingCompletion,
+                hasWaitingItems:
+                  serverProjection?.runs.some((run) => run.status === "queued") === true,
+                awaitingCompletion: hasHeldQueuedRuns,
               });
             if (!previewQueueAdmission)
               frameSubmittedMessage(messageIdForSend, readingPositionAtSend);
@@ -1775,7 +1768,6 @@ export function useComposerSend(input: ComposerSendInput) {
                 );
                 if (queued) {
                   if (!sendQueuesBehindSetup) resetLocalDispatch();
-                  void threadQueue.refresh();
                 } else {
                   if (previewQueueAdmission && currentRouteThreadKeyRef.current === routeThreadKey)
                     frameSubmittedMessage(messageIdForSend, readingPositionAtSend);
