@@ -1,3 +1,4 @@
+import { ConnectorToolsList } from "./ConnectorToolsList";
 import { PluginContents } from "./PluginContents";
 import {
   type ConnectorSummary,
@@ -53,7 +54,6 @@ import { ExtensionIcon, type ExtensionTarget } from "./ExtensionRow";
 import { extensionsDiscoverEntry } from "./extensionsState";
 import {
   type ProviderExtensionGroup,
-  type ToolGroups,
   catalogEntries,
   providerExtensionAudience,
   collectProviderExtensionGroups,
@@ -65,7 +65,6 @@ import {
   providerServerDisplayName,
   entrySourceLabel,
   entryTagline,
-  groupTools,
   isCatalogOnlyEntry,
   MCP_SERVER_STATUS_TEXT,
   pluginGlyph,
@@ -365,19 +364,10 @@ function MutedCard({ children }: { readonly children: string }) {
   );
 }
 
-function toolRows(tools: ToolGroups["read"]): ReadonlyArray<DetailRow> {
-  return tools.map((tool) => ({
-    key: tool.name,
-    name: <span className="font-mono text-xs leading-5">{tool.name}</span>,
-    detail: tool.description?.trim() || tool.title,
-  }));
-}
-
 const TOOLS_AFTER_SIGN_IN = "Tools appear after you add and sign in.";
 
 /**
- * A connector's tools, grouped from its last test. Nothing runs on its own:
- * "See tools" runs one test, then the groups show.
+ * "See tools" runs one test before displaying the connector's tools.
  */
 function ToolsSection({
   canTest,
@@ -392,24 +382,14 @@ function ToolsSection({
   readonly testResult: ConnectorTestResult | null;
   readonly onTest: () => void;
 }) {
-  if (!canTest || testResult?.outcome === "ok") {
-    const grouped = testResult?.outcome === "ok" ? groupTools(testResult.tools) : null;
+  const { environmentId } = useExtensionsEnvironment();
+  if (testResult?.outcome === "ok") {
+    return <ConnectorToolsList tools={testResult.tools} environmentId={environmentId} />;
+  }
+  if (!canTest) {
     return (
       <DetailSection title="Tools">
-        {grouped === null ? (
-          <MutedCard>{TOOLS_AFTER_SIGN_IN}</MutedCard>
-        ) : testResult?.tools.length === 0 ? (
-          <MutedCard>No tools reported.</MutedCard>
-        ) : (
-          <GroupsCard
-            label="Tool groups"
-            groups={[
-              { label: "Write", rows: toolRows(grouped.write) },
-              { label: "Read", rows: toolRows(grouped.read) },
-              { label: "Other", rows: toolRows(grouped.other) },
-            ]}
-          />
-        )}
+        <MutedCard>{TOOLS_AFTER_SIGN_IN}</MutedCard>
       </DetailSection>
     );
   }

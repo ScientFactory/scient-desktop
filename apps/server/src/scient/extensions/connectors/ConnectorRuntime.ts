@@ -42,6 +42,7 @@ import {
   type EligibleConnector,
 } from "../ExtensionsServices.ts";
 import { PluginConnectorEligibility } from "../plugins/PluginConnectorEligibility.ts";
+import { extractToolParameters } from "./toolParameters.ts";
 import { ConnectorCredentialStore } from "./ConnectorCredentialStore.ts";
 import {
   applySignIn,
@@ -1449,9 +1450,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         const name = clean(tool.name);
         if (name === undefined) return [];
         const title = clean(tool.title);
+        const parameters = extractToolParameters(tool.inputSchema, (text) =>
+          redactString(text, credentials),
+        );
         return [
           {
             name,
+            ...(parameters === undefined ? {} : { parameters }),
             ...(title === undefined ? {} : { title }),
             ...(tool.description === undefined
               ? {}

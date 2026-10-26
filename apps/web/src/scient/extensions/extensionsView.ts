@@ -4,7 +4,6 @@ import {
   type ConnectorStatus,
   type ConnectorSummary,
   type ConnectorTestResult,
-  type ConnectorToolSummary,
   type DiscoverCatalog,
   type DiscoverEntry,
   ExtensionCategory,
@@ -135,21 +134,6 @@ export function entrySourceLabel(entry: DiscoverEntry): string {
   return isCatalogOnlyEntry(entry) || entry.categories.length > 0
     ? "Scient catalog"
     : "MCP Registry";
-}
-
-export interface ToolGroups {
-  readonly read: ReadonlyArray<ConnectorToolSummary>;
-  readonly write: ReadonlyArray<ConnectorToolSummary>;
-  /** Tools whose server gave no read-only or destructive hint. */
-  readonly other: ReadonlyArray<ConnectorToolSummary>;
-}
-
-/** Read: read-only. Write: not read-only, or destructive. Other: no hint at all. */
-export function groupTools(tools: ReadonlyArray<ConnectorToolSummary>): ToolGroups {
-  const write = tools.filter((tool) => tool.destructive === true || tool.readOnly === false);
-  const read = tools.filter((tool) => tool.readOnly === true && tool.destructive !== true);
-  const other = tools.filter((tool) => tool.readOnly === undefined && tool.destructive !== true);
-  return { read, write, other };
 }
 
 /** `example.com` from `https://www.example.com/path`; null for anything unparsable. */

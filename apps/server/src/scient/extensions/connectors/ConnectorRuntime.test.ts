@@ -227,7 +227,13 @@ const handleMcp = async (
             {
               name: "search",
               description: `Search things (debug: ${authorization})`,
-              inputSchema: { type: "object" },
+              inputSchema: {
+                type: "object",
+                properties: {
+                  query: { type: "string", description: `Query (debug: ${authorization})` },
+                },
+                required: ["query"],
+              },
               annotations: { readOnlyHint: true },
             },
           ],
@@ -977,6 +983,14 @@ describe("connector credential isolation", () => {
 
       // Connector test results reach the settings UI and are redacted too.
       const tested = yield* harness.runtime.test({ connectorId });
+      expect(tested.tools[0]?.parameters).toEqual([
+        {
+          name: "query",
+          type: "string",
+          required: true,
+          description: "[redacted by Scient]",
+        },
+      ]);
       expect(JSON.stringify(tested)).not.toContain("vendor-access-token-");
     }).pipe(Effect.provide(testLayer)),
   );

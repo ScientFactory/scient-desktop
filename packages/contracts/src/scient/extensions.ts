@@ -285,6 +285,16 @@ export const ConnectorToolSummary = Schema.Struct({
   description: Schema.optional(Schema.String),
   readOnly: Schema.optional(Schema.Boolean),
   destructive: Schema.optional(Schema.Boolean),
+  parameters: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+        type: Schema.optional(Schema.String.check(Schema.isMaxLength(100))),
+        required: Schema.Boolean,
+        description: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
+      }),
+    ).check(Schema.isMaxLength(50)),
+  ),
 });
 export type ConnectorToolSummary = typeof ConnectorToolSummary.Type;
 
