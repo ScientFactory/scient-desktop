@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import { ensureNativePrivateRetentionDirectory } from "../workspace/NativeFilePublication.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
 /**
@@ -95,7 +96,10 @@ export const overleafSyncWorld = (input?: {
     const store = yield* OverleafStateStore.make({
       root: stateRoot,
       publicationHelper: helper,
-      volumeUuid: async () => VOLUME,
+      volumeUuid: async (path: string) =>
+        HostProcess.Platform.defaultValue() === "win32"
+          ? platformFileIdentity.volume(path)
+          : VOLUME,
     });
     const publicationHelper = helper ?? null;
     const files = yield* makeApplierFiles({ root, helper, retainedHooks: {} });
@@ -256,7 +260,10 @@ export const overleafSyncWorld = (input?: {
       publicationHelper,
       activeThreads: Effect.suspend(() => onActivity().pipe(Effect.map(() => threads))),
       gitUrl: overleafFor,
-      volumeUuid: async () => VOLUME,
+      volumeUuid: async (path: string) =>
+        HostProcess.Platform.defaultValue() === "win32"
+          ? platformFileIdentity.volume(path)
+          : VOLUME,
       hooks: { at: (point) => input?.at?.(point) ?? Effect.void },
     }).pipe(
       Effect.provideService(ServerSecretStore, secrets),
