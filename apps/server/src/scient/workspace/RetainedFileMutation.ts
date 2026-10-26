@@ -240,6 +240,7 @@ export type MutationPoint =
   | "round-admitted"
   | "done";
 export interface RetainedMutationHooks {
+  readonly nativeProcess?: (processId: number | null) => void;
   readonly removal?: (when: "before" | "after", path: string) => Promise<void>;
   readonly at?: (point: MutationPoint) => Promise<void>;
 }

@@ -794,8 +794,7 @@ static int restore_policy(Context *context, HANDLE original) {
     if (!GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) || !present || !dacl ||
         !GetSecurityDescriptorControl(descriptor, &control, &revision)) error = ERROR_INVALID_DATA;
     else {
-      NTSTATUS result = nt_security(original, DACL_SECURITY_INFORMATION |
-        ((control & SE_DACL_PROTECTED) ? PROTECTED_DACL_SECURITY_INFORMATION : UNPROTECTED_DACL_SECURITY_INFORMATION), descriptor);
+      NTSTATUS result = nt_security(original, DACL_SECURITY_INFORMATION, descriptor);
       error = result < 0 ? (int)nt_error(result) : 0;
     }
   }
@@ -871,18 +870,27 @@ static int windows_operation(Context *context, const char *operation, const char
     error = creation ? inherited_user_security(&descriptor) : save_policy(context, transaction.original, &descriptor);
     if (!error && strcmp(operation, "win-prepare-delete")) {
       SECURITY_DESCRIPTOR_CONTROL original_control = 0; DWORD revision = 0;
-      if (transaction.original && (!GetSecurityDescriptorControl(descriptor, &original_control, &revision) ||
+      DWORD stage_attributes = FILE_ATTRIBUTE_NORMAL;
+      if (transaction.original) {
+        FILE_BASIC_INFO basic;
+        if (!GetFileInformationByHandleEx(transaction.original, FileBasicInfo, &basic, sizeof(basic))) error = (int)GetLastError();
+        else {
+          stage_attributes = basic.FileAttributes & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM |
+            FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_TEMPORARY | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED);
+          if (!stage_attributes) stage_attributes = FILE_ATTRIBUTE_NORMAL;
+        }
+      }
+      if (!error && transaction.original && (!GetSecurityDescriptorControl(descriptor, &original_control, &revision) ||
           !SetSecurityDescriptorControl(descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED))) error = (int)GetLastError();
       if (!error) transaction.stage = create_relative(context->parent, to,
         GENERIC_READ | GENERIC_WRITE | DELETE | WRITE_DAC | FILE_WRITE_ATTRIBUTES | READ_CONTROL,
-        2, FILE_ATTRIBUTE_NORMAL, descriptor, FILE_SHARE_READ);
+        2, stage_attributes, descriptor, FILE_SHARE_READ);
       if (transaction.stage == INVALID_HANDLE_VALUE) { transaction.stage = NULL; error = (int)GetLastError(); }
       if (transaction.stage) *applied = -1;
       if (!error && transaction.original) {
         if (!SetSecurityDescriptorControl(descriptor, SE_DACL_PROTECTED, original_control & SE_DACL_PROTECTED)) error = (int)GetLastError();
         else {
-          NTSTATUS result = nt_security(transaction.stage, DACL_SECURITY_INFORMATION |
-            ((original_control & SE_DACL_PROTECTED) ? PROTECTED_DACL_SECURITY_INFORMATION : UNPROTECTED_DACL_SECURITY_INFORMATION), descriptor);
+          NTSTATUS result = nt_security(transaction.stage, DACL_SECURITY_INFORMATION, descriptor);
           if (result < 0) error = (int)nt_error(result);
         }
       }

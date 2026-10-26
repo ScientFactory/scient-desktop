@@ -229,6 +229,7 @@ export async function runWindowsRetainedMutation(
     return good(policy) ? finish("attention", "target") : result();
   };
   let held = false;
+  if (lease.processId !== undefined) hooks.nativeProcess?.(lease.processId);
   try {
     if (previous && record.phase !== "preparing") {
       const current =
@@ -484,6 +485,10 @@ export async function runWindowsRetainedMutation(
       return finish("attention", "recovery");
     return finish("done");
   } finally {
-    if (held) await command("win-release");
+    try {
+      if (held) await command("win-release");
+    } finally {
+      hooks.nativeProcess?.(null);
+    }
   }
 }

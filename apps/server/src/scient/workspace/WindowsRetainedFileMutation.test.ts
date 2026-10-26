@@ -259,6 +259,40 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
         ).toBe("skipped");
         expect(access(target)).toBe(0);
         expect(await security(target)).toBe(policy);
+        NodeChildProcess.execFileSync("icacls.exe", [
+          input.cwd,
+          "/grant",
+          `${account}:(OI)(CI)(R,W)`,
+        ]);
+        NodeChildProcess.execFileSync("icacls.exe", [
+          target,
+          "/inheritance:r",
+          "/remove:g",
+          account,
+        ]);
+        const privatePolicy = await security(target);
+        expect(access(target)).toBe(5);
+        const privateInput = {
+          ...input,
+          id: "private-stage",
+          bytes: Buffer.from("private incoming"),
+        };
+        const privateResult = await mutateRetainedFile(privateInput, target, {
+          at: async (point) => {
+            if (point === "staged") {
+              const journal = JSON.parse(
+                await NodeFSP.readFile(
+                  NodePath.join(input.retentionDirectory, "private-stage/record.json"),
+                  "utf8",
+                ),
+              );
+              expect(access(NodePath.join(input.cwd, journal.stageName))).toBe(5);
+            }
+          },
+        });
+        expect(privateResult.outcome).toBe("done");
+        expect(await security(target)).toBe(privatePolicy);
+        expect(access(target)).toBe(5);
       } finally {
         expect(accountCommand("delete-account")).toBe(0);
       }
