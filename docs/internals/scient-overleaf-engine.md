@@ -360,7 +360,10 @@ project's own disk, so projects on external disks are supported. Either way it
 is private, owned by the server user, not a symlink and outside the checkout,
 so checkout cleanup cannot erase it. Its location is recorded as the disk's
 volume UUID (from `diskutil`) plus the folder's file ID, never the device
-number, so a disk mounted again under another path is recognized. Once
+number, so a disk mounted again under another path is recognized. New identities
+carry platform and version tags; existing untagged macOS identities decode unchanged
+and compare as the same objects. Linux and Windows identity shapes are defined,
+but those hosts remain refused until their resolvers and file mechanisms qualify. Once
 recorded, nothing is created: a missing folder (unplugged disk, deleted
 folder) or a different folder in its place is reported, never replaced.
 Before use, a probe exchanges two files through the host's exchange helper;

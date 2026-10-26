@@ -3,6 +3,7 @@
  * once (verified, recorded first, never resent). Recovery settles by positive
  * evidence only and never sends. Lock order: operation reservation, checkout
  * application section, store CAS, then file locks; fetch before the section. */
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -45,7 +46,7 @@ import {
 } from "./OverleafInventory.ts";
 import { probeAcceptance } from "./OverleafProtocolProbe.ts";
 import * as OverleafRepository from "./OverleafRepository.ts";
-import { macVolumeUuid, type OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
+import type { OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
 import {
   buildOverleafReview,
   type OverleafReview,
@@ -673,7 +674,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   const applier = yield* WorkspaceApplier.WorkspaceApplier;
   const barrier = yield* CheckoutBarrier.CheckoutBarrier;
   const registry = options.registry ?? makeOverleafReviewRegistry();
-  const volumeUuid = options.volumeUuid ?? macVolumeUuid;
+  const volumeUuid = options.volumeUuid ?? platformFileIdentity.volume;
   const credentialEpoch = options.credentialEpoch ?? (() => 0);
   const fileBytes = options.limits?.fileBytes ?? RESTORE_MAX_BYTES;
   const listingBytes = options.limits?.listingBytes ?? LISTING_MAX_BYTES;
@@ -719,10 +720,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         [connection.checkout.canonicalRoot, connection.checkout.identity],
         [folderOf(connection), connection.folder.identity],
       ] as const) {
-        const stat = await NodeFSP.lstat(path, { bigint: true }).catch(() => null);
-        if (stat === null || !stat.isDirectory() || String(stat.ino) !== recorded.fileId)
-          return false;
-        if ((await volumeUuid(path)) !== recorded.volume) return false;
+        const identity = await platformFileIdentity.directory(path, volumeUuid);
+        if (identity === null || !platformFileIdentity.equal(identity, recorded)) return false;
       }
       return true;
     });
