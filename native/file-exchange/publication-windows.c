@@ -779,6 +779,15 @@ static int save_policy(Context *context, HANDLE original, PSECURITY_DESCRIPTOR *
   if (sid) LocalFree(sid);
   return error;
 }
+static int set_recorded_dacl(HANDLE file, PSECURITY_DESCRIPTOR descriptor) {
+  SECURITY_DESCRIPTOR_CONTROL control; DWORD revision;
+  if (!GetSecurityDescriptorControl(descriptor, &control, &revision)) return (int)GetLastError();
+  /* The native setter preserves AUTO_INHERITED only with its set-only request bit. */
+  if (!SetSecurityDescriptorControl(descriptor, SE_DACL_AUTO_INHERIT_REQ,
+      control & SE_DACL_AUTO_INHERITED ? SE_DACL_AUTO_INHERIT_REQ : 0)) return (int)GetLastError();
+  NTSTATUS result = nt_security(file, DACL_SECURITY_INFORMATION, descriptor);
+  return result < 0 ? (int)nt_error(result) : 0;
+}
 static int restore_policy(Context *context, HANDLE original) {
   HANDLE file = open_relative(context->record, L"original-security", GENERIC_READ | READ_CONTROL, 0, FILE_SHARE_READ);
   if (file == INVALID_HANDLE_VALUE) return (int)GetLastError();
@@ -794,8 +803,7 @@ static int restore_policy(Context *context, HANDLE original) {
     if (!GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) || !present || !dacl ||
         !GetSecurityDescriptorControl(descriptor, &control, &revision)) error = ERROR_INVALID_DATA;
     else {
-      NTSTATUS result = nt_security(original, DACL_SECURITY_INFORMATION, descriptor);
-      error = result < 0 ? (int)nt_error(result) : 0;
+      error = set_recorded_dacl(original, descriptor);
     }
   }
   free(descriptor); CloseHandle(file); return error;
@@ -890,8 +898,7 @@ static int windows_operation(Context *context, const char *operation, const char
       if (!error && transaction.original) {
         if (!SetSecurityDescriptorControl(descriptor, SE_DACL_PROTECTED, original_control & SE_DACL_PROTECTED)) error = (int)GetLastError();
         else {
-          NTSTATUS result = nt_security(transaction.stage, DACL_SECURITY_INFORMATION, descriptor);
-          if (result < 0) error = (int)nt_error(result);
+          error = set_recorded_dacl(transaction.stage, descriptor);
         }
       }
       if (!error) error = supported_file(transaction.stage);

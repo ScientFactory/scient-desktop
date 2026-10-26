@@ -72,6 +72,32 @@ describe.skipIf(!windows)("Windows capture and install", () => {
       expect(await fileIdentity(target)).not.toEqual(original);
       expect((await windowsNativeFile(result.retainedPath!, "private", helper)).code).toBe(0);
     }));
+  it("deletes by keeping the original object and prunes only an empty directory", () =>
+    fixture(async (input, target) => {
+      const original = await fileIdentity(target);
+      const deleted = await mutateRetainedFile(
+        { ...input, kind: "delete", bytes: undefined },
+        target,
+      );
+      expect(deleted.outcome).toBe("done");
+      expect(deleted.retainedIdentity).toEqual(original);
+      expect(await NodeFSP.readFile(deleted.retainedPath!, "utf8")).toBe("original");
+      await expect(NodeFSP.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+      await NodeFSP.mkdir(target);
+      const pruned = await mutateRetainedFile(
+        {
+          ...input,
+          id: "prune",
+          kind: "prune",
+          condition: "unguarded",
+          expectedRevision: null,
+          bytes: undefined,
+        },
+        target,
+      );
+      expect(pruned.outcome).toBe("done");
+      await expect(NodeFSP.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+    }));
   it.each(["create", "replace"] as const)(
     "keeps another process’s %s at the target after capture",
     (mode) =>
@@ -128,44 +154,60 @@ async function security(path: string) {
 }
 
 describe.skipIf(!windows)("Windows process death and sharing", () => {
-  it.each([
-    "intent",
-    "staged",
-    "prepared",
-    "checked",
-    "restricted",
-    "called",
-    "displaced",
-    "install-intent",
-    "installed",
-    "done",
-  ] as const)("recovers after TerminateProcess at %s without losing the original", (point) =>
-    fixture(async (input, target) => {
-      const original = await fileIdentity(target);
-      const policy = await security(target);
-      const jobPath = NodePath.join(NodePath.dirname(input.cwd), "job.json");
-      const job: WindowsCrashJob = { input, target, point, probe: probe! };
-      await NodeFSP.writeFile(jobPath, JSON.stringify(job));
-      const child = NodeChildProcess.spawnSync(
-        process.execPath,
-        [NodePath.join(import.meta.dirname, "WindowsRetainedFileMutation.crash-child.ts"), jobPath],
-        { encoding: "utf8" },
-      );
-      expect(child.status, child.stderr).toBe(73);
-      const recovered = await mutateRetainedFile({ ...input, bytes: undefined }, target);
-      const live = await NodeFSP.readFile(target, "utf8").catch(() => null);
-      const kept = recovered.retainedPath
-        ? await NodeFSP.readFile(recovered.retainedPath, "utf8")
-        : null;
-      expect([live, kept]).toContain("original");
-      if (live === "original") {
-        expect(await fileIdentity(target)).toEqual(original);
-        expect(await security(target)).toBe(policy);
-      } else {
-        expect(live).toBe("incoming");
-        expect(recovered.retainedIdentity).toEqual(original);
-      }
-    }),
+  it.each(
+    (
+      [
+        "intent",
+        "staged",
+        "prepared",
+        "checked",
+        "restricted",
+        "called",
+        "displaced",
+        "install-intent",
+        "installed",
+        "done",
+      ] as const
+    ).flatMap<{ point: WindowsCrashJob["point"]; occurrence: number }>((point) =>
+      point === "called"
+        ? [
+            { point, occurrence: 1 },
+            { point, occurrence: 2 },
+          ]
+        : [{ point, occurrence: 1 }],
+    ),
+  )(
+    "recovers after TerminateProcess at $point/$occurrence without losing the original",
+    ({ point, occurrence }) =>
+      fixture(async (input, target) => {
+        const original = await fileIdentity(target);
+        const policy = await security(target);
+        const jobPath = NodePath.join(NodePath.dirname(input.cwd), "job.json");
+        const job: WindowsCrashJob = { input, target, point, occurrence, probe: probe! };
+        await NodeFSP.writeFile(jobPath, JSON.stringify(job));
+        const child = NodeChildProcess.spawnSync(
+          process.execPath,
+          [
+            NodePath.join(import.meta.dirname, "WindowsRetainedFileMutation.crash-child.ts"),
+            jobPath,
+          ],
+          { encoding: "utf8" },
+        );
+        expect(child.status, child.stderr).toBe(73);
+        const recovered = await mutateRetainedFile({ ...input, bytes: undefined }, target);
+        const live = await NodeFSP.readFile(target, "utf8").catch(() => null);
+        const kept = recovered.retainedPath
+          ? await NodeFSP.readFile(recovered.retainedPath, "utf8")
+          : null;
+        expect([live, kept]).toContain("original");
+        if (live === "original") {
+          expect(await fileIdentity(target)).toEqual(original);
+          expect(await security(target)).toBe(policy);
+        } else {
+          expect(live).toBe("incoming");
+          expect(recovered.retainedIdentity).toEqual(original);
+        }
+      }),
   );
   it("refuses a file held for writing by another process", () =>
     fixture(async (input, target) => {
