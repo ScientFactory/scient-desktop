@@ -66,7 +66,9 @@ export const firstKept = (stateRoot: string) =>
   NodeFSP.readdir(stateRoot, { recursive: true }).then((paths) =>
     NodePath.join(
       stateRoot,
-      paths.find((path) => /\/step-0\/(?:slot|retained)$/u.test(path))!,
+      paths.find((path) =>
+        /\/step-0\/(?:slot|retained)$/u.test(path.replaceAll(NodePath.sep, "/")),
+      )!,
     ),
   );
 
