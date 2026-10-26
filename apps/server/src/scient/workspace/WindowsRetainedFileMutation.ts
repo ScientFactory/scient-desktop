@@ -23,7 +23,7 @@ import {
   type RetainedMutationHooks,
   type MutationPoint,
 } from "./RetainedFileMutation.ts";
-import { windowsFileIdentity } from "./WindowsNativeFile.ts";
+import { windowsFileIdentity, windowsNativeFile } from "./WindowsNativeFile.ts";
 import { overleafFilesAvailability } from "../overleaf/overleafFileAvailability.ts";
 import type {
   NativeFileBinding,
@@ -306,6 +306,14 @@ export async function runWindowsRetainedMutation(
       }
       if (
         record.publication === "windows-stage-create" &&
+        current === null &&
+        same(staged, record.stagedIdentity) &&
+        (record.parentChange === undefined ||
+          (await windowsNativeFile(NodePath.dirname(published))).changeTime !== record.parentChange)
+      )
+        return await finish("attention", "recovery");
+      if (
+        record.publication === "windows-stage-create" &&
         input.bytes === undefined &&
         current === null &&
         same(staged, record.stagedIdentity) &&
@@ -466,7 +474,11 @@ export async function runWindowsRetainedMutation(
       await point("staged");
       if (stageRevision !== null && (await fileRevision(stage)) !== stageRevision)
         return await finish("attention", "recovery");
-      await save({ phase: "prepared" });
+      const parentChange = creation
+        ? (await windowsNativeFile(NodePath.dirname(published))).changeTime
+        : undefined;
+      if (creation && parentChange === undefined) return await finish("attention", "recovery");
+      await save({ phase: "prepared", ...(parentChange === undefined ? {} : { parentChange }) });
       await point("prepared");
       if (!creation) {
         const snapshot =

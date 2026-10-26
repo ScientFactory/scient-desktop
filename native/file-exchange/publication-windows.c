@@ -943,8 +943,9 @@ static int windows_operation(Context *context, const char *operation, const char
       if (!error && transaction.original) {
         if (!GetFileInformationByHandleEx(transaction.original, FileBasicInfo, &attributes, sizeof(attributes))) error = (int)GetLastError();
         else {
-          attributes.FileAttributes &= ~(FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE | 0x00400000UL);
-          if (!attributes.FileAttributes) attributes.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+          DWORD flags = attributes.FileAttributes & ~(FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE | 0x00400000UL);
+          memset(&attributes, 0, sizeof(attributes));
+          attributes.FileAttributes = flags ? flags : FILE_ATTRIBUTE_NORMAL;
           if (!SetFileInformationByHandle(transaction.stage, FileBasicInfo, &attributes, sizeof(attributes))) error = (int)GetLastError();
         }
       }
@@ -1146,7 +1147,9 @@ int platform_windows_main(int argc, char **argv) {
       free(parent);
     }
   }
+  FILE_BASIC_INFO basic = {0};
   if (!error) error = identify(file, &entry);
+  if (!error && !GetFileInformationByHandleEx(file, FileBasicInfo, &basic, sizeof(basic))) error = (int)GetLastError();
   if (!error && strcmp(entry.type, "file") && strcmp(entry.type, "directory")) error = ERROR_REPARSE_TAG_INVALID;
   if (!error) error = qualified_volume(file);
   if (!error && !strcmp(argv[2], "private")) {
@@ -1173,6 +1176,7 @@ int platform_windows_main(int argc, char **argv) {
     (unsigned long)data.dwFileAttributes, managed ? "true" : "false");
   if (!error) printf("{\"dev\":\"%s\",\"ino\":\"%s\",\"type\":\"%s\"}", entry.dev, entry.ino, entry.type);
   else printf("null");
+  if (!error) printf(",\"changeTime\":\"%lld\"", (long long)basic.ChangeTime.QuadPart);
   printf("}\n");
   if (file != INVALID_HANDLE_VALUE && context && file != context->parent) CloseHandle(file);
   if (context) platform_close(context);
