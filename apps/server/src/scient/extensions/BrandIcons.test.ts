@@ -24,6 +24,25 @@ describe("bundled extension brand icons", () => {
     const images: Readonly<Record<string, string>> = { ...curated, ...icons };
     for (const [key, data] of Object.entries(images)) {
       expect(isExtensionIconDataUri(data), key).toBe(true);
+      const bytes = Buffer.from(data.split(",")[1]!, "base64");
+      expect(bytes.length, key).toBeLessThanOrEqual(25_600);
+      expect(bytes.toString("ascii", 0, 4), key).toBe("RIFF");
+      expect(bytes.toString("ascii", 8, 12), key).toBe("WEBP");
+      let dimensions: [number, number] | undefined;
+      for (let offset = 12; offset + 8 <= bytes.length;) {
+        const type = bytes.toString("ascii", offset, offset + 4);
+        const length = bytes.readUInt32LE(offset + 4);
+        expect(type, `${key}: opaque corners`).not.toBe("ALPH");
+        if (type === "VP8X") expect(bytes[offset + 8]! & 0x10, key).toBe(0);
+        if (type === "VP8 ")
+          dimensions = [
+            bytes.readUInt16LE(offset + 14) & 0x3fff,
+            bytes.readUInt16LE(offset + 16) & 0x3fff,
+          ];
+        offset += 8 + length + (length % 2);
+      }
+      // Lossy VP8 without an alpha chunk is opaque across the entire tile.
+      expect(dimensions, key).toEqual([256, 256]);
       expect(resolveBrandIcon(key), key).toBe(data);
     }
     for (const [name, key] of Object.entries(aliases)) {

@@ -555,11 +555,13 @@ describe("curated Discover catalog", () => {
       const [header, payload] = server.icon.split(",") as [string, string];
       const bytes = Buffer.from(payload, "base64");
       expect(bytes.byteLength, server.id).toBeLessThanOrEqual(64 * 1024);
-      // The bytes are what the MIME type says: a PNG signature or SVG markup.
+      // Check the container signature as well as the data URI MIME type.
       const looksRight =
         header === "data:image/png;base64"
           ? bytes.subarray(0, 8).equals(PNG_SIGNATURE)
-          : header === "data:image/svg+xml;base64" && bytes.toString("utf8").includes("<svg");
+          : header === "data:image/webp;base64"
+            ? bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP"
+            : header === "data:image/svg+xml;base64" && bytes.toString("utf8").includes("<svg");
       expect(looksRight, server.id).toBe(true);
     }
     expect(Object.keys(CURATED_ICONS).toSorted()).toEqual(

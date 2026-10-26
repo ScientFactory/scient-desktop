@@ -94,11 +94,21 @@ WebP or SVG signatures; SVG additionally requires `image/svg+xml`.
 
 The checked-in source list is `scripts/scient-extension-brands.json`. Run
 `pnpm --dir scripts extensions:icons:generate` to rebuild the pack and aliases
-from its recorded sources. Existing `discover/curatedIcons.json` entries are
-referenced, never duplicated. Other images are fitted inside a transparent
-64×64 PNG. The generator writes `.logs/extension-brand-icons.html` for visual
-review on light and dark backgrounds. Review every icon before committing;
-record rejected marks with `omitted` in the source list. Generic and personal
+from its recorded sources and license notes. Both the brand pack and the existing
+`discover/curatedIcons.json` keys are regenerated as opaque 256×256 WebP tiles
+at quality 90, with a 25 KiB per-icon and 4 MB combined JSON budget. Raster inputs
+below 128 pixels on either side are rejected; SVG inputs are rendered at high
+resolution. Brand tiles retain their backgrounds; transparent marks are trimmed
+and centred at 68% on an opaque brand background or white. Recorded sources are
+pinned during regeneration; discovery only supplies uncatalogued brands.
+
+The generator writes `.logs/extension-brand-icons.html` and
+`.logs/extension-owner-examples.html` for visual review on light and dark
+backgrounds at row, large and round avatar sizes. Review every icon before
+committing; record rejected marks with `omitted` in the source list. Images fill
+the frame without padding when opaque. Runtime inline images use one cached,
+local canvas corner sample per URL; transparent marks retain white backing and
+padding. Generic and personal
 skills packs retain monograms; their inventory is `brandIcons/excluded.json`.
 The official vendor marks identify third-party services without affiliation or
 endorsement. The source URLs are development inputs only.

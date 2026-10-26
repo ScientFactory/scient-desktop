@@ -1,7 +1,7 @@
 import { isExtensionIconDataUri, type ExtensionAudience } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { ProjectMonogram } from "../../components/ProjectMonogram";
 import { cn } from "../../lib/utils";
@@ -115,12 +115,37 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 type ExtensionIconSize = "row" | "large" | "avatar";
 
-/** Tile size and inner padding; avatar icons are round. */
+/** Avatar icons share the row size and use a round frame. */
 const ICON_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
-  row: "size-10 p-1.5 rounded-[25%]",
-  large: "size-16 p-2.5 rounded-[25%]",
-  avatar: "size-10 p-1.5 rounded-full",
+  row: "size-10 rounded-[25%]",
+  large: "size-16 rounded-[25%]",
+  avatar: "size-10 rounded-full",
 };
+
+const transparentIconCorners = new Map<string, boolean>();
+
+function hasTransparentCorners(image: HTMLImageElement, url: string): boolean {
+  const cached = transparentIconCorners.get(url);
+  if (cached !== undefined) return cached;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 8;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    transparentIconCorners.set(url, true);
+    return true;
+  }
+  try {
+    context.drawImage(image, 0, 0, 8, 8);
+    const { data } = context.getImageData(0, 0, 8, 8);
+    const transparent = [0, 7, 56, 63].some((pixel) => data[pixel * 4 + 3]! < 250);
+    if (transparentIconCorners.size >= 512) transparentIconCorners.clear();
+    transparentIconCorners.set(url, transparent);
+    return transparent;
+  } catch {
+    transparentIconCorners.set(url, true);
+    return true;
+  }
+}
 
 const MONOGRAM_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
   row: "size-10",
@@ -146,9 +171,12 @@ function ExtensionIconTile({
   readonly size?: ExtensionIconSize;
 }) {
   const image = iconUrl !== undefined && isExtensionIconDataUri(iconUrl) ? iconUrl : undefined;
+  const [sample, setSample] = useState<{ url: string; transparent: boolean }>();
+  const padded =
+    Boolean(Glyph) ||
+    (image !== undefined &&
+      (transparentIconCorners.get(image) ?? (sample?.url === image && sample.transparent)));
   if (image !== undefined || Glyph) {
-    // Many logos disappear on dark backgrounds or recolour with dark mode; render them on a white
-    // tile in the light scheme. Scient glyphs still follow the theme.
     return (
       <span
         aria-hidden
@@ -157,14 +185,27 @@ function ExtensionIconTile({
           "flex shrink-0 items-center justify-center overflow-hidden border",
           Glyph
             ? "border-border bg-white dark:bg-card"
-            : "border-border bg-white [color-scheme:light] dark:border-white/10",
+            : "border-border [color-scheme:light] dark:border-white/10",
+          padded && "bg-white",
+          padded && (size === "large" ? "p-2.5" : "p-1.5"),
           ICON_FRAME[size],
         )}
       >
         {Glyph ? (
           <Glyph className="size-full text-foreground/75" strokeWidth={1.75} />
         ) : (
-          <img alt="" src={image} className="size-full object-contain" />
+          <img
+            alt=""
+            src={image}
+            className={cn("size-full", padded ? "object-contain" : "object-cover")}
+            onLoad={(event) => {
+              if (image)
+                setSample({
+                  url: image,
+                  transparent: hasTransparentCorners(event.currentTarget, image),
+                });
+            }}
+          />
         )}
       </span>
     );
