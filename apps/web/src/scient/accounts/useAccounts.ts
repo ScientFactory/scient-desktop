@@ -16,7 +16,8 @@ export function useAccounts(environmentId: EnvironmentId | null) {
   return {
     ...query,
     data: query.error ? null : query.data,
-    canWrite: scope && permitted && query.isSuccess,
+    // A refresh after each change keeps the last snapshot; writes stay enabled meanwhile.
+    canWrite: scope && permitted && !query.error && query.data != null,
   };
 }
 
