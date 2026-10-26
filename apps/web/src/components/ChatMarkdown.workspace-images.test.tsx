@@ -31,7 +31,7 @@ vi.mock("../assets/assetUrls", () => ({
   useAssetUrlState: (_environmentId: unknown, resource: unknown) => {
     testState.resources.push(resource);
     if (testState.assetState === "loading") return { _tag: "Loading" };
-    if (testState.assetState === "failure") return { _tag: "Failure" };
+    if (testState.assetState === "failure") return { _tag: "Failure", refresh: vi.fn() };
     return {
       _tag: "Success",
       url: "https://signed.test/workspace-image.svg",
