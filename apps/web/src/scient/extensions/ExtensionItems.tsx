@@ -6,11 +6,14 @@ import type {
   ServerProvider,
   ServerProviderMcpServer,
   ServerProviderPlugin,
+  ProviderStoreApp,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
+import { useAtomCommand } from "../../state/use-atom-command";
+import { actOnProviderPlugin } from "./extensionsState";
 import { Button } from "../../components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import {
@@ -18,6 +21,7 @@ import {
   type ConnectorActionsState,
   type PluginActionsState,
   useAddEntry,
+  useActionLock,
   useConnectorActions,
   usePluginActions,
   useProviderPluginActions,
@@ -341,7 +345,17 @@ export function ProviderPluginItem({
       tagline={[plugin.description, plugin.sourceLabel ?? `${label} plugin`]
         .filter(Boolean)
         .join(" · ")}
-      status={plugin.enabled ? null : "Off"}
+      status={
+        !plugin.enabled
+          ? "Off"
+          : plugin.apps?.length
+            ? plugin.apps.some((app) => !app.enabled)
+              ? "Disabled in Codex"
+              : plugin.apps.every((app) => app.connected)
+                ? "Connected"
+                : "Needs sign-in"
+            : null
+      }
       trailing={
         <ItemMenu name={name} target={target}>
           {plugin.canSetEnabled ? (
@@ -417,5 +431,61 @@ export function ProviderServerItem({
         hasFeedback(actions.feedback, false) ? <ActionFeedback feedback={actions.feedback} /> : null
       }
     />
+  );
+}
+
+export function ProviderAppConnect({
+  provider,
+  pluginId,
+  app,
+  disabled = false,
+}: {
+  readonly provider: ServerProvider;
+  readonly pluginId: string;
+  readonly app: ProviderStoreApp;
+  readonly disabled?: boolean;
+}) {
+  const { environmentId } = useExtensionsEnvironment();
+  const act = useAtomCommand(actOnProviderPlugin);
+  const waiting = useRef(false);
+  useEffect(() => {
+    const refresh = () => {
+      if (!waiting.current) return;
+      waiting.current = false;
+      void act({
+        environmentId,
+        input: {
+          instanceId: provider.instanceId,
+          action: { type: "refresh-inventory", connectionsOnly: true },
+        },
+      });
+    };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [act, environmentId, provider.instanceId]);
+  const lock = useActionLock(
+    JSON.stringify(["provider-app", provider.instanceId, pluginId, app.name]),
+  );
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="ghost-primary"
+        disabled={lock.locked || disabled || !app.enabled}
+        onClick={() =>
+          void lock.signIn(
+            "sign-in",
+            () => {
+              waiting.current = true;
+              return Promise.resolve(app.installUrl ?? null);
+            },
+            null,
+          )
+        }
+      >
+        Connect {app.name}
+      </Button>
+      <ActionFeedback feedback={lock.feedback} />
+    </>
   );
 }

@@ -10,8 +10,9 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useDebouncedValue } from "../../state/queries";
 import { useActionLock } from "./extensionActions";
-import { ActionFeedback } from "./ExtensionItems";
+import { ActionFeedback, ProviderAppConnect } from "./ExtensionItems";
 import {
   AboutCard,
   DetailHeader,
@@ -73,9 +74,11 @@ function StoreInstall({
           ? "Installing…"
           : entry.installed
             ? "Installed"
-            : provider.driver === "claudeAgent"
-              ? "Install in Claude Code"
-              : "Install in Scient Agent"}
+            : provider.driver === "codex"
+              ? "Install in Codex"
+              : provider.driver === "claudeAgent"
+                ? "Install in Claude Code"
+                : "Install in Scient Agent"}
       </Button>
       <ActionFeedback feedback={lock.feedback} />
     </>
@@ -223,45 +226,109 @@ export function ProviderStoreShelves({ query = "" }: { readonly query?: string }
   const scient = providers.filter((provider) => provider.enabled && provider.driver === "scient");
   const targets = [...claude, ...scient];
   const primary = targets[0];
-  return primary ? (
-    <ExtensionsSection
-      title={
-        <Link
-          to="/settings/extensions/store/$instanceId"
-          params={{ instanceId: primary.instanceId }}
-          className={SECTION_TITLE_LINK_CLASS}
+  const codex = providers.filter((provider) => provider.enabled && provider.driver === "codex");
+  return (
+    <>
+      {primary ? (
+        <ExtensionsSection
+          title={
+            <Link
+              to="/settings/extensions/store/$instanceId"
+              params={{ instanceId: primary.instanceId }}
+              className={SECTION_TITLE_LINK_CLASS}
+            >
+              Plugins for Claude and Scient Agent
+              <SectionTitleChevron />
+            </Link>
+          }
         >
-          Plugins for Claude and Scient Agent
-          <SectionTitleChevron />
-        </Link>
-      }
-    >
-      {targets.map((provider) => (
-        <StoreResults
-          key={`${provider.instanceId}:${query}`}
-          provider={provider}
-          query={query}
-          preview
-        />
+          {targets.map((provider) => (
+            <StoreResults
+              key={`${provider.instanceId}:${query}`}
+              provider={provider}
+              query={query}
+              preview
+            />
+          ))}
+        </ExtensionsSection>
+      ) : null}
+      {codex.map((provider) => (
+        <ExtensionsSection
+          key={provider.instanceId}
+          title={
+            <Link
+              to="/settings/extensions/store/$instanceId"
+              params={{ instanceId: provider.instanceId }}
+              className={SECTION_TITLE_LINK_CLASS}
+            >
+              From the Codex store
+              <SectionTitleChevron />
+            </Link>
+          }
+        >
+          <StoreResults
+            key={`${provider.instanceId}:${query}`}
+            provider={provider}
+            query={query}
+            preview
+          />
+        </ExtensionsSection>
       ))}
-    </ExtensionsSection>
-  ) : null;
+    </>
+  );
 }
 
 function Store({ instanceId }: { readonly instanceId: string }) {
   const { providers } = useExtensionsEnvironment();
   const provider = providers.find((item) => item.instanceId === instanceId);
-  const [query, setQuery] = useState("");
+  const [search, setSearch] = useState("");
+  const query = useDebouncedValue(search.trim(), 300);
+  const { environmentId } = useExtensionsEnvironment();
+  const registry = useContext(RegistryContext);
+  const act = useAtomCommand(actOnProviderPlugin);
+  const allowed = useAtomValue(actOnProviderPlugin.permissionAtom(environmentId));
+  const lock = useActionLock(JSON.stringify(["refresh-store", instanceId]));
   return (
     <>
       <BackLink to="/settings/extensions">Discover</BackLink>
-      <ExtensionsSection title="Plugins for Claude and Scient Agent">
+      <ExtensionsSection
+        title={
+          provider?.driver === "codex"
+            ? "From the Codex store"
+            : "Plugins for Claude and Scient Agent"
+        }
+      >
         <Input
           aria-label="Search plugins"
           placeholder="Search plugins"
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
+          value={search}
+          onChange={(event) => setSearch(event.currentTarget.value)}
         />
+        {provider ? (
+          <Button
+            size="sm"
+            variant="ghost-muted"
+            disabled={!allowed || lock.locked}
+            onClick={() =>
+              void lock.run("refresh", async () => {
+                const result = await act({
+                  environmentId,
+                  input: { instanceId: provider.instanceId, action: { type: "refresh-inventory" } },
+                });
+                registry.refresh(
+                  extensionsProviderStorePage({
+                    environmentId,
+                    input: { instanceId: provider.instanceId, query, preview: false, limit: 30 },
+                  }),
+                );
+                return result;
+              })
+            }
+          >
+            {lock.busy ? "Refreshing…" : "Refresh"}
+          </Button>
+        ) : null}
+        <ActionFeedback feedback={lock.feedback} />
         {provider ? (
           <StoreResults key={query} provider={provider} query={query} preview={false} />
         ) : (
@@ -319,6 +386,39 @@ function StoreDetail({
       description={entry.description}
     >
       {entry.disabledReason ? <MutedLine>{entry.disabledReason}</MutedLine> : null}
+      {entry.kind === "codex" ? (
+        <DetailSection title="Connection">
+          {entry.authPolicy === "ON_USE" ? (
+            <MutedLine>Connects the first time Codex uses it</MutedLine>
+          ) : null}
+          <GroupsCard
+            label="Apps"
+            groups={[
+              {
+                label: "Apps",
+                rows: entry.apps.map((app) => ({
+                  key: app.name,
+                  name: app.name,
+                  detail: app.connected ? (
+                    "Connected"
+                  ) : !app.enabled ? (
+                    "Disabled in Codex"
+                  ) : entry.installed && app.installUrl ? (
+                    <ProviderAppConnect
+                      provider={provider}
+                      pluginId={entry.id}
+                      app={app}
+                      disabled={Boolean(entry.disabledReason)}
+                    />
+                  ) : (
+                    "Not connected"
+                  ),
+                })),
+              },
+            ]}
+          />
+        </DetailSection>
+      ) : null}
       <DetailSection title="Includes">
         <GroupsCard
           label="Parts"

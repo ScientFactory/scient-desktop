@@ -12,6 +12,7 @@ import {
   ProviderInstanceId,
   type ScientPluginSummary,
   type ServerProvider,
+  type ProviderStoreEntry,
 } from "@t3tools/contracts";
 import type * as AtomReact from "@effect/atom-react";
 import type * as TanStackRouter from "@tanstack/react-router";
@@ -43,6 +44,7 @@ const state = vi.hoisted(() => ({
   discoverOutcomes: {} as Record<string, "pending" | { readonly error: string }>,
   /** `extensions.discover.entry` answers by name; catalog entries answer too. */
   entries: {} as Record<string, DiscoverEntry>,
+  storeEntry: null as ProviderStoreEntry | null,
   queryTargets: [] as unknown[],
   projects: [] as Array<{ environmentId: string; id: string; title: string; isScratch?: true }>,
   projectsKnown: true,
@@ -157,6 +159,7 @@ vi.mock("../../state/query", async () => {
       useStateVersion();
       if (atom === null) return { data: null, error: null, failure: null, isPending: false };
       state.queryTargets.push(atom);
+      if (atom.kind === "store-entry") return { data: state.storeEntry, error: null };
       if (atom.kind === "inventory") return { data: state.inventory, error: null };
       if (atom.kind === "catalog") return { data: state.catalog, error: null };
       if (atom.kind === "entry") {
@@ -390,6 +393,7 @@ import {
   ProviderPluginDetailPage,
   ServerDetailPage,
 } from "./ExtensionDetailPages";
+import { ProviderStoreDetailPage } from "./ProviderStorePages";
 import { InstalledPage } from "./InstalledPage";
 
 const codex = ProviderInstanceId.make("codex");
@@ -567,6 +571,7 @@ function setup() {
   state.projectsKnown = true;
   state.registry = AtomRegistry.make();
   state.queryTargets = [];
+  state.storeEntry = null;
   state.hash = "";
   state.navigate.mockReset();
   for (const command of Object.values(state.commands)) command.mockReset();
@@ -1835,5 +1840,55 @@ describe("Detail pages", () => {
     });
     expect(fixture.container.querySelector('[role="alert"]')?.textContent).toBe("Codex refused.");
     expect(fixture.aboutValue("Managed by")).toBe("Codex");
+  });
+});
+
+describe("Codex store connection", () => {
+  it("shows connection actions from the owner's verified installation and refreshed app state", async () => {
+    await using fixture = setup();
+    state.storeEntry = {
+      id: "sample",
+      name: "sample",
+      displayName: "Sample",
+      description: "Search documents",
+      marketplace: "remote",
+      kind: "codex",
+      installed: false,
+      includes: [],
+      apps: [],
+      authPolicy: "ON_INSTALL",
+    };
+    state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    await userEvent.click(buttonIn(fixture.container, "Install in Codex")!);
+    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    state.storeEntry = {
+      ...state.storeEntry,
+      installed: true,
+      apps: [
+        {
+          name: "Sample",
+          connected: false,
+          enabled: true,
+          installUrl: "https://chatgpt.com/apps/sample/app",
+        },
+      ],
+    };
+    await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+    await expect
+      .element(page.getByRole("button", { name: "Installed", exact: true }))
+      .toBeDisabled();
+    await userEvent.click(fixture.section("Connection").querySelector("button")!);
+    await expect
+      .element(page.getByRole("button", { name: "Connect Sample", exact: true }))
+      .toBeVisible();
+    state.storeEntry = {
+      ...state.storeEntry,
+      apps: [{ name: "Sample", connected: true, enabled: true }],
+    };
+    await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(fixture.section("Connection").textContent).toContain("Connected");
   });
 });

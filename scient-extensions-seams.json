@@ -22,7 +22,8 @@
     "packages/contracts/src/scient/extensionAudience.ts",
     "packages/contracts/src/scient/providerStore.ts",
     "apps/web/src/routes/_chat.settings.extensions_.store.$instanceId.tsx",
-    "apps/web/src/routes/_chat.settings.extensions_.item.store.$instanceId.$entryId.tsx"
+    "apps/web/src/routes/_chat.settings.extensions_.item.store.$instanceId.$entryId.tsx",
+    "packages/contracts/src/scient/extensionIcon.ts"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",

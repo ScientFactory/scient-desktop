@@ -39,7 +39,7 @@ import {
   useProviderPluginActions,
   useProviderServerActions,
 } from "./extensionActions";
-import { ActionFeedback, mcpServerSummary } from "./ExtensionItems";
+import { ActionFeedback, mcpServerSummary, ProviderAppConnect } from "./ExtensionItems";
 import {
   BackLink,
   ExtensionsPage,
@@ -1084,6 +1084,31 @@ function ProviderPluginDetail({
       }
       feedback={<ActionFeedback feedback={actions.feedback} />}
     >
+      {plugin.apps?.length ? (
+        <DetailSection title="Connection">
+          <GroupsCard
+            label="Apps"
+            groups={[
+              {
+                label: "Apps",
+                rows: plugin.apps.map((app) => ({
+                  key: app.name,
+                  name: app.name,
+                  detail: !app.enabled ? (
+                    "Disabled in Codex"
+                  ) : app.connected ? (
+                    "Connected"
+                  ) : app.installUrl ? (
+                    <ProviderAppConnect provider={group.provider} pluginId={plugin.id} app={app} />
+                  ) : (
+                    "Not connected"
+                  ),
+                })),
+              },
+            ]}
+          />
+        </DetailSection>
+      ) : null}
       {servers.length > 0 ? (
         <DetailSection title="Includes">
           <GroupsCard

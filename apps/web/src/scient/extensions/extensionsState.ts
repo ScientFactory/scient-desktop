@@ -102,12 +102,14 @@ export function createExtensionsAtoms<R, E>(
     providerStorePage: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:provider-store",
       tag: WS_METHODS.extensionsProviderStoreSearch,
+      refreshTrigger: changesOf,
       staleTimeMs: 60_000,
       idleTtlMs: 60_000,
     }),
     providerStoreEntry: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:provider-store-entry",
       tag: WS_METHODS.extensionsProviderStoreEntry,
+      refreshTrigger: changesOf,
       staleTimeMs: 60_000,
       idleTtlMs: 60_000,
     }),

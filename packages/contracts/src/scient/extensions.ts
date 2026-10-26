@@ -3,6 +3,8 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "../baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
 import { ServerProviders } from "../server.ts";
+import { ExtensionIconDataUri } from "./extensionIcon.ts";
+import { ProviderStoreApp } from "./providerStore.ts";
 import { ExtensionAgentStores } from "./extensionAudience.ts";
 export {
   ExtensionAudience,
@@ -95,12 +97,7 @@ export type ConnectorStatus = typeof ConnectorStatus.Type;
  * icons travel only as base64 `data:` URIs of PNG, JPEG, WebP or SVG, at most
  * 64 KiB of image (about 87,400 base64 characters).
  */
-export const ExtensionIconDataUri = Schema.String.check(
-  Schema.isMaxLength(90_000),
-  Schema.isPattern(/^data:image\/(?:png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$/u),
-);
-export type ExtensionIconDataUri = typeof ExtensionIconDataUri.Type;
-export const isExtensionIconDataUri = Schema.is(ExtensionIconDataUri);
+export { ExtensionIconDataUri, isExtensionIconDataUri } from "./extensionIcon.ts";
 
 export const ConnectorSummary = Schema.Struct({
   connectorId: ConnectorId,
@@ -457,7 +454,10 @@ export type ExtensionDeliveryReceiptResult = typeof ExtensionDeliveryReceiptResu
 export const ProviderPluginActionInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   action: Schema.Union([
-    Schema.Struct({ type: Schema.Literal("refresh-inventory") }),
+    Schema.Struct({
+      type: Schema.Literal("refresh-inventory"),
+      connectionsOnly: Schema.optional(Schema.Boolean),
+    }),
     Schema.Struct({ type: Schema.Literal("install"), entryId: TrimmedNonEmptyString }),
     Schema.Struct({ type: Schema.Literal("add-official-store") }),
     Schema.Struct({
@@ -474,6 +474,8 @@ export const ProviderPluginActionInput = Schema.Struct({
 export type ProviderPluginActionInput = typeof ProviderPluginActionInput.Type;
 
 export const ProviderPluginActionResult = Schema.Struct({
+  appsNeedingAuth: Schema.optional(Schema.Array(ProviderStoreApp)),
+  authPolicy: Schema.optional(Schema.String),
   /** Provider-owned sign-in page to open in the user's browser. */
   authorizationUrl: Schema.optional(TrimmedNonEmptyString),
   providers: ServerProviders,

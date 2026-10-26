@@ -269,7 +269,11 @@ export function makeProviderPluginManagement(
       ),
     );
     if (entry.disabledReason) return yield* failure("unsupported", entry.disabledReason);
-    yield* untilRetired(actions, "installing the plugin", actions.store.install(entryId)).pipe(
+    const installed = yield* untilRetired(
+      actions,
+      "installing the plugin",
+      actions.store.install(entryId),
+    ).pipe(
       Effect.mapError(() =>
         failure(
           "provider-rejected",
@@ -301,6 +305,7 @@ export function makeProviderPluginManagement(
       ),
     );
     return {
+      ...(installed ? installed : {}),
       providers: yield* providerRegistry.recordProviderNativeInventory({
         instanceId: input.instanceId,
         reportedBy: actions,
@@ -523,7 +528,12 @@ export function makeProviderPluginManagement(
               yield* untilRetired(
                 actions,
                 "refreshing extensions",
-                actions.refreshInventory({ force: true }),
+                actions.refreshInventory({
+                  force: true,
+                  connectionsOnly:
+                    input.action.type === "refresh-inventory" &&
+                    input.action.connectionsOnly === true,
+                }),
               ).pipe(
                 Effect.mapError(() =>
                   failure("state-unavailable", "Could not refresh this agent's extensions."),

@@ -37,6 +37,7 @@ import {
  * Health/status refreshes alone must not invalidate the inventory.
  */
 export interface ExtensionsChangeFeedShape {
+  readonly notify: Effect.Effect<void>;
   readonly current: Effect.Effect<number>;
   readonly changes: Stream.Stream<ExtensionsChangedEvent>;
 }
@@ -77,6 +78,10 @@ export const changeFeedLayer = Layer.effect(
       providerSupportChanges(yield* providers.getProviders, providers.streamChanges),
       () => undefined,
     );
+    const notify = Ref.updateAndGet(revision, (value) => value + 1).pipe(
+      Effect.flatMap((next) => PubSub.publish(events, { revision: next })),
+      Effect.asVoid,
+    );
     yield* Stream.mergeAll(
       [
         Stream.map(connectors.changes, () => undefined),
@@ -86,14 +91,11 @@ export const changeFeedLayer = Layer.effect(
       ],
       { concurrency: "unbounded" },
     ).pipe(
-      Stream.runForEach(() =>
-        Ref.updateAndGet(revision, (value) => value + 1).pipe(
-          Effect.flatMap((next) => PubSub.publish(events, { revision: next })),
-        ),
-      ),
+      Stream.runForEach(() => notify),
       Effect.forkScoped,
     );
     return ExtensionsChangeFeed.of({
+      notify,
       current: Ref.get(revision),
       changes: Stream.fromPubSub(events),
     });
@@ -156,6 +158,11 @@ export const makeExtensionsRpcHandlers = ({
               const actions = yield* providerRegistry.getProviderPluginActionsForInstance(
                 provider.instanceId,
               );
+              if (actions?.store?.changes)
+                yield* actions.store.changes.pipe(
+                  Stream.runForEach(() => changeFeed.notify),
+                  Effect.forkScoped,
+                );
               if (actions?.refreshInventory)
                 yield* actions.refreshInventory({ force: false }).pipe(
                   Effect.catch(() => Effect.void),

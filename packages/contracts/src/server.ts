@@ -137,8 +137,10 @@ export const ServerProviderSkill = Schema.Struct({
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
 // SCIENT-FORK:START — Scient Extensions native inventory.
+import { ProviderStoreApp } from "./scient/providerStore.ts";
 /** A plugin installed in a provider instance's own plugin system. Provider-owned; Scient only reports it. */
 export const ServerProviderPlugin = Schema.Struct({
+  apps: Schema.optional(Schema.Array(ProviderStoreApp)),
   id: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
   displayName: Schema.optional(TrimmedNonEmptyString),

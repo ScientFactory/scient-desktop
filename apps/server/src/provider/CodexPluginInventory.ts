@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import type * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 
+import { makeCodexProviderStore } from "../scient/extensions/CodexProviderStore.ts";
 import { nextInventoryReadSequence, nonEmptyText, uniqueBy } from "./ProviderNativeInventory.ts";
 import type {
   ProviderMcpSignInAttempt,
@@ -466,7 +467,20 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
       ),
   };
 
+  const store = yield* makeCodexProviderStore(open);
   const actions: ProviderPluginActions = {
+    store,
+    refreshInventory: Effect.fn("CodexPluginInventory.refreshInventory")(function* ({
+      force,
+      connectionsOnly,
+    }: {
+      readonly force: boolean;
+      readonly connectionsOnly?: boolean | undefined;
+    }) {
+      if (!connectionsOnly) yield* store.search({ refresh: force, limit: 1 });
+      const listing = yield* actions.listPlugins({});
+      yield* publishMachine("plugins", listing);
+    }),
     listPlugins: ({ cwd }) =>
       open(cwd).pipe(
         Effect.flatMap((client) =>
@@ -476,7 +490,10 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
               client,
               cwd === undefined ? undefined : [cwd],
             );
-            return { plugins, sequence };
+            const enriched = yield* store
+              .enrichInstalled(plugins)
+              .pipe(Effect.orElseSucceed(() => plugins));
+            return { plugins: enriched, sequence };
           }),
         ),
         Effect.timeout(CODEX_ACTION_TIMEOUT),
@@ -516,5 +533,11 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
     whenRetired: Deferred.await(retired),
   };
 
+  yield* store.changes.pipe(
+    Stream.runForEach(() =>
+      actions.refreshInventory!({ force: false, connectionsOnly: true }).pipe(Effect.ignore),
+    ),
+    Effect.forkScoped,
+  );
   return { actions, refresh, workspace, reports };
 });

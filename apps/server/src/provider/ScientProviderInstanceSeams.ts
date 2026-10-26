@@ -6,6 +6,7 @@
  */
 import type {
   ModelSelection,
+  ProviderStoreInstallResult,
   ProviderStoreEntry,
   ProviderStorePage,
   ProviderStoreSearchInput,
@@ -21,6 +22,7 @@ import type {
   VoiceTranscriptCorrectionError,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
+import type * as Stream from "effect/Stream";
 import type * as Scope from "effect/Scope";
 
 /** Optional, tightly sandboxed one-shot cleanup for local voice transcripts. */
@@ -70,20 +72,26 @@ export interface ProviderMcpSignInAttempt {
 export interface ProviderPluginActions {
   readonly store?:
     | {
+        readonly changes?: Stream.Stream<void> | undefined;
         readonly search: (
           input: Omit<ProviderStoreSearchInput, "instanceId">,
         ) => Effect.Effect<ProviderStorePage, ProviderPluginActionFailure>;
         readonly entry: (
           entryId: string,
         ) => Effect.Effect<ProviderStoreEntry, ProviderPluginActionFailure>;
-        readonly install: (entryId: string) => Effect.Effect<void, ProviderPluginActionFailure>;
+        readonly install: (
+          entryId: string,
+        ) => Effect.Effect<void | ProviderStoreInstallResult, ProviderPluginActionFailure>;
         readonly addOfficialStore?:
           | (() => Effect.Effect<void, ProviderPluginActionFailure>)
           | undefined;
       }
     | undefined;
   readonly refreshInventory?:
-    | ((input: { readonly force: boolean }) => Effect.Effect<void, ProviderPluginActionFailure>)
+    | ((input: {
+        readonly force: boolean;
+        readonly connectionsOnly?: boolean | undefined;
+      }) => Effect.Effect<void, ProviderPluginActionFailure>)
     | undefined;
   /**
    * A fresh listing of the plugins this generation sees, in `cwd` when given.

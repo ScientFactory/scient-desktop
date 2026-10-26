@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "../baseSchemas.ts";
+import { ExtensionIconDataUri } from "./extensionIcon.ts";
 import { ProviderInstanceId } from "../providerInstance.ts";
 
 export const ProviderStoreApp = Schema.Struct({
@@ -21,7 +22,7 @@ export const ProviderStoreEntry = Schema.Struct({
   version: Schema.optional(Schema.String),
   publisher: Schema.optional(Schema.String),
   website: Schema.optional(Schema.String),
-  iconUrl: Schema.optional(Schema.String),
+  iconUrl: Schema.optional(ExtensionIconDataUri),
   includes: Schema.Array(Schema.String),
   review: Schema.optional(Schema.Literals(["anthropic", "partner"])),
   disabledReason: Schema.optional(Schema.String),
@@ -52,3 +53,8 @@ export const ProviderStorePage = Schema.Struct({
   message: Schema.optional(Schema.String),
 });
 export type ProviderStorePage = typeof ProviderStorePage.Type;
+
+export interface ProviderStoreInstallResult {
+  readonly authPolicy: string;
+  readonly appsNeedingAuth: ReadonlyArray<ProviderStoreApp>;
+}
