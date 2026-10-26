@@ -50,11 +50,13 @@ import {
 import {
   pendingOverleafDecisions,
   setOverleafFileDecision,
+  setOverleafConflictChoices,
+  type OverleafReviewChoice,
   useOverleafWorkspace,
 } from "./overleafStore";
 
 /** A person's choice: the engine's three, plus "Ask the agent", which writes the marks too. */
-export type OverleafReviewChoice = ScientOverleafConflictChoice | "agent";
+export type { OverleafReviewChoice } from "./overleafStore";
 
 const CHOICE_LABELS: Record<OverleafReviewChoice, string> = {
   mine: "Keep mine",
@@ -154,11 +156,7 @@ export function OverleafReviewPanel(props: {
   const composer = useComposerHandleContext();
   const handleNewThread = useNewThreadHandler();
   const readShownThread = useReadShownThread();
-  // Choices answer one review: they are kept with its identity and shown only for it.
-  const [choiceState, setChoiceState] = useState<{
-    readonly review: string;
-    readonly choices: ReadonlyMap<string, OverleafReviewChoice>;
-  }>({ review: "", choices: new Map() });
+  const choiceState = workspace.conflictChoices.get(connectionId);
   // Overleaf moved after the choices were made: the review the conflicts are shown again in.
   const [chooseAgainFor, setChooseAgainFor] = useState<string | null>(null);
   // The send the Undo dialog is open for.
@@ -186,17 +184,13 @@ export function OverleafReviewPanel(props: {
   const readError = workspace.previewErrors.get(connectionId) ?? null;
   const readNote = workspace.previewNotes.get(connectionId) ?? null;
   const readChanges = () => void readOverleafChanges(environmentId, cwd, connectionId);
-  const chosen = choiceState.review === shownReview ? choiceState.choices : NO_CHOICES;
+  const chosen = choiceState?.review === shownReview ? choiceState.choices : NO_CHOICES;
   const chooseAgain = chooseAgainFor !== null && chooseAgainFor === shownReview;
   const setChosen = (
     change: (
       current: ReadonlyMap<string, OverleafReviewChoice>,
     ) => ReadonlyMap<string, OverleafReviewChoice>,
-  ) =>
-    setChoiceState((current) => ({
-      review: shownReview,
-      choices: change(current.review === shownReview ? current.choices : NO_CHOICES),
-    }));
+  ) => setOverleafConflictChoices(environmentId, connectionId, shownReview, change(chosen));
 
   if (!connection) {
     return (
@@ -374,7 +368,12 @@ export function OverleafReviewPanel(props: {
             </TooltipTrigger>
             <TooltipPopup>Open in Overleaf</TooltipPopup>
           </Tooltip>
-          <Button size="xs" variant="outline" disabled={syncing} onClick={() => void syncNow()}>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={syncing}
+            onClick={() => void (allChosen ? syncWithChoices() : syncNow())}
+          >
             <RefreshCw aria-hidden className={syncing ? "size-3.5 animate-spin" : "size-3.5"} />
             {syncing ? "Syncing…" : "Sync"}
           </Button>

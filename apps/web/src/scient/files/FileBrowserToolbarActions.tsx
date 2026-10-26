@@ -13,8 +13,11 @@ import { DropboxMark, GoogleDriveMark, OneDriveMark, OverleafMark } from "./Exte
 /** Extra controls the Files bar can carry, such as a tab's Back and Forward. */
 export type ScientToolbarSlot = ReactNode;
 
-/** The services a project folder keeps in sync with. Overleaf is live; the rest are on the way. */
-const CONNECT_SERVICES: ReadonlyArray<{
+/**
+ * The services a project folder keeps in sync with, in the Connect menu and
+ * Settings ▸ Synced folders. Overleaf is live; the rest are on the way.
+ */
+export const CONNECT_SERVICES: ReadonlyArray<{
   readonly id: string;
   readonly label: string;
   readonly Mark: Icon;

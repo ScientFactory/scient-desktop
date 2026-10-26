@@ -151,17 +151,17 @@ export function OverleafUndoDialog(props: {
             </ul>
           )}
         </DialogPanel>
-        <DialogFooter>
+        <DialogFooter variant="bare" className="mt-2">
           {phase._tag === "done" || phase._tag === "failed" || send === null ? (
-            <Button type="button" onClick={onClose}>
+            <Button type="button" size="sm" onClick={onClose}>
               Done
             </Button>
           ) : (
             <>
-              <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={onClose}>
                 Cancel
               </Button>
-              <Button type="button" disabled={busy} onClick={() => void undo(send)}>
+              <Button type="button" size="sm" disabled={busy} onClick={() => void undo(send)}>
                 {busy ? "Undoing…" : "Undo"}
               </Button>
             </>

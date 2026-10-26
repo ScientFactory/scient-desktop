@@ -6,6 +6,13 @@ import { ExternalLinkIcon, FolderOpenIcon } from "lucide-react";
 import { useState } from "react";
 
 import { SecretInput } from "~/components/settings/SecretInput";
+import {
+  Autocomplete,
+  AutocompleteInput,
+  AutocompleteItem,
+  AutocompleteList,
+  AutocompletePopup,
+} from "~/components/ui/autocomplete";
 import { Button, InlineButton } from "~/components/ui/button";
 import {
   Dialog,
@@ -21,6 +28,7 @@ import { Radio, RadioGroup } from "~/components/ui/radio-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { ensureBrowseDirectoryPath } from "~/lib/projectPaths";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
+import { useProjectPathSearch } from "~/state/queries";
 
 import { connectOverleaf, overleafRequestId, saveOverleafToken } from "./client";
 import { runOverleafSync } from "./overleafActions";
@@ -32,6 +40,8 @@ import {
   overleafResultView,
   parseOverleafProjectInput,
   refusalText,
+  workspaceFolderPath,
+  workspaceFolderProblem,
 } from "./overleafModel";
 import {
   forgetOverleafConnection,
@@ -45,8 +55,8 @@ export type ConnectOverleafMode = "new" | "link";
 
 const MADE_NOT_LINKED = "The project is made, but Overleaf isn't linked yet. ";
 
-/** The name a new folder gets until the person changes it. */
-const DEFAULT_OVERLEAF_FOLDER_NAME = "paper";
+/** Only an example in the empty folder-name field; no name is assumed. */
+const EXAMPLE_FOLDER_NAME = "paper";
 
 type Phase =
   | { readonly _tag: "form" }
@@ -75,8 +85,6 @@ export function ConnectOverleafDialog(props: {
   /** The selected folder, relative to the workspace; empty for the project's top. */
   readonly folder: string;
   readonly initialMode?: ConnectOverleafMode;
-  /** Project Settings: the folder to link is typed, since nothing is selected there. */
-  readonly folderEditable?: boolean;
   /** Opens the new link's review tab ("See changes"); absent without a side panel. */
   readonly onSeeChanges?: ((connection: OverleafConnection) => void) | undefined;
   /** Makes a new Scient project and brings the paper in as a subfolder of it. */
@@ -87,13 +95,17 @@ export function ConnectOverleafDialog(props: {
   const token = useOverleafTokenSaved(environmentId);
   const [project, setProject] = useState("");
   const [mode, setMode] = useState<ConnectOverleafMode>(props.initialMode ?? "new");
-  const [name, setName] = useState(DEFAULT_OVERLEAF_FOLDER_NAME);
-  const [linkFolder, setLinkFolder] = useState(folder);
+  // The folder the person chose in this workspace: the parent for a new folder,
+  // the folder itself for a link. Starts at the folder the dialog opened for.
+  const [chosenFolder, setChosenFolder] = useState(folder);
+  const [name, setName] = useState("");
   const [tokenDraft, setTokenDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ _tag: "form" });
   const [projectName, setProjectName] = useState("");
   const [location, setLocation] = useState(newProject?.location ?? "");
+  // Location and Paper folder stay folded behind the path they make until Change… or an error about them.
+  const [whereOpen, setWhereOpen] = useState(false);
   // Once made, the project stays: a refused link is tried again in it, never made twice.
   const [madeRoot, setMadeRoot] = useState<string | null>(null);
   const cwd = newProject ? (madeRoot ?? "") : props.cwd;
@@ -102,7 +114,12 @@ export function ConnectOverleafDialog(props: {
   // token would only show after the project was made.
   const tokenKnown = token.loaded;
   const needsToken = token.loaded && !token.saved;
-  const folderLabel = folder === "" ? "the project's top folder" : folder;
+  const chosenPath = workspaceFolderPath(chosenFolder);
+  const chosenLabel = chosenPath === "" ? "the project's top folder" : chosenPath;
+  const rootPath = props.cwd.replace(/\/$/u, "");
+  const fullPath = (relative: string) => (relative === "" ? rootPath : `${rootPath}/${relative}`);
+  // The paper's folder joins the project's path once the person names it.
+  const destination = `${location.trim() ? ensureBrowseDirectoryPath(location.trim()) : ""}${projectName.trim()}${name.trim() ? `/${name.trim()}` : ""}`;
 
   const connect = async () => {
     if (!tokenKnown) return;
@@ -124,6 +141,14 @@ export function ConnectOverleafDialog(props: {
       }
       if (location.trim().length === 0) {
         setError("Choose where the project goes.");
+        setWhereOpen(true);
+        return;
+      }
+    }
+    if (!newProject) {
+      const problem = workspaceFolderProblem(chosenFolder);
+      if (problem !== null) {
+        setError(problem);
         return;
       }
     }
@@ -131,6 +156,7 @@ export function ConnectOverleafDialog(props: {
       const problem = folderNameProblem(name);
       if (problem !== null) {
         setError(problem);
+        setWhereOpen(true);
         return;
       }
     }
@@ -164,6 +190,8 @@ export function ConnectOverleafDialog(props: {
           setError(
             `The project wasn't made: ${failure instanceof Error ? failure.message : "an error occurred."}`,
           );
+          // Often the location: show it.
+          setWhereOpen(true);
           setPhase({ _tag: "form" });
           return;
         }
@@ -175,8 +203,10 @@ export function ConnectOverleafDialog(props: {
         workspaceRoot,
         folder:
           mode === "new"
-            ? newFolderPath(folder, name)
-            : linkFolder.trim().replace(/^\/+|\/+$/gu, ""),
+            ? newFolderPath(newProject ? folder : chosenPath, name)
+            : newProject
+              ? folder
+              : chosenPath,
         create: mode === "new",
         project: projectId,
         requestId: overleafRequestId(),
@@ -295,68 +325,86 @@ export function ConnectOverleafDialog(props: {
                         size="sm"
                         autoComplete="off"
                         disabled={madeRoot !== null}
+                        aria-describedby={
+                          projectName.trim() ? "overleaf-new-project-destination" : undefined
+                        }
                         value={projectName}
                         onChange={(event) => setProjectName(event.target.value)}
                       />
+                      {projectName.trim() ? (
+                        <p className="flex min-w-0 items-baseline gap-1 text-xs text-muted-foreground">
+                          <span className="shrink-0">Goes in</span>
+                          <span
+                            id="overleaf-new-project-destination"
+                            className="min-w-0 break-all text-foreground/80"
+                          >
+                            {destination}
+                          </span>
+                          {whereOpen ? null : (
+                            <InlineButton tone="muted" onClick={() => setWhereOpen(true)}>
+                              Change…
+                            </InlineButton>
+                          )}
+                        </p>
+                      ) : null}
                     </div>
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="overleaf-new-project-location">Location</Label>
-                      <div className="flex min-w-0 items-center gap-1">
-                        <Input
-                          id="overleaf-new-project-location"
-                          size="sm"
-                          autoComplete="off"
-                          spellCheck={false}
-                          className="min-w-0 flex-1"
-                          disabled={madeRoot !== null}
-                          value={location}
-                          onChange={(event) => setLocation(event.target.value)}
-                        />
-                        {newProject.chooseFolder ? (
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <Button
-                                  type="button"
-                                  variant="ghost-muted"
-                                  size="icon-xs"
-                                  className="shrink-0"
-                                  aria-label="Choose a folder"
-                                  disabled={madeRoot !== null}
-                                  onClick={() => {
-                                    void newProject.chooseFolder?.(location).then((picked) => {
-                                      if (picked) setLocation(picked);
-                                    });
-                                  }}
-                                />
-                              }
-                            >
-                              <FolderOpenIcon
-                                aria-hidden
-                                className="scient-quiet-icon size-[17px]"
-                                strokeWidth={1.75}
-                              />
-                            </TooltipTrigger>
-                            <TooltipPopup>Choose a folder</TooltipPopup>
-                          </Tooltip>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="overleaf-new-project-folder">Paper folder</Label>
-                      <div className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground">
-                        <span className="max-w-1/2 truncate">
-                          {projectName.trim() || "project"}/
-                        </span>
-                        <Input
-                          id="overleaf-new-project-folder"
-                          size="sm"
-                          className="min-w-0 flex-1"
-                          value={name}
-                          onChange={(event) => setName(event.target.value)}
-                        />
-                      </div>
-                    </div>
+                    {whereOpen ? (
+                      <>
+                        <div className="grid gap-1.5">
+                          <Label htmlFor="overleaf-new-project-location">Location</Label>
+                          <div className="flex min-w-0 items-center gap-1">
+                            <Input
+                              id="overleaf-new-project-location"
+                              size="sm"
+                              autoComplete="off"
+                              spellCheck={false}
+                              className="min-w-0 flex-1"
+                              disabled={madeRoot !== null}
+                              value={location}
+                              onChange={(event) => setLocation(event.target.value)}
+                            />
+                            {newProject.chooseFolder ? (
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <Button
+                                      type="button"
+                                      variant="ghost-muted"
+                                      size="icon-xs"
+                                      className="shrink-0"
+                                      aria-label="Choose a folder"
+                                      disabled={madeRoot !== null}
+                                      onClick={() => {
+                                        void newProject.chooseFolder?.(location).then((picked) => {
+                                          if (picked) setLocation(picked);
+                                        });
+                                      }}
+                                    />
+                                  }
+                                >
+                                  <FolderOpenIcon
+                                    aria-hidden
+                                    className="scient-quiet-icon size-[17px]"
+                                    strokeWidth={1.75}
+                                  />
+                                </TooltipTrigger>
+                                <TooltipPopup>Choose a folder</TooltipPopup>
+                              </Tooltip>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="grid gap-1.5">
+                          <Label htmlFor="overleaf-new-project-folder">Paper folder</Label>
+                          <Input
+                            id="overleaf-new-project-folder"
+                            size="sm"
+                            placeholder={EXAMPLE_FOLDER_NAME}
+                            value={name}
+                            onChange={(event) => setName(event.target.value)}
+                          />
+                        </div>
+                      </>
+                    ) : null}
                   </>
                 ) : (
                   <RadioGroup
@@ -369,32 +417,64 @@ export function ConnectOverleafDialog(props: {
                       Bring it in as a new folder
                     </Label>
                     {mode === "new" ? (
-                      <div className="ms-6 flex min-w-0 items-center gap-1 text-sm text-muted-foreground">
-                        {folder === "" ? null : <span className="truncate">{folder}/</span>}
-                        <Input
-                          size="sm"
-                          aria-label="Folder name"
-                          className="min-w-0 flex-1"
-                          value={name}
-                          onChange={(event) => setName(event.target.value)}
-                        />
+                      <div className="ms-6 grid gap-1.5">
+                        <div className="grid gap-1.5">
+                          <Label htmlFor="overleaf-inside">Inside</Label>
+                          <WorkspaceFolderField
+                            id="overleaf-inside"
+                            environmentId={environmentId}
+                            cwd={props.cwd}
+                            value={chosenFolder}
+                            onChange={setChosenFolder}
+                          />
+                        </div>
+                        <div className="grid gap-1.5">
+                          <Label htmlFor="overleaf-folder-name">Folder name</Label>
+                          <Input
+                            id="overleaf-folder-name"
+                            size="sm"
+                            placeholder={EXAMPLE_FOLDER_NAME}
+                            aria-describedby={name.trim() ? "overleaf-destination" : undefined}
+                            value={name}
+                            onChange={(event) => setName(event.target.value)}
+                          />
+                        </div>
+                        {name.trim() ? (
+                          <p className="flex min-w-0 items-baseline gap-1 text-xs text-muted-foreground">
+                            <span className="shrink-0">Goes in</span>
+                            <span
+                              id="overleaf-destination"
+                              className="min-w-0 break-all text-foreground/80"
+                            >
+                              {fullPath(newFolderPath(chosenPath, name.trim()))}
+                            </span>
+                          </p>
+                        ) : null}
                       </div>
                     ) : null}
                     <Label>
                       <Radio value="link" />
-                      <span className="min-w-0 truncate">
-                        {props.folderEditable ? "Link a folder" : `Link ${folderLabel}`}
-                      </span>
+                      <span className="min-w-0 truncate">{`Link ${chosenLabel}`}</span>
                     </Label>
-                    {mode === "link" && props.folderEditable ? (
-                      <Input
-                        size="sm"
-                        aria-label="Folder to link"
-                        className="ms-6 w-auto"
-                        placeholder="paper"
-                        value={linkFolder}
-                        onChange={(event) => setLinkFolder(event.target.value)}
-                      />
+                    {mode === "link" ? (
+                      <div className="ms-6 grid gap-1.5">
+                        <div className="grid gap-1.5">
+                          <Label htmlFor="overleaf-folder">Folder</Label>
+                          <WorkspaceFolderField
+                            id="overleaf-folder"
+                            environmentId={environmentId}
+                            cwd={props.cwd}
+                            value={chosenFolder}
+                            onChange={setChosenFolder}
+                          />
+                        </div>
+                        <p className="flex min-w-0 items-baseline gap-1 text-xs text-muted-foreground">
+                          <span className="shrink-0">Links</span>
+                          <span className="min-w-0 break-all text-foreground/80">
+                            {fullPath(chosenPath)}
+                          </span>
+                        </p>
+                      </div>
                     ) : null}
                   </RadioGroup>
                 )}
@@ -403,6 +483,8 @@ export function ConnectOverleafDialog(props: {
                     <div className="flex items-center justify-between gap-2">
                       <Label htmlFor="overleaf-token">Overleaf Git token</Label>
                       <InlineButton
+                        tone="muted"
+                        className="text-xs"
                         render={
                           <a
                             href={OVERLEAF_TOKEN_PAGE_URL}
@@ -432,12 +514,13 @@ export function ConnectOverleafDialog(props: {
             </form>
           </DialogPanel>
         )}
-        <DialogFooter>
+        <DialogFooter variant="bare" className="mt-2">
           {phase._tag === "done" ? (
             <>
               {view?.hasChanges && props.onSeeChanges ? (
                 <Button
                   type="button"
+                  size="sm"
                   variant="outline"
                   onClick={() => {
                     props.onSeeChanges?.(phase.connection);
@@ -447,28 +530,90 @@ export function ConnectOverleafDialog(props: {
                   See changes
                 </Button>
               ) : null}
-              <Button type="button" onClick={onClose}>
+              <Button type="button" size="sm" onClick={onClose}>
                 Done
               </Button>
             </>
           ) : (
             <>
-              <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={onClose}>
                 Cancel
               </Button>
-              <Button type="submit" form="connect-overleaf-form" disabled={busy || !tokenKnown}>
+              <Button
+                type="submit"
+                size="sm"
+                form="connect-overleaf-form"
+                disabled={busy || !tokenKnown}
+              >
                 {phase._tag === "working"
                   ? phase.step === "sync"
                     ? "Syncing…"
                     : phase.step === "project"
                       ? "Creating…"
                       : "Connecting…"
-                  : "Connect"}
+                  : newProject
+                    ? "Add"
+                    : "Connect"}
               </Button>
             </>
           )}
         </DialogFooter>
       </DialogPopup>
     </Dialog>
+  );
+}
+
+/**
+ * A folder of this workspace, picked from its folders or typed as a path from
+ * the project's top. An empty field is the project's top folder.
+ */
+function WorkspaceFolderField(props: {
+  readonly id: string;
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}) {
+  const search = useProjectPathSearch(
+    { environmentId: props.environmentId, cwd: props.cwd, query: props.value, kind: "directory" },
+    20,
+    { allowEmptyQuery: true },
+  );
+  const folders = search.entries
+    .filter((entry) => entry.kind === "directory")
+    .map((entry) => workspaceFolderPath(entry.path))
+    .filter((path, index, all) => path !== "" && all.indexOf(path) === index);
+  const items = [
+    ...(props.value.trim() === "" ? [{ path: "", label: "Project's top folder" }] : []),
+    ...folders.map((path) => ({ path, label: path })),
+  ];
+  return (
+    <Autocomplete
+      items={items}
+      itemToStringValue={(item) => item.path}
+      mode="none"
+      openOnInputClick
+      value={props.value}
+      onValueChange={(value) => props.onChange(value)}
+    >
+      <AutocompleteInput
+        id={props.id}
+        size="sm"
+        autoComplete="off"
+        spellCheck={false}
+        placeholder="Project's top folder"
+      />
+      {items.length > 0 ? (
+        <AutocompletePopup>
+          <AutocompleteList className="max-h-60">
+            {items.map((item) => (
+              <AutocompleteItem key={item.path === "" ? "top" : item.path} value={item}>
+                <span className="min-w-0 truncate">{item.label}</span>
+              </AutocompleteItem>
+            ))}
+          </AutocompleteList>
+        </AutocompletePopup>
+      ) : null}
+    </Autocomplete>
   );
 }

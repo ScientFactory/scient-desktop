@@ -23,7 +23,7 @@ Overleaf gives Git access through a token instead of your password.
 1. On Overleaf, open **Account settings ▸ Git integration** and generate a token.
    **Create a token on Overleaf ↗** in Scient opens that page.
 2. Paste it in Scient: the Connect dialog asks for it the first time, or save it
-   in **Settings ▸ Source Control ▸ Overleaf**.
+   in **Settings ▸ Synced folders ▸ Overleaf**.
 
 Scient saves one token for Overleaf. It is kept in the server's secret store, a
 folder inside Scient's own data that only your user account can read. It is not
@@ -51,23 +51,25 @@ Linked folders carry Overleaf's leaf in the file tree.
 
 Every way opens the same **Connect to Overleaf** dialog:
 
-| Where            | How                                                                |
-| ---------------- | ------------------------------------------------------------------ |
-| The Files bar    | The Connect button (a folder with arrows) ▸ **Overleaf…**          |
-| The file tree    | Right-click a folder ▸ **Connect to ▸ Overleaf…**                  |
-| Add project      | **Overleaf project**, for a new Scient project (see below)         |
-| Project Settings | **Overleaf ▸ Link a folder…** or **Bring in an Overleaf project…** |
-| Ask the agent    | For example: "Bring my Overleaf project into a `paper` folder."    |
+| Where         | How                                                             |
+| ------------- | --------------------------------------------------------------- |
+| The Files bar | The Connect button (a folder with arrows) ▸ **Overleaf…**       |
+| The file tree | Right-click a folder ▸ **Connect to ▸ Overleaf…**               |
+| Add project   | **Overleaf project**, for a new Scient project (see below)      |
+| Ask the agent | For example: "Bring my Overleaf project into a `paper` folder." |
 
 In the dialog:
 
 1. Paste the project's **link** (the address of the project on Overleaf) or its
    **ID**.
 2. Choose where it goes:
-   - **Bring it in as a new folder** (the default). Name the folder; it is made
-     inside the selected folder, or at the project's top when nothing is
-     selected. The folder must not exist yet, or must be empty.
-   - **Link** the selected folder, for a folder that already holds just the paper.
+   - **Bring it in as a new folder** (the default). Pick the folder it goes
+     **Inside** (the folder you opened the dialog from, until you change it;
+     an empty field is the project's top folder) and name the new folder, for
+     example `paper`. Once named, **Goes in** shows its full path. The folder
+     must not exist yet, or must be empty.
+   - **Link** a folder that already holds just the paper. Pick it in
+     **Folder**; **Links** shows its full path.
 3. If no token is saved yet, paste it.
 4. **Connect.** Scient links the folder and runs the first sync straight away,
    then shows what came in and what was sent.
@@ -83,16 +85,17 @@ your analysis, and keeps Scient's own files (`AGENTS.md`, `PROJECT.md`,
 `.scient/`) out of Overleaf. The dialog asks for:
 
 1. the Overleaf project's **link** or **ID**;
-2. the **project name** and its **location** (where Add project browses from;
-   the folder button opens your computer's folder chooser). The project's folder
-   is made there, named after the project; a folder that already is a project is
-   used as it is;
-3. the **paper folder**, `paper` until you rename it;
-4. your token, if none is saved yet.
+2. the **project name**. Under it, **Goes in** shows the project's folder,
+   for example `~/Thesis`. It is made in the location Add project browses
+   from, named after the project; a folder that already is a project is used
+   as it is. **Change…** shows the **location** (the folder button opens your
+   computer's folder chooser) and the **paper folder**, which you name there,
+   for example `paper`; the path then reads `~/Thesis/paper`;
+3. your token, if none is saved yet.
 
-**Connect** makes the project, links the paper folder and runs the first sync,
+**Add** makes the project, links the paper folder and runs the first sync,
 then shows its result. If Overleaf refuses the link after the project is made,
-the dialog says so and keeps the project: fix the link and **Connect** again,
+the dialog says so and keeps the project: fix the link and **Add** again,
 or close the dialog and connect later from the Files bar. Closing the dialog
 opens the new project.
 
@@ -102,7 +105,7 @@ Start a sync from:
 
 - the **Overleaf chip** in the header of any file in a linked folder: **Sync now**;
 - the command palette: **Sync with Overleaf** (one entry per linked folder);
-- **Settings ▸ Source Control ▸ Overleaf** or **Project Settings ▸ Overleaf**:
+- **Settings ▸ Synced folders ▸ Overleaf** or **Project Settings ▸ Overleaf**:
   **Sync now** beside each link.
 
 Before it syncs, Scient saves the folder's open editors in every open window.
@@ -277,7 +280,7 @@ A sync stops with a reason, never a question, when:
 
 ## Unlink
 
-**Unlink** in **Settings ▸ Source Control ▸ Overleaf** or **Project Settings ▸
+**Unlink** in **Settings ▸ Synced folders ▸ Overleaf** or **Project Settings ▸
 Overleaf** ends the link. Nothing is deleted, in the folder or on Overleaf.
 Linking the same folder to the same project again picks up where it left off.
 
@@ -285,7 +288,7 @@ Linking the same folder to the same project again picks up where it left off.
 
 | Message                                                              | What to do                                                                 |
 | -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| No Overleaf token is saved.                                          | Save one in Settings ▸ Source Control ▸ Overleaf.                          |
+| No Overleaf token is saved.                                          | Save one in Settings ▸ Synced folders ▸ Overleaf.                          |
 | Overleaf refused the token, or this account has no Git access.       | Make a new token, or ask the project's owner for Git access.               |
 | Overleaf has no such project.                                        | Check the link or ID.                                                      |
 | That isn't an Overleaf project link or ID.                           | Paste the address of the project on Overleaf.                              |
@@ -295,8 +298,8 @@ Linking the same folder to the same project again picks up where it left off.
 | A folder with that name already has files.                           | Pick another name, or link that folder instead.                            |
 | This folder, or one inside or around it, is linked already.          | Use the existing link, or unlink it first.                                 |
 | This Overleaf project is linked to another folder of this project.   | Sync that folder instead.                                                  |
-| The project wasn't made: _reason_                                    | Fix what the reason says (often the location), then **Connect** again.     |
-| The project is made, but Overleaf isn't linked yet.                  | Fix what follows it, then **Connect** again; the project stays.            |
+| The project wasn't made: _reason_                                    | Fix what the reason says (often the location), then **Add** again.         |
+| The project is made, but Overleaf isn't linked yet.                  | Fix what follows it, then **Add** again; the project stays.                |
 | The token wasn't saved. Try again.                                   | Paste the token again and **Connect**; nothing was made.                   |
 | The project is made but not in the sidebar yet.                      | Wait for it to appear, or open its folder with Add project ▸ Local folder. |
 | _file_ couldn't be saved, so nothing was changed.                    | Save the file (finish Visual editor input), then try again.                |

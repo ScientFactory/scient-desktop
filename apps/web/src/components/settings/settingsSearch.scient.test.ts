@@ -52,11 +52,25 @@ describe("settings sidebar order", () => {
     expect(SETTINGS_SECTION_LABELS["/settings/keybindings"]).toBe("Shortcuts");
     expect(searchSettings("keybindings").some((item) => item.id === "keybindings")).toBe(true);
   });
+
+  it("puts Synced folders right after Source Control", () => {
+    const paths = Object.keys(SETTINGS_SECTION_LABELS);
+    expect(paths.indexOf("/settings/synced-folders")).toBe(
+      paths.indexOf("/settings/source-control") + 1,
+    );
+  });
 });
 
 // Restored after a mutation audit (Codex review r4): each case is the only guard of where
 // settings search sends its query.
 describe("Scient settings search routing", () => {
+  it("finds the Overleaf token controls on Synced folders", () => {
+    expect(searchSettings("overleaf token")[0]).toMatchObject({
+      id: "synced-folders-overleaf",
+      to: "/settings/synced-folders",
+    });
+  });
+
   it.each(["font weight", "text thickness"])("finds interface typography by %s", (query) => {
     expect(searchSettings(query)[0]).toMatchObject({
       id: "interface-font",

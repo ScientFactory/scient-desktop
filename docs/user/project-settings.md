@@ -212,8 +212,8 @@ working. Current logs, message attachments, and browser profiles are kept.
 ## Overleaf links
 
 **Project Settings → Overleaf** lists this project's folders linked to Overleaf, each with
-**Sync now**, **Open in Overleaf** and **Unlink**. **Link a folder…** links a folder you name;
-**Bring in an Overleaf project…** makes a new folder for one. See [Overleaf](overleaf.md).
+**Sync now**, **Open in Overleaf** and **Unlink**. New links are made from the Files bar; see
+[Overleaf](overleaf.md).
 
 ## Manage project skills
 

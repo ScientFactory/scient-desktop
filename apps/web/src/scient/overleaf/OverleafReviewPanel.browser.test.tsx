@@ -319,6 +319,41 @@ describe("OverleafReviewPanel", () => {
       .toBeVisible();
   });
 
+  it("keeps choices after opening a file and remounting, then carries them in header Sync", async () => {
+    reset();
+    recordOverleafSync(environmentId, "c1", decision);
+    const onOpenFile = vi.fn();
+    {
+      await using _screen = await render(panel(onOpenFile));
+      for (const path of ["main.tex", "intro.tex", "old.tex"])
+        await page
+          .getByRole("group", { name: `Settle ${path}` })
+          .getByRole("button", { name: "Keep mine" })
+          .click();
+      await page.getByRole("button", { name: "main.tex", exact: true }).click();
+      expect(onOpenFile).toHaveBeenCalledWith("paper/main.tex");
+    }
+    await using _screen = await render(panel());
+    await expect.element(page.getByRole("button", { name: "Sync again" })).toBeEnabled();
+    await expect
+      .element(
+        page
+          .getByRole("group", { name: "Settle main.tex" })
+          .getByRole("button", { name: "Keep mine" }),
+      )
+      .toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Sync", exact: true }).click();
+    await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+    expect(client.syncOverleaf.mock.calls[0]![1]).toMatchObject({
+      choices: [
+        { key: "k-main", choice: "mine" },
+        { key: "k-intro", choice: "mine" },
+        { key: "k-group", choice: "mine" },
+      ],
+      reviewedRemote: "a".repeat(40),
+    });
+  });
+
   it("shows the conflicts again when Overleaf moved after the choices were made", async () => {
     reset();
     recordOverleafSync(environmentId, "c1", decision);

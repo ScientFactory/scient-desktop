@@ -125,8 +125,10 @@ function deferred<T>() {
 async function fillAndConnect(token?: string) {
   await page.getByLabelText("Overleaf project").fill(ID);
   await page.getByLabelText("Project name").fill("Thesis");
+  await page.getByRole("button", { name: "Change…" }).click();
+  await page.getByLabelText("Paper folder").fill("paper");
   if (token !== undefined) await page.getByLabelText("Overleaf Git token").fill(token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
 }
 
 /** Chooses Add project ▸ Overleaf project, as the palette does. */
@@ -176,8 +178,17 @@ describe("Add project ▸ Overleaf project", () => {
 
     await expect.element(page.getByRole("dialog", { name: "Add Overleaf project" })).toBeVisible();
     // Where Add project browses from; the paper's folder is named as "Bring it in as a new folder" names it.
+    // Once named, the path it makes shows; Location and Paper folder open with Change….
+    await expect.element(page.getByText("Goes in")).not.toBeInTheDocument();
+    await page.getByLabelText("Project name").fill("Thesis");
+    // The project's folder shows; the paper's folder is appended once named.
+    await expect.element(page.getByText("~/Projects/Thesis", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Change…" }).click();
     await expect.element(page.getByLabelText("Location")).toHaveValue("~/Projects/");
-    await expect.element(page.getByLabelText("Paper folder")).toHaveValue("paper");
+    // No name is assumed: "paper" is only the placeholder.
+    await expect.element(page.getByLabelText("Paper folder")).toHaveValue("");
+    await page.getByLabelText("Paper folder").fill("paper");
+    await expect.element(page.getByText("~/Projects/Thesis/paper")).toBeVisible();
     // Linking a whole folder makes no sense for a project that doesn't exist yet.
     await expect
       .element(page.getByRole("radio", { name: "Bring it in as a new folder" }))
@@ -186,7 +197,7 @@ describe("Add project ▸ Overleaf project", () => {
     await page.getByLabelText("Overleaf project").fill(`https://www.overleaf.com/project/${ID}`);
     await page.getByLabelText("Project name").fill("Thesis");
     await page.getByLabelText("Overleaf Git token").fill("olp_secret");
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
 
     await expect.element(page.getByText("2 files came in")).toBeVisible();
     await expect.element(page.getByText("Linked Thesis/paper.")).toBeVisible();
@@ -231,20 +242,22 @@ describe("Add project ▸ Overleaf project", () => {
     await chooseOverleafProject();
 
     await page.getByLabelText("Overleaf project").fill(ID);
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect.element(page.getByText("Name the project.")).toBeVisible();
     expect(project.createProjectForOverleaf).not.toHaveBeenCalled();
 
     // Making the project fails: nothing was made, and Overleaf isn't asked.
     await page.getByLabelText("Project name").fill("Thesis");
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.getByRole("button", { name: "Change…" }).click();
+    await page.getByLabelText("Paper folder").fill("paper");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect
       .element(page.getByText("The project wasn't made: Permission denied"))
       .toBeVisible();
     expect(client.connectOverleaf).not.toHaveBeenCalled();
 
     // Made, then refused: the message says the project stays and the link is still to make.
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect
       .element(page.getByRole("alert"))
       .toHaveTextContent(
@@ -254,7 +267,7 @@ describe("Add project ▸ Overleaf project", () => {
     await expect.element(page.getByLabelText("Location")).toBeDisabled();
 
     // Trying again links into the same project; it is never made twice.
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect.element(page.getByText("Linked Thesis/paper.")).toBeVisible();
     expect(project.createProjectForOverleaf).toHaveBeenCalledTimes(2);
     expect(client.connectOverleaf).toHaveBeenCalledTimes(2);
@@ -272,7 +285,9 @@ describe("Add project ▸ Overleaf project", () => {
 
     await page.getByLabelText("Overleaf project").fill(ID);
     await page.getByLabelText("Project name").fill("Thesis");
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.getByRole("button", { name: "Change…" }).click();
+    await page.getByLabelText("Paper folder").fill("paper");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect.element(page.getByText(/Overleaf refused the token/u)).toBeVisible();
     await page.getByRole("button", { name: "Cancel" }).click();
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
@@ -332,20 +347,22 @@ describe("Add project ▸ Overleaf project", () => {
     // While the token's status is unknown, Connect can't make the project.
     await page.getByLabelText("Overleaf project").fill(ID);
     await page.getByLabelText("Project name").fill("Thesis");
-    await expect.element(page.getByRole("button", { name: "Connect", exact: true })).toBeDisabled();
+    await expect.element(page.getByRole("button", { name: "Add", exact: true })).toBeDisabled();
     tokenStatus.resolve({ saved: false });
     await expect.element(page.getByLabelText("Overleaf Git token")).toBeVisible();
-    await expect.element(page.getByRole("button", { name: "Connect", exact: true })).toBeEnabled();
+    await expect.element(page.getByRole("button", { name: "Add", exact: true })).toBeEnabled();
 
     // A token the server didn't save stops before anything is made.
+    await page.getByRole("button", { name: "Change…" }).click();
+    await page.getByLabelText("Paper folder").fill("paper");
     await page.getByLabelText("Overleaf Git token").fill("olp_secret");
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect.element(page.getByText("The token wasn't saved. Try again.")).toBeVisible();
     expect(project.createProjectForOverleaf).not.toHaveBeenCalled();
     expect(client.connectOverleaf).not.toHaveBeenCalled();
 
     await page.getByLabelText("Overleaf Git token").fill("olp_secret");
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect.element(page.getByText("Linked Thesis/paper.")).toBeVisible();
     expect(client.saveOverleafToken).toHaveBeenCalledTimes(2);
     expect(client.saveOverleafToken.mock.invocationCallOrder[1]).toBeLessThan(

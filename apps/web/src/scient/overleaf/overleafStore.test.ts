@@ -25,12 +25,14 @@ vi.mock("~/scient/markdownEditor/persistence/markdownPersistenceRegistry", () =>
 }));
 
 import { notifyWorkspaceFileSaved } from "~/scient/files/workspaceFileSaves";
+import { reviewIdentity } from "./overleafModel";
 import { ensureOverleafSaveWatch } from "./overleafSaveWatch";
 
 const {
   forgetOverleafConnection,
   pendingOverleafDecisions,
   setOverleafFileDecision,
+  setOverleafConflictChoices,
   beginOverleafPreview,
   finishOverleafPreview,
   recordOverleafSync,
@@ -300,6 +302,32 @@ describe("overleafStore", () => {
       ...pendingOverleafDecisions(readOverleafWorkspace(environmentId, root), "c1"),
     ];
 
+    it("keeps conflict choices only for their review and environment", () => {
+      resetOverleafStoreForTests();
+      const first = withFiles("r1", []);
+      accept(first);
+      setOverleafConflictChoices(
+        environmentId,
+        "c1",
+        reviewIdentity(first),
+        new Map([["k-main", "mine"]]),
+      );
+      expect(
+        readOverleafWorkspace(environmentId, "/work/project-wt")
+          .conflictChoices.get("c1")
+          ?.choices.get("k-main"),
+      ).toBe("mine");
+      expect(readOverleafWorkspace(EnvironmentId.make("remote"), ROOT).conflictChoices.size).toBe(
+        0,
+      );
+      accept(first);
+      expect(readOverleafWorkspace(environmentId, ROOT).conflictChoices.has("c1")).toBe(true);
+      accept(withFiles("r2", []));
+      expect(readOverleafWorkspace(environmentId, ROOT).conflictChoices.has("c1")).toBe(false);
+      accept(first);
+      expect(readOverleafWorkspace(environmentId, ROOT).conflictChoices.has("c1")).toBe(false);
+    });
+
     it("a fresh review drops decisions it no longer allows, for good", () => {
       resetOverleafStoreForTests();
       accept(
@@ -321,12 +349,21 @@ describe("overleafStore", () => {
       resetOverleafStoreForTests();
       accept(withFiles("r1", [{ path: "draft.tex", selected: true, skippedBecause: null }]));
       setOverleafFileDecision(environmentId, "c1", "draft.tex", "keep");
+      setOverleafConflictChoices(
+        environmentId,
+        "c1",
+        reviewIdentity(
+          withFiles("r1", [{ path: "draft.tex", selected: true, skippedBecause: null }]),
+        ),
+        new Map([["k-main", "mine"]]),
+      );
       const late = beginOverleafPreview(environmentId, "c1");
       forgetOverleafConnection(environmentId, "c1");
       for (const root of [ROOT, "/work/project-wt"]) {
         const view = readOverleafWorkspace(environmentId, root);
         expect(view.reviews.has("c1")).toBe(false);
         expect(view.fileDecisions.has("c1")).toBe(false);
+        expect(view.conflictChoices.has("c1")).toBe(false);
         expect(view.submittedDecisions.has("c1")).toBe(false);
       }
       // A read that started before is dropped.
@@ -348,6 +385,14 @@ describe("overleafStore", () => {
       setOverleafFileDecision(environmentId, "c1", "draft.tex", "keep");
       expect(pending(MAIN)).toEqual([["draft.tex", "keep"]]);
       expect(pending(WORKTREE)).toEqual([["draft.tex", "keep"]]);
+      setOverleafConflictChoices(
+        environmentId,
+        "c1",
+        reviewIdentity(
+          withFiles("r1", [{ path: "draft.tex", selected: true, skippedBecause: null }]),
+        ),
+        new Map([["k-main", "mine"]]),
+      );
       // A sync that applies (here, from the main view) spends it in every view.
       recordOverleafSync(environmentId, "c1", {
         _tag: "synced",
@@ -362,6 +407,7 @@ describe("overleafStore", () => {
         linkedElsewhere: false,
       });
       expect(readOverleafWorkspace(environmentId, WORKTREE).fileDecisions.has("c1")).toBe(false);
+      expect(readOverleafWorkspace(environmentId, WORKTREE).conflictChoices.has("c1")).toBe(false);
       expect(readOverleafWorkspace(environmentId, WORKTREE).reviews.get("c1")?.applied).toBe(true);
     });
   });

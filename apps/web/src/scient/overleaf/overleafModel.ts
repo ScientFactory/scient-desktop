@@ -82,6 +82,25 @@ export function folderNameProblem(name: string): string | null {
   return null;
 }
 
+/** A folder of the workspace a person picked or typed: empty for its top folder. */
+export function workspaceFolderPath(path: string): string {
+  return path.trim().replace(/^\/+|\/+$/gu, "");
+}
+
+/** Why a picked or typed folder can't be used, or null: it must stay inside the project. */
+export function workspaceFolderProblem(path: string): string | null {
+  const trimmed = path.trim();
+  if (trimmed === "") return null;
+  if (trimmed.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(trimmed) || trimmed.includes("\\")) {
+    return "Choose a folder inside this project.";
+  }
+  const parts = workspaceFolderPath(trimmed).split("/");
+  if (parts.some((part) => part === "" || part.startsWith("."))) {
+    return "Choose a folder inside this project.";
+  }
+  return null;
+}
+
 /**
  * A person's per-file decision: keep a new file only here, send one anyway, or
  * send a file held back for its conflict marks as it is ("Send it anyway").
@@ -166,8 +185,26 @@ export function overleafChipView(
 export function refusalText(refusal: ScientOverleafRefusal): string {
   const at = refusal.path ? ` (${refusal.path})` : "";
   switch (refusal.reason) {
+    case "volume-unavailable":
+      return "The disk holding this project is not connected.";
+    case "no-volume-identity":
+      return "This disk does not report a stable identity, so Scient cannot keep replaced files safely on it.";
+    case "unsupported-filesystem":
+      return "This disk cannot replace files safely (for example exFAT or FAT). Use a disk formatted as APFS.";
+    case "read-only-parent":
+      return "Scient cannot create its folder for kept files beside this project, because that location is read-only.";
+    case "shared-parent":
+      return "The folder containing this project belongs to another user, so Scient will not keep files there.";
+    case "disk-root-checkout":
+      return "This project is the top folder of its disk, so there is no place beside it on the same disk for kept files.";
+    case "unsafe-directory":
+      return "The folder for kept files is not a private directory owned by Scient.";
+    case "vault-missing":
+      return "The folder holding this connection's kept files is missing. Reconnect the disk it was on.";
+    case "vault-replaced":
+      return "The folder for kept files is not the one this connection recorded.";
     case "token-missing":
-      return "No Overleaf token is saved. Add one in Settings ▸ Source Control ▸ Overleaf.";
+      return "No Overleaf token is saved. Add one in Settings ▸ Synced folders ▸ Overleaf.";
     case "access-denied":
       return "Overleaf refused the token, or this account has no Git access to the project.";
     case "project-not-found":
