@@ -190,6 +190,8 @@ static HANDLE absolute_directory(Context *context, const char *path) {
   HANDLE drive = CreateFileW(volume, FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL,
     FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
   if (drive == INVALID_HANDLE_VALUE) { DWORD error = GetLastError(); free(name); SetLastError(error); return drive; }
+  int admission = qualified_volume(drive);
+  if (admission) { CloseHandle(drive); free(name); SetLastError((DWORD)admission); return INVALID_HANDLE_VALUE; }
   if (!remember(context, drive)) {
     DWORD error = GetLastError(); CloseHandle(drive); free(name); SetLastError(error); return INVALID_HANDLE_VALUE;
   }
@@ -1027,6 +1029,9 @@ static int qualified_volume(HANDLE folder) {
 }
 int platform_windows_main(int argc, char **argv) {
 #ifdef SCIENT_PUBLICATION_PROBE
+  if (argc == 4 && !strcmp(argv[2], "drive-mask")) {
+    printf("{\"mask\":%lu}\n", (unsigned long)GetLogicalDrives()); return 0;
+  }
   if (argc == 4 && (!strcmp(argv[2], "add-account") || !strcmp(argv[2], "delete-account"))) {
     wchar_t account[256], password[256];
     GetEnvironmentVariableW(L"SCIENT_TEST_ACCOUNT", account, 256);
