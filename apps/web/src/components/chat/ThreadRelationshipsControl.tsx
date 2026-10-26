@@ -30,6 +30,8 @@ import {
 import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
+  // SCIENT-FORK: native child Stop is shared with server admission.
+  supportsNativeSubagentStop,
   NodeId,
   type EnvironmentId,
   type OrchestrationV2Subagent,
@@ -472,7 +474,7 @@ export function ThreadRelationshipsPanel(props: {
                 agent &&
                 (agent.origin === "app_owned" ||
                   (agent.origin === "provider_native" &&
-                    agent.driver === "claudeAgent" &&
+                    supportsNativeSubagentStop(agent.driver) &&
                     agent.runId != null &&
                     agent.nativeTaskRef?.strength === "strong" &&
                     agent.nativeTaskRef.nativeId !== null &&

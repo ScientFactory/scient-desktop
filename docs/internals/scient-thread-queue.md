@@ -9,8 +9,14 @@ and manual product acceptance are separate; no visual acceptance is implied.
 ## Native V2 cutover
 
 For V2 threads, native queued runs and their user messages are the sole live
-queue authority. `QueuedRunsControl` adapts that projection and native commands
-into the single Scient `ThreadQueueStrip`; it does not render another queue.
+queue authority. Upstream's `QueuedRunsControl` presents that projection in the
+composer's drawer column (`queuedRunsControl` → `attachedAbove`), so it shares the
+Tasks bar's width. Scient's parts are mounted from
+`scient/threadQueue/useScientQueueParts.tsx`: the held-queue Send rule, the
+failed-start notice with Retry, readable command failures, the "Editing queued
+message" row after extraction, and "Queuing…" only when admission is slow.
+The web app does not read the pre-native queue endpoint except once per thread,
+through `useLegacyQueueRecoveryError`, to show retained work that needs recovery.
 `Orchestrator` owns admission, held state, ordering and delivery.
 Legacy payloads enter native held runs through `LegacyQueueCutover` before
 native delivery. Reading recovery data never executes it. The V1 Scient
@@ -43,7 +49,7 @@ hold delivery. Becoming idle does not resume a held queue.
 Three things release a held queue, and each releases every queued run:
 
 - **Send on a row.** While the queue is held and the thread is idle, every user
-  row offers Send (on mobile too). It dispatches `queue.resume(runId)`: the
+  row offers **Send now** (on mobile too). It dispatches `queue.resume(runId)`: the
   server moves automatic delegated completions first, then the chosen message,
   then the other messages in their current order, and releases them all. The
   shared rule is `canSendQueuedRun` (`@t3tools/shared/scientQueuedRunSend`);
@@ -163,7 +169,7 @@ remains editable, and already queued delivery does not require an edit snapshot.
 Native `queued-run.edit` retains context and selected skills when their fields are omitted.
 Explicit `context: null` clears context; an explicit empty skill-selection list clears selections.
 Every accepted native edit discards the previous composer snapshot. This command differs from
-the strip's cancellation/extraction followed by a new ordinary submission.
+the queue control's cancellation/extraction followed by a new ordinary submission.
 
 `editSession.ts` keeps both complete drafts in the existing IndexedDB journal,
 including attachment bytes. Before extraction, the client saves the queued message's
@@ -199,19 +205,20 @@ cleanup. Bytes still referenced by a queued item or projected message are retain
 
 ## Implementation owners
 
-| Owner                                                                                   | Responsibility                                                             |
-| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `apps/server/src/orchestration-v2/Orchestrator.ts`                                      | Admission, command predicates, held state, and advancement                 |
-| `apps/server/src/scient/orchestration/TerminalQueueHold.ts`                             | Exact terminal boundary and held-queue eligibility                         |
-| `apps/server/src/orchestration-v2/QueuedRunOrder.ts`                                    | Native delivery order and automatic-completion separation                  |
-| `apps/server/src/orchestration-v2/QueuedMessageBudget.ts`                               | Serialized-message and owned-byte limits                                   |
-| `apps/server/src/orchestration-v2/EffectWorker.ts`                                      | Durable execution after admission                                          |
-| `apps/server/src/orchestration-v2/legacy/`                                              | Legacy queue cutover and recovery readers                                  |
-| `apps/web/src/components/chat/QueuedRunsControl.tsx`                                    | Native projection and command adapter for the strip                        |
-| `apps/web/src/scient/threadQueue/ThreadQueueStrip.tsx`                                  | Queue presentation                                                         |
-| `apps/web/src/scient/threadQueue/editSession.ts`                                        | Local draft journal and edit recovery                                      |
-| `apps/web/src/scient/threadQueue/extractedIntentSend.ts`, `submission.ts`               | Frozen offered packet, uncertain-intake retry and later-draft preservation |
-| `apps/web/src/scient/threadQueue/extractedDraftIntent.ts`, `extractedImageSelection.ts` | Extracted intent and image-selection ownership                             |
+| Owner                                                                                   | Responsibility                                                               |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `apps/server/src/orchestration-v2/Orchestrator.ts`                                      | Admission, command predicates, held state, and advancement                   |
+| `apps/server/src/scient/orchestration/TerminalQueueHold.ts`                             | Exact terminal boundary and held-queue eligibility                           |
+| `apps/server/src/orchestration-v2/QueuedRunOrder.ts`                                    | Native delivery order and automatic-completion separation                    |
+| `apps/server/src/orchestration-v2/QueuedMessageBudget.ts`                               | Serialized-message and owned-byte limits                                     |
+| `apps/server/src/orchestration-v2/EffectWorker.ts`                                      | Durable execution after admission                                            |
+| `apps/server/src/orchestration-v2/legacy/`                                              | Legacy queue cutover and recovery readers                                    |
+| `apps/web/src/components/chat/QueuedRunsControl.tsx`                                    | Upstream's queue presentation and native commands, with marked Scient mounts |
+| `apps/web/src/scient/threadQueue/useScientQueueParts.tsx`                               | Held-queue Send rule, Retry, command errors, edit row, admission status      |
+| `apps/web/src/scient/threadQueue/useLegacyQueueRecoveryError.ts`                        | One-time notice for retained pre-native queue work                           |
+| `apps/web/src/scient/threadQueue/editSession.ts`                                        | Local draft journal and edit recovery                                        |
+| `apps/web/src/scient/threadQueue/extractedIntentSend.ts`, `submission.ts`               | Frozen offered packet, uncertain-intake retry and later-draft preservation   |
+| `apps/web/src/scient/threadQueue/extractedDraftIntent.ts`, `extractedImageSelection.ts` | Extracted intent and image-selection ownership                               |
 
 ## Verification and manual acceptance
 

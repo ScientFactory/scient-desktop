@@ -105,8 +105,8 @@ after the drop.
 
 New threads appear above the active threads you have arranged. Settling clears a thread's active
 position, so using **Un-settle** returns it to the top. Pinning and snoozing preserve its active
-position until you move it again. In Status view, thread activity does not change the order. Sections view can
-automatically place active threads as described below. The settled shelf
+position until you move it again. Automatic placement can bring active threads near the top without changing this saved
+manual order, as described below. The settled shelf
 continues to use the finished-work order described above.
 
 If dragging is unavailable for one environment, update the Scient server running in that
@@ -130,8 +130,10 @@ mobile without requiring the originating browser to remain open.
 
 ## Keep active threads near the top
 
-In **Sections** view, **Settings → General → Organization → Keep active threads near the top**
-is on by default. It applies separately inside every section, including General.
+**Settings → General → Organization → Keep active threads near the top** is on by default.
+One switch controls both the default Pinned and Active sidebar and Sections view. It applies
+to the unpinned inbox in the default sidebar, and separately inside each section, including General.
+An existing off preference stays off.
 Working, Monitoring, unread Done, approval or input requests, failed sessions, and
 unread Woke threads share one upper group. There is no priority between those states:
 a thread joining the group goes below its existing members, above ordinary inactive
@@ -143,8 +145,8 @@ read. Three seconds after you leave, an inactive thread moves to the first inact
 position, below the upper group. Reopening it restarts that delay; new work cancels
 it. Other newly inactive threads can subsequently land above it.
 
-You can still drag threads within or between sections, and move whole sections. A
-drop keeps the place you choose, with one limit: active work always gets the top back.
+You can still drag threads within the inbox, within or between sections, and move whole
+sections. A drop keeps the place you choose, with one limit: active work always gets the top back.
 
 | You drag                                     | It stays there                                                                      |
 | -------------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -168,7 +170,12 @@ active threads in saved order, then follows subsequent transitions. The switch a
 automatic positions belong to this client; section membership and manual order remain
 shared through the server. Refresh preserves local positions, and revalidates current
 status before moving threads. Filtering projects or collapsing a section never counts
-as reading or removes a thread from its remembered position.
+as reading or removes a thread from its remembered position. The two views remember their
+automatic positions separately.
+
+When **Working section (beta)** is on, the default sidebar uses that feature's own ordering
+instead. Automatic placement still works in Sections view. Search results keep their search order;
+the mobile app and legacy sidebar keep their existing behavior.
 
 ## Start a new thread
 
@@ -294,7 +301,7 @@ there. A thread returns to the top of the active list when it finishes, fails, o
 answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
 
-This is on by default. Turn it off with **Settings → Beta → Working section** on web and desktop,
+This is off by default. Turn it on with **Settings → Beta → Working section** on web and desktop,
 or **Settings → Thread behavior → Working section** on iOS and Android. Each device keeps its own
 choice.
 

@@ -362,7 +362,7 @@ it("bridges cross-section membership until its acknowledged shell echo arrives",
   expect(_fixture.value.state.groups[1]!.order).toEqual(["c", "a"]);
 });
 
-it("keeps a newly woken shelf row in its chosen slot until it appears, and prunes a deletion", async () => {
+it("keeps a newly woken shelf row in its chosen slot until its membership and key arrive, and prunes a deletion", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
@@ -371,28 +371,62 @@ it("keeps a newly woken shelf row in its chosen slot until it appears, and prune
   await render(_fixture);
   await act(() => _fixture.value.onInteractionChange(true));
   await act(() =>
-    _fixture.value.onManualPlacement("general", ["a", "shelf", "b", "x"], "shelf", new Map(), {
-      key: "shelf",
-      eligible: false,
-      orderKey: null,
-    }),
+    _fixture.value.onManualPlacement(
+      "general",
+      ["a", "shelf", "b", "x"],
+      "shelf",
+      new Map([["shelf", "ab"]]),
+      { key: "shelf", eligible: false, orderKey: null },
+    ),
   );
   await act(() => _fixture.value.onInteractionChange(false));
   expect(order(_fixture)).toEqual(["a", "shelf", "b", "x"]);
-  _fixture.input = {
-    ..._fixture.input,
-    groups: [
-      {
-        id: "general",
-        rows: [...group(["a", "b"])[0]!.rows, { key: "shelf", eligible: false, orderKey: null }],
-      },
-    ],
-  };
+  const withShelf = (orderKey: string | null) => [
+    {
+      id: "general",
+      rows: [...group(["a", "b"])[0]!.rows, { key: "shelf", eligible: false, orderKey }],
+    },
+  ];
+  _fixture.input = { ..._fixture.input, groups: withShelf(null) };
+  await render(_fixture);
+  expect(order(_fixture)).toEqual(["a", "shelf", "b", "x"]);
+  _fixture.input = { ..._fixture.input, groups: withShelf("ab") };
   await render(_fixture);
   expect(order(_fixture)).toEqual(["a", "shelf", "b", "x"]);
   _fixture.input = { ..._fixture.input, knownKeys: ["x", "a", "b"], groups: group(["a", "b"]) };
   await render(_fixture);
   expect(order(_fixture)).not.toContain("shelf");
+});
+
+it("keeps unrelated active positions when a bulk drop's shell echoes precede its command result", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  await act(() => _fixture.value.onInteractionChange(true));
+  const assignments = new Map([
+    ["x", "d"],
+    ["a", "m"],
+    ["b", "t"],
+  ]);
+  _fixture.input = {
+    ..._fixture.input,
+    groups: [
+      {
+        id: "general",
+        rows: group(["a", "b"])[0]!.rows.map((row) => ({
+          ...row,
+          orderKey: assignments.get(row.key)!,
+        })),
+      },
+    ],
+  };
+  await render(_fixture);
+  await act(() => _fixture.value.onManualPlacement("general", ["a", "x", "b"], "b", assignments));
+  await act(() => _fixture.value.onInteractionChange(false));
+  expect(order(_fixture)).toEqual(["a", "x", "b"]);
+  expect(_fixture.value.state.groups[0]!.upper).toEqual(["a"]);
+  expect(_fixture.value.state.groups[0]!.aside).toEqual(["b"]);
 });
 
 function _createFixture() {

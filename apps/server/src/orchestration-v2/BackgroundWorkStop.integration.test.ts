@@ -47,6 +47,7 @@ const stopEarlierBackgroundWork = ({
   nativeStop,
   nativeResume = false,
   nativeTerminalParent = false,
+  nativeDriver = "claudeAgent",
   workflowMember = false,
 }: {
   readonly failedStart?: boolean;
@@ -63,13 +64,12 @@ const stopEarlierBackgroundWork = ({
   readonly nativeStop?: "released" | "live" | "nonretryable";
   readonly nativeResume?: boolean;
   readonly nativeTerminalParent?: boolean;
+  readonly nativeDriver?: "claudeAgent" | "scient";
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const driver = ProviderDriverKind.make(nativeStop === undefined ? "codex" : "claudeAgent");
-      const instanceId = ProviderInstanceId.make(
-        nativeStop === undefined ? "codex" : "claudeAgent",
-      );
+      const driver = ProviderDriverKind.make(nativeStop === undefined ? "codex" : nativeDriver);
+      const instanceId = ProviderInstanceId.make(nativeStop === undefined ? "codex" : nativeDriver);
       const modelSelection = { instanceId, model: "test-model" };
       const capabilities =
         nativeStop === undefined ? CodexProviderCapabilitiesV2 : ClaudeProviderCapabilitiesV2;
@@ -2063,6 +2063,11 @@ it.effect.each(["missing-session-terminal", "returned-interrupt", "superseded-at
 it.effect.each(["released", "live", "nonretryable"] as const)(
   "a native child Stop preserves its parent and siblings after %s provider control",
   (nativeStop) => stopEarlierBackgroundWork({ nativeStop }),
+);
+
+// regression: a released Scient Agent session's stopped child stayed "running".
+it.effect("a released Scient Agent native child Stop settles like Claude's", () =>
+  stopEarlierBackgroundWork({ nativeStop: "released", nativeDriver: "scient" }),
 );
 
 it.effect("Stop settles native descendants launched after their coordinator resumes", () =>

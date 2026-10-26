@@ -192,6 +192,10 @@ export interface NativeSession {
   ) => Effect.Effect<void, NativeSessionOperationError>;
   // SCIENT-FORK: compaction uses the same turn ownership and receipt path as send.
   readonly compact?: NativeSession["send"];
+  // SCIENT-FORK: child cancellation never uses the parent interrupt path.
+  readonly stopSubagent?: (
+    nativeTaskId: string,
+  ) => Effect.Effect<void, NativeSessionOperationError>;
   readonly interrupt: Effect.Effect<void, NativeSessionOperationError>;
   readonly interruptBreaksSession?: boolean;
   // SCIENT-FORK:START — bounded graceful Stop can still require destructive fallback.
@@ -1322,7 +1326,8 @@ export function makeNativeSessionAdapterV2(
                   countsForRun: false,
                   providerThreadId: base.providerThreadId,
                   providerTurnId: base.providerTurnId,
-                  nativeItemRef: base.nativeItemRef,
+                  // SCIENT-FORK: native task refs use the protocol id, while app ids stay scoped.
+                  nativeItemRef: update.type === "subagent" ? ref(update.id) : base.nativeItemRef,
                   runtimeRequestId:
                     item.type === "approval_request" || item.type === "user_input_request"
                       ? item.requestId
@@ -1531,6 +1536,7 @@ export function makeNativeSessionAdapterV2(
           (effect, request, _send) =>
             effect.pipe(Effect.mapError(turnStartErrorKeepingReceipt(driver, request))),
         );
+        const stopSubagent = native.stopSubagent;
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
           driver,
@@ -1552,6 +1558,40 @@ export function makeNativeSessionAdapterV2(
                 }),
             ),
           ),
+          // SCIENT-FORK:START — dispatch child Stop only through its live session owner.
+          ...(stopSubagent === undefined
+            ? {}
+            : {
+                stopSubagent: Effect.fn("NativeSessionAdapterV2.stopSubagent")(function* (request) {
+                  if (
+                    !thread ||
+                    request.providerThread.id !== thread.id ||
+                    request.providerThread.providerSessionId !== input.providerSessionId ||
+                    !validateThreadOwner(input.threadId, request.providerThread) ||
+                    request.providerThread.nativeThreadRef?.strength !== "strong" ||
+                    request.providerThread.nativeThreadRef.driver !== driver ||
+                    request.providerThread.nativeThreadRef.nativeId !==
+                      thread.nativeThreadRef?.nativeId
+                  )
+                    return yield* protocolError(
+                      "The native subagent belongs to another session owner.",
+                    );
+                  const task = subagents.get(`${thread.id}:subagent:${request.nativeTaskId}`);
+                  if (
+                    task === undefined ||
+                    task.status !== "running" ||
+                    (request.requestedAt !== undefined &&
+                      task.startedAt !== null &&
+                      DateTime.toEpochMillis(task.startedAt) >
+                        DateTime.toEpochMillis(request.requestedAt))
+                  )
+                    return;
+                  yield* stopSubagent(request.nativeTaskId).pipe(
+                    Effect.mapError((cause) => protocolError(cause.detail)),
+                  );
+                }),
+              }),
+          // SCIENT-FORK:END
           hasPendingBackgroundWork: Effect.sync(
             () =>
               backgroundPending ||

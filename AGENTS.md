@@ -54,7 +54,8 @@ Terminology: `docs/internals/glossary.md`.
   `Orchestrator` serializes commands per thread; `EventSink` commits events,
   projections, command receipts, and outbox effects transactionally. The effect
   worker performs execution through V2 services and adapters. Native runs own
-  queued work; the Scient queue strip is its UI. Extend this path, not the
+  queued work; upstream's `QueuedRunsControl` is its UI, with Scient's parts in
+  `apps/web/src/scient/threadQueue/useScientQueueParts.tsx`. Extend this path, not the
   superseded V1 engine, reactors, provider service, or queue ledger. Legacy
   readers are import/recovery boundaries, never execution authorities.
 - Server features are services and transports stay thin: a `ws.ts` RPC handler, HTTP route,
