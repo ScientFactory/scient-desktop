@@ -2052,11 +2052,16 @@ describe("attachment HTML preview recovery", () => {
       "fetch",
       vi.fn(async () => new Response("<p>Captured HTML</p>")),
     );
+    // Connection discovery shares the stubbed fetch; only preview reads matter here.
+    const previewFetches = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([url]) => !String(url).includes("/.well-known/t3/environment"));
     await using screen = await openRemote();
     now = 61 * 60_000;
     refresh.mockResolvedValue(null);
     await toggleMode(screen, "Show HTML source");
-    expect(fetch).not.toHaveBeenCalled();
+    expect(previewFetches()).toEqual([]);
     await expect
       .element(screen.getByRole("button", { name: "Details", exact: true }))
       .toBeVisible();
@@ -2066,7 +2071,7 @@ describe("attachment HTML preview recovery", () => {
     await toggleMode(screen, "Show rendered page");
     await toggleMode(screen, "Show HTML source");
     expect(refresh).toHaveBeenCalledTimes(3);
-    expect(fetch).not.toHaveBeenCalled();
+    expect(previewFetches()).toEqual([]);
   });
 
   it("can return to rendered HTML after local source decoding fails", async () => {
