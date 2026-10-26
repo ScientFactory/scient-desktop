@@ -538,7 +538,7 @@ describe("OverleafReviewPanel", () => {
     });
     await page.getByRole("button", { name: "Try again" }).click();
     await expect
-      .element(page.getByRole("button", { name: "Keep only on this computer: draft.tex" }))
+      .element(page.getByRole("button", { name: "Keep only here: draft.tex" }))
       .toBeVisible();
     await expect.element(page.getByRole("region", { name: "To bring in" })).toBeVisible();
   });
@@ -569,9 +569,7 @@ describe("OverleafReviewPanel", () => {
       await using _screen = await readNewFiles();
       await page.getByRole("button", { name: "Send this file: main.aux" }).click();
       await page.getByRole("button", { name: "Send this file: notes.md" }).click();
-      await page
-        .getByRole("button", { name: "Keep only on this computer: figures/plot.pdf" })
-        .click();
+      await page.getByRole("button", { name: "Keep only here: figures/plot.pdf" }).click();
 
       // main.aux was deleted, and figures/plot.pdf is now over Overleaf's limit.
       client.previewOverleaf.mockResolvedValue({
@@ -621,9 +619,7 @@ describe("OverleafReviewPanel", () => {
 
     it("keeps sending the decisions when a sync stops at a conflict", async () => {
       await using _screen = await readNewFiles();
-      await page
-        .getByRole("button", { name: "Keep only on this computer: figures/plot.pdf" })
-        .click();
+      await page.getByRole("button", { name: "Keep only here: figures/plot.pdf" }).click();
       await page.getByRole("button", { name: "Send this file: main.aux" }).click();
       await page.getByRole("button", { name: "Send this file: notes.md" }).click();
       // The sync stops at a conflict; its review already carries the decisions: the kept file
@@ -652,7 +648,7 @@ describe("OverleafReviewPanel", () => {
       await expect.element(page.getByRole("group", { name: "Settle main.tex" })).toBeVisible();
       // Still shown as decided.
       for (const name of [
-        "Keep only on this computer: figures/plot.pdf",
+        "Keep only here: figures/plot.pdf",
         "Send this file: main.aux",
         "Send this file: notes.md",
       ])
@@ -675,14 +671,12 @@ describe("OverleafReviewPanel", () => {
     it("keeps decisions when the tab closes and opens again, until a sync applies", async () => {
       {
         await using _screen = await readNewFiles();
-        await page
-          .getByRole("button", { name: "Keep only on this computer: figures/plot.pdf" })
-          .click();
+        await page.getByRole("button", { name: "Keep only here: figures/plot.pdf" }).click();
       }
       // Opening a file replaced the tab; it comes back with the decision.
       await using _again = await render(panel());
       const keep = page.getByRole("button", {
-        name: "Keep only on this computer: figures/plot.pdf",
+        name: "Keep only here: figures/plot.pdf",
       });
       await expect.element(keep).toHaveAttribute("aria-pressed", "true");
       client.syncOverleaf.mockResolvedValue(applied);
@@ -697,10 +691,10 @@ describe("OverleafReviewPanel", () => {
         .toBeUndefined();
     });
 
-    it("keeps a new file only on this computer at the next sync", async () => {
+    it("keeps a new file only here at the next sync", async () => {
       await using _screen = await readNewFiles();
       const keep = page.getByRole("button", {
-        name: "Keep only on this computer: figures/plot.pdf",
+        name: "Keep only here: figures/plot.pdf",
       });
       await keep.click();
       await expect.element(keep).toHaveAttribute("aria-pressed", "true");
@@ -729,7 +723,7 @@ describe("OverleafReviewPanel", () => {
         }),
       );
       const keep = page.getByRole("button", {
-        name: "Keep only on this computer: figures/plot.pdf",
+        name: "Keep only here: figures/plot.pdf",
       });
       await page.getByRole("button", { name: "Sync", exact: true }).click();
       await expect.element(keep).toBeDisabled();

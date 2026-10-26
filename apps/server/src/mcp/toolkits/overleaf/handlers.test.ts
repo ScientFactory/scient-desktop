@@ -321,7 +321,7 @@ describe("Overleaf tool handlers", () => {
         }),
       ).toEqual([
         "Nothing of send #4 was put back.",
-        "Left as it is: private.tex (kept only on this computer).",
+        "Left as it is: private.tex (kept only here).",
         ...followUp,
       ]);
       expect(yield* refusedWith({ _tag: "cancelled" })).toEqual([
@@ -805,8 +805,8 @@ describe("Overleaf tool handlers", () => {
       expect(previewed.lines).toEqual([
         "Up to date: nothing would come in or be sent.",
         "New files not sent by the rule: main.aux (build output). Send one with files.send.",
-        "New files over Overleaf's 50 MB limit stay only on this computer: data.bin.",
-        "Kept only on this computer: notes.tex. Send one with files.send.",
+        "New files over Overleaf's 50 MB limit stay only here: data.bin.",
+        "Kept only here: notes.tex. Send one with files.send.",
       ]);
     }),
   );

@@ -197,7 +197,7 @@ no token saved the dialog asks for it, saves it first (a token the server didn't
 then connects and runs the first sync with `quiet`.
 
 **Add project ▸ Overleaf project** opens the same dialog with `newProject`: a project name, a
-location (Add project's starting folder, plus the system folder chooser on this computer) and the
+location (Add project's starting folder, plus the system folder chooser on this computer; remote locations are typed on the project's server) and the
 paper's folder name (initially empty); no Link choice. The project's destination appears below
 its name, and **Change…** reveals the location and folder fields. A missing folder name reveals
 those fields before anything is created. Connect saves the token, makes the project
@@ -220,7 +220,7 @@ which opens that file on the linked copy the way the Overleaf tab does. A restor
 apply did (`restored` carries `outcome`): "Restored" only when it completed; a `replan` wrote
 nothing ("The file changed while restoring, so nothing was written. Try again."), and `attention`
 may have stopped partway. Compare and
-**Show in Finder** need the copy's location or bytes, which the routes don't return yet.
+**Show file on disk** need the copy's location or bytes, which the routes don't return yet.
 
 ## Undo
 

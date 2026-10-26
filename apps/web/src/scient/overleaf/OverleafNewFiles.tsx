@@ -121,7 +121,7 @@ export function OverleafNewFiles(props: {
                   onOpenFile={props.onOpenFile}
                 >
                   <DecisionButton
-                    label="Keep only on this computer"
+                    label="Keep only here"
                     path={addition.path}
                     pressed={decisions.get(addition.path) === "keep"}
                     disabled={props.disabled ?? false}
