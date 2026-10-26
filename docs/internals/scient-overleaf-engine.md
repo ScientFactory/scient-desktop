@@ -157,7 +157,10 @@ between the two, and after both, for both kinds of record). A kept copy may be
 a folder (one that stood where a file was). Nothing below a kept copy's name
 is ever visited: a file or link is removed with `unlink` (a link as a name),
 a folder with a single `rmdir`, which removes only an empty real folder and
-fails harmlessly on one with anything in it, a link or a mount point. A
+fails harmlessly on one with anything in it, a link or a mount point. Removals
+and folder flushes use the native lease holder's original private folder handle,
+so renaming an ancestor cannot redirect discard, interrupted-discard settlement,
+staging cleanup or retained-view cleanup. A
 discard of a kept folder with anything in it is refused before anything is
 marked (`WorkspaceFileMutationUnavailableError`, reason `kept-folder-not-empty`);
 the version stays listed and as it was. A mark that already stands on such a
@@ -902,19 +905,6 @@ unverified product environments.
 
 ## Known limits
 
-- **Retention removals follow path names.** Discarding a kept copy, and the
-  other places the file layer removes retained objects, name the target by
-  its full path. After a record's lease is taken, another process running as
-  the same user could rename the record folder (or a folder above it) and put
-  a link to a workspace folder in its place; the removal would then follow the
-  link and delete a same-named workspace file or empty folder. The lease holds
-  the record's folder, not its name. This predates the Overleaf work (main's
-  discard removes by path the same way) and needs a deliberate same-user
-  process racing Scient's private retention folders. The fix is to perform
-  these removals in the native helper, relative to the held folder
-  (`unlinkat`-style, single-component names, with the folder sync anchored
-  there too), for discard, settlement and the file layer's other path-named
-  removals; it is a follow-up of its own.
 - **A refused discard's reason travels in the message only.** A discard of a
   kept folder that still has contents is refused with
   `reason: "kept-folder-not-empty"` on the server error; over the WebSocket it
