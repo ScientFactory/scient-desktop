@@ -520,17 +520,31 @@ describe.skipIf(!windows)("Windows identity and file admission", () => {
       ).toBe("done");
       expect(await NodeFSP.readFile(target, "utf8")).toBe("incoming");
     }));
-  it("stops on enumerated offline attributes before reading or displacing the file", () =>
-    fixture(async (input, target) => {
-      NodeChildProcess.execFileSync("attrib.exe", ["+O", target]);
-      try {
-        expect((await overleafFilesAvailability([target])).get(target)).toBe("online-only-file");
-        await expect(mutateRetainedFile(input, target)).rejects.toThrow("online-only-file");
-      } finally {
-        NodeChildProcess.execFileSync("attrib.exe", ["-O", target]);
-      }
-      expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
-    }));
+  it.each(["write", "rename"] as const)(
+    "stops on enumerated offline attributes before %s reads or displaces the file",
+    (kind) =>
+      fixture(async (input, target) => {
+        NodeChildProcess.execFileSync("attrib.exe", ["+O", target]);
+        try {
+          expect((await overleafFilesAvailability([target])).get(target)).toBe("online-only-file");
+          await expect(
+            mutateRetainedFile(
+              {
+                ...input,
+                kind,
+                ...(kind === "rename"
+                  ? { bytes: undefined, destination: `${target}.renamed` }
+                  : {}),
+              },
+              target,
+            ),
+          ).rejects.toThrow("online-only-file");
+        } finally {
+          NodeChildProcess.execFileSync("attrib.exe", ["-O", target]);
+        }
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
+      }),
+  );
   it("refuses an EFS-encrypted file before changing its bytes or policy", () =>
     fixture(async (input, target) => {
       NodeChildProcess.execFileSync("cipher.exe", ["/e", "/a", target]);
