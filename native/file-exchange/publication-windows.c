@@ -175,7 +175,8 @@ static HANDLE absolute_directory(Context *context, const char *path) {
   if (!name) return INVALID_HANDLE_VALUE;
   /* Local DOS volumes only. UNC, device namespaces and junctions are not silently normalized. */
   if (wcslen(name) < 3 || name[1] != L':' || (name[2] != L'\\' && name[2] != L'/')) {
-    free(name); SetLastError(ERROR_NOT_SUPPORTED); return INVALID_HANDLE_VALUE;
+    int network = name[0] == L'\\' && name[1] == L'\\';
+    free(name); SetLastError(network ? 0x20000005 : ERROR_NOT_SUPPORTED); return INVALID_HANDLE_VALUE;
   }
   wchar_t dos[] = L"C:", device[32768], drive_root[] = L"C:\\";
   dos[0] = name[0]; drive_root[0] = name[0];
@@ -421,13 +422,35 @@ int platform_lock_parent(Context *context, int exclusive) {
   error = current_user_security(&descriptor, &sid, 1);
   HANDLE directory = INVALID_HANDLE_VALUE;
   if (!error) {
-    SECURITY_ATTRIBUTES attributes = { sizeof(attributes), descriptor, FALSE };
-    if (!CreateDirectoryW(state, &attributes) && GetLastError() != ERROR_ALREADY_EXISTS)
-      error = (int)GetLastError();
-    else directory = CreateFileW(state, FILE_LIST_DIRECTORY | READ_CONTROL | FILE_READ_ATTRIBUTES,
-      FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
-      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
-    if (!error && directory == INVALID_HANDLE_VALUE) error = (int)GetLastError();
+    wchar_t *leaf = wcsrchr(state, L'\\');
+    if (!leaf || !leaf[1]) error = ERROR_INVALID_NAME;
+    else {
+      *leaf++ = 0;
+      int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, state, -1, NULL, 0, NULL, NULL);
+      char *parent_path = bytes ? malloc((size_t)bytes) : NULL;
+      if (!parent_path) error = ERROR_NOT_ENOUGH_MEMORY;
+      else {
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, state, -1, parent_path, bytes, NULL, NULL);
+        HANDLE parent_directory = absolute_directory(context, parent_path);
+        free(parent_path);
+        if (parent_directory == INVALID_HANDLE_VALUE) error = (int)GetLastError();
+        else {
+          USHORT size = (USHORT)(wcslen(leaf) * sizeof(wchar_t));
+          UNICODE_STRING string = { size, size, leaf }; IO_STATUS_BLOCK status;
+          OBJECT_ATTRIBUTES attributes = {0}; attributes.Length = sizeof(attributes);
+          attributes.RootDirectory = parent_directory; attributes.ObjectName = &string;
+          attributes.Attributes = OBJ_CASE_INSENSITIVE; attributes.SecurityDescriptor = descriptor;
+          NTSTATUS result = nt_create(&directory, FILE_LIST_DIRECTORY | READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+            &attributes, &status, NULL, FILE_ATTRIBUTE_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            3 /* FILE_OPEN_IF leaves an existing policy unchanged. */,
+            FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
+          if (result < 0) error = (int)nt_error(result);
+          else if (!remember(context, directory)) {
+            error = (int)GetLastError(); CloseHandle(directory); directory = INVALID_HANDLE_VALUE;
+          }
+        }
+      }
+    }
   }
   Entry state_entry = {0};
   if (!error) error = identify(directory, &state_entry);
@@ -455,7 +478,6 @@ int platform_lock_parent(Context *context, int exclusive) {
     if (!LockFileEx(context->lock, flags, 0, 1, 0, &overlapped)) error = (int)GetLastError();
     else context->lock_owned = 1;
   }
-  if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
   if (descriptor) LocalFree(descriptor);
   if (sid) LocalFree(sid);
   return error;

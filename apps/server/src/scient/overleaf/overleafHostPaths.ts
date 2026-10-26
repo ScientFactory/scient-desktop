@@ -6,6 +6,12 @@ import {
   ScientOverleafFilesystemRefusalReason,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
+import {
+  platformFileIdentity,
+  type VolumeIdentityResolver,
+} from "../workspace/PlatformFileIdentity.ts";
+import { WindowsNativeFileError } from "../workspace/WindowsNativeFile.ts";
 
 export class OverleafFilesystemError extends Schema.TaggedError<OverleafFilesystemError>()(
   "OverleafFilesystemError",
@@ -14,6 +20,22 @@ export class OverleafFilesystemError extends Schema.TaggedError<OverleafFilesyst
   override get message(): string {
     return overleafFilesystemRefusalText(this.reason)!;
   }
+}
+
+/** Native admission failures remain actionable at the shared connection boundary. */
+export function overleafDirectoryIdentity(
+  path: string,
+  volume?: VolumeIdentityResolver,
+  helperPath?: string,
+) {
+  return Effect.tryPromise({
+    try: () => platformFileIdentity.directory(path, volume, helperPath),
+    catch: (error) =>
+      new OverleafFilesystemError({
+        path,
+        reason: error instanceof WindowsNativeFileError ? error.reason : "identity-unavailable",
+      }),
+  });
 }
 
 /** Leave room for the terminating NUL and Windows' extended UNC prefix. */

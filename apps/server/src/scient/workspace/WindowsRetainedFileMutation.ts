@@ -178,7 +178,7 @@ export async function runWindowsRetainedMutation(
     !bindingSame(record.binding, input.binding) ||
     (record.destination && !bindingSame(record.destinationBinding, input.destinationBinding))
   )
-    return finish("attention", "target");
+    return await finish("attention", "target");
   const stage = NodePath.join(NodePath.dirname(target), record.stageName);
   const retained = NodePath.join(directory, "retained");
   const published = record.destination ?? target;
@@ -221,7 +221,7 @@ export async function runWindowsRetainedMutation(
   };
   const settlePrune = async () => {
     const removed = await command("win-remove-captured");
-    if (good(removed)) return finish("done");
+    if (good(removed)) return await finish("done");
     await save({ phase: "restoring", failure: "target" });
     const restored = await command("win-return-captured", "retained", NodePath.basename(target));
     if (!good(restored)) return result();
@@ -243,18 +243,18 @@ export async function runWindowsRetainedMutation(
           (!same(kept, record.originalIdentity) ||
             (await fileRevision(retained)) !== (record.currentRevision ?? record.expected))
         )
-          return finish("attention", "recovery");
+          return await finish("attention", "recovery");
         if ((await fileRevision(published)) !== stageRevision)
-          return finish("attention", "recovery");
+          return await finish("attention", "recovery");
         await save({ publishedIdentity: record.stagedIdentity, publishedRevision: stageRevision });
-        return finish("done");
+        return await finish("done");
       }
       if (same(current, record.originalIdentity) && kept === null) {
         const reply = await command("win-resume");
         held = true;
         // Delete has no stage; its original is still opened even if resume reports absent staging.
         if (!same(reply.sourceBefore, record.originalIdentity))
-          return finish("attention", "recovery");
+          return await finish("attention", "recovery");
         if (
           !record.originalDescriptor ||
           (await NodeFSP.readFile(NodePath.join(directory, "original-security"))).toString(
@@ -265,7 +265,7 @@ export async function runWindowsRetainedMutation(
         const restored = await command("win-restore-policy");
         if (!good(restored)) return result();
         await save({ sourceMutation: false, currentRevision: await fileRevision(target) });
-        return finish("skipped", "revision");
+        return await finish("skipped", "revision");
       }
       if (
         kind === "prune" &&
@@ -273,24 +273,24 @@ export async function runWindowsRetainedMutation(
         record.phase === "displaced" &&
         record.capturedIdentity
       )
-        return finish("done");
+        return await finish("done");
       if (record.publication !== "windows-stage-create") {
         if (
           !same(kept, record.originalIdentity) ||
           (kind !== "prune" &&
             (await fileRevision(retained)) !== (record.currentRevision ?? record.expected))
         )
-          return finish("attention", "recovery");
+          return await finish("attention", "recovery");
         await save({ capturedIdentity: record.originalIdentity, sourceMutation: true });
         if (kind === "prune") {
           const resumed = await command("win-resume-captured", "retained");
           held = true;
           if (resumed.code !== 0 || !same(resumed.sourceBefore, record.originalIdentity))
             return result();
-          return settlePrune();
+          return await settlePrune();
         }
         if (kind === "delete")
-          return finish(
+          return await finish(
             current === null ? "done" : "attention",
             current === null ? null : "recovery",
           );
@@ -307,13 +307,13 @@ export async function runWindowsRetainedMutation(
         (await fileRevision(stage)) !== stageRevision ||
         !(await peersIntact())
       )
-        return finish("attention", "recovery");
+        return await finish("attention", "recovery");
       if (
         record.expectedMutationEpoch &&
         input.bytes === undefined &&
         (record.sourceMutation === false || record.publication === "windows-stage-create")
       )
-        return finish("skipped", "revision");
+        return await finish("skipped", "revision");
       const resumed = await command("win-resume-stage");
       held = true;
       if (
@@ -321,12 +321,12 @@ export async function runWindowsRetainedMutation(
         !same(resumed.destinationAfter, record.stagedIdentity) ||
         (await fileRevision(stage)) !== stageRevision
       )
-        return finish("attention", "recovery");
+        return await finish("attention", "recovery");
     } else {
-      if (previous) return finish("skipped", "unavailable");
+      if (previous) return await finish("skipped", "unavailable");
       await save({});
       await point("intent");
-      if (!(await peersIntact())) return finish("skipped", "revision");
+      if (!(await peersIntact())) return await finish("skipped", "revision");
       if (
         creation &&
         (await NodeFSP.lstat(target).then(
@@ -337,7 +337,7 @@ export async function runWindowsRetainedMutation(
           },
         ))
       )
-        return finish("skipped", "exists");
+        return await finish("skipped", "exists");
       const space = await NodeFSP.statfs(directory, { bigint: true });
       const required = BigInt(input.bytes?.byteLength ?? 0) + 16384n;
       if (
@@ -361,10 +361,10 @@ export async function runWindowsRetainedMutation(
           },
         ))
       )
-        return finish("skipped", "exists");
+        return await finish("skipped", "exists");
       if (kind === "rename" && stageRevision === null) {
         stageRevision = await fileRevision(target);
-        if (!stageRevision) return finish("skipped", "target");
+        if (!stageRevision) return await finish("skipped", "target");
         await save({ currentRevision: stageRevision });
       }
       if (stageRevision !== null) {
@@ -417,7 +417,7 @@ export async function runWindowsRetainedMutation(
       });
       await point("staged");
       if (stageRevision !== null && (await fileRevision(stage)) !== stageRevision)
-        return finish("attention", "recovery");
+        return await finish("attention", "recovery");
       await save({ phase: "prepared" });
       await point("prepared");
       if (!creation) {
@@ -432,12 +432,12 @@ export async function runWindowsRetainedMutation(
             (input.guardMaxBytes !== undefined &&
               (snapshot.byteLength > input.guardMaxBytes || snapshot.binary)))
         )
-          return finish("skipped", "revision");
+          return await finish("skipped", "revision");
         await save({ currentRevision: snapshot?.revision ?? null });
       }
-      if (!(await peersIntact())) return finish("skipped", "revision");
+      if (!(await peersIntact())) return await finish("skipped", "revision");
       if (kind === "prune" && (await NodeFSP.readdir(target)).length)
-        return finish("skipped", "target");
+        return await finish("skipped", "target");
       await save({
         phase: "publishing",
         sourceMutation: true,
@@ -456,9 +456,9 @@ export async function runWindowsRetainedMutation(
         await point("displaced");
       }
     }
-    if (kind === "delete") return finish("done");
+    if (kind === "delete") return await finish("done");
     if (kind === "prune") {
-      return settlePrune();
+      return await settlePrune();
     }
     await save({ phase: "installing", sourceMutation: true });
     await point("install-intent");
@@ -471,7 +471,7 @@ export async function runWindowsRetainedMutation(
     await command("win-release");
     held = false;
     await point("called");
-    if (!good(installed)) return finish("attention", "recovery");
+    if (!good(installed)) return await finish("attention", "recovery");
     await save({
       phase: "installed",
       publishedIdentity: record.stagedIdentity,
@@ -482,8 +482,8 @@ export async function runWindowsRetainedMutation(
       !same(await fileIdentity(published), record.stagedIdentity) ||
       (await fileRevision(published)) !== stageRevision
     )
-      return finish("attention", "recovery");
-    return finish("done");
+      return await finish("attention", "recovery");
+    return await finish("done");
   } finally {
     try {
       if (held) await command("win-release");

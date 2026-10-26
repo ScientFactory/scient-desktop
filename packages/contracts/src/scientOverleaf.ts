@@ -11,6 +11,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export const ScientOverleafFilesystemRefusalReason = Schema.Literals([
   "unsupported-filesystem",
+  "unsupported-windows-version",
   "network-filesystem",
   "volatile-filesystem",
   "file-busy",
@@ -30,6 +31,8 @@ export type ScientOverleafFilesystemRefusalReason =
   typeof ScientOverleafFilesystemRefusalReason.Type;
 
 const FILESYSTEM_REFUSAL_TEXT: Record<ScientOverleafFilesystemRefusalReason, string> = {
+  "unsupported-windows-version":
+    "Update this project's server to Windows 10 version 1809 or later, then sync again.",
   "unsupported-filesystem": "Move the project to a supported local disk, then relink it.",
   "network-filesystem":
     "Move the project from the network drive to a supported local disk, then relink it.",
