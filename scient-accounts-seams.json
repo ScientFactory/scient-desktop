@@ -132,6 +132,11 @@
       "path": "third-party-licenses.config.json",
       "anchor": "\"name\": \"@1password/sdk\"",
       "purpose": "Supply the SDK and SDK core notices omitted from their npm packages."
+    },
+    {
+      "path": "scripts/lib/cli-external-packages.test.ts",
+      "anchor": "\"@1password/sdk\",",
+      "purpose": "Expect the 1Password SDK among the server's on-disk runtime externals."
     }
   ],
   "scientMounts": [
