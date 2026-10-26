@@ -83,15 +83,15 @@ export interface OverleafGitAvailability {
   readonly version: string;
 }
 
-export function posixAskpassScript(): string {
+function posixAskpassScript(): string {
   return '#!/bin/sh\ncase "$1" in *Username*) printf \'%s\' git ;; *) exec /bin/cat "$SCIENT_OVERLEAF_TOKEN_FILE" ;; esac\n';
 }
 
-export function windowsAskpassPowerShellScript(): string {
+function windowsAskpassPowerShellScript(): string {
   return "param([string]$Prompt)\nif ($Prompt -match 'Username') { [Console]::Out.Write('git') } else { [Console]::Out.Write([IO.File]::ReadAllText($env:SCIENT_OVERLEAF_TOKEN_FILE)) }\n";
 }
 
-export function windowsAskpassLauncher(powershell: string, scriptPath: string): string {
+function windowsAskpassLauncher(powershell: string, scriptPath: string): string {
   return `@echo off\r\n"${powershell}" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}" %*\r\n`;
 }
 
