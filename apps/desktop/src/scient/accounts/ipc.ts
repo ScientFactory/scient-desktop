@@ -121,7 +121,7 @@ export const signedInSites = Effect.fn("DesktopAccounts.signedInSites")(function
   );
 });
 
-export const signOutSite = Effect.fn("DesktopAccounts.signOutSite")(function* (
+const signOutSite = Effect.fn("DesktopAccounts.signOutSite")(function* (
   raw: unknown,
   event?: AccountsInvokeEvent,
 ) {
