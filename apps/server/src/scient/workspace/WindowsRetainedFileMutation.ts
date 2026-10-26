@@ -227,7 +227,7 @@ export async function runWindowsRetainedMutation(
       if (record.publication !== "windows-stage-create") {
         if (
           !same(kept, record.originalIdentity) ||
-          (await fileRevision(retained)) !== record.expected
+          (await fileRevision(retained)) !== (record.currentRevision ?? record.expected)
         )
           return finish("attention", "recovery");
         await save({ capturedIdentity: record.originalIdentity, sourceMutation: true });
@@ -353,12 +353,12 @@ export async function runWindowsRetainedMutation(
       await point("checked");
       if (!creation) {
         const restricted = await command("win-restrict");
-        if (!good(restricted)) return finish("attention", "recovery");
+        if (!good(restricted)) return result();
         await point("restricted");
         const captured = await command("win-capture", NodePath.basename(target), "retained");
         await point("called");
         if (!good(captured) || !same(captured.destinationAfter, record.originalIdentity))
-          return finish("attention", "recovery");
+          return result();
         await save({ phase: "displaced", capturedIdentity: record.originalIdentity });
         await point("displaced");
       }

@@ -331,7 +331,8 @@ static int cloud_managed(HANDLE folder) {
   HRESULT result = query(folder, 0 /* CF_SYNC_ROOT_INFO_BASIC */, buffer, sizeof(buffer), &returned);
   FreeLibrary(library);
   if (SUCCEEDED(result)) return 0x20000001; /* sync-managed-folder */
-  return result == HRESULT_FROM_WIN32(ERROR_NOT_A_CLOUD_SYNC_ROOT) ? 0 : (int)HRESULT_CODE(result);
+  return result == HRESULT_FROM_WIN32(ERROR_NOT_A_CLOUD_SYNC_ROOT) ||
+    result == HRESULT_FROM_WIN32(ERROR_CLOUD_FILE_NOT_UNDER_SYNC_ROOT) ? 0 : (int)HRESULT_CODE(result);
 }
 int platform_lock_parent(Context *context, int exclusive) {
   Entry parent = {0};
@@ -746,7 +747,9 @@ static int windows_operation(Context *context, const char *operation, const char
       transaction.original = open_relative(context->parent, from,
         GENERIC_READ | DELETE | WRITE_DAC | READ_CONTROL, 0, FILE_SHARE_READ);
       if (transaction.original == INVALID_HANDLE_VALUE) { transaction.original = NULL; error = (int)GetLastError(); goto done; }
-      error = supported_file(transaction.original);
+      error = identify(transaction.original, &transaction.original_id);
+      if (!error && (strcmp(operation, "win-prepare-delete") || strcmp(transaction.original_id.type, "directory")))
+        error = supported_file(transaction.original);
       if (!error) error = identify(transaction.original, &transaction.original_id);
       *before = transaction.original_id;
       if (error) goto done;
@@ -792,7 +795,8 @@ static int windows_operation(Context *context, const char *operation, const char
     if (!error) { *applied = 1; *after_source = transaction.original_id; }
     goto done;
   }
-  if (strcmp(parent.dev, transaction.parent_id.dev) || strcmp(parent.ino, transaction.parent_id.ino) ||
+  if ((strcmp(operation, "win-install") && (strcmp(parent.dev, transaction.parent_id.dev) ||
+        strcmp(parent.ino, transaction.parent_id.ino))) ||
       strcmp(record.dev, transaction.record_id.dev) || strcmp(record.ino, transaction.record_id.ino)) {
     error = ERROR_FILE_INVALID; goto done;
   }
@@ -848,6 +852,10 @@ int platform_windows_main(int argc, char **argv) {
   HANDLE find = FindFirstFileW(path, &data);
   int error = find == INVALID_HANDLE_VALUE ? (int)GetLastError() : 0;
   if (find != INVALID_HANDLE_VALUE) FindClose(find);
+  if (wcslen(path) == 3 && path[1] == L':') {
+    data.dwFileAttributes = GetFileAttributesW(path);
+    error = data.dwFileAttributes == INVALID_FILE_ATTRIBUTES ? (int)GetLastError() : 0;
+  }
   if (!strcmp(argv[2], "flags")) {
     printf("{\"code\":%d,\"flags\":%lu}\n", error, (unsigned long)data.dwFileAttributes);
     free(path); return 0;
