@@ -55,6 +55,7 @@ static int sort_parents(const void *left, const void *right) {
 }
 #ifdef _WIN32
 int platform_windows_main(int argc, char **argv);
+int platform_windows_flags(int argc, char **argv);
 #endif
 static int publication_main(int argc, char **argv);
 static int lease_main(int argc, char **argv) {
@@ -276,6 +277,7 @@ static int publication_main(int argc, char **argv) {
 #endif
 #ifdef _WIN32
   if (argc > 1 && !strcmp(argv[1], "--windows=1")) return platform_windows_main(argc, argv);
+  if (argc > 1 && !strcmp(argv[1], "--windows-flags=1")) return platform_windows_flags(argc, argv);
 #endif
   if (argc > 1 && !strcmp(argv[1], "--lease=1")) return lease_main(argc, argv);
   if (argc > 1 && !strcmp(argv[1], "--directory=1")) return directory_main(argc, argv);
