@@ -1668,7 +1668,7 @@ describe("Detail pages", () => {
     ).toBe(true);
   });
 
-  it("lists tools only after See tools, grouped by kind", async () => {
+  it("lists tools only after See tools and retains the result", async () => {
     await using fixture = setup();
     state.commands.test.mockResolvedValueOnce(
       toolResult(LINEAR, [
@@ -1686,19 +1686,11 @@ describe("Detail pages", () => {
       input: { connectorId: LINEAR },
     });
     const tools = fixture.section("Tools");
-    expect(
-      ["Write", "Read", "Other"].map((label) => groupTrigger(tools, label)?.textContent),
-    ).toEqual(["Write2", "Read1", "Other1"]);
-    await userEvent.click(groupTrigger(tools, "Read")!);
-    expect(tools.querySelector('[aria-label="Read"]')?.textContent).toBe("list_issuesList issues");
-    await userEvent.click(groupTrigger(tools, "Write")!);
-    expect(
-      [...tools.querySelectorAll('[aria-label="Write"] li')].map((item) => item.textContent),
-    ).toEqual(["delete_issue", "update_issue"]);
+    expect(groupTrigger(tools, "List issues")).not.toBeNull();
 
     // The result stays for this connector without testing again.
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).not.toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).not.toBeNull();
     expect(state.commands.test).toHaveBeenCalledOnce();
   });
 
@@ -1731,10 +1723,10 @@ describe("Detail pages", () => {
     );
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     await userEvent.click(buttonIn(fixture.section("Tools"), "See tools")!);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).not.toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).not.toBeNull();
 
     await fixture.render(<ConnectorDetailPage connectorId="con_notes00001" />);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).toBeNull();
     expect(buttonIn(fixture.section("Tools"), "See tools")).not.toBeNull();
 
     // An answer for Linear that lands after moving to Notes is ignored.
@@ -1746,7 +1738,7 @@ describe("Detail pages", () => {
     await act(async () =>
       late.resolve(toolResult(LINEAR, [{ name: "late_tool", readOnly: true }])),
     );
-    expect(fixture.section("Tools").textContent).not.toContain("Read");
+    expect(fixture.section("Tools").textContent).not.toContain("Late tool");
     expect(buttonIn(fixture.section("Tools"), "See tools")?.disabled).toBe(false);
   });
 
@@ -1763,20 +1755,20 @@ describe("Detail pages", () => {
     );
     await linearAt(0);
     await userEvent.click(buttonIn(fixture.section("Tools"), "See tools")!);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).not.toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).not.toBeNull();
 
     // Another client signed in again, to the same issuer and scopes: only the
     // revision says so.
     await linearAt(1);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).toBeNull();
     expect(buttonIn(fixture.section("Tools"), "See tools")).not.toBeNull();
 
     // connected → needs sign-in → connected never brings the old tools back.
     await userEvent.click(buttonIn(fixture.section("Tools"), "See tools")!);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).not.toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).not.toBeNull();
     await linearAt(2, { status: "needs-auth" });
     await linearAt(3);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).toBeNull();
     expect(state.commands.test).toHaveBeenCalledTimes(2);
 
     // An answer that lands after the sign-in changed is dropped.
@@ -1787,7 +1779,7 @@ describe("Detail pages", () => {
     await act(async () =>
       late.resolve(toolResult(LINEAR, [{ name: "late_tool", readOnly: true }])),
     );
-    expect(fixture.section("Tools").textContent).not.toContain("Read");
+    expect(fixture.section("Tools").textContent).not.toContain("Late tool");
     expect(buttonIn(fixture.section("Tools"), "See tools")?.disabled).toBe(false);
   });
 
