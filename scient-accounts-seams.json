@@ -274,6 +274,36 @@
       "path": "apps/server/src/scient/skills/ScientV2SkillTurn.test.ts",
       "anchor": "Scient Accounts: retain account grants during skill-scope changes.",
       "purpose": "Keep skill-authority tests complete when every provider session also receives account tools."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/ConnectorRuntime.ts",
+      "anchor": "const accounts = yield* Effect.serviceOption(AccountsService);",
+      "purpose": "Resolve bound account tokens for each connector request while preserving optional Accounts availability."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/ConnectorStateStore.ts",
+      "anchor": "storage: Schema.Literals([\"owned\", \"bound\"]),",
+      "purpose": "Persist account bindings as refs without copying their values into owned credentials."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/ConnectorRuntime.test.ts",
+      "anchor": "describe(\"bound connector credentials\"",
+      "purpose": "Verify live account rotation and loss across connector runtime reloads."
+    },
+    {
+      "path": "apps/web/src/scient/extensions/AddConnectorDialog.tsx",
+      "anchor": "Use an existing account",
+      "purpose": "Offer API-key accounts from the selected environment whose sites match the connector."
+    },
+    {
+      "path": "apps/web/src/scient/extensions/extensionsView.ts",
+      "anchor": "`${kind} from Accounts`",
+      "purpose": "Identify bound connector credentials as Accounts keys in the shared Extensions presentation."
+    },
+    {
+      "path": "apps/web/src/scient/extensions/AddConnectorDialog.browser.test.tsx",
+      "anchor": "binds a matching account without retaining the entered key",
+      "purpose": "Verify account selection drops typed key material and rejects a binding after an endpoint-origin change."
     }
   ]
 }

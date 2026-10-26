@@ -28,6 +28,8 @@ import type {
   PasswordImportResult,
   ProjectId,
   ThreadId,
+  VaultSecretRef,
+  ConnectorId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -96,6 +98,18 @@ export interface AccountsServiceShape {
   readonly matchSignIn: (
     input: AccountMatchSignInInput,
   ) => Effect.Effect<AccountMatchSignInResult, AccountsError>;
+
+  // Extensions bindings: the saved connector is the user's approval for Ask access.
+  readonly resolveBound: (
+    ref: VaultSecretRef,
+    consumer: { readonly connectorId: ConnectorId; readonly origin: string },
+  ) => Effect.Effect<Redacted.Redacted<string>, AccountsError>;
+  readonly listBindable: (input: {
+    readonly origin: string;
+  }) => Effect.Effect<
+    ReadonlyArray<{ readonly ref: VaultSecretRef; readonly name: string }>,
+    AccountsError
+  >;
 
   // Agent surface (Scient MCP tools).
   readonly forSession: (

@@ -7,6 +7,8 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
 import {
+  AccountsError,
+  AccountId,
   type ConnectorId,
   EnvironmentId,
   ProjectId,
@@ -20,6 +22,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { HttpRouter } from "effect/http";
 
@@ -29,6 +32,8 @@ import type { McpThreadInvocationScope } from "../../../mcp/McpInvocationContext
 import * as McpSessionRegistry from "../../../mcp/McpSessionRegistry.ts";
 import { type ProjectRow, ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import { AccountsService } from "../../accounts/AccountsService.ts";
+import { accountTokenRef } from "../../accounts/AccountBoundRef.ts";
 import { ConnectorRuntime } from "../ExtensionsServices.ts";
 import * as PluginConnectorEligibility from "../plugins/PluginConnectorEligibility.ts";
 import * as ConnectorCallbackRoute from "./ConnectorCallbackRoute.ts";
@@ -2088,5 +2093,74 @@ describe("connector credential store", () => {
       yield* store.remove(ref);
       expect(Option.isNone(yield* store.readOwned(ref, owner))).toBe(true);
     }).pipe(Effect.provide(testLayer)),
+  );
+});
+
+describe("bound connector credentials", () => {
+  it.live(
+    "uses live account rotation after reload and loses access on removal without fallback",
+    () =>
+      Effect.gen(function* () {
+        let token: string | undefined = NodeCrypto.randomUUID();
+        const ref = accountTokenRef(AccountId.make("acc_synthetic01"));
+        const bindings = Layer.mock(AccountsService)({
+          resolveBound: (candidate, consumer) =>
+            Effect.suspend(() => {
+              if (candidate !== ref || consumer.origin !== vendor.base || token === undefined)
+                return Effect.fail(
+                  new AccountsError({
+                    reason: "not-found",
+                    message: "Synthetic account unavailable.",
+                  }),
+                );
+              return Effect.succeed(Redacted.make(token));
+            }),
+        });
+        const harness = yield* makeHarness().pipe(Effect.provide(bindings));
+        vendor.validTokens.add(token);
+        const added = yield* harness.runtime.add({
+          target: { type: "url", url: `${vendor.base}/secure/mcp` },
+          credential: { type: "bound", strategy: "bearer", secretRef: ref },
+        });
+        const connectorId = added.connector.connectorId;
+        harness.delivered.add(connectorId);
+        const firstCall = yield* harness.proxy(connectorId, toolCall(101, "echo-auth"));
+        const firstText = yield* readText(firstCall);
+        expect(firstText.includes(token)).toBe(false);
+        expect(firstText).toContain("[redacted by Scient]");
+        expect(vendor.upstream.at(-1)?.authorization === `Bearer ${token}`).toBe(true);
+        expect(added.connector.auth).toMatchObject({ storage: "bound" });
+        expect(yield* connectorSecrets(harness.config)).toEqual([]);
+        const state = yield* Effect.promise(() => NodeFSP.readFile(harness.statePath, "utf8"));
+        expect(state.includes(token)).toBe(false);
+        const reloaded = yield* makeConnectorRuntime({ stateDir: harness.config.stateDir }).pipe(
+          Effect.provide(bindings),
+        );
+        expect((yield* reloaded.list()).connectors[0]?.auth).toMatchObject({ storage: "bound" });
+        expect((yield* reloaded.test({ connectorId })).outcome).toBe("ok");
+        vendor.validTokens.delete(token);
+        token = NodeCrypto.randomUUID();
+        vendor.validTokens.add(token);
+        const before = vendor.upstream.length;
+        const rotatedCall = yield* harness.proxy(connectorId, toolCall(102, "echo-auth"));
+        const rotatedText = yield* readText(rotatedCall);
+        expect(rotatedText.includes(token)).toBe(false);
+        expect(rotatedText).toContain("[redacted by Scient]");
+        expect((yield* reloaded.test({ connectorId })).outcome).toBe("ok");
+        expect(
+          vendor.upstream
+            .slice(before)
+            .every((request) => request.authorization === `Bearer ${token}`),
+        ).toBe(true);
+        token = undefined;
+        const sent = vendor.upstream.length;
+        yield* reloaded.test({ connectorId });
+        const removedCall = yield* harness.proxy(connectorId, toolCall(103));
+        expect(yield* readJson(removedCall)).toMatchObject({ id: 103, error: { code: -32001 } });
+        expect(vendor.upstream.length).toBe(sent);
+        expect((yield* reloaded.list()).connectors[0]?.status).toBe("needs-credential");
+        yield* reloaded.remove({ connectorId });
+        expect(yield* connectorSecrets(harness.config)).toEqual([]);
+      }).pipe(Effect.provide(testLayer)),
   );
 });

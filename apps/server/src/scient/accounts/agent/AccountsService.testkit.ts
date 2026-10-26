@@ -57,6 +57,8 @@ export function fakeAccounts(
           ? { decision: "denied" as const, reason: "off" as const }
           : { decision: "allowed" as const };
       }),
+    resolveBound: () => unavailable,
+    listBindable: () => unavailable,
     resolveSecrets: (_id, fields) =>
       Effect.sync(() => {
         calls.push("resolve");

@@ -122,6 +122,24 @@ The store lives in the server, on the machine where agents run.
   cancellation, timeout or restart. A failed metadata write retains the old value blobs and any new
   unreferenced blobs, because the durable outcome of a failed filesystem sync can be uncertain.
 
+### Connector bindings
+
+Extensions can use an API-key account through `AccountsService.resolveBound` and
+`listBindable`. A validated `account:<accountId>:token` vault ref names only that
+account's token; no key is copied into the connector store. The saved connector
+record is the user's binding approval. Every upstream request resolves the current
+source again and checks the account kind, sites, global Agent access and account
+access. Bare domains and exact HTTPS origins use the existing Accounts site matcher.
+
+Adding a binding approves Ask access for that connector without an agent approval
+card; subsequent connector calls never prompt. The binding delegates use under the
+connector's project availability, while Account tools retain their own account
+project grants. Either Off switch still refuses every use. Removing the account,
+clearing its token, changing its kind or sites, or disabling access makes the
+connector `needs-credential`; it never falls back to an owned value or OAuth.
+Disconnecting a bound connector leaves the account intact. Successful resolutions
+and denied access appear in Accounts activity without values.
+
 ### Existing secrets
 
 - **Extensions connectors** (`connector-<uuid>`): Accounts provides the `ConnectorCredentialStore`

@@ -5,7 +5,6 @@ import {
   AccountId,
   AccountSaveInput,
   AccountMatchSignInInput,
-  DEFAULT_BROWSER_PROFILE_ID,
   AccountsError,
   defaultAccountControls,
   type AccountActivityEntry,
@@ -53,12 +52,14 @@ import {
 import { AccountSources, type OnePasswordClient } from "./AccountSources.ts";
 import {
   applyApprovalDecision,
+  agentAccessOff,
   authorizationDecision,
   effectiveProfile,
   inScope,
   sameTarget,
   siteMatches,
 } from "./AccountDecisions.ts";
+import { accountTokenRef, boundAccountId } from "./AccountBoundRef.ts";
 import { planSecretStores, type CopyDestination } from "./copyPlan.ts";
 import { parsePasswordImport } from "./PasswordImport.ts";
 
@@ -1004,6 +1005,57 @@ export const layer = Layer.effect(
           }),
         );
       }),
+      listBindable: Effect.fn("AccountsService.listBindable")(({ origin }) =>
+        locked(
+          Effect.sync(() =>
+            state.accounts.flatMap(({ summary }) =>
+              summary.details.kind === "api-key" && siteMatches(summary.details.sites, origin)
+                ? [{ ref: accountTokenRef(summary.accountId), name: summary.name }]
+                : [],
+            ),
+          ),
+        ),
+      ),
+      resolveBound: Effect.fn("AccountsService.resolveBound")((ref, { origin }) =>
+        locked(
+          Effect.gen(function* () {
+            const accountId = boundAccountId(ref);
+            if (Option.isNone(accountId))
+              return yield* failure("invalid-input", "The account reference is invalid.");
+            const account = findAccount(accountId.value);
+            if (!account) return yield* missing();
+            const { details, controls } = account.summary;
+            if (
+              details.kind !== "api-key" ||
+              !siteMatches(details.sites, origin) ||
+              agentAccessOff(state.agentAccess, controls.access)
+            ) {
+              yield* appendActivity({
+                target: { type: "account", accountId: accountId.value },
+                action: "request",
+                decision: "denied",
+                detail: origin,
+              }).pipe(Effect.ignore);
+              return yield* failure("denied", "The account is unavailable for this service.");
+            }
+            const values = yield* resolve(accountId.value, ["token"]);
+            if (values.token === undefined)
+              return yield* failure("not-found", "The account key is missing.");
+            return values.token;
+          }),
+        ).pipe(
+          Effect.tap(() => {
+            const accountId = boundAccountId(ref);
+            return Option.isSome(accountId)
+              ? service.recordUse({
+                  target: { type: "account", accountId: accountId.value },
+                  action: "request",
+                  detail: origin,
+                })
+              : Effect.void;
+          }),
+        ),
+      ),
       resolveSecrets: Effect.fn("AccountsService.resolveSecretsInput")((accountId, fields) =>
         locked(resolve(accountId, fields)),
       ),

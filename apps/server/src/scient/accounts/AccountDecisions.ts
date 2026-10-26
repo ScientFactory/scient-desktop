@@ -21,12 +21,15 @@ export const effectiveProfile = (
   id: BrowserProfileId,
 ) => profiles.find((profile) => profile.profileId === id) ?? defaultBrowserProfileRecord(id);
 
+export const agentAccessOff = (enabled: boolean, access: AccountControls["access"]) =>
+  !enabled || access === "off";
+
 export const authorizationDecision = (
   enabled: boolean,
   controls: AccessControls,
   scope: AccountSessionScope,
 ): AccountAuthorization | { readonly decision: "ask" } => {
-  if (!enabled || controls.access === "off") return { decision: "denied", reason: "off" };
+  if (agentAccessOff(enabled, controls.access)) return { decision: "denied", reason: "off" };
   if (!inScope(controls.scope, scope.projectId))
     return { decision: "denied", reason: "out-of-scope" };
   if (

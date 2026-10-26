@@ -134,6 +134,8 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         matchSignIn: () => missingService,
         forSession: () => missingService,
         authorize: () => missingService,
+        resolveBound: () => missingService,
+        listBindable: () => missingService,
         resolveSecrets: () => missingService,
         recordUse: () => Effect.void,
       }),

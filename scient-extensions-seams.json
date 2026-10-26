@@ -304,6 +304,11 @@
       "path": "apps/server/src/scient/accounts/agent/request.ts",
       "anchor": "from \"../../extensions/connectors/ConnectorOutbound.ts\"",
       "purpose": "Accounts reuses Extensions public-address validation and credential-response redaction."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/AccountsService.ts",
+      "anchor": "readonly resolveBound:",
+      "purpose": "Expose the live account-token resolver and matching-account list consumed by Extensions bindings."
     }
   ]
 }
