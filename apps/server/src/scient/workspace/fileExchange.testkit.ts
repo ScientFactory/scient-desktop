@@ -76,13 +76,15 @@ function compileFilePublicationTestHelper(probe: boolean) {
         { encoding: "utf8" },
       ).trim();
       const vcvars = NodePath.join(installation, "VC/Auxiliary/Build/vcvars64.bat");
-      const sources = ["publication.c", "publication-windows.c"].map((name) =>
-        NodePath.resolve(import.meta.dirname, "../../../../../native/file-exchange", name),
+      // Stage through the shipped build so test helpers carry the production receipt and flags.
+      const stage = NodePath.resolve(
+        import.meta.dirname,
+        "../../../../../scripts/stage-file-exchange.ts",
       );
       const build = NodePath.join(directory, "build.cmd");
       await NodeFSP.writeFile(
         build,
-        `@echo off\r\ncall "${vcvars}" >nul\r\ncl.exe /nologo /O2 /W4 /WX /D_CRT_SECURE_NO_WARNINGS ${probe ? "/DSCIENT_PUBLICATION_PROBE" : ""} ${sources.map((source) => `"${source}"`).join(" ")} /link /OUT:"${helper}" Advapi32.lib\r\n`,
+        `@echo off\r\ncall "${vcvars}" >nul\r\n"${process.execPath}" "${stage}" --destination="${directory}"${probe ? " --probe=true" : ""}\r\n`,
       );
       NodeChildProcess.execFileSync("cmd.exe", ["/d", "/c", build], {
         cwd: directory,
