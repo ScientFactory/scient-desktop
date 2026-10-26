@@ -377,7 +377,7 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
       className="scient-reading-ui scrollbar-gutter-both @container/launcher flex min-h-0 flex-1 flex-col overflow-y-auto bg-sidebar px-4 pt-12 pb-6 outline-none"
     >
       {/* Lowers the list in a tall panel; a short panel gives this room up before it scrolls. */}
-      <div aria-hidden className="basis-8" />
+      <div aria-hidden className="basis-16" />
       <div className="mx-auto w-full max-w-3xl">
         <h2 className="mb-3 px-1 font-medium text-foreground text-sm">Tools</h2>
         <div className="grid gap-2 @[36rem]/launcher:grid-cols-2">
