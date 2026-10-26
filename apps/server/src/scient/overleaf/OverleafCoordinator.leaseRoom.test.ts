@@ -2,6 +2,7 @@
 /** Each apply write takes one native lease binding at most 256 folders; a sync
  * with an unleaseable write is refused before anything is written, never stopped
  * part way through. */
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -14,6 +15,25 @@ import { CONNECTION, canApply, read, run, world } from "./OverleafCoordinator.te
 const DEEP = `${"d/".repeat(260)}deep.tex`;
 
 describe.skipIf(!canApply)("Overleaf apply and native leases", () => {
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
+    "refuses a host path budget before linking an apply",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const path = `${"a/".repeat(430)}main.tex`;
+          const w = yield* world({
+            synced: { "main.tex": "before" },
+            remote: { "main.tex": "after", [path]: "new" },
+          });
+          expect(yield* Effect.flip(w.sync())).toMatchObject({
+            _tag: "OverleafFilesystemError",
+            reason: "path-too-long",
+          });
+          expect(yield* read(w.folder, "main.tex")).toBe("before");
+          expect((yield* w.connection).activeApply).toBeNull();
+        }),
+      ),
+  );
   it.live("refuses a file nested deeper than a lease can reach, with nothing written", () =>
     run(
       Effect.gen(function* () {

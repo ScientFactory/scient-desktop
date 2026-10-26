@@ -1,4 +1,5 @@
 import {
+  ScientOverleafFilesystemRefusalReason,
   ScientOverleafConflictChoice,
   ScientOverleafCancelResult,
   ScientOverleafConnectionList,
@@ -65,6 +66,7 @@ export class ScientOverleafToolError extends Schema.TaggedError<ScientOverleafTo
       "failed",
     ]),
     message: NonEmptyMessage,
+    reason: Schema.optional(ScientOverleafFilesystemRefusalReason),
     /** The files an editor could not save, relative to the linked checkout. */
     paths: Schema.optional(Schema.Array(Schema.String)),
   },

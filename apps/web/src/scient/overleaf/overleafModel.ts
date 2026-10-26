@@ -1,5 +1,7 @@
 // SCIENT-OWNED: what the Overleaf screens say, decided from the server's fixed
 // categories. Pure functions, so every line a person sees is tested here.
+import { overleafFilesystemRefusalText, overleafNameProblem } from "@t3tools/contracts";
+
 import type {
   ScientOverleafChange,
   ScientOverleafConnectionSummary,
@@ -67,7 +69,7 @@ export function workspacePathOf(folder: string, manuscriptPath: string): string 
 /** The folder a new Overleaf project is brought into: `<parent>/<name>`. */
 export function newFolderPath(parent: string, name: string): string {
   const base = parent.replace(/^\/+|\/+$/gu, "");
-  const leaf = name.trim().replace(/^\/+|\/+$/gu, "");
+  const leaf = name;
   return base === "" ? leaf : `${base}/${leaf}`;
 }
 
@@ -79,6 +81,10 @@ export function folderNameProblem(name: string): string | null {
   if (trimmed === "." || trimmed === ".." || trimmed.startsWith(".")) {
     return "Use a name that doesn't start with a dot.";
   }
+  const problem = overleafNameProblem(name);
+  if (problem === "component-too-long") return "Use a shorter folder name.";
+  if (problem !== null)
+    return "Use a name without reserved words, trailing spaces or special characters.";
   return null;
 }
 
@@ -183,6 +189,8 @@ export function overleafChipView(
 
 /** Plain words for a refusal or failure reason, from the engine's fixed categories. */
 export function refusalText(refusal: ScientOverleafRefusal): string {
+  const filesystem = overleafFilesystemRefusalText(refusal.reason);
+  if (filesystem !== null) return filesystem;
   const at = refusal.path ? ` (${refusal.path})` : "";
   switch (refusal.reason) {
     case "volume-unavailable":

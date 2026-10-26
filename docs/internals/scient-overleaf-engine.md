@@ -438,6 +438,21 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
   when the review is applied and become managed. A path not on the list is
   `not-local-only`, one not in the folder `not-selectable`. A file Overleaf
   already has is managed and synced whatever its name.
+- **Portable names and host paths.** Manuscript components are limited to 255
+  UTF-8 bytes and 255 UTF-16 units; Windows device names include superscript
+  digits. Names are never repaired or truncated. A walk lists raw UTF-8 names
+  and refuses any undecodable entry instead of inferring a managed deletion.
+  Capture checks absolute host paths; admission reserves journal, retained-copy
+  and sibling stage names before recording an apply. Host budgets include the
+  terminating NUL (1,024 bytes on macOS, 4,096 on Linux, 32,767 UTF-16 units on
+  Windows with room for the extended UNC prefix).
+- **Online-only content.** Before opening data, including an unchecked addition's
+  prefix, capture refuses `online-only-file` and asks for a download. macOS reads
+  `SF_DATALESS` through `/usr/bin/stat` because Node's `Stats` omits `st_flags`.
+  The Windows metadata reader seam requires `GetFileAttributesW` and checks
+  `OFFLINE`, `RECALL_ON_OPEN` and `RECALL_ON_DATA_ACCESS`; until supplied, it
+  refuses `helper-unavailable`. Linux needs no placeholder probe. These checks
+  do not enable another platform's publication mechanism.
 - **Per-file requests.** `keepOnlyHere` and `send` are judged on the review's
   own capture, with the defaults applying to every other file. `keepOnlyHere`
   keeps a new file only on this computer and remembers it, whatever the rule

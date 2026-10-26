@@ -237,6 +237,7 @@ type Progress = { -readonly [K in keyof OverleafSyncProgress]: OverleafSyncProgr
 
 /** Errors a person or agent can act on; anything else is an internal failure. */
 export const OVERLEAF_ACTIONABLE_ERRORS: ReadonlySet<string> = new Set([
+  "OverleafFilesystemError",
   "OverleafSyncRefusedError",
   "OverleafEditorUnsavedError",
   "OverleafOperationActiveError",
