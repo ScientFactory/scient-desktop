@@ -21,6 +21,7 @@ import {
   type ConnectorRuntimeShape,
 } from "../ExtensionsServices.ts";
 import {
+  canonicalConnectorUrl,
   CATALOG_CATEGORY_ORDER,
   CURATED_SERVERS,
   curatedServerForUrl,
@@ -533,6 +534,9 @@ describe("curated Discover catalog", () => {
   it("ships a catalog that satisfies its own rules", () => {
     const ids = new Set(CURATED_SERVERS.map((server) => server.id));
     expect(ids.size).toBe(CURATED_SERVERS.length);
+    expect(new Set(CURATED_SERVERS.map((server) => canonicalConnectorUrl(server.url))).size).toBe(
+      CURATED_SERVERS.length,
+    );
     for (const server of CURATED_SERVERS) {
       expect(server.tagline.length, server.id).toBeLessThanOrEqual(60);
       expect(new URL(server.url).protocol, server.id).toBe("https:");
@@ -568,6 +572,34 @@ describe("curated Discover catalog", () => {
 });
 
 describe("bundled curated icons", () => {
+  it.effect(
+    "serves biology discovery through the shared category contract without registry access",
+    () => {
+      const http = harness(() => {
+        throw new Error("Curated discovery must stay offline");
+      });
+      return Effect.gen(function* () {
+        const discover = yield* ExtensionsDiscover;
+        const catalog = yield* discover.catalog();
+        expect(isDiscoverCatalog(catalog)).toBe(true);
+        const biology = catalog.sections.find((section) => section.category === "biology");
+        expect(biology).toBeDefined();
+        const results = yield* discover.search({ scope: "curated", category: "biology" });
+        expect(results.entries.length).toBeGreaterThan(0);
+        expect(
+          results.entries.every(
+            (entry) => entry.categories.includes("biology") && entry.installable,
+          ),
+        ).toBe(true);
+        for (const entry of results.entries) {
+          const detail = yield* discover.entry({ name: entry.name });
+          expect(detail.remotes).toEqual(entry.remotes);
+          expect(detail.iconUrl).toBeDefined();
+        }
+      }).pipe(Effect.provide(http.layer()));
+    },
+  );
+
   it.effect("reach every shipped entry and connector immediately, without the network", () => {
     const http = harness(() => Response.json(recordedPage));
     return Effect.gen(function* () {
@@ -600,7 +632,8 @@ describe("curated names for connectors", () => {
     expect(curatedServerForUrl("https://MCP.deepwiki.com/mcp/")?.displayName).toBe("DeepWiki");
     expect(curatedServerForUrl("https://mcp.deepwiki.com/mcp#tools")?.displayName).toBe("DeepWiki");
     expect(curatedServerForUrl("https://mcp.deepwiki.com/other")).toBeUndefined();
-    expect(curatedServerForUrl("https://pubmed.mcp.claude.com/mcp")).toBeUndefined();
+    expect(curatedServerForUrl("https://pubmed.mcp.claude.com/mcp")?.id).toBe("pubmed");
+    expect(curatedServerForUrl("https://unknown.example/mcp")).toBeUndefined();
   });
 });
 

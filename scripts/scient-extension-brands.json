@@ -397,6 +397,22 @@
     "website": "https://www.biorender.com"
   },
   {
+    "key": "biorxiv",
+    "names": ["bioRxiv", "medRxiv", "bioRxiv & medRxiv"],
+    "website": "https://www.biorxiv.org",
+    "source": {
+      "kind": "directory",
+      "url": "https://storage.googleapis.com/media-assets-299d7136-cb52-d546-ee02-34bc1307c35f/mcp-directory/icons/biorxiv.png",
+      "mode": "mark",
+      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "rendering": "mark",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "png",
+      "outputBytes": 2762
+    }
+  },
+  {
     "key": "blackrock",
     "names": ["blackrock-advisor-center-plugin"],
     "website": "https://blackrock.com",
@@ -532,6 +548,22 @@
     "omitted": "Available artwork is a framed wordmark whose lettering is illegible in a row tile; omitted after visual review."
   },
   {
+    "key": "chembl",
+    "names": ["ChEMBL"],
+    "website": "https://www.ebi.ac.uk/chembl",
+    "source": {
+      "kind": "directory",
+      "url": "https://storage.googleapis.com/media-assets-299d7136-cb52-d546-ee02-34bc1307c35f/mcp-directory/icons/chembl.png",
+      "mode": "mark",
+      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "rendering": "mark",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "png",
+      "outputBytes": 4708
+    }
+  },
+  {
     "key": "chrome-devtools",
     "names": ["chrome devtools", "chrome-devtools-mcp", "modern-web-guidance"],
     "website": "https://developer.chrome.com",
@@ -663,6 +695,22 @@
       "outputBytes": 3490
     },
     "website": "https://clickup.com"
+  },
+  {
+    "key": "clinical-trials",
+    "names": ["ClinicalTrials.gov", "Clinical Trials"],
+    "website": "https://clinicaltrials.gov",
+    "source": {
+      "kind": "directory",
+      "url": "https://storage.googleapis.com/media-assets-299d7136-cb52-d546-ee02-34bc1307c35f/mcp-directory/icons/clinical-trials.png",
+      "mode": "mark",
+      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "rendering": "mark",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "png",
+      "outputBytes": 2228
+    }
   },
   {
     "key": "cloudflare-docs",
@@ -1147,6 +1195,22 @@
       "sourceHeight": 260,
       "sourceFormat": "svg",
       "outputBytes": 3744
+    }
+  },
+  {
+    "key": "ensembl-community",
+    "names": ["Ensembl", "Ensembl (community)"],
+    "website": "https://www.ensembl.org",
+    "source": {
+      "kind": "official",
+      "url": "https://www.ensembl.org/static/images/favicon.a94e5097d6f2285305b4.svg",
+      "mode": "mark",
+      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "rendering": "mark",
+      "sourceWidth": 150,
+      "sourceHeight": 150,
+      "sourceFormat": "svg",
+      "outputBytes": 2642
     }
   },
   {
@@ -2710,6 +2774,26 @@
     }
   },
   {
+    "key": "pubmed",
+    "names": ["PubMed"],
+    "website": "https://pubmed.ncbi.nlm.nih.gov",
+    "source": {
+      "kind": "simple-icons",
+      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/pubmed.svg",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
+      "color": "#326599",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
+      "brandSource": "https://pubmed.ncbi.nlm.nih.gov",
+      "rendering": "mark",
+      "sourceWidth": 24,
+      "sourceHeight": 24,
+      "sourceFormat": "svg",
+      "outputBytes": 3288
+    }
+  },
+  {
     "key": "pydantic-ai",
     "names": ["pydantic-ai"],
     "website": "https://ai.pydantic.dev",
@@ -3594,6 +3678,22 @@
       "sourceHeight": 64,
       "sourceFormat": "svg",
       "outputBytes": 5920
+    }
+  },
+  {
+    "key": "uniprot-community",
+    "names": ["UniProt", "UniProt (community)"],
+    "website": "https://www.uniprot.org",
+    "source": {
+      "kind": "official",
+      "url": "https://www.uniprot.org/apple-touch-icon.png",
+      "mode": "mark",
+      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "rendering": "mark",
+      "sourceWidth": 180,
+      "sourceHeight": 180,
+      "sourceFormat": "png",
+      "outputBytes": 5488
     }
   },
   {

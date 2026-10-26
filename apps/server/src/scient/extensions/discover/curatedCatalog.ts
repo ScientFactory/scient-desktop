@@ -16,6 +16,7 @@ export const CURATED_NAME_PREFIX = "scient.curated/";
 export const CATALOG_CATEGORY_ORDER: ReadonlyArray<ExtensionCategory> = [
   "featured",
   "research",
+  "biology",
   "data",
   "code",
   "writing",
@@ -30,6 +31,10 @@ export const CATALOG_SECTIONS: Readonly<
   research: {
     title: "Research",
     description: "Literature, citations, models and biomedical knowledge.",
+  },
+  biology: {
+    title: "Biology & genetics",
+    description: "Genes, proteins, drug targets, preprints and clinical studies.",
   },
   data: { title: "Data", description: "Datasets, notebooks and databases." },
   code: { title: "Code", description: "Repositories, documentation and developer tools." },
@@ -63,6 +68,18 @@ export interface CuratedServer {
 
 export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   // ── Research ────────────────────────────────────────────────────────────
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (7 tools).
+    id: "pubmed",
+    displayName: "PubMed",
+    tagline: "Biomedical papers, abstracts and full text",
+    description:
+      "Search biomedical literature, read abstracts and find related papers. Anthropic's public connector also retrieves full text from PubMed Central when available; article reuse follows the publisher's licence.",
+    url: "https://pubmed.mcp.claude.com/mcp",
+    categories: ["research", "biology"],
+    websiteUrl: "https://pubmed.ncbi.nlm.nih.gov",
+    icon: CURATED_ICONS["pubmed"],
+  },
   {
     // open: 200 "Asta Scientific Corpus Tool" 1.9.4
     id: "semantic-scholar",
@@ -126,18 +143,6 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     icon: CURATED_ICONS["scite"],
   },
   {
-    // open: 200 Open Targets Platform 2026.7.1
-    id: "open-targets",
-    displayName: "Open Targets",
-    tagline: "Target–disease evidence for drug discovery",
-    description:
-      "Query the Open Targets Platform for targets, diseases, drugs and the evidence linking them. Agents can search entities and run GraphQL queries against the platform.",
-    url: "https://mcp.platform.opentargets.org/mcp",
-    categories: ["research"],
-    websiteUrl: "https://platform.opentargets.org",
-    icon: CURATED_ICONS["open-targets"],
-  },
-  {
     // sign-in: 401 OAuth
     id: "synapse",
     displayName: "Synapse",
@@ -173,6 +178,82 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     categories: ["data", "research"],
     websiteUrl: "https://www.kaggle.com",
     icon: CURATED_ICONS["kaggle"],
+  },
+
+  // ── Biology & genetics ──────────────────────────────────────────────────
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (7 tools).
+    id: "biorxiv",
+    displayName: "bioRxiv & medRxiv",
+    tagline: "Biology and medicine before peer review",
+    description:
+      "Find preprints by topic, date or funder and follow their published versions. Anthropic's public connector searches both bioRxiv and medRxiv; these manuscripts have not yet been peer reviewed.",
+    url: "https://hcls.mcp.claude.com/biorxiv/mcp",
+    categories: ["biology"],
+    websiteUrl: "https://www.biorxiv.org",
+    icon: CURATED_ICONS["biorxiv"],
+  },
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (6 tools).
+    id: "clinical-trials",
+    displayName: "ClinicalTrials.gov",
+    tagline: "Find studies, eligibility rules and trial results",
+    description:
+      "Search registered clinical studies by condition, sponsor or eligibility and read their endpoints and results. Uses Anthropic's public connector to ClinicalTrials.gov; no account needed.",
+    url: "https://hcls.mcp.claude.com/clinical_trials/mcp",
+    categories: ["biology"],
+    websiteUrl: "https://clinicaltrials.gov",
+    icon: CURATED_ICONS["clinical-trials"],
+  },
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (6 tools).
+    id: "chembl",
+    displayName: "ChEMBL",
+    tagline: "Compounds, drug targets and measured activity",
+    description:
+      "Find bioactive compounds, protein targets and experimental activity measurements in EMBL-EBI's ChEMBL database. Anthropic's public connector also looks up drug mechanisms and molecular properties.",
+    url: "https://hcls.mcp.claude.com/chembl/mcp",
+    categories: ["biology"],
+    websiteUrl: "https://www.ebi.ac.uk/chembl",
+    icon: CURATED_ICONS["chembl"],
+  },
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (7 tools); exact registry remote.
+    id: "ensembl-community",
+    displayName: "Ensembl (community)",
+    tagline: "Genes, sequences, variants and related species",
+    description:
+      "Look up genes, retrieve DNA or protein sequences, predict variant consequences and find related genes across species. Community server maintained and hosted by Casey Hand, using the Ensembl REST API; no account needed.",
+    url: "https://ensembl.caseyjhand.com/mcp",
+    registry: { name: "io.github.cyanheads/ensembl-mcp-server", version: "0.6.2" },
+    categories: ["biology"],
+    websiteUrl: "https://github.com/cyanheads/ensembl-mcp-server",
+    icon: CURATED_ICONS["ensembl-community"],
+  },
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (6 tools); exact registry remote.
+    id: "uniprot-community",
+    displayName: "UniProt (community)",
+    tagline: "Protein functions, sequences and database IDs",
+    description:
+      "Search UniProtKB for proteins, read curated records, retrieve sequences and translate identifiers between biological databases. Community server maintained and hosted by Casey Hand, using UniProt's public API; no account needed.",
+    url: "https://uniprot.caseyjhand.com/mcp",
+    registry: { name: "io.github.cyanheads/uniprot-mcp-server", version: "0.3.0" },
+    categories: ["biology"],
+    websiteUrl: "https://github.com/cyanheads/uniprot-mcp-server",
+    icon: CURATED_ICONS["uniprot-community"],
+  },
+  {
+    // open: 200 Open Targets Platform 2026.7.1
+    id: "open-targets",
+    displayName: "Open Targets",
+    tagline: "Target–disease evidence for drug discovery",
+    description:
+      "Query the Open Targets Platform for targets, diseases, drugs and the evidence linking them. Agents can search entities and run GraphQL queries against the platform.",
+    url: "https://mcp.platform.opentargets.org/mcp",
+    categories: ["biology"],
+    websiteUrl: "https://platform.opentargets.org",
+    icon: CURATED_ICONS["open-targets"],
   },
 
   // ── Data ────────────────────────────────────────────────────────────────

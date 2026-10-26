@@ -313,6 +313,7 @@ export type ConnectorTestResult = typeof ConnectorTestResult.Type;
 export const ExtensionCategory = Schema.Literals([
   "featured",
   "research",
+  "biology",
   "data",
   "code",
   "writing",
