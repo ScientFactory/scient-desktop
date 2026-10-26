@@ -645,6 +645,44 @@ describe.skipIf(!windows)("Windows identity and file admission", () => {
         expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
       }),
   );
+  it("refuses a FAT32 virtual disk before requesting unsupported file IDs", () =>
+    fixture(async (input) => {
+      const mask = JSON.parse(
+        NodeChildProcess.execFileSync(probe!, ["--windows=1", "drive-mask", "fixture"], {
+          encoding: "utf8",
+        }),
+      ).mask;
+      const index = Array.from({ length: 20 }, (_, offset) => 25 - offset).find(
+        (bit) => !(mask & (1 << bit)),
+      );
+      if (index === undefined)
+        throw new Error("No free drive letter for the isolated FAT32 probe.");
+      const letter = String.fromCharCode(65 + index);
+      const root = `${letter}:\\`;
+      const vhd = NodePath.join(NodePath.dirname(input.cwd), "unsupported.vhd");
+      const script = NodePath.join(NodePath.dirname(input.cwd), "diskpart.txt");
+      const diskpart = async (commands: string[]) => {
+        await NodeFSP.writeFile(script, commands.join("\r\n") + "\r\n");
+        NodeChildProcess.execFileSync("diskpart.exe", ["/s", script], { encoding: "utf8" });
+      };
+      try {
+        await diskpart([
+          `create vdisk file="${vhd}" maximum=64 type=expandable`,
+          `select vdisk file="${vhd}"`,
+          "attach vdisk",
+          "create partition primary",
+          "format fs=fat32 quick label=ScientQA",
+          `assign letter=${letter}`,
+        ]);
+        const directory = NodePath.join(root, "paper");
+        await NodeFSP.mkdir(directory);
+        await expect(platformFileIdentity.directory(directory)).rejects.toMatchObject({
+          reason: "unsupported-filesystem",
+        });
+      } finally {
+        await diskpart([`select vdisk file="${vhd}"`, "detach vdisk noerr"]);
+      }
+    }));
   it("refuses an EFS-encrypted file before changing its bytes or policy", () =>
     fixture(async (input, target) => {
       NodeChildProcess.execFileSync("cipher.exe", ["/e", "/a", target]);
