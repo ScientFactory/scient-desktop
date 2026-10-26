@@ -1,9 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real manuscript folders.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 import {
@@ -54,6 +55,55 @@ const refusal = async (root: string, input: Partial<OverleafInventoryInput> = {}
 };
 
 describe("captureOverleafInventory", () => {
+  it("refuses online-only managed files and unchecked additions before opening them", async () => {
+    const root = await folder({ "main.tex": "local" });
+    using open = vi.spyOn(NodeFS.promises, "open");
+    for (const managedPaths of [["main.tex"], []]) {
+      expect(
+        await refusal(root, {
+          managedPaths,
+          filesAvailability: async (paths) =>
+            new Map(
+              paths.map((path) => [
+                path,
+                path.endsWith("main.tex") ? "online-only-file" : "available",
+              ]),
+            ),
+        }),
+      ).toEqual({ reason: "online-only-file", path: "main.tex" });
+    }
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("refuses an oversized managed path instead of treating it as missing", async () => {
+    const root = await folder({ "main.tex": "local" });
+    expect(await refusal(root, { managedPaths: [`${"a/".repeat(2100)}main.tex`] })).toEqual({
+      reason: "path-too-long",
+      path: ".",
+    });
+  });
+
+  it("refuses undecodable entries rather than reporting managed content missing", async () => {
+    const root = await folder({ "main.tex": "local" });
+    const opendir = NodeFS.promises.opendir;
+    using _listing = vi.spyOn(NodeFS.promises, "opendir").mockImplementation(async (...args) => {
+      const directory = await opendir(...args);
+      const iterator = directory[Symbol.asyncIterator].bind(directory);
+      directory[Symbol.asyncIterator] = async function* () {
+        for await (const entry of { [Symbol.asyncIterator]: iterator }) {
+          Object.defineProperty(entry, "name", { value: Buffer.from([0xff]) });
+          yield entry;
+        }
+        return undefined;
+      };
+      return directory;
+    });
+    expect(await refusal(root, { managedPaths: ["main.tex"] })).toEqual({
+      reason: "invalid-encoding",
+      path: ".",
+    });
+  });
+
   it("reads managed files, lists additions and never reads local-only files", async () => {
     const root = await folder({
       "main.tex": "main",

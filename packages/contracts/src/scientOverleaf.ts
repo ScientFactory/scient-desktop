@@ -9,6 +9,62 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
  * or Git's own text. See docs/internals/scient-overleaf-engine.md.
  */
 
+export const ScientOverleafFilesystemRefusalReason = Schema.Literals([
+  "unsupported-filesystem",
+  "network-filesystem",
+  "volatile-filesystem",
+  "file-busy",
+  "online-only-file",
+  "path-too-long",
+  "component-too-long",
+  "helper-unavailable",
+  "identity-unavailable",
+  "invalid-encoding",
+]);
+export type ScientOverleafFilesystemRefusalReason =
+  typeof ScientOverleafFilesystemRefusalReason.Type;
+
+const FILESYSTEM_REFUSAL_TEXT: Record<ScientOverleafFilesystemRefusalReason, string> = {
+  "unsupported-filesystem": "Move the project to a supported local disk, then relink it.",
+  "network-filesystem":
+    "Move the project from the network drive to a supported local disk, then relink it.",
+  "volatile-filesystem": "Move the project to a permanent local disk, then relink it.",
+  "file-busy": "Close the program using this file, then sync again.",
+  "online-only-file": "Download this file from your cloud storage first, then sync again.",
+  "path-too-long":
+    "Move the project to a shorter path or shorten its folder names, then relink it.",
+  "component-too-long": "Shorten this file or folder name, then sync again.",
+  "helper-unavailable": "Repair or update Scient on this project's server, then sync again.",
+  "identity-unavailable":
+    "Reconnect the project's disk or move the project to a supported local disk, then relink it.",
+  "invalid-encoding": "Rename the file or folder with a valid Unicode name, then sync again.",
+};
+
+export function overleafFilesystemRefusalText(reason: string): string | null {
+  return Object.hasOwn(FILESYSTEM_REFUSAL_TEXT, reason)
+    ? FILESYSTEM_REFUSAL_TEXT[reason as ScientOverleafFilesystemRefusalReason]
+    : null;
+}
+
+/** A component is preserved verbatim; validation never repairs a filesystem name. */
+export function overleafNameProblem(name: string): "component-too-long" | "invalid-name" | null {
+  if (name.length > 255 || new TextEncoder().encode(name).length > 255) return "component-too-long";
+  if (
+    name.length === 0 ||
+    name === "." ||
+    name === ".." ||
+    /[\uD800-\uDFFF]/u.test(name) ||
+    /^ |[ .]$/u.test(name) ||
+    /[<>:"/\\|?*]/u.test(name) ||
+    [...name].some(
+      (character) => character.charCodeAt(0) <= 0x1f || character.charCodeAt(0) === 0x7f,
+    ) ||
+    /^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)/iu.test(name)
+  )
+    return "invalid-name";
+  return null;
+}
+
 const WorkspaceRoot = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096));
 const ConnectionId = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,63}$/u));
 const RequestId = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,47}$/u));
