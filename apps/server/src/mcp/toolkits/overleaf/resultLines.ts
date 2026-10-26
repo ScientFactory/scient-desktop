@@ -153,10 +153,10 @@ const fileLines = (review: ScientOverleafReview): string[] => {
     );
   if (tooLarge.length > 0)
     lines.push(
-      `New files over Overleaf's 50 MB limit stay only on this computer: ${named(tooLarge.map((addition) => addition.path))}.`,
+      `New files over Overleaf's 50 MB limit stay only here: ${named(tooLarge.map((addition) => addition.path))}.`,
     );
   if (review.localOnly.length > 0)
-    lines.push(`Kept only on this computer: ${named(review.localOnly)}. Send one with files.send.`);
+    lines.push(`Kept only here: ${named(review.localOnly)}. Send one with files.send.`);
   return lines;
 };
 
@@ -264,12 +264,12 @@ const refusalReason = (refusal: ScientOverleafRefusal): string => {
       return `Overleaf has content Scient will not write (a link, Git LFS pointer, repository or reserved name)${at}.`;
     case "path-alias":
     case "alias-rename":
-      return "two names differ only by letter case or Unicode spelling, which the project’s filesystem or Overleaf cannot distinguish. Rename one of them.";
+      return "these names cannot be synced as separate files. Rename one.";
     case "unreviewed-path":
     case "remote-collides-with-excluded":
       return `Overleaf has a file where this folder has something that is not synced${at}. Move or rename it here or on Overleaf.`;
     case "local-only-limit":
-      return "too many files are kept only on this computer. Choose a narrower folder.";
+      return "too many files are kept only here. Choose a narrower folder.";
     case "folder-unavailable":
       return "the linked folder is missing or is not a folder. Relink it if it moved.";
     case "walk-limit":
@@ -508,7 +508,7 @@ const UNDO_SKIP_TEXT: Record<
   "already-undone": "already Overleaf's earlier version",
   "name-clash": "another file or folder is in its place",
   "too-large": "Overleaf's earlier version is too large to put back",
-  "kept-only-here": "kept only on this computer",
+  "kept-only-here": "kept only here",
 };
 
 /** What an undo put back and left alone, then what the sync after it did (design section 4.3). */

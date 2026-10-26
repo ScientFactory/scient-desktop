@@ -9,6 +9,8 @@ The goal is to keep a paper in a Scient project and its Overleaf project in step
 
 You can do with Overleaf whatever the user can do in Scient. The tools ask no one for approval: do what the user asked, then report the result lines. This skill grants no tools or authority.
 
+Here means the linked folder on this project's server. For a remote project, Git 2.39 or newer and the project files must be on that server.
+
 ## The Folder Model
 
 - One Overleaf project is one document (a paper, thesis, slide deck or grant). It lives in its own folder inside the Scient project, and everything in that folder syncs. Nothing outside it ever does.
@@ -30,7 +32,7 @@ Never ask for the token in chat, never write it anywhere, and never repeat it.
 1. Find the link with `scient_overleaf_status`; it lists each linked folder's `connectionId` and status without going online.
 2. Optionally preview with `scient_overleaf_preview`: what would come in and be sent, and any conflicts.
 3. Sync with `scient_overleaf_sync`. It saves the folder's open editors, brings Overleaf's changes in, then sends the folder's changes. New files, deletions, renames and older versions all sync, then get reported.
-4. New files are sent by default, except build output, hidden files and Scient's own project files. Send one of those with `files.send`. Keep a new file only on this computer (notes to self, for example) with `files.keepOnlyHere`; it stays out until you send it the same way.
+4. New files are sent by default, except build output, hidden files and Scient's own project files. Send one of those with `files.send`. Keep a new file only here (notes to self, for example) with `files.keepOnlyHere`; it stays out until you send it the same way.
 5. Report the result lines to the user: what came in, what was sent, renames (Overleaf drops comments and tracked changes on renamed files), older versions sent, and any other agents working in the same copy.
 
 If the thread works in a separate worktree, the tools act on the copy the link belongs to and say so. Your edits in the worktree reach Overleaf only after they are merged into that copy.
@@ -39,7 +41,7 @@ If the thread works in a separate worktree, the tools act on the copy the link b
 
 Only a conflict stops a sync. None of the stopped review's changes are applied; the result first says if the sync finished an interrupted sync or applied an earlier attempt before it stopped. Each conflict has a key and allowed choices:
 
-- `mine` keeps this computer's version; `theirs` takes Overleaf's.
+- `mine` keeps this folder's version; `theirs` takes Overleaf's.
 - `markers` writes both versions into the file between conflict marks (`<<<<<<<`, `=======`, `>>>>>>>`).
 
 Decide the way you would for a Git merge conflict: follow the user's instructions, and when both sides hold real work, choose `markers` and merge. Call `scient_overleaf_sync` again with one choice per key and the `reviewedRemote` the result gave. If Overleaf changed meanwhile, the result shows a new review whose conflicts your choices don't answer; decide again for them. For `markers`, edit each marked file so it keeps the intended text from both sides, remove every mark, check the document still builds, then sync again. A file with marks is not sent until its marks are gone; everything else is. If the marks are the file's real content (a guide that quotes them), send it as it is with `files.release`. Explain your merge choices to the user.

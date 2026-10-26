@@ -100,7 +100,7 @@ const Choices = Schema.Array(
     }),
     choice: ScientOverleafConflictChoice.annotate({
       description:
-        "mine keeps this computer's version, theirs takes Overleaf's, markers writes both into the file between conflict marks for you to merge. Use one of the conflict's allowed choices.",
+        "mine keeps this folder's version, theirs takes Overleaf's, markers writes both into the file between conflict marks for you to merge. Use one of the conflict's allowed choices.",
     }),
   }),
 )
@@ -111,12 +111,11 @@ const FilePaths = Schema.Array(Schema.String.check(Schema.isMaxLength(4_096))).c
 );
 const Files = Schema.Struct({
   keepOnlyHere: Schema.optional(FilePaths).annotate({
-    description:
-      "New files to keep only on this computer: not sent, and remembered until you send them.",
+    description: "New files to keep only here: not sent, and remembered until you send them.",
   }),
   send: Schema.optional(FilePaths).annotate({
     description:
-      "Files to send anyway: new files the rule skips (build output, hidden files, Scient's own files) or files kept only on this computer.",
+      "Files to send anyway: new files the rule skips (build output, hidden files, Scient's own files) or files kept only here.",
   }),
   release: Schema.optional(FilePaths).annotate({
     description:
@@ -211,7 +210,7 @@ const ScientOverleafConnectTool = Tool.make("scient_overleaf_connect", {
 
 const ScientOverleafSyncTool = Tool.make("scient_overleaf_sync", {
   description:
-    "Sync one linked folder with Overleaf: save the folder's open editors, bring Overleaf's changes in, then send the folder's changes (like git pull then git push). New files, deletions, renames and older versions are all synced, then reported; new files that are build output, hidden or Scient's own are skipped unless sent with files.send, and files.keepOnlyHere keeps a new file only on this computer. Only a conflict stops it: none of that review's changes are applied (the result first says if this sync finished an interrupted sync or applied an earlier attempt before it stopped), and the result lists each conflict's key and allowed choices; call again with choices and reviewedRemote from that result. If Overleaf changed since, the choices don't answer the new review and the result asks again. For choice markers, edit each marked file to merge the two versions, remove every conflict mark, then sync again; a file with marks is not sent. If the thread works in another worktree, this syncs the linked copy and says so. Read `lines` and act on them.",
+    "Sync one linked folder with Overleaf: save the folder's open editors, bring Overleaf's changes in, then send the folder's changes (like git pull then git push). New files, deletions, renames and older versions are all synced, then reported; new files that are build output, hidden or Scient's own are skipped unless sent with files.send, and files.keepOnlyHere keeps a new file only here. Only a conflict stops it: none of that review's changes are applied (the result first says if this sync finished an interrupted sync or applied an earlier attempt before it stopped), and the result lists each conflict's key and allowed choices; call again with choices and reviewedRemote from that result. If Overleaf changed since, the choices don't answer the new review and the result asks again. For choice markers, edit each marked file to merge the two versions, remove every conflict mark, then sync again; a file with marks is not sent. If the thread works in another worktree, this syncs the linked copy and says so. Read `lines` and act on them.",
   parameters: Schema.Struct({
     connectionId: ConnectionId,
     choices: Schema.optional(Choices),
