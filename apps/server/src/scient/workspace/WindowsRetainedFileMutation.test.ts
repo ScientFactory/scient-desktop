@@ -423,3 +423,38 @@ describe.skipIf(!windows)("Windows identity and file admission", () => {
       expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
     }));
 });
+
+it.skipIf(!windows)(
+  "creates a user-owned file even with an elevated Administrators default owner",
+  () =>
+    fixture(async (input, target) => {
+      const owner = (operation: string) =>
+        JSON.parse(
+          NodeChildProcess.execFileSync(probe!, ["--windows=1", operation, String(process.pid)], {
+            encoding: "utf8",
+          }),
+        ).code;
+      await NodeFSP.unlink(target);
+      expect(owner("default-owner-admin")).toBe(0);
+      try {
+        const created = await mutateRetainedFile(
+          { ...input, kind: "create", condition: "absent", expectedRevision: null },
+          target,
+        );
+        expect(created.outcome).toBe("done");
+        const replaced = await mutateRetainedFile(
+          {
+            ...input,
+            id: "next",
+            expectedRevision: bytesRevision(Buffer.from("incoming")),
+            bytes: Buffer.from("next"),
+          },
+          target,
+        );
+        expect(replaced.outcome).toBe("done");
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("next");
+      } finally {
+        expect(owner("default-owner")).toBe(0);
+      }
+    }),
+);

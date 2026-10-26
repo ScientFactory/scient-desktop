@@ -503,7 +503,9 @@ async function nativePrivateRetentionDirectory(
     !result.destinationAfter ||
     result.destinationAfter.type !== "directory" ||
     (result.outcome === "applied" &&
-      (result.flush.sourceDirectory > 0 || result.flush.destinationDirectory > 0))
+      (result.codeDomain === "win32"
+        ? result.flush.sourceDirectory > 0 || result.flush.destinationDirectory > 0
+        : result.flush.sourceDirectory !== 0 || result.flush.destinationDirectory !== 0))
   )
     throw new NativeFilePublicationError(
       `Native private retention provisioning refused (${result.codeDomain}:${result.code}).`,
@@ -863,7 +865,12 @@ export async function removeNativeRetainedEntry(
     (result.codeDomain === "win32" && result.code === 267)
   )
     result = await lease.remove(directory, name, "rmdir");
-  if (result.code !== 0 || result.flush.sourceDirectory > 0)
+  if (
+    result.code !== 0 ||
+    (result.codeDomain === "win32"
+      ? result.flush.sourceDirectory > 0
+      : result.flush.sourceDirectory !== 0)
+  )
     throw new NativeFilePublicationError(
       `Retained removal refused (${result.codeDomain}:${result.code}, flush=${result.flush.sourceDirectory}).`,
       result,
