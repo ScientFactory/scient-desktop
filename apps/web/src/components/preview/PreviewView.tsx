@@ -92,7 +92,9 @@ import {
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+// SCIENT-FORK:START — keep PDF export actions in their Scient owner.
 import { ScientPreviewExportActions } from "~/scient/pdf/ScientPreviewExportActions";
+// SCIENT-FORK:END
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
 
@@ -900,45 +902,47 @@ export function PreviewView({
         }
         trailingActions={
           moreMenuActions ? (
-            <>
-              {previewBridge && tabId ? (
-                <ScientPreviewExportActions
-                  disabled={
-                    pdfExportOwner === null ||
-                    isUnreachable ||
-                    loading ||
-                    (isServerTab && clientPdfUrl !== null)
-                  }
-                  pageUrl={url}
-                  tabId={tabId}
-                  runtimeTabId={runtimeTabId}
-                  threadRef={threadRef}
-                />
-              ) : null}
-              <PreviewMoreMenu
-                enabled={
-                  runtimeTabId !== null &&
-                  (serverOwnsRendering || (desktopOverlay?.hasWebContents ?? false))
-                }
-                actions={moreMenuActions}
-                {...(moveTarget
-                  ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
-                  : {})}
-                profileName={activeProfileName}
-                zoomFactor={
-                  serverOwnsRendering ? serverZoomFactor : (desktopOverlay?.zoomFactor ?? 1)
-                }
-                colorScheme={
-                  serverOwnsRendering
-                    ? (snapshot?.colorScheme ?? "system")
-                    : (desktopOverlay?.colorScheme ?? "system")
-                }
-                deviceToolbarVisible={viewport._tag !== "fill"}
-                onToggleDeviceToolbar={handleToggleDeviceToolbar}
-                nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
-              />
-            </>
+            // SCIENT-FORK:START — place PDF export in the preview menu.
+            <PreviewMoreMenu
+              extraItems={
+                previewBridge && tabId ? (
+                  <ScientPreviewExportActions
+                    disabled={
+                      pdfExportOwner === null ||
+                      isUnreachable ||
+                      loading ||
+                      (isServerTab && clientPdfUrl !== null)
+                    }
+                    pageUrl={url}
+                    tabId={tabId}
+                    runtimeTabId={runtimeTabId}
+                    threadRef={threadRef}
+                  />
+                ) : null
+              }
+              enabled={
+                runtimeTabId !== null &&
+                (serverOwnsRendering || (desktopOverlay?.hasWebContents ?? false))
+              }
+              actions={moreMenuActions}
+              {...(moveTarget
+                ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
+                : {})}
+              profileName={activeProfileName}
+              zoomFactor={
+                serverOwnsRendering ? serverZoomFactor : (desktopOverlay?.zoomFactor ?? 1)
+              }
+              colorScheme={
+                serverOwnsRendering
+                  ? (snapshot?.colorScheme ?? "system")
+                  : (desktopOverlay?.colorScheme ?? "system")
+              }
+              deviceToolbarVisible={viewport._tag !== "fill"}
+              onToggleDeviceToolbar={handleToggleDeviceToolbar}
+              nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+            />
           ) : null
+          // SCIENT-FORK:END
         }
       />
 

@@ -1,6 +1,5 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { ButtonHTMLAttributes, MouseEventHandler, ReactElement, ReactNode } from "react";
-import { cloneElement } from "react";
+import type { ButtonHTMLAttributes, MouseEventHandler, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -27,15 +26,10 @@ vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: { exportPdf: mocks.exportPdf },
 }));
 
-vi.mock("~/components/ui/button", () => ({
-  Button: (props: ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props} />,
-}));
-
 vi.mock("~/components/ui/menu", () => ({
-  Menu: (props: { children: ReactNode }) => <div>{props.children}</div>,
-  MenuTrigger: (props: { children?: ReactNode; render: ReactElement }) =>
-    cloneElement(props.render, {}, props.children),
-  MenuPopup: (props: { children: ReactNode }) => <div>{props.children}</div>,
+  MenuGroup: (props: { children: ReactNode }) => <div>{props.children}</div>,
+  MenuGroupLabel: (props: { children: ReactNode }) => <div>{props.children}</div>,
+  MenuSeparator: () => <hr />,
   MenuItem: (
     props: ButtonHTMLAttributes<HTMLButtonElement> & { "data-export-action"?: string },
   ) => {
@@ -59,9 +53,6 @@ vi.mock("~/state/browserPdfExport", () => ({
   browserPdfExportEnvironment: { publish: "browser-pdf-export-publish" },
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => mocks.publish }));
-vi.mock("../presentation/ScientTooltip", () => ({
-  ScientTooltip: (props: { children: ReactElement }) => props.children,
-}));
 vi.mock("../rightPanel/surfaces", () => ({
   scientGeneratedPdfSurface: (source: unknown) => ({ module: "generated-pdf", source }),
 }));
@@ -216,7 +207,7 @@ describe("ScientPreviewExportActions", () => {
   });
 
   // regression: 666ea3a41a feat: refine browser PDF export lifecycle
-  it("keeps the chrome action disabled when the browser surface is unavailable", () => {
+  it("keeps the menu actions disabled when the browser surface is unavailable", () => {
     const markup = renderToStaticMarkup(
       <ScientPreviewExportActions
         disabled
@@ -227,7 +218,7 @@ describe("ScientPreviewExportActions", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Export PDF"');
+    expect(markup).toContain("Export to PDF");
     expect(markup).toContain("disabled");
   });
 

@@ -15,7 +15,7 @@ describe("browser PDF export seams", () => {
     const exportHook = read("../documentExport/useBrowserPdfExport.ts");
 
     expect(previewView).toContain("<ScientPreviewExportActions");
-    expect(previewView).toContain("trailingActions={");
+    expect(previewView).toContain("extraItems={");
     expect(previewView).not.toMatch(/Encoding|LogicalDocumentKey|publishBrowserPdfExport/gu);
     expect(previewChrome).not.toMatch(
       /Export PDF|FileDown|onExportPdf|exportingPdf|contentActions/gu,

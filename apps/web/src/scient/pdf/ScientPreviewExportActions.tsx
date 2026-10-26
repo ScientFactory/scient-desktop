@@ -1,15 +1,13 @@
 import type { Dispatch, SetStateAction, RefObject } from "react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { Download, FileDown, FileText } from "lucide-react";
+import { Download, FileText } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { Button } from "~/components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { MenuGroup, MenuGroupLabel, MenuItem, MenuSeparator } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
 
 import { readHtmlPdfRelation } from "../documentExport/htmlPdfSourceStore";
 import { useBrowserPdfExport } from "../documentExport/useBrowserPdfExport";
-import { ScientTooltip } from "../presentation/ScientTooltip";
 import { announcePdfSaveCopyResult } from "./pdfSaveCopyNotification";
 import { usePdfSaveCopy } from "./usePdfSaveCopy";
 
@@ -46,23 +44,10 @@ export function ScientPreviewExportActions(props: {
     })(action);
 
   return (
-    <Menu>
-      <ScientTooltip content={exporting ? "Exporting PDF…" : "Export PDF"}>
-        <MenuTrigger
-          render={
-            <Button
-              variant={exporting ? "secondary" : "ghost"}
-              size="icon-xs"
-              aria-label="Export PDF"
-              type="button"
-              disabled={props.disabled || exporting}
-            />
-          }
-        >
-          <FileDown className={exporting ? "animate-pulse" : undefined} />
-        </MenuTrigger>
-      </ScientTooltip>
-      <MenuPopup align="end" sideOffset={6} className="min-w-40">
+    <>
+      <MenuSeparator />
+      <MenuGroup>
+        <MenuGroupLabel>{exporting ? "Exporting PDF…" : "Export to PDF"}</MenuGroupLabel>
         <MenuItem
           data-export-action="open"
           disabled={props.disabled || exporting}
@@ -79,8 +64,8 @@ export function ScientPreviewExportActions(props: {
           <Download />
           Save PDF…
         </MenuItem>
-      </MenuPopup>
-    </Menu>
+      </MenuGroup>
+    </>
   );
 }
 

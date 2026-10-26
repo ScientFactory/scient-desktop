@@ -1,8 +1,8 @@
 # Scient browser HTML → PDF export
 
-The Browser's compact menu offers **Open PDF** and **Save PDF…**. Both print the
-currently loaded page through its physical browser owner; neither reloads, serializes,
-nor reconstructs the page. Native desktop tabs use `webContents.printToPDF()`.
+The Browser's **⋯** menu offers **Open PDF** and **Save PDF…** in its **Export to PDF**
+group. Both print the currently loaded page through its physical browser owner; neither reloads,
+serializes, nor reconstructs the page. Native desktop tabs use `webContents.printToPDF()`.
 Streamed server tabs use the environment's live browser page, even when the client
 runs in Electron. The tab remains intact while an immutable PDF revision is published
 to the environment's generated-document store. Open activates that revision in
@@ -147,8 +147,9 @@ truthfully; it never represents this as visual inspection. Publication failure m
 production failed, while render, authorization, invalid-response, source-race, and pre-publication
 output failures abandon the attempt without discrediting the last successful revision.
 
-Substantive implementation stays in Scient-owned modules. The Browser action reuses the inherited
-chrome's existing trailing-action slot; it does not add PDF-specific state or props to that component.
+Substantive implementation stays in Scient-owned modules. The Browser actions use the preview more
+menu's generic extra-items slot, mounted through the chrome's existing trailing-action slot.
+PDF-specific state and behavior stay in the Scient owner.
 Inherited Browser, server, desktop IPC, and right-panel files contain only the narrow mounts recorded
 in `UPSTREAM.md` and enforced by the browser-export seam audit.
 
