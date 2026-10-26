@@ -384,6 +384,19 @@ async function attemptHasDurableMutation(state: State, name: string, directory: 
   }
   if (record.phase === "done") return record.outcome !== "skipped";
   if (record.phase === "preparing") return false;
+  if ("originalSecurity" in record) {
+    if (await fileIdentity(NodePath.join(directory, "retained"))) return true;
+    const target = await fileIdentity(record.destination ?? record.target);
+    if (
+      target &&
+      record.stagedIdentity &&
+      target.dev === record.stagedIdentity.dev &&
+      target.ino === record.stagedIdentity.ino
+    )
+      return true;
+    // A permission transition also needs recovery, even when A never left the public name.
+    return record.sourceMutation === true;
+  }
   if (record.phase !== "prepared") return true;
   // Older additive records have no durable pre-publication boundary. Their
   // absence of evidence cannot establish that publication never happened.

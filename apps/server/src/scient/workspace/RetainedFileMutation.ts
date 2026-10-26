@@ -24,6 +24,9 @@ import {
   type NativeFilePublicationResult,
 } from "./NativeFilePublication.ts";
 
+import { windowsFileIdentity } from "./WindowsNativeFile.ts";
+import { runWindowsRetainedMutation } from "./WindowsRetainedFileMutation.ts";
+
 const Identity = Schema.Struct({ dev: Schema.String, ino: Schema.String });
 const Binding = Schema.Struct({
   rootPath: Schema.String,
@@ -136,10 +139,26 @@ const StagedCreateJournal = Schema.Struct({
   createStageName: Schema.String.check(Schema.isPattern(/^\.scient-overleaf-apply-[a-f0-9]{64}$/u)),
   createStageIdentity: Schema.NullOr(Identity),
 });
-export type RetainedRecord = typeof Journal.Type | typeof StagedCreateJournal.Type;
-const validateRecord = Schema.decodeUnknownSync(Schema.Union([Journal, StagedCreateJournal]));
+export const WindowsJournal = Schema.Struct({
+  ...Journal.fields,
+  publication: Schema.Literals(["windows-move-install", "windows-stage-create", "windows-capture"]),
+  originalIdentity: Schema.NullOr(Identity),
+  stageName: Schema.String,
+  originalSecurity: Schema.Literal("original-security"),
+});
+export type WindowsRetainedRecord = typeof WindowsJournal.Type;
+export type AnyRetainedRecord =
+  | typeof Journal.Type
+  | typeof StagedCreateJournal.Type
+  | WindowsRetainedRecord;
+export type RetainedRecord = AnyRetainedRecord;
+const validateRecord = Schema.decodeUnknownSync(
+  Schema.Union([Journal, StagedCreateJournal, WindowsJournal]),
+);
 export const decodeRetainedRecord = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Union([Journal, StagedCreateJournal, LegacyJournal])),
+  Schema.fromJsonString(
+    Schema.Union([Journal, StagedCreateJournal, WindowsJournal, LegacyJournal]),
+  ),
 );
 
 export type Identity = NativeFileIdentity;
@@ -199,6 +218,7 @@ export interface RetainedMutationResult {
 }
 export type MutationPoint =
   | "intent"
+  | "restricted"
   | "staged"
   | "create-staged"
   | "prepared"
@@ -314,6 +334,12 @@ const absent = (e: unknown) =>
   ["ENOENT", "ENOTDIR"].includes((e as NodeJS.ErrnoException).code ?? "");
 export const retainedFileNames = ["slot", "retained", "provisional"] as const;
 export async function directoryIdentity(directory: string): Promise<Identity> {
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    const identity = await windowsFileIdentity(directory);
+    if (!identity || identity.type !== "directory")
+      throw new Error("Workspace directory binding changed.");
+    return { dev: identity.dev, ino: identity.ino };
+  }
   const stat = await NodeFSP.lstat(directory, { bigint: true });
   if (!stat.isDirectory() || stat.isSymbolicLink())
     throw new Error("Workspace directory binding changed.");
@@ -324,6 +350,10 @@ export async function assertRootBinding(root: string, expected?: Identity) {
     throw new RetainedMutationError("target", "Workspace root identity changed.", "root-binding");
 }
 export async function fileIdentity(file: string): Promise<Identity | null> {
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    const identity = await windowsFileIdentity(file);
+    return identity?.type === "file" ? { dev: identity.dev, ino: identity.ino } : null;
+  }
   try {
     const stat = await NodeFSP.lstat(file, { bigint: true });
     if (!stat.isFile() || stat.isSymbolicLink()) return null;
@@ -340,7 +370,7 @@ export async function fileIdentity(file: string): Promise<Identity | null> {
  * the way should be means nothing can stand at `path`, but only if that file is
  * one of `planned`; any other file there is `other`.
  */
-async function peerEntry(
+export async function peerEntry(
   root: string,
   path: string,
   planned: ReadonlySet<string>,
@@ -375,7 +405,7 @@ async function peerEntry(
  * folders, empty ones included, may lead anywhere; any other file, link or
  * special entry fails. Links are never followed.
  */
-async function holdsOnly(root: string, path: string, only: ReadonlyArray<string>) {
+export async function holdsOnly(root: string, path: string, only: ReadonlyArray<string>) {
   const allowed = new Set(only);
   const pending = [path];
   // Bounded: a folder the group empties holds its files and some folders, not a tree.
@@ -464,7 +494,10 @@ export async function inspectGuardedFile(file: string, maxBytes?: number) {
         "revision-inspection",
       );
     return {
-      identity: { dev: String(stat.dev), ino: String(stat.ino) },
+      identity:
+        HostProcess.Platform.defaultValue() === "win32"
+          ? (await fileIdentity(file))!
+          : { dev: String(stat.dev), ino: String(stat.ino) },
       byteLength,
       binary,
       revision: `sha256:${hash.digest("hex")}`,
@@ -483,6 +516,8 @@ async function leadingFileRevision(file: string, maxBytes = 1024 * 1024): Promis
   return snapshot.leadingRevision;
 }
 export async function syncDirectory(directory: string) {
+  // Win32 has no supported directory FlushFileBuffers; files are flushed before rename.
+  if (HostProcess.Platform.defaultValue() === "win32") return;
   const handle = await NodeFSP.open(directory, "r");
   try {
     await handle.sync();
@@ -568,7 +603,7 @@ export async function retainedPaths(directory: string): Promise<string[]> {
   }
   return paths;
 }
-async function retainedStorageBytes(retention: string): Promise<number> {
+export async function retainedStorageBytes(retention: string): Promise<number> {
   let total = 0;
   for (const entry of await NodeFSP.readdir(retention, { withFileTypes: true })) {
     if (!entry.isDirectory() || !/^[a-zA-Z0-9_-]{1,100}$/u.test(entry.name)) continue;
@@ -650,7 +685,7 @@ export async function mutateRetainedFile(
     (kind === "write" || kind === "create") &&
     !(creation
       ? capabilities.atomicCreateMetadata && parentCapabilities.atomicCreateMetadata
-      : capabilities.atomicExchange)
+      : capabilities.atomicExchange || capabilities.windowsMoveInstall)
   ) {
     let previous;
     try {
@@ -742,6 +777,8 @@ async function run(
   lease: NativeFilePublicationLease,
   hooks: RetainedMutationHooks,
 ): Promise<RetainedMutationResult> {
+  if (HostProcess.Platform.defaultValue() === "win32")
+    return runWindowsRetainedMutation(input, target, directory, lease, hooks);
   const journalPath = NodePath.join(directory, "record.json"),
     slot = NodePath.join(directory, "slot"),
     retained = NodePath.join(directory, "retained"),
@@ -753,7 +790,7 @@ async function run(
   };
   const kind = input.kind ?? (input.bytes === null ? "delete" : "write");
   const condition = input.condition ?? (input.expectedRevision === null ? "absent" : "revision");
-  let record: RetainedRecord;
+  let record: typeof Journal.Type;
   let previous;
   try {
     previous = await readRetainedRecord(directory);
@@ -769,6 +806,12 @@ async function run(
       await retainedPaths(directory),
     );
   }
+  if (previous && "originalSecurity" in previous)
+    throw new RetainedMutationError(
+      "recovery",
+      "Windows record requires its native host.",
+      input.id,
+    );
   if (previous) {
     record = previous;
     if (
@@ -857,7 +900,7 @@ async function run(
         : { expectedMutationEpoch: input.expectedMutationEpoch }),
     };
   }
-  const save = async (patch: Partial<RetainedRecord>) => {
+  const save = async (patch: Partial<typeof Journal.Type>) => {
     lease.assertHeld();
     record = validateRecord({ ...record, ...patch, generation: record.generation + 1 });
     await durableJson(journalPath, record);
