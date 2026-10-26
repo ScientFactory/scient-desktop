@@ -749,11 +749,9 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     return yield* make({
       root: NodePath.join(config.stateDir, "overleaf"),
-      publicationHelper:
-        config.filePublicationHelperPath ??
-        (yield* Effect.promise(() =>
-          resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
-        )),
+      publicationHelper: yield* Effect.promise(() =>
+        resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
+      ),
     });
   }),
 );

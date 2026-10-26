@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real binary, filesystem and restart/update fixtures.
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { publicationDigest } from "@t3tools/shared/scientPublicationArtifact";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -69,6 +71,17 @@ describe.skipIf(!qualified)("host-configured file publication", () => {
           yield* fs.makeDirectory(NodePath.dirname(helper), { recursive: true });
           yield* fs.copyFile(publication!, helper);
           yield* fs.chmod(helper, 0o755);
+          yield* fs.writeFileString(
+            NodePath.join(NodePath.dirname(helper), "publication-artifact.json"),
+            JSON.stringify({
+              protocol: 1,
+              platform: HostProcess.Platform.defaultValue(),
+              arch: HostProcess.Architecture.defaultValue(),
+              probe: false,
+              executable: "scient-file-publication",
+              sha256: publicationDigest(yield* Effect.promise(() => NodeFSP.readFile(helper))),
+            }),
+          );
         }
         yield* fs.writeFileString(target, "captured");
         const input = {

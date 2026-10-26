@@ -249,7 +249,10 @@ const resolveFilePublicationHelperPath = Effect.fn(
     if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
       return Option.some(candidate);
   }
-  return Option.none<string>();
+  // Keep absence explicit: the server must not discover a different packaged helper.
+  return environment.isPackaged && candidates[0] !== undefined
+    ? Option.some(candidates[0])
+    : Option.none<string>();
 });
 
 const readPersistedBackendObservabilitySettings = Effect.gen(function* () {

@@ -30,6 +30,7 @@
         "mobile-native-client.ts",
         "setup-worktree.ts",
         "sign-macos.ts",
+        "publication-after-sign.ts",
         "verify-windows-desktop-artifact.ts",
         // release-smoke.ts runs it by path to check the branded nightly release name.
         "resolve-nightly-release.ts",

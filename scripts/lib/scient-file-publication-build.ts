@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { publicationDigest } from "@t3tools/shared/scientPublicationArtifact";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -32,6 +33,11 @@ export async function validatePackagedFilePublication(
   );
   if (artifact.arch !== arch)
     throw new Error("Packaged file publication has the wrong architecture.");
+  const receipt = JSON.parse(
+    await NodeFSP.readFile(NodePath.join(directory, "publication-artifact.json"), "utf8"),
+  );
+  if (receipt.sha256 !== publicationDigest(await NodeFSP.readFile(helper)))
+    throw new Error("Packaged file publication hash differs from its receipt.");
   const actual = NodeChildProcess.execFileSync("lipo", ["-archs", helper], {
     encoding: "utf8",
     timeout: 10_000,
