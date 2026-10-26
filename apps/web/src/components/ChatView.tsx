@@ -55,18 +55,8 @@ import {
   useScientRightPanelOpeners,
 } from "~/scient/rightPanel/useScientRightPanelOpeners";
 import { ScientRightPanelContent } from "~/scient/rightPanel/ScientRightPanelContent";
-import { ThreadQueueStrip } from "~/scient/threadQueue/ThreadQueueStrip";
-import {
-  deriveQueueAcknowledgedUserMessages,
-  pendingQueueAdmissionPreviews,
-  type OptimisticUserMessage,
-} from "~/scient/threadQueue/optimisticQueuePresentation";
+import { type OptimisticUserMessage } from "~/scient/threadQueue/optimisticQueuePresentation";
 import { useThreadQueue } from "~/scient/threadQueue/useThreadQueue";
-import {
-  editQueuedMessageShortcut,
-  steerQueuedMessageShortcut,
-} from "~/scient/threadQueue/queueShortcuts";
-import type { ScientThreadQueueItem } from "@t3tools/contracts";
 import { ContentDirectionScope } from "../scient/bidi/ContentDirectionScope";
 import {
   ScientRevertDialogDiagnostics,
@@ -671,12 +661,6 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return ids;
   })();
-  // SCIENT-FORK:START — the queue strip hides a preview once the server owns
-  // the message; the acknowledged user rows are that source of truth.
-  const serverAcknowledgedUserMessages = deriveQueueAcknowledgedUserMessages(
-    serverProjection?.messages ?? [],
-  );
-  // SCIENT-FORK:END
   const settings = useEnvironmentSettings(environmentId);
   const clientSettingsHydrated = useClientSettingsHydrated();
   const timestampFormat = settings.timestampFormat;
@@ -3374,23 +3358,13 @@ function ChatViewContent(props: ChatViewProps) {
       "composer.previousWorktree": ({ event }) => {
         if (!event.repeat) branchToolbarRef.current?.usePreviousWorktree();
       },
-      // SCIENT-FORK:START — queue shortcuts are decided by the Scient queue (threadQueue/queueShortcuts).
       "thread.steerQueuedMessage": ({ event }) =>
-        steerQueuedMessageShortcut({
-          repeat: event.repeat,
-          nativeQueue: queuedRunsControlRef.current,
-          stripHead: threadQueue.items[0],
-          steerStripItem: (item) =>
-            void threadQueue.control("steer", item.queueItemId).catch((cause) => {
-              if (activeThreadId) setThreadError(activeThreadId, chatActionErrorMessage(cause));
-            }),
-        }),
+        routeKind !== "draft" && queuedRunsControlRef.current?.steerNext(event.repeat) === true,
       "thread.editQueuedMessage": ({ event }) =>
-        editQueuedMessageShortcut({
-          repeat: event.repeat,
-          nativeQueue: queuedRunsControlRef.current,
-        }),
-      // SCIENT-FORK:END
+        routeKind !== "draft" &&
+        // SCIENT-FORK:START — Edit Queued Message takes the latest message wherever the caret is.
+        // SCIENT-FORK:END
+        queuedRunsControlRef.current?.editLatest(event.repeat) === true,
       "thread.stop": ({ event }) => {
         if (!canInterruptRunningThread) return false;
         if (!event.repeat) void onInterruptStable();
@@ -3514,29 +3488,6 @@ function ChatViewContent(props: ChatViewProps) {
     activeEnvironmentUnavailable,
     defaultRuntimeMode,
   });
-  const editQueuedItem = (item: ScientThreadQueueItem) => {
-    if (!isServerThread || !activeThreadId) return;
-    if (activePendingProgress || pendingApprovals.length > 0 || isConnecting || isSendBusy) {
-      setThreadError(
-        activeThreadId,
-        "Finish the current approval or question before editing a queued message.",
-      );
-      return;
-    }
-    void beginQueueEdit(routeThreadRef, item)
-      .then(() => threadQueue.refresh())
-      .catch((cause) => {
-        setThreadError(activeThreadId, chatActionErrorMessage(cause));
-      });
-  };
-
-  const deleteQueuedItem = (item: ScientThreadQueueItem) => {
-    if (!isServerThread || !activeThreadId) return;
-    void threadQueue.remove(item.queueItemId).catch((cause) => {
-      setThreadError(activeThreadId, chatActionErrorMessage(cause));
-    });
-  };
-
   const { onSend } = useComposerSend({
     queueEditsReady,
     queueContextKeyRef,
@@ -3634,6 +3585,35 @@ function ChatViewContent(props: ChatViewProps) {
     serverProjection?.thread.guestShare?.messages.filter((message) => message.status === "pending")
       .length ?? 0;
   // SCIENT-FORK:END
+
+  const queuedRunsControl =
+    isServerThread && activeThread ? (
+      <>
+        <QueuedRunsControl
+          ref={queuedRunsControlRef}
+          steerShortcutLabel={shortcutLabelForCommand(keybindings, "thread.steerQueuedMessage", {
+            context: { terminalFocus: false },
+          })}
+          editShortcutLabel={shortcutLabelForCommand(keybindings, "thread.editQueuedMessage", {
+            context: { composerFocus: true },
+          })}
+          environmentId={activeThread.environmentId}
+          threadId={activeThread.id}
+          optimisticMessages={optimisticUserMessages}
+          // SCIENT-FORK:START — queued edits live in Scient edit sessions (scient/threadQueue/editSession).
+          error={threadQueue.error ?? queueEditStorageError}
+          editingRunId={queueEdit?.nativeRun?.runId ?? null}
+          onEditQueuedRun={beginEditingQueuedRunStable}
+          onCancelEdit={() => {
+            if (queueEdit)
+              void stashRecoveredDraft(queueEdit).catch((cause) =>
+                setThreadError(threadId, chatActionErrorMessage(cause)),
+              );
+          }}
+          // SCIENT-FORK:END
+        />
+      </>
+    ) : null;
 
   const resendAfterWorkLocallyStable = useStableCallback(() => {
     setWorkLocallyResendDraftId(null);
@@ -4265,79 +4245,6 @@ function ChatViewContent(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    {/* SCIENT-FORK:START — queued messages strip, stacked on top of the composer */}
-                    <div className="mx-auto w-full max-w-3xl">
-                      {isServerThread && activeThread ? (
-                        <QueuedRunsControl
-                          error={threadQueue.error ?? queueEditStorageError}
-                          ref={queuedRunsControlRef}
-                          steerShortcutLabel={shortcutLabelForCommand(
-                            keybindings,
-                            "thread.steerQueuedMessage",
-                            { context: { terminalFocus: false } },
-                          )}
-                          editShortcutLabel={shortcutLabelForCommand(
-                            keybindings,
-                            "thread.editQueuedMessage",
-                            { context: { composerFocus: true } },
-                          )}
-                          environmentId={activeThread.environmentId}
-                          threadId={activeThread.id}
-                          optimisticMessages={optimisticUserMessages}
-                          editingRunId={queueEdit?.nativeRun?.runId ?? null}
-                          onEditQueuedRun={beginEditingQueuedRunStable}
-                          onCancelEdit={() => {
-                            if (queueEdit)
-                              void stashRecoveredDraft(queueEdit).catch((cause) =>
-                                setThreadError(threadId, chatActionErrorMessage(cause)),
-                              );
-                          }}
-                        />
-                      ) : (
-                        <ThreadQueueStrip
-                          items={threadQueue.items}
-                          pendingMessages={pendingQueueAdmissionPreviews(
-                            optimisticUserMessages,
-                            routeThreadKey,
-                            threadQueue.items,
-                            serverAcknowledgedUserMessages,
-                          ).map((message) => ({
-                            id: message.id,
-                            text: message.text,
-                            attachmentCount: message.attachments?.length ?? 0,
-                            accepted: message.queueAdmission?.accepted === true,
-                          }))}
-                          error={threadQueue.error ?? queueEditStorageError}
-                          threadBusy={phase === "running" || phase === "connecting"}
-                          supportsExplicitSend={
-                            environmentById.get(environmentId)?.serverConfig?.environment
-                              .capabilities.threadQueueExplicitSend === true
-                          }
-                          awaitingCompletion={threadQueue.awaitingCompletion}
-                          paused={threadQueue.paused !== null}
-                          dispatchingItemId={threadQueue.pendingSendItemId}
-                          onSend={(item) => {
-                            void threadQueue.control("send", item.queueItemId).catch(() => {});
-                          }}
-                          onSteer={(item) => {
-                            void threadQueue.control("steer", item.queueItemId).catch(() => {});
-                          }}
-                          retryable={threadQueue.paused !== null}
-                          onRetry={() => {
-                            void threadQueue.control("resume").catch(() => {});
-                          }}
-                          onEdit={editQueuedItem}
-                          onDelete={deleteQueuedItem}
-                          onReorder={(ids) => {
-                            void threadQueue.reorder(ids).catch((cause) => {
-                              if (activeThreadId)
-                                setThreadError(activeThreadId, chatActionErrorMessage(cause));
-                            });
-                          }}
-                        />
-                      )}
-                    </div>
-                    {/* SCIENT-FORK:END */}
                     <ComposerSurface.Shell
                       contextStrip={showComposerContextStrip || showComposerModelStrip}
                     >
@@ -4440,7 +4347,7 @@ function ChatViewContent(props: ChatViewProps) {
                                             : projectCloneSendBlockReason
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
-                              queuedRunsControl={null}
+                              queuedRunsControl={queuedRunsControl}
                               bannerItems={composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}

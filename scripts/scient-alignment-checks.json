@@ -200,18 +200,18 @@
         "apps/web/src/components/chat/QueuedRunsControl",
         "apps/mobile/src/",
         "apps/web/src/components/ChatView",
-        "apps/web/src/scient/threadQueue/queueShortcuts"
+        "apps/web/src/scient/threadQueue/"
       ],
       "consumers": [
         "Native Orchestrator admission -> EventSink/outbox -> worker start; TerminalQueueHold -> explicit Resume/selected Send/admitted direct Send",
         "Legacy readers/cutover retain inert held queue; web/mobile/client-runtime commands consume same contract",
-        "ChatComposer submission intent -> resolveComposerSteerRequested; ChatView shortcut map -> scient/threadQueue/queueShortcuts -> actual QueuedRunsControl imperative handle (else the Scient strip head) -> exact environment/thread/queuedRun/targetRun command"
+        "ChatComposer submission intent -> resolveComposerSteerRequested; ChatView shortcut map -> actual QueuedRunsControl imperative handle -> exact environment/thread/queuedRun/targetRun command"
       ],
       "decidingAssertions": [
         "NativeQueueHoldPolicy drains success FIFO once, holds Stop/failure, admits explicit Resume/selected Send/direct Send, refuses active head; continuation/Queue/Steer fallback never release prior held work. Late old terminal/checkpoint cannot re-hold replacement.",
         "QueuedStartRecovery preserves full message/skills/attachment bytes, modes, root/plan and queue position; explicit Retry creates a distinct attempt, stale start cannot change it.",
         "Budget/QueuedRunSend bound queued admission. LegacyV1RecoveryAcceptance preserves original source bytes, rebuilds/idempotently imports held rows with no automatic offers; only explicit release starts work.",
-        "Client disposition preserves normal/alternate Queue/Steer intent and refuses idle steer. Real QueuedRunsControl shortcut fixture dispatches exact native queue-head/active-run identifiers, ignores repeats/unavailable shortcuts and sends the selected held run with exact environment/thread/run; the strip exposes no blanket Resume. Composer markup asserts Queue availability alongside Stop."
+        "Client disposition preserves normal/alternate Queue/Steer intent and refuses idle steer. Real QueuedRunsControl shortcut fixture dispatches exact native queue-head/active-run identifiers, ignores repeats/unavailable shortcuts and sends the selected held run with exact environment/thread/run; the control exposes no blanket Resume. Composer markup asserts Queue availability alongside Stop."
       ],
       "checks": {
         "server": [
@@ -224,7 +224,7 @@
         "web-unit": ["src/scient/threadQueue/disposition.test.ts"],
         "web-browser": [
           "src/components/chat/ComposerPrimaryActions.scient.browser.test.tsx",
-          "src/scient/threadQueue/queueShortcuts.browser.test.tsx"
+          "src/components/chat/QueuedRunsControl.scient.browser.test.tsx"
         ]
       },
       "limits": [
