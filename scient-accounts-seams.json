@@ -269,6 +269,11 @@
       "path": "apps/server/src/mcp/toolkits/worktree/registration.test.ts",
       "anchor": "Scient Accounts: keep MCP fixtures away",
       "purpose": "Provide an in-memory Accounts owner to MCP registration tests."
+    },
+    {
+      "path": "apps/server/src/scient/skills/ScientV2SkillTurn.test.ts",
+      "anchor": "Scient Accounts: retain account grants during skill-scope changes.",
+      "purpose": "Keep skill-authority tests complete when every provider session also receives account tools."
     }
   ]
 }

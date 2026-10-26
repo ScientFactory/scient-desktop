@@ -242,3 +242,32 @@ it.effect(
       ).toBe(true);
     }),
 );
+
+it.effect("compares a current linked password after an earlier autofill cached its old value", () =>
+  Effect.gen(function* () {
+    let value = syntheticValue();
+    const { service } = yield* makeHarness({
+      sourceOverrides: {
+        onePassword: () =>
+          Effect.succeed({
+            label: "Synthetic vault",
+            resolve: () => Effect.sync(() => Redacted.make(value)),
+          }),
+      },
+    });
+    yield* service.connectOnePassword({ mode: "desktop", accountName: "Synthetic" });
+    const { accountId } = yield* service.save({
+      ...website(),
+      secrets: { password: { type: "1password", reference: "op://vault/item/password" } },
+    });
+    yield* service.fillValues(accountId, "https://example.com");
+    value = syntheticValue();
+    expect(
+      yield* service.matchSignIn({
+        origin: "https://example.com",
+        username: "synthetic-user",
+        password: value,
+      }),
+    ).toEqual({ result: "same", accountId });
+  }),
+);

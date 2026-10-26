@@ -835,6 +835,7 @@ export const layer = Layer.effect(
               NodeCrypto.createHash("sha256").update(Redacted.value(value)).digest();
             const submitted = digest(Redacted.make(input.password));
             for (const account of candidates) {
+              cache.delete(account.summary.accountId);
               const resolved = yield* resolve(account.summary.accountId, ["password"]);
               if (
                 resolved.password &&
