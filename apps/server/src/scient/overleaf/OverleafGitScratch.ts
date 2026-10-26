@@ -47,5 +47,13 @@ export async function makeGitScratch(runtimeRoot: string, windows: boolean) {
     if (/^git-[A-Za-z0-9-]+$/u.test(name))
       await NodeFSP.rm(NodePath.join(root, name), { recursive: true, force: true });
   }
-  return { create: () => privateDirectory(NodePath.join(root, `git-${NodeCrypto.randomUUID()}`)) };
+  return {
+    create: () => privateDirectory(NodePath.join(root, `git-${NodeCrypto.randomUUID()}`)),
+    remove: (directory: string) =>
+      NodeFSP.rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: windows ? 5 : 0,
+      }),
+  };
 }

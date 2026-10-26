@@ -12,7 +12,13 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 const acl = (path: string) =>
   JSON.parse(
     NodeChildProcess.execFileSync(
-      "powershell.exe",
+      NodePath.join(
+        process.env.SystemRoot ?? "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      ),
       [
         "-NoLogo",
         "-NoProfile",
@@ -20,7 +26,20 @@ const acl = (path: string) =>
         "-Command",
         "$a=Get-Acl -LiteralPath $env:SCIENT_TEST_ACL_PATH; @{protected=$a.AreAccessRulesProtected; owner=$a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value; rules=@($a.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]) | ForEach-Object { @{sid=$_.IdentityReference.Value; inherited=$_.IsInherited; type=$_.AccessControlType.ToString()} })} | ConvertTo-Json -Depth 4 -Compress",
       ],
-      { encoding: "utf8", env: { ...process.env, SCIENT_TEST_ACL_PATH: path } },
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PSModulePath: NodePath.join(
+            process.env.SystemRoot ?? "C:\\Windows",
+            "System32",
+            "WindowsPowerShell",
+            "v1.0",
+            "Modules",
+          ),
+          SCIENT_TEST_ACL_PATH: path,
+        },
+      },
     ),
   ) as {
     protected: boolean;
