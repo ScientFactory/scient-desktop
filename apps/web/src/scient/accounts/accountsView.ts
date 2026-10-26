@@ -245,3 +245,33 @@ export function writableOnePasswordVaults(status: AccountStoresStatus["onePasswo
     ? (status.vaults?.filter((vault) => !vault.readOnly) ?? [])
     : [];
 }
+
+type MergedSource = ReturnType<typeof mergeSourceProfiles>[number];
+type MergedSourceProfile = MergedSource["profiles"][number];
+
+/**
+ * The source profile an existing Scient profile came from, for profiles imported before Scient
+ * kept the source: the only source profile with the same name, or the only profile of the browser
+ * the upstream import named it after ("Chrome", "Chrome 2").
+ */
+export function matchExistingProfile(
+  name: string,
+  sources: ReadonlyArray<MergedSource>,
+): { readonly source: MergedSource; readonly profile: MergedSourceProfile } | undefined {
+  const key = name.trim().toLowerCase();
+  const byName = sources.flatMap((source) =>
+    source.profiles
+      .filter((profile) => profile.name.trim().toLowerCase() === key)
+      .map((profile) => ({ source, profile })),
+  );
+  if (byName.length === 1) return byName[0];
+  if (byName.length > 1) return undefined;
+  const browser = sources.filter((source) =>
+    new RegExp(
+      `^${source.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?: \\d+)?$`,
+    ).test(key),
+  );
+  return browser.length === 1 && browser[0]!.profiles.length === 1
+    ? { source: browser[0]!, profile: browser[0]!.profiles[0]! }
+    : undefined;
+}

@@ -19,6 +19,7 @@ import {
   mergeSourceProfiles,
   secretFields,
   siteMatchesUrl,
+  matchExistingProfile,
 } from "./accountsView";
 
 function website(profileId?: string): AccountSummary {
@@ -215,4 +216,34 @@ it("offers connected vaults until a write rejection marks one read-only", () => 
     }).map((vault) => vault.id),
   ).toEqual(["available"]);
   expect(writableOnePasswordVaults({ state: "not-connected" })).toEqual([]);
+});
+
+describe("matchExistingProfile", () => {
+  const chrome = {
+    id: "chrome" as const,
+    name: "Chrome",
+    profiles: [
+      { directory: "Default", name: "Work" },
+      { directory: "Profile 1", name: "Personal" },
+    ],
+  };
+  const firefox = {
+    id: "firefox" as const,
+    name: "Firefox",
+    profiles: [{ directory: "a", name: "Main" }],
+  };
+
+  it.each([
+    ["the only source profile with the same name", "work", [chrome, firefox], "Work"],
+    ["the only profile of the browser it was named after", "Firefox 2", [chrome, firefox], "Main"],
+    ["nothing when the browser has several profiles", "Chrome", [chrome, firefox], undefined],
+    [
+      "nothing when the name is ambiguous",
+      "Work",
+      [chrome, { ...firefox, profiles: [{ directory: "b", name: "Work" }] }],
+      undefined,
+    ],
+  ])("returns %s", (_, name, sources, expected) => {
+    expect(matchExistingProfile(name, sources)?.profile.name).toBe(expected);
+  });
 });

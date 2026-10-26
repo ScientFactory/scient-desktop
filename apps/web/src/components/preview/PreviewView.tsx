@@ -79,7 +79,6 @@ import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
-import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
 import { useBrowserPdfExportOwner } from "~/scient/documentExport/browserPdfExportOwner";
@@ -98,8 +97,10 @@ import {
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { ScientPreviewExportActions } from "~/scient/pdf/ScientPreviewExportActions";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
+// SCIENT-FORK:START — Scient Accounts: browser profile switcher.
+import { ProfileSwitcher } from "~/scient/accounts/ProfileSwitcher";
+// SCIENT-FORK:END
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -952,14 +953,24 @@ export function PreviewView({
           isUnreachable ? "Page didn't load. Pick is unavailable until the page renders" : undefined
         }
         leadingActions={
-          activeProfileId !== browserDefaults.profileId ? (
-            <Tooltip>
-              <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
-                <span className="truncate">{activeProfileName}</span>
-              </TooltipTrigger>
-              <TooltipPopup side="top">{activeProfileName}</TooltipPopup>
-            </Tooltip>
-          ) : null
+          // SCIENT-FORK:START — Scient Accounts: profile switcher replaces the profile-name badge.
+          <ProfileSwitcher
+            environmentId={threadRef.environmentId}
+            activeProfileId={activeProfileId}
+            onOpenInProfile={(profileId) =>
+              void openPreviewSession({
+                openPreview: open,
+                threadRef,
+                ...(url ? { url } : {}),
+                viewport,
+                profileId,
+              }).then((result) => {
+                if (result._tag === "Success")
+                  useRightPanelStore.getState().openBrowser(threadRef, result.value.tabId);
+              })
+            }
+          />
+          // SCIENT-FORK:END
         }
         trailingActions={
           moreMenuActions ? (

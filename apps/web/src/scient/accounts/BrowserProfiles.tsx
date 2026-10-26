@@ -1,5 +1,5 @@
 import * as DateTime from "effect/DateTime";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   BROWSER_IMPORT_FAILURE_COPY,
   BROWSER_PROFILE_MAX_COUNT,
@@ -14,11 +14,11 @@ import {
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
-import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { DraftInput } from "~/components/ui/draft-input";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
 import { Checkbox } from "~/components/ui/checkbox";
+import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
 import {
   Dialog,
   DialogPopup,
@@ -46,13 +46,14 @@ import { randomUUID } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { toastManager } from "~/components/ui/toast";
 import { accountsState } from "./accountsState";
+import { ProfilePicture } from "./ProfilePicture";
 import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeDialog } from "./AccountControls";
 import {
   importProfileName,
   mergeProfiles,
+  matchExistingProfile,
   mergeSourceProfiles,
-  profilePresentation,
 } from "./accountsView";
 
 const decodeProfileUpdate = Schema.decodeOption(BrowserProfileRecordUpdateInput);
@@ -60,30 +61,10 @@ const decodeProfileUpdate = Schema.decodeOption(BrowserProfileRecordUpdateInput)
 /** The desktop lists at most this many signed-in sites per profile. */
 const SIGNED_IN_SITES_LIMIT = 50;
 
+type SourceMatch = NonNullable<ReturnType<typeof matchExistingProfile>>;
+
 function profileError() {
   toastManager.add({ type: "error", title: "Browser profile action failed" });
-}
-
-function ProfilePicture({
-  name,
-  picture,
-  color,
-}: {
-  name: string;
-  picture?: string | undefined;
-  color?: string | undefined;
-}) {
-  const visual = profilePresentation({ picture, color });
-  return visual.picture ? (
-    <img alt="" src={visual.picture} className="size-9 rounded-full object-cover" />
-  ) : (
-    <span
-      className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-sm"
-      style={visual.color ? { backgroundColor: visual.color } : undefined}
-    >
-      {name.slice(0, 1).toUpperCase()}
-    </span>
-  );
 }
 
 function SignedInSites({
@@ -396,6 +377,55 @@ export function BrowserProfiles({
       if (Option.isSome(metadata)) await updateRecord(metadata.value);
     }
   };
+  const linkSource = async (profileId: string, match: SourceMatch) => {
+    const metadata = decodeProfileUpdate({
+      profileId,
+      ...(match.profile.picture ? { picture: match.profile.picture } : {}),
+      ...(match.profile.color ? { color: match.profile.color } : {}),
+      source: {
+        browser: match.source.id,
+        profileName: match.profile.name,
+        ...(match.profile.email ? { email: match.profile.email } : {}),
+        importedAt: DateTime.formatIso(DateTime.nowUnsafe()),
+      },
+    });
+    if (Option.isSome(metadata)) await updateRecord(metadata.value);
+  };
+  const loadSources = async () =>
+    previewBridge
+      ? mergeSourceProfiles(
+          await previewBridge.listBrowserImportSources(),
+          (await window.desktopBridge?.accounts?.sourceProfiles().catch(() => [])) ?? [],
+        )
+      : [];
+  const [linking, setLinking] = useState<string | null>(null);
+  const [sources, setSources] = useState<Awaited<ReturnType<typeof loadSources>>>([]);
+  const unlinked = profiles
+    .filter((profile) => !isBuiltInBrowserProfileId(profile.id) && !profile.record.source)
+    .map((profile) => `${profile.id}\u0000${profile.name}`)
+    .join("\u0001");
+  // Profiles imported before Scient kept their source get its picture, email and name once.
+  const linkExisting = useEffectEvent((loaded: Awaited<ReturnType<typeof loadSources>>) => {
+    setSources(loaded);
+    for (const profile of profiles) {
+      if (isBuiltInBrowserProfileId(profile.id) || profile.record.source) continue;
+      const match = matchExistingProfile(profile.name, loaded);
+      if (match) void linkSource(profile.id, match);
+    }
+  });
+  const fetchSources = useEffectEvent(loadSources);
+  useEffect(() => {
+    if (!canWrite || !hydrated || unlinked === "") return;
+    let live = true;
+    void fetchSources()
+      .then((loaded) => {
+        if (live) linkExisting(loaded);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [canWrite, hydrated, unlinked]);
   return (
     <SettingsSection
       id="accounts-browser-profiles"
@@ -481,10 +511,6 @@ export function BrowserProfiles({
                       }}
                     />
                   )}
-                  {profile.id !== DEFAULT_BROWSER_PROFILE_ID &&
-                  settings.browserDefaultProfileId === profile.id ? (
-                    <Badge>Default</Badge>
-                  ) : null}
                 </div>
                 {profile.record.source ? (
                   <span className="text-xs text-muted-foreground">
@@ -531,6 +557,20 @@ export function BrowserProfiles({
                 </MenuCheckboxItem>
                 {isBuiltInBrowserProfileId(profile.id) ? null : (
                   <MenuItem onClick={() => setRenaming(profile.id)}>Rename</MenuItem>
+                )}
+                {isBuiltInBrowserProfileId(profile.id) ||
+                profile.record.source ||
+                !previewBridge ? null : (
+                  <MenuItem
+                    onClick={() => {
+                      setLinking(profile.id);
+                      void loadSources()
+                        .then(setSources)
+                        .catch(() => undefined);
+                    }}
+                  >
+                    Match to browser profile…
+                  </MenuItem>
                 )}
                 <MenuItem onClick={() => setScopeProfile(profile.record)}>Available in…</MenuItem>
                 <MenuItem
@@ -581,6 +621,40 @@ export function BrowserProfiles({
           }
         />
       ))}
+      {linking ? (
+        <Dialog open onOpenChange={(open) => !open && setLinking(null)}>
+          <DialogPopup>
+            <DialogHeader>
+              <DialogTitle>Match to browser profile</DialogTitle>
+            </DialogHeader>
+            <DialogPanel>
+              <DiscoveryList>
+                {sources.flatMap((source) =>
+                  source.profiles.map((sourceProfile) => (
+                    <DiscoveryListRow
+                      key={`${source.id}:${sourceProfile.directory}`}
+                      icon={
+                        <ProfilePicture
+                          name={sourceProfile.name}
+                          picture={sourceProfile.picture}
+                          color={sourceProfile.color}
+                        />
+                      }
+                      title={sourceProfile.name}
+                      description={[source.name, sourceProfile.email].filter(Boolean).join(" · ")}
+                      onClick={() => {
+                        const profileId = linking;
+                        setLinking(null);
+                        void act(() => linkSource(profileId, { source, profile: sourceProfile }));
+                      }}
+                    />
+                  )),
+                )}
+              </DiscoveryList>
+            </DialogPanel>
+          </DialogPopup>
+        </Dialog>
+      ) : null}
       {scopeProfile ? (
         <ScopeDialog
           environmentId={environmentId}
