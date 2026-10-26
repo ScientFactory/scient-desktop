@@ -11,7 +11,7 @@
       "sourceWidth": 300,
       "sourceHeight": 300,
       "sourceFormat": "png",
-      "outputBytes": 3170
+      "outputBytes": 3218
     }
   },
   {
@@ -19,14 +19,17 @@
     "names": ["activecampaign"],
     "website": "https://www.activecampaign.com",
     "source": {
-      "kind": "official",
-      "url": "https://www.activecampaign.com/dist/favicon-180x180.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
-      "sourceWidth": 180,
-      "sourceHeight": 180,
-      "sourceFormat": "webp",
-      "outputBytes": 3650
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/active-campaign-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
+      "rendering": "mark",
+      "sourceWidth": 256,
+      "sourceHeight": 391,
+      "sourceFormat": "svg",
+      "outputBytes": 3700
     }
   },
   {
@@ -34,14 +37,17 @@
     "names": ["adobe", "adobe-for-creativity"],
     "website": "https://www.adobe.com",
     "source": {
-      "kind": "codex-plugin",
-      "url": "https://files.openai.com/content?id=file_0000000000b4720ca05473965adda507&cdn=1&cp=pi&ma=31017600&ts=0&p=pi&cid=1&sig=9c83a384615d57139ad7d061085b80c28688ba0a35d60b1bf150a24d56b4546d&v=0",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/adobe.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 2698
+      "sourceWidth": 91,
+      "sourceHeight": 80,
+      "sourceFormat": "svg",
+      "outputBytes": 2982
     }
   },
   {
@@ -52,11 +58,12 @@
       "kind": "website",
       "url": "https://cdn.prod.website-files.com/642adcaf364024552e71df01/6acf3def6456cdb50f820e2e_favicon-512.jpg",
       "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
+      "rendering": "mark",
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 1290
+      "outputBytes": 1588,
+      "mode": "mark"
     }
   },
   {
@@ -64,17 +71,17 @@
     "names": ["airtable"],
     "website": "https://www.airtable.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/airtable.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#18BFFF",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/airtable.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://airtable.com/newsroom",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 215,
       "sourceFormat": "svg",
-      "outputBytes": 2942
+      "outputBytes": 3114
     }
   },
   {
@@ -89,7 +96,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 3100
+      "outputBytes": 3156
     }
   },
   {
@@ -104,7 +111,7 @@
       "sourceWidth": 96,
       "sourceHeight": 96,
       "sourceFormat": "svg",
-      "outputBytes": 4274
+      "outputBytes": 4372
     }
   },
   {
@@ -119,7 +126,7 @@
       "sourceWidth": 239,
       "sourceHeight": 189,
       "sourceFormat": "svg",
-      "outputBytes": 2224,
+      "outputBytes": 2270,
       "mode": "mark",
       "background": "#000000"
     }
@@ -129,29 +136,36 @@
     "names": ["amd", "amd-skills"],
     "website": "https://www.amd.com",
     "source": {
-      "kind": "codex-plugin",
-      "url": "https://files.openai.com/content?id=file_00000000b23081f6b00e59ebc98c3c4c&cdn=1&cp=pi&ma=32054400&ts=0&p=pi&cid=8&sig=67537e125fd6635afe9d0011d6ce333d888299eb7d69ad41634491915c0f1e9f&v=0",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
-      "sourceWidth": 535,
-      "sourceHeight": 535,
-      "sourceFormat": "png",
-      "outputBytes": 2370
-    }
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/amd.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
+      "rendering": "mark",
+      "sourceWidth": 512,
+      "sourceHeight": 123,
+      "sourceFormat": "svg",
+      "outputBytes": 1600
+    },
+    "omitted": "Available vector artwork is a wide wordmark; omitted after row-size visual review."
   },
   {
     "key": "amplitude",
     "names": ["amplitude"],
     "website": "https://amplitude.com",
     "source": {
-      "kind": "website",
-      "url": "https://amplitude.com/nextjs-public/favicon/apple-touch-icon.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/amplitude-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 180,
-      "sourceHeight": 180,
-      "sourceFormat": "png",
-      "outputBytes": 4506
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "svg",
+      "outputBytes": 4750
     }
   },
   {
@@ -189,17 +203,17 @@
     "names": ["appwrite"],
     "website": "https://appwrite.io",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/appwrite.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#FD366E",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/appwrite.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://appwrite.io/assets",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 90,
+      "sourceHeight": 91,
       "sourceFormat": "svg",
-      "outputBytes": 2226
+      "outputBytes": 2192
     }
   },
   {
@@ -207,17 +221,17 @@
     "names": ["asana"],
     "website": "https://asana.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/asana.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#F06A6A",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/asana-logo.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://asana.com/brand",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 251,
+      "sourceHeight": 232,
       "sourceFormat": "svg",
-      "outputBytes": 2598
+      "outputBytes": 2666
     }
   },
   {
@@ -232,7 +246,7 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "svg",
-      "outputBytes": 3026
+      "outputBytes": 3176
     }
   },
   {
@@ -247,7 +261,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 3140
+      "outputBytes": 3190
     }
   },
   {
@@ -262,17 +276,17 @@
     ],
     "website": "https://www.atlassian.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/atlassian.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#0052CC",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/atlassian.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://atlassian.design/resources/logo-library",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 2664
+      "outputBytes": 2572
     }
   },
   {
@@ -280,17 +294,17 @@
     "names": ["auth0"],
     "website": "https://auth0.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/auth0.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#EB5424",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/auth0.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://auth0.com",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 3908
+      "outputBytes": 4094
     }
   },
   {
@@ -314,14 +328,17 @@
     ],
     "website": "https://aws.amazon.com",
     "source": {
-      "kind": "official",
-      "url": "https://github.com/aws.png?size=460",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/aws_light.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 400,
-      "sourceHeight": 400,
-      "sourceFormat": "png",
-      "outputBytes": 3834
+      "sourceWidth": 304,
+      "sourceHeight": 182,
+      "sourceFormat": "svg",
+      "outputBytes": 4554
     }
   },
   {
@@ -346,7 +363,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 2220
+      "outputBytes": 2362
     }
   },
   {
@@ -361,7 +378,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 2216
+      "outputBytes": 2318
     }
   },
   {
@@ -391,25 +408,27 @@
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 2574
-    }
+      "outputBytes": 2574,
+      "mode": "mark"
+    },
+    "omitted": "Only an extremely wide wordmark or a 16 px favicon is available; neither is legible in a row tile."
   },
   {
     "key": "box",
     "names": ["box"],
     "website": "https://www.box.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/box.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#0061D5",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/box.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.box.com/en-gb/about-us/press",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 512,
+      "sourceHeight": 277,
       "sourceFormat": "svg",
-      "outputBytes": 3936
+      "outputBytes": 4188
     }
   },
   {
@@ -425,7 +444,8 @@
       "sourceHeight": 460,
       "sourceFormat": "png",
       "outputBytes": 3520
-    }
+    },
+    "omitted": "Available artwork is a wordmark that is illegible in a row tile; omitted after whole-pack visual review."
   },
   {
     "key": "browser-use",
@@ -447,17 +467,17 @@
     "names": ["buildkite"],
     "website": "https://buildkite.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/buildkite.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#14CC80",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/buildkite-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://buildkite.com/brand-assets",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 171,
       "sourceFormat": "svg",
-      "outputBytes": 2318
+      "outputBytes": 1760
     }
   },
   {
@@ -465,14 +485,17 @@
     "names": ["canva"],
     "website": "https://www.canva.com",
     "source": {
-      "kind": "codex-catalog",
-      "url": "https://files.openai.com/content?id=file_000000000ee871fd807d17a056d79aa7&cdn=1&cp=pi&ma=30153600&ts=0&p=pi&cid=1&sig=07ea3990463c5d5c58deba9d55d8dfa10178b2a1cabb20fb0fdcf93fc218472b&v=0",
-      "rendering": "tile",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 3490
+      "kind": "svgl",
+      "url": "https://svgl.app/library/canva.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
+      "rendering": "mark",
+      "sourceWidth": 80,
+      "sourceHeight": 80,
+      "sourceFormat": "svg",
+      "outputBytes": 4812
     }
   },
   {
@@ -487,7 +510,7 @@
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 2122,
+      "outputBytes": 2128,
       "mode": "mark"
     }
   },
@@ -503,8 +526,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 1594
-    }
+      "outputBytes": 1646,
+      "mode": "mark"
+    },
+    "omitted": "Available artwork is a framed wordmark whose lettering is illegible in a row tile; omitted after visual review."
   },
   {
     "key": "chrome-devtools",
@@ -513,15 +538,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/googlechrome.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#4285F4",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://www.google.com/chrome",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 4336
+      "outputBytes": 4536
     }
   },
   {
@@ -551,7 +578,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 4158
+      "outputBytes": 4430
     }
   },
   {
@@ -566,7 +593,7 @@
       "sourceWidth": 1024,
       "sourceHeight": 1024,
       "sourceFormat": "png",
-      "outputBytes": 3078
+      "outputBytes": 3184
     }
   },
   {
@@ -596,7 +623,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 3446
+      "outputBytes": 3560
     }
   },
   {
@@ -604,32 +631,36 @@
     "names": ["clickhouse", "clickhouse-best-practices"],
     "website": "https://clickhouse.com",
     "source": {
-      "kind": "official",
-      "url": "https://clickhouse.com/icon0.svg?icon0.14ll1zwu0qk95.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "simple-icons",
+      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/clickhouse.svg",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#FFCC01",
-      "rendering": "tile",
-      "sourceWidth": 512,
-      "sourceHeight": 512,
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
+      "brandSource": "https://github.com/ClickHouse/ClickHouse/blob/12bd453a43819176d25ecf247033f6cb1af54beb/website/images/logo-clickhouse.svg",
+      "rendering": "mark",
+      "sourceWidth": 24,
+      "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 1128
+      "outputBytes": 996
     }
   },
   {
     "key": "clickup",
     "names": ["clickup"],
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/clickup.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#7B68EE",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/clickup.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://clickup.com/brand",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 64,
+      "sourceHeight": 64,
       "sourceFormat": "svg",
-      "outputBytes": 2550
+      "outputBytes": 3490
     },
     "website": "https://clickup.com"
   },
@@ -638,17 +669,17 @@
     "names": ["cloudflare", "cloudflare docs"],
     "website": "https://developers.cloudflare.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/cloudflare.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#F38020",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/cloudflare.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.cloudflare.com/logo/",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 116,
       "sourceFormat": "svg",
-      "outputBytes": 1944
+      "outputBytes": 1880
     }
   },
   {
@@ -656,17 +687,17 @@
     "names": ["cloudinary"],
     "website": "https://cloudinary.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/cloudinary.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#3448C5",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/cloudinary.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://cloudinary.com",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 168,
       "sourceFormat": "svg",
-      "outputBytes": 3768
+      "outputBytes": 4032
     }
   },
   {
@@ -688,17 +719,17 @@
     "key": "coda",
     "names": ["coda"],
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/coda.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#F46A54",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/coda-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://coda.io",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 275,
       "sourceFormat": "svg",
-      "outputBytes": 1536
+      "outputBytes": 1596
     },
     "website": "https://coda.io"
   },
@@ -707,17 +738,17 @@
     "names": ["coderabbit"],
     "website": "https://coderabbit.ai",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/coderabbit.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#FF570A",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/coderabbit-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.coderabbit.ai/brand",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 4362
+      "outputBytes": 4518
     }
   },
   {
@@ -732,7 +763,7 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 2960
+      "outputBytes": 3088
     }
   },
   {
@@ -762,7 +793,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 5572
+      "outputBytes": 5800
     }
   },
   {
@@ -776,7 +807,7 @@
       "sourceWidth": 200,
       "sourceHeight": 200,
       "sourceFormat": "svg",
-      "outputBytes": 3182
+      "outputBytes": 3296
     },
     "website": "https://consensus.app"
   },
@@ -800,17 +831,17 @@
     "names": ["convex"],
     "website": "https://convex.dev",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/convex.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#EE342F",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/convex.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.convex.dev/brand",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 128,
+      "sourceHeight": 132,
       "sourceFormat": "svg",
-      "outputBytes": 4582
+      "outputBytes": 4538
     }
   },
   {
@@ -820,15 +851,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/coursera.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#0056D2",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://about.coursera.org/press",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 4414
+      "outputBytes": 4620
     }
   },
   {
@@ -843,7 +876,7 @@
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 6164
+      "outputBytes": 6486
     }
   },
   {
@@ -858,7 +891,7 @@
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 4242
+      "outputBytes": 4488
     }
   },
   {
@@ -868,15 +901,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/dash0.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#EA3D3B",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://www.dash0.com",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 2298
+      "outputBytes": 2390
     }
   },
   {
@@ -884,17 +919,17 @@
     "names": ["databricks"],
     "website": "https://developers.databricks.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/databricks.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#FF3621",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/databricks-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.databricks.com",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 276,
       "sourceFormat": "svg",
-      "outputBytes": 6670
+      "outputBytes": 6986
     }
   },
   {
@@ -902,17 +937,17 @@
     "names": ["datadog"],
     "website": "https://www.datadoghq.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/datadog.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#632CA6",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/datadog.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.datadoghq.com/about/resources",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 274,
       "sourceFormat": "svg",
-      "outputBytes": 6144
+      "outputBytes": 6582
     }
   },
   {
@@ -927,7 +962,7 @@
       "sourceWidth": 121,
       "sourceHeight": 120,
       "sourceFormat": "svg",
-      "outputBytes": 5438
+      "outputBytes": 5582
     }
   },
   {
@@ -957,7 +992,7 @@
       "sourceWidth": 96,
       "sourceHeight": 96,
       "sourceFormat": "svg",
-      "outputBytes": 3578
+      "outputBytes": 3666
     }
   },
   {
@@ -972,7 +1007,7 @@
       "sourceWidth": 142,
       "sourceHeight": 140,
       "sourceFormat": "svg",
-      "outputBytes": 2204
+      "outputBytes": 2380
     }
   },
   {
@@ -990,7 +1025,7 @@
       "sourceWidth": 128,
       "sourceHeight": 128,
       "sourceFormat": "png",
-      "outputBytes": 1658
+      "outputBytes": 1724
     },
     "website": "https://deepwiki.com"
   },
@@ -1006,7 +1041,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 3730
+      "outputBytes": 3860
     }
   },
   {
@@ -1014,17 +1049,17 @@
     "names": ["discord"],
     "website": "https://discord.com",
     "source": {
-      "kind": "official",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/discord.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "color": "#ffffff",
-      "background": "#5865f2",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/discord.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 199,
       "sourceFormat": "svg",
-      "outputBytes": 3006
+      "outputBytes": 3210
     }
   },
   {
@@ -1047,17 +1082,17 @@
     "names": ["dropbox"],
     "website": "https://www.dropbox.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/dropbox.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#0061FF",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/dropbox.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.dropbox.com/branding",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 128,
+      "sourceHeight": 128,
       "sourceFormat": "svg",
-      "outputBytes": 4806
+      "outputBytes": 5442
     }
   },
   {
@@ -1065,15 +1100,19 @@
     "names": ["duckdb", "duckdb-skills"],
     "website": "https://duckdb.org",
     "source": {
-      "kind": "official",
-      "url": "https://duckdb.org/images/favicon/safari-pinned-tab.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "simple-icons",
+      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/duckdb.svg",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#FFF000",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
+      "brandSource": "https://duckdb.org",
       "rendering": "mark",
-      "sourceWidth": 100,
-      "sourceHeight": 100,
+      "sourceWidth": 24,
+      "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 2496
+      "outputBytes": 2662
     }
   },
   {
@@ -1084,11 +1123,12 @@
       "kind": "official",
       "url": "https://duendesoftware.com/favicon/favicon.svg",
       "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
+      "rendering": "mark",
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "svg",
-      "outputBytes": 3626
+      "outputBytes": 2920,
+      "mode": "mark"
     }
   },
   {
@@ -1096,17 +1136,17 @@
     "names": ["dynatrace"],
     "website": "https://www.dynatrace.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/dynatrace.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#1496FF",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/dynatrace-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.dynatrace.com/company/press-kit/",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 260,
       "sourceFormat": "svg",
-      "outputBytes": 4180
+      "outputBytes": 3744
     }
   },
   {
@@ -1114,14 +1154,17 @@
     "names": ["exa"],
     "website": "https://exa.ai",
     "source": {
-      "kind": "official",
-      "url": "https://exa.ai/favicon.ico",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/exa-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
+      "rendering": "mark",
       "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 3244
+      "sourceHeight": 311,
+      "sourceFormat": "svg",
+      "outputBytes": 3738
     }
   },
   {
@@ -1130,15 +1173,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/excalidraw.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#6965DB",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://excalidraw.com",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 5010
+      "outputBytes": 5284
     },
     "website": "https://excalidraw.com"
   },
@@ -1147,17 +1192,17 @@
     "names": ["expo"],
     "website": "https://expo.dev",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/expo.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#1C2024",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/expo.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://expo.dev/brand/",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 231,
       "sourceFormat": "svg",
-      "outputBytes": 1926
+      "outputBytes": 2250
     }
   },
   {
@@ -1165,17 +1210,17 @@
     "names": ["fastly", "fastly-agent-toolkit"],
     "website": "https://www.fastly.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/fastly.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#FF282D",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/fastly.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://assets.fastly.com/style-guide/docs/",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 512,
+      "sourceHeight": 199,
       "sourceFormat": "svg",
-      "outputBytes": 3662
+      "outputBytes": 3770
     }
   },
   {
@@ -1186,11 +1231,12 @@
       "kind": "website",
       "url": "https://docs.voxel51.com/_static/favicon/favicon-512.png",
       "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
+      "rendering": "mark",
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 3632
+      "outputBytes": 4924,
+      "mode": "mark"
     }
   },
   {
@@ -1198,14 +1244,17 @@
     "names": ["figma"],
     "website": "https://www.figma.com",
     "source": {
-      "kind": "codex-catalog",
-      "url": "https://files.openai.com/content?id=file_00000000506c723082a1829c75222641&cdn=1&cp=pi&ma=32745600&ts=0&p=pi&cid=8&sig=51027ff0441b7b917de8a4ddb2e43432c957574a3f152621ae7e541c404a6d69&v=0",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/figma.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 2558
+      "sourceWidth": 54,
+      "sourceHeight": 80,
+      "sourceFormat": "svg",
+      "outputBytes": 2548
     }
   },
   {
@@ -1213,17 +1262,17 @@
     "names": ["firebase"],
     "website": "https://firebase.google.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/firebase.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#DD2C00",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/firebase.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://firebase.google.com/brand-guidelines",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 600,
+      "sourceHeight": 600,
       "sourceFormat": "svg",
-      "outputBytes": 5104
+      "outputBytes": 2916
     }
   },
   {
@@ -1231,14 +1280,17 @@
     "names": ["firecrawl"],
     "website": "https://firecrawl.dev",
     "source": {
-      "kind": "official",
-      "url": "https://firecrawl.dev/apple-touch-icon.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/firecrawl.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 180,
-      "sourceHeight": 180,
-      "sourceFormat": "png",
-      "outputBytes": 2604
+      "sourceWidth": 50,
+      "sourceHeight": 72,
+      "sourceFormat": "svg",
+      "outputBytes": 2784
     }
   },
   {
@@ -1252,7 +1304,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 1812
+      "outputBytes": 1756
     },
     "website": "https://fireflies.ai"
   },
@@ -1264,11 +1316,12 @@
       "kind": "official",
       "url": "https://www.fullstory.com/favicon.svg?v=7cac1bc6d731746740d72903d25cd5bf",
       "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
+      "rendering": "mark",
       "sourceWidth": 61,
       "sourceHeight": 61,
       "sourceFormat": "svg",
-      "outputBytes": 3214
+      "outputBytes": 2564,
+      "mode": "mark"
     }
   },
   {
@@ -1300,7 +1353,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 1482
+      "outputBytes": 1520
     }
   },
   {
@@ -1308,16 +1361,17 @@
     "names": ["github"],
     "website": "https://github.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/github.svg",
-      "color": "#181717",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/github-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 250,
       "sourceFormat": "svg",
-      "outputBytes": 2566
+      "outputBytes": 2946
     }
   },
   {
@@ -1325,35 +1379,35 @@
     "names": ["gitkraken"],
     "website": "https://gitkraken.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/gitkraken.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#179287",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/gitkraken.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.gitkraken.com",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 224,
       "sourceFormat": "svg",
-      "outputBytes": 5724
+      "outputBytes": 6216
     }
   },
   {
     "key": "gitlab",
-    "names": ["gitlab"],
+    "names": ["gitlab", "GitLab (Beta)"],
     "website": "https://gitlab.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/gitlab.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#FC6D26",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/gitlab.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://about.gitlab.com/press/press-kit/",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 32,
+      "sourceHeight": 32,
       "sourceFormat": "svg",
-      "outputBytes": 2542
+      "outputBytes": 3212
     }
   },
   {
@@ -1361,14 +1415,17 @@
     "names": ["gmail"],
     "website": "https://mail.google.com",
     "source": {
-      "kind": "official",
-      "url": "https://fonts.gstatic.com/s/i/productlogos/gmail_2020q4/v8/192px.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/gmail.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 192,
-      "sourceHeight": 192,
+      "sourceWidth": 512,
+      "sourceHeight": 399,
       "sourceFormat": "svg",
-      "outputBytes": 2680
+      "outputBytes": 2660
     }
   },
   {
@@ -1376,14 +1433,17 @@
     "names": ["gcal", "google calendar"],
     "website": "https://calendar.google.com",
     "source": {
-      "kind": "official",
-      "url": "https://fonts.gstatic.com/s/i/productlogos/calendar_2020q4/v8/192px.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
-      "sourceWidth": 192,
-      "sourceHeight": 192,
+      "kind": "svgl",
+      "url": "https://svgl.app/library/google-calendar.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
+      "rendering": "mark",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
       "sourceFormat": "svg",
-      "outputBytes": 2880
+      "outputBytes": 2620
     }
   },
   {
@@ -1406,17 +1466,17 @@
     ],
     "website": "https://cloud.google.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/googlecloud.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#4285F4",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/google-cloud.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://cloud.google.com",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 800,
+      "sourceHeight": 800,
       "sourceFormat": "svg",
-      "outputBytes": 2964
+      "outputBytes": 3262
     }
   },
   {
@@ -1424,14 +1484,17 @@
     "names": ["gdrive", "google drive"],
     "website": "https://drive.google.com",
     "source": {
-      "kind": "codex-plugin",
-      "url": "https://files.openai.com/content?id=file_000000008c1c81f5a1d8d475c7d49acd&cdn=1&cp=pi&ma=31622400&ts=0&p=pi&cid=8&sig=aac55b1ecc7e2356796e63877fa4b67d0da5f7e14d8efcf08cb91a7802d36755&v=0",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/drive.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 512,
-      "sourceHeight": 512,
-      "sourceFormat": "png",
-      "outputBytes": 2808
+      "sourceWidth": 87,
+      "sourceHeight": 78,
+      "sourceFormat": "svg",
+      "outputBytes": 2942
     }
   },
   {
@@ -1442,11 +1505,12 @@
       "kind": "codex-app",
       "url": "https://files.openai.com/content?id=file_0000000059fc81f5a11e932239f99623&cdn=1&cp=pi&ma=32313600&ts=0&p=pi&cid=8&sig=f1b18f077f6f2f19be9d73141291d126f38a3184f46205078b3c9dfa4d7f3256&v=0",
       "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
+      "rendering": "mark",
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2490
+      "outputBytes": 2112,
+      "mode": "mark"
     }
   },
   {
@@ -1454,31 +1518,34 @@
     "names": ["grafana", "grafana-assistant", "grafana-cloud-mcp", "grafana-mcp"],
     "website": "https://grafana.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/grafana.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#F46800",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/grafana.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://grafana.com",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 279,
       "sourceFormat": "svg",
-      "outputBytes": 4612
+      "outputBytes": 4638
     }
   },
   {
     "key": "granola",
     "names": ["granola"],
     "source": {
-      "kind": "official",
-      "url": "https://www.granola.ai/favicon/apple-touch-icon.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
-      "sourceWidth": 180,
-      "sourceHeight": 180,
-      "sourceFormat": "png",
-      "outputBytes": 4118
+      "kind": "svgl",
+      "url": "https://svgl.app/library/granola-light.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
+      "rendering": "mark",
+      "sourceWidth": 32,
+      "sourceHeight": 32,
+      "sourceFormat": "svg",
+      "outputBytes": 3698
     },
     "website": "https://www.granola.ai"
   },
@@ -1502,15 +1569,17 @@
     "names": ["growthbook"],
     "website": "https://growthbook.io",
     "source": {
-      "kind": "official",
-      "url": "https://github.com/growthbook.png?size=460",
-      "rendering": "mark",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/growth-book-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 329,
-      "sourceHeight": 329,
-      "sourceFormat": "png",
-      "outputBytes": 3598
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
+      "rendering": "mark",
+      "sourceWidth": 256,
+      "sourceHeight": 272,
+      "sourceFormat": "svg",
+      "outputBytes": 3826
     }
   },
   {
@@ -1525,7 +1594,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 3080
+      "outputBytes": 3184
     }
   },
   {
@@ -1535,12 +1604,12 @@
       "kind": "official",
       "url": "https://hex.tech/favicon.svg",
       "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
+      "rendering": "mark",
       "sourceWidth": 280,
       "sourceHeight": 280,
       "sourceFormat": "svg",
-      "outputBytes": 1866,
-      "mode": "tile",
+      "outputBytes": 1854,
+      "mode": "mark",
       "background": "#01011b"
     },
     "website": "https://hex.tech"
@@ -1557,7 +1626,7 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 4058
+      "outputBytes": 4150
     }
   },
   {
@@ -1572,7 +1641,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2890
+      "outputBytes": 2864
     }
   },
   {
@@ -1582,15 +1651,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/hostinger.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#673DE6",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://www.hostinger.com/newsroom",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 2130
+      "outputBytes": 2102
     }
   },
   {
@@ -1600,15 +1671,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/hubspot.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#FF7A59",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://www.hubspot.com/style-guide",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 3174
+      "outputBytes": 3270
     }
   },
   {
@@ -1616,17 +1689,17 @@
     "names": ["hugging face", "huggingface", "huggingface-skills"],
     "website": "https://huggingface.co",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/huggingface.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#FFD21E",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/hugging_face.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://huggingface.co/brand",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 95,
+      "sourceHeight": 88,
       "sourceFormat": "svg",
-      "outputBytes": 4970
+      "outputBytes": 5020
     }
   },
   {
@@ -1641,25 +1714,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 2228
-    }
-  },
-  {
-    "key": "imessage",
-    "names": ["imessage"],
-    "website": "https://www.apple.com",
-    "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/imessage.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#34DA50",
-      "mode": "mark",
-      "brandSource": "https://commons.wikimedia.org/wiki/File:IMessage_logo.svg",
-      "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
-      "sourceFormat": "svg",
-      "outputBytes": 2546
+      "outputBytes": 2740
     }
   },
   {
@@ -1698,17 +1753,17 @@
     "names": ["intercom"],
     "website": "https://www.intercom.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/intercom.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#6AFDEF",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/intercom-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.intercom.com/press",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 263,
       "sourceFormat": "svg",
-      "outputBytes": 1976
+      "outputBytes": 1936
     }
   },
   {
@@ -1716,17 +1771,17 @@
     "names": ["jfrog"],
     "website": "https://jfrog.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/jfrog.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#40BE46",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/jfrog.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://jfrog.com/brand-guidelines",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 248,
       "sourceFormat": "svg",
-      "outputBytes": 6604
+      "outputBytes": 6938
     }
   },
   {
@@ -1734,29 +1789,48 @@
     "names": ["kaggle"],
     "source": {
       "kind": "official",
-      "url": "https://github.com/kaggle.png?size=460",
+      "url": "https://github.com/Kaggle.png?size=460",
+      "mode": "mark",
       "rendering": "mark",
       "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 1626
+      "outputBytes": 1650
     },
     "website": "https://www.kaggle.com"
+  },
+  {
+    "key": "klaviyo",
+    "names": ["klaviyo"],
+    "website": "https://www.klaviyo.com",
+    "source": {
+      "kind": "official",
+      "url": "https://www.klaviyo.com/icons/icon-512x512.png",
+      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "rendering": "mark",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "png",
+      "outputBytes": 734
+    }
   },
   {
     "key": "langfuse",
     "names": ["langfuse", "langfuse-observability"],
     "website": "https://langfuse.com",
     "source": {
-      "kind": "website",
-      "url": "https://langfuse.com/apple-touch-icon.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/langfuse-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 180,
-      "sourceHeight": 180,
-      "sourceFormat": "png",
-      "outputBytes": 4520
+      "sourceWidth": 256,
+      "sourceHeight": 161,
+      "sourceFormat": "svg",
+      "outputBytes": 4986
     }
   },
   {
@@ -1764,17 +1838,17 @@
     "names": ["laravel-boost"],
     "website": "https://laravel.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/laravel.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#FF2D20",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/laravel.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://github.com/laravel/art/tree/5a8325b064634b900f25dbb6f1cafd888b2d2211",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 264,
       "sourceFormat": "svg",
-      "outputBytes": 5760
+      "outputBytes": 6104
     }
   },
   {
@@ -1804,7 +1878,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 1284
+      "outputBytes": 1324
     }
   },
   {
@@ -1812,16 +1886,17 @@
     "names": ["linear"],
     "website": "https://linear.app",
     "source": {
-      "kind": "official",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/linear.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "color": "#5e6ad2",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/linear.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 200,
+      "sourceHeight": 200,
       "sourceFormat": "svg",
-      "outputBytes": 4178
+      "outputBytes": 4378
     }
   },
   {
@@ -1836,7 +1911,7 @@
       "sourceWidth": 128,
       "sourceHeight": 128,
       "sourceFormat": "png",
-      "outputBytes": 2074
+      "outputBytes": 2120
     }
   },
   {
@@ -1851,7 +1926,7 @@
       "sourceWidth": 139,
       "sourceHeight": 120,
       "sourceFormat": "svg",
-      "outputBytes": 4316
+      "outputBytes": 4462
     }
   },
   {
@@ -1874,14 +1949,17 @@
     "names": ["lovable"],
     "website": "https://lovable.dev",
     "source": {
-      "kind": "codex-plugin",
-      "url": "https://files.openai.com/content?id=file_00000000b4ec71f6ab8c69f2f285f74b&cdn=1&cp=pi&ma=30844800&ts=0&p=pi&cid=1&sig=20498371312886c59f32c51971b7921d0f0181ec2c93ce77a7bbcc652b6e8d97",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/lovable.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 1782
+      "sourceWidth": 121,
+      "sourceHeight": 122,
+      "sourceFormat": "svg",
+      "outputBytes": 2208
     }
   },
   {
@@ -1889,17 +1967,17 @@
     "names": ["lumen"],
     "website": "https://www.ory.sh",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/lumen.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#E74430",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/lumen.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://lumen.laravel.com",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 515,
       "sourceFormat": "svg",
-      "outputBytes": 4764
+      "outputBytes": 4858
     }
   },
   {
@@ -1913,8 +1991,8 @@
       "rendering": "mark",
       "sourceWidth": 180,
       "sourceHeight": 180,
-      "sourceFormat": "png",
-      "outputBytes": 4086
+      "sourceFormat": "webp",
+      "outputBytes": 4142
     }
   },
   {
@@ -1922,17 +2000,17 @@
     "names": ["mapbox"],
     "website": "https://www.mapbox.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/mapbox.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#000000",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/mapbox-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.mapbox.com/about/press/brand-guidelines",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 254,
       "sourceFormat": "svg",
-      "outputBytes": 2762
+      "outputBytes": 3064
     }
   },
   {
@@ -1955,17 +2033,17 @@
     "names": ["mercadopago"],
     "website": "https://mercadopago.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/mercadopago.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#00B1EA",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/mercado-pago.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.mercadopago.com",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 150,
+      "sourceHeight": 104,
       "sourceFormat": "svg",
-      "outputBytes": 6194
+      "outputBytes": 6386
     }
   },
   {
@@ -1980,7 +2058,7 @@
       "sourceWidth": 25,
       "sourceHeight": 25,
       "sourceFormat": "svg",
-      "outputBytes": 2716
+      "outputBytes": 2756
     }
   },
   {
@@ -2003,15 +2081,17 @@
     "names": ["microsoft learn", "microsoft-docs"],
     "website": "https://learn.microsoft.com",
     "source": {
-      "kind": "official",
-      "url": "https://learn.microsoft.com/apple-touch-icon.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/microsoft.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 192,
-      "sourceHeight": 192,
-      "sourceFormat": "png",
-      "outputBytes": 1036,
-      "mode": "mark"
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "svg",
+      "outputBytes": 1056
     }
   },
   {
@@ -2019,17 +2099,17 @@
     "names": ["mintlify"],
     "website": "https://www.mintlify.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/mintlify.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#18E299",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/mintlify.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://mintlify.com",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 19,
+      "sourceHeight": 19,
       "sourceFormat": "svg",
-      "outputBytes": 2622
+      "outputBytes": 2870
     }
   },
   {
@@ -2037,17 +2117,17 @@
     "names": ["miro"],
     "website": "https://miro.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/miro.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#050038",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/miro-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://miro.com",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 4098
+      "outputBytes": 4120
     }
   },
   {
@@ -2055,14 +2135,19 @@
     "names": ["mlflow"],
     "website": "https://mlflow.org",
     "source": {
-      "kind": "official",
-      "url": "https://raw.githubusercontent.com/mlflow/mlflow/855881f93703b15ffe643003fb4d7c84f0ec2502/assets/icon.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "simple-icons",
+      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/mlflow.svg",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
+      "color": "#0194E2",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
+      "brandSource": "https://github.com/mlflow/mlflow/blob/855881f93703b15ffe643003fb4d7c84f0ec2502/assets/icon.svg",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 3850
+      "outputBytes": 4282
     }
   },
   {
@@ -2070,14 +2155,17 @@
     "names": ["monday", "monday-com", "monday-crm", "monday.com"],
     "website": "https://monday.com",
     "source": {
-      "kind": "official",
-      "url": "https://cdn.prod.website-files.com/656da6fea306219773d04208/65af6bd6e742d497b5f23f69_645898132bbaac20f1963919_256x256.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/monday-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
       "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 2728
+      "sourceHeight": 156,
+      "sourceFormat": "svg",
+      "outputBytes": 2888
     }
   },
   {
@@ -2085,17 +2173,17 @@
     "names": ["mongodb", "mongodb-atlas"],
     "website": "https://www.mongodb.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/mongodb.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#47A248",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/mongodb-icon-light.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.mongodb.com/pressroom",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 120,
+      "sourceHeight": 258,
       "sourceFormat": "svg",
-      "outputBytes": 1806
+      "outputBytes": 1928
     }
   },
   {
@@ -2109,7 +2197,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2068,
+      "outputBytes": 2126,
       "background": "#f4efea"
     },
     "website": "https://motherduck.com"
@@ -2119,17 +2207,17 @@
     "names": ["neon"],
     "website": "https://neon.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/neon.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#34D59A",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/neon.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://neon.com/brand",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 64,
+      "sourceHeight": 64,
       "sourceFormat": "svg",
-      "outputBytes": 1196
+      "outputBytes": 1232
     }
   },
   {
@@ -2137,17 +2225,17 @@
     "names": ["netlify", "netlify-skills"],
     "website": "https://www.netlify.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/netlify.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#00C7B7",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/netlify.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.netlify.com/press/",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 226,
       "sourceFormat": "svg",
-      "outputBytes": 1784
+      "outputBytes": 1740
     }
   },
   {
@@ -2163,11 +2251,12 @@
       "kind": "official",
       "url": "https://www.netsuite.com/apple-touch-icon.png",
       "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
+      "rendering": "mark",
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "jpeg",
-      "outputBytes": 4370
+      "outputBytes": 3200,
+      "mode": "mark"
     }
   },
   {
@@ -2175,17 +2264,17 @@
     "names": ["new relic", "newrelic"],
     "website": "https://newrelic.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/newrelic.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#1CE783",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/new-relic-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://newrelic.com/about/media-assets",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 296,
       "sourceFormat": "svg",
-      "outputBytes": 2592
+      "outputBytes": 2722
     }
   },
   {
@@ -2200,7 +2289,7 @@
       "sourceWidth": 250,
       "sourceHeight": 250,
       "sourceFormat": "svg",
-      "outputBytes": 2718
+      "outputBytes": 2760
     }
   },
   {
@@ -2215,7 +2304,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 3794
+      "outputBytes": 3870
     }
   },
   {
@@ -2230,7 +2319,7 @@
       "sourceWidth": 334,
       "sourceHeight": 334,
       "sourceFormat": "png",
-      "outputBytes": 2028
+      "outputBytes": 2058
     }
   },
   {
@@ -2238,17 +2327,17 @@
     "names": ["notion"],
     "website": "https://www.notion.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/notion.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#000000",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/notion.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.notion.so",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 268,
       "sourceFormat": "svg",
-      "outputBytes": 2730
+      "outputBytes": 2834
     }
   },
   {
@@ -2256,14 +2345,17 @@
     "names": ["nvidia", "nvidia-skills"],
     "website": "https://www.nvidia.com",
     "source": {
-      "kind": "official",
-      "url": "https://github.com/nvidia.png?size=460",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/nvidia-icon-light.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 460,
-      "sourceHeight": 460,
-      "sourceFormat": "png",
-      "outputBytes": 4142
+      "sourceWidth": 351,
+      "sourceHeight": 259,
+      "sourceFormat": "svg",
+      "outputBytes": 4338
     }
   },
   {
@@ -2277,7 +2369,7 @@
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 1248
+      "outputBytes": 1344
     },
     "website": "https://platform.opentargets.org"
   },
@@ -2286,15 +2378,17 @@
     "names": ["OpenAI", "Codex", "codex-app-tools", "Codex Document Control"],
     "website": "https://openai.com",
     "source": {
-      "kind": "repository",
-      "url": "repo:apps/marketing/public/harnesses/openai_dark.svg",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/openai.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "color": "#000000",
-      "licenseNote": "Brand-owned artwork reused from the existing Scient provider mark; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
+      "sourceWidth": 611,
+      "sourceHeight": 611,
       "sourceFormat": "svg",
-      "outputBytes": 4968
+      "outputBytes": 5004
     }
   },
   {
@@ -2308,7 +2402,7 @@
       "sourceWidth": 512,
       "sourceHeight": 481,
       "sourceFormat": "png",
-      "outputBytes": 1744
+      "outputBytes": 2096
     },
     "website": "https://openalex.org"
   },
@@ -2330,7 +2424,7 @@
       "sourceWidth": 192,
       "sourceHeight": 192,
       "sourceFormat": "png",
-      "outputBytes": 2318
+      "outputBytes": 2322
     }
   },
   {
@@ -2338,14 +2432,17 @@
     "names": ["outlook calendar"],
     "website": "https://outlook.com",
     "source": {
-      "kind": "codex-plugin",
-      "url": "https://files.openai.com/content?id=file_0000000087dc81f783c699f284fad19f&cdn=1&cp=pi&ma=32659200&ts=0&p=pi&cid=8&sig=1a62ee7c566ca713d2d82e0e8edadcc8445d7ea42b3d8705a421fd70309d781e&v=0",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/microsoft-outlook.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 4070
+      "sourceWidth": 570,
+      "sourceHeight": 540,
+      "sourceFormat": "svg",
+      "outputBytes": 4440
     }
   },
   {
@@ -2353,14 +2450,17 @@
     "names": ["outlook email"],
     "website": "https://outlook.com",
     "source": {
-      "kind": "codex-plugin",
-      "url": "https://files.openai.com/content?id=file_000000004cd081f797845d3a5fc32d25&cdn=1&cp=pi&ma=32572800&ts=0&p=pi&cid=8&sig=e29695420bbf127996af816598986f76232bea38445fe2e423db60bc05690591&v=0",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/microsoft-outlook.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 4070
+      "sourceWidth": 570,
+      "sourceHeight": 540,
+      "sourceFormat": "svg",
+      "outputBytes": 4440
     }
   },
   {
@@ -2383,17 +2483,17 @@
     "names": ["pagerduty"],
     "website": "https://pagerduty.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/pagerduty.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#06AC38",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/pagerduty-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.pagerduty.com/brand/",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 372,
       "sourceFormat": "svg",
-      "outputBytes": 1696
+      "outputBytes": 1754
     }
   },
   {
@@ -2401,17 +2501,17 @@
     "names": ["paypal"],
     "website": "https://developer.paypal.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/paypal.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#002991",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/paypal.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.paypal.com/us",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 37,
+      "sourceHeight": 45,
       "sourceFormat": "svg",
-      "outputBytes": 3314
+      "outputBytes": 2532
     }
   },
   {
@@ -2433,7 +2533,7 @@
       "sourceWidth": 152,
       "sourceHeight": 152,
       "sourceFormat": "svg",
-      "outputBytes": 1412
+      "outputBytes": 1418
     }
   },
   {
@@ -2448,7 +2548,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2818
+      "outputBytes": 2892
     }
   },
   {
@@ -2456,14 +2556,17 @@
     "names": ["pinecone"],
     "website": "https://pinecone.io",
     "source": {
-      "kind": "codex-plugin",
-      "url": "https://files.openai.com/content?id=file_00000000f01082309ceb159d6dd35580&cdn=1&cp=pi&ma=32054400&ts=0&p=pi&cid=8&sig=18d45c5276374e570639246b80eaf903befcff27bb75ae2ec1abe60e94035c36&v=0",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/pinecone-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 512,
-      "sourceHeight": 512,
-      "sourceFormat": "png",
-      "outputBytes": 4350
+      "sourceWidth": 256,
+      "sourceHeight": 288,
+      "sourceFormat": "svg",
+      "outputBytes": 4454
     }
   },
   {
@@ -2478,7 +2581,7 @@
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 3420
+      "outputBytes": 3510
     }
   },
   {
@@ -2486,17 +2589,17 @@
     "names": ["planetscale"],
     "website": "https://planetscale.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/planetscale.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#000000",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/planetscale.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://planetscale.com",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 2632
+      "outputBytes": 2876
     }
   },
   {
@@ -2504,14 +2607,17 @@
     "names": ["playwright"],
     "website": "https://playwright.dev",
     "source": {
-      "kind": "website",
-      "url": "https://playwright.dev/img/playwright-logo.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/playwright.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
       "sourceWidth": 400,
       "sourceHeight": 400,
       "sourceFormat": "svg",
-      "outputBytes": 3996
+      "outputBytes": 4162
     }
   },
   {
@@ -2519,14 +2625,17 @@
     "names": ["posthog"],
     "website": "https://posthog.com",
     "source": {
-      "kind": "codex-plugin",
-      "url": "https://files.openai.com/content?id=file_0000000028b081f5bcfe744a3b5a115a&cdn=1&cp=pi&ma=31622400&ts=0&p=pi&cid=8&sig=bab1812e5ee91da46b3760115716a96c4657f4022c0ebc77120006329df2250a&v=0",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/posthog.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 64,
-      "sourceHeight": 64,
+      "sourceWidth": 50,
+      "sourceHeight": 30,
       "sourceFormat": "svg",
-      "outputBytes": 2046
+      "outputBytes": 3930
     }
   },
   {
@@ -2536,15 +2645,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/postiz.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#612BD3",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://postiz.com",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 4002
+      "outputBytes": 4306
     }
   },
   {
@@ -2552,17 +2663,17 @@
     "names": ["postman"],
     "website": "https://postman.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/postman.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#FF6C37",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/postman.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.getpostman.com/resources/media-assets/",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 4330
+      "outputBytes": 4602
     }
   },
   {
@@ -2577,7 +2688,7 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 2350
+      "outputBytes": 2460
     }
   },
   {
@@ -2585,17 +2696,17 @@
     "names": ["prisma"],
     "website": "https://prisma.io",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/prisma.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#2D3748",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/prisma.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://github.com/prisma/presskit/tree/4bcb64181f266723439d955d60afa1c55fefa715",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 310,
       "sourceFormat": "svg",
-      "outputBytes": 2616
+      "outputBytes": 2468
     }
   },
   {
@@ -2603,17 +2714,17 @@
     "names": ["pydantic-ai"],
     "website": "https://ai.pydantic.dev",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/pydantic.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#E92063",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/pydantic-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://github.com/pydantic/pydantic/blob/94c748001a32992a587694b999fb1f3d2f1fc1fe/docs/logo-white.svg",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 222,
       "sourceFormat": "svg",
-      "outputBytes": 3556
+      "outputBytes": 4494
     }
   },
   {
@@ -2621,17 +2732,17 @@
     "names": ["qdrant", "qdrant-skills"],
     "website": "https://qdrant.tech",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/qdrant.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#DC244C",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/qdrant-icon-light.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://qdrant.tech/img/brand-resources-logos/qdrant-brandmark-white.svg",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 57,
+      "sourceHeight": 64,
       "sourceFormat": "svg",
-      "outputBytes": 3082
+      "outputBytes": 3344
     }
   },
   {
@@ -2641,15 +2752,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/qodo.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#7968FA",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://www.qodo.ai/media-kit",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 4516
+      "outputBytes": 4822
     }
   },
   {
@@ -2657,17 +2770,17 @@
     "names": ["qt", "qt-development-skills"],
     "website": "https://www.qt.io",
     "source": {
-      "kind": "official",
-      "url": "https://github.com/qt.png?size=460",
-      "rendering": "mark",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 460,
-      "sourceHeight": 460,
-      "sourceFormat": "png",
-      "outputBytes": 2828,
+      "kind": "svgl",
+      "url": "https://svgl.app/library/qt.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "extendBackground": true,
-      "background": "#2cde85"
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
+      "rendering": "mark",
+      "sourceWidth": 54,
+      "sourceHeight": 43,
+      "sourceFormat": "svg",
+      "outputBytes": 3516
     }
   },
   {
@@ -2675,17 +2788,17 @@
     "names": ["quarkus", "quarkus-agent"],
     "website": "https://quarkus.io",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/quarkus.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#4695EB",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/quarkus-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://design.jboss.org/quarkus",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 257,
       "sourceFormat": "svg",
-      "outputBytes": 4108
+      "outputBytes": 4038
     }
   },
   {
@@ -2695,15 +2808,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/quickbooks.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#2CA01C",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://design.intuit.com/quickbooks/brand",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 3894
+      "outputBytes": 4136
     }
   },
   {
@@ -2711,17 +2826,17 @@
     "names": ["railway"],
     "website": "https://railway.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/railway.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#0B0D0E",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/railway.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://railway.app",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 2332
+      "outputBytes": 2478
     }
   },
   {
@@ -2729,17 +2844,17 @@
     "names": ["redis", "redis-development"],
     "website": "https://redis.io",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/redis.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#FF4438",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/redis.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://redis.io/brand-guidelines",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 220,
       "sourceFormat": "svg",
-      "outputBytes": 4320
+      "outputBytes": 4816
     }
   },
   {
@@ -2747,15 +2862,17 @@
     "names": ["render"],
     "website": "https://render.com",
     "source": {
-      "kind": "official",
-      "url": "https://render.com/icon.svg?icon.00d01gt742wgb.svg?dpl=64774b7776",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "color": "#000000",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/render_black.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 800,
+      "sourceHeight": 800,
       "sourceFormat": "svg",
-      "outputBytes": 1246
+      "outputBytes": 1306
     }
   },
   {
@@ -2763,17 +2880,17 @@
     "names": ["resend"],
     "website": "https://resend.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/resend.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#000000",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/resend-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://resend.com/brand",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 1626
+      "outputBytes": 1688
     }
   },
   {
@@ -2783,15 +2900,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/revenuecat.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#F2545B",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://www.revenuecat.com/integrations",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 4246
+      "outputBytes": 4472
     }
   },
   {
@@ -2806,7 +2925,7 @@
       "sourceWidth": 128,
       "sourceHeight": 128,
       "sourceFormat": "svg",
-      "outputBytes": 2286
+      "outputBytes": 2674
     }
   },
   {
@@ -2821,7 +2940,7 @@
       "sourceWidth": 320,
       "sourceHeight": 320,
       "sourceFormat": "svg",
-      "outputBytes": 2566
+      "outputBytes": 2814
     }
   },
   {
@@ -2829,14 +2948,17 @@
     "names": ["runway", "runway-api"],
     "website": "https://runwayml.com",
     "source": {
-      "kind": "official",
-      "url": "https://github.com/runwayml.png?size=460",
-      "rendering": "tile",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 460,
-      "sourceHeight": 460,
-      "sourceFormat": "png",
-      "outputBytes": 1968
+      "kind": "svgl",
+      "url": "https://svgl.app/library/runway.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
+      "rendering": "mark",
+      "sourceWidth": 300,
+      "sourceHeight": 300,
+      "sourceFormat": "svg",
+      "outputBytes": 2908
     }
   },
   {
@@ -2844,14 +2966,17 @@
     "names": ["agentforce-adlc", "salesforce", "salesforce-development"],
     "website": "https://www.salesforce.com",
     "source": {
-      "kind": "codex-plugin",
-      "url": "https://files.openai.com/content?id=file_0000000061f481f7ab615d02bc60c2cb&cdn=1&cp=pi&ma=30412800&ts=0&p=pi&cid=8&sig=e778da9f34de6f7988211d9d9a20fabdb87ad97689df6bc60ee2fe90ef5cf56c&v=0",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/salesforce.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 999,
+      "sourceHeight": 699,
       "sourceFormat": "svg",
-      "outputBytes": 2192
+      "outputBytes": 4356
     }
   },
   {
@@ -2859,17 +2984,17 @@
     "names": ["sanity"],
     "website": "https://www.sanity.io",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/sanity.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#0D0E12",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/sanity-light.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://github.com/sanity-io/logos/blob/e298a1ac2757c83910fe08b496a115bc9aef06bd/src/sanityMonogram.tsx",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 12,
+      "sourceHeight": 12,
       "sourceFormat": "svg",
-      "outputBytes": 4692
+      "outputBytes": 4764
     }
   },
   {
@@ -2888,17 +3013,17 @@
     ],
     "website": "https://www.sap.com",
     "source": {
-      "kind": "official",
-      "url": "https://www.sap.com/favicon.svg",
-      "rendering": "mark",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/sap.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "brandGuidelines": "https://www.sap.com/design-system/digital/foundations/identity/logo/",
-      "brandNote": "The solid Blue-7 anvil is SAP's official favicon, updated May 2026; the missing letters are intentional.",
-      "sourceWidth": 400,
-      "sourceHeight": 200,
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
+      "rendering": "mark",
+      "sourceWidth": 512,
+      "sourceHeight": 254,
       "sourceFormat": "svg",
-      "outputBytes": 1020
+      "outputBytes": 3264
     }
   },
   {
@@ -2913,7 +3038,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 820,
+      "outputBytes": 838,
       "mode": "mark"
     }
   },
@@ -2928,7 +3053,7 @@
       "sourceWidth": 201,
       "sourceHeight": 201,
       "sourceFormat": "svg",
-      "outputBytes": 5198
+      "outputBytes": 5374
     },
     "website": "https://scholargateway.ai"
   },
@@ -2953,15 +3078,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/semanticscholar.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#1857B6",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://www.semanticscholar.org/about",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 3980
+      "outputBytes": 4218
     },
     "website": "https://www.semanticscholar.org"
   },
@@ -2977,7 +3104,7 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "svg",
-      "outputBytes": 3084
+      "outputBytes": 3234
     }
   },
   {
@@ -2985,17 +3112,17 @@
     "names": ["sentry", "sentry-cli"],
     "website": "https://sentry.io",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/sentry.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#362D59",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/sentry.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://sentry.io/branding/",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 227,
       "sourceFormat": "svg",
-      "outputBytes": 3694
+      "outputBytes": 3916
     }
   },
   {
@@ -3012,11 +3139,12 @@
       "kind": "website",
       "url": "https://www.servicenow.com/content/dam/servicenow-assets/public/en-us/images/apple-touch-icon/180x180.png",
       "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
+      "rendering": "mark",
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 3568
+      "outputBytes": 3136,
+      "mode": "mark"
     }
   },
   {
@@ -3031,7 +3159,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 3280
+      "outputBytes": 3314
     }
   },
   {
@@ -3039,17 +3167,17 @@
     "names": ["liquid-lsp", "liquid-skills", "shopify", "shopify-ai-toolkit"],
     "website": "https://www.shopify.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/shopify.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#7AB55C",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/shopify.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.shopify.com/brand-assets",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 292,
       "sourceFormat": "svg",
-      "outputBytes": 3598
+      "outputBytes": 3438
     }
   },
   {
@@ -3057,14 +3185,17 @@
     "names": ["slack"],
     "website": "https://slack.com",
     "source": {
-      "kind": "official",
-      "url": "https://slack.com/favicon.ico",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/slack-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
       "sourceWidth": 256,
       "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 3082
+      "sourceFormat": "svg",
+      "outputBytes": 3310
     }
   },
   {
@@ -3072,17 +3203,17 @@
     "names": ["snowflake", "snowflake-cortex-code"],
     "website": "https://www.snowflake.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/snowflake.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#29B5E8",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/snowflake-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.snowflake.com/brand-guidelines/",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 255,
       "sourceFormat": "svg",
-      "outputBytes": 5188
+      "outputBytes": 5054
     }
   },
   {
@@ -3097,7 +3228,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 5652
+      "outputBytes": 5818
     }
   },
   {
@@ -3105,15 +3236,19 @@
     "names": ["sonatype", "sonatype-guide"],
     "website": "https://www.sonatype.com",
     "source": {
-      "kind": "official",
-      "url": "https://www.sonatype.com/hubfs/1-2025_Website-Assets/logos/favicon-2025.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "simple-icons",
+      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/sonatype.svg",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#1B1C30",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
+      "brandSource": "https://www.sonatype.com/company/press-kit",
       "rendering": "mark",
-      "sourceWidth": 100,
-      "sourceHeight": 100,
+      "sourceWidth": 24,
+      "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 3016
+      "outputBytes": 3772
     }
   },
   {
@@ -3121,14 +3256,17 @@
     "names": ["sourcegraph"],
     "website": "https://sourcegraph.com",
     "source": {
-      "kind": "website",
-      "url": "data:image/png;base64,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",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/sourcegraph.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 128,
-      "sourceHeight": 128,
-      "sourceFormat": "png",
-      "outputBytes": 3484
+      "sourceWidth": 800,
+      "sourceHeight": 800,
+      "sourceFormat": "svg",
+      "outputBytes": 4258
     }
   },
   {
@@ -3136,34 +3274,34 @@
     "names": ["save-to-spotify", "spotify", "spotify-ads-api"],
     "website": "https://www.spotify.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/spotify.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#1ED760",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/spotify.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://developer.spotify.com/documentation/general/design-and-branding/#using-our-logo",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 4036
+      "outputBytes": 4248
     }
   },
   {
     "key": "stack-overflow",
     "names": ["stack overflow"],
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/stackoverflow.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#F58025",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/stackoverflow-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://stackoverflow.design/brand/logo/",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 304,
       "sourceFormat": "svg",
-      "outputBytes": 3304
+      "outputBytes": 3324
     },
     "website": "https://stackoverflow.com"
   },
@@ -3174,15 +3312,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/stackhawk.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#00CBC6",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://www.stackhawk.com/press/",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 8362
+      "outputBytes": 8720
     }
   },
   {
@@ -3190,17 +3330,17 @@
     "names": ["stripe"],
     "website": "https://stripe.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/stripe.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#635BFF",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/stripe.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://stripe.com/newsroom/information",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 2592
+      "outputBytes": 1530
     }
   },
   {
@@ -3208,14 +3348,19 @@
     "names": ["sumup"],
     "website": "https://www.sumup.com",
     "source": {
-      "kind": "official",
-      "url": "https://github.com/sumup.png?size=460",
-      "rendering": "tile",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 460,
-      "sourceHeight": 460,
-      "sourceFormat": "png",
-      "outputBytes": 1966
+      "kind": "simple-icons",
+      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/sumup.svg",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
+      "color": "#1E1C1C",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
+      "brandSource": "https://circuit.sumup.com/?path=/docs/brand-sumuplogo--docs",
+      "rendering": "mark",
+      "sourceWidth": 24,
+      "sourceHeight": 24,
+      "sourceFormat": "svg",
+      "outputBytes": 1972
     }
   },
   {
@@ -3223,14 +3368,17 @@
     "names": ["supabase"],
     "website": "https://supabase.com",
     "source": {
-      "kind": "official",
-      "url": "https://raw.githubusercontent.com/supabase/supabase/master/packages/common/assets/images/supabase-logo-icon.svg",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/supabase.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
       "sourceWidth": 109,
       "sourceHeight": 113,
       "sourceFormat": "svg",
-      "outputBytes": 1846
+      "outputBytes": 1762
     },
     "background": "#1c1c1c"
   },
@@ -3246,7 +3394,7 @@
       "sourceWidth": 26,
       "sourceHeight": 30,
       "sourceFormat": "svg",
-      "outputBytes": 3532
+      "outputBytes": 3568
     }
   },
   {
@@ -3260,7 +3408,7 @@
       "sourceWidth": 144,
       "sourceHeight": 144,
       "sourceFormat": "png",
-      "outputBytes": 3194
+      "outputBytes": 3312
     },
     "website": "https://www.synapse.org"
   },
@@ -3276,7 +3424,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 3440
+      "outputBytes": 3590
     }
   },
   {
@@ -3294,14 +3442,17 @@
     "names": ["tavily"],
     "website": "https://www.tavily.com",
     "source": {
-      "kind": "official",
-      "url": "https://www.tavily.com/icon.svg?icon.0v6b1ltlljvdd.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
-      "sourceWidth": 55,
-      "sourceHeight": 55,
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/tavily.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
+      "rendering": "mark",
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 1844
+      "outputBytes": 1990
     }
   },
   {
@@ -3309,14 +3460,17 @@
     "names": ["teamcity-cli"],
     "website": "https://jetbrains.com/teamcity",
     "source": {
-      "kind": "official",
-      "url": "https://resources.jetbrains.com/storage/products/company/brand/logos/TeamCity_icon.svg",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/teamcity.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 64,
-      "sourceHeight": 64,
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 2922
+      "outputBytes": 3618
     }
   },
   {
@@ -3324,14 +3478,17 @@
     "names": ["microsoft teams", "teams"],
     "website": "https://www.microsoft.com/microsoft-teams",
     "source": {
-      "kind": "codex-catalog",
-      "url": "https://files.openai.com/content?id=file_00000000bc9481f5b8b85a85bddd3576&cdn=1&cp=pi&ma=32659200&ts=0&p=pi&cid=8&sig=318f558986dc75467ff5f5e6c51222cdc5b7f115ab4ff2555836f1c074a09ab6&v=0",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/microsoft-teams.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 3118
+      "sourceWidth": 36,
+      "sourceHeight": 38,
+      "sourceFormat": "svg",
+      "outputBytes": 3312
     }
   },
   {
@@ -3339,15 +3496,17 @@
     "names": ["telegram"],
     "website": "https://telegram.org",
     "source": {
-      "kind": "official",
-      "url": "https://telegram.org/img/website_icon.svg?4",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "color": "#26A5E4",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/telegram.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 16,
-      "sourceHeight": 16,
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 3746
+      "outputBytes": 3888
     }
   },
   {
@@ -3355,33 +3514,49 @@
     "names": ["terraform"],
     "website": "https://developer.hashicorp.com/terraform",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/terraform.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#844FBA",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/terraform.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.hashicorp.com/brand",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 50,
+      "sourceHeight": 72,
       "sourceFormat": "svg",
-      "outputBytes": 2026
+      "outputBytes": 2064
+    }
+  },
+  {
+    "key": "tinyfish",
+    "names": ["tinyfish"],
+    "website": "https://www.tinyfish.ai",
+    "source": {
+      "kind": "official",
+      "url": "https://www.tinyfish.ai/favicon-for-app/icon0.svg",
+      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "rendering": "mark",
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "svg",
+      "outputBytes": 6056
     }
   },
   {
     "key": "todoist",
     "names": ["todoist"],
     "source": {
-      "kind": "curated",
-      "key": "todoist",
-      "url": "data:image/png;base64,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",
-      "rendering": "tile",
-      "repositorySource": "apps/server/src/scient/extensions/discover/curatedIcons.json at 0a345a3126",
-      "licenseNote": "Existing curated brand artwork at 0a345a3126; original upstream artwork license was not recorded. Brand trademarks remain with their respective owners.",
-      "sourceWidth": 180,
-      "sourceHeight": 180,
-      "sourceFormat": "png",
-      "outputBytes": 3918
+      "kind": "svgl",
+      "url": "https://svgl.app/library/todoist.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
+      "rendering": "mark",
+      "sourceWidth": 152,
+      "sourceHeight": 152,
+      "sourceFormat": "svg",
+      "outputBytes": 4220
     },
     "website": "https://www.todoist.com"
   },
@@ -3390,14 +3565,17 @@
     "names": ["together ai", "togetherai-skills"],
     "website": "https://www.together.ai",
     "source": {
-      "kind": "website",
-      "url": "https://cdn.prod.website-files.com/69654e88dce9154b5f1206dd/69a59cff65ed0f267dd2fbe8_touchicon.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/togetherai-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
       "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 3232
+      "sourceHeight": 239,
+      "sourceFormat": "svg",
+      "outputBytes": 3588
     }
   },
   {
@@ -3405,14 +3583,17 @@
     "names": ["twilio", "twilio-developer-kit"],
     "website": "https://www.twilio.com",
     "source": {
-      "kind": "official",
-      "url": "https://www.twilio.com/content/dam/twilio-com/core-assets/social/android-chrome-512x512.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/twilio.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 512,
-      "sourceHeight": 512,
-      "sourceFormat": "png",
-      "outputBytes": 5036
+      "sourceWidth": 64,
+      "sourceHeight": 64,
+      "sourceFormat": "svg",
+      "outputBytes": 5920
     }
   },
   {
@@ -3420,15 +3601,17 @@
     "names": ["unity"],
     "website": "https://unity.com",
     "source": {
-      "kind": "official",
-      "url": "https://unity.com/icon.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "color": "#FFFFFF",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/unity.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 512,
-      "sourceHeight": 512,
+      "sourceWidth": 256,
+      "sourceHeight": 263,
       "sourceFormat": "svg",
-      "outputBytes": 2416
+      "outputBytes": 3706
     }
   },
   {
@@ -3436,17 +3619,17 @@
     "names": ["unreal engine", "unreal-engine-skills-for-claude-code"],
     "website": "https://www.unrealengine.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/unrealengine.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#0E1128",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/unreal_engine.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.unrealengine.com/en-US/branding",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 4342
+      "outputBytes": 3984
     }
   },
   {
@@ -3461,7 +3644,7 @@
       "sourceWidth": 16,
       "sourceHeight": 16,
       "sourceFormat": "svg",
-      "outputBytes": 1206
+      "outputBytes": 1380
     }
   },
   {
@@ -3488,7 +3671,7 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 4388
+      "outputBytes": 4548
     }
   },
   {
@@ -3496,17 +3679,17 @@
     "names": ["vercel"],
     "website": "https://vercel.com",
     "source": {
-      "kind": "official",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/vercel.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "color": "#ffffff",
-      "background": "#000000",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/vercel.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 256,
+      "sourceHeight": 222,
       "sourceFormat": "svg",
-      "outputBytes": 1134
+      "outputBytes": 1204
     }
   },
   {
@@ -3536,7 +3719,7 @@
       "sourceWidth": 412,
       "sourceHeight": 333,
       "sourceFormat": "svg",
-      "outputBytes": 3270
+      "outputBytes": 3510
     }
   },
   {
@@ -3551,7 +3734,7 @@
       "sourceWidth": 300,
       "sourceHeight": 300,
       "sourceFormat": "png",
-      "outputBytes": 3446
+      "outputBytes": 3524
     }
   },
   {
@@ -3566,7 +3749,7 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2634
+      "outputBytes": 2724
     }
   },
   {
@@ -3574,17 +3757,17 @@
     "names": ["wix"],
     "website": "https://dev.wix.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/wix.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#0C6EFC",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/wix.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.wix.com/about/design-assets",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 512,
+      "sourceHeight": 202,
       "sourceFormat": "svg",
-      "outputBytes": 3896
+      "outputBytes": 2730
     }
   },
   {
@@ -3592,17 +3775,17 @@
     "names": ["build-with-wordpress", "wordpress"],
     "website": "https://wordpress.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/wordpress.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#21759B",
+      "kind": "svgl",
+      "url": "https://svgl.app/library/wordpress.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://wordpress.org/about/logos",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 512,
+      "sourceHeight": 512,
       "sourceFormat": "svg",
-      "outputBytes": 6434
+      "outputBytes": 7748
     }
   },
   {
@@ -3610,14 +3793,17 @@
     "names": ["workos"],
     "website": "https://workos.com",
     "source": {
-      "kind": "official",
-      "url": "https://cdn.prod.website-files.com/621f54116cab10f6e9215d8b/621f549024eb2947f6f2f7f7_Favicon%20256x256.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/workos-icon.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
+      "rendering": "mark",
       "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 3102
+      "sourceHeight": 222,
+      "sourceFormat": "svg",
+      "outputBytes": 3060
     }
   },
   {
@@ -3635,14 +3821,19 @@
     "names": ["zapier"],
     "website": "https://zapier.com",
     "source": {
-      "kind": "official",
-      "url": "https://github.com/zapier.png?size=460",
-      "rendering": "tile",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 460,
-      "sourceHeight": 460,
-      "sourceFormat": "png",
-      "outputBytes": 3856
+      "kind": "simple-icons",
+      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/zapier.svg",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
+      "color": "#FF4F00",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
+      "brandSource": "https://www.figma.com/file/NQFxTCE5pGR3dHZt0DkOyy/Zapier-Brand-Guidelines-%5BExternal%5D?type=design&node-id=101-9701&mode=design",
+      "rendering": "mark",
+      "sourceWidth": 24,
+      "sourceHeight": 24,
+      "sourceFormat": "svg",
+      "outputBytes": 3582
     }
   },
   {
@@ -3657,7 +3848,7 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 4266
+      "outputBytes": 4412
     }
   },
   {
@@ -3668,11 +3859,12 @@
       "kind": "official",
       "url": "https://cdn.prod.website-files.com/67f74eda1b8c9b4c09dc5893/68e8aee2fb5a42ad37ccfb2f_Fav_%20256%20x%20256.png",
       "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
+      "rendering": "mark",
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2056
+      "outputBytes": 2386,
+      "mode": "mark"
     }
   },
   {
@@ -3680,32 +3872,36 @@
     "names": ["catalyst-by-zoho", "zoho"],
     "website": "https://www.zoho.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/zoho.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
-      "color": "#E42527",
+      "kind": "gilbarbara/logos",
+      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/zoho.svg",
+      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
       "mode": "mark",
-      "brandSource": "https://www.zoho.com/branding",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 512,
+      "sourceHeight": 220,
       "sourceFormat": "svg",
-      "outputBytes": 3928
-    }
+      "outputBytes": 3884
+    },
+    "omitted": "Available artwork is a wordmark that is illegible in a row tile; omitted after whole-pack visual review."
   },
   {
     "key": "zoom",
     "names": ["zoom", "zoom-plugin"],
     "website": "https://www.zoom.com",
     "source": {
-      "kind": "official",
-      "url": "https://github.com/zoom.png?size=460",
-      "rendering": "tile",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "sourceWidth": 460,
-      "sourceHeight": 460,
-      "sourceFormat": "png",
-      "outputBytes": 4352
+      "kind": "svgl",
+      "url": "https://svgl.app/library/zoom.svg",
+      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
+      "rendering": "mark",
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "svg",
+      "outputBytes": 4682
     }
   },
   {
@@ -3716,11 +3912,12 @@
       "kind": "official",
       "url": "https://cws-zoominfo-assets.zoominfo.com/Contentful/favicon/favicon-512x512-1.png",
       "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "tile",
+      "rendering": "mark",
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 2256
+      "outputBytes": 2656,
+      "mode": "mark"
     }
   },
   {
@@ -3735,7 +3932,7 @@
       "sourceWidth": 32,
       "sourceHeight": 32,
       "sourceFormat": "svg",
-      "outputBytes": 3474
+      "outputBytes": 3710
     }
   },
   {
@@ -3745,15 +3942,17 @@
     "source": {
       "kind": "simple-icons",
       "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/zyte.svg",
-      "licenseNote": "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
       "color": "#B02CCE",
       "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
       "brandSource": "https://www.zyte.com",
       "rendering": "mark",
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 3164
+      "outputBytes": 3124
     }
   }
 ]

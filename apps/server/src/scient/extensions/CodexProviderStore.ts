@@ -23,6 +23,7 @@ import {
   readContainedPluginIcon,
 } from "./LocalPluginContents.ts";
 import { sharedPluginDisplayName } from "./SharedPluginStore.ts";
+import { resolveBrandIcon } from "./BrandIcons.ts";
 import { makeCodexStoreIcons } from "./CodexStoreIcons.ts";
 
 type Client = CodexClient.CodexAppServerClient["Service"];
@@ -136,10 +137,12 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
       Effect.fn("CodexProviderStore.app")(function* (reference) {
         const app = apps.get(reference.id);
         const url = codexAppInstallUrl(app?.installUrl ?? reference.installUrl);
-        const iconUrl = yield* icon(app?.logoUrl).pipe(
-          Effect.timeoutOption("1 second"),
-          Effect.map(Option.getOrUndefined),
-        );
+        const iconUrl =
+          resolveBrandIcon(app?.name ?? reference.name) ??
+          (yield* icon(app?.logoUrl).pipe(
+            Effect.timeoutOption("1 second"),
+            Effect.map(Option.getOrUndefined),
+          ));
         return {
           id: reference.id,
           name: app?.name ?? reference.name,
@@ -334,13 +337,17 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     const plugin = item.plugin;
     const info = plugin.interface;
     const root = plugin.source.type === "local" ? plugin.source.path : undefined;
+    const bundledIcon = includeIcon
+      ? (resolveBrandIcon(info?.displayName ?? "") ?? resolveBrandIcon(plugin.name))
+      : undefined;
     const localIcon =
-      root && (info?.logo || info?.composerIcon) && includeIcon
+      !bundledIcon && root && (info?.logo || info?.composerIcon) && includeIcon
         ? yield* Effect.tryPromise(() =>
             readContainedPluginIcon(root, (info?.logo || info?.composerIcon)!),
           ).pipe(Effect.orElseSucceed(() => undefined))
         : undefined;
     const iconUrl =
+      bundledIcon ??
       localIcon ??
       (includeIcon
         ? yield* icon(info?.logoUrl).pipe(

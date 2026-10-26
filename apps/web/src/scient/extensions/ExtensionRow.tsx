@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
+import { extensionMarkLayout } from "./extensionIconLayout";
 import { ProjectMonogram } from "../../components/ProjectMonogram";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
@@ -122,29 +123,43 @@ const ICON_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
   avatar: "size-10 rounded-full",
 };
 
-const transparentIconCorners = new Map<string, boolean>();
+const renderedIcons = new Map<string, string>();
 
-function hasTransparentCorners(image: HTMLImageElement, url: string): boolean {
-  const cached = transparentIconCorners.get(url);
+function renderIcon(image: HTMLImageElement, url: string): string {
+  const cached = renderedIcons.get(url);
   if (cached !== undefined) return cached;
   const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = 8;
+  const scale = Math.min(1, 512 / Math.max(image.naturalWidth, image.naturalHeight));
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
   const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) {
-    transparentIconCorners.set(url, true);
-    return true;
+  let result = url;
+  if (context) {
+    try {
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const layout = extensionMarkLayout(
+        context.getImageData(0, 0, canvas.width, canvas.height).data,
+        canvas.width,
+        canvas.height,
+      );
+      if (layout) {
+        const crop = document.createElement("canvas");
+        crop.width = crop.height = 256;
+        const target = crop.getContext("2d");
+        if (target) {
+          target.fillStyle = "#ffffff";
+          target.fillRect(0, 0, 256, 256);
+          target.drawImage(canvas, ...layout.source, ...layout.destination);
+          result = crop.toDataURL("image/png");
+        }
+      }
+    } catch {
+      // A browser that refuses canvas access can still display the original image.
+    }
   }
-  try {
-    context.drawImage(image, 0, 0, 8, 8);
-    const { data } = context.getImageData(0, 0, 8, 8);
-    const transparent = [0, 7, 56, 63].some((pixel) => data[pixel * 4 + 3]! < 250);
-    if (transparentIconCorners.size >= 512) transparentIconCorners.clear();
-    transparentIconCorners.set(url, transparent);
-    return transparent;
-  } catch {
-    transparentIconCorners.set(url, true);
-    return true;
-  }
+  if (renderedIcons.size >= 512) renderedIcons.clear();
+  renderedIcons.set(url, result);
+  return result;
 }
 
 const MONOGRAM_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
@@ -171,11 +186,9 @@ function ExtensionIconTile({
   readonly size?: ExtensionIconSize;
 }) {
   const image = iconUrl !== undefined && isExtensionIconDataUri(iconUrl) ? iconUrl : undefined;
-  const [sample, setSample] = useState<{ url: string; transparent: boolean }>();
-  const padded =
-    Boolean(Glyph) ||
-    (image !== undefined &&
-      (transparentIconCorners.get(image) ?? (sample?.url === image && sample.transparent)));
+  const [sample, setSample] = useState<{ url: string; rendered: string }>();
+  const rendered =
+    image && (renderedIcons.get(image) ?? (sample?.url === image ? sample.rendered : image));
   if (image !== undefined || Glyph) {
     return (
       <span
@@ -186,8 +199,7 @@ function ExtensionIconTile({
           Glyph
             ? "border-border bg-white dark:bg-card"
             : "border-border [color-scheme:light] dark:border-white/10",
-          padded && "bg-white",
-          padded && (size === "large" ? "p-2.5" : "p-1.5"),
+          Glyph && (size === "large" ? "p-2.5" : "p-1.5"),
           ICON_FRAME[size],
         )}
       >
@@ -196,14 +208,11 @@ function ExtensionIconTile({
         ) : (
           <img
             alt=""
-            src={image}
-            className={cn("size-full", padded ? "object-contain" : "object-cover")}
+            src={rendered}
+            className="size-full object-cover"
             onLoad={(event) => {
-              if (image)
-                setSample({
-                  url: image,
-                  transparent: hasTransparentCorners(event.currentTarget, image),
-                });
+              if (image && !renderedIcons.has(image))
+                setSample({ url: image, rendered: renderIcon(event.currentTarget, image) });
             }}
           />
         )}
@@ -225,7 +234,7 @@ type ExtensionIconProps = Parameters<typeof ExtensionIconTile>[0] & {
 };
 
 export function ExtensionIcon(props: ExtensionIconProps) {
-  if (props.glyph || (props.iconUrl && isExtensionIconDataUri(props.iconUrl))) {
+  if (props.glyph) {
     return <ExtensionIconTile {...props} />;
   }
   return <ResolvedExtensionIcon {...props} />;
@@ -253,7 +262,10 @@ function ResolvedExtensionIcon(props: ExtensionIconProps) {
       : null,
   );
   return (
-    <ExtensionIconTile {...props} iconUrl={own.data?.iconUrl ?? result.data?.icons[props.name]} />
+    <ExtensionIconTile
+      {...props}
+      iconUrl={result.data?.icons[props.name] ?? own.data?.iconUrl ?? props.iconUrl}
+    />
   );
 }
 

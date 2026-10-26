@@ -130,6 +130,13 @@ const siteIcons = async (website) => {
     new URL("/favicon.ico", website).href,
   ];
 };
+const refreshSources = process.argv.includes("--refresh-sources");
+const svgl = JSON.parse((await fetchResource("https://api.svgl.app")).toString());
+const vectorLogos = JSON.parse(
+  (
+    await fetchResource("https://raw.githubusercontent.com/gilbarbara/logos/main/logos.json")
+  ).toString(),
+);
 const simpleVersion = "16.36.0";
 const simple = JSON.parse(
   (
@@ -294,7 +301,13 @@ const render = async (bytes, source, brand) => {
   const edgeOffset = Math.floor(width / 2) * 4;
   const inferredBackground =
     mode === "tile" ? `#${data.subarray(edgeOffset, edgeOffset + 3).toString("hex")}` : "#ffffff";
-  const background = source.background ?? brand.background ?? inferredBackground;
+  const points = corners(data, width, height);
+  const solidBackground = points.every(
+    (p) => p[3] === 255 && p.slice(0, 3).every((c, i) => Math.abs(c - points[0][i]) < 12),
+  )
+    ? `#${data.subarray(0, 3).toString("hex")}`
+    : inferredBackground;
+  const background = source.background ?? brand.background ?? solidBackground;
   let tile;
   if (mode === "tile") {
     tile = await sharp(data, { raw: { width, height, channels: 4 } })
@@ -305,14 +318,37 @@ const render = async (bytes, source, brand) => {
       .toBuffer();
   } else {
     const mark = await sharp(data, { raw: { width, height, channels: 4 } })
+      .flatten({ background })
       .trim({ threshold: 12 })
       .png()
       .toBuffer();
     const cleanMark = await sharp(mark).trim({ threshold: 12 }).png().toBuffer();
     const box = await sharp(cleanMark).metadata();
-    if (Math.max(box.width / box.height, box.height / box.width) > 2.8)
-      throw new Error("Wordmark rather than app mark");
-    const resized = await sharp(cleanMark).resize(174, 174, { fit: "inside" }).png().toBuffer();
+    if (box.width / box.height > 2.8) throw new Error("Wordmark rather than app mark");
+    const { data: rgba, info } = await sharp(cleanMark)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const bg = Buffer.from(background.slice(1), "hex");
+    let left = info.width,
+      top = info.height,
+      right = -1,
+      bottom = -1;
+    for (let y = 0; y < info.height; y++)
+      for (let x = 0; x < info.width; x++) {
+        const offset = (y * info.width + x) * 4;
+        if (![0, 1, 2].some((c) => Math.abs(rgba[offset + c] - bg[c]) > 24)) continue;
+        left = Math.min(left, x);
+        right = Math.max(right, x);
+        top = Math.min(top, y);
+        bottom = Math.max(bottom, y);
+      }
+    if (right < left) throw new Error("No visible mark");
+    const resized = await sharp(cleanMark)
+      .extract({ left, top, width: right - left + 1, height: bottom - top + 1 })
+      .resize(179, 179, { fit: "inside" })
+      .png()
+      .toBuffer();
     tile = await sharp({ create: { width: 256, height: 256, channels: 3, background } })
       .composite([{ input: resized, gravity: "centre" }])
       .png()
@@ -331,6 +367,7 @@ const render = async (bytes, source, brand) => {
     bytes: webp.length,
   };
 };
+const audit = [];
 const icons = {};
 const aliases = {};
 const missing = [];
@@ -348,39 +385,48 @@ await Promise.all(
       let candidates = [];
       const add = (url, extra = {}) =>
         candidates.push({ kind: "official", url, licenseNote: license, ...extra });
-      if (brand.source?.rendering) candidates.push(brand.source);
-      if (!brand.source?.rendering) {
-        if (si?.source && si.source.endsWith(".svg"))
-          add(si.source.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/"));
-        if (!brand.source?.rendering && brand.website) {
-          try {
-            for (const url of await siteIcons(brand.website))
-              if (/\.svg(?:\?|$)/.test(url)) add(url, { color: si ? `#${si.hex}` : undefined });
-          } catch {
-            /* Try catalog sources. */
-          }
-        }
+      if (brand.source?.rendering && !refreshSources) candidates.push(brand.source);
+      else {
+        const key = simpleNames[brand.key] ?? slug(brand.key);
+        const vector = svgl.find((item) => slug(item.title) === key);
+        if (vector)
+          add(typeof vector.route === "string" ? vector.route : vector.route.light, {
+            kind: "svgl",
+            mode: "mark",
+            background: "#ffffff",
+            licenseNote:
+              "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
+            licenseUrl: "https://github.com/pheralb/svgl/blob/main/LICENSE",
+          });
+        const logo = vectorLogos.find((item) => slug(item.shortname) === key);
+        const file =
+          logo?.files.find((file) => file === `${logo.shortname}-icon.svg`) ?? logo?.files[0];
+        if (file)
+          add(`https://raw.githubusercontent.com/gilbarbara/logos/main/logos/${file}`, {
+            kind: "gilbarbara/logos",
+            mode: "mark",
+            background: "#ffffff",
+            licenseNote: "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
+            licenseUrl: "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
+          });
         if (si)
           add(`https://cdn.jsdelivr.net/npm/simple-icons@${simpleVersion}/icons/${si.slug}.svg`, {
             kind: "simple-icons",
             color: `#${si.hex}`,
             mode: "mark",
-            licenseNote:
-              "Simple Icons 16.36.0 SVG: CC0-1.0; brand trademarks remain with their owners.",
+            background: si.hex === "FFFFFF" ? "#000000" : "#ffffff",
+            licenseNote: `Simple Icons ${simpleVersion}: CC0-1.0; trademarks remain with their owners.`,
+            licenseUrl: "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
             brandSource: si.source,
           });
-        if (brand.source?.url && brand.source.kind !== "codex-plugin")
-          candidates.push({ ...brand.source, licenseNote: license });
-        if (brand.website && !brand.source?.rendering) {
+        if (brand.source?.url) candidates.push(brand.source);
+        if (brand.website) {
           try {
-            for (const url of await siteIcons(brand.website))
-              if (!/\.svg(?:\?|$)/.test(url)) add(url);
+            for (const url of await siteIcons(brand.website)) add(url);
           } catch {
-            /* Try catalog source. */
+            /* Try the next brand if its website is unavailable. */
           }
         }
-        if (brand.source?.url && brand.source.kind === "codex-plugin")
-          candidates.push({ ...brand.source, licenseNote: license });
       }
       let result;
       const errors = [];
@@ -406,6 +452,32 @@ await Promise.all(
         failures[brand.key] = errors;
         continue;
       }
+      const { data: pixels } = await sharp(Buffer.from(result.data.split(",")[1], "base64"))
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      const bg = [0, 1, 2].map((c) => pixels[c]);
+      let left = 256,
+        top = 256,
+        right = -1,
+        bottom = -1;
+      for (let y = 0; y < 256; y++)
+        for (let x = 0; x < 256; x++) {
+          const i = (y * 256 + x) * 4;
+          if (![0, 1, 2].some((c) => Math.abs(pixels[i + c] - bg[c]) > 40)) continue;
+          left = Math.min(left, x);
+          right = Math.max(right, x);
+          top = Math.min(top, y);
+          bottom = Math.max(bottom, y);
+        }
+      const fill = Math.max(right - left + 1, bottom - top + 1) / 256;
+      audit.push({
+        key: brand.key,
+        mode: result.mode,
+        bbox: [left, top, right, bottom],
+        fill,
+        flagged: fill < 0.55 || fill > 0.92,
+      });
       if (Object.hasOwn(curated, brand.key)) curated[brand.key] = result.data;
       else icons[brand.key] = result.data;
       for (const name of [brand.key, ...brand.names]) {
@@ -416,6 +488,14 @@ await Promise.all(
       console.log(brand.key, brand.source.kind, result.mode, `${result.width}×${result.height}`);
     }
   }),
+);
+await NodeFSP.writeFile(
+  new URL(".logs/icon-optical-audit.json", root),
+  JSON.stringify(
+    audit.sort((a, b) => a.key.localeCompare(b.key)),
+    null,
+    2,
+  ),
 );
 await NodeFSP.writeFile(
   new URL(".logs/icon-source-failures.json", root),

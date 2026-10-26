@@ -11,6 +11,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import type * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexSchema from "effect-codex-app-server/schema";
+import { resolveBrandIcon } from "./BrandIcons.ts";
 import { makeCodexNativeInventory } from "../../provider/CodexPluginInventory.ts";
 import {
   codexAppInstallUrl,
@@ -131,6 +132,30 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
   return { client, calls, state, notify };
 }
 describe("Codex provider store", () => {
+  it.effect("prefers bundled brands in store details and app contents, with runtime fallback", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = clientFixture([plugin("slack"), plugin("unknown-service")]);
+        fixture.state.app.name = "Slack";
+        const fetched: string[] = [];
+        const runtimeIcon = "data:image/png;base64,cnVudGltZQ==";
+        const store = yield* makeCodexProviderStore(
+          () => Effect.succeed(fixture.client),
+          (url) =>
+            Effect.sync(() => {
+              if (url) fetched.push(url);
+              return runtimeIcon;
+            }),
+        );
+        expect((yield* store.entry("slack")).iconUrl).toBe(resolveBrandIcon("Slack"));
+        expect((yield* store.entry("unknown-service")).iconUrl).toBe(runtimeIcon);
+        expect(fetched).toEqual(["https://files.openai.com/unknown-service"]);
+        const contents = yield* store.contents("slack");
+        expect(contents.apps[0]?.iconUrl).toBe(resolveBrandIcon("Slack"));
+      }),
+    ),
+  );
+
   it.effect(
     "keeps a large catalog server-side, fetches only visible icons, and refreshes on TTL or request",
     () =>
@@ -154,12 +179,15 @@ describe("Codex provider store", () => {
           );
           const preview = yield* store.search({ preview: true });
           expect(preview.entries.map((entry) => entry.id)).toEqual(["featured", "notion"]);
-          expect(icons).toHaveLength(2);
+          expect(icons).toEqual(["https://files.openai.com/featured"]);
+          expect(preview.entries.find((entry) => entry.id === "notion")?.iconUrl).toBe(
+            resolveBrandIcon("Notion"),
+          );
           const page = yield* store.search({ limit: 5 });
           expect(page.entries).toHaveLength(5);
           expect(page.total).toBe(8115);
           expect(page.nextCursor).toBe("5");
-          expect(encode(page).length).toBeLessThan(5000);
+          expect(encode(page).length).toBeLessThan(20_000);
           expect(encode(page)).not.toContain("https://files.openai.com");
           expect(fixture.calls.filter((call) => call.method === "plugin/list")).toHaveLength(1);
           yield* store.search({ query: "item-8000", limit: 5, preview: true });
