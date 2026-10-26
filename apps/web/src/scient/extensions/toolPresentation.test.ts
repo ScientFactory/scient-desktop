@@ -38,6 +38,9 @@ describe("tool presentation", () => {
     expect(markdown).toContain('Default is "title". Available fields are: abstract');
     expect(markdown).toContain("## Returns\n\nThe paper object.");
     expect(markdown).not.toContain("Args:");
+    // The card header shows the first sentence, so the body must not repeat it.
+    expect(markdown.startsWith("## Parameters")).toBe(true);
+    expect(markdown).not.toContain("Get details about a paper by its id.");
   });
 
   it("prefers schema metadata and descriptions, filling missing descriptions from the docstring", () => {
@@ -56,13 +59,19 @@ describe("tool presentation", () => {
 
   it("preserves fallback Markdown and unrecognized parameter prose", () => {
     const description = "A paragraph.\n\n- Parent\n  - Child\n\n```python\nif True:\n    pass\n```";
-    expect(toolDescription({ name: "custom", description })).toBe(description);
+    // Only the header's summary sentence is dropped; the Markdown itself is preserved.
+    expect(toolDescription({ name: "custom", description })).toBe(
+      "- Parent\n  - Child\n\n```python\nif True:\n    pass\n```",
+    );
+    expect(toolDescription({ name: "custom", description: "Only sentence." })).toBe(
+      "Only sentence.",
+    );
     expect(
       toolDescription({
         name: "custom",
         description: "Lead\nParameters:\nFree-form notes.\nReturns:\nA list.",
       }),
-    ).toContain("## Parameters\n\n\n\nFree-form notes.");
+    ).toContain("## Parameters\n\nFree-form notes.");
     expect(toolDescription({ name: "empty" })).toBe("");
   });
 

@@ -56,12 +56,24 @@ function readableMarkdown(text: string): string {
     .join("\n");
 }
 
+/** The card header already shows the summary sentence; don't repeat it in the body. */
+function dropSummarySentence(markdown: string, summary: string): string {
+  if (!summary || summary.endsWith("…")) return markdown;
+  const [first = "", ...rest] = markdown.split(/\n\n+/u);
+  const collapsed = first.replace(/\s+/gu, " ").trim();
+  if (!collapsed.startsWith(summary)) return markdown;
+  const remainder = collapsed.slice(summary.length).trim();
+  const result = [remainder, ...rest].filter((part) => part.trim()).join("\n\n");
+  return result || markdown;
+}
+
 export function toolDescription(tool: ConnectorToolSummary): string {
   const description = tool.description?.trim() ?? "";
   const sections = description.split(
     /(?:^|\n)\s*(?:#{1,6}\s*)?(Args|Arguments|Parameters|Returns?)\s*:\s*/iu,
   );
-  if (sections.length === 1 && tool.parameters === undefined) return readableMarkdown(description);
+  if (sections.length === 1 && tool.parameters === undefined)
+    return dropSummarySentence(readableMarkdown(description), toolSummary(description));
   const lead = readableMarkdown(sections[0] ?? "");
   const parsed: Array<{ name: string; type?: string; description: string }> = [];
   let returns = "";
@@ -109,13 +121,16 @@ export function toolDescription(tool: ConnectorToolSummary): string {
       return `- \`${parameter.name.replaceAll("`", "")}\`${metadata ? ` (${metadata})` : ""}\n\n${body}`;
     })
     .join("\n\n");
-  return [
-    lead,
-    parameterText || unparsed.trim()
-      ? `## Parameters\n\n${parameterText}\n\n${readableMarkdown(unparsed)}`.trim()
-      : "",
-    returns ? `## Returns\n\n${returns}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  return dropSummarySentence(
+    [
+      lead,
+      parameterText || unparsed.trim()
+        ? `## Parameters\n\n${parameterText}\n\n${readableMarkdown(unparsed)}`.trim()
+        : "",
+      returns ? `## Returns\n\n${returns}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+    toolSummary(description),
+  );
 }
