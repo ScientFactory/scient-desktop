@@ -29,13 +29,14 @@ export const make = Effect.fn("CursorAccountReader.make")(function* (
   return CursorAccountReader.of({
     // Only a Keychain login asks the Keychain. The dashboard reader turns
     // its outcome, a failure included, into the source's message.
-    read: (credentialSource, sinceMs, untilMs) =>
-      readCursorAccountUsage(
+    read: Effect.fn("CursorAccountReader.read")(function (credentialSource, sinceMs, untilMs) {
+      return readCursorAccountUsage(
         credentialSource,
         sinceMs,
         untilMs,
         keychain.accessToken,
         options,
-      ).pipe(Effect.provideContext(context)),
+      ).pipe(Effect.provideContext(context));
+    }),
   });
 });

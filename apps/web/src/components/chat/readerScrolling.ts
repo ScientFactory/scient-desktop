@@ -20,7 +20,6 @@ import {
   readingIdentity,
   resolveReadingRow,
 } from "./readerScrollPolicy";
-import type { CitationHistoryPage } from "./useAssistantCitationTarget";
 import { flushTimelinePositions } from "./readingPositionStore";
 import {
   rememberTimelinePosition,
@@ -28,6 +27,13 @@ import {
 } from "./timelineScrollAnchoring";
 
 type ReadingDisclosures = NonNullable<RememberedTimelinePosition["disclosures"]>;
+
+/** One older page of the thread, requested while the restore looks for its saved message. */
+export interface ReadingHistoryPage {
+  readonly loading: boolean;
+  readonly cursor?: string | null;
+  readonly onLoadEarlier: () => void;
+}
 
 /**
  * Idle end-keeping and frame bookkeeping must respect recorded reader input rather than acting on
@@ -404,7 +410,7 @@ export function useReadingRestoreTarget({
   rememberedPosition: RememberedTimelinePosition | undefined;
   restoringThreadPosition: boolean;
   positionHistoryLoading: boolean;
-  loadEarlier: CitationHistoryPage | null;
+  loadEarlier: ReadingHistoryPage | null;
   listIdentityKey: string;
   readingHistoryPages: ReadingHistoryPages;
   setReadingHistoryPages: Dispatch<SetStateAction<ReadingHistoryPages>>;

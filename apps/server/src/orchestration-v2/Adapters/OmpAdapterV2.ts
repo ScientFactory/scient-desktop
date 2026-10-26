@@ -1490,12 +1490,12 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     mutated = true;
                     yield* client.setModel(model.provider, model.modelId).pipe(
                       Effect.catchTags({
-                        OmpRpcCommandError: () =>
-                          Effect.gen(function* () {
-                            if (client.refreshModels) yield* client.refreshModels();
-                            yield* refreshCatalog().pipe(Effect.ignore);
-                            yield* client.setModel(model.provider, model.modelId);
-                          }),
+                        // The enclosing operation owns the span for this inline handler.
+                        OmpRpcCommandError: Effect.fnUntraced(function* () {
+                          if (client.refreshModels) yield* client.refreshModels();
+                          yield* refreshCatalog().pipe(Effect.ignore);
+                          yield* client.setModel(model.provider, model.modelId);
+                        }),
                       }),
                     );
                   }

@@ -83,7 +83,7 @@ function failingReleaseEventSinkLayer(control: ReleaseWriteFailureControl) {
       const delegate = yield* EventSink.EventSinkV2;
       return EventSink.EventSinkV2.of({
         ...delegate,
-        write: (input) => {
+        write: Effect.fn("EventSinkV2.write")(function (input) {
           const isRelease = input.events.some(
             (event) =>
               event.type === "provider-session.updated" &&
@@ -99,7 +99,7 @@ function failingReleaseEventSinkLayer(control: ReleaseWriteFailureControl) {
             yield* Deferred.succeed(control.persisted, undefined);
             return result;
           });
-        },
+        }),
       });
     }),
   ).pipe(Layer.provide(TestEventSinkLayer));
@@ -171,58 +171,56 @@ function makeProviderSession(input: {
   };
 }
 
-function makeThreadCreatedEvent(input: {
+const makeThreadCreatedEvent = Effect.fn("makeThreadCreatedEvent")(function* (input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
   readonly now: DateTime.Utc;
   readonly projectId?: ProjectId;
 }) {
-  return Effect.gen(function* () {
-    const projectId =
-      input.projectId ??
-      (yield* input.idAllocator.allocate.project({
-        fixtureName: "provider-session-manager",
-      }));
-    const providerThreadId = input.idAllocator.derive.providerThread({
-      driver: CODEX_DRIVER,
-      nativeThreadId: "native-thread",
-    });
-    const thread: OrchestrationV2AppThread = {
-      createdBy: "user",
-      creationSource: "web",
-      id: input.threadId,
-      projectId,
-      title: "Provider session manager",
-      providerInstanceId: modelSelection.instanceId,
-      modelSelection,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      activeProviderThreadId: providerThreadId,
-      lineage: {
-        parentThreadId: null,
-        relationshipToParent: null,
-        rootThreadId: input.threadId,
-      },
-      forkedFrom: null,
-      createdAt: input.now,
-      updatedAt: input.now,
-      archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
-      lastVisitedAt: null,
-      deletedAt: null,
-    };
-    return {
-      id: yield* input.idAllocator.allocate.event({ threadId: input.threadId }),
-      type: "thread.created" as const,
-      threadId: input.threadId,
-      occurredAt: input.now,
-      payload: thread,
-    };
+  const projectId =
+    input.projectId ??
+    (yield* input.idAllocator.allocate.project({
+      fixtureName: "provider-session-manager",
+    }));
+  const providerThreadId = input.idAllocator.derive.providerThread({
+    driver: CODEX_DRIVER,
+    nativeThreadId: "native-thread",
   });
-}
+  const thread: OrchestrationV2AppThread = {
+    createdBy: "user",
+    creationSource: "web",
+    id: input.threadId,
+    projectId,
+    title: "Provider session manager",
+    providerInstanceId: modelSelection.instanceId,
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: providerThreadId,
+    lineage: {
+      parentThreadId: null,
+      relationshipToParent: null,
+      rootThreadId: input.threadId,
+    },
+    forkedFrom: null,
+    createdAt: input.now,
+    updatedAt: input.now,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    deletedAt: null,
+  };
+  return {
+    id: yield* input.idAllocator.allocate.event({ threadId: input.threadId }),
+    type: "thread.created" as const,
+    threadId: input.threadId,
+    occurredAt: input.now,
+    payload: thread,
+  };
+});
 
 function makeProviderThread(input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
@@ -310,131 +308,130 @@ const makeProviderAdapter = Effect.fn("makeProviderAdapter")(function* (
       : { mcpSessionInjection: options.mcpSessionInjection ?? true }),
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-    openSession: (input) =>
-      Effect.gen(function* () {
-        if (options.spawnBeforeOpen !== true && options.beforeOpen !== undefined) {
-          yield* options
-            .beforeOpen(input)
-            .pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
-        }
-        if (options.mcpConfigs !== undefined) {
-          const config =
-            input.configureMcp === false ? undefined : yield* mcpSessions.read(input.threadId);
-          yield* Ref.update(options.mcpConfigs, (configs) => [...configs, config]);
-        }
-        const now = yield* DateTime.now;
-        const openOrdinal = (yield* Ref.get(state)).openCount + 1;
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event, Cause.Done>();
-        const session = makeProviderSession({
-          providerSessionId: input.providerSessionId,
-          now,
-          ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
-        });
-        yield* Ref.update(state, (current) => {
-          const eventQueues = new Map(current.eventQueues);
-          eventQueues.set(String(input.providerSessionId), events);
+    openSession: Effect.fn("ProviderSessionManagerTestHarness.openSession")(function* (input) {
+      if (options.spawnBeforeOpen !== true && options.beforeOpen !== undefined) {
+        yield* options
+          .beforeOpen(input)
+          .pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
+      }
+      if (options.mcpConfigs !== undefined) {
+        const config =
+          input.configureMcp === false ? undefined : yield* mcpSessions.read(input.threadId);
+        yield* Ref.update(options.mcpConfigs, (configs) => [...configs, config]);
+      }
+      const now = yield* DateTime.now;
+      const openOrdinal = (yield* Ref.get(state)).openCount + 1;
+      const events = yield* Queue.unbounded<ProviderAdapterV2Event, Cause.Done>();
+      const session = makeProviderSession({
+        providerSessionId: input.providerSessionId,
+        now,
+        ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
+      });
+      yield* Ref.update(state, (current) => {
+        const eventQueues = new Map(current.eventQueues);
+        eventQueues.set(String(input.providerSessionId), events);
+        return {
+          ...current,
+          openCount: current.openCount + 1,
+          eventQueues,
+        };
+      });
+      yield* Effect.addFinalizer(() =>
+        Ref.update(state, (current) => ({
+          ...current,
+          closeCount: current.closeCount + 1,
+        })),
+      );
+      const closeSession = options.closeSession?.(input.providerSessionId);
+      if (closeSession) yield* Effect.addFinalizer(() => closeSession);
+      if (options.hangSessionScopeClose === true) {
+        // Registered last so it runs first on scope close, wedging the
+        // close before the closeCount finalizer, like a provider process
+        // that never yields its message stream.
+        yield* Effect.addFinalizer(() => Effect.never);
+      }
+
+      if (options.spawnBeforeOpen === true && options.beforeOpen !== undefined) {
+        yield* options
+          .beforeOpen(input)
+          .pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
+      }
+
+      return {
+        instanceId,
+        driver,
+        providerSessionId: input.providerSessionId,
+        get providerSession() {
           return {
-            ...current,
-            openCount: current.openCount + 1,
-            eventQueues,
+            ...session,
+            providerInstanceId: instanceId,
+            driver,
+            cwd: input.runtimePolicy.cwd ?? session.cwd,
+            status: options.liveStatus?.(openOrdinal) ?? session.status,
           };
-        });
-        yield* Effect.addFinalizer(() =>
+        },
+        events: options.failEventStream
+          ? Stream.fail(
+              new ProviderAdapterEventStreamError({
+                driver,
+                providerSessionId: input.providerSessionId,
+                cause: "process exited",
+              }),
+            )
+          : Stream.fromQueue(events),
+        ...(options.hasPendingBackgroundWork === undefined
+          ? {}
+          : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
+        ...(options.hasPendingBackgroundWorkForThread === undefined
+          ? {}
+          : {
+              hasPendingBackgroundWorkForThread: () => options.hasPendingBackgroundWorkForThread!,
+            }),
+        ...(options.invalidateInitiatedWork === undefined
+          ? {}
+          : { invalidateInitiatedWork: options.invalidateInitiatedWork }),
+        ensureThread: () => unimplemented("ensureThread unused in test"),
+        resumeThread: (threadInput) =>
           Ref.update(state, (current) => ({
             ...current,
-            closeCount: current.closeCount + 1,
-          })),
-        );
-        const closeSession = options.closeSession?.(input.providerSessionId);
-        if (closeSession) yield* Effect.addFinalizer(() => closeSession);
-        if (options.hangSessionScopeClose === true) {
-          // Registered last so it runs first on scope close, wedging the
-          // close before the closeCount finalizer, like a provider process
-          // that never yields its message stream.
-          yield* Effect.addFinalizer(() => Effect.never);
-        }
-
-        if (options.spawnBeforeOpen === true && options.beforeOpen !== undefined) {
-          yield* options
-            .beforeOpen(input)
-            .pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
-        }
-
-        return {
-          instanceId,
-          driver,
-          providerSessionId: input.providerSessionId,
-          get providerSession() {
-            return {
-              ...session,
-              providerInstanceId: instanceId,
-              driver,
-              cwd: input.runtimePolicy.cwd ?? session.cwd,
-              status: options.liveStatus?.(openOrdinal) ?? session.status,
-            };
-          },
-          events: options.failEventStream
-            ? Stream.fail(
-                new ProviderAdapterEventStreamError({
-                  driver,
-                  providerSessionId: input.providerSessionId,
-                  cause: "process exited",
-                }),
-              )
-            : Stream.fromQueue(events),
-          ...(options.hasPendingBackgroundWork === undefined
-            ? {}
-            : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
-          ...(options.hasPendingBackgroundWorkForThread === undefined
-            ? {}
-            : {
-                hasPendingBackgroundWorkForThread: () => options.hasPendingBackgroundWorkForThread!,
-              }),
-          ...(options.invalidateInitiatedWork === undefined
-            ? {}
-            : { invalidateInitiatedWork: options.invalidateInitiatedWork }),
-          ensureThread: () => unimplemented("ensureThread unused in test"),
-          resumeThread: (threadInput) =>
-            Ref.update(state, (current) => ({
-              ...current,
-              resumeCount: current.resumeCount + 1,
-              resumedWorkspaces: [
-                ...current.resumedWorkspaces,
-                {
-                  threadId: threadInput.threadId ?? threadInput.providerThread.appThreadId,
-                  cwd: threadInput.runtimePolicy?.cwd ?? null,
-                },
-              ],
-            })).pipe(Effect.as(threadInput.providerThread)),
-          startTurn: options.startTurn ?? (() => Effect.void),
-          steerTurn: options.steerTurn ?? (() => Effect.void),
-          interruptTurn: () =>
-            Ref.update(state, (current) => ({
-              ...current,
-              interruptCount: current.interruptCount + 1,
-            })).pipe(
-              Effect.andThen(
-                options.interruptSession?.(input.providerSessionId, events) ?? Effect.void,
-              ),
+            resumeCount: current.resumeCount + 1,
+            resumedWorkspaces: [
+              ...current.resumedWorkspaces,
+              {
+                threadId: threadInput.threadId ?? threadInput.providerThread.appThreadId,
+                cwd: threadInput.runtimePolicy?.cwd ?? null,
+              },
+            ],
+          })).pipe(Effect.as(threadInput.providerThread)),
+        startTurn: options.startTurn ?? (() => Effect.void),
+        steerTurn: options.steerTurn ?? (() => Effect.void),
+        interruptTurn: () =>
+          Ref.update(state, (current) => ({
+            ...current,
+            interruptCount: current.interruptCount + 1,
+          })).pipe(
+            Effect.andThen(
+              options.interruptSession?.(input.providerSessionId, events) ?? Effect.void,
             ),
-          unloadThread: ({ providerThread }) =>
-            (options.beforeUnload ?? Effect.void).pipe(
-              Effect.andThen(
-                Ref.update(state, (current) => ({
-                  ...current,
-                  unloadedNativeThreadIds: [
-                    ...current.unloadedNativeThreadIds,
-                    providerThread.nativeThreadRef?.nativeId ?? "",
-                  ],
-                })),
-              ),
+          ),
+        unloadThread: ({ providerThread }) =>
+          (options.beforeUnload ?? Effect.void).pipe(
+            Effect.andThen(
+              Ref.update(state, (current) => ({
+                ...current,
+                unloadedNativeThreadIds: [
+                  ...current.unloadedNativeThreadIds,
+                  providerThread.nativeThreadRef?.nativeId ?? "",
+                ],
+              })),
             ),
-          respondToRuntimeRequest: () => Effect.void,
-          readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
-          rollbackThread: () => unimplemented("rollbackThread unused in test"),
-          forkThread: () => unimplemented("forkThread unused in test"),
-        } satisfies ProviderAdapterV2SessionRuntime;
-      }),
+          ),
+        respondToRuntimeRequest: () => Effect.void,
+        readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
+        rollbackThread: () => unimplemented("rollbackThread unused in test"),
+        forkThread: () => unimplemented("forkThread unused in test"),
+      } satisfies ProviderAdapterV2SessionRuntime;
+    }),
   };
 });
 
@@ -527,13 +524,16 @@ function makeTestLayer(input: {
       Effect.gen(function* () {
         const adapter = yield* configuredAdapter;
         return ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
-          get: () =>
-            injectionEnabled === undefined
+          get: Effect.fn("ProviderAdapterRegistryV2.get")(function () {
+            return injectionEnabled === undefined
               ? Effect.succeed(adapter)
               : Ref.get(injectionEnabled).pipe(
                   Effect.map((enabled) => ({ ...adapter, mcpSessionInjection: enabled })),
-                ),
-          list: () => Effect.succeed([adapter.instanceId]),
+                );
+          }),
+          list: Effect.fn("ProviderAdapterRegistryV2.list")(function () {
+            return Effect.succeed([adapter.instanceId]);
+          }),
         });
       }),
     );
@@ -623,7 +623,7 @@ function makeBrowserAccessProject(projectId: ProjectId): Project {
   };
 }
 
-function runBrowserAccessScenario(input: {
+const runBrowserAccessScenario = Effect.fn("runBrowserAccessScenario")(function* (input: {
   readonly enableAgentBrowserAccess: boolean;
   readonly enableAgentDeviceAccess?: boolean;
   readonly projectOverride?: boolean;
@@ -631,111 +631,107 @@ function runBrowserAccessScenario(input: {
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
 }) {
-  return Effect.gen(function* () {
-    const state = yield* Ref.make(emptyState);
-    const mcpConfigs = yield* Ref.make<
-      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
-    >([]);
-    const createAfterPolicyCapture = yield* Ref.make<Effect.Effect<void>>(
-      Effect.die("The missing-thread fixture must install its durable creation before open."),
-    );
-    const projectId = ProjectId.make("project-provider-session-manager-browser-access");
-    const threadId = ThreadId.make("thread-provider-session-manager-browser-access");
-    const projectServiceLayer = Layer.mock(ProjectService.ProjectService)({
-      getById: (requestedProjectId) =>
-        Effect.succeed(
-          input.projectExists === false
-            ? Option.none()
-            : Option.some(makeBrowserAccessProject(requestedProjectId)),
-        ),
-    });
-
-    yield* Effect.gen(function* () {
-      const eventSink = yield* EventSink.EventSinkV2;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      const now = yield* DateTime.now;
-      const providerSessionId = yield* idAllocator.allocate.providerSession({
-        providerInstanceId: modelSelection.instanceId,
-        threadId,
-      });
-      const created = yield* makeThreadCreatedEvent({ idAllocator, threadId, now, projectId });
-      if (input.createThread !== false) {
-        yield* eventSink.write({ events: [created] });
-      } else {
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
-        yield* Ref.set(
-          createAfterPolicyCapture,
-          Effect.gen(function* () {
-            // openSession starts after capability capture. The thread is genuinely
-            // absent for that capture, then becomes durable for native retirement.
-            const absent = yield* projections.getThreadProjection(threadId).pipe(Effect.flip);
-            assert.equal(absent._tag, "ProjectionStoreThreadNotFoundError");
-            const captured = yield* mcpSessions.read(threadId);
-            assert.isDefined(captured);
-            assert.isFalse(captured!.capabilities.has("preview"));
-            yield* eventSink.write({ events: [created] });
-          }).pipe(Effect.orDie),
-        );
-      }
-      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
-      if (input.createThread === false) {
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
-        assert.equal((yield* projections.getThreadProjection(threadId)).thread.id, threadId);
-      }
-      const captured = (yield* Ref.get(mcpConfigs))[0];
-      assert.isDefined(captured);
-      const registry = yield* McpSessionRegistry.McpSessionRegistry;
-      const scope = yield* registry.resolve(
-        captured!.authorizationHeader.replace(/^Bearer\s+/, ""),
-      );
-      assert.isDefined(scope);
-      assert.deepEqual(scope!.capabilities, captured!.capabilities);
-    }).pipe(
-      Effect.provide(
-        makeTestLayer({
-          state,
-          idleTimeoutMs: 1_000,
-          mcpConfigs,
-          ...(input.createThread === false
-            ? {
-                beforeOpen: () => Ref.get(createAfterPolicyCapture).pipe(Effect.flatten),
-              }
-            : {}),
-          projectServiceLayer,
-          serverSettingsLayer: ServerSettings.layerTest({
-            enableAgentBrowserAccess: input.enableAgentBrowserAccess,
-            ...(input.enableAgentDeviceAccess === undefined
-              ? {}
-              : { enableAgentDeviceAccess: input.enableAgentDeviceAccess }),
-            projectSettingsOverrides: {
-              [projectId]: {
-                ...(input.projectOverride === undefined
-                  ? {}
-                  : { enableAgentBrowserAccess: input.projectOverride }),
-                ...(input.deviceOverride === undefined
-                  ? {}
-                  : { enableAgentDeviceAccess: input.deviceOverride }),
-              },
-            },
-          }),
-        }),
+  const state = yield* Ref.make(emptyState);
+  const mcpConfigs = yield* Ref.make<
+    ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+  >([]);
+  const createAfterPolicyCapture = yield* Ref.make<Effect.Effect<void>>(
+    Effect.die("The missing-thread fixture must install its durable creation before open."),
+  );
+  const projectId = ProjectId.make("project-provider-session-manager-browser-access");
+  const threadId = ThreadId.make("thread-provider-session-manager-browser-access");
+  const projectServiceLayer = Layer.mock(ProjectService.ProjectService)({
+    getById: (requestedProjectId) =>
+      Effect.succeed(
+        input.projectExists === false
+          ? Option.none()
+          : Option.some(makeBrowserAccessProject(requestedProjectId)),
       ),
-    );
-
-    return (yield* Ref.get(mcpConfigs))[0];
   });
-}
 
-function makePendingRuntimeRequestEvents(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-  readonly threadId: ThreadId;
-  readonly providerSessionId: ProviderSessionId;
-  readonly providerThread: OrchestrationV2ProviderThread;
-  readonly now: DateTime.Utc;
-}) {
-  return Effect.gen(function* () {
+  yield* Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+    const now = yield* DateTime.now;
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId,
+    });
+    const created = yield* makeThreadCreatedEvent({ idAllocator, threadId, now, projectId });
+    if (input.createThread !== false) {
+      yield* eventSink.write({ events: [created] });
+    } else {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      yield* Ref.set(
+        createAfterPolicyCapture,
+        Effect.gen(function* () {
+          // openSession starts after capability capture. The thread is genuinely
+          // absent for that capture, then becomes durable for native retirement.
+          const absent = yield* projections.getThreadProjection(threadId).pipe(Effect.flip);
+          assert.equal(absent._tag, "ProjectionStoreThreadNotFoundError");
+          const captured = yield* mcpSessions.read(threadId);
+          assert.isDefined(captured);
+          assert.isFalse(captured!.capabilities.has("preview"));
+          yield* eventSink.write({ events: [created] });
+        }).pipe(Effect.orDie),
+      );
+    }
+    yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+    if (input.createThread === false) {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      assert.equal((yield* projections.getThreadProjection(threadId)).thread.id, threadId);
+    }
+    const captured = (yield* Ref.get(mcpConfigs))[0];
+    assert.isDefined(captured);
+    const registry = yield* McpSessionRegistry.McpSessionRegistry;
+    const scope = yield* registry.resolve(captured!.authorizationHeader.replace(/^Bearer\s+/, ""));
+    assert.isDefined(scope);
+    assert.deepEqual(scope!.capabilities, captured!.capabilities);
+  }).pipe(
+    Effect.provide(
+      makeTestLayer({
+        state,
+        idleTimeoutMs: 1_000,
+        mcpConfigs,
+        ...(input.createThread === false
+          ? {
+              beforeOpen: () => Ref.get(createAfterPolicyCapture).pipe(Effect.flatten),
+            }
+          : {}),
+        projectServiceLayer,
+        serverSettingsLayer: ServerSettings.layerTest({
+          enableAgentBrowserAccess: input.enableAgentBrowserAccess,
+          ...(input.enableAgentDeviceAccess === undefined
+            ? {}
+            : { enableAgentDeviceAccess: input.enableAgentDeviceAccess }),
+          projectSettingsOverrides: {
+            [projectId]: {
+              ...(input.projectOverride === undefined
+                ? {}
+                : { enableAgentBrowserAccess: input.projectOverride }),
+              ...(input.deviceOverride === undefined
+                ? {}
+                : { enableAgentDeviceAccess: input.deviceOverride }),
+            },
+          },
+        }),
+      }),
+    ),
+  );
+
+  return (yield* Ref.get(mcpConfigs))[0];
+});
+
+const makePendingRuntimeRequestEvents = Effect.fn("makePendingRuntimeRequestEvents")(
+  function* (input: {
+    readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
+    readonly threadId: ThreadId;
+    readonly providerSessionId: ProviderSessionId;
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly now: DateTime.Utc;
+  }) {
     const requestId = yield* input.idAllocator.allocate.runtimeRequest({
       driver: CODEX_DRIVER,
       nativeRequestId: "pending-approval",
@@ -852,8 +848,8 @@ function makePendingRuntimeRequestEvents(input: {
       },
     ] satisfies ReadonlyArray<ProviderAdapterV2Event>;
     return { events, providerEvents, requestId, nodeId };
-  });
-}
+  },
+);
 export {
   CodexCapabilities,
   ExclusiveCapabilities,

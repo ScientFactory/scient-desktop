@@ -534,8 +534,11 @@ export function layerWithRegistry<Error>(
     options.providerRegistryLayer ??
     Layer.succeed(ProviderRegistry.ProviderRegistry, {
       ...makeProviderRegistryMock(),
-      setProviderAuthenticationFailure: () =>
-        Effect.die("Unexpected authentication invalidation in recorded provider replay."),
+      setProviderAuthenticationFailure: Effect.fn(
+        "ProviderRegistry.setProviderAuthenticationFailure",
+      )(function () {
+        return Effect.die("Unexpected authentication invalidation in recorded provider replay.");
+      }),
     });
   const layerCommandOutputHubProvided = CommandOutputRecorder.layer.pipe(
     Layer.provide(Layer.merge(layerEventSinkProvided, layerStores)),
@@ -633,7 +636,9 @@ export function layerWithRegistry<Error>(
   const layerThreadTitleRegenerationTest = Layer.succeed(
     ThreadTitleRegenerationService.ThreadTitleRegenerationService,
     ThreadTitleRegenerationService.ThreadTitleRegenerationService.of({
-      execute: () => Effect.void,
+      execute: Effect.fn("ThreadTitleRegenerationService.execute")(function () {
+        return Effect.void;
+      }),
     }),
   );
   const layerOrchestratorProvided = Orchestrator.layer.pipe(

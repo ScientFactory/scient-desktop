@@ -1108,8 +1108,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const refreshWorkspaceSnapshotOnTyping = useProviderWorkspaceSnapshotRefresh({
     environmentId,
     gitCwd,
-    selectedProviderEntry,
-    selectedProviderStatus: selectedProviderStatus,
+    instanceId: selectedProviderEntry?.instanceId,
   });
   // SCIENT-FORK:START — inline provider setup inside the model picker
   const { isProviderSetupAvailable, renderProviderSetup } =

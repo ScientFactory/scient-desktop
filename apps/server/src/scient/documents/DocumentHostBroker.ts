@@ -51,8 +51,8 @@ export const layer = Layer.effect(
     const broker = yield* PreviewBroker.make;
     const clientKey = (clientId: string) => `scient-documents:${clientId}`;
     return DocumentHostBroker.of({
-      connect: (host) =>
-        broker
+      connect: Effect.fn("DocumentHostBroker.connect")(function (host) {
+        return broker
           .connect({
             ...host,
             clientId: clientKey(host.clientId),
@@ -78,11 +78,14 @@ export const layer = Layer.effect(
                 }),
               ),
             ),
-          ),
-      respond: (response) =>
-        broker
+          );
+      }),
+      respond: Effect.fn("DocumentHostBroker.respond")(function (response) {
+        return broker
           .respond({ ...response, clientId: clientKey(response.clientId) })
-          .pipe(Effect.as({ accepted: true })),
+          .pipe(Effect.as({ accepted: true }));
+      }),
+      // @effect-diagnostics-next-line effectFnOpportunity:off - Effect.fn would erase the caller-selected result type.
       invoke: (input) =>
         Effect.suspend(() => {
           if (!documentHostOperations.some((operation) => operation === input.operation)) {

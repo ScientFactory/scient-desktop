@@ -8,7 +8,7 @@ import {
 
 export const INVENTORY_PROVIDER = ProviderInstanceId.make("inventory-provider");
 export const OTHER_INVENTORY_PROVIDER = ProviderInstanceId.make("other-provider");
-export const INVENTORY_CHECKED_AT = "2026-10-26T00:00:00.000Z";
+const INVENTORY_CHECKED_AT = "2026-10-26T00:00:00.000Z";
 
 export function inventorySnapshot(cwd: string, name: string): ServerProviderWorkspaceSnapshot {
   return {

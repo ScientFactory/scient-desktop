@@ -25,7 +25,7 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import {
-  hasCurrentProviderWorkspaceSnapshot,
+  hasCompleteProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "../providerSkills.ts";
@@ -35,7 +35,6 @@ import type { RpcSession } from "../rpc/session.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { createEnvironmentPresentationAtoms } from "./presentation.ts";
 import {
-  INVENTORY_CHECKED_AT,
   INVENTORY_PROVIDER,
   OTHER_INVENTORY_PROVIDER,
   inventoryConfig,
@@ -205,13 +204,7 @@ it.effect.each(["full", "fresh cwd"] as const)(
         expect(
           resolveProviderSkillsForCwd(h.read()[0]!, "/project").map((skill) => skill.name),
         ).toEqual(["old"]);
-        expect(
-          hasCurrentProviderWorkspaceSnapshot(
-            h.read()[0],
-            "/project",
-            Date.parse(INVENTORY_CHECKED_AT),
-          ),
-        ).toBe(true);
+        expect(hasCompleteProviderWorkspaceSnapshot(h.read()[0], "/project")).toBe(true);
         const input: RefreshInput = {
           instanceId: INVENTORY_PROVIDER,
           cwd: "/project",
@@ -233,13 +226,7 @@ it.effect.each(["full", "fresh cwd"] as const)(
         expect(h.read()[0]?.nativeInventoryGeneration).toBe("B");
         expect(resolveProviderSkillsForCwd(h.read()[0]!, "/project")).toEqual([]);
         expect(resolveProviderSlashCommandsForCwd(h.read()[0]!, "/project")).toEqual([]);
-        expect(
-          hasCurrentProviderWorkspaceSnapshot(
-            h.read()[0],
-            "/project",
-            Date.parse(INVENTORY_CHECKED_AT),
-          ),
-        ).toBe(false);
+        expect(hasCompleteProviderWorkspaceSnapshot(h.read()[0], "/project")).toBe(false);
 
         const b = inventoryProvider("B", [
           inventorySnapshot("/project", "replacement"),

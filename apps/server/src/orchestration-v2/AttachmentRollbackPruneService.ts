@@ -200,8 +200,8 @@ export const layer = Layer.effect(
       );
     });
     return {
-      execute: (threadId, request) =>
-        execute(threadId, request).pipe(
+      execute: Effect.fn("AttachmentRollbackPruneService.execute")(function (threadId, request) {
+        return execute(threadId, request).pipe(
           Effect.mapError((cause) =>
             isDeferred(cause)
               ? cause
@@ -210,7 +210,8 @@ export const layer = Layer.effect(
                   cause,
                 }),
           ),
-        ),
+        );
+      }),
     };
   }),
 );

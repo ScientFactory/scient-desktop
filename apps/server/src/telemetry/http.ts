@@ -19,12 +19,18 @@ export const scientAnalyticsHttpApiLayer = HttpApiBuilder.group(
       yield* Effect.serviceOption(AnalyticsService.AnalyticsService),
       () =>
         AnalyticsService.AnalyticsService.of({
-          recordOwners: () => Effect.void,
-          record: () => Effect.void,
+          recordOwners: Effect.fn("AnalyticsService.recordOwners")(function () {
+            return Effect.void;
+          }),
+          record: Effect.fn("AnalyticsService.record")(function () {
+            return Effect.void;
+          }),
           flush: Effect.void,
           status: Effect.succeed({ available: false, consent: "off" }),
           collectionEpoch: Effect.succeed(0),
-          setConsent: () => Effect.succeed({ available: false, consent: "off" }),
+          setConsent: Effect.fn("AnalyticsService.setConsent")(function () {
+            return Effect.succeed({ available: false, consent: "off" });
+          }),
           deleteData: Effect.succeed(false),
         }),
     );

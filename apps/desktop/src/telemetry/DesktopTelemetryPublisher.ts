@@ -421,7 +421,9 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     handleControlForSource,
     removeControlSource,
     publishUpdateReport,
-    publishHealth: (report) => PubSub.publish(appHealthChanges, report).pipe(Effect.asVoid),
+    publishHealth: Effect.fn("DesktopTelemetryPublisher.publishHealth")(function (report) {
+      return PubSub.publish(appHealthChanges, report).pipe(Effect.asVoid);
+    }),
     updateRequests: Stream.fromQueue(updateRequestQueue),
     updateCommits: Stream.fromQueue(updateCommitQueue),
     updateCancellations: Stream.fromQueue(updateCancellationQueue),

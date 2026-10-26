@@ -4,6 +4,7 @@ import { useWorkingRowExit } from "./workingRowExit";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import {
   timelineRowsKey,
+  type ReadingHistoryPage,
   type RestingAtReadingEnd,
   useReaderScrollInput,
   useReadingBookkeepingFrame,
@@ -85,7 +86,8 @@ import {
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { type AssistantCitationRequest } from "./AssistantCitationSource";
-import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssistantCitationTarget";
+import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
+import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
 import {
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
@@ -180,6 +182,8 @@ function TimelineListFooter({
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
 
+const CITED_HISTORY_LOADING: CitedHistory = { _tag: "loading" };
+
 export interface MessagesTimelineHistoryControls {
   readonly hasMoreHistory: boolean;
   readonly loading: boolean;
@@ -189,7 +193,7 @@ export interface MessagesTimelineHistoryControls {
 
 interface MessagesTimelineProps {
   citationRequest?: AssistantCitationRequest | null;
-  citationHistoryLoading?: boolean;
+  citationHistory?: CitedHistory;
   onCiteAssistantText?: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -312,7 +316,9 @@ interface MessagesTimelineProps {
   emptyPlaceholderInset: number;
   topFadeEnabled?: boolean;
   historyControls?: MessagesTimelineHistoryControls | undefined;
-  loadEarlier?: CitationHistoryPage | null;
+  // SCIENT-FORK:START — older pages for the reading-position restore (chat/readerScrolling.ts).
+  loadEarlier?: ReadingHistoryPage | null;
+  // SCIENT-FORK:END
   findExpanded?: boolean;
   findQuery?: string;
   activeFindMatch?: ThreadFindMatch | null;
@@ -321,17 +327,14 @@ interface MessagesTimelineProps {
 
 export function MessagesTimeline(props: MessagesTimelineProps) {
   const find = useContext(ThreadFindTimelineContext);
-  const findOpen = find?.findOpen ?? props.findOpen;
-  const { onManualNavigation } = props;
-  useEffect(() => {
-    if (findOpen) onManualNavigation();
-  }, [findOpen, onManualNavigation]);
+  // Opening find announces its navigation through threadFindStore; a thread
+  // shown with find already open restores before find reveals its match.
   return <ConversationTimeline {...props} {...find} />;
 }
 
 const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
-  citationHistoryLoading = false,
+  citationHistory = CITED_HISTORY_LOADING,
   onCiteAssistantText,
   // SCIENT-FORK:START
   agentPanelModel,
@@ -431,7 +434,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   emptyPlaceholderInset,
   topFadeEnabled = false,
   historyControls,
+  // SCIENT-FORK:START
   loadEarlier = null,
+  // SCIENT-FORK:END
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
@@ -514,9 +519,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }
   const citationThreadRef = parseScopedThreadKey(routeThreadKey);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
-  const expandCitedRun = (runId: RunId) => {
-    setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
-  };
   // SCIENT-FORK:START — agent-spawn rows expand in place (scient/presentation/AgentSpawnRow.tsx).
   const onToggleSpawnRow = (entryId: string, expanded: boolean, runId?: RunId) => {
     setExpandedSpawnEntryIds((current) => {
@@ -681,6 +683,49 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (activeFindRunId) {
       setExpandedRunIds((previous) =>
         previous.has(activeFindRunId) ? previous : new Set(previous).add(activeFindRunId),
+      );
+    }
+  }
+  // A cited response folded inside a turn opens its fold once per activation;
+  // the user can fold it again. Only a citation that can still land opens one.
+  // The marker stops the O(entries) fold lookup once the entry is found, since
+  // the href stays in the URL after the citation settles.
+  const [citationExpandedFor, setCitationExpandedFor] = useState<string | null>(null);
+  // Back/Forward can restore an earlier activation key, so the marker clears
+  // between activations and a revisit opens the fold again.
+  if (!citationRequest && citationExpandedFor !== null) setCitationExpandedFor(null);
+  const citedEntry =
+    citationRequest &&
+    citationExpandedFor !== citationRequest.key &&
+    citationHistory._tag !== "failed"
+      ? timelineEntries.find(
+          (entry) =>
+            entry.kind === "message" &&
+            entry.message.role === "assistant" &&
+            entry.message.id === citationRequest.citation.messageId,
+        )
+      : undefined;
+  if (citationRequest && citedEntry) {
+    const citedRunId = (
+      findFoldRunIds ??
+      timelineTurnFoldRunIdsByEntryId({
+        timelineEntries,
+        latestRun,
+        runningRunId,
+        isWorking,
+        runlessWorkActive,
+      })
+    ).get(citedEntry.id);
+    setCitationExpandedFor(citationRequest.key);
+    if (citedRunId) {
+      setExpandedRunIds((previous) =>
+        previous.has(citedRunId) ? previous : new Set(previous).add(citedRunId),
+      );
+    }
+    const citedAttempt = citedEntry.attempt;
+    if (citedAttempt?.status === "superseded") {
+      setExpandedAttemptIds((previous) =>
+        previous.has(citedAttempt.id) ? previous : new Set(previous).add(citedAttempt.id),
       );
     }
   }
@@ -851,24 +896,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
     alwaysRender: citationAlwaysRender,
   } = useAssistantCitationTarget({
     request: citationRequest,
-    entries: timelineEntries,
-    rows,
-    listRef,
-    viewport: timelineViewportElement,
-    historyLoading: citationHistoryLoading,
-    loadEarlier,
-    getTurnFoldRunId: (entryId) =>
-      (
-        findFoldRunIds ??
-        timelineTurnFoldRunIdsByEntryId({
-          timelineEntries,
-          latestRun,
-          runningRunId,
-          isWorking,
-          runlessWorkActive,
+    phase: citationRequest
+      ? resolveCitationPhase({
+          history: citationHistory,
+          messageId: citationRequest.citation.messageId,
+          entries: timelineEntries,
+          rows,
         })
-      ).get(entryId),
-    onExpandTurn: expandCitedRun,
+      : null,
+    viewport: timelineViewportElement,
     onManualNavigation,
   });
   const [findListReady, setFindListReady] = useState(false);
@@ -1339,6 +1375,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   useThreadFindPositionReader({
     threadKey: listIdentityKey,
+    navigate: onManualNavigation,
     timelineViewportElement,
     findFoldRunIds,
     timelineEntries,
@@ -1351,7 +1388,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   });
 
   useThreadFindNavigation({
-    listReady: findListReady,
+    // Find reveals its match only after the opening restore settles; both
+    // scroll the list directly, so the restore would otherwise pull it back.
+    listReady: findListReady && !restoringThreadPosition,
     historyControls,
     entries: timelineEntries,
     container: timelineViewportElement,

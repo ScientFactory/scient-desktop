@@ -513,10 +513,11 @@ export const makeWithDependencies = Effect.fn("DesktopVoice.makeWithDependencies
       }).pipe(Effect.ensuring(clearDownloadState));
     }),
 
-    cancelModelDownload: (request) =>
-      Effect.sync(() => {
+    cancelModelDownload: Effect.fn("DesktopVoice.cancelModelDownload")(function (request) {
+      return Effect.sync(() => {
         if (downloadModelId === request.modelId) downloadController?.abort();
-      }),
+      });
+    }),
 
     selectModel: Effect.fn("DesktopVoice.selectModel")(function* (
       request: VoiceModelOperationRequest,
@@ -609,12 +610,13 @@ export const makeWithDependencies = Effect.fn("DesktopVoice.makeWithDependencies
       );
     }),
 
-    cancelTranscription: (request) =>
-      Effect.sync(() => {
+    cancelTranscription: Effect.fn("DesktopVoice.cancelTranscription")(function (request) {
+      return Effect.sync(() => {
         for (const transcription of transcriptions) {
           if (transcription.requestId === request?.requestId) transcription.controller.abort();
         }
-      }),
+      });
+    }),
 
     transcribe: Effect.fn("DesktopVoice.transcribe")(function* (request: VoiceTranscribeRequest) {
       const clip = yield* Effect.try({

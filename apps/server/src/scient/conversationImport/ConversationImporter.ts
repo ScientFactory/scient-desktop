@@ -702,19 +702,21 @@ export class ConversationImporter extends Context.Service<
    * publishes anything, so there is never an attempt to settle.
    */
   static readonly layerUnavailable = Layer.succeed(this, {
-    importConversation: () =>
-      Effect.fail(
+    importConversation: Effect.fn("ConversationImporter.importConversation")(function () {
+      return Effect.fail(
         new ConversationImporterError({
           reason: "importer-unavailable",
           detail: "This Scient cannot import conversations yet.",
         }),
-      ),
-    settleAttempt: (attempt) =>
-      Effect.fail(
+      );
+    }),
+    settleAttempt: Effect.fn("ConversationImporter.settleAttempt")(function (attempt) {
+      return Effect.fail(
         new ConversationImportSettleError({
           detail: `Import ${attempt.importId} has an attempt this Scient cannot settle.`,
           cause: null,
         }),
-      ),
+      );
+    }),
   });
 }

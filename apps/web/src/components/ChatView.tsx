@@ -47,7 +47,7 @@ import {
   useForkPdfContinuityPending,
   deriveForkTimelineBaseline,
 } from "~/scient/fork/chatViewFork";
-import type { CitationHistoryPage } from "./chat/useAssistantCitationTarget";
+import type { ReadingHistoryPage } from "./chat/readerScrolling";
 import { useProjectScriptAutoPreview } from "./preview/useProjectScriptAutoPreview";
 import { AgentsPanel } from "./AgentsPanel";
 import {
@@ -346,6 +346,7 @@ import {
   PullRequestThreadDialogHost,
 } from "./chat/ChatOverlayHosts";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
+import { useCitedHistory } from "./chat/citationProcedure";
 import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
@@ -639,8 +640,8 @@ function ChatViewContent(props: ChatViewProps) {
       },
     };
   })() as MessagesTimelineHistoryControls | undefined;
-  // SCIENT-FORK:START — older pages for the reading-position restore and for citations.
-  const loadEarlierTurns = ((): CitationHistoryPage | null => {
+  // SCIENT-FORK:START — older pages for the reading-position restore.
+  const loadEarlierTurns = ((): ReadingHistoryPage | null => {
     if (routeThreadDetailRef === null || !shouldShowLoadEarlierControl(serverThreadHistory)) {
       return null;
     }
@@ -688,6 +689,7 @@ function ChatViewContent(props: ChatViewProps) {
       ? { citation, key: citationLocation.key ?? citationLocation.href }
       : null;
   })() as AssistantCitationRequest | null;
+  const citationHistory = useCitedHistory(citationRequest);
   const { resolvedTheme } = useTheme();
   const composerExtractedIntent = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.extractedIntent,
@@ -1611,7 +1613,6 @@ function ChatViewContent(props: ChatViewProps) {
   } = usePendingThreadRequests({
     environmentId,
     activeThreadId,
-    activeThread,
     serverProjection,
     supportsQuestionAttachments,
     composerDraftTarget,
@@ -2640,7 +2641,6 @@ function ChatViewContent(props: ChatViewProps) {
     composerTimelineInset,
     routeThreadKey,
     activeThreadKey,
-    activeThreadId: activeThread?.id,
     isServerThread,
     serverProjection,
     timelineMessages,
@@ -3965,7 +3965,7 @@ function ChatViewContent(props: ChatViewProps) {
                 readyMarkdownCwd={gitCwd}
                 readyWorkspaceRoot={activeWorkspaceRoot ?? null}
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
-                citationHistoryLoading={threadDetailLoading}
+                citationHistory={citationHistory}
                 {...(!paintOnlyDisplayedTimeline
                   ? {
                       onCiteAssistantText: citeAssistantTextStable,
@@ -4150,7 +4150,7 @@ function ChatViewContent(props: ChatViewProps) {
                 // SCIENT-FORK:END
                 emptyPlaceholderInset={composerReservedHeight}
                 topFadeEnabled={!hasTimelineTopBanner}
-                // SCIENT-FORK:START — older pages for the restore and for citations.
+                // SCIENT-FORK:START — older pages for the restore.
                 loadEarlier={paintOnlyDisplayedTimeline ? null : loadEarlierTurns}
                 // SCIENT-FORK:END
                 {...(paintOnlyDisplayedTimeline || threadHistoryControls === undefined

@@ -73,14 +73,15 @@ export const layer = Layer.effect(
       );
     });
     return {
-      release: (threadId) =>
-        release(threadId).pipe(
+      release: Effect.fn("ThreadFileRelease.release")(function (threadId) {
+        return release(threadId).pipe(
           Effect.mapError((cause) =>
             cause._tag === "ThreadFileReleaseDeferred"
               ? cause
               : new ThreadFileReleaseDeferred({ reason: "File release failed.", cause }),
           ),
-        ),
+        );
+      }),
     };
   }),
 );

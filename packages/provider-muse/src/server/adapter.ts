@@ -288,8 +288,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
     // SCIENT-FORK:START — the native sessionMcp channel carries host-issued skill authority.
     mcpSessionInjection: true,
     // SCIENT-FORK:END
-    getCapabilities: () => Effect.succeed(MuseProviderCapabilitiesV2),
-    planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
+    getCapabilities: Effect.fn("MuseAdapter.getCapabilities")(function () {
+      return Effect.succeed(MuseProviderCapabilitiesV2);
+    }),
+    planSelectionTransition: Effect.fn("MuseAdapter.planSelectionTransition")(function () {
+      return Effect.succeed(turnScopedSelectionTransition());
+    }),
     openSession: Effect.fn("MuseAdapterV2.openSession")(function* (
       input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
     ) {
@@ -391,11 +395,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }).pipe(
           Effect.timeout(options.requestTimeoutMs ?? 30_000),
           Effect.catchTags({
-            TimeoutError: (cause) =>
-              Effect.gen(function* () {
-                yield* eventPermit.withPermits(1)(failHost(cause));
-                return yield* protocolError(`Muse ${method} timed out; its host was closed`, cause);
-              }),
+            // The enclosing operation owns the span for this inline handler.
+            TimeoutError: Effect.fnUntraced(function* (cause) {
+              yield* eventPermit.withPermits(1)(failHost(cause));
+              return yield* protocolError(`Muse ${method} timed out; its host was closed`, cause);
+            }),
           }),
         );
       const updateSession = Effect.fnUntraced(function* (

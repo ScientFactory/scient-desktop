@@ -3764,26 +3764,26 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           yield* submit(sessionId, turnInput, state, turn).pipe(
             // Forget externally deleted sessions so the next turn recreates them with handoff.
             Effect.catchTags({
-              SessionNotFoundError: () =>
-                Effect.gen(function* () {
-                  if (state.active === turn && turn.providerTurn.acceptedAt === undefined) {
-                    turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "pending" };
-                    yield* emitProviderTurn(state, turn, turn.providerTurn);
-                  }
-                  yield* finishTurn(
-                    state,
-                    {
-                      status: "failed",
-                      failure: makeProviderFailure({
-                        message:
-                          "The OpenCode session no longer exists. Send the message again to continue in a new session.",
-                        class: "provider_error",
-                      }),
-                    },
-                    "broken",
-                  );
-                  threads.delete(sessionId);
-                }),
+              // The enclosing operation owns the span for this inline handler.
+              SessionNotFoundError: Effect.fnUntraced(function* () {
+                if (state.active === turn && turn.providerTurn.acceptedAt === undefined) {
+                  turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "pending" };
+                  yield* emitProviderTurn(state, turn, turn.providerTurn);
+                }
+                yield* finishTurn(
+                  state,
+                  {
+                    status: "failed",
+                    failure: makeProviderFailure({
+                      message:
+                        "The OpenCode session no longer exists. Send the message again to continue in a new session.",
+                      class: "provider_error",
+                    }),
+                  },
+                  "broken",
+                );
+                threads.delete(sessionId);
+              }),
             }),
             Effect.tapError((cause) =>
               state.active === turn
@@ -4237,8 +4237,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     instanceId,
     driver,
     mcpSessionInjection: options.mcpSessionInjection === true,
-    getCapabilities: () => Effect.succeed(OpenCode2ProviderCapabilities),
-    planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
+    getCapabilities: Effect.fn("OpencodeAdapter.getCapabilities")(function () {
+      return Effect.succeed(OpenCode2ProviderCapabilities);
+    }),
+    planSelectionTransition: Effect.fn("OpencodeAdapter.planSelectionTransition")(function () {
+      return Effect.succeed(turnScopedSelectionTransition());
+    }),
     // The session borrows the instance's server for as long as it is open, so a
     // spawned server is not idle-stopped under a long tool call.
     openSession: Effect.fn("OpenCode2Adapter.borrowAndOpenSession")(
