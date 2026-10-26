@@ -11,7 +11,7 @@ extensions.
 
 - **Discover** lists services you can add. Curated sections such as Featured
   and Research come first, followed by the features built into Scient and
-  **Browse all MCP servers**, which lists the public MCP Registry. Select a
+  the shared plugin shelf, the Codex store, and **Browse all MCP servers**, which lists the public MCP Registry. Select a
   section title to see the whole category. Search covers the catalog, the
   registry, and what you have already installed.
 - **Installed** lists what this environment already has, grouped by who manages
@@ -66,14 +66,11 @@ the service and its stored sign-in or key.
 
 ## Works with
 
-**Works with** counts the agents that can use a service: **All agents**, a
-number, or **None of your agents**. Hover over it, or select it, to see their
-logos.
-
-An agent marked with an amber dot works with limits; hover over or tap its logo
-to see why. For example, OpenCode receives connected services only when Scient
-starts its server, not when it uses an external OpenCode server URL. Agents
-that cannot use connected services at all are not counted.
+The line on each row says who can use it: **Works with all your agents**,
+**Works with Claude and Scient Agent**, **Codex only**, or **Claude only**.
+Hover over it or select it to see the agents and any limits. Account apps use
+their owning agent's account. A standalone server configured in Claude stays
+with Claude.
 
 On **Installed**, the **Works with** filter shows only what a chosen agent can
 use.
@@ -98,6 +95,50 @@ you can see everything in one place, but the agent remains in charge.
 **Uninstall** and **Sign in** appear only where that agent allows Scient to do
 them. A section shows six items at first; use **Show all** in its header to see
 the rest.
+
+## Plugins for Claude and Scient Agent
+
+Discover lists plugins from Claude Code's locally available stores and stores
+configured in Scient Agent. Select the heading to search and browse the full
+list. A plugin's page shows its contents when available and the store's review
+state, such as **Reviewed by Anthropic** or **Reviewed by a partner**.
+
+Choose **Install in Claude Code** when Claude is available. Scient uses Claude
+Code's own installer; if the store was configured only in Scient Agent,
+Scient asks Claude Code to add that store first. With no Claude instance,
+choose **Install in Scient Agent**. **Add Claude Code's store** adds the official
+store to Scient Agent only when you choose it.
+
+Shared plugins can include hooks, local MCP servers, and extension modules,
+as well as skills and commands. They follow the installing agent's own
+lifecycle. Follow that agent's reload or restart instructions when new parts
+do not appear in an existing session.
+
+In **Settings → Providers → Scient**, **Use my Claude Code plugins in Scient
+Agent** is on by default. It appears with Scient Agent 0.1.3 or newer. It uses
+that server's `CLAUDE_CONFIG_DIR` or default Claude home; it does not combine
+separate Claude profiles. Scient Agent's own disabled-source settings still
+apply. Turning the preference off stops Scient's additional source request;
+it does not replace sources you enabled in Scient Agent yourself.
+
+## Codex apps and Claude connectors
+
+**From the Codex store** needs a Codex instance signed in with ChatGPT.
+Discover shows featured and installed apps; search finds others, and the
+heading opens the full searchable store. Apps that duplicate Scient's curated
+services appear through the wider Scient version in Discover.
+
+On an app's page, choose **Install in Codex**, then **Connect <app>** when
+sign-in is required. Complete sign-in on ChatGPT and return to Scient. The
+connection status updates after Codex confirms it. Some apps **connect the
+first time Codex uses them**. Plan and administrator restrictions appear beside
+a disabled action.
+
+**From Claude** can list claude.ai connectors without starting a conversation.
+Choose **Connect on claude.ai**, then return after signing in. **Add more on
+claude.ai** opens the account's connector settings. These connectors are
+**Claude only**. Google's account apps remain available through Codex or
+Claude; Scient does not add Google's official MCP servers itself.
 
 ## See what a conversation received
 
