@@ -2282,6 +2282,22 @@
     "website": "https://platform.opentargets.org"
   },
   {
+    "key": "openai",
+    "names": ["OpenAI", "Codex", "codex-app-tools", "Codex Document Control"],
+    "website": "https://openai.com",
+    "source": {
+      "kind": "repository",
+      "url": "repo:apps/marketing/public/harnesses/openai_dark.svg",
+      "rendering": "mark",
+      "color": "#000000",
+      "licenseNote": "Brand-owned artwork reused from the existing Scient provider mark; trademarks remain with their respective owners. No open artwork license asserted.",
+      "sourceWidth": 256,
+      "sourceHeight": 256,
+      "sourceFormat": "svg",
+      "outputBytes": 4968
+    }
+  },
+  {
     "key": "openalex",
     "names": ["openalex"],
     "source": {

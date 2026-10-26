@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { parseDocument } from "yaml";
 import * as Schema from "effect/Schema";
+import { extensionIconData } from "./ExtensionIconData.ts";
 import type { ExtensionPluginContents } from "@t3tools/contracts";
 
 const MAX_BYTES = 256 * 1024;
@@ -11,6 +12,7 @@ const MAX_ENTRIES = 200;
 const Metadata = Schema.Struct({
   name: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
+  "user-invocable": Schema.optional(Schema.Boolean),
 });
 const decodeMetadata = Schema.decodeUnknownSync(Metadata);
 const decodeRecord = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
@@ -22,7 +24,7 @@ function isPluginPathContained(root: string, file: string): boolean {
   );
 }
 
-export async function readContainedPluginText(root: string, file: string): Promise<string> {
+async function readContainedPluginBytes(root: string, file: string): Promise<Buffer> {
   const realRoot = await NodeFSP.realpath(root);
   const realFile = await NodeFSP.realpath(NodePath.resolve(root, file));
   if (!isPluginPathContained(realRoot, realFile))
@@ -48,10 +50,18 @@ export async function readContainedPluginText(root: string, file: string): Promi
       (await NodeFSP.realpath(root)) !== realRoot
     )
       throw new Error("The plugin changed while reading it.");
-    return bytes.subarray(0, total).toString("utf8");
+    return bytes.subarray(0, total);
   } finally {
     await handle.close();
   }
+}
+
+export async function readContainedPluginText(root: string, file: string): Promise<string> {
+  return (await readContainedPluginBytes(root, file)).toString("utf8");
+}
+
+export async function readContainedPluginIcon(root: string, file: string) {
+  return extensionIconData(await readContainedPluginBytes(root, file));
 }
 
 async function entries(root: string, folder: string): Promise<string[]> {
@@ -75,6 +85,9 @@ function skillMetadata(text: string, fallback: string) {
   return {
     name: metadata.name?.trim() || fallback,
     description: metadata.description?.trim() ?? "",
+    ...(metadata["user-invocable"] === undefined
+      ? {}
+      : { userInvocable: metadata["user-invocable"] }),
   };
 }
 

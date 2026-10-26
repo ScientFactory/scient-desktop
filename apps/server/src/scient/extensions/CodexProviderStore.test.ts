@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -56,6 +57,7 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
     },
     localPlugins: [] as Plugin[],
     skills: [{ name: "search" }] as Array<{ name: string; path?: string; description?: string }>,
+    summary: undefined as Plugin | undefined,
     repeatCursor: false,
     incomplete: false,
   };
@@ -90,6 +92,7 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
           case "plugin/read":
             return Effect.succeed({
               plugin: {
+                summary: state.summary,
                 apps: [{ id: "app", name: "Sample", installUrl: state.app.installUrl }],
                 skills: state.skills,
                 mcpServers: ["sample"],
@@ -150,7 +153,7 @@ describe("Codex provider store", () => {
               }),
           );
           const preview = yield* store.search({ preview: true });
-          expect(preview.entries.map((entry) => entry.id)).toEqual(["featured", "installed"]);
+          expect(preview.entries.map((entry) => entry.id)).toEqual(["featured", "notion"]);
           expect(icons).toHaveLength(2);
           const page = yield* store.search({ limit: 5 });
           expect(page.entries).toHaveLength(5);
@@ -336,11 +339,12 @@ it.effect(
         const fixture = clientFixture([]);
         fixture.state.localPlugins = [plugin("local")];
         fixture.state.installed.add("local");
+        fixture.state.summary = plugin("local", { source: { type: "local", path: root } });
         fixture.state.skills = [{ name: "search", path, description: "Search locally" }];
         const store = yield* makeCodexProviderStore(
           () => Effect.succeed(fixture.client),
           () => Effect.succeed(undefined),
-          cache,
+          NodePath.join(cache, "other-cache"),
         );
         expect((yield* store.contents("local")).skills).toMatchObject([
           { name: "search", documentAvailable: true, enabled: true },
@@ -348,13 +352,64 @@ it.effect(
         expect(yield* store.skillDocument("local", "search")).toEqual({
           instructions: "# Search locally",
         });
+        yield* store.contents("local");
+        expect(fixture.calls.filter((call) => call.method === "plugin/read")).toHaveLength(1);
+        expect(fixture.calls.some((call) => call.method === "plugin/list")).toBe(false);
+        expect(fixture.calls.filter((call) => call.method === "plugin/installed")).toHaveLength(1);
+
         fixture.state.skills = [
           { name: "search", path: NodePath.join(NodeOS.tmpdir(), "outside/SKILL.md") },
         ];
+        yield* store.search({ refresh: true });
         expect((yield* store.contents("local")).skills[0]?.documentAvailable).toBe(false);
         expect((yield* store.skillDocument("local", "search").pipe(Effect.result))._tag).toBe(
           "Failure",
         );
+      }),
+    ),
+);
+
+it.effect(
+  "does not queue skill contents behind store icon downloads and coalesces plugin reads",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = clientFixture([plugin("sample")]);
+        fixture.state.installed.add("sample");
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let openings = 0;
+        const store = yield* makeCodexProviderStore(
+          () =>
+            Effect.sync(() => {
+              openings++;
+              return fixture.client;
+            }),
+          (url) =>
+            url
+              ? Deferred.succeed(started, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.as(undefined),
+                )
+              : Effect.succeed(undefined),
+        );
+        const page = yield* store
+          .search({ limit: 1 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        const reading = yield* Effect.all([store.contents("sample"), store.contents("sample")], {
+          concurrency: "unbounded",
+        }).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(0);
+        const completedBeforeIcons = reading.pollUnsafe();
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(page);
+        expect(completedBeforeIcons?._tag).toBe("Success");
+        const [first, second] = yield* Fiber.join(reading);
+        expect(first.skills).toEqual(second.skills);
+        expect(first.mcpServers).toEqual([{ name: "sample" }]);
+        expect(openings).toBe(1);
+        expect(fixture.calls.filter((call) => call.method === "plugin/read")).toHaveLength(1);
       }),
     ),
 );

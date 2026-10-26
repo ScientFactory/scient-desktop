@@ -113,7 +113,7 @@ function StoreResults({
   readonly preview: boolean;
   readonly cursor?: string;
 }) {
-  const { environmentId, catalog, providers } = useExtensionsEnvironment();
+  const { environmentId, providers } = useExtensionsEnvironment();
   const registry = useContext(RegistryContext);
   const atom = extensionsProviderStorePage({
     environmentId,
@@ -154,17 +154,10 @@ function StoreResults({
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [atom, registry]);
-  const curatedIds = new Set(
-    catalog?.sections.flatMap((section) =>
-      section.entries.flatMap((entry) =>
-        entry.agentStores?.codex ? [entry.agentStores.codex] : [],
-      ),
-    ),
-  );
   const entries =
     page.data?.entries.filter(
       (entry) =>
-        (entry.kind !== "codex" || !preview || !curatedIds.has(entry.name)) &&
+        (entry.kind !== "codex" || !preview || !entry.installed) &&
         !(claudeServesOfficial && entry.marketplace === "claude-plugins-official"),
     ) ?? [];
   return (

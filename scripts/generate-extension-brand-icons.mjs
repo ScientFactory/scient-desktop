@@ -14,6 +14,7 @@ const normalize = (name) => name.trim().toLowerCase().replace(/[-_]/g, " ").repl
 const cache = new URL(".logs/icon-sources/", root);
 await NodeFSP.mkdir(cache, { recursive: true });
 const fetchResource = async (url) => {
+  if (url.startsWith("repo:")) return NodeFSP.readFile(new URL(url.slice(5), root));
   const path = new URL(NodeCrypto.createHash("sha256").update(url).digest("hex"), cache);
   try {
     return await NodeFSP.readFile(path);
@@ -204,6 +205,8 @@ const render = async (bytes, source, brand) => {
   const meta = await sharp(bytes).metadata();
   if (meta.format !== "svg" && Math.min(meta.width, meta.height) < 128)
     throw new Error(`Low resolution ${meta.width}×${meta.height}`);
+  if (meta.format === "svg" && source.kind === "repository" && source.color)
+    bytes = Buffer.from(bytes.toString().replace(/fill="#[a-f0-9]+"/gi, `fill="${source.color}"`));
   if (meta.format === "svg" && source.color)
     bytes = Buffer.from(bytes.toString().replace("<svg", `<svg fill="${source.color}"`));
   const decoded = await sharp(bytes, { density: meta.format === "svg" ? 1200 : 72 })

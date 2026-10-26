@@ -201,19 +201,20 @@ it.effect(
 );
 
 it("ranks reviewed plugins before familiar brands and formats readable slug names", () => {
-  const entries = ["42crunch-api-security-testing", "github", "reviewed"].map((name) => ({
-    name,
-    rank: sharedPluginShelfRank(
-      name,
-      name === "reviewed" ? { state: "done", by: { type: "partner" } } : undefined,
-    ),
-  }));
-  expect(entries.sort((a, b) => a.rank - b.rank).map((entry) => entry.name)).toEqual([
-    "reviewed",
-    "github",
-    "42crunch-api-security-testing",
-  ]);
-  expect(sharedPluginShelfRank("unknown", { state: "pending", by: { type: "anthropic" } })).toBe(2);
+  const entries = [
+    { name: "unbranded" },
+    { name: "github" },
+    { name: "partner", review: { state: "done", by: { type: "partner" } } },
+    { name: "anthropic", review: { state: "done", by: { type: "anthropic" } } },
+  ];
+  expect(
+    entries
+      .sort(
+        (a, b) => sharedPluginShelfRank(a.name, a.review) - sharedPluginShelfRank(b.name, b.review),
+      )
+      .map((entry) => entry.name),
+  ).toEqual(["anthropic", "partner", "github", "unbranded"]);
+  expect(sharedPluginShelfRank("unknown", { state: "pending", by: { type: "anthropic" } })).toBe(5);
   expect(sharedPluginDisplayName("github-api-pdf-tools")).toBe("GitHub API PDF Tools");
 });
 
@@ -240,6 +241,47 @@ it.effect(
         expect(
           (yield* store.search({ preview: true })).entries.map((entry) => entry.displayName),
         ).toEqual(["Review", "GitHub", "Other"]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "shows only declared inline contents until an external marketplace source is installed",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { home, clone, path, write } = yield* fixture;
+        yield* write(path.join(clone, ".claude-plugin", "marketplace.json"), {
+          name: "claude-plugins-official",
+          plugins: [
+            {
+              name: "remote",
+              source: { source: "github", repo: "example/plugin" },
+              mcpServers: { search: { command: "never-run" } },
+              skills: { research: {} },
+              commands: { inspect: {} },
+            },
+            { name: "unknown", source: { source: "url", url: "https://example.com/plugin.git" } },
+          ],
+        });
+        const store = yield* makeSharedPluginStore({
+          kind: "claude",
+          claudeHome: home,
+          installed: () => Effect.succeed({ plugins: [], sequence: 1 }),
+          run: () => Effect.fail({ message: "Read only" }),
+        });
+        expect(yield* store.contents!("remote@claude-plugins-official")).toMatchObject({
+          deferred: true,
+          mcpServers: [{ name: "search" }],
+          skills: [{ name: "research", documentAvailable: false, enabled: false }],
+          commands: ["inspect"],
+        });
+        expect(yield* store.contents!("unknown@claude-plugins-official")).toMatchObject({
+          deferred: true,
+          skills: [],
+          mcpServers: [],
+          commands: [],
+        });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );

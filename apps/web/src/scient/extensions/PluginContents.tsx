@@ -63,6 +63,7 @@ function PluginSkillCard({
   return (
     <SkillCard
       name={skill.name}
+      displayName={skill.displayName}
       description={skill.description}
       environmentId={environmentId}
       instructions={document.data?.instructions ?? null}
@@ -242,6 +243,9 @@ export function PluginContents({
   };
   return (
     <>
+      {contents.data.deferred ? (
+        <MutedLine>Skills and tools appear after you install it.</MutedLine>
+      ) : null}
       <PluginContentsView
         contents={value}
         canConnectApps={canConnectApps}

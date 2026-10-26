@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import type * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 
+import { sharedPluginDisplayName } from "../scient/extensions/SharedPluginStore.ts";
 import { makeCodexProviderStore } from "../scient/extensions/CodexProviderStore.ts";
 import { nextInventoryReadSequence, nonEmptyText, uniqueBy } from "./ProviderNativeInventory.ts";
 import type {
@@ -96,7 +97,8 @@ export function parseCodexInstalledPlugins(
         const id = nonEmptyText(plugin.id);
         const name = nonEmptyText(plugin.name);
         if (!plugin.installed || !id || !name) return [];
-        const displayName = nonEmptyText(plugin.interface?.displayName);
+        const displayName =
+          nonEmptyText(plugin.interface?.displayName) ?? sharedPluginDisplayName(name);
         const description =
           nonEmptyText(plugin.interface?.shortDescription) ??
           nonEmptyText(plugin.interface?.longDescription);

@@ -17,6 +17,7 @@
     "apps/web/src/routes/_chat.settings.extensions_.item.provider.$instanceId.server.$serverName.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.item.server.$.tsx",
     "apps/server/src/provider/CodexPluginInventory.ts",
+    "apps/server/src/provider/CodexPluginInventory.test.ts",
     "apps/server/src/provider/ProviderNativeInventory.ts",
     "apps/server/src/provider/ScientProviderNativeInventory.ts",
     "packages/contracts/src/scient/extensionAudience.ts",
@@ -122,7 +123,7 @@
     {
       "path": "apps/server/src/provider/Drivers/CodexDriver.ts",
       "anchor": "makeCodexNativeInventory",
-      "purpose": "Attach verified Codex plugin uninstall and MCP sign-in actions to the exact provider instance."
+      "purpose": "Attach verified Codex plugin uninstall and MCP sign-in actions to the exact provider instance; its store retains one scoped lease and caches plugin details across page, icon and skill reads."
     },
     {
       "path": "apps/server/src/provider/ProviderRegistry.ts",
@@ -329,7 +330,7 @@
     {
       "path": "apps/web/src/scient/skills/SkillCard.tsx",
       "anchor": "SkillCard",
-      "purpose": "Use one existing Dialog and Markdown presentation for Extensions and Skills settings."
+      "purpose": "Use one existing Dialog and Markdown presentation for Extensions and Skills settings, retaining provider display names."
     },
     {
       "path": "apps/web/src/scient/skills/ManagedSkillCard.tsx",

@@ -450,9 +450,20 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
 ```
 
 - **Codex**: `plugin/installed` and paged `mcpServerStatus/list`, enriched outside
-  health checks. Installed app summaries use paged `app/list` and its
-  `isAccessible`, `isEnabled`, and `installUrl` fields. Uninstall and MCP OAuth
-  retain the existing admit/mutate/verify path.
+  health checks. App summaries combine `app/installed` with targeted `app/read`
+  requests. The store keeps one app-server lease for its provider scope, caches
+  `plugin/read` for the catalog lifetime, and checks account identity on reads.
+  Installed plugin pages can load without decoding the full marketplace catalog.
+  Catalogs expire after an hour; installed membership refreshes after 30 seconds
+  or an inventory refresh. Account changes and explicit store refresh discard
+  plugin details. Icon downloads do not serialize plugin and skill reads.
+  Local logos and skill documents stay inside the real plugin source directory
+  and are capped at 256 KB. Skill reads fail visibly after 15 seconds.
+  Discover previews show featured, uninstalled Codex plugins; shared previews
+  rank Anthropic reviews, partner reviews, then other entries, preferring bundled
+  brand icons within each tier. Uncloned shared plugins show inline declarations
+  until installation makes their remaining contents available. Uninstall and
+  MCP OAuth retain the existing admit/mutate/verify path.
 - **Claude**: live session plugins/MCP status are combined with an on-demand,
   promptless account connector probe. The probe disables hooks and user settings,
   sets `ENABLE_CLAUDEAI_MCP_SERVERS=true`, and deliberately omits

@@ -32,6 +32,26 @@ it("offers only the installed plugin's invocable skill in the selected instance 
   };
   const input = { instanceId: provider.instanceId, pluginId: "plugin" };
   expect(nativePluginSkill(provider, input, skill)?.name).toBe("plugin:search");
+  const catalogSkill = { ...skill, name: "plugin:search" };
+  expect(nativePluginSkill({ ...provider, skills: [] }, input, catalogSkill)?.name).toBe(
+    "plugin:search",
+  );
+  for (const driver of ["claudeAgent", "scient"]) {
+    expect(
+      nativePluginSkill(
+        { ...provider, driver: ProviderDriverKind.make(driver), skills: [] },
+        input,
+        skill,
+      )?.name,
+    ).toBe("plugin:search");
+  }
+  expect(
+    nativePluginSkill({ ...provider, skills: [] }, input, {
+      ...catalogSkill,
+      userInvocable: false,
+    }),
+  ).toBeUndefined();
+
   expect(nativePluginSkill(provider, { ...input, cwd: "/other-project" }, skill)).toBeUndefined();
   expect(
     nativePluginSkill(provider, { ...input, instanceId: ProviderInstanceId.make("other") }, skill),
