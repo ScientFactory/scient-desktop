@@ -7,6 +7,10 @@
 #include <sddl.h>
 #include <fltuser.h>
 #include <cfapi.h>
+#ifdef SCIENT_PUBLICATION_PROBE
+#include <lm.h>
+#pragma comment(lib, "Netapi32.lib")
+#endif
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +44,8 @@ static QueryNtInformation nt_query;
 static SetNtInformation nt_set;
 static CreateNtFile nt_create;
 static NtError nt_error;
+typedef NTSTATUS (NTAPI *SetNtSecurity)(HANDLE, SECURITY_INFORMATION, PSECURITY_DESCRIPTOR);
+static SetNtSecurity nt_security;
 const char *platform_domain(void) { return "win32"; }
 int platform_unsupported(void) { return ERROR_NOT_SUPPORTED; }
 int platform_invalid(void) { return ERROR_INVALID_PARAMETER; }
@@ -268,12 +274,14 @@ Context *platform_bind_parent(const char *root, const char *parent, int *error) 
   FARPROC create_address = library ? GetProcAddress(library, "NtCreateFile") : NULL;
   FARPROC error_address = library ? GetProcAddress(library, "RtlNtStatusToDosError") : NULL;
   FARPROC set_address = library ? GetProcAddress(library, "NtSetInformationFile") : NULL;
+  FARPROC security_address = library ? GetProcAddress(library, "NtSetSecurityObject") : NULL;
   FARPROC query_address = library ? GetProcAddress(library, "NtQueryInformationFile") : NULL;
+  memcpy(&nt_security, &security_address, sizeof(nt_security));
   memcpy(&nt_create, &create_address, sizeof(nt_create));
   memcpy(&nt_error, &error_address, sizeof(nt_error));
   memcpy(&nt_set, &set_address, sizeof(nt_set));
   memcpy(&nt_query, &query_address, sizeof(nt_query));
-  if (!nt_create || !nt_error || !nt_set || !nt_query) { *error = ERROR_PROC_NOT_FOUND; return NULL; }
+  if (!nt_create || !nt_error || !nt_set || !nt_query || !nt_security) { *error = ERROR_PROC_NOT_FOUND; return NULL; }
   Context *context = calloc(1, sizeof(*context));
   if (!context) { *error = ERROR_NOT_ENOUGH_MEMORY; return NULL; }
   context->root = absolute_directory(context, root);
@@ -704,10 +712,12 @@ static int rename_handle(HANDLE file, HANDLE parent, const wchar_t *name) {
   size_t size = offsetof(FILE_RENAME_INFO, FileName) + bytes + sizeof(wchar_t);
   FILE_RENAME_INFO *rename = calloc(1, size);
   if (!rename) return ERROR_NOT_ENOUGH_MEMORY;
-  rename->Flags = 2 /* FILE_RENAME_FLAG_POSIX_SEMANTICS; never REPLACE_IF_EXISTS */;
+  rename->Flags = 0; /* Non-replacing capture/install never enables replacement semantics. */
   rename->RootDirectory = parent; rename->FileNameLength = (DWORD)bytes;
   memcpy(rename->FileName, name, bytes);
-  int error = SetFileInformationByHandle(file, FileRenameInfoEx, rename, (DWORD)size) ? 0 : (int)GetLastError();
+  IO_STATUS_BLOCK status;
+  NTSTATUS result = nt_set(file, &status, rename, (ULONG)size, (FILE_INFORMATION_CLASS)65);
+  int error = result < 0 ? (int)nt_error(result) : 0;
   free(rename); return error;
 }
 static int supported_file(HANDLE file) {
@@ -771,9 +781,11 @@ static int restore_policy(Context *context, HANDLE original) {
     PACL dacl = NULL; BOOL present, defaulted; SECURITY_DESCRIPTOR_CONTROL control; DWORD revision;
     if (!GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) || !present || !dacl ||
         !GetSecurityDescriptorControl(descriptor, &control, &revision)) error = ERROR_INVALID_DATA;
-    else error = (int)SetSecurityInfo(original, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION |
-      ((control & SE_DACL_PROTECTED) ? PROTECTED_DACL_SECURITY_INFORMATION : UNPROTECTED_DACL_SECURITY_INFORMATION),
-      NULL, NULL, dacl, NULL);
+    else {
+      NTSTATUS result = nt_security(original, DACL_SECURITY_INFORMATION |
+        ((control & SE_DACL_PROTECTED) ? PROTECTED_DACL_SECURITY_INFORMATION : UNPROTECTED_DACL_SECURITY_INFORMATION), descriptor);
+      error = result < 0 ? (int)nt_error(result) : 0;
+    }
   }
   free(descriptor); CloseHandle(file); return error;
 }
@@ -941,6 +953,16 @@ static int qualified_volume(HANDLE folder) {
 }
 int platform_windows_main(int argc, char **argv) {
 #ifdef SCIENT_PUBLICATION_PROBE
+  if (argc == 4 && (!strcmp(argv[2], "add-account") || !strcmp(argv[2], "delete-account"))) {
+    wchar_t account[256], password[256];
+    GetEnvironmentVariableW(L"SCIENT_TEST_ACCOUNT", account, 256);
+    GetEnvironmentVariableW(L"SCIENT_TEST_PASSWORD", password, 256);
+    USER_INFO_1 user = {0}; user.usri1_name = account; user.usri1_password = password;
+    user.usri1_priv = USER_PRIV_USER; user.usri1_flags = UF_SCRIPT | UF_DONT_EXPIRE_PASSWD;
+    DWORD parameter = 0;
+    NET_API_STATUS error = !strcmp(argv[2], "add-account") ? NetUserAdd(NULL, 1, (LPBYTE)&user, &parameter) : NetUserDel(NULL, account);
+    printf("{\"code\":%lu}\n", (unsigned long)error); return 0;
+  }
   if (argc == 4 && !strcmp(argv[2], "default-owner")) {
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)strtoul(argv[3], NULL, 10));
     HANDLE token = NULL; DWORD error = 0, length = 0;
@@ -997,7 +1019,7 @@ int platform_windows_main(int argc, char **argv) {
     GetEnvironmentVariableW(L"SCIENT_TEST_ACCOUNT", user, 256);
     GetEnvironmentVariableW(L"SCIENT_TEST_PASSWORD", password, 256);
     HANDLE token = NULL; DWORD error = 0;
-    if (!LogonUserW(user, L".", password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, &token) ||
+    if (!LogonUserW(user, L".", password, LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, &token) ||
         !ImpersonateLoggedOnUser(token)) error = GetLastError();
     wchar_t *path = wide_path(argv[3]);
     HANDLE file = INVALID_HANDLE_VALUE;
