@@ -129,13 +129,14 @@ The store lives in the server, on the machine where agents run.
 Family `accounts`, capability `accounts`, granted to every provider session by
 `prepareMcpSession`. Values never appear in tool output, thread items, logs, errors or exports.
 
-| Tool                             | What it does                                                                                                                |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `scient_accounts_list`           | Accounts and profiles this session may use: id, name, kind, sites, access, whether readable, how to use it, status          |
-| `scient_account_sign_in`         | Signs in on the agent's tab (or a new tab in the account's profile): fills username, password and 2FA code across SSO steps |
-| `scient_account_credentials`     | Readable accounts only: writes owner-only files for this session and returns their paths and how to use them                |
-| `scient_account_request`         | Brokered HTTP with a hidden API key, only to the account's sites; read-only allows `GET`/`HEAD`                             |
-| `scient_account_browser_session` | A profile's cookies for one site as a cookie-jar file, for scripts; needs `scriptSignIn`                                    |
+| Tool                             | What it does                                                                                                                                                                |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scient_accounts_list`           | Accounts and profiles this session may use: id, name, kind, sites, access, whether readable, how to use it, status                                                          |
+| `scient_account_sign_in`         | Signs in on the agent's tab (or a new tab in the account's profile): fills username, password and 2FA code across SSO steps                                                 |
+| `scient_account_credentials`     | Readable accounts only: writes owner-only files for this session and returns their paths and how to use them                                                                |
+| `scient_account_request`         | Brokered HTTP with a hidden API key, only to the account's sites; read-only allows `GET`/`HEAD`                                                                             |
+| `scient_account_find_profile`    | Checks up to eight Allowed, in-scope non-incognito profiles in temporary background tabs; returns access labels and the first that opens, plus skipped names; never prompts |
+| `scient_account_browser_session` | A profile's cookies for one site as a cookie-jar file, for scripts; needs `scriptSignIn`                                                                                    |
 
 Every call runs `AccountsService.authorize`. Allowed proceeds; Ask shows the user a card ("Allow
 once", "Always in this project", "Always") and waits up to ten minutes, and is denied at once for

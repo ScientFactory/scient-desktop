@@ -37,6 +37,10 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Request", "Requesting", "Requested", "with an account"],
     "scient-accounts",
   ),
+  t3_account_find_profile: tool(
+    ["Find", "Finding", "Found", "a browser profile for a page"],
+    "scient-accounts",
+  ),
   t3_account_browser_session: tool(
     ["Prepare", "Preparing", "Prepared", "a browser session"],
     "scient-accounts",

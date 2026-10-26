@@ -19,7 +19,13 @@ can enforce it; readable values are supplied to agents through private session f
 | `scient_account_sign_in`         | Sign in through the browser, including supported 2FA.  |
 | `scient_account_credentials`     | Create private credential files for readable accounts. |
 | `scient_account_request`         | Make an HTTPS request with a hidden key.               |
+| `scient_account_find_profile`    | Find a browser profile that can open a page.           |
 | `scient_account_browser_session` | Supply a site's browser session to scripts.            |
+
+When a page asks you to sign in or says you need access, agents can check up to eight
+Allowed profiles automatically and continue in the first that opens it. Each check uses a
+new background tab and closes it afterwards. Ask me, Off and incognito profiles are skipped;
+project scope and the global agent-access switch still apply.
 
 Saved sign-ins fill automatically as a login form appears, without submitting or replacing
 what you typed. Exact-site matches come first, then your most recently used sign-in. Use the

@@ -8,6 +8,8 @@ import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationMetadata } from "../../../mcp/ScientOperationTool.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 
+import { ProfileResult } from "./profileClassification.ts";
+
 const ResultFiles = Schema.Struct({ paths: Schema.Array(Schema.String), usage: Schema.String });
 const accountOperation = (id: string): OperationMetadata => ({
   id: `accounts.${id}`,
@@ -39,7 +41,7 @@ const list = metadata(
   Tool.make("scient_accounts_list", {
     ...common,
     description:
-      "List accounts and browser profiles for this session: how each may be used, and which the user turned off (tell the user; they can allow it in Settings → Accounts). Never returns values.",
+      "List accounts and browser profiles for this session: how each may be used, and which the user turned off (tell the user; they can allow it in Settings → Accounts). Never returns values. If a page needs sign-in or access, use scient_account_find_profile.",
     parameters: Tool.EmptyParams,
     success: Schema.Struct({
       accounts: Schema.Array(
@@ -138,10 +140,33 @@ const browserSession = metadata(
   "browser-session",
   "Prepare a browser session",
 );
+const findProfile = metadata(
+  Tool.make("scient_account_find_profile", {
+    ...common,
+    description:
+      "When a page asks to sign in or says you need access, find an Allowed browser profile that opens it. Then continue with preview_open in the best profile. Skips profiles requiring approval.",
+    parameters: Schema.Struct({ url: Schema.String.check(Schema.isMaxLength(2048)) }),
+    success: Schema.Struct({
+      profiles: Schema.Array(
+        Schema.Struct({
+          profileId: BrowserProfileId,
+          name: Schema.String,
+          email: Schema.optional(Schema.String),
+          result: ProfileResult,
+        }),
+      ),
+      best: Schema.optional(BrowserProfileId),
+      skipped: Schema.optional(Schema.Array(Schema.String)),
+    }),
+  }),
+  "find-profile",
+  "Find a browser profile for a page",
+);
 export const ScientAccountsToolkit = Toolkit.make(
   list,
   credentials,
   signIn,
   request,
   browserSession,
+  findProfile,
 );

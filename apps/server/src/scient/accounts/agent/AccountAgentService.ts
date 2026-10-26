@@ -4,6 +4,7 @@ import {
   type AccountId,
   type AccountTarget,
   type AccountUseAction,
+  type BrowserProfileId,
   type PreviewAutomationStatus,
   type PreviewTabId,
 } from "@t3tools/contracts";
@@ -23,7 +24,10 @@ import { accountRequest } from "./request.ts";
 import { accountSessionScope } from "./scope.ts";
 import { authorizePreviewProfile } from "./previewProfileAccess.ts";
 import { ScientAccountsToolkit } from "./tools.ts";
+import { classifyProfilePage, type ProfileResult } from "./profileClassification.ts";
+import { ProfileDetection, profileDetectionScript } from "./profileDetection.ts";
 
+const decodeProfileDetection = Schema.decodeUnknownEffect(ProfileDetection);
 const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
 const encodeCookies = Schema.encodeEffect(Schema.fromJsonString(AccountCookies));
 
@@ -237,6 +241,107 @@ export const accountAgentOperations = {
         return { status: response.status, path };
       }),
     );
+  }),
+  scient_account_find_profile: Effect.fn("AccountsAgent.findProfile")(function* (
+    input: ToolInput<"scient_account_find_profile">,
+  ) {
+    const scope = yield* accountSessionScope();
+    const invocation = yield* AgentInvocationContext;
+    if (!invocation.capabilities.has("preview"))
+      return yield* fail("denied", "Browser access is disabled for this session.");
+    if (
+      !URL.canParse(input.url) ||
+      new URL(input.url).protocol !== "https:" ||
+      new URL(input.url).username ||
+      new URL(input.url).password
+    )
+      return yield* fail("invalid-input", "Choose an HTTPS URL without credentials.");
+    const accounts = yield* AccountsService;
+    const broker = yield* PreviewAutomationBroker;
+    const invoke = <A>(
+      operation: Parameters<typeof broker.invoke>[0]["operation"],
+      data: unknown,
+      tabId?: PreviewTabId,
+    ) =>
+      broker
+        .invoke<A>({
+          scope: invocation,
+          operation,
+          input: data,
+          ...(tabId === undefined ? {} : { tabId }),
+          updateCurrentTab: false,
+        })
+        .pipe(Effect.mapError(() => fail("unavailable", "The profile could not be checked.")));
+    const status = yield* invoke<PreviewAutomationStatus>("status", {});
+    const session = yield* accounts.forSession(
+      scope,
+      status.profiles?.map((profile) => profile.id),
+    );
+    if (!session.agentAccess)
+      return yield* fail("denied", "Agent access is disabled in Settings → Accounts.");
+    const profiles: Array<{
+      profileId: BrowserProfileId;
+      name: string;
+      email?: string;
+      result: typeof ProfileResult.Type;
+    }> = [];
+    const skipped: string[] = [];
+    for (const profile of status.profiles ?? []) {
+      const record = session.profiles.find((item) => item.profileId === profile.id);
+      if (!record) continue;
+      if (
+        profile.incognito ||
+        profile.id === INCOGNITO_BROWSER_PROFILE_ID ||
+        record.access !== "allowed" ||
+        profiles.length >= 8
+      ) {
+        skipped.push(profile.name);
+        continue;
+      }
+      const result = yield* withAccountUse(
+        // A grant changed to Ask during discovery must never prompt.
+        { ...scope, unattended: true },
+        { type: "profile", profileId: profile.id },
+        "open-profile",
+        Effect.acquireUseRelease(
+          invoke<PreviewAutomationStatus>("open", {
+            url: input.url,
+            profileId: profile.id,
+            open: false,
+            reuseExistingTab: false,
+          }),
+          (opened) =>
+            Effect.gen(function* () {
+              if (!opened.tabId)
+                return yield* fail("unavailable", "No browser tab is available for this profile.");
+              yield* invoke("accountWaitForLoad", {}, opened.tabId);
+              const raw = yield* invoke<unknown>(
+                "evaluate",
+                { expression: profileDetectionScript },
+                opened.tabId,
+              );
+              const page = yield* decodeProfileDetection(raw).pipe(
+                Effect.mapError(() => fail("unavailable", "The profile could not be checked.")),
+              );
+              return classifyProfilePage(input.url, page);
+            }),
+          (opened) => (opened.tabId ? invoke<void>("close", {}, opened.tabId) : Effect.void),
+        ),
+        (result) => result !== "error",
+      ).pipe(Effect.orElseSucceed(() => classifyProfilePage(input.url, undefined)));
+      profiles.push({
+        profileId: profile.id,
+        name: profile.name,
+        ...(record.source?.email ? { email: record.source.email } : {}),
+        result,
+      });
+    }
+    const best = profiles.find((profile) => profile.result === "opens")?.profileId;
+    return {
+      profiles,
+      ...(best === undefined ? {} : { best }),
+      ...(skipped.length ? { skipped } : {}),
+    };
   }),
   scient_account_browser_session: Effect.fn("AccountsAgent.browserSession")(function* (
     input: ToolInput<"scient_account_browser_session">,
