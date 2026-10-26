@@ -359,63 +359,88 @@ static HANDLE create_relative(HANDLE parent, const wchar_t *name, ACCESS_MASK ac
   if (code < 0) { SetLastError(nt_error(code)); return INVALID_HANDLE_VALUE; }
   return handle;
 }
+typedef HRESULT (WINAPI *CloudRegister)(LPCWSTR, const CF_SYNC_REGISTRATION *, const CF_SYNC_POLICIES *, CF_REGISTER_FLAGS);
+typedef HRESULT (WINAPI *CloudUnregister)(LPCWSTR);
 #ifdef SCIENT_PUBLICATION_PROBE
-static HRESULT probe_filter_status = E_UNEXPECTED;
-static DWORD probe_path_error;
-static HRESULT probe_instance_status = E_UNEXPECTED;
+static int probe_cloud_bootstraps;
 #endif
-static int cloud_filter_absent(HANDLE folder) {
-  HMODULE library = LoadLibraryW(L"fltlib.dll");
-  if (!library) return 0;
-  typedef HRESULT (WINAPI *First)(LPCWSTR, INSTANCE_INFORMATION_CLASS, LPVOID, DWORD, LPDWORD, LPHANDLE);
-  typedef HRESULT (WINAPI *Next)(HANDLE, INSTANCE_INFORMATION_CLASS, LPVOID, DWORD, LPDWORD);
-  typedef HRESULT (WINAPI *Close)(HANDLE);
-  First first = NULL; Next next = NULL; Close close = NULL;
-  FARPROC address = GetProcAddress(library, "FilterVolumeInstanceFindFirst"); memcpy(&first, &address, sizeof(first));
-  address = GetProcAddress(library, "FilterVolumeInstanceFindNext"); memcpy(&next, &address, sizeof(next));
-  address = GetProcAddress(library, "FilterVolumeInstanceFindClose"); memcpy(&close, &address, sizeof(close));
-  wchar_t volume[32768];
-  DWORD length = GetFinalPathNameByHandleW(folder, volume, 32768, VOLUME_NAME_NT);
-#ifdef SCIENT_PUBLICATION_PROBE
-  probe_path_error = length ? 0 : GetLastError();
-#endif
-  int absent = 0;
-  if (first && next && close && length && length < 32768 && !wcsncmp(volume, L"\\Device\\", 8)) {
-    wchar_t *end = wcschr(volume + 8, L'\\');
-    if (end) *end = 0;
-    union { ULONGLONG aligned; BYTE bytes[65536]; } buffer;
-    HANDLE search = INVALID_HANDLE_VALUE; DWORD returned = 0;
-    HRESULT result = first(volume, InstanceFullInformation, buffer.bytes, sizeof(buffer.bytes), &returned, &search);
-    int found = 0;
-    while (SUCCEEDED(result)) {
-      INSTANCE_FULL_INFORMATION *info = (INSTANCE_FULL_INFORMATION *)buffer.bytes;
-      if (returned < sizeof(*info) || (DWORD)info->FilterNameBufferOffset + info->FilterNameLength > returned) { found = 1; break; }
-      if (info->FilterNameLength == 12 && !_wcsnicmp((PWSTR)(buffer.bytes + info->FilterNameBufferOffset), L"CldFlt", 6)) { found = 1; break; }
-      result = next(search, InstanceFullInformation, buffer.bytes, sizeof(buffer.bytes), &returned);
-    }
-#ifdef SCIENT_PUBLICATION_PROBE
-    probe_filter_status = result;
-#endif
-    absent = !found && result == HRESULT_FROM_WIN32(ERROR_NO_MORE_ITEMS);
-    if (search != INVALID_HANDLE_VALUE) close(search);
+/* An empty delete-on-close root activates the volume without privileged filter enumeration. */
+static int cloud_bootstrap(HANDLE folder, CloudRegister registration, CloudUnregister unregistration) {
+  FILE_ATTRIBUTE_TAG_INFO attributes;
+  if (!GetFileInformationByHandleEx(folder, FileAttributeTagInfo, &attributes, sizeof(attributes))) return (int)GetLastError();
+  if (!(attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY)) return ERROR_INVALID_FUNCTION;
+  if (!registration || !unregistration || !nt_create || !nt_error) return ERROR_PROC_NOT_FOUND;
+  typedef BOOLEAN (WINAPI *Random)(PVOID, ULONG);
+  Random random = NULL; FARPROC address = GetProcAddress(GetModuleHandleW(L"advapi32.dll"), "SystemFunction036");
+  memcpy(&random, &address, sizeof(random));
+  BYTE bytes[16]; wchar_t name[96] = L".scient-cloud-check-";
+  if (!random || !random(bytes, sizeof(bytes))) return ERROR_GEN_FAILURE;
+  size_t prefix = wcslen(name);
+  for (size_t i = 0; i < sizeof(bytes); ++i) swprintf(name + prefix + i * 2, 96 - prefix - i * 2, L"%02x", (unsigned)bytes[i]);
+  PSECURITY_DESCRIPTOR descriptor = NULL; wchar_t *sid = NULL;
+  int error = current_user_security(&descriptor, &sid, 1);
+  HANDLE probe = INVALID_HANDLE_VALUE;
+  if (!error) {
+    USHORT length = (USHORT)(wcslen(name) * sizeof(wchar_t));
+    UNICODE_STRING string = { length, length, name }; OBJECT_ATTRIBUTES object = {0}; IO_STATUS_BLOCK status;
+    object.Length = sizeof(object); object.RootDirectory = folder; object.ObjectName = &string;
+    object.Attributes = OBJ_CASE_INSENSITIVE; object.SecurityDescriptor = descriptor;
+    NTSTATUS result = nt_create(&probe, FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL | DELETE | SYNCHRONIZE,
+      &object, &status, NULL, FILE_ATTRIBUTE_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE,
+      2 /* FILE_CREATE never adopts an existing name. */,
+      FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT | 0x00001000 /* FILE_DELETE_ON_CLOSE */, NULL, 0);
+    if (result < 0) error = (int)nt_error(result);
   }
-  FreeLibrary(library); return absent;
+  wchar_t path[32768];
+  if (!error) {
+    DWORD length = GetFinalPathNameByHandleW(probe, path, 32768, VOLUME_NAME_DOS);
+    if (!length || length >= 32768) error = ERROR_FILENAME_EXCED_RANGE;
+  }
+  if (!error) error = private_security(probe, SE_FILE_OBJECT, NULL);
+  if (!error) {
+    CF_SYNC_REGISTRATION data = {0}; data.StructSize = sizeof(data);
+    data.ProviderName = L"Scient storage qualification"; data.ProviderVersion = L"1";
+    CF_SYNC_POLICIES policies = {0}; policies.StructSize = sizeof(policies);
+    policies.Hydration.Primary = CF_HYDRATION_POLICY_FULL; policies.Population.Primary = CF_POPULATION_POLICY_FULL;
+    HRESULT result = registration(path, &data, &policies, CF_REGISTER_FLAG_NONE);
+    if (SUCCEEDED(result)) {
+#ifdef SCIENT_PUBLICATION_PROBE
+      ++probe_cloud_bootstraps;
+#endif
+      result = unregistration(path);
+    }
+    if (FAILED(result)) error = (int)HRESULT_CODE(result);
+  }
+  if (probe != INVALID_HANDLE_VALUE) CloseHandle(probe);
+  if (descriptor) LocalFree(descriptor);
+  if (sid) LocalFree(sid);
+  if (!error) {
+    HANDLE check = open_relative(folder, name, FILE_READ_ATTRIBUTES, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+    if (check != INVALID_HANDLE_VALUE) { CloseHandle(check); error = ERROR_DIR_NOT_EMPTY; }
+    else if (GetLastError() != ERROR_FILE_NOT_FOUND && GetLastError() != ERROR_PATH_NOT_FOUND) error = (int)GetLastError();
+  }
+  return error;
 }
 static int cloud_managed(HANDLE folder) {
   typedef HRESULT (WINAPI *CloudInfo)(HANDLE, int, PVOID, DWORD, PDWORD);
   HMODULE library = LoadLibraryW(L"cldapi.dll");
   if (!library) return (int)GetLastError();
-  FARPROC address = GetProcAddress(library, "CfGetSyncRootInfoByHandle");
-  CloudInfo query = NULL;
+  FARPROC address = GetProcAddress(library, "CfGetSyncRootInfoByHandle"); CloudInfo query = NULL;
   memcpy(&query, &address, sizeof(query));
+  CloudRegister registration = NULL; CloudUnregister unregistration = NULL;
+  address = GetProcAddress(library, "CfRegisterSyncRoot"); memcpy(&registration, &address, sizeof(registration));
+  address = GetProcAddress(library, "CfUnregisterSyncRoot"); memcpy(&unregistration, &address, sizeof(unregistration));
   if (!query) { FreeLibrary(library); return ERROR_PROC_NOT_FOUND; }
   BYTE buffer[65536]; DWORD returned = 0;
   HRESULT result = query(folder, 0 /* CF_SYNC_ROOT_INFO_BASIC */, buffer, sizeof(buffer), &returned);
-
+  if (result == HRESULT_FROM_WIN32(ERROR_INVALID_FUNCTION)) {
+    int error = cloud_bootstrap(folder, registration, unregistration);
+    /* Registration can fail because an existing provider owns an ancestor: ask again either way. */
+    result = query(folder, 0, buffer, sizeof(buffer), &returned);
+    if (result == HRESULT_FROM_WIN32(ERROR_INVALID_FUNCTION) && error) { FreeLibrary(library); return error; }
+  }
   FreeLibrary(library);
-  /* A volume without CldFlt returns INVALID_FUNCTION even when the driver runs elsewhere. */
-  if (result == HRESULT_FROM_WIN32(ERROR_INVALID_FUNCTION) && cloud_filter_absent(folder)) return 0;
-  if (SUCCEEDED(result)) return 0x20000001; /* sync-managed-folder */
+  if (SUCCEEDED(result)) return 0x20000001;
   return result == HRESULT_FROM_WIN32(ERROR_NOT_A_CLOUD_SYNC_ROOT) ||
     result == HRESULT_FROM_WIN32(ERROR_CLOUD_FILE_NOT_UNDER_SYNC_ROOT) ? 0 : (int)HRESULT_CODE(result);
 }
@@ -537,7 +562,7 @@ int platform_private_directory(Context *context, const char *name, Entry *entry)
   wchar_t *component = wide(name);
   if (!component) return (int)GetLastError();
   HANDLE directory = open_relative(context->parent, component,
-    FILE_READ_ATTRIBUTES | READ_CONTROL, FILE_DIRECTORY_FILE, FILE_SHARE_READ);
+    FILE_READ_ATTRIBUTES | READ_CONTROL, FILE_DIRECTORY_FILE, FILE_SHARE_READ | FILE_SHARE_WRITE);
   DWORD code = GetLastError(); free(component);
   if (directory == INVALID_HANDLE_VALUE) return (int)code;
   int error = identify(directory, entry);
@@ -1076,7 +1101,7 @@ int platform_windows_main(int argc, char **argv) {
     wchar_t *path = wide_path(argv[3]); HRESULT result = E_NOTIMPL;
     HANDLE held = INVALID_HANDLE_VALUE;
     if (path && !strcmp(argv[2], "hold-sync-root")) held = CreateFileW(path, FILE_LIST_DIRECTORY | FILE_ADD_FILE | DELETE | READ_CONTROL,
-      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
       FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_DELETE_ON_CLOSE, NULL);
     if (registration && unregistration && path) {
       CF_SYNC_REGISTRATION data = {0}; data.StructSize = sizeof(data);
@@ -1133,26 +1158,11 @@ int platform_windows_main(int argc, char **argv) {
       file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
       if (file == INVALID_HANDLE_VALUE) error = GetLastError();
-      else if (!strcmp(argv[2], "as-account-cloud")) {
-        error = (DWORD)cloud_managed(file);
-        HMODULE filters = LoadLibraryW(L"fltlib.dll");
-        typedef HRESULT (WINAPI *FirstInstance)(LPCWSTR, INSTANCE_INFORMATION_CLASS, LPVOID, DWORD, LPDWORD, LPHANDLE);
-        typedef HRESULT (WINAPI *CloseInstance)(HANDLE);
-        FirstInstance first = NULL; CloseInstance close = NULL;
-        FARPROC address = filters ? GetProcAddress(filters, "FilterInstanceFindFirst") : NULL; memcpy(&first, &address, sizeof(first));
-        address = filters ? GetProcAddress(filters, "FilterInstanceFindClose") : NULL; memcpy(&close, &address, sizeof(close));
-        union { ULONGLONG aligned; BYTE bytes[65536]; } buffer; DWORD returned = 0; HANDLE search = INVALID_HANDLE_VALUE;
-        if (first && close) {
-          probe_instance_status = first(L"CldFlt", InstanceFullInformation, buffer.bytes, sizeof(buffer.bytes), &returned, &search);
-          if (search != INVALID_HANDLE_VALUE) close(search);
-        }
-        if (filters) FreeLibrary(filters);
-      }
+      else if (!strcmp(argv[2], "as-account-cloud")) error = (DWORD)cloud_managed(file);
     }
     RevertToSelf(); if (token) CloseHandle(token);
     if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
-    free(path); printf("{\"code\":%lu,\"filterCode\":%lu,\"pathCode\":%lu,\"instanceCode\":%lu}\n", (unsigned long)error,
-      (unsigned long)probe_filter_status, (unsigned long)probe_path_error, (unsigned long)probe_instance_status); return 0;
+    free(path); printf("{\"code\":%lu}\n", (unsigned long)error); return 0;
   }
 #endif
 
