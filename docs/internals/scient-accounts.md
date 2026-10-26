@@ -46,7 +46,8 @@ are its secret variable names. Each field has a source:
 A field has one read source and optional copies in other stores. Links are read when needed. On macOS the user approves Scient once
 per keychain item ("Always Allow"). On Windows and Linux any program running as the user can read
 keychain items. Apple Passwords / iCloud Keychain items are not readable by other apps; their
-export file is the way in.
+export file is the way in. Password imports retain the full hostname and update only an exact
+site-and-username match; sibling subdomains remain separate accounts.
 
 ### Copies and password comparison
 

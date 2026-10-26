@@ -46,7 +46,7 @@ describe("password import", () => {
       expect(explicit.entries.length).toBe(1);
       expect(auto.entries[0]?.password === value).toBe(true);
       expect(explicit.entries[0]?.password === value).toBe(true);
-      expect(explicit.entries[0]).toMatchObject({ site: "example.co.uk", username: "user" });
+      expect(explicit.entries[0]).toMatchObject({ site: "login.example.co.uk", username: "user" });
     },
   );
   it("handles BOM, escaped quotes, embedded commas and multiline fields", () => {

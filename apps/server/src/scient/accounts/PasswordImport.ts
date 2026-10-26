@@ -116,9 +116,9 @@ export const parsePasswordImport = (content: string, format: PasswordImportForma
       skipped++;
       continue;
     }
-    const site = getDomain(url.hostname, { allowPrivateDomains: true });
+    const site = url.hostname;
     if (
-      !site ||
+      !getDomain(site, { allowPrivateDomains: true }) ||
       !["http:", "https:"].includes(url.protocol) ||
       url.username ||
       url.password ||

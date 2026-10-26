@@ -481,3 +481,50 @@ describe("AccountsService grants and approvals", () => {
     }),
   );
 });
+
+it.effect(
+  "imports sibling subdomains separately and updates only the exact site and username",
+  () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const parentValue = syntheticValue();
+      const parent = yield* service.save({
+        ...website(parentValue),
+        details: { kind: "website", sites: ["example.com"], username: "user" },
+      });
+      const mailValue = syntheticValue();
+      const wikiValue = syntheticValue();
+      const content = `name,url,username,password,note\nMail,https://mail.example.com/login,user,${mailValue},\nWiki,https://wiki.example.com/login,user,${wikiValue},`;
+      expect(yield* service.importPasswords({ format: "auto", content })).toEqual({
+        created: 2,
+        updated: 0,
+        skipped: 0,
+      });
+      const accounts = (yield* service.snapshot).accounts;
+      const mail = accounts.find(
+        (account) =>
+          account.details.kind === "website" && account.details.sites.includes("mail.example.com"),
+      )!;
+      const wiki = accounts.find(
+        (account) =>
+          account.details.kind === "website" && account.details.sites.includes("wiki.example.com"),
+      )!;
+      expect(mail.accountId).not.toBe(wiki.accountId);
+      const next = syntheticValue();
+      expect(
+        yield* service.importPasswords({
+          format: "auto",
+          content: `name,url,username,password,note\nMail,https://mail.example.com/other,user,${next},`,
+        }),
+      ).toEqual({ created: 0, updated: 1, skipped: 0 });
+      for (const [accountId, expected] of [
+        [parent.accountId, parentValue],
+        [mail.accountId, next],
+        [wiki.accountId, wikiValue],
+      ] as const) {
+        expect(
+          secretEquals((yield* service.resolveSecrets(accountId, ["password"])).password, expected),
+        ).toBe(true);
+      }
+    }),
+);
