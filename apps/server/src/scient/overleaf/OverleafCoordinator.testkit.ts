@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import { ensureNativePrivateRetentionDirectory } from "../workspace/NativeFilePublication.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
 /**
@@ -40,7 +41,8 @@ import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 
 export const canApply = await nativePublicationHost();
 const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
-const volumeUuid = async () => VOLUME;
+const volumeUuid = async (path: string) =>
+  HostProcess.Platform.defaultValue() === "win32" ? platformFileIdentity.volume(path) : VOLUME;
 export const CONNECTION = "connection-1";
 const TOKEN = new TextEncoder().encode("test-token");
 export type Point = "linked" | "applied" | "adopted" | "recorded" | "admitting" | "sent";
