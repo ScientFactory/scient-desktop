@@ -1,3 +1,7 @@
+// SCIENT-FORK:START — Scient Accounts: desktop account controls for the owning tab.
+import type { EnvironmentId } from "@t3tools/contracts";
+import { BrowserAccountControls } from "~/scient/accounts/BrowserAccountControls";
+// SCIENT-FORK:END
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   ArrowLeft,
@@ -22,6 +26,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
 interface Props {
+  // SCIENT-FORK:START — Scient Accounts: the preview owner supplies the native tab identity.
+  accountsTab?: { environmentId: EnvironmentId; tabId: string; profileId: string } | undefined;
+  // SCIENT-FORK:END
   url: string;
   loading: boolean;
   canGoBack: boolean;
@@ -52,6 +59,9 @@ const NOOP = () => {};
 
 export function PreviewChromeRow({
   url,
+  // SCIENT-FORK:START — Scient Accounts: receive the native tab account context.
+  accountsTab,
+  // SCIENT-FORK:END
   loading,
   canGoBack,
   canGoForward,
@@ -291,6 +301,9 @@ export function PreviewChromeRow({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {/* SCIENT-FORK:START — Scient Accounts: fill and capture stay anchored to this tab. */}
+        {accountsTab ? <BrowserAccountControls {...accountsTab} url={url} /> : null}
+        {/* SCIENT-FORK:END */}
         {trailingActions}
       </form>
       <div

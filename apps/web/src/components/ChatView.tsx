@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Scient Accounts: mount approvals above the composer.
+import { ThreadAccountApprovals } from "~/scient/accounts/AccountApprovals";
+// SCIENT-FORK:END
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { readThreadProjection } from "../state/entities";
 import { deriveTimelineEntriesFromVisibleTurnItemsWithState } from "../session-logic";
@@ -4265,6 +4268,16 @@ function ChatViewContent(props: ChatViewProps) {
                         : undefined
                     }
                   >
+                    {/* SCIENT-FORK:START — Scient Accounts: approvals belong to the active thread. */}
+                    {activeThread ? (
+                      <div className="mx-auto w-full max-w-3xl">
+                        <ThreadAccountApprovals
+                          environmentId={activeThread.environmentId}
+                          threadId={activeThread.id}
+                        />
+                      </div>
+                    ) : null}
+                    {/* SCIENT-FORK:END */}
                     {/* SCIENT-FORK:START — queued messages strip, stacked on top of the composer */}
                     <div className="mx-auto w-full max-w-3xl">
                       {isServerThread && activeThread ? (

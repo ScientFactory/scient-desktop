@@ -912,6 +912,17 @@ export function PreviewView({
       data-thread-key={scopedThreadKey(threadRef)}
     >
       <PreviewChromeRow
+        // SCIENT-FORK:START — Scient Accounts: native credentials use the desktop runtime tab id.
+        accountsTab={
+          !isServerTab && runtimeTabId
+            ? {
+                environmentId: threadRef.environmentId,
+                tabId: runtimeTabId,
+                profileId: activeProfileId,
+              }
+            : undefined
+        }
+        // SCIENT-FORK:END
         url={url}
         loading={loading || serverStreamPending}
         canGoBack={canGoBack && !serverInputDisabled}
