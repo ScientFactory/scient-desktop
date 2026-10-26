@@ -282,7 +282,10 @@ describe("GuestPage", () => {
     await expect.element(screen.getByText("notes.txt")).not.toBeInTheDocument();
   });
 
-  it("follows the end as replies stream, and shows the guest's own message even after they scrolled up", async () => {
+  // SCIENT-FORK:START — Scient never follows a streaming reply (docs/internals/chat-scrolling-and-motion.md);
+  // only the guest's own message is brought into view.
+  it("keeps a guest who read back in place as a reply streams, and shows their own message", async () => {
+    // SCIENT-FORK:END
     using _page = visit(`/guest?share=${SHARE_ID}`);
     using _session = vi
       .spyOn(window, "fetch")
@@ -316,7 +319,17 @@ describe("GuestPage", () => {
       });
     await expectAtEnd();
 
-    // A new reply streams in at the end.
+    // SCIENT-FORK:START — reading back comes first (it also ends the opening's positioning), and a
+    // reply streaming in then leaves the guest where they are reading.
+    // The guest reads back a little, then sends: their message comes into view anyway, as the
+    // owner's own send does.
+    const node = scroller();
+    node.dispatchEvent(new WheelEvent("wheel", { deltaY: -400, bubbles: true }));
+    node.scrollTop = node.scrollTop - 400;
+    node.dispatchEvent(new Event("scroll"));
+    await expect.element(screen.getByRole("button", { name: /scroll to/i })).toBeVisible();
+    const readingAt = node.scrollTop;
+    const heightBefore = node.scrollHeight;
     send(
       threadEvent(2, {
         type: "turn-item.updated",
@@ -330,16 +343,10 @@ describe("GuestPage", () => {
         },
       }),
     );
-    await expect.element(screen.getByText("Newest reply")).toBeInTheDocument();
-    await expectAtEnd();
-
-    // The guest reads back a little, then sends: their message comes into view anyway, as the
-    // owner's own send does.
-    const node = scroller();
-    node.dispatchEvent(new WheelEvent("wheel", { deltaY: -400, bubbles: true }));
-    node.scrollTop = node.scrollTop - 400;
-    node.dispatchEvent(new Event("scroll"));
-    await expect.element(screen.getByRole("button", { name: /scroll to/i })).toBeVisible();
+    // The list draws rows near the view only; it grows by the reply far below the guest.
+    await vi.waitFor(() => expect(scroller().scrollHeight).toBeGreaterThan(heightBefore));
+    expect(Math.abs(scroller().scrollTop - readingAt)).toBeLessThanOrEqual(1);
+    // SCIENT-FORK:END
 
     // The guest's own message waits at the end for the owner.
     const waiting = {
@@ -351,50 +358,7 @@ describe("GuestPage", () => {
     send({ type: "view", view: { ...view, messages: [waiting] } });
     await expect.element(screen.getByText(waiting.text)).toBeInTheDocument();
     await expectAtEnd();
-
-    // The owner sends it: the run ends, the message becomes a row, and a new run's reply grows.
-    const sent = { ...waiting, status: "sent" as const };
-    send(threadEvent(3, { type: "run.updated", payload: run("run-1", 1, "completed") }));
-    send({ type: "view", view: { ...view, messages: [sent] } });
-    send(threadEvent(4, { type: "run.updated", payload: run("run-2", 2, "running") }));
-    send(
-      threadEvent(5, {
-        type: "turn-item.updated",
-        payload: {
-          ...itemBase("guest-row", 30, "run-2"),
-          type: "user_message",
-          createdBy: "user",
-          creationSource: "web",
-          messageId: MessageId.make("guest-row"),
-          inputIntent: "turn_start",
-          text: `Message from guest Sam, sent by the owner: ${sent.text}`,
-          attachments: [],
-          context: {
-            version: 1,
-            guest: { guestMessageId: sent.id, name: "Sam", text: sent.text },
-            records: [],
-          },
-        },
-      }),
-    );
-    await expectAtEnd();
-    for (const [index, words] of [10, 40, 120].entries()) {
-      send(
-        threadEvent(6 + index, {
-          type: "turn-item.updated",
-          payload: {
-            ...reply(
-              "logout-reply",
-              31,
-              `Logout reply\n\n${"Checking the logout flow now. ".repeat(words)}`,
-              "run-2",
-            ),
-            streaming: true,
-          },
-        }),
-      );
-      await expectAtEnd();
-      await expect.element(screen.getByText("Logout reply")).toBeInTheDocument();
-    }
+    // SCIENT-FORK:START — nor is the owner's reply to it followed as it streams (see above).
+    // SCIENT-FORK:END
   });
 });
