@@ -78,7 +78,6 @@ interface PlanFollowUpSendInput
       | "currentRouteThreadKeyRef"
       | "composerDraftTarget"
       | "frameSubmittedMessage"
-      | "threadQueue"
       | "clearUsageLimitsFor"
       | "acknowledgeActiveThreadWoke"
     > {
@@ -126,7 +125,6 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
   const {
     declineApprovalsForSend,
     frameSubmittedMessage,
-    threadQueue,
     clearUsageLimitsFor,
     acknowledgeActiveThreadWoke,
   } = input;
@@ -338,7 +336,6 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
           );
           if (queued) {
             resetLocalDispatch();
-            void threadQueue.refresh();
           } else {
             if (previewQueueAdmission && input.currentRouteThreadKeyRef.current === routeThreadKey)
               frameSubmittedMessage(messageIdForSend, readingPositionAtSend);

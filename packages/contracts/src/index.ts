@@ -89,6 +89,7 @@ export * from "./scientSkills.ts";
 // SCIENT-FORK:START — Scient Extensions contracts (new files, no upstream edits).
 export * from "./scient/secrets.ts";
 export * from "./scient/extensions.ts";
+export * from "./scient/nativeSubagentControl.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Accounts contracts (new files, no upstream edits).
 export * from "./scient/accounts.ts";

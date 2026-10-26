@@ -27,3 +27,17 @@ it("keeps letters typed on the device screen on the device", () => {
   stack.defer(() => deviceScreen.remove());
   expect(typeOn(deviceScreen, "a")).toBe(false);
 });
+
+// The side panel's New tab page uses typed letters to open its cards.
+it("keeps letters typed on the side panel's New tab page there", () => {
+  using stack = new DisposableStack();
+  const launcher = document.createElement("div");
+  launcher.setAttribute("data-scient-launcher", "");
+  launcher.tabIndex = -1;
+  const heading = document.createElement("h2");
+  launcher.append(heading);
+  document.body.append(launcher);
+  stack.defer(() => launcher.remove());
+  expect(typeOn(launcher, "f")).toBe(false);
+  expect(typeOn(heading, "f")).toBe(false);
+});

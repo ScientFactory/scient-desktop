@@ -1,5 +1,12 @@
 import type { EnvironmentId, ProjectDirectoryView } from "@t3tools/contracts";
-import { FolderXIcon, MoreHorizontal, SearchIcon } from "lucide-react";
+import {
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
+  FolderXIcon,
+  MoreHorizontal,
+  RefreshCwIcon,
+  SearchIcon,
+} from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { FileSurfaceFailure } from "~/components/files/fileSurfaceChrome";
@@ -9,9 +16,11 @@ import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
+  MenuSeparator,
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
@@ -49,6 +58,10 @@ export function useScientDirectoryView(environmentId: EnvironmentId, cwd: string
 export function WorkspaceFilesMenu(props: {
   view: ProjectDirectoryView;
   onViewChange: (view: ProjectDirectoryView) => void;
+  /** Reloads the listed files; the tree does not watch the disk. */
+  refresh?: { readonly pending: boolean; readonly onRefresh: () => void } | undefined;
+  /** Opens or closes every loaded folder; absent where that would walk too much. */
+  folders?: { readonly allExpanded: boolean; readonly onToggle: () => void } | undefined;
 }) {
   return (
     <Menu>
@@ -57,16 +70,38 @@ export function WorkspaceFilesMenu(props: {
           render={
             <MenuTrigger
               render={
-                <Button type="button" variant="ghost" size="icon-xs" aria-label="Files menu" />
+                <Button
+                  type="button"
+                  variant="ghost-muted"
+                  size="icon-xs"
+                  aria-label="Files menu"
+                />
               }
             />
           }
         >
-          <MoreHorizontal />
+          <MoreHorizontal className="scient-quiet-icon size-4" />
         </TooltipTrigger>
         <TooltipPopup>Files menu</TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" sideOffset={6} className="min-w-56">
+        {props.refresh ? (
+          <MenuItem onClick={props.refresh.onRefresh}>
+            <RefreshCwIcon aria-hidden className="size-4 text-muted-foreground" />
+            {props.refresh.pending ? "Refreshing…" : "Refresh files"}
+          </MenuItem>
+        ) : null}
+        {props.folders ? (
+          <MenuItem onClick={props.folders.onToggle}>
+            {props.folders.allExpanded ? (
+              <ChevronsDownUpIcon aria-hidden className="size-4 text-muted-foreground" />
+            ) : (
+              <ChevronsUpDownIcon aria-hidden className="size-4 text-muted-foreground" />
+            )}
+            {props.folders.allExpanded ? "Collapse all folders" : "Expand all folders"}
+          </MenuItem>
+        ) : null}
+        {props.refresh || props.folders ? <MenuSeparator /> : null}
         <MenuGroup>
           <MenuGroupLabel>File visibility</MenuGroupLabel>
           <MenuRadioGroup
@@ -222,7 +257,7 @@ export function FileSearchField(props: {
         className="h-7 min-w-0 flex-1 @max-[14rem]/file-browser-header:hidden"
       >
         <InputGroupAddon>
-          <SearchIcon aria-hidden className="size-3.5" />
+          <SearchIcon aria-hidden className="scient-quiet-icon size-3.5" />
         </InputGroupAddon>
         {renderSearchInput()}
       </InputGroup>
@@ -232,14 +267,14 @@ export function FileSearchField(props: {
             <Button
               type="button"
               size="icon-xs"
-              variant="ghost"
+              variant="ghost-muted"
               className="hidden shrink-0 @max-[14rem]/file-browser-header:inline-flex"
               aria-label={props.ariaLabel}
               title={props.ariaLabel}
             />
           }
         >
-          <SearchIcon aria-hidden className="size-3.5" />
+          <SearchIcon aria-hidden className="scient-quiet-icon size-4" />
         </PopoverTrigger>
         <PopoverPopup
           side="top"
@@ -247,12 +282,11 @@ export function FileSearchField(props: {
           alignOffset={8}
           sideOffset={6}
           padding="none"
-          surface="bare"
           className="w-48 max-w-[calc(100vw-2rem)]"
         >
           <InputGroup variant="ghost" className="h-7 min-w-0">
             <InputGroupAddon>
-              <SearchIcon aria-hidden className="size-3.5" />
+              <SearchIcon aria-hidden className="scient-quiet-icon size-3.5" />
             </InputGroupAddon>
             {renderSearchInput(true)}
           </InputGroup>

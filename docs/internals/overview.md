@@ -201,7 +201,8 @@ blindly replayed against a vanished runtime. Recovery persists outcomes before a
 Old database/queue readers hydrate saved facts into V2; they do not execute V1 commands.
 
 Native queued runs are the sole live queue authority. Admission, order, holds, and advancement
-belong to `Orchestrator`; `QueuedRunsControl` adapts them into the Scient `ThreadQueueStrip`.
+belong to `Orchestrator`; upstream's `QueuedRunsControl` shows them in the composer's drawer, with
+Scient's parts mounted from `scient/threadQueue/useScientQueueParts.tsx`.
 See [the queue contract](./scient-thread-queue.md) and
 [legacy import](./legacy-orchestration-migration.md).
 

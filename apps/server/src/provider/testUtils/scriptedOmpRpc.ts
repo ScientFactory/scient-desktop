@@ -30,6 +30,7 @@ interface FakeModel {
 }
 
 interface Frame {
+  readonly subagentId?: string;
   readonly id?: string;
   readonly type: string;
   readonly provider?: string;

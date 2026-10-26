@@ -87,10 +87,9 @@ then sends it after the current turn finishes successfully. Use **Steer** on a
 queued message to send it into the running turn, or edit, reorder, or delete it
 from the queue. **Stop**, interruptions, and failed starts hold the remaining
 queue until you choose **Resume**. A later successful answer does not release
-that hold. When the thread is idle, **Send** on the first waiting message starts
-only that message; the other messages stay held in order. Reorder first if you
-want to send a different one. Once resumed, the queue sends each message after
-the preceding answer finishes successfully.
+that hold. When the thread is idle, **Send now** on any held message starts it,
+and the rest of the queue continues after it in order. Once resumed, the queue
+sends each message after the preceding answer finishes successfully.
 When Enter sends, `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses
 the opposite action: it steers when your default is Queue and queues when your
 default is Steer.
@@ -329,12 +328,13 @@ Steer. Click it or press your send shortcut to use that action. Hold `Cmd` on ma
 Windows and Linux to switch the button to the opposite action, then click, or use the opposite-action
 shortcut described above.
 
-Queued messages appear above the composer. Rows show a thumbnail of any attached image alongside
-the text. Drag a row by its handle to reorder it, use the handle's arrow keys, promote the message
-to a steer, or remove it.
+Queued messages appear above the composer under a **Queued** header with their count; click the
+header to fold or unfold the list. Rows show a thumbnail of any attached image alongside the text.
+Drag a row by its handle to reorder it, use the handle's arrow keys, use **Steer** to send it into
+the running turn, or remove it.
 
 After Stop, a failed turn, or a server restart, queued messages keep their order and are held.
-While the agent is idle, every held message shows **Send**, on mobile too. Send starts that
+While the agent is idle, every held message shows **Send now**, on mobile too. Send starts that
 message now, and the rest of the queue continues after it in order. Sending a new message
 directly also continues the held queue after that message. On web or desktop, **Resume** in an
 empty composer continues the queue too. You can edit, reorder, or remove held messages without
