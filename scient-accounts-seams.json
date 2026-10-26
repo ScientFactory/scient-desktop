@@ -21,6 +21,42 @@
     "Scient Accounts",
     "scient_accounts?_"
   ],
-  "upstreamMounts": [],
+  "upstreamMounts": [
+    {
+      "path": "apps/desktop/src/preload.ts",
+      "anchor": "accounts: makeDesktopAccountsBridge",
+      "purpose": "Expose the desktop Accounts bridge to the application renderer."
+    },
+    {
+      "path": "apps/desktop/src/ipc/DesktopIpcHandlers.ts",
+      "anchor": "yield* installAccountsIpc()",
+      "purpose": "Register Accounts IPC beside voice handlers."
+    },
+    {
+      "path": "apps/desktop/src/preview-pick-preload.ts",
+      "anchor": "installSignInCapture(",
+      "purpose": "Install submitted sign-in capture in preview guest preloads."
+    },
+    {
+      "path": "apps/desktop/src/preview/Manager.ts",
+      "anchor": "accountsWebContents: requireWebContents",
+      "purpose": "Resolve registered guest contents and bind sessions to profile identities."
+    },
+    {
+      "path": "apps/desktop/src/preview/BrowserImport/Sources.ts",
+      "anchor": "const counted = (profiles: ReadonlyArray<BrowserImportSourceProfile>) =>",
+      "purpose": "Allow metadata discovery without reading browser cookie counts."
+    },
+    {
+      "path": "scripts/build-desktop-artifact.ts",
+      "anchor": "electronFuses: { enableCookieEncryption: true }",
+      "purpose": "Keep packaged profile cookies encrypted with Electron Safe Storage."
+    },
+    {
+      "path": "apps/desktop/vite.config.ts",
+      "anchor": "src/scient/accounts/loginForm.test.ts",
+      "purpose": "Run Accounts guest DOM verification in the existing isolated preload test project."
+    }
+  ],
   "scientMounts": []
 }

@@ -3192,6 +3192,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     productName: resolveDesktopProductName(version),
     artifactName: "Scient-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
+    // SCIENT-FORK:START — Scient Accounts: encrypt packaged browser cookies.
+    // Never turn this fuse off: doing so makes existing encrypted cookies unreadable.
+    electronFuses: { enableCookieEncryption: true },
+    // SCIENT-FORK:END
     // SCIENT-FORK:START
     fileAssociations:
       platform === "linux"

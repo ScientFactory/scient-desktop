@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Scient Accounts: remember the identity of browser sessions.
+import { rememberAccountsSession } from "../scient/accounts/sessionIdentity.ts";
+// SCIENT-FORK:END
 import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewRecordingInputSchema,
@@ -3362,6 +3365,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   yield* Effect.addFinalizer(() => destroy().pipe(Effect.ignore));
 
   return {
+    // SCIENT-FORK:START — Scient Accounts: resolve only registered preview guests.
+    accountsWebContents: requireWebContents,
+    accountsTabIdForWebContents: tabIdForWebContents,
+    // SCIENT-FORK:END
     cancelPickElement,
     captureScreenshot,
     exportPdf,
@@ -3554,6 +3561,12 @@ export type PreviewManagerError = typeof PreviewManagerError.Type;
 export class PreviewManager extends Context.Service<
   PreviewManager,
   {
+    // SCIENT-FORK:START — Scient Accounts: narrow registered-tab lookup for capture and fill.
+    readonly accountsWebContents: (
+      tabId: string,
+    ) => Effect.Effect<Electron.WebContents, PreviewManagerError>;
+    readonly accountsTabIdForWebContents: (id: number) => Effect.Effect<string | null>;
+    // SCIENT-FORK:END
     readonly setMainWindow: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
     readonly setForwardedShortcuts: (
       shortcuts: ReadonlyArray<PreviewForwardedShortcut>,
@@ -3701,6 +3714,10 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   );
 
   return PreviewManager.of({
+    // SCIENT-FORK:START — Scient Accounts: expose registered-tab lookups.
+    accountsWebContents: operations.accountsWebContents,
+    accountsTabIdForWebContents: operations.accountsTabIdForWebContents,
+    // SCIENT-FORK:END
     setMainWindow: operations.setMainWindow,
     setForwardedShortcuts: operations.setForwardedShortcuts,
     getBrowserSession: Effect.fn("PreviewManager.getBrowserSession")(
@@ -3712,6 +3729,9 @@ export const make = Effect.gen(function* PreviewManagerMake() {
               (cause) => new PreviewOperationError({ operation: "getBrowserSession", cause }),
             ),
           );
+        // SCIENT-FORK:START — Scient Accounts: bind capture to the session's profile identity.
+        rememberAccountsSession(session, scope, persistent, namespace);
+        // SCIENT-FORK:END
         placeServerDownloads(session);
         passkeys.installSessionHandlers(session);
         return session;

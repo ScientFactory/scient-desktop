@@ -31,6 +31,8 @@ export interface DesktopCapturedSignIn {
 
 export interface DesktopSignInFill {
   readonly tabId: string;
+  /** Bind an asynchronous values lookup to the origin the user requested. */
+  readonly origin?: string;
   readonly username?: string;
   readonly password?: string;
   readonly otp?: string;
@@ -39,7 +41,11 @@ export interface DesktopSignInFill {
 /** Scient Accounts members of the desktop bridge (`ScientDesktopBridge.accounts`). */
 export interface DesktopAccountsBridge {
   readonly sourceProfiles: () => Promise<ReadonlyArray<DesktopSourceProfileDetails>>;
-  readonly signedInSites: (profileId: string) => Promise<ReadonlyArray<DesktopProfileSignedInSite>>;
+  /** Omit environmentId for the primary local environment. */
+  readonly signedInSites: (
+    profileId: string,
+    environmentId?: string,
+  ) => Promise<ReadonlyArray<DesktopProfileSignedInSite>>;
   /** Fills the login form on the tab's current page. Resolves false when it found none. */
   readonly fill: (input: DesktopSignInFill) => Promise<boolean>;
   readonly onSignInCaptured: (listener: (capture: DesktopCapturedSignIn) => void) => () => void;
