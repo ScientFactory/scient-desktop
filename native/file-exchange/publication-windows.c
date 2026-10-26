@@ -362,6 +362,7 @@ static HANDLE create_relative(HANDLE parent, const wchar_t *name, ACCESS_MASK ac
 #ifdef SCIENT_PUBLICATION_PROBE
 static HRESULT probe_filter_status = E_UNEXPECTED;
 static DWORD probe_path_error;
+static HRESULT probe_instance_status = E_UNEXPECTED;
 #endif
 static int cloud_filter_absent(HANDLE folder) {
   HMODULE library = LoadLibraryW(L"fltlib.dll");
@@ -1124,12 +1125,26 @@ int platform_windows_main(int argc, char **argv) {
       file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
       if (file == INVALID_HANDLE_VALUE) error = GetLastError();
-      else if (!strcmp(argv[2], "as-account-cloud")) error = (DWORD)cloud_managed(file);
+      else if (!strcmp(argv[2], "as-account-cloud")) {
+        error = (DWORD)cloud_managed(file);
+        HMODULE filters = LoadLibraryW(L"fltlib.dll");
+        typedef HRESULT (WINAPI *FirstInstance)(LPCWSTR, INSTANCE_INFORMATION_CLASS, LPVOID, DWORD, LPDWORD, LPHANDLE);
+        typedef HRESULT (WINAPI *CloseInstance)(HANDLE);
+        FirstInstance first = NULL; CloseInstance close = NULL;
+        FARPROC address = filters ? GetProcAddress(filters, "FilterInstanceFindFirst") : NULL; memcpy(&first, &address, sizeof(first));
+        address = filters ? GetProcAddress(filters, "FilterInstanceFindClose") : NULL; memcpy(&close, &address, sizeof(close));
+        union { ULONGLONG aligned; BYTE bytes[65536]; } buffer; DWORD returned = 0; HANDLE search = INVALID_HANDLE_VALUE;
+        if (first && close) {
+          probe_instance_status = first(L"CldFlt", InstanceFullInformation, buffer.bytes, sizeof(buffer.bytes), &returned, &search);
+          if (search != INVALID_HANDLE_VALUE) close(search);
+        }
+        if (filters) FreeLibrary(filters);
+      }
     }
     RevertToSelf(); if (token) CloseHandle(token);
     if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
-    free(path); printf("{\"code\":%lu,\"filterCode\":%lu,\"pathCode\":%lu}\n", (unsigned long)error,
-      (unsigned long)probe_filter_status, (unsigned long)probe_path_error); return 0;
+    free(path); printf("{\"code\":%lu,\"filterCode\":%lu,\"pathCode\":%lu,\"instanceCode\":%lu}\n", (unsigned long)error,
+      (unsigned long)probe_filter_status, (unsigned long)probe_path_error, (unsigned long)probe_instance_status); return 0;
   }
 #endif
 
