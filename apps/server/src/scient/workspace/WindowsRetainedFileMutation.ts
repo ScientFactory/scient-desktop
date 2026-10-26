@@ -261,7 +261,7 @@ export async function runWindowsRetainedMutation(
         await save({ publishedIdentity: record.stagedIdentity, publishedRevision: stageRevision });
         return await finish("done");
       }
-      if (same(current, record.originalIdentity) && kept === null) {
+      if (same(current, record.originalIdentity) && !same(kept, record.originalIdentity)) {
         const reply = await command("win-resume");
         held = true;
         // Delete has no stage; its original is still opened even if resume reports absent staging.
@@ -277,6 +277,19 @@ export async function runWindowsRetainedMutation(
         const restored = await command("win-restore-policy");
         if (!good(restored)) return result();
         await save({ sourceMutation: false, currentRevision: await fileRevision(target) });
+        return await finish(
+          kept === null ? "skipped" : "attention",
+          kept === null ? "revision" : "recovery",
+        );
+      }
+      if (
+        record.publication === "windows-stage-create" &&
+        record.expectedMutationEpoch &&
+        input.bytes === undefined &&
+        current === null &&
+        same(staged, record.stagedIdentity)
+      ) {
+        await save({ sourceMutation: false });
         return await finish("skipped", "revision");
       }
       if (
