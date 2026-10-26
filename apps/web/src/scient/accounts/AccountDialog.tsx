@@ -15,7 +15,10 @@ import * as Option from "effect/Option";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { NativeSelect } from "~/components/ui/select";
+import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
+import { ExtensionIcon } from "../extensions/ExtensionRow";
 import {
   Dialog,
   DialogPopup,
@@ -46,6 +49,30 @@ export function AccountField({ label, children }: { label: string; children: Rea
   );
 }
 
+const FIELD_LABELS: Readonly<Record<string, string>> = {
+  password: "Password",
+  totp: "2FA key",
+  token: "Key",
+  clientCert: "Client certificate",
+  clientKey: "Client key",
+  caCert: "CA certificate",
+};
+const KIND_LABELS: Readonly<Record<AccountDetails["kind"], string>> = {
+  website: "Website sign-in",
+  library: "Library access",
+  "api-key": "API key",
+  database: "Database",
+  "cli-login": "Command-line login",
+};
+const OPTIONAL_FIELDS = new Set(["totp", "clientCert", "clientKey", "caCert"]);
+
+type ValueSource = AccountSecretSummary["source"]["type"];
+const LINK_LABELS: Readonly<Record<Exclude<ValueSource, "scient">, string>> = {
+  keychain: "Keychain item",
+  "1password": "1Password item",
+  "custom-model": "Custom models key",
+};
+
 function SecretField({
   field,
   saved,
@@ -59,9 +86,8 @@ function SecretField({
   environmentId: EnvironmentId;
   onChange: (input: AccountSecretInput | undefined) => void;
 }) {
-  const [source, setSource] = useState(saved?.source.type ?? "scient");
+  const [source, setSource] = useState<ValueSource>(saved?.source.type ?? "scient");
   const [value, setValue] = useState("");
-  const [saveTo, setSaveTo] = useState<ReadonlyArray<AccountWriteStore>>([{ type: "scient" }]);
   const [service, setService] = useState(
     saved?.source.type === "keychain" ? saved.source.service : "",
   );
@@ -76,19 +102,25 @@ function SecretField({
   );
   const [candidates, setCandidates] = useState<KeychainCandidatesResult | null>(null);
   const load = useAccountCommand(accountsState.keychainCandidates, environmentId);
-  const changed = (next: typeof source) => {
+  const label = FIELD_LABELS[field] ?? field;
+  const links: ReadonlyArray<Exclude<ValueSource, "scient">> = [
+    ...(snapshot.stores.keychain.available ? (["keychain"] as const) : []),
+    ...(snapshot.stores.onePassword.state === "connected" ? (["1password"] as const) : []),
+    ...(field === "token" && snapshot.customModelKeys.length > 0
+      ? (["custom-model"] as const)
+      : []),
+  ];
+  const changed = (next: ValueSource) => {
     setSource(next);
     setValue("");
     onChange(
-      next === saved?.source.type
+      next === saved?.source.type || next === "scient"
         ? undefined
-        : next === "scient"
-          ? undefined
-          : next === "keychain"
-            ? { type: next, service, account }
-            : next === "1password"
-              ? { type: next, reference }
-              : { type: next, connectionId: connection },
+        : next === "keychain"
+          ? { type: next, service, account }
+          : next === "1password"
+            ? { type: next, reference }
+            : { type: next, connectionId: connection },
     );
     if (next === "keychain")
       void load({}).then((result) => {
@@ -96,113 +128,97 @@ function SecretField({
       });
   };
   return (
-    <div className="grid gap-2">
+    <div className="grid gap-1.5 text-sm">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm">
-          {field}
-          {saved ? <span className="ml-2 text-xs text-muted-foreground">Saved</span> : null}
-        </span>
-        <div className="w-40">
-          <NativeSelect
-            aria-label={`${field} source`}
-            size="sm"
-            value={source}
-            onChange={(event) => changed(event.target.value as typeof source)}
-          >
-            <option value="scient">Scient</option>
-            {snapshot.stores.keychain.available || source === "keychain" ? (
-              <option value="keychain">Keychain</option>
-            ) : null}
-            {snapshot.stores.onePassword.state === "connected" || source === "1password" ? (
-              <option value="1password">1Password</option>
-            ) : null}
-            {field === "token" && snapshot.customModelKeys.length > 0 ? (
-              <option value="custom-model">Custom models key</option>
-            ) : null}
-          </NativeSelect>
-        </div>
+        <Label render={<span />}>
+          {label}
+          {source !== "scient" ? (
+            <span className="font-normal text-muted-foreground"> · {LINK_LABELS[source]}</span>
+          ) : null}
+        </Label>
+        {links.length > 0 ? (
+          <Menu>
+            <MenuTrigger render={<Button size="xs" variant="ghost-muted" />}>
+              {source === "scient" ? "Use existing" : "Change"}
+            </MenuTrigger>
+            <MenuPopup align="end">
+              {source !== "scient" ? (
+                <MenuItem onClick={() => changed("scient")}>Enter a value</MenuItem>
+              ) : null}
+              {links
+                .filter((link) => link !== source)
+                .map((link) => (
+                  <MenuItem key={link} onClick={() => changed(link)}>
+                    {LINK_LABELS[link]}
+                  </MenuItem>
+                ))}
+            </MenuPopup>
+          </Menu>
+        ) : null}
       </div>
       {source === "scient" ? (
-        <>
-          <Input
-            aria-label={field}
-            type="password"
-            autoComplete="off"
-            value={value}
-            placeholder={saved ? "Saved" : field}
-            onChange={(event) => {
-              setValue(event.target.value);
-              onChange(
-                event.target.value
-                  ? { type: "scient", value: event.target.value, saveTo }
-                  : undefined,
-              );
-            }}
-          />
-          <SaveStores
-            kept={saved}
-            stores={snapshot.stores}
-            selected={saveTo}
-            onChange={(stores) => {
-              setSaveTo(stores);
-              if (value) onChange({ type: "scient", value, saveTo: stores });
-            }}
-          />
-        </>
+        <Input
+          aria-label={label}
+          type="password"
+          autoComplete="off"
+          value={value}
+          placeholder={saved ? "Saved" : OPTIONAL_FIELDS.has(field) ? "Optional" : undefined}
+          onChange={(event) => {
+            setValue(event.target.value);
+            onChange(
+              event.target.value ? { type: "scient", value: event.target.value } : undefined,
+            );
+          }}
+        />
       ) : source === "keychain" ? (
-        <div className="grid gap-2">
-          {candidates?.listed ? (
-            <NativeSelect
-              aria-label="Keychain item"
-              value=""
-              onChange={(event) => {
-                const item = candidates.candidates[Number(event.target.value)];
-                if (item) {
-                  setService(item.service);
-                  setAccount(item.account);
-                  onChange({ type: "keychain", service: item.service, account: item.account });
-                }
-              }}
-            >
-              <option value="" disabled>
-                Choose an item
-              </option>
-              {candidates.candidates.map((item, index) => (
-                <option key={`${item.service}:${item.account}`} value={index}>
-                  {item.label ?? `${item.service} · ${item.account}`}
-                </option>
-              ))}
-            </NativeSelect>
-          ) : null}
-          <Input
-            aria-label="Keychain service"
-            placeholder="Service"
-            value={service}
+        candidates?.listed ? (
+          <NativeSelect
+            aria-label="Keychain item"
+            value={String(
+              candidates.candidates.findIndex(
+                (item) => item.service === service && item.account === account,
+              ),
+            )}
             onChange={(event) => {
-              setService(event.target.value);
-              onChange({ type: "keychain", service: event.target.value, account });
-            }}
-          />
-          <Input
-            aria-label="Keychain account"
-            placeholder="Account"
-            value={account}
-            onChange={(event) => {
-              setAccount(event.target.value);
-              onChange({ type: "keychain", service, account: event.target.value });
-            }}
-          />
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={async () => {
-              const result = await load({ query: service });
-              if (result.ok) setCandidates(result.value);
+              const item = candidates.candidates[Number(event.target.value)];
+              if (item) {
+                setService(item.service);
+                setAccount(item.account);
+                onChange({ type: "keychain", service: item.service, account: item.account });
+              }
             }}
           >
-            Find items
-          </Button>
-        </div>
+            <option value="-1" disabled>
+              Choose an item
+            </option>
+            {candidates.candidates.map((item, index) => (
+              <option key={`${item.service}:${item.account}`} value={index}>
+                {item.label ?? `${item.service} · ${item.account}`}
+              </option>
+            ))}
+          </NativeSelect>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              aria-label="Keychain service"
+              placeholder="Service"
+              value={service}
+              onChange={(event) => {
+                setService(event.target.value);
+                onChange({ type: "keychain", service: event.target.value, account });
+              }}
+            />
+            <Input
+              aria-label="Keychain account"
+              placeholder="Account"
+              value={account}
+              onChange={(event) => {
+                setAccount(event.target.value);
+                onChange({ type: "keychain", service, account: event.target.value });
+              }}
+            />
+          </div>
+        )
       ) : source === "1password" ? (
         <Input
           aria-label="1Password reference"
@@ -291,7 +307,7 @@ function DetailsFields({
                 const { loginUrl: _, ...rest } = details;
                 onChange(event.target.value ? { ...details, loginUrl: event.target.value } : rest);
               }}
-              placeholder="https://…"
+              placeholder="Optional"
             />
           </AccountField>
           {details.kind === "library" ? (
@@ -361,8 +377,14 @@ function DetailsFields({
       ) : null}
       {details.kind === "database" ? (
         <>
-          {(["host", "database", "user"] as const).map((field) => (
-            <AccountField key={field} label={field}>
+          {(
+            [
+              ["host", "Host"],
+              ["database", "Database"],
+              ["user", "User"],
+            ] as const
+          ).map(([field, label]) => (
+            <AccountField key={field} label={label}>
               <Input
                 value={details[field]}
                 onChange={(event) => onChange({ ...details, [field]: event.target.value })}
@@ -411,6 +433,7 @@ export function AccountDialog({
   const [details, setDetails] = useState<AccountDetails | null>(account?.details ?? null);
   const [name, setName] = useState(account?.name ?? "");
   const [secrets, setSecrets] = useState<Record<string, AccountSecretInput>>({});
+  const [saveTo, setSaveTo] = useState<ReadonlyArray<AccountWriteStore>>([{ type: "scient" }]);
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
   const save = useAccountCommand(accountsState.save, environmentId);
@@ -434,7 +457,12 @@ export function AccountDialog({
       ...(account ? { accountId: account.accountId } : {}),
       name,
       details,
-      secrets,
+      secrets: Object.fromEntries(
+        Object.entries(secrets).map(([field, input]) => [
+          field,
+          input.type === "scient" ? { ...input, saveTo } : input,
+        ]),
+      ),
     });
     if (Option.isNone(input)) {
       setError(true);
@@ -472,18 +500,25 @@ export function AccountDialog({
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
-                <div className="grid gap-1">
+                <DiscoveryList>
                   {accountCatalogue
                     .filter((entry) => entry.name.toLowerCase().includes(query.toLowerCase()))
                     .map((entry) => (
-                      <Button key={entry.name} variant="ghost" onClick={() => choose(entry)}>
-                        {entry.name}
-                      </Button>
+                      <DiscoveryListRow
+                        key={entry.name}
+                        icon={<ExtensionIcon name={entry.name} />}
+                        title={entry.name}
+                        description={KIND_LABELS[entry.kind]}
+                        onClick={() => choose(entry)}
+                      />
                     ))}
-                  <Button variant="ghost" onClick={() => choose(null)}>
-                    Any website address
-                  </Button>
-                </div>
+                  <DiscoveryListRow
+                    icon={<ExtensionIcon name={query.trim() || "Website"} />}
+                    title={query.trim() || "Any website"}
+                    description={KIND_LABELS.website}
+                    onClick={() => choose(null)}
+                  />
+                </DiscoveryList>
               </>
             ) : (
               <>
@@ -513,6 +548,12 @@ export function AccountDialog({
                     }
                   />
                 ))}
+                <SaveStores
+                  kept={account ? Object.values(account.secrets)[0] : undefined}
+                  stores={snapshot.stores}
+                  selected={saveTo}
+                  onChange={setSaveTo}
+                />
               </>
             )}
             {error ? (

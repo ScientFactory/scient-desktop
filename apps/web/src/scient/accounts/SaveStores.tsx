@@ -34,6 +34,9 @@ export function SaveStores({
   const onePassword =
     selected.find((store) => store.type === "1password") ??
     (existingVault ? { type: "1password" as const, vaultId: existingVault.id } : undefined);
+  // With one place to keep values there is nothing to choose.
+  if (!stores.keychain.available && !vaults[0] && !has("keychain") && !has("1password"))
+    return null;
   const toggle = (store: AccountWriteStore, enabled: boolean) =>
     onChange(
       enabled
@@ -41,8 +44,9 @@ export function SaveStores({
         : selected.filter((entry) => entry.type !== store.type),
     );
   return (
-    <fieldset className="grid gap-2 text-sm">
-      <legend className="mb-2 text-xs text-muted-foreground">Save to</legend>
+    <fieldset className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+      <legend className="sr-only">Save in</legend>
+      <span className="text-muted-foreground">Save in</span>
       <label className="flex items-center gap-2">
         <Checkbox
           disabled={has("scient")}

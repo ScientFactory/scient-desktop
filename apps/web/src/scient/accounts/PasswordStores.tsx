@@ -106,7 +106,20 @@ export function PasswordStores({
   const importPasswords = useAccountCommand(accountsState.importPasswords, environmentId);
   const status = snapshot.stores.onePassword;
   return (
-    <SettingsSection title="Password stores" id="accounts-password-stores">
+    <SettingsSection
+      title="Password stores"
+      id="accounts-password-stores"
+      headerAction={
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={!canWrite || busy}
+          onClick={() => fileRef.current?.click()}
+        >
+          Import passwords…
+        </Button>
+      }
+    >
       {snapshot.stores.scient.protection === "file" ? (
         <SettingsRow title="Scient" status="Store key protected by a local file" />
       ) : null}
@@ -137,19 +150,6 @@ export function PasswordStores({
               Connect
             </Button>
           )
-        }
-      />
-      <SettingsRow
-        title="Import passwords"
-        control={
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={!canWrite || busy}
-            onClick={() => fileRef.current?.click()}
-          >
-            Import passwords…
-          </Button>
         }
       />
       <input

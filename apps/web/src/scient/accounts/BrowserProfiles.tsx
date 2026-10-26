@@ -14,6 +14,7 @@ import {
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
+import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { DraftInput } from "~/components/ui/draft-input";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
@@ -55,6 +56,9 @@ import {
 } from "./accountsView";
 
 const decodeProfileUpdate = Schema.decodeOption(BrowserProfileRecordUpdateInput);
+
+/** The desktop lists at most this many signed-in sites per profile. */
+const SIGNED_IN_SITES_LIMIT = 50;
 
 function profileError() {
   toastManager.add({ type: "error", title: "Browser profile action failed" });
@@ -104,18 +108,16 @@ function SignedInSites({
   }, [profileId, environmentId]);
   return sites?.length ? (
     <Tooltip>
-      <TooltipTrigger
-        render={<div className="flex items-center gap-1 text-xs text-muted-foreground" />}
-      >
-        {sites.slice(0, 4).map((site) => (
-          <span
-            key={site.domain}
-            className="flex size-5 items-center justify-center rounded bg-muted"
-          >
-            {site.domain[0]?.toUpperCase()}
-          </span>
-        ))}
-        <span>{sites.length} sites</span>
+      <TooltipTrigger render={<div className="flex min-w-0 text-xs text-muted-foreground" />}>
+        <span className="truncate">
+          {sites
+            .slice(0, 3)
+            .map((site) => site.domain)
+            .join(" · ")}
+          {sites.length > 3
+            ? ` + ${sites.length - 3}${sites.length >= SIGNED_IN_SITES_LIMIT ? "+" : ""} more`
+            : ""}
+        </span>
       </TooltipTrigger>
       <TooltipPopup>{sites.map((site) => site.domain).join(", ")}</TooltipPopup>
     </Tooltip>
@@ -322,6 +324,7 @@ export function BrowserProfiles({
   const [siteRevision, setSiteRevision] = useState(0);
   const removeRecord = useAccountCommand(accountsState.removeProfile, environmentId);
   const [scopeProfile, setScopeProfile] = useState<BrowserProfileRecord | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const profiles = mergeProfiles(settings.browserProfiles, snapshot.profiles);
   const disabled = !canWrite || !hydrated || busy;
@@ -454,28 +457,43 @@ export function BrowserProfiles({
                 color={profile.record.color}
               />
               <div className="grid gap-1">
-                <DraftInput
-                  aria-label="Profile name"
-                  value={profile.name}
-                  disabled={disabled || isBuiltInBrowserProfileId(profile.id)}
-                  maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
-                  onCommit={(value) => {
-                    const name = value.trim();
-                    if (name)
-                      void changeSettings((current) => ({
-                        ...current,
-                        browserProfiles: current.browserProfiles.map((item) =>
-                          item.id === profile.id ? { ...item, name } : item,
-                        ),
-                      }));
-                  }}
-                />
+                <div className="flex items-center gap-2">
+                  {renaming !== profile.id ? (
+                    <span className="text-sm text-foreground">{profile.name}</span>
+                  ) : (
+                    <DraftInput
+                      aria-label="Profile name"
+                      autoFocus
+                      nativeInput
+                      size="sm"
+                      value={profile.name}
+                      disabled={disabled}
+                      maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
+                      onCommit={(value) => {
+                        const name = value.trim();
+                        if (name)
+                          void changeSettings((current) => ({
+                            ...current,
+                            browserProfiles: current.browserProfiles.map((item) =>
+                              item.id === profile.id ? { ...item, name } : item,
+                            ),
+                          }));
+                      }}
+                    />
+                  )}
+                  {profile.id !== DEFAULT_BROWSER_PROFILE_ID &&
+                  settings.browserDefaultProfileId === profile.id ? (
+                    <Badge>Default</Badge>
+                  ) : null}
+                </div>
                 {profile.record.source ? (
                   <span className="text-xs text-muted-foreground">
                     {[
                       profile.record.source.browser[0]!.toUpperCase() +
                         profile.record.source.browser.slice(1),
-                      profile.record.source.profileName,
+                      profile.record.source.profileName === profile.name
+                        ? undefined
+                        : profile.record.source.profileName,
                       profile.record.source.email,
                     ]
                       .filter(Boolean)
@@ -511,6 +529,9 @@ export function BrowserProfiles({
                 >
                   Use in scripts
                 </MenuCheckboxItem>
+                {isBuiltInBrowserProfileId(profile.id) ? null : (
+                  <MenuItem onClick={() => setRenaming(profile.id)}>Rename</MenuItem>
+                )}
                 <MenuItem onClick={() => setScopeProfile(profile.record)}>Available in…</MenuItem>
                 <MenuItem
                   disabled={settings.browserDefaultProfileId === profile.id}

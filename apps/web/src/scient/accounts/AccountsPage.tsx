@@ -175,10 +175,7 @@ function AccountsContent({
   const inventory = useEnvironmentQuery(extensionsInventory({ environmentId, input: {} }));
   const setAccess = useAccountCommand(accountsState.setAgentAccess, environmentId);
   const controls = useAccountCommand(accountsState.setControls, environmentId);
-  const firstRun =
-    snapshot.accounts.length === 0 &&
-    !snapshot.profiles.some((profile) => profile.source) &&
-    userProfiles.length === 0;
+  const firstRun = snapshot.accounts.length === 0 && userProfiles.length === 0;
   const connectorRows = inventory.data?.connectors.map((connector) => (
     <SettingsRow
       key={connector.connectorId}
@@ -228,46 +225,41 @@ function AccountsContent({
             Add an account
           </Button>
         </div>
-      ) : (
-        <>
-          <BrowserProfiles
-            environmentId={environmentId}
-            snapshot={snapshot}
-            canWrite={canWrite}
-            onImport={() => setDialog("import")}
-          />
-          <SettingsSection
-            id="accounts-list"
-            title="Accounts"
-            headerAction={
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={!canWrite}
-                onClick={() => setDialog("add")}
-              >
-                Add
-              </Button>
-            }
-          >
-            {snapshot.accounts.map((account) => (
-              <AccountRow
-                key={account.accountId}
-                account={account}
-                environmentId={environmentId}
-                canWrite={canWrite}
-                onEdit={() => setEditing(account)}
-                onScope={() => setScopeAccount(account)}
-                onActivity={setActivity}
-              />
-            ))}
-
-            {connectorRows}
-          </SettingsSection>
-        </>
-      )}
-      {firstRun && inventory.data?.connectors.length ? (
-        <SettingsSection title="Accounts">{connectorRows}</SettingsSection>
+      ) : null}
+      <BrowserProfiles
+        environmentId={environmentId}
+        snapshot={snapshot}
+        canWrite={canWrite}
+        onImport={() => setDialog("import")}
+      />
+      {snapshot.accounts.length > 0 || connectorRows?.length ? (
+        <SettingsSection
+          id="accounts-list"
+          title="Accounts"
+          headerAction={
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!canWrite}
+              onClick={() => setDialog("add")}
+            >
+              Add
+            </Button>
+          }
+        >
+          {snapshot.accounts.map((account) => (
+            <AccountRow
+              key={account.accountId}
+              account={account}
+              environmentId={environmentId}
+              canWrite={canWrite}
+              onEdit={() => setEditing(account)}
+              onScope={() => setScopeAccount(account)}
+              onActivity={setActivity}
+            />
+          ))}
+          {connectorRows}
+        </SettingsSection>
       ) : null}
       <PasswordStores
         environmentId={environmentId}
