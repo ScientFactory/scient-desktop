@@ -230,8 +230,8 @@ interface SpawnInput {
 }
 
 /**
- * One Git run. Interruption kills the process group before this effect
- * completes, so no Git outlives the fiber that started it.
+ * Cancellation kills the owned process group (Windows: taskkill /T /F).
+ * Server death can leave Git running; journaled send attempts stay unknown.
  */
 const spawnGit = Effect.fnUntraced(function* (input: SpawnInput) {
   let stopAndWait: (() => Promise<void>) | undefined;
@@ -437,13 +437,15 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
     return resolved;
   });
 
-  const scratchRoot = yield* Effect.tryPromise(() =>
+  const scratchReady = yield* Effect.tryPromise(() =>
     makeGitScratch(options.runtimeRoot, windows),
   ).pipe(
     Effect.mapError(() => fail("runtime-failed", "Could not prepare private Git scratch space.")),
+    Effect.result,
   );
 
   const runIn = Effect.fnUntraced(function* (executable: string, input: OverleafGitExecuteInput) {
+    const scratchRoot = yield* Effect.fromResult(scratchReady);
     const gitDirectory = path.dirname(executable);
     const gitRoot =
       windows && ["cmd", "bin"].includes(path.basename(gitDirectory).toLowerCase())
@@ -548,6 +550,7 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
       : probe.pipe(Effect.tap((found) => Effect.sync(() => (known = found)))),
   );
   const probe: Effect.Effect<OverleafGitAvailability, OverleafGitError> = Effect.gen(function* () {
+    yield* Effect.fromResult(scratchReady);
     let tooOld: OverleafGitError | undefined;
     for (const executable of yield* candidates) {
       const result = yield* runIn(executable, {
