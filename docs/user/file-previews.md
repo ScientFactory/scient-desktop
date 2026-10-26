@@ -13,6 +13,28 @@ visible whether it is Git-tracked, ignored, or named with a leading dot.
 Low-level machinery such as version-control data, dependency stores, temporary
 caches, and private Scient runtime state stays out of the ordinary view.
 
+The bar above the tree searches file names and offers **New**, which creates a
+Markdown or LaTeX document in the selected folder (or the folder of the selected
+file). Right-click a folder for the same choice under **New document here**.
+**Connect** lists the services a folder will keep in sync with, such as Overleaf
+and Google Drive; they are coming soon.
+The **⋯** Files menu refreshes the tree, expands or collapses every loaded
+folder, and sets file visibility. The tree does not watch the disk, so use
+**Refresh files** after changing files outside Scient.
+
+The same file list can sit beside other side-panel tabs too, such as a browser
+page, Sources, or a Scientific computing session. Use the folder button at the
+end of the tab strip, or `mod+alt+e`. One switch covers every tab, project files
+and PDFs included. Clicking a file opens it in its own tab. Diff keeps its own
+file list, and a panel too narrow for both shows the page alone.
+
+Files and file tabs keep a short history. **Back** and **Forward** sit at the
+start of the tab's header and light up once there is somewhere to go: after
+Files opens a file, after a path crumb opens a folder, or after a file opens
+from another tab, including a tab that was already open.
+While the keyboard is in the tab, `mod+[` and `mod+]` do the same. The history
+lasts while Scient is open.
+
 The Files menu offers two visibility levels:
 
 - **Project files** is the default. It includes durable managed source files,

@@ -1,0 +1,176 @@
+/* The tab strip is a shade further from the page colour than the sidebar, so
+   the open tab stands out against it. Mixing toward the text colour darkens it
+   in light themes and lightens it in dark ones: more contrast either way. */
+:root {
+  --scient-tabstrip-background: color-mix(in srgb, var(--sidebar) 95%, var(--foreground));
+}
+
+[data-right-panel-tabbar][data-scient-tabstrip] {
+  background-color: var(--scient-tabstrip-background);
+}
+
+/* Against the strip's shade a hovered tab (and the "+" and scroll buttons)
+   lifts toward the page colour, and a selected New tab is the page colour
+   itself, as an open tab is. */
+[data-scient-tabstrip] [data-active-tab="false"]:hover,
+[data-scient-tabstrip] > button:hover,
+[data-scient-tabstrip] [aria-label="Scroll panel tabs"] button:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--background) 65%, transparent);
+}
+
+[data-scient-tabstrip="launcher"] [data-active-tab="true"] {
+  background-color: var(--background);
+}
+
+/* The New tab page starts in the strip's shade and eases into the sidebar
+   grey, so only the top carries the extra contrast. The stops follow a
+   smoothstep curve: flat at both ends, so no edge shows where it starts or
+   where it ends. */
+[data-scient-launcher] {
+  --scient-launcher-fade: 9rem;
+  background: linear-gradient(
+    to bottom,
+    var(--scient-tabstrip-background) 0,
+    color-mix(in srgb, var(--scient-tabstrip-background) 84%, var(--sidebar))
+      calc(var(--scient-launcher-fade) * 0.25),
+    color-mix(in srgb, var(--scient-tabstrip-background) 50%, var(--sidebar))
+      calc(var(--scient-launcher-fade) * 0.5),
+    color-mix(in srgb, var(--scient-tabstrip-background) 16%, var(--sidebar))
+      calc(var(--scient-launcher-fade) * 0.75),
+    var(--sidebar) var(--scient-launcher-fade)
+  );
+}
+
+/* Scient's side-panel tab strip ends one tab gap below the tabs, so a hovered
+   tab sits as far above the page as it sits beside the open tab. Tab labels
+   stay centred on the top bar's line, level with the chat title and the panel
+   buttons. */
+[data-right-panel-tabbar][data-scient-tabstrip] {
+  --scient-tab-height: 1.75rem;
+  --scient-tab-gap: 0.25rem;
+  height: calc(
+    var(--workspace-topbar-height) / 2 + var(--scient-tab-height) / 2 + var(--scient-tab-gap)
+  );
+  min-height: 0;
+  padding-top: calc(
+    var(--workspace-topbar-height) / 2 - var(--scient-tab-height) / 2 - var(--scient-tab-gap)
+  );
+}
+
+/* In Scient's side-panel tab strip, the open tab curves out into the page at
+   its lower corners: the inverse of its rounded top, as Chrome's tabs do. The
+   short soft edge keeps the curve smooth. */
+[data-scient-tabstrip="content"] [data-active-tab="true"]::after {
+  --scient-tab-curve: var(--radius-lg);
+  content: "";
+  position: absolute;
+  right: calc(-1 * var(--scient-tab-curve));
+  bottom: 0;
+  left: calc(-1 * var(--scient-tab-curve));
+  height: var(--scient-tab-curve);
+  pointer-events: none;
+  background:
+    radial-gradient(
+        circle at 0 0,
+        transparent calc(var(--scient-tab-curve) - 0.75px),
+        var(--background) var(--scient-tab-curve)
+      )
+      left bottom / var(--scient-tab-curve) var(--scient-tab-curve) no-repeat,
+    radial-gradient(
+        circle at 100% 0,
+        transparent calc(var(--scient-tab-curve) - 0.75px),
+        var(--background) var(--scient-tab-curve)
+      )
+      right bottom / var(--scient-tab-curve) var(--scient-tab-curve) no-repeat;
+}
+
+/* Every page's first row starts 10px below the strip. Each value tops up
+   what the page already leaves: Browser and Diff about 1px, documents none,
+   Files about 5px, Scientific computing 8px. Terminal already sits at about
+   10px, and Sources sets its own. */
+[data-scient-surface="preview"],
+[data-scient-surface="diff"] {
+  padding-top: 0.5625rem;
+  background-color: var(--background);
+}
+
+[data-scient-surface="file"],
+[data-scient-surface="scient-file"] {
+  padding-top: 0.625rem;
+  background-color: var(--background);
+}
+
+[data-scient-surface="files"] {
+  padding-top: 0.3125rem;
+  background-color: var(--background);
+}
+
+[data-scient-surface="scient-compute"] {
+  padding-top: 0.125rem;
+  background-color: var(--background);
+}
+
+/* The open page reads as a card tucked under the strip: its top corners are
+   rounded at half the tabs' radius, the strip's shade filling the cut-outs.
+   When the first tab is open, its own curve meets the page there instead. */
+[data-scient-tabstrip="content"] ~ [data-right-panel-surface-content] {
+  position: relative;
+}
+
+[data-scient-tabstrip="content"] ~ [data-right-panel-surface-content]::before,
+[data-scient-tabstrip="content"] ~ [data-right-panel-surface-content]::after {
+  --scient-page-corner: calc(var(--radius-lg) / 2);
+  content: "";
+  position: absolute;
+  top: 0;
+  z-index: 40;
+  width: var(--scient-page-corner);
+  height: var(--scient-page-corner);
+  pointer-events: none;
+}
+
+[data-scient-tabstrip="content"] ~ [data-right-panel-surface-content]::before {
+  left: 0;
+  background: radial-gradient(
+    circle at 100% 100%,
+    transparent calc(var(--scient-page-corner) - 0.5px),
+    var(--scient-tabstrip-background) var(--scient-page-corner)
+  );
+}
+
+[data-scient-tabstrip="content"] ~ [data-right-panel-surface-content]::after {
+  right: 0;
+  background: radial-gradient(
+    circle at 0 100%,
+    transparent calc(var(--scient-page-corner) - 0.5px),
+    var(--scient-tabstrip-background) var(--scient-page-corner)
+  );
+}
+
+[data-scient-tabstrip="content"]:has([data-active-tab="true"]:first-child)
+  ~ [data-right-panel-surface-content]::before {
+  display: none;
+}
+
+/* The window's panel buttons (maximize, terminal drawer, side panel) sit over
+   the tab strip while it is open, so there they hover and press like the
+   strip's own buttons. Their icons use the strip's quieter style everywhere. */
+body:has([data-scient-tabstrip])
+  [data-workspace-titlebar-controls]
+  :is(button, [role="button"]):hover {
+  background-color: color-mix(in srgb, var(--background) 65%, transparent);
+}
+
+body:has([data-scient-tabstrip]) [data-workspace-titlebar-controls] [data-pressed] {
+  background-color: color-mix(in srgb, var(--background) 85%, transparent);
+}
+
+[data-workspace-titlebar-controls] :is(button, [role="button"]) svg {
+  color: color-mix(in srgb, var(--sidebar-icon-color) 70%, var(--card-foreground));
+  stroke-width: 1.75;
+  opacity: 1;
+}
+
+[data-workspace-titlebar-controls] :is(button, [role="button"]):is(:hover, [data-pressed]) svg {
+  color: var(--foreground);
+}
