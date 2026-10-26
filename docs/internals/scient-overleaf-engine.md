@@ -975,17 +975,17 @@ screens alike (the screens' own window answers like any other).
 
 ## Remaining integration gates
 
-The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
-defines the remaining work and tracks each step's status. Derive
-interrupted operations in status (a `running` receipt whose operation is no
-longer live was interrupted). The coordinator must implement cancellation between
-stages; the local filesystem critical section completes before cancellation can
-release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
-in the development app. The exercised Cloud protocol behavior is recorded on #535;
-packaged, signed macOS helper behavior is a separate gate. A local bare Git
-remote does not establish the Cloud bridge's commit/history or
-publication-acknowledgement semantics. Server Pro, Windows and Linux remain
-unverified product environments.
+Automated tests cannot settle these; each is checked by hand before a release.
+
+- **Overleaf Cloud itself.** A local bare Git remote does not reproduce the Cloud Git
+  bridge's history and acknowledgement behaviour. A disposable Cloud project is synced
+  end to end, by a person and by an agent, from the app.
+- **Shipped builds.** The signed macOS app, the installed Windows app, the Linux AppImage
+  and the server tarball each run one synthetic sync in their packaging jobs; one real
+  sync from each precedes a release.
+- **Cloud-provider folders.** Dropbox, OneDrive, iCloud Drive and Google Drive are each
+  checked with a real client: online-only files, and kept copies outside the provider.
+- **Overleaf Server Pro** (self-hosted) is not supported.
 
 ## Known limits
 
