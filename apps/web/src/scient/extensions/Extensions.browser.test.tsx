@@ -196,6 +196,7 @@ vi.mock("./extensionsState", async () => {
   const storeAtom = Atom.family((key: string) => Object.assign(Atom.make(null), JSON.parse(key)));
   const idle = { busy: null, error: null, blockedSignInUrl: null, signInStartedAt: null };
   return {
+    extensionsBrandIcon: () => null,
     extensionsInventory: ({ environmentId }: { environmentId: string }) => ({
       kind: "inventory",
       environmentId,

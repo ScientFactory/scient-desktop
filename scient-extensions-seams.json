@@ -25,7 +25,9 @@
     "apps/web/src/routes/_chat.settings.extensions_.item.store.$instanceId.$entryId.tsx",
     "packages/contracts/src/scient/extensionIcon.ts",
     "packages/contracts/src/scient/extensionsPermissions.ts",
-    "packages/contracts/src/scient/extensionsPermissions.test.ts"
+    "packages/contracts/src/scient/extensionsPermissions.test.ts",
+    "scripts/generate-extension-brand-icons.mjs",
+    "scripts/scient-extension-brands.json"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",

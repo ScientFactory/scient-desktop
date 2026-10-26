@@ -99,6 +99,12 @@ export function createExtensionsAtoms<R, E>(
       idleTtlMs: 10 * 60_000,
       refreshTrigger: changesOf,
     }),
+    brandIcon: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:brand-icon",
+      tag: WS_METHODS.extensionsBrandIcon,
+      staleTimeMs: 3_600_000,
+      idleTtlMs: 3_600_000,
+    }),
     providerStorePage: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:provider-store",
       tag: WS_METHODS.extensionsProviderStoreSearch,
@@ -219,3 +225,5 @@ export const actOnProviderPlugin = extensionsAtoms.actOnProviderPlugin;
 
 export const extensionsProviderStorePage = extensionsAtoms.providerStorePage;
 export const extensionsProviderStoreEntry = extensionsAtoms.providerStoreEntry;
+
+export const extensionsBrandIcon = extensionsAtoms.brandIcon;

@@ -48,7 +48,7 @@ import {
   SECTION_HEADING_CLASS,
   useExtensionsEnvironment,
 } from "./ExtensionsPage";
-import { ExtensionIcon } from "./ExtensionRow";
+import { ExtensionIcon, type ExtensionTarget } from "./ExtensionRow";
 import { extensionsDiscoverEntry } from "./extensionsState";
 import {
   type ProviderExtensionGroup,
@@ -123,19 +123,27 @@ export function DetailLayout({
 export function DetailHeader({
   name,
   iconUrl,
+  providerPlugin,
   glyph,
   tagline,
   actions,
 }: {
   readonly name: string;
   readonly iconUrl?: string | undefined;
+  readonly providerPlugin?: Extract<ExtensionTarget, { kind: "provider-plugin" }> | undefined;
   readonly glyph?: LucideIcon | undefined;
   readonly tagline?: string | undefined;
   readonly actions: ReactNode;
 }) {
   return (
     <header className="flex flex-wrap items-center gap-4">
-      <ExtensionIcon name={name} iconUrl={iconUrl} glyph={glyph} size="large" />
+      <ExtensionIcon
+        name={name}
+        iconUrl={iconUrl}
+        glyph={glyph}
+        size="large"
+        providerPlugin={providerPlugin}
+      />
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-2xl font-medium tracking-[-0.02em] text-foreground">{name}</h1>
         {tagline ? <p className="text-sm text-muted-foreground">{tagline}</p> : null}
@@ -1053,6 +1061,12 @@ function ProviderPluginDetail({
       header={
         <DetailHeader
           name={name}
+          providerPlugin={{
+            kind: "provider-plugin",
+            instanceId: group.provider.instanceId,
+            pluginId: plugin.id,
+            workspace,
+          }}
           tagline={plugin.description}
           actions={
             <>

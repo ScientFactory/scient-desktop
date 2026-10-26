@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 
 import { ProviderRegistry, type ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
+import { resolveBrandIcon } from "./BrandIcons.ts";
 import { connectorProviderSupport } from "./ConnectorProviderSupport.ts";
 import {
   ConnectorRuntime,
@@ -146,6 +147,19 @@ export const makeExtensionsRpcHandlers = ({
   });
 
   return WsExtensionsRpcGroup.of({
+    [WS_METHODS.extensionsBrandIcon]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsBrandIcon,
+        Effect.sync(() => ({
+          icons: Object.fromEntries(
+            input.names.flatMap((name) => {
+              const icon = resolveBrandIcon(name);
+              return icon === undefined ? [] : [[name, icon]];
+            }),
+          ),
+        })),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsList]: () =>
       observeRpcEffect(WS_METHODS.extensionsList, inventory(), traceAttributes),
     [WS_METHODS.extensionsSubscribeChanges]: () =>

@@ -39,7 +39,7 @@ export function makeCodexStoreIcons(fetch: ConnectorFetch = fetchIcon) {
     const value = yield* Effect.tryPromise(async (signal) => {
       const response = await fetch(url, {
         signal,
-        headers: { accept: "image/png,image/jpeg,image/webp" },
+        headers: { accept: "image/png,image/jpeg,image/webp,image/svg+xml" },
       });
       if (!response.ok) {
         await response.body?.cancel();
@@ -57,7 +57,12 @@ export function makeCodexStoreIcons(fetch: ConnectorFetch = fetchIcon) {
         mime === "image/webp" &&
         Buffer.from(bytes.subarray(0, 4)).toString() === "RIFF" &&
         Buffer.from(bytes.subarray(8, 12)).toString() === "WEBP";
-      if (!png && !jpeg && !webp) return undefined;
+      const svg =
+        mime === "image/svg+xml" &&
+        /^(?:<svg(?:\s|\/?>)|<\?xml(?:\s|\?))/.test(
+          Buffer.from(bytes).toString("utf8").trimStart(),
+        );
+      if (!png && !jpeg && !webp && !svg) return undefined;
       const data = `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`;
       return isExtensionIconDataUri(data) ? data : undefined;
     }).pipe(Effect.orElseSucceed(() => undefined));

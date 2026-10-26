@@ -270,6 +270,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.extensionsConnectorTest]: "extensions",
   [WS_METHODS.extensionsDiscoverSearch]: "extensions",
   [WS_METHODS.extensionsDiscoverCatalog]: "extensions",
+  [WS_METHODS.extensionsBrandIcon]: "extensions",
   [WS_METHODS.extensionsProviderStoreSearch]: "extensions",
   [WS_METHODS.extensionsProviderStoreEntry]: "extensions",
   [WS_METHODS.extensionsDiscoverEntry]: "extensions",

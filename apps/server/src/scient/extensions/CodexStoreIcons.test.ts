@@ -39,4 +39,34 @@ describe("Codex store icon cache", () => {
         expect(yield* oversized(url)).toBeUndefined();
       }),
   );
+  it.effect("accepts SVG and XML-prefixed SVG only with the SVG media type and signature", () =>
+    Effect.gen(function* () {
+      const cases = [
+        {
+          body: '  <svg xmlns="http://www.w3.org/2000/svg"/>',
+          mime: "image/svg+xml",
+          accepted: true,
+        },
+        {
+          body: '\n<?xml version="1.0"?><svg/>',
+          mime: "image/svg+xml; charset=utf-8",
+          accepted: true,
+        },
+        { body: "<svg/>", mime: "text/html", accepted: false },
+        { body: "<html><svg/></html>", mime: "image/svg+xml", accepted: false },
+        { body: "<svg-fake/>", mime: "image/svg+xml", accepted: false },
+      ];
+      for (const { body, mime, accepted } of cases) {
+        const icon = makeCodexStoreIcons(
+          async () => new Response(body, { headers: { "content-type": mime } }),
+        );
+        const result = yield* icon("https://files.openai.com/svg");
+        expect(result).toBe(
+          accepted
+            ? `data:image/svg+xml;base64,${Buffer.from(body).toString("base64")}`
+            : undefined,
+        );
+      }
+    }),
+  );
 });

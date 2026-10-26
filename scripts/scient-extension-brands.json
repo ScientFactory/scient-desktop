@@ -1,0 +1,2109 @@
+[
+  {
+    "key": "42crunch-api-security-testing",
+    "names": ["42crunch-api-security-testing"],
+    "website": "https://42crunch.com",
+    "source": {
+      "kind": "website",
+      "url": "https://42crunch.com/img/42crunch-symbol-32.png"
+    }
+  },
+  {
+    "key": "activecampaign",
+    "names": ["activecampaign"],
+    "website": "https://www.activecampaign.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000006a9081fb87d5648205338f08&cdn=1&cp=pi&ma=32227200&ts=0&p=pi&cid=8&sig=d1ad9be86e0d06e3333b34923dfcf0d1aab75cb22acadb94f3980d0d3dfa62b1&v=0"
+    }
+  },
+  {
+    "key": "adobe",
+    "names": ["adobe", "adobe-for-creativity"],
+    "website": "https://www.adobe.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000000b4720ca05473965adda507&cdn=1&cp=pi&ma=31017600&ts=0&p=pi&cid=1&sig=9c83a384615d57139ad7d061085b80c28688ba0a35d60b1bf150a24d56b4546d&v=0"
+    }
+  },
+  {
+    "key": "aikido",
+    "names": ["aikido"],
+    "website": "https://aikido.dev",
+    "source": {
+      "kind": "website",
+      "url": "https://cdn.prod.website-files.com/642adcaf364024552e71df01/6acf3def6456cdb50f820e2e_favicon-512.jpg"
+    }
+  },
+  {
+    "key": "airtable",
+    "names": ["airtable"],
+    "website": "https://www.airtable.com",
+    "source": {
+      "kind": "curated",
+      "key": "airtable"
+    }
+  },
+  {
+    "key": "airwallex",
+    "names": ["airwallex", "airwallex-agentos", "airwallex-dev"],
+    "website": "https://www.airwallex.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000010848211808b76f0ce78b1b5&cdn=1&cp=pi&ma=32054400&ts=0&p=pi&cid=8&sig=6d5a996f6fe4c46a21e0904730be4c967abc2aca1989d77944f015db790dc6b8&v=0"
+    }
+  },
+  {
+    "key": "aiven",
+    "names": ["aiven"],
+    "website": "https://aiven.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000001a3c7208a242334b5ad846fc&cdn=1&cp=pi&ma=32486400&ts=0&p=pi&cid=8&sig=a9a0b61d548b4b7b2462423d6304afddfeba4700588440d183c4d19cdfbb2319&v=0"
+    }
+  },
+  {
+    "key": "altimate-code",
+    "names": ["altimate-code"],
+    "website": "https://www.altimate.ai",
+    "source": {
+      "kind": "website",
+      "url": "https://www.altimate.ai/logo192.png"
+    }
+  },
+  {
+    "key": "amd",
+    "names": ["amd", "amd-skills"],
+    "website": "https://www.amd.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000b23081f6b00e59ebc98c3c4c&cdn=1&cp=pi&ma=32054400&ts=0&p=pi&cid=8&sig=67537e125fd6635afe9d0011d6ce333d888299eb7d69ad41634491915c0f1e9f&v=0"
+    }
+  },
+  {
+    "key": "amplitude",
+    "names": ["amplitude"],
+    "website": "https://amplitude.com",
+    "source": {
+      "kind": "website",
+      "url": "https://amplitude.com/nextjs-public/favicon/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "apollo",
+    "names": ["apollo"],
+    "website": "https://www.apollo.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000923c71f68ff2719faaafd27f&cdn=1&cp=pi&ma=32313600&ts=0&p=pi&cid=8&sig=b9bb22908a8da00fd980853bc965d8e449373ed05eb9f9e314d2502eda1c0fdf&v=0"
+    }
+  },
+  {
+    "key": "apollo-skills",
+    "names": ["apollo-skills"],
+    "website": "https://www.apollographql.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.apollographql.com/favicon/lightfall/apple-icon-180x180.png"
+    }
+  },
+  {
+    "key": "appwrite",
+    "names": ["appwrite"],
+    "website": "https://appwrite.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000df74820d8fff49ee17655c24&cdn=1&cp=pi&ma=32572800&ts=0&p=pi&cid=8&sig=83ad87758908c7c080986115b3bf779813256dfacf8bb49b1aa38e45f3380e49&v=0"
+    }
+  },
+  {
+    "key": "asana",
+    "names": ["asana"],
+    "website": "https://asana.com",
+    "source": {
+      "kind": "curated",
+      "key": "asana"
+    }
+  },
+  {
+    "key": "astronomer",
+    "names": ["astronomer", "astronomer-data-agents"],
+    "website": "https://www.astronomer.io",
+    "source": {
+      "kind": "website",
+      "url": "https://www.astronomer.io/favicon.svg"
+    }
+  },
+  {
+    "key": "atlan",
+    "names": ["atlan"],
+    "website": "https://docs.atlan.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000068d07208815aff58aff3df62&cdn=1&cp=pi&ma=31276800&ts=0&p=pi&cid=8&sig=b5525b188e9db461d8c5a0d5249d3007ac608f45fcc78905c864bf6b20476f89&v=0"
+    }
+  },
+  {
+    "key": "atlassian",
+    "names": [
+      "atlassian",
+      "atlassian-rovo",
+      "atlassian-twg-cli",
+      "confluence",
+      "forge-skills",
+      "jira"
+    ],
+    "website": "https://www.atlassian.com",
+    "source": {
+      "kind": "curated",
+      "key": "atlassian"
+    }
+  },
+  {
+    "key": "auth0",
+    "names": ["auth0"],
+    "website": "https://auth0.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000a35481fb88f846d34aa61b10&cdn=1&cp=pi&ma=31536000&ts=0&p=pi&cid=8&sig=bde31cb8fe501cc47ad08929c5d0fba3c18eb850aa318cc98d9fd682a3cd7e89&v=0"
+    }
+  },
+  {
+    "key": "aws",
+    "names": [
+      "amazon-location-service",
+      "amazon-selling-partner",
+      "aws",
+      "aws-agents",
+      "aws-agents-for-devsecops",
+      "aws-amplify",
+      "aws-core",
+      "aws-data-analytics",
+      "aws-serverless",
+      "aws-startup-advisor",
+      "aws-transform",
+      "databases-on-aws",
+      "deploy-on-aws",
+      "migration-to-aws",
+      "sagemaker-ai"
+    ],
+    "website": "https://aws.amazon.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000003e3481f4982e90213ec664ab&cdn=1&cp=pi&ma=31708800&ts=0&p=pi&cid=8&sig=592bcdf52e11724c21bc6f1e16162e8e6e49ab4a6c34641622f72bb9d6b7f5cb&v=0"
+    }
+  },
+  {
+    "key": "azure",
+    "names": ["azure", "azure-cosmos-db-assistant", "azure-sql-developer"],
+    "website": "https://azure.microsoft.com",
+    "source": {
+      "kind": "website",
+      "url": "https://azure.microsoft.com/favicon.ico"
+    },
+    "omitted": "Official site supplied the Microsoft corporate mark rather than an Azure-specific mark; rejected to avoid a wrong logo."
+  },
+  {
+    "key": "base44",
+    "names": ["base44"],
+    "website": "https://docs.base44.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000016987208b4db5dbeb832e81b&cdn=1&cp=pi&ma=30326400&ts=0&p=pi&cid=8&sig=0d0e4d2031f224e14612a6ed2b66f1dc36dcc95567a09de969c92a370483ea9b&v=0"
+    }
+  },
+  {
+    "key": "bigdata-com",
+    "names": ["bigdata-com"],
+    "website": "https://docs.bigdata.com",
+    "source": {
+      "kind": "website",
+      "url": "https://docs.bigdata.com/mintlify-assets/_mintlify/favicons/ravenpackinternational/0ZQJThiL-hYHaY_C/_generated/favicon/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "biorender",
+    "names": ["biorender"],
+    "source": {
+      "kind": "curated",
+      "key": "biorender"
+    }
+  },
+  {
+    "key": "blackrock",
+    "names": ["blackrock-advisor-center-plugin"],
+    "website": "https://blackrock.com",
+    "source": {
+      "kind": "website",
+      "url": "https://blackrock.com/favicon.ico"
+    }
+  },
+  {
+    "key": "box",
+    "names": ["box"],
+    "website": "https://www.box.com",
+    "source": {
+      "kind": "curated",
+      "key": "box"
+    }
+  },
+  {
+    "key": "bright-data",
+    "names": ["bright data", "brightdata-plugin"],
+    "website": "https://brightdata.com",
+    "source": {
+      "kind": "website",
+      "url": "https://brightdata.com/wp-content/themes/brightdata/assets/images/favicon.png"
+    }
+  },
+  {
+    "key": "browser-use",
+    "names": ["browser-use"],
+    "website": "https://browser-use.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000073408211a62759478ec52a07&cdn=1&cp=pi&ma=32054400&ts=0&p=pi&cid=8&sig=05c904e22e641cac655d744e526b8b3a257595e15524618498317ef153564b1b&v=0"
+    }
+  },
+  {
+    "key": "buildkite",
+    "names": ["buildkite"],
+    "website": "https://buildkite.com",
+    "source": {
+      "kind": "website",
+      "url": "https://buildkite.com/_site/favicon.png"
+    }
+  },
+  {
+    "key": "canva",
+    "names": ["canva"],
+    "website": "https://www.canva.com",
+    "source": {
+      "kind": "curated",
+      "key": "canva"
+    }
+  },
+  {
+    "key": "carbone",
+    "names": ["carbone", "carbone-skill"],
+    "website": "https://carbone.io",
+    "source": {
+      "kind": "website",
+      "url": "https://carbone.io/favicon.ico"
+    }
+  },
+  {
+    "key": "carta",
+    "names": ["carta", "carta-cap-table", "carta-crm", "carta-investors"],
+    "website": "https://carta.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000092388230b9f023e97e5ac8bd&cdn=1&cp=pi&ma=32572800&ts=0&p=pi&cid=8&sig=2ecb5ae1f3246d98d484375ef192bdca389947852c94bdaf884936965e78754c&v=0"
+    }
+  },
+  {
+    "key": "chrome-devtools",
+    "names": ["chrome devtools", "chrome-devtools-mcp", "modern-web-guidance"],
+    "website": "https://developer.chrome.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.gstatic.com/devrel-devsite/prod/v5a0f9ff8b593048661361a49e11ab98a8b1ac025e19e60e6189f2b56796f8a43/chrome/images/touchicon-180.png"
+    }
+  },
+  {
+    "key": "chronograph",
+    "names": ["chronograph", "chronograph-gp", "chronograph-lp"],
+    "website": "https://www.chronograph.pe",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000052e471f797f7756a4275b7e7&cdn=1&cp=pi&ma=32054400&ts=0&p=pi&cid=8&sig=08e082fb4ae599654ada5b63011543181d9b095806e4af90579af5d3a5839502&v=0"
+    }
+  },
+  {
+    "key": "circle-skills",
+    "names": ["circle-skills"],
+    "website": "https://www.circle.com",
+    "source": {
+      "kind": "website",
+      "url": "https://cdn.prod.website-files.com/668c08d1b8a9330bd1d786ad/669a20df8ac2810a6dd50e67_favicon-256.svg"
+    }
+  },
+  {
+    "key": "circleback",
+    "names": ["circleback"],
+    "website": "https://circleback.ai",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000000b8c71f6a9e4210a8837936b&cdn=1&cp=pi&ma=32486400&ts=0&p=pi&cid=1&sig=1c6ce72670d74a3da7019194ab1efda1bb27f7a3998c6091a797c0dc225770cb"
+    }
+  },
+  {
+    "key": "ckeditor",
+    "names": ["ckeditor"],
+    "website": "https://ckeditor.com",
+    "source": {
+      "kind": "website",
+      "url": "https://ckeditor.com/assets/images/favicons/180x180.png"
+    }
+  },
+  {
+    "key": "clay",
+    "names": ["clay"],
+    "website": "https://clay.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000268081fb809351406ca9267c&cdn=1&cp=pi&ma=32572800&ts=0&p=pi&cid=8&sig=dcb309a5f452a962c211f62889eda5ae7b2b900238a20deca61bd2ae11b3981a&v=0"
+    }
+  },
+  {
+    "key": "clickhouse",
+    "names": ["clickhouse", "clickhouse-best-practices"],
+    "website": "https://clickhouse.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000009b8471f4bd4c0a644b3f1b4d&cdn=1&cp=pi&ma=31708800&ts=0&p=pi&cid=8&sig=0f067aa3abfe91502756fdd381b2577684eabf146a251d731310e6f471f6370a&v=0"
+    }
+  },
+  {
+    "key": "clickup",
+    "names": ["clickup"],
+    "source": {
+      "kind": "curated",
+      "key": "clickup"
+    }
+  },
+  {
+    "key": "cloudflare-docs",
+    "names": ["cloudflare", "cloudflare docs"],
+    "website": "https://www.cloudflare.com",
+    "source": {
+      "kind": "curated",
+      "key": "cloudflare-docs"
+    }
+  },
+  {
+    "key": "cloudinary",
+    "names": ["cloudinary"],
+    "website": "https://cloudinary.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000ffac722f987914a6f7db710b&cdn=1&cp=pi&ma=32054400&ts=0&p=pi&cid=1&sig=26b2c9500db3c7de3659e1e158826d1ced4806f01d50f831132375e3b497a249&v=0"
+    }
+  },
+  {
+    "key": "cockroachdb",
+    "names": ["cockroachdb"],
+    "website": "https://cockroachlabs.com",
+    "source": {
+      "kind": "website",
+      "url": "https://cockroachlabs.com/icon1.png?38190d312b196e2c"
+    }
+  },
+  {
+    "key": "coda",
+    "names": ["coda"],
+    "source": {
+      "kind": "curated",
+      "key": "coda"
+    }
+  },
+  {
+    "key": "coderabbit",
+    "names": ["coderabbit"],
+    "website": "https://coderabbit.ai",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000005f1471f798944cc04e0d01d3&cdn=1&cp=pi&ma=31449600&ts=0&p=pi&cid=1&sig=0b03bab9dcdbe59e6398bda2e43be1443a31654aacb5aa97d8ec9871effd8271&v=0"
+    }
+  },
+  {
+    "key": "codspeed",
+    "names": ["codspeed"],
+    "website": "https://codspeed.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000008cf48210ae8d2e58de312e61&cdn=1&cp=pi&ma=31536000&ts=0&p=pi&cid=8&sig=fbc522ea7f5bbf25219acd1cd6b3e48ad1008dc23985eadd7cc8a11a27af5a5d&v=0"
+    }
+  },
+  {
+    "key": "confidence",
+    "names": ["confidence"],
+    "website": "https://confidence.spotify.com",
+    "source": {
+      "kind": "website",
+      "url": "https://confidence.spotify.com/icon.png?icon.2xrprevu3hzd1.png"
+    }
+  },
+  {
+    "key": "confluent",
+    "names": ["confluent", "streaming-skills-plugin"],
+    "website": "https://www.confluent.io",
+    "source": {
+      "kind": "website",
+      "url": "https://www.confluent.io/icons/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "consensus",
+    "names": ["consensus"],
+    "source": {
+      "kind": "curated",
+      "key": "consensus"
+    }
+  },
+  {
+    "key": "context7",
+    "names": ["context7"],
+    "website": "https://context7.com",
+    "source": {
+      "kind": "curated",
+      "key": "context7"
+    }
+  },
+  {
+    "key": "convex",
+    "names": ["convex"],
+    "website": "https://convex.dev",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000d2d871fdbcd2854b1a5c7032&cdn=1&cp=pi&ma=32313600&ts=0&p=pi&cid=1&sig=e54a0860b338046ae9db9199b4e34d2d403b1078beb1167ad654717beb53b1d8&v=0"
+    }
+  },
+  {
+    "key": "coursera",
+    "names": ["coursera", "learn-with-coursera"],
+    "website": "https://www.coursera.org",
+    "source": {
+      "kind": "website",
+      "url": "https://d3njjcbhbojbot.cloudfront.net/web/images/favicons/apple-touch-icon-v2-180x180.png"
+    }
+  },
+  {
+    "key": "crowdsec",
+    "names": ["crowdsec"],
+    "website": "https://www.crowdsec.net",
+    "source": {
+      "kind": "website",
+      "url": "https://www.crowdsec.net/favicon.ico"
+    }
+  },
+  {
+    "key": "crowdstrike",
+    "names": ["crowdstrike", "crowdstrike-falcon-foundry", "crowdstrike-falcon-fusion"],
+    "website": "https://www.crowdstrike.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.crowdstrike.com/etc.clientlibs/crowdstrike/clientlibs/crowdstrike-common/resources/favicon.ico"
+    }
+  },
+  {
+    "key": "dash0",
+    "names": ["dash0"],
+    "website": "https://dash0.com",
+    "source": {
+      "kind": "website",
+      "url": "https://dash0.com/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "databricks",
+    "names": ["databricks"],
+    "website": "https://developers.databricks.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000a06481f6b01ef561cffb7a27&cdn=1&cp=pi&ma=31708800&ts=0&p=pi&cid=8&sig=361dece7ef5ee83a94bd0a3362b6e9db0384316cfed471514d48be0228d20d15&v=0"
+    }
+  },
+  {
+    "key": "datadog",
+    "names": ["datadog"],
+    "website": "https://www.datadoghq.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000238871fd8a6d0e8b39d07333&cdn=1&cp=pi&ma=31881600&ts=0&p=pi&cid=1&sig=f6f77664b5f021ed2675c55ea22ee8ed05fd5519ca4c4ec7eda953fb9aa0293a&v=0"
+    }
+  },
+  {
+    "key": "datahub",
+    "names": ["datahub", "datahub-skills"],
+    "website": "https://datahub.com",
+    "source": {
+      "kind": "website",
+      "url": "https://datahub.com/wp-content/uploads/2026/01/dataHub_symbol_color.svg"
+    }
+  },
+  {
+    "key": "datarobot",
+    "names": ["datarobot", "datarobot-agent-skills"],
+    "website": "https://www.datarobot.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000decc81f6816f034232e0115e&cdn=1&cp=pi&ma=30672000&ts=0&p=pi&cid=8&sig=6992ed21630086824a13f3b30063760468f04222c896a97ee13d8d96f2121698&v=0"
+    }
+  },
+  {
+    "key": "dataverse",
+    "names": ["dataverse"],
+    "website": "https://learn.microsoft.com/power-apps/maker/data-platform",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000065a881fb9fc557c24991d5b3&cdn=1&cp=pi&ma=31622400&ts=0&p=pi&cid=8&sig=4820ece6474e2ce12769b16c3e03cc0d7cc2b20e1ffe94581b1e59d95aae3e29&v=0"
+    }
+  },
+  {
+    "key": "deepeval",
+    "names": ["deepeval"],
+    "website": "https://deepeval.com",
+    "source": {
+      "kind": "website",
+      "url": "https://deepeval.com/apple-icon.png?apple-icon.07qho5~3b2m7t.png?dpl=dpl_GeH6jNHja9CrcmiGXMpd6L6oRJTU"
+    }
+  },
+  {
+    "key": "deepwiki",
+    "names": ["deepwiki"],
+    "source": {
+      "kind": "curated",
+      "key": "deepwiki"
+    }
+  },
+  {
+    "key": "desktop-commander",
+    "names": ["desktop-commander"],
+    "website": "https://desktopcommander.app",
+    "source": {
+      "kind": "website",
+      "url": "https://desktopcommander.app/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "discord",
+    "names": ["discord"],
+    "website": "https://discord.com",
+    "source": {
+      "kind": "website",
+      "url": "https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/62fddf0fde45a8baedcc7ee5_847541504914fd33810e70a0ea73177e%20(2)-1.png"
+    }
+  },
+  {
+    "key": "dominodatalab",
+    "names": ["dominodatalab"],
+    "website": "https://www.domino.ai",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000513c81f5ab1cb8300d65d845&cdn=1&cp=pi&ma=30326400&ts=0&p=pi&cid=8&sig=2341928b8ab1c7bdf831a4f12cff6edfc97f281fcd72d9745ee310981c937920&v=0"
+    }
+  },
+  {
+    "key": "dropbox",
+    "names": ["dropbox"],
+    "website": "https://www.dropbox.com",
+    "source": {
+      "kind": "curated",
+      "key": "dropbox"
+    }
+  },
+  {
+    "key": "duckdb",
+    "names": ["duckdb", "duckdb-skills"],
+    "website": "https://duckdb.org",
+    "source": {
+      "kind": "website",
+      "url": "https://duckdb.org/images/favicon/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "duende",
+    "names": ["duende", "duende-skills"],
+    "website": "https://duendesoftware.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000f55c820aaa9d9a4d33ca15b5&cdn=1&cp=pi&ma=31104000&ts=0&p=pi&cid=8&sig=143e5fb389c82e3c14191ea1611f7f7a28d5570163f1543309072b99d6ebaef9&v=0"
+    }
+  },
+  {
+    "key": "dynatrace",
+    "names": ["dynatrace"],
+    "website": "https://www.dynatrace.com",
+    "source": {
+      "kind": "website",
+      "url": "https://dt-cdn.net/images/apple-touch-icon-180x180-180-80738a22c0.png"
+    }
+  },
+  {
+    "key": "exa",
+    "names": ["exa"],
+    "website": "https://exa.ai",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000bff0821180fa8eee7a2d3f9a&cdn=1&cp=pi&ma=30931200&ts=0&p=pi&cid=8&sig=dc5996c00b6f1b63ff696a01b7ec6c7a408b92b70fd87e9d3b5e49a0d0cddcf7&v=0"
+    }
+  },
+  {
+    "key": "excalidraw",
+    "names": ["excalidraw"],
+    "source": {
+      "kind": "curated",
+      "key": "excalidraw"
+    }
+  },
+  {
+    "key": "expo",
+    "names": ["expo"],
+    "website": "https://expo.dev",
+    "source": {
+      "kind": "website",
+      "url": "https://static.expo.dev/static/brand/app-icon-512x512.png"
+    }
+  },
+  {
+    "key": "fastly",
+    "names": ["fastly", "fastly-agent-toolkit"],
+    "website": "https://www.fastly.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000abd4820d9a2b16b05a6c1b81&cdn=1&cp=pi&ma=30585600&ts=0&p=pi&cid=8&sig=d2fc71c7812b69e0da5077379b28aedde10f00267e330724682bb8de064ff983&v=0"
+    }
+  },
+  {
+    "key": "fiftyone",
+    "names": ["fiftyone"],
+    "website": "https://docs.voxel51.com",
+    "source": {
+      "kind": "website",
+      "url": "https://docs.voxel51.com/_static/favicon/favicon-512.png"
+    }
+  },
+  {
+    "key": "figma",
+    "names": ["figma"],
+    "website": "https://www.figma.com",
+    "source": {
+      "kind": "curated",
+      "key": "figma"
+    }
+  },
+  {
+    "key": "firebase",
+    "names": ["firebase"],
+    "website": "https://firebase.google.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000faf881f6bc23fb5a7d1608d1&cdn=1&cp=pi&ma=31190400&ts=0&p=pi&cid=8&sig=66928efcdb4ef4389fa392911a441aeebb984fc4b3d0cda61329790d713b3aa7&v=0"
+    }
+  },
+  {
+    "key": "firecrawl",
+    "names": ["firecrawl"],
+    "website": "https://firecrawl.dev",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000003f0881f5aed8385d9da4a6e1&cdn=1&cp=pi&ma=31017600&ts=0&p=pi&cid=8&sig=51eb134f2e71ee4d31b8d4730c2b7a523a5f7b8a34adbc90d7afa45c7cd95b1b&v=0"
+    }
+  },
+  {
+    "key": "fireflies",
+    "names": ["fireflies"],
+    "source": {
+      "kind": "curated",
+      "key": "fireflies"
+    }
+  },
+  {
+    "key": "fullstory",
+    "names": ["fullstory"],
+    "website": "https://www.fullstory.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000009d688243b5c71611d1c2f576&cdn=1&cp=pi&ma=31968000&ts=0&p=pi&cid=8&sig=9567aff74623e004d11455962053e7e590ab381316c49625991ac2c0c12a0e4b&v=0"
+    }
+  },
+  {
+    "key": "gamma",
+    "names": ["gamma"],
+    "source": {
+      "kind": "curated",
+      "key": "gamma"
+    }
+  },
+  {
+    "key": "gc-ai",
+    "names": ["gc-ai"],
+    "website": "https://docs.gc.ai",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000fa6871f7a380d931ef018731&cdn=1&cp=pi&ma=31190400&ts=0&p=pi&cid=8&sig=54d877a3dc533225f542c5758f5af2ce40416c704c23a4f1b78d9c167f8f2d4c&v=0"
+    }
+  },
+  {
+    "key": "github",
+    "names": ["github"],
+    "website": "https://github.com",
+    "source": {
+      "kind": "curated",
+      "key": "github"
+    }
+  },
+  {
+    "key": "gitkraken",
+    "names": ["gitkraken"],
+    "website": "https://gitkraken.com",
+    "source": {
+      "kind": "website",
+      "url": "https://gitkraken.com/wp-content/uploads/2021/03/android-chrome-144x144-1.png"
+    }
+  },
+  {
+    "key": "gitlab",
+    "names": ["gitlab"],
+    "website": "https://gitlab.com",
+    "source": {
+      "kind": "curated",
+      "key": "gitlab"
+    }
+  },
+  {
+    "key": "gmail",
+    "names": ["gmail"],
+    "website": "https://mail.google.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000076ec81f781eb7d3411c86768&cdn=1&cp=pi&ma=31622400&ts=0&p=pi&cid=8&sig=a79e5a0eeed78f9094dbeb21dc090aa140341aef4a54a636c8473ed1cc53aca1&v=0"
+    }
+  },
+  {
+    "key": "google-calendar",
+    "names": ["gcal", "google calendar"],
+    "website": "https://calendar.google.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000088c081f5a5df05f3ccb77c37&cdn=1&cp=pi&ma=31276800&ts=0&p=pi&cid=8&sig=049c536a3ac3e353e8fe23a648922cf9bf98f9a008ce80b954663a4f54291a6e&v=0"
+    }
+  },
+  {
+    "key": "google-cloud",
+    "names": [
+      "alloydb",
+      "alloydb-omni",
+      "bigquery-data-analytics",
+      "cloud-sql-mysql",
+      "cloud-sql-postgresql",
+      "cloud-sql-sqlserver",
+      "data-agent-kit",
+      "dataproc",
+      "firestore-native",
+      "google cloud",
+      "google-cloud-storage",
+      "knowledge-catalog",
+      "looker",
+      "spanner"
+    ],
+    "website": "https://cloud.google.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.gstatic.com/cgc/super_cloud_gradient.png"
+    }
+  },
+  {
+    "key": "google-drive",
+    "names": ["gdrive", "google drive"],
+    "website": "https://drive.google.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000008c1c81f5a1d8d475c7d49acd&cdn=1&cp=pi&ma=31622400&ts=0&p=pi&cid=8&sig=aac55b1ecc7e2356796e63877fa4b67d0da5f7e14d8efcf08cb91a7802d36755&v=0"
+    }
+  },
+  {
+    "key": "govtribe",
+    "names": ["govtribe"],
+    "website": "https://govtribe.com",
+    "source": {
+      "kind": "codex-app",
+      "url": "https://files.openai.com/content?id=file_0000000059fc81f5a11e932239f99623&cdn=1&cp=pi&ma=32313600&ts=0&p=pi&cid=8&sig=f1b18f077f6f2f19be9d73141291d126f38a3184f46205078b3c9dfa4d7f3256&v=0"
+    }
+  },
+  {
+    "key": "grafana",
+    "names": ["grafana", "grafana-assistant", "grafana-cloud-mcp", "grafana-mcp"],
+    "website": "https://grafana.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000778081f7b8be8798982135c6&cdn=1&cp=pi&ma=31363200&ts=0&p=pi&cid=8&sig=6f349457860760999a7b329f7df62204073a95323120dae2fdb43c96128e98a7&v=0"
+    }
+  },
+  {
+    "key": "granola",
+    "names": ["granola"],
+    "source": {
+      "kind": "curated",
+      "key": "granola"
+    }
+  },
+  {
+    "key": "greptile",
+    "names": ["greptile"],
+    "website": "https://greptile.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000ea8481f595f06dc750f23c1f&cdn=1&cp=pi&ma=30844800&ts=0&p=pi&cid=8&sig=f38cb42920c26609d0a870c426881003fe07649e57d33b36ae09cf4913c44eec&v=0"
+    }
+  },
+  {
+    "key": "growthbook",
+    "names": ["growthbook"],
+    "website": "https://growthbook.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000c1ec81f6a19d925d05fb67b6&cdn=1&cp=pi&ma=32140800&ts=0&p=pi&cid=8&sig=1af793531d881a30798ced87ba5898b2fba7acedbe9c170191562452819ee425&v=0"
+    }
+  },
+  {
+    "key": "guru",
+    "names": ["guru"],
+    "website": "https://www.getguru.com",
+    "source": {
+      "kind": "website",
+      "url": "https://cdn.prod.website-files.com/5d8d029013ffd80bbb91320d/6216a21ee8829c7531435bc8_Guru_G_Black%202256.png"
+    }
+  },
+  {
+    "key": "hex",
+    "names": ["hex"],
+    "source": {
+      "kind": "curated",
+      "key": "hex"
+    }
+  },
+  {
+    "key": "heygen",
+    "names": ["heygen", "hyperframes"],
+    "website": "https://www.heygen.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000f65481f5be80e30031681e94&cdn=1&cp=pi&ma=31104000&ts=0&p=pi&cid=8&sig=980a71cd94b25fabbb4bce7031f5f194abfe67ec2c84a7da21fad79c7e971ab5&v=0"
+    }
+  },
+  {
+    "key": "honeycomb",
+    "names": ["honeycomb"],
+    "website": "https://www.honeycomb.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000037d071f7bbb14369a26a4ca8&cdn=1&cp=pi&ma=30240000&ts=0&p=pi&cid=8&sig=9b1bf8a7222d93927d8eb781d407e56a10aecc7fed5b95a85730d6b9e609b628&v=0"
+    }
+  },
+  {
+    "key": "hostinger",
+    "names": ["hostinger"],
+    "website": "https://www.hostinger.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000a26c82438e675fa3afe8ddc8&cdn=1&cp=pi&ma=30672000&ts=0&p=pi&cid=8&sig=128156ccdd608fa47e9cc3d0c9d3c551f688ddffb3a32ecde240f9dfb32368dd&v=0"
+    }
+  },
+  {
+    "key": "hubspot",
+    "names": ["hubspot", "hubspot-sales"],
+    "website": "https://www.hubspot.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000d6d871f6af516dd237732886&cdn=1&cp=pi&ma=31622400&ts=0&p=pi&cid=8&sig=57605450edcdfd982a04b1b6acfaaefae75de19e6e4de54c96f260b5442b30a9&v=0"
+    }
+  },
+  {
+    "key": "hugging-face",
+    "names": ["hugging face", "huggingface", "huggingface-skills"],
+    "website": "https://huggingface.co",
+    "source": {
+      "kind": "curated",
+      "key": "hugging-face"
+    }
+  },
+  {
+    "key": "hunter",
+    "names": ["hunter"],
+    "website": "https://hunter.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000f66071f6ae30a1801b466264&cdn=1&cp=pi&ma=32745600&ts=0&p=pi&cid=8&sig=87630da3f497309f4a89497964bc69346c5ac0bf384388b74e60b58952cd6764&v=0"
+    }
+  },
+  {
+    "key": "imessage",
+    "names": ["imessage"],
+    "website": "https://www.apple.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.apple.com/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "incident-io",
+    "names": ["incident-io"],
+    "website": "https://incident.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000fe5481f4ba584e7e5631941e&cdn=1&cp=pi&ma=30758400&ts=0&p=pi&cid=8&sig=3dc9818f9fdea75609f35f398e6529d1928ab8372ca72918eab3692eb698aa26&v=0"
+    }
+  },
+  {
+    "key": "informatica",
+    "names": ["informatica", "informatica-for-claude-platform"],
+    "website": "https://www.informatica.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.informatica.com/etc.clientlibs/informatica-commons/clientlibs/clientlib-base/resources/images/favicon.png"
+    }
+  },
+  {
+    "key": "intercom",
+    "names": ["intercom"],
+    "website": "https://www.intercom.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.intercom.com/intercom-marketing-site/favicons/favicon-32x32.png"
+    }
+  },
+  {
+    "key": "jfrog",
+    "names": ["jfrog"],
+    "website": "https://jfrog.com",
+    "source": {
+      "kind": "website",
+      "url": "https://speedmedia2.jfrog.com/08612fe1-9391-4cf3-ac1a-6dd49c36b276/jfrog.com/wp-content/uploads/2024/09/JFrog-Logo.png"
+    }
+  },
+  {
+    "key": "kaggle",
+    "names": ["kaggle"],
+    "source": {
+      "kind": "curated",
+      "key": "kaggle"
+    }
+  },
+  {
+    "key": "langfuse",
+    "names": ["langfuse", "langfuse-observability"],
+    "website": "https://langfuse.com",
+    "source": {
+      "kind": "website",
+      "url": "https://langfuse.com/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "laravel-boost",
+    "names": ["laravel-boost"],
+    "website": "https://laravel.com",
+    "source": {
+      "kind": "website",
+      "url": "https://laravel.com/img/favicon/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "leadfeeder",
+    "names": ["leadfeeder"],
+    "website": "https://www.leadfeeder.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000433482439272d72e9f441f03&cdn=1&cp=pi&ma=30672000&ts=0&p=pi&cid=8&sig=2f90a44ac3a0bfacae79f116ec14b61bf44ea54bc05f949d2f4b39e4c132297e&v=0"
+    }
+  },
+  {
+    "key": "legalzoom",
+    "names": ["legalzoom"],
+    "website": "https://www.legalzoom.com",
+    "source": {
+      "kind": "codex-app",
+      "url": "https://files.openai.com/content?id=file_00000000098471f6bd9aaab8ccef8131&cdn=1&cp=pi&ma=32745600&ts=0&p=pi&cid=1&sig=3365264582da9a861b0753c4dd3e42a815bb428276f27a8fedd9b52773b99d9e"
+    }
+  },
+  {
+    "key": "linear",
+    "names": ["linear"],
+    "website": "https://linear.app",
+    "source": {
+      "kind": "curated",
+      "key": "linear"
+    }
+  },
+  {
+    "key": "linq-alpha",
+    "names": ["linq-alpha"],
+    "website": "https://www.linqalpha.com",
+    "source": {
+      "kind": "website",
+      "url": "https://framerusercontent.com/images/AbwTwD2ZqryPaCk08RsFBFmCmuk.png"
+    }
+  },
+  {
+    "key": "logfire",
+    "names": ["logfire"],
+    "website": "https://pydantic.dev/logfire",
+    "source": {
+      "kind": "codex-app",
+      "url": "https://files.openai.com/content?id=file_000000005a4c81f693068986261351d5&cdn=1&cp=pi&ma=30672000&ts=0&p=pi&cid=8&sig=24336619968e8d15172f8800124ff51f4f06e0c19d25fec0df6f807fd248f80f&v=0"
+    }
+  },
+  {
+    "key": "logrocket",
+    "names": ["logrocket"],
+    "website": "https://logrocket.com",
+    "source": {
+      "kind": "website",
+      "url": "https://logrocket.com/favicon/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "lovable",
+    "names": ["lovable"],
+    "website": "https://lovable.dev",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000b4ec71f6ab8c69f2f285f74b&cdn=1&cp=pi&ma=30844800&ts=0&p=pi&cid=1&sig=20498371312886c59f32c51971b7921d0f0181ec2c93ce77a7bbcc652b6e8d97"
+    }
+  },
+  {
+    "key": "lumen",
+    "names": ["lumen"],
+    "website": "https://www.ory.sh",
+    "source": {
+      "kind": "website",
+      "url": "https://www.ory.sh/icon.svg?c4370a965aac90e8"
+    }
+  },
+  {
+    "key": "lusha",
+    "names": ["lusha"],
+    "website": "https://www.lusha.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000063e08211a2b4bb7a0eb31d25&cdn=1&cp=pi&ma=31017600&ts=0&p=pi&cid=8&sig=5f8959d6f99a0cb33f8f9fc2f3ab8709887112b20f5b447f351a0c24813c165a&v=0"
+    }
+  },
+  {
+    "key": "mapbox",
+    "names": ["mapbox"],
+    "website": "https://www.mapbox.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000000f4871f7b1f6f4bed05d019a&cdn=1&cp=pi&ma=32227200&ts=0&p=pi&cid=8&sig=137f4fd671f225355b905224d4afbef7d1deba77e75d6752c1da62d9210a07ae&v=0"
+    }
+  },
+  {
+    "key": "mcp-apps",
+    "names": ["mcp-apps"],
+    "website": "https://modelcontextprotocol.io",
+    "source": {
+      "kind": "website",
+      "url": "https://modelcontextprotocol.io/mintlify-assets/_mintlify/favicons/mcp/ebiVJzri-bsiCfVZ/_generated/favicon/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "mercadopago",
+    "names": ["mercadopago"],
+    "website": "https://mercadopago.com",
+    "source": {
+      "kind": "website",
+      "url": "https://http2.mlstatic.com/frontend-assets/ui-navigation/5.18.9/mercadopago/favicon.svg"
+    }
+  },
+  {
+    "key": "mergify",
+    "names": ["mergify"],
+    "website": "https://mergify.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000a4b0820c833393cce79149a9&cdn=1&cp=pi&ma=30326400&ts=0&p=pi&cid=8&sig=206897bfe81bfdc1fe2d55d1385267b236216b426294e6366468d33f8f5d8be9&v=0"
+    }
+  },
+  {
+    "key": "mermaid-chart",
+    "names": ["mermaid chart"],
+    "source": {
+      "kind": "curated",
+      "key": "mermaid-chart"
+    }
+  },
+  {
+    "key": "microsoft-learn",
+    "names": ["microsoft learn", "microsoft-docs"],
+    "website": "https://learn.microsoft.com",
+    "source": {
+      "kind": "curated",
+      "key": "microsoft-learn"
+    }
+  },
+  {
+    "key": "mintlify",
+    "names": ["mintlify"],
+    "website": "https://www.mintlify.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000034cc81f7839ab4280962ba96&cdn=1&cp=pi&ma=31017600&ts=0&p=pi&cid=8&sig=b1fed9299f17933502ff08f720c533e9059f01a4c196a45de6cecf70dfe3e790&v=0"
+    }
+  },
+  {
+    "key": "miro",
+    "names": ["miro"],
+    "website": "https://miro.com",
+    "source": {
+      "kind": "curated",
+      "key": "miro"
+    }
+  },
+  {
+    "key": "mlflow",
+    "names": ["mlflow"],
+    "website": "https://mlflow.org",
+    "source": {
+      "kind": "website",
+      "url": "https://raw.githubusercontent.com/mlflow/mlflow/master/assets/logo.svg"
+    }
+  },
+  {
+    "key": "monday",
+    "names": ["monday", "monday-com", "monday-crm", "monday.com"],
+    "website": "https://monday.com",
+    "source": {
+      "kind": "curated",
+      "key": "monday"
+    }
+  },
+  {
+    "key": "mongodb",
+    "names": ["mongodb", "mongodb-atlas"],
+    "website": "https://www.mongodb.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000006128824382b4c3ad66a596e3&cdn=1&cp=pi&ma=30326400&ts=0&p=pi&cid=8&sig=50bd4935c54840b2d48e9475f13d1d5f0b871988437c32444a362dc2bd9ea30a&v=0"
+    }
+  },
+  {
+    "key": "motherduck",
+    "names": ["motherduck"],
+    "source": {
+      "kind": "curated",
+      "key": "motherduck"
+    }
+  },
+  {
+    "key": "neon",
+    "names": ["neon"],
+    "website": "https://neon.com",
+    "source": {
+      "kind": "curated",
+      "key": "neon"
+    }
+  },
+  {
+    "key": "netlify",
+    "names": ["netlify", "netlify-skills"],
+    "website": "https://www.netlify.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000061c481f883280081346e1276&cdn=1&cp=pi&ma=32140800&ts=0&p=pi&cid=8&sig=4dfb1f34fe3600f26ece0db54f59ab17ead0ec11f748a6adc08e1937d6bd8d91&v=0"
+    }
+  },
+  {
+    "key": "netsuite",
+    "names": [
+      "netsuite",
+      "netsuite-ai-companion",
+      "netsuite-finance-analyst",
+      "netsuite-suitecloud"
+    ],
+    "website": "https://www.netsuite.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000006c6071fd897a1111797f143b&cdn=1&cp=pi&ma=32486400&ts=0&p=pi&cid=1&sig=7477079a0ea6be9582749aa83d7aac78d8de046d545a67418c8b3152a9bc5edd&v=0"
+    }
+  },
+  {
+    "key": "new-relic",
+    "names": ["new relic", "newrelic"],
+    "website": "https://newrelic.com",
+    "source": {
+      "kind": "website",
+      "url": "https://newrelic.com/themes/custom/erno/assets/images/metadata/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "nightvision",
+    "names": ["nightvision"],
+    "website": "https://nightvision.net",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000008bc81f788c63eec905f6f58&cdn=1&cp=pi&ma=31795200&ts=0&p=pi&cid=8&sig=e18c5ce1377db46ba5d093693120894704d3c20cab5e7e1729bdccb065c3a5f4&v=0"
+    }
+  },
+  {
+    "key": "nimble",
+    "names": ["nimble"],
+    "website": "https://docs.nimbleway.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000404082119e328918432f6981&cdn=1&cp=pi&ma=30240000&ts=0&p=pi&cid=8&sig=f4c4ce28c4333701e99527739d40d3850964c2560efa0ee267e38020ebd462ea&v=0"
+    }
+  },
+  {
+    "key": "noibu",
+    "names": ["noibu"],
+    "website": "https://help.noibu.com",
+    "source": {
+      "kind": "website",
+      "url": "https://avatars.slack-edge.com/2025-03-05/8558511455908_c1ec6534129188c21a66_88.png"
+    }
+  },
+  {
+    "key": "notion",
+    "names": ["notion"],
+    "website": "https://www.notion.so",
+    "source": {
+      "kind": "curated",
+      "key": "notion"
+    }
+  },
+  {
+    "key": "nvidia",
+    "names": ["nvidia", "nvidia-skills"],
+    "website": "https://www.nvidia.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000b5cc81f5ab2e91688c377e7f&cdn=1&cp=pi&ma=32054400&ts=0&p=pi&cid=8&sig=d0879a979984afb8222689f0c28f31a47e7601940fc67de515384e6679248cf0&v=0"
+    }
+  },
+  {
+    "key": "open-targets",
+    "names": ["open targets"],
+    "source": {
+      "kind": "curated",
+      "key": "open-targets"
+    }
+  },
+  {
+    "key": "openalex",
+    "names": ["openalex"],
+    "source": {
+      "kind": "curated",
+      "key": "openalex"
+    }
+  },
+  {
+    "key": "oracle",
+    "names": [
+      "oracle",
+      "oracle-ai-data-platform-workbench-databricks-migrator",
+      "oracle-ai-data-platform-workbench-engineer-agent",
+      "oracle-ai-data-platform-workbench-spark-connectors",
+      "oracledb"
+    ],
+    "website": "https://www.oracle.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.oracle.com/asset/web/favicons/favicon-192.png"
+    }
+  },
+  {
+    "key": "outlook-calendar",
+    "names": ["outlook calendar"],
+    "website": "https://outlook.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000087dc81f783c699f284fad19f&cdn=1&cp=pi&ma=32659200&ts=0&p=pi&cid=8&sig=1a62ee7c566ca713d2d82e0e8edadcc8445d7ea42b3d8705a421fd70309d781e&v=0"
+    }
+  },
+  {
+    "key": "outlook-email",
+    "names": ["outlook email"],
+    "website": "https://outlook.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000004cd081f797845d3a5fc32d25&cdn=1&cp=pi&ma=32572800&ts=0&p=pi&cid=8&sig=e29695420bbf127996af816598986f76232bea38445fe2e423db60bc05690591&v=0"
+    }
+  },
+  {
+    "key": "outputai",
+    "names": ["outputai"],
+    "website": "https://output.ai",
+    "source": {
+      "kind": "website",
+      "url": "https://output.ai/icon.png"
+    }
+  },
+  {
+    "key": "pagerduty",
+    "names": ["pagerduty"],
+    "website": "https://pagerduty.com",
+    "source": {
+      "kind": "website",
+      "url": "https://pagerduty.com/favicon/prod/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "paypal",
+    "names": ["paypal"],
+    "website": "https://developer.paypal.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000001f24820c8690d15377467396&cdn=1&cp=pi&ma=31622400&ts=0&p=pi&cid=8&sig=488863f4dc57b6c8bf9c24411bc4dee7c68f9fb3d834d3e153b8cc66c609e437&v=0"
+    }
+  },
+  {
+    "key": "pendo",
+    "names": [
+      "pendo",
+      "pendo-analytics",
+      "pendo-guides",
+      "pendo-orchestrate",
+      "setup-agent-analytics",
+      "setup-mcp-agent-analytics"
+    ],
+    "website": "https://www.pendo.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000c32871f6b743b22a88c5cdd5&cdn=1&cp=pi&ma=30931200&ts=0&p=pi&cid=8&sig=53f01c66b2a43c0cb1bcf6c1e3f71f2e44d08cfbb773492f02206b04a107ea67&v=0"
+    }
+  },
+  {
+    "key": "pigment",
+    "names": ["pigment"],
+    "website": "https://www.pigment.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000548c824384855047dfd5a9a7&cdn=1&cp=pi&ma=30758400&ts=0&p=pi&cid=8&sig=9fc71bd4cb005dd83ea7814bff4a1bd1fcd5f4b396249c6edc7abf9c3557370d&v=0"
+    }
+  },
+  {
+    "key": "pinecone",
+    "names": ["pinecone"],
+    "website": "https://pinecone.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000f01082309ceb159d6dd35580&cdn=1&cp=pi&ma=32054400&ts=0&p=pi&cid=8&sig=18d45c5276374e570639246b80eaf903befcff27bb75ae2ec1abe60e94035c36&v=0"
+    }
+  },
+  {
+    "key": "pixeltable",
+    "names": ["pixeltable"],
+    "website": "https://docs.pixeltable.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000a91081fd8b0a640e2bd7c278&cdn=1&cp=pi&ma=31968000&ts=0&p=pi&cid=8&sig=fa203c1c69090b52649f9ca16a5b3b99985ffd2f3f1a0d417916ab307243a2ce&v=0"
+    }
+  },
+  {
+    "key": "planetscale",
+    "names": ["planetscale"],
+    "website": "https://planetscale.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000d29481fbaa95e4c8f31d0698&cdn=1&cp=pi&ma=30931200&ts=0&p=pi&cid=8&sig=c05943dc2b97f4fc9ddc90c42d5619e344efda168e4aa1aad5b386149185f969&v=0"
+    }
+  },
+  {
+    "key": "playwright",
+    "names": ["playwright"],
+    "website": "https://playwright.dev",
+    "source": {
+      "kind": "website",
+      "url": "https://playwright.dev/img/playwright-logo.svg"
+    }
+  },
+  {
+    "key": "posthog",
+    "names": ["posthog"],
+    "website": "https://posthog.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000028b081f5bcfe744a3b5a115a&cdn=1&cp=pi&ma=31622400&ts=0&p=pi&cid=8&sig=bab1812e5ee91da46b3760115716a96c4657f4022c0ebc77120006329df2250a&v=0"
+    }
+  },
+  {
+    "key": "postiz",
+    "names": ["postiz"],
+    "website": "https://postiz.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000007b0820d9f4d795b1caa920e&cdn=1&cp=pi&ma=31363200&ts=0&p=pi&cid=8&sig=a16879ee5032ca09fb8b907610790092034270e89019433356aa092450276392&v=0"
+    }
+  },
+  {
+    "key": "postman",
+    "names": ["postman"],
+    "website": "https://postman.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000e114820a908dc985e74f72a4&cdn=1&cp=pi&ma=30240000&ts=0&p=pi&cid=8&sig=9ea031ef681dd14127c8420ec60b6bc09438767232c913c8fb6704fa803cf4a6&v=0"
+    }
+  },
+  {
+    "key": "preset",
+    "names": ["preset", "preset-cli-skills"],
+    "website": "https://preset.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000005ccc81faa3eafa128c574917&cdn=1&cp=pi&ma=30672000&ts=0&p=pi&cid=8&sig=91be1aa3f2c10e58559a95af549ac788c215dc979b79cb85a1e4af6de1e10fe0&v=0"
+    }
+  },
+  {
+    "key": "prisma",
+    "names": ["prisma"],
+    "website": "https://prisma.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000d8d48243b87f50e2bc7ae094&cdn=1&cp=pi&ma=31363200&ts=0&p=pi&cid=8&sig=1a9be78630a7ca9e9efad8e23ee3b5daf305cc609dcbb569a484b61c53b9639f&v=0"
+    }
+  },
+  {
+    "key": "pydantic-ai",
+    "names": ["pydantic-ai"],
+    "website": "https://ai.pydantic.dev",
+    "source": {
+      "kind": "website",
+      "url": "https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/favicon.ico"
+    }
+  },
+  {
+    "key": "qdrant",
+    "names": ["qdrant", "qdrant-skills"],
+    "website": "https://qdrant.tech",
+    "source": {
+      "kind": "website",
+      "url": "https://qdrant.tech/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "qodo",
+    "names": ["qodo", "qodo-standards"],
+    "website": "https://www.qodo.ai",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000005d881f4931727fbdf72fc87&cdn=1&cp=pi&ma=32745600&ts=0&p=pi&cid=8&sig=b983324ebf44ef21cad04044b1c85f9f8658ed84677c6de4ab9e38e33dd52d46&v=0"
+    }
+  },
+  {
+    "key": "qt",
+    "names": ["qt", "qt-development-skills"],
+    "website": "https://www.qt.io",
+    "source": {
+      "kind": "website",
+      "url": "https://www.qt.io/hubfs/QtGroup_Favicon_32.ico"
+    }
+  },
+  {
+    "key": "quarkus",
+    "names": ["quarkus", "quarkus-agent"],
+    "website": "https://quarkus.io",
+    "source": {
+      "kind": "website",
+      "url": "https://quarkus.io/favicon.ico"
+    }
+  },
+  {
+    "key": "quickbooks",
+    "names": ["intuit-quickbooks", "quickbooks"],
+    "website": "https://quickbooks.intuit.com",
+    "source": {
+      "kind": "website",
+      "url": "https://quickbooks.intuit.com/cas/dam/IMAGE/A8u8GvpJS/apple-touch-icon-152x152.png"
+    }
+  },
+  {
+    "key": "railway",
+    "names": ["railway"],
+    "website": "https://railway.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000097e871f489b2ab356bdd41d9&cdn=1&cp=pi&ma=31708800&ts=0&p=pi&cid=8&sig=a68dbec5a8edfd5116e6488c131c2b8e597dab9e703c390ad3120c4c5d872a68&v=0"
+    }
+  },
+  {
+    "key": "redis",
+    "names": ["redis", "redis-development"],
+    "website": "https://redis.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000089e88210b97f2055f754743c&cdn=1&cp=pi&ma=31708800&ts=0&p=pi&cid=8&sig=3bd7e451889949a66e1b5b7a65e9a9d79bb852f6236c5520d688c16fcf5e7c71&v=0"
+    }
+  },
+  {
+    "key": "render",
+    "names": ["render"],
+    "website": "https://render.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000f3248243bc03958fe320356d&cdn=1&cp=pi&ma=32400000&ts=0&p=pi&cid=8&sig=ea1e030064667c01c9fe39387b771bdd21dbe335422968c097281782483d39fe&v=0"
+    }
+  },
+  {
+    "key": "resend",
+    "names": ["resend"],
+    "website": "https://resend.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000f53881f79e4178aeede88b83&cdn=1&cp=pi&ma=31708800&ts=0&p=pi&cid=8&sig=9a73049df47a15e36aeac12438952ff1ab7c0875c4af6a983eb389e41e1699e4&v=0"
+    }
+  },
+  {
+    "key": "revenuecat",
+    "names": ["rc", "revenuecat"],
+    "website": "https://www.revenuecat.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000058b88209bbdcd31eb338bf83&cdn=1&cp=pi&ma=32054400&ts=0&p=pi&cid=8&sig=45cf295f07861ca79c712c0fac63d4720bf033e31ff648d8d868213dc105d2cf&v=0"
+    }
+  },
+  {
+    "key": "rill",
+    "names": ["rill"],
+    "website": "https://docs.rilldata.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000543c81f69b145dbf95f666f7&cdn=1&cp=pi&ma=31795200&ts=0&p=pi&cid=8&sig=dc611f18029cefb8fec3abca7a36744174a7bc06542ff4eba930c39e3ae14c22&v=0"
+    }
+  },
+  {
+    "key": "rootly",
+    "names": ["rootly"],
+    "website": "https://rootly.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000038081f59655a4e00581d774&cdn=1&cp=pi&ma=30844800&ts=0&p=pi&cid=8&sig=0c2d578f52a66245cdba7289ff4fcb81ebfab25b16c8444ebcba96f2002a0897&v=0"
+    }
+  },
+  {
+    "key": "runway",
+    "names": ["runway", "runway-api"],
+    "website": "https://runwayml.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000004e44720d93d77b01e0e37b19&cdn=1&cp=pi&ma=32227200&ts=0&p=pi&cid=8&sig=a323a8ae718fbbce220ce916417e1bd045b4677dae33789117a257c40b2a6c88&v=0"
+    }
+  },
+  {
+    "key": "salesforce",
+    "names": ["agentforce-adlc", "salesforce", "salesforce-development"],
+    "website": "https://www.salesforce.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000061f481f7ab615d02bc60c2cb&cdn=1&cp=pi&ma=30412800&ts=0&p=pi&cid=8&sig=e778da9f34de6f7988211d9d9a20fabdb87ad97689df6bc60ee2fe90ef5cf56c&v=0"
+    }
+  },
+  {
+    "key": "sanity",
+    "names": ["sanity"],
+    "website": "https://www.sanity.io",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000d93881f5ba3e018685339586&cdn=1&cp=pi&ma=30240000&ts=0&p=pi&cid=8&sig=64f93e0cf4b4339a012d8c16094192a0fce27e7675d8d78f1ee576730556cb5b&v=0"
+    }
+  },
+  {
+    "key": "sap",
+    "names": [
+      "cds-mcp",
+      "sap",
+      "sap-cds-mcp",
+      "sap-fiori-mcp-server",
+      "sap-hana-cli",
+      "sap-mdk-server",
+      "ui-theme-designer",
+      "ui5",
+      "ui5-modernization",
+      "ui5-typescript-conversion"
+    ],
+    "website": "https://www.sap.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.sap.com/dam/application/shared/logos/sap-logo-svg.svg"
+    }
+  },
+  {
+    "key": "scandit",
+    "names": ["scandit", "scandit-sdk"],
+    "website": "https://www.scandit.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.scandit.com/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "scholar-gateway",
+    "names": ["scholar gateway"],
+    "source": {
+      "kind": "curated",
+      "key": "scholar-gateway"
+    }
+  },
+  {
+    "key": "scite",
+    "names": ["scite"],
+    "source": {
+      "kind": "curated",
+      "key": "scite"
+    }
+  },
+  {
+    "key": "semantic-scholar",
+    "names": ["semantic scholar"],
+    "source": {
+      "kind": "curated",
+      "key": "semantic-scholar"
+    }
+  },
+  {
+    "key": "semgrep",
+    "names": ["semgrep"],
+    "website": "https://semgrep.dev",
+    "source": {
+      "kind": "website",
+      "url": "https://semgrep.dev/build/assets/favicon-CIx-xpG_.svg"
+    }
+  },
+  {
+    "key": "sentry",
+    "names": ["sentry", "sentry-cli"],
+    "website": "https://sentry.io",
+    "source": {
+      "kind": "curated",
+      "key": "sentry"
+    }
+  },
+  {
+    "key": "serena",
+    "names": ["serena"],
+    "website": "https://oraios.github.io/serena",
+    "omitted": "No usable vendor icon could be retrieved from the official site."
+  },
+  {
+    "key": "servicenow",
+    "names": ["servicenow", "servicenow-sdk"],
+    "website": "https://www.servicenow.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.servicenow.com/content/dam/servicenow-assets/public/en-us/images/apple-touch-icon/180x180.png"
+    }
+  },
+  {
+    "key": "shippo",
+    "names": ["shippo"],
+    "website": "https://docs.goshippo.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000149881f7891ea436c08da76b&cdn=1&cp=pi&ma=32745600&ts=0&p=pi&cid=8&sig=94d39f12484bcc83fe467296dc863a4b9f0eb3a058a125c9ec447d0bff6a27dc&v=0"
+    }
+  },
+  {
+    "key": "shopify",
+    "names": ["liquid-lsp", "liquid-skills", "shopify", "shopify-ai-toolkit"],
+    "website": "https://www.shopify.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000a034820db4c1393f33a1aa36&cdn=1&cp=pi&ma=32140800&ts=0&p=pi&cid=8&sig=9222e4153ea61915a84fade266d14f712ebc89b7488c0a86fc8233c7a14fb77c&v=0"
+    }
+  },
+  {
+    "key": "slack",
+    "names": ["slack"],
+    "website": "https://slack.com",
+    "source": {
+      "kind": "curated",
+      "key": "slack"
+    }
+  },
+  {
+    "key": "snowflake",
+    "names": ["snowflake", "snowflake-cortex-code"],
+    "website": "https://www.snowflake.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000006a9081f784e8b22442512610&cdn=1&cp=pi&ma=31363200&ts=0&p=pi&cid=8&sig=88993ea1a8fc4f51581077a70b24fd31f555a979059a41a1d6150337170612fd&v=0"
+    }
+  },
+  {
+    "key": "sonarqube",
+    "names": ["sonarqube"],
+    "website": "https://www.sonarsource.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000008710820db8b71a2374cdd24e&cdn=1&cp=pi&ma=30153600&ts=0&p=pi&cid=8&sig=8103822e5e393376f58013408e8d71d9f3c0d92357fbf9f48609fd4b80ef6572&v=0"
+    }
+  },
+  {
+    "key": "sonatype",
+    "names": ["sonatype", "sonatype-guide"],
+    "website": "https://www.sonatype.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.sonatype.com/hubfs/1-2025_Website-Assets/logos/favicon-2025.svg"
+    }
+  },
+  {
+    "key": "sourcegraph",
+    "names": ["sourcegraph"],
+    "website": "https://sourcegraph.com",
+    "source": {
+      "kind": "website",
+      "url": "data:image/png;base64,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"
+    }
+  },
+  {
+    "key": "spotify",
+    "names": ["save-to-spotify", "spotify", "spotify-ads-api"],
+    "website": "https://www.spotify.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000004a548243b326f2bdcb15dcc4&cdn=1&cp=pi&ma=32313600&ts=0&p=pi&cid=8&sig=deecb748c2b7e833deafaa17f477bea651f033c378b82f8a927a5f6911dc5286&v=0"
+    }
+  },
+  {
+    "key": "stack-overflow",
+    "names": ["stack overflow"],
+    "source": {
+      "kind": "curated",
+      "key": "stack-overflow"
+    }
+  },
+  {
+    "key": "stackhawk",
+    "names": ["stackhawk", "stackhawk-api", "stackhawk-hawkscan"],
+    "website": "https://www.stackhawk.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.stackhawk.com/wp-content/uploads/2025/03/icon-512x512-2-300x300.png"
+    }
+  },
+  {
+    "key": "stripe",
+    "names": ["stripe"],
+    "website": "https://stripe.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000679472069fa7c35ce5919579&cdn=1&cp=pi&ma=32140800&ts=0&p=pi&cid=8&sig=38636a046f717091f234b4cacc5910c1314058595218bebbe09a395bf5f680c1&v=0"
+    }
+  },
+  {
+    "key": "sumup",
+    "names": ["sumup"],
+    "website": "https://www.sumup.com",
+    "source": {
+      "kind": "website",
+      "url": "https://static.sumup.com/favicons/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "supabase",
+    "names": ["supabase"],
+    "website": "https://supabase.com",
+    "source": {
+      "kind": "curated",
+      "key": "supabase"
+    }
+  },
+  {
+    "key": "superdesign",
+    "names": ["superdesign"],
+    "website": "https://superdesign.dev",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000958882079a4d9e2e4a78d14f&cdn=1&cp=pi&ma=30499200&ts=0&p=pi&cid=8&sig=706137c5f28e2149f2a523c8fc4c356a92f08c0e1c8d4dd73fc1a4ac7f301643&v=0"
+    }
+  },
+  {
+    "key": "synapse",
+    "names": ["synapse"],
+    "source": {
+      "kind": "curated",
+      "key": "synapse"
+    }
+  },
+  {
+    "key": "synthflow",
+    "names": ["synthflow"],
+    "website": "https://synthflow.ai",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000991c824387e82a81fe82a544&cdn=1&cp=pi&ma=31104000&ts=0&p=pi&cid=8&sig=ab13c023b4452c8742d20aceda490ebbda1b252ede6806c192583a5395dfe3d6&v=0"
+    }
+  },
+  {
+    "key": "taosdata",
+    "names": ["idmp-plugin", "taosdata"],
+    "website": "https://www.taosdata.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.taosdata.com/wp-content/uploads/2025/07/favicon.ico"
+    },
+    "omitted": "Official icon endpoint was not reliably retrievable during the final generation."
+  },
+  {
+    "key": "tavily",
+    "names": ["tavily"],
+    "website": "https://www.tavily.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000433c81f7a3f6364e878cf9d0&cdn=1&cp=pi&ma=30931200&ts=0&p=pi&cid=8&sig=0b4cdd2b1ad627bb2ef1715a27fbcf86a0ed4a9c517aae0dba712ec1e447a1a8&v=0"
+    }
+  },
+  {
+    "key": "teamcity-cli",
+    "names": ["teamcity-cli"],
+    "website": "https://jetbrains.com/teamcity",
+    "source": {
+      "kind": "website",
+      "url": "https://jetbrains.com/apple-touch-icon.png?r=1234"
+    }
+  },
+  {
+    "key": "teams",
+    "names": ["microsoft teams", "teams"],
+    "website": "https://www.microsoft.com/microsoft-teams",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000bc9481f5b8b85a85bddd3576&cdn=1&cp=pi&ma=32659200&ts=0&p=pi&cid=8&sig=318f558986dc75467ff5f5e6c51222cdc5b7f115ab4ff2555836f1c074a09ab6&v=0"
+    }
+  },
+  {
+    "key": "telegram",
+    "names": ["telegram"],
+    "website": "https://telegram.org",
+    "source": {
+      "kind": "website",
+      "url": "https://telegram.org/img/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "terraform",
+    "names": ["terraform"],
+    "website": "https://developer.hashicorp.com/terraform",
+    "source": {
+      "kind": "website",
+      "url": "https://developer.hashicorp.com/favicon.svg"
+    }
+  },
+  {
+    "key": "todoist",
+    "names": ["todoist"],
+    "source": {
+      "kind": "curated",
+      "key": "todoist"
+    }
+  },
+  {
+    "key": "together-ai",
+    "names": ["together ai", "togetherai-skills"],
+    "website": "https://www.together.ai",
+    "source": {
+      "kind": "website",
+      "url": "https://cdn.prod.website-files.com/69654e88dce9154b5f1206dd/69a59cff65ed0f267dd2fbe8_touchicon.png"
+    }
+  },
+  {
+    "key": "twilio",
+    "names": ["twilio", "twilio-developer-kit"],
+    "website": "https://www.twilio.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000d040722f9ca810dd55466f56&cdn=1&cp=pi&ma=32572800&ts=0&p=pi&cid=1&sig=8a5935ea2b3057d74a93730410cb156874380892012d3f16c860a3b605fc6b83&v=0"
+    }
+  },
+  {
+    "key": "unity",
+    "names": ["unity"],
+    "website": "https://unity.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000003fe481f69ea520d79039e7f7&cdn=1&cp=pi&ma=31449600&ts=0&p=pi&cid=8&sig=d734d7842c95c52a8fefa91a116173cceb1a1a568df51402c67b2a10bf00ebb0&v=0"
+    }
+  },
+  {
+    "key": "unreal-engine",
+    "names": ["unreal engine", "unreal-engine-skills-for-claude-code"],
+    "website": "https://www.unrealengine.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000090c8230a93cd60d7674326b&cdn=1&cp=pi&ma=31104000&ts=0&p=pi&cid=8&sig=be22994c4f948cbf51f3cabf3e5e95cf6afdec71271aff52dc00cc4211b36352&v=0"
+    }
+  },
+  {
+    "key": "valtown",
+    "names": ["valtown"],
+    "website": "https://val.town",
+    "source": {
+      "kind": "website",
+      "url": "https://val.town/favicon.svg?dot=false"
+    }
+  },
+  {
+    "key": "vanguard",
+    "names": ["vanguard", "vanguard-advisor-tools"],
+    "website": "https://advisors.vanguard.com",
+    "source": {
+      "kind": "website",
+      "url": "https://advisors.vanguard.com/favicon.ico"
+    }
+  },
+  {
+    "key": "vanta",
+    "names": ["vanta", "vanta-mcp-plugin"],
+    "website": "https://www.vanta.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000f780722f8a9baa96189f5ebc&cdn=1&cp=pi&ma=31104000&ts=0&p=pi&cid=1&sig=6d6ef2877fac111a5e56c154a748e03ea171f20341cbab7e1ebe547c412900f8&v=0"
+    }
+  },
+  {
+    "key": "vercel",
+    "names": ["vercel"],
+    "website": "https://vercel.com",
+    "source": {
+      "kind": "curated",
+      "key": "vercel"
+    }
+  },
+  {
+    "key": "vibe-prospecting",
+    "names": ["vibe-prospecting"],
+    "website": "https://www.vibeprospecting.ai",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000726081f699c3f7437301e4d3&cdn=1&cp=pi&ma=31449600&ts=0&p=pi&cid=8&sig=5e2b7cfd0fcea4cbcc074bdee5a2d7992affed97412c73e1e316cc53b2012c63&v=0"
+    }
+  },
+  {
+    "key": "villagesql",
+    "names": ["villagesql", "vsql-extension-builder"],
+    "website": "https://villagesql.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000c7f081f7b0b7f87fc233d95d&cdn=1&cp=pi&ma=31363200&ts=0&p=pi&cid=8&sig=26a6fb865926827a904355c41458b300731812c2330d3cd03504859fca1acd4c&v=0"
+    }
+  },
+  {
+    "key": "windsor-ai",
+    "names": ["windsor-ai"],
+    "website": "https://windsor.ai",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000c678822fac3083e74fefb45f&cdn=1&cp=pi&ma=30672000&ts=0&p=pi&cid=1&sig=955ee725d5b8a81fd1b39f5b06fd86c70231a0e28392418bff13654c082bac34&v=0"
+    }
+  },
+  {
+    "key": "wingspan",
+    "names": ["wingspan"],
+    "website": "https://wingspan.app",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000efb48210ae1994ed86c45f39&cdn=1&cp=pi&ma=30844800&ts=0&p=pi&cid=8&sig=a156479c7e605b0ac608c57a123736e7ce92b09413836fb235a77e8b36f20ffc&v=0"
+    }
+  },
+  {
+    "key": "wix",
+    "names": ["wix"],
+    "website": "https://dev.wix.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000003270820c81b846cb9c79c42c&cdn=1&cp=pi&ma=30153600&ts=0&p=pi&cid=8&sig=27c3818ad5b3fc462359d741dd7992cfd2bfdfd63023972351507b4a55770134&v=0"
+    }
+  },
+  {
+    "key": "wordpress",
+    "names": ["build-with-wordpress", "wordpress"],
+    "website": "https://wordpress.com",
+    "source": {
+      "kind": "website",
+      "url": "https://0.gravatar.com/blavatar/653166773dc88127bd3afe0b6dfe5ea7?s=114&d=https%3A%2F%2Fs1.wp.com%2Fi%2Fwebclip.png"
+    }
+  },
+  {
+    "key": "workos",
+    "names": ["workos"],
+    "website": "https://workos.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000005aa881f7b81cd17bd4c10055&cdn=1&cp=pi&ma=30153600&ts=0&p=pi&cid=8&sig=8cb9fbe72067a4dd359f5c755e14a6582f9347e4d96a7eb7a510ef46abb82a64&v=0"
+    }
+  },
+  {
+    "key": "you-com",
+    "names": ["you com", "youdotcom-agent-skills"],
+    "website": "https://you.com",
+    "source": {
+      "kind": "website",
+      "url": "https://you.com/favicon.ico?favicon.2oo7buuzhxlge.ico"
+    },
+    "omitted": "Available site icon was only 16 pixels and visibly pixelated at 64 pixels; rejected after visual review."
+  },
+  {
+    "key": "zapier",
+    "names": ["zapier"],
+    "website": "https://zapier.com",
+    "source": {
+      "kind": "website",
+      "url": "https://cdn.zapier.com/zapier/images/favicon.ico"
+    }
+  },
+  {
+    "key": "zilliz",
+    "names": ["zilliz"],
+    "website": "https://docs.zilliz.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_0000000095d881fa80be9ff22768c1c3&cdn=1&cp=pi&ma=31795200&ts=0&p=pi&cid=8&sig=bfe17f221047dc1b94a0c9819715ea14ca0ed8d192aa831e2a89f9b8ac872bcc&v=0"
+    }
+  },
+  {
+    "key": "zocks",
+    "names": ["zocks", "zocks-advisor"],
+    "website": "https://www.zocks.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000f0d871f6b4d801b0d8cd9f3c&cdn=1&cp=pi&ma=32140800&ts=0&p=pi&cid=8&sig=2cc4be29c4a4812745d93c397e445ea6ef4d95f90f2caf5223364a395134148d&v=0"
+    }
+  },
+  {
+    "key": "zoho",
+    "names": ["catalyst-by-zoho", "zoho"],
+    "website": "https://www.zoho.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000aaa871f88a34781f5d3b0b4b&cdn=1&cp=pi&ma=30326400&ts=0&p=pi&cid=1&sig=1c06dbfa6124c46ba704c3b117f7d0305da93bc6ef5465612e3adcbffe34dfef&v=0"
+    }
+  },
+  {
+    "key": "zoom",
+    "names": ["zoom", "zoom-plugin"],
+    "website": "https://www.zoom.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_00000000aa9071f59db729d014a2c122&cdn=1&cp=pi&ma=31795200&ts=0&p=pi&cid=1&sig=6709f94e3d491849be21f21c311321cfd336dd2079d72129fb55b6b76e78464e&v=0"
+    }
+  },
+  {
+    "key": "zoominfo",
+    "names": ["zoominfo"],
+    "website": "https://www.zoominfo.com",
+    "source": {
+      "kind": "codex-plugin",
+      "url": "https://files.openai.com/content?id=file_000000007b5c71f68f4ce7109fe9895c&cdn=1&cp=pi&ma=32572800&ts=0&p=pi&cid=8&sig=a5a793a7e75695a72af470326e881780a30318137c1513faad1613814c2c9dc1&v=0"
+    }
+  },
+  {
+    "key": "zscaler",
+    "names": ["zscaler"],
+    "website": "https://zscaler.com",
+    "source": {
+      "kind": "website",
+      "url": "https://zscaler.com/favicons/apple-touch-icon.png"
+    }
+  },
+  {
+    "key": "zyte",
+    "names": ["zyte", "zyte-web-data"],
+    "website": "https://www.zyte.com",
+    "source": {
+      "kind": "website",
+      "url": "https://www.zyte.com/apple-touch-icon.png?v=2"
+    }
+  }
+]

@@ -5,6 +5,9 @@ import type { ReactNode } from "react";
 
 import { ProjectMonogram } from "../../components/ProjectMonogram";
 import { cn } from "../../lib/utils";
+import { useEnvironmentQuery } from "../../state/query";
+import { useExtensionsEnvironment } from "./ExtensionsPage";
+import { extensionsBrandIcon, extensionsProviderStoreEntry } from "./extensionsState";
 import { WorksWithValue } from "./WorksWith";
 import { iconTint } from "./extensionsView";
 
@@ -130,7 +133,7 @@ const MONOGRAM_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
  * (`data:image/png|jpeg|webp|svg+xml;base64`, so nothing loads from
  * elsewhere), otherwise its first letter on a tint derived from its name.
  */
-export function ExtensionIcon({
+function ExtensionIconTile({
   name,
   iconUrl,
   glyph: Glyph,
@@ -176,6 +179,43 @@ export function ExtensionIcon({
   );
 }
 
+type ExtensionIconProps = Parameters<typeof ExtensionIconTile>[0] & {
+  readonly providerPlugin?: Extract<ExtensionTarget, { kind: "provider-plugin" }> | undefined;
+};
+
+export function ExtensionIcon(props: ExtensionIconProps) {
+  if (props.glyph || (props.iconUrl && isExtensionIconDataUri(props.iconUrl))) {
+    return <ExtensionIconTile {...props} />;
+  }
+  return <ResolvedExtensionIcon {...props} />;
+}
+
+function ResolvedExtensionIcon(props: ExtensionIconProps) {
+  const { environmentId, providers } = useExtensionsEnvironment();
+  const target = props.providerPlugin;
+  const codex =
+    target &&
+    providers.find(
+      (provider) => provider.instanceId === target.instanceId && provider.driver === "codex",
+    );
+  const own = useEnvironmentQuery(
+    codex && target
+      ? extensionsProviderStoreEntry({
+          environmentId,
+          input: { instanceId: codex.instanceId, entryId: target.pluginId },
+        })
+      : null,
+  );
+  const result = useEnvironmentQuery(
+    props.name.length <= 200
+      ? extensionsBrandIcon({ environmentId, input: { names: [props.name] } })
+      : null,
+  );
+  return (
+    <ExtensionIconTile {...props} iconUrl={own.data?.iconUrl ?? result.data?.icons[props.name]} />
+  );
+}
+
 /**
  * One extension in a list: icon, name with a short status, one-line tagline,
  * and a trailing action. The whole row opens the detail page; the trailing
@@ -207,7 +247,12 @@ export function ExtensionRow({
   return (
     <li className="flex min-w-0 flex-col" data-extension-row={name}>
       <div className="relative flex items-center gap-3 rounded-xl p-2 transition-colors has-[a:hover]:bg-foreground/[0.035] has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-inset has-[a:focus-visible]:ring-ring">
-        <ExtensionIcon name={name} iconUrl={iconUrl} glyph={glyph} />
+        <ExtensionIcon
+          name={name}
+          iconUrl={iconUrl}
+          glyph={glyph}
+          providerPlugin={target.kind === "provider-plugin" ? target : undefined}
+        />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-baseline gap-1.5">
             <ExtensionLink

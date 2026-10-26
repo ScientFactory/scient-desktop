@@ -148,6 +148,7 @@ describe("RPC authorization scopes", () => {
   // SCIENT-FORK:START — Scient Extensions RPC scopes.
   it("lets readers observe extensions while every extensions change needs settings write", () => {
     for (const method of [
+      WS_METHODS.extensionsBrandIcon,
       WS_METHODS.extensionsList,
       WS_METHODS.extensionsSubscribeChanges,
       WS_METHODS.extensionsDiscoverSearch,

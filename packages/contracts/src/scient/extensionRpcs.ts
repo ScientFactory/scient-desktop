@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 
+import { ExtensionIconDataUri } from "./extensionIcon.ts";
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
   ConnectorAddInput,
@@ -35,6 +36,7 @@ import {
 
 /** Spread into rpc.ts WS_METHODS. */
 export const SCIENT_EXTENSION_WS_METHODS = {
+  extensionsBrandIcon: "extensions.brandIcon",
   extensionsProviderStoreSearch: "extensions.providerStore.search",
   extensionsProviderStoreEntry: "extensions.providerStore.entry",
   extensionsList: "extensions.list",
@@ -158,3 +160,11 @@ export const WsExtensionsProviderStoreEntryRpc = Rpc.make(
   SCIENT_EXTENSION_WS_METHODS.extensionsProviderStoreEntry,
   { payload: ProviderStoreEntryInput, success: ProviderStoreEntry, error: ExtensionsRpcError },
 );
+
+export const WsExtensionsBrandIconRpc = Rpc.make(SCIENT_EXTENSION_WS_METHODS.extensionsBrandIcon, {
+  payload: Schema.Struct({
+    names: Schema.Array(Schema.String.check(Schema.isMaxLength(200))).check(Schema.isMaxLength(50)),
+  }),
+  success: Schema.Struct({ icons: Schema.Record(Schema.String, ExtensionIconDataUri) }),
+  error: ExtensionsRpcError,
+});

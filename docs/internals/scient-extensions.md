@@ -80,6 +80,29 @@ session actually received: delivered connectors and skipped ones with reasons
 ("needs sign-in", "transport unsupported by this agent", "disabled for this
 project", "name collides with native server").
 
+Extension images share one bundled name-based resolver across shelves, stores,
+Installed, details and avatars. An item's own inline icon takes precedence; a
+missing image falls back to Scient's bundled brand pack, independently of any
+provider installation, configuration or sign-in. Normalization removes a leading
+`claude.ai ` and marketplace suffix, replaces hyphens and underscores with spaces,
+and folds case and whitespace. Only exact names and explicit aliases match.
+Images stay outside provider snapshots and reach clients through the read-only
+`extensions.brandIcon` RPC (up to 50 names of 200 characters), cached for an hour
+in the client. Non-Codex items never fetch images at runtime. Codex store images
+use strict egress to `files.openai.com`, a 64 KiB limit and matching PNG, JPEG,
+WebP or SVG signatures; SVG additionally requires `image/svg+xml`.
+
+The checked-in source list is `scripts/scient-extension-brands.json`. Run
+`pnpm --dir scripts extensions:icons:generate` to rebuild the pack and aliases
+from its recorded sources. Existing `discover/curatedIcons.json` entries are
+referenced, never duplicated. Other images are fitted inside a transparent
+64×64 PNG. The generator writes `.logs/extension-brand-icons.html` for visual
+review on light and dark backgrounds. Review every icon before committing;
+record rejected marks with `omitted` in the source list. Generic and personal
+skills packs retain monograms; their inventory is `brandIcons/excluded.json`.
+The official vendor marks identify third-party services without affiliation or
+endorsement. The source URLs are development inputs only.
+
 ## Connected services
 
 ### Model
