@@ -8,7 +8,9 @@ import type {
   DesktopCapturedSignIn,
   DesktopLoginForm,
   EnvironmentId,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
+import { useQuietThreadShell } from "~/state/entities";
 import { Button } from "~/components/ui/button";
 import { Menu, MenuTrigger, MenuPopup, MenuItem } from "~/components/ui/menu";
 import { Popover, PopoverPopup } from "~/components/ui/popover";
@@ -17,6 +19,7 @@ import { accountsState } from "./accountsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import {
   automaticSignIn,
+  canAutomaticallyFill,
   capturedSignInInput,
   matchingAccounts,
   signInLabel,
@@ -140,17 +143,20 @@ function SaveSignIn({
 }
 
 function DesktopBrowserAccountControls({
+  threadRef,
   environmentId,
   tabId,
   profileId,
   url,
 }: {
   environmentId: EnvironmentId;
+  threadRef: ScopedThreadRef;
   tabId: string;
   profileId: string;
   url: string;
 }) {
   const { data, canWrite } = useAccounts(environmentId);
+  const thread = useQuietThreadShell(threadRef);
   const [pending, setPending] = useState<{
     capture: DesktopCapturedSignIn;
     comparison: AccountMatchSignInResult;
@@ -236,9 +242,15 @@ function DesktopBrowserAccountControls({
     setBusy(false);
   };
   const onForm = useEffectEvent((form: DesktopLoginForm) => {
+    const account =
+      thread && data
+        ? matches.find((match) =>
+            canAutomaticallyFill(match.controls, data.agentAccess, thread.projectId),
+          )
+        : undefined;
     if (
       !canWrite ||
-      !matches[0] ||
+      !account ||
       !automaticSignIn(
         form,
         { tabId, profileId, url: currentUrl.current },
@@ -247,7 +259,7 @@ function DesktopBrowserAccountControls({
     )
       return;
     attemptedDocument.current = form.documentId;
-    void fill(matches[0], form);
+    void fill(account, form);
   });
   useEffect(() => {
     const bridge = window.desktopBridge?.accounts;
@@ -326,6 +338,7 @@ function DesktopBrowserAccountControls({
 
 export function BrowserAccountControls(props: {
   environmentId: EnvironmentId;
+  threadRef: ScopedThreadRef;
   tabId: string;
   profileId: string;
   url: string;

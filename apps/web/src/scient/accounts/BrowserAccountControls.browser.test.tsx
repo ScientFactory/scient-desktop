@@ -3,6 +3,7 @@ import { page } from "vite-plus/test/browser";
 import {
   AccountId,
   EnvironmentId,
+  ThreadId,
   defaultAccountControls,
   type AccountsSnapshot,
   type DesktopAccountsBridge,
@@ -81,6 +82,7 @@ it("withholds autofill from an older bridge and drops values after the tab navig
   await using screen = await render(
     <BrowserAccountControls
       environmentId={environmentId}
+      threadRef={{ environmentId, threadId: ThreadId.make("synthetic-thread") }}
       tabId="synthetic-tab"
       profileId="default"
       url="https://example.com/login"
@@ -97,6 +99,7 @@ it("withholds autofill from an older bridge and drops values after the tab navig
     <BrowserAccountControls
       key="current-bridge"
       environmentId={environmentId}
+      threadRef={{ environmentId, threadId: ThreadId.make("synthetic-thread") }}
       tabId="synthetic-tab"
       profileId="default"
       url="https://example.com/login"
@@ -107,6 +110,7 @@ it("withholds autofill from an older bridge and drops values after the tab navig
   await screen.rerender(
     <BrowserAccountControls
       environmentId={environmentId}
+      threadRef={{ environmentId, threadId: ThreadId.make("synthetic-thread") }}
       tabId="synthetic-tab"
       profileId="default"
       url="https://other.example.org"

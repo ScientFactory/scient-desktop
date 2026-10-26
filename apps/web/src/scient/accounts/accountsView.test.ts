@@ -13,6 +13,7 @@ import {
   accountIconUrl,
   capturedSignInInput,
   automaticSignIn,
+  canAutomaticallyFill,
   writableOnePasswordVaults,
   profilePresentation,
   importProfileName,
@@ -293,4 +294,25 @@ describe("toggleScope", () => {
   ] as const)("%s", (_, scope, entry, checked, expected) => {
     expect(toggleScope(scope, [a, b], entry, checked)).toEqual(expected);
   });
+});
+
+it("does not automatically fill accounts the thread agent cannot use, while retaining explicit matches", () => {
+  const project = "project-a" as ProjectId;
+  const other = "project-b" as ProjectId;
+  const controls = defaultAccountControls("website");
+  expect(canAutomaticallyFill(controls, true, project)).toBe(true);
+  expect(canAutomaticallyFill(controls, false, project)).toBe(false);
+  expect(canAutomaticallyFill({ ...controls, access: "off" }, true, project)).toBe(false);
+  expect(canAutomaticallyFill({ ...controls, access: "ask" }, true, project)).toBe(false);
+  const approved = { ...controls, access: "ask" as const, allowedProjects: [project] };
+  expect(canAutomaticallyFill(approved, true, project)).toBe(true);
+  expect(canAutomaticallyFill(approved, true, other)).toBe(false);
+  expect(canAutomaticallyFill(approved, true, undefined)).toBe(false);
+  const scoped = { ...approved, scope: { type: "projects" as const, projectIds: [other] } };
+  expect(canAutomaticallyFill(scoped, true, project)).toBe(false);
+  expect(canAutomaticallyFill({ ...scoped, access: "allowed" }, true, other)).toBe(true);
+  expect(canAutomaticallyFill({ ...scoped, access: "allowed" }, true, undefined)).toBe(false);
+  expect(canAutomaticallyFill(controls, true, undefined)).toBe(true);
+  const account = { ...website(), controls: { ...controls, access: "off" as const } };
+  expect(matchingAccounts([account], "https://example.com", "default")).toEqual([account]);
 });

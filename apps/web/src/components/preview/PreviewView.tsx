@@ -920,6 +920,7 @@ export function PreviewView({
           !isServerTab && runtimeTabId
             ? {
                 environmentId: threadRef.environmentId,
+                threadRef,
                 tabId: runtimeTabId,
                 profileId: activeProfileId,
               }

@@ -223,7 +223,9 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   prompt offers available stores; nothing is kept unless the user saves.
 - **Autofill**: the persistent desktop guest reports a visible login form after load. Exact-origin
   accounts rank before bare-domain matches, then most recently used. Scient fills once per document
-  without submitting, only when fields remain empty and the user has not typed. Incognito never
+  without submitting, only when fields remain empty, the user has not typed, and the thread agent
+  may use the account: global access on, in scope, and Allowed or Ask approved for its project.
+  Incognito never
   autofills. The toolbar chip identifies the filled sign-in and offers other matches; the key button
   remains available for manual filling. The desktop advertises `originBoundFill`; `expectedOrigin`
   and the isolated guest's document nonce reject navigation races, including same-origin reloads.

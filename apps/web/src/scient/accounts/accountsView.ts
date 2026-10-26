@@ -8,6 +8,7 @@ import {
   defaultBrowserProfileRecord,
   resolveBrowserProfiles,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
+  type AccountControls,
   type AccountDetails,
   type GrantScope,
   type ProjectId,
@@ -58,6 +59,22 @@ export function matchingAccounts(
         (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "") ||
         a.accountId.localeCompare(b.accountId),
     );
+}
+
+export function canAutomaticallyFill(
+  controls: AccountControls,
+  agentAccess: boolean,
+  projectId: ProjectId | null | undefined,
+): boolean {
+  return (
+    agentAccess &&
+    (controls.scope.type === "all-projects" ||
+      (projectId != null && controls.scope.projectIds.includes(projectId))) &&
+    (controls.access === "allowed" ||
+      (controls.access === "ask" &&
+        projectId != null &&
+        controls.allowedProjects?.includes(projectId) === true))
+  );
 }
 
 export function mergeProfiles(

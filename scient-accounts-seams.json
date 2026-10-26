@@ -91,7 +91,7 @@
     {
       "path": "apps/web/src/components/preview/PreviewView.tsx",
       "anchor": "Scient Accounts: native credentials use the desktop runtime tab id.",
-      "purpose": "Pass the owning environment, runtime tab and profile to preview account controls, and show the profile switcher in place of the profile-name badge."
+      "purpose": "Pass the owning environment, thread, runtime tab and profile to preview account controls, and show the profile switcher in place of the profile-name badge."
     },
     {
       "path": "apps/web/src/routeTree.gen.ts",
