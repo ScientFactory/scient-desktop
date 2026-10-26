@@ -440,7 +440,12 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
   const scratchReady = yield* Effect.tryPromise(() =>
     makeGitScratch(options.runtimeRoot, windows),
   ).pipe(
-    Effect.mapError(() => fail("runtime-failed", "Could not prepare private Git scratch space.")),
+    Effect.mapError((cause) =>
+      fail(
+        "runtime-failed",
+        cause instanceof Error ? cause.message : "Could not prepare private Git scratch space.",
+      ),
+    ),
     Effect.result,
   );
 
