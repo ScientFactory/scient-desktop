@@ -1,16 +1,14 @@
-// SCIENT-FORK:START — ThreadId went with the moved file-open case.
-import { EnvironmentId } from "@t3tools/contracts";
-// SCIENT-FORK:END
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
-// SCIENT-FORK:START — useRightPanelStore went with the moved file-open case.
-// SCIENT-FORK:END
+import { useRightPanelStore } from "../rightPanelStore";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
 const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
@@ -232,6 +230,39 @@ describe("ChatMarkdown streaming", () => {
 // SCIENT-FORK:START — Scient resolves file links through environment-owned resolution; this
 // case runs with that fixture in ChatMarkdown.scient.browser.test.tsx.
 // SCIENT-FORK:END
+
+describe("ChatMarkdown skill chips", () => {
+  it("shows the skill's details and opens its instructions", async () => {
+    setup();
+    const threadRef = {
+      environmentId: EnvironmentId.make("workspace"),
+      threadId: ThreadId.make("thread"),
+    };
+    await using screen = await renderText("Run $review now", {
+      threadRef,
+      skills: [
+        {
+          name: "review",
+          displayName: "Review",
+          description: "Reviews the current branch.",
+          path: "/skills/review/SKILL.md",
+          enabled: true,
+        },
+      ],
+    });
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+
+    await userEvent.click(screen.getByRole("button", { name: "Skill Review. Show details" }));
+    await expect.element(page.getByText("Reviews the current branch.")).toBeVisible();
+    // SCIENT-FORK:START — Scient's skill popover action reads View Skill.
+    await userEvent.click(page.getByRole("button", { name: "View Skill" }));
+    // SCIENT-FORK:END
+
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/skills/review/SKILL.md");
+  });
+});
 
 describe("ChatMarkdown headings", () => {
   it("never gives two headings the same id, even when a suffix matches another heading", async () => {
