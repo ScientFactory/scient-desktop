@@ -24,7 +24,7 @@ const acl = (path: string) =>
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        "$a=Get-Acl -LiteralPath $env:SCIENT_TEST_ACL_PATH; @{protected=$a.AreAccessRulesProtected; owner=$a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value; rules=@($a.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]) | ForEach-Object { @{sid=$_.IdentityReference.Value; inherited=$_.IsInherited; type=$_.AccessControlType.ToString()} })} | ConvertTo-Json -Depth 4 -Compress",
+        "$a=if ([IO.Directory]::Exists($env:SCIENT_TEST_ACL_PATH)) { [IO.Directory]::GetAccessControl($env:SCIENT_TEST_ACL_PATH) } else { [IO.File]::GetAccessControl($env:SCIENT_TEST_ACL_PATH) }; @{protected=$a.AreAccessRulesProtected; owner=$a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value; rules=@($a.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]) | ForEach-Object { @{sid=$_.IdentityReference.Value; inherited=$_.IsInherited; type=$_.AccessControlType.ToString()} })} | ConvertTo-Json -Depth 4 -Compress",
       ],
       {
         encoding: "utf8",
