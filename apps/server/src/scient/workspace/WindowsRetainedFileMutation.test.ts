@@ -57,6 +57,44 @@ async function fixture(body: (input: RetainedMutationInput, target: string) => P
   }
 }
 
+async function onVirtualDisk(
+  input: RetainedMutationInput,
+  format: "fat32" | "ntfs",
+  body: (root: string) => Promise<void>,
+) {
+  const mask = JSON.parse(
+    NodeChildProcess.execFileSync(probe!, ["--windows=1", "drive-mask", "fixture"], {
+      encoding: "utf8",
+    }),
+  ).mask;
+  const index = Array.from({ length: 20 }, (_, offset) => 25 - offset).find(
+    (bit) => !(mask & (1 << bit)),
+  );
+  if (index === undefined)
+    throw new Error("No free drive letter for the isolated filesystem probe.");
+  const letter = String.fromCharCode(65 + index);
+  const root = `${letter}:\\`;
+  const vhd = NodePath.join(NodePath.dirname(input.cwd), "volume.vhd");
+  const script = NodePath.join(NodePath.dirname(input.cwd), "diskpart.txt");
+  const diskpart = async (commands: string[]) => {
+    await NodeFSP.writeFile(script, commands.join("\r\n") + "\r\n");
+    NodeChildProcess.execFileSync("diskpart.exe", ["/s", script], { encoding: "utf8" });
+  };
+  try {
+    await diskpart([
+      `create vdisk file="${vhd}" maximum=64 type=expandable`,
+      `select vdisk file="${vhd}"`,
+      "attach vdisk",
+      "create partition primary",
+      `format fs=${format} quick label=ScientQA`,
+      `assign letter=${letter}`,
+    ]);
+    await body(root);
+  } finally {
+    await diskpart([`select vdisk file="${vhd}"`, "detach vdisk noerr"]);
+  }
+}
+
 describe.skipIf(!windows)("Windows capture and install", () => {
   it("retains the original object and installs complete bytes", () =>
     fixture(async (input, target) => {
@@ -682,43 +720,47 @@ describe.skipIf(!windows)("Windows identity and file admission", () => {
       }),
   );
   it("refuses a FAT32 virtual disk before requesting unsupported file IDs", () =>
-    fixture(async (input) => {
-      const mask = JSON.parse(
-        NodeChildProcess.execFileSync(probe!, ["--windows=1", "drive-mask", "fixture"], {
-          encoding: "utf8",
-        }),
-      ).mask;
-      const index = Array.from({ length: 20 }, (_, offset) => 25 - offset).find(
-        (bit) => !(mask & (1 << bit)),
-      );
-      if (index === undefined)
-        throw new Error("No free drive letter for the isolated FAT32 probe.");
-      const letter = String.fromCharCode(65 + index);
-      const root = `${letter}:\\`;
-      const vhd = NodePath.join(NodePath.dirname(input.cwd), "unsupported.vhd");
-      const script = NodePath.join(NodePath.dirname(input.cwd), "diskpart.txt");
-      const diskpart = async (commands: string[]) => {
-        await NodeFSP.writeFile(script, commands.join("\r\n") + "\r\n");
-        NodeChildProcess.execFileSync("diskpart.exe", ["/s", script], { encoding: "utf8" });
-      };
-      try {
-        await diskpart([
-          `create vdisk file="${vhd}" maximum=64 type=expandable`,
-          `select vdisk file="${vhd}"`,
-          "attach vdisk",
-          "create partition primary",
-          "format fs=fat32 quick label=ScientQA",
-          `assign letter=${letter}`,
-        ]);
+    fixture((input) =>
+      onVirtualDisk(input, "fat32", async (root) => {
         const directory = NodePath.join(root, "paper");
         await NodeFSP.mkdir(directory);
         await expect(platformFileIdentity.directory(directory)).rejects.toMatchObject({
           reason: "unsupported-filesystem",
         });
-      } finally {
-        await diskpart([`select vdisk file="${vhd}"`, "detach vdisk noerr"]);
-      }
-    }));
+      }),
+    ));
+  it("activates a cold NTFS volume from a separate unprivileged process", () =>
+    fixture((input) =>
+      onVirtualDisk(input, "ntfs", async (root) => {
+        const account = `Scient${NodeCrypto.randomBytes(5).toString("hex")}`;
+        const password = `S!${NodeCrypto.randomBytes(5).toString("hex")}a7`;
+        const run = (operation: string, path: string) =>
+          JSON.parse(
+            NodeChildProcess.execFileSync(probe!, ["--windows=1", operation, path], {
+              encoding: "utf8",
+              env: { ...process.env, SCIENT_TEST_ACCOUNT: account, SCIENT_TEST_PASSWORD: password },
+            }),
+          );
+        expect(run("add-account", "fixture").code).toBe(0);
+        try {
+          const directory = NodePath.join(root, "paper");
+          await NodeFSP.mkdir(directory);
+          NodeChildProcess.execFileSync("icacls.exe", [
+            directory,
+            "/grant",
+            `${account}:(OI)(CI)F`,
+          ]);
+          NodeChildProcess.execFileSync("icacls.exe", [probe!, "/grant", `${account}:RX`]);
+          const detached = run("detach-cloud", root);
+          expect(detached.code, JSON.stringify(detached)).toBe(0);
+          const checked = run("as-account-cloud-process", directory);
+          expect(checked.code, JSON.stringify(checked)).toBe(0);
+          expect(await NodeFSP.readdir(directory)).toEqual([]);
+        } finally {
+          expect(run("delete-account", "fixture").code).toBe(0);
+        }
+      }),
+    ));
   it("refuses an EFS-encrypted file before changing its bytes or policy", () =>
     fixture(async (input, target) => {
       NodeChildProcess.execFileSync("cipher.exe", ["/e", "/a", target]);
