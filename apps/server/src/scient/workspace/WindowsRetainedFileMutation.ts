@@ -236,7 +236,7 @@ export async function runWindowsRetainedMutation(
     if (!good(restricted)) return false;
     await point("restricted");
     const captured = await command("win-capture", NodePath.basename(target), "retained");
-    await point("called");
+    await point(kind === "delete" || kind === "prune" ? "called" : "captured");
     if (!good(captured) || !same(captured.destinationAfter, record.originalIdentity)) return false;
     await save({ phase: "displaced", capturedIdentity: record.originalIdentity });
     await point("displaced");

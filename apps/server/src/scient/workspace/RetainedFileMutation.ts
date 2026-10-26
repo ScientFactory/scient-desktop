@@ -224,6 +224,7 @@ export interface RetainedMutationResult {
 export type MutationPoint =
   | "intent"
   | "restricted"
+  | "captured"
   | "staged"
   | "create-staged"
   | "prepared"
