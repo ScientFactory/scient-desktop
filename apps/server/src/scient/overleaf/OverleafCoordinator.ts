@@ -64,7 +64,11 @@ import {
 import * as OverleafStateStore from "./OverleafStateStore.ts";
 import type { ConflictChoice, Rename } from "./syncRules.ts";
 import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
-import { assertOverleafApplyPaths, OverleafFilesystemError } from "./overleafHostPaths.ts";
+import {
+  assertOverleafApplyPaths,
+  overleafDirectoryIdentity,
+  OverleafFilesystemError,
+} from "./overleafHostPaths.ts";
 import * as WorkspaceApplier from "./WorkspaceApplier.ts";
 
 const isKeptPath = Schema.is(KeptPath);
@@ -721,12 +725,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   const verifyFolders = Effect.fn("OverleafCoordinator.verifyFolders")(function* (
     connection: OverleafConnectionDocument,
   ) {
-    const matches = yield* Effect.promise(async () => {
+    const matches = yield* Effect.gen(function* () {
       for (const [path, recorded] of [
         [connection.checkout.canonicalRoot, connection.checkout.identity],
         [folderOf(connection), connection.folder.identity],
       ] as const) {
-        const identity = await platformFileIdentity.directory(
+        const identity = yield* overleafDirectoryIdentity(
           path,
           volumeUuid,
           options.publicationHelper ?? undefined,
