@@ -5,6 +5,8 @@
  * crash. A thrown hook is not one: the file layer's failure handler runs.
  * Usage: node WorkspaceApplier.crash-child.ts <job.json>
  */
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -19,6 +21,7 @@ export interface CrashJob {
   readonly cwd: string;
   readonly owner: string;
   readonly helper: string;
+  readonly terminationHelper?: string;
   readonly id: string;
   readonly killAt: MutationPoint;
   /** Which time `killAt` is reached that kills the child: 1 for the first step. */
@@ -43,6 +46,16 @@ export interface CrashJob {
 const jobPath = process.argv[2];
 if (jobPath !== undefined) {
   const job: CrashJob = JSON.parse(await NodeFSP.readFile(jobPath, "utf8"));
+  const kill = () => {
+    if (HostProcess.Platform.defaultValue() === "win32") {
+      if (!job.terminationHelper) throw new Error("Windows crash proof requires TerminateProcess.");
+      NodeChildProcess.execFileSync(job.terminationHelper, [
+        "--windows=1",
+        "terminate",
+        String(process.pid),
+      ]);
+    } else process.kill(process.pid, "SIGKILL");
+  };
   let reached = 0;
   const killIn = job.killIn;
   // The module's mutable default export; `syncBuiltinESMExports` carries changes to imports.
@@ -54,14 +67,14 @@ if (jobPath !== undefined) {
   if (killIn?.operation === "rename") {
     const rename = MutableFSP.rename;
     MutableFSP.rename = async (from, to) => {
-      if (String(to).endsWith(killIn.suffix)) process.kill(process.pid, "SIGKILL");
+      if (String(to).endsWith(killIn.suffix)) kill();
       return rename(from, to);
     };
   } else if (killIn?.operation === "open") {
     const open = MutableFSP.open;
     MutableFSP.open = async (path, ...rest) => {
       const handle = await open(path, ...rest);
-      if (String(path).endsWith(killIn.suffix)) process.kill(process.pid, "SIGKILL");
+      if (String(path).endsWith(killIn.suffix)) kill();
       return handle;
     };
   }
@@ -87,8 +100,7 @@ if (jobPath !== undefined) {
         helper: job.helper,
         retainedHooks: {
           at: async (point) => {
-            if (point === job.killAt && ++reached === (job.occurrence ?? 1))
-              process.kill(process.pid, "SIGKILL");
+            if (point === job.killAt && ++reached === (job.occurrence ?? 1)) kill();
           },
         },
       });
