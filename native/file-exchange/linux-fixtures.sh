@@ -20,6 +20,7 @@ for format in ext4 xfs btrfs; do
   mkdir "$root/mount-$format"
   mount -o loop "$root/$format.img" "$root/mount-$format"
 done
+udevadm settle
 mkdir "$root/mount-tmpfs" "$root/mount-overlay" "$root/lower" "$root/upper" "$root/work"
 mount -t tmpfs tmpfs "$root/mount-tmpfs"
 mount -t overlay overlay -o "lowerdir=$root/lower,upperdir=$root/upper,workdir=$root/work" "$root/mount-overlay"
