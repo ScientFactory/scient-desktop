@@ -5,6 +5,7 @@ import {
   withPreviewAccounts,
   recordProfileUse,
 } from "../../../scient/accounts/agent/previewProfileAccess.ts";
+import { previewProfileFallback } from "../../../scient/accounts/agent/previewProfileFallback.ts";
 // SCIENT-FORK:END
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -226,14 +227,38 @@ const handlers = {
               normalizePreviewOpenInput({ ...input, profileId: profile.profileId }),
             ),
           );
-          return yield* filterPreviewProfiles(scope, opened);
+          const checked = yield* previewProfileFallback(scope, opened, {
+            operation: "open",
+            requestedUrl: input.url,
+            input: normalizePreviewOpenInput(input),
+            profileId: profile.profileId,
+            targetsExistingTab:
+              input.tabId !== undefined ||
+              (input.reuseExistingTab !== false && status.tabId !== null),
+          });
+          return yield* filterPreviewProfiles(scope, checked);
         }),
     ),
   ),
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: flag access failures after navigating an existing tab.
   preview_navigate: McpToolAccess.actsAsCaller((input) =>
-    invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
+    Effect.gen(function* () {
+      const status = yield* invokeTargeted<PreviewAutomationStatus>(
+        "navigate",
+        input,
+        input.timeoutMs,
+      );
+      return yield* withPreviewAccounts(Effect.succeed(status), (scope) =>
+        previewProfileFallback(scope, status, {
+          operation: "navigate",
+          requestedUrl: input.url ?? (input.target?.kind === "url" ? input.target.url : undefined),
+          targetsExistingTab: true,
+        }),
+      ).pipe(Effect.orElseSucceed(() => status));
+    }),
   ),
+  // SCIENT-FORK:END
   preview_resize: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
   ),

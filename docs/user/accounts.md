@@ -22,10 +22,14 @@ can enforce it; readable values are supplied to agents through private session f
 | `scient_account_find_profile`    | Find a browser profile that can open a page.           |
 | `scient_account_browser_session` | Supply a site's browser session to scripts.            |
 
-When a page asks you to sign in or says you need access, agents can check up to eight
-Allowed profiles automatically and continue in the first that opens it. Each check uses a
-new background tab and closes it afterwards. Ask me, Off and incognito profiles are skipped;
-project scope and the global agent-access switch still apply.
+When an agent opens a new HTTPS page without choosing a profile, Scient checks for sign-in
+or access-denied pages. It tries up to eight other Allowed profiles and opens the page in the
+first that can access it, closing the failed tab. Checks use temporary background tabs; Ask me,
+Off and incognito profiles are skipped. Project scope and the global agent-access switch apply.
+If none works, the agent receives guidance to ask you to sign in or allow a profile in Accounts.
+
+Choosing a profile explicitly or navigating an existing tab keeps that profile. If access fails,
+Scient tells the agent to use `scient_account_find_profile` with the URL.
 
 Saved sign-ins fill automatically as a login form appears, without submitting or replacing
 what you typed. Exact-site matches come first, then your most recently used sign-in. Use the

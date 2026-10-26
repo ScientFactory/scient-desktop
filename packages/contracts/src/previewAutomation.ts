@@ -96,6 +96,11 @@ export const PreviewAutomationProfile = Schema.Struct({
 export type PreviewAutomationProfile = typeof PreviewAutomationProfile.Type;
 
 export const PreviewAutomationStatus = Schema.Struct({
+  // SCIENT-FORK:START — Scient Accounts: tell agents when a page needs another account.
+  accountsNote: Schema.optional(Schema.String).annotate({
+    description: "Account access guidance or the browser profile selected to open this page.",
+  }),
+  // SCIENT-FORK:END
   available: Schema.Boolean,
   visible: Schema.Boolean,
   tabId: Schema.NullOr(PreviewTabId),

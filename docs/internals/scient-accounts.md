@@ -88,6 +88,16 @@ The server cannot enumerate profiles kept in a client's settings. `forSession(sc
 accepts the preview inventory's ids so profiles without records receive the same defaults; its
 one-argument form includes built-in profiles and stored records.
 
+`preview_open` checks HTTPS pages after `accountWaitForLoad` using the same detection and
+classification as `scient_account_find_profile`. A new tab without an explicit profile can
+switch to the first other Allowed profile that opens the URL, checking at most eight profiles.
+The final open preserves the caller's show flags, rechecks the grant without prompting, and
+closes the failed tab. Explicit profiles and existing tabs, including `preview_navigate`, receive
+an `accountsNote` directing the agent to profile discovery instead. No matching profile yields
+sign-in/settings guidance. Detection and discovery errors leave the normal preview status intact;
+page text is never included in the note. The discovery tool still checks every eligible profile
+up to its limit and returns its existing access labels, first match and skipped names.
+
 ## Storage
 
 The store lives in the server, on the machine where agents run.
