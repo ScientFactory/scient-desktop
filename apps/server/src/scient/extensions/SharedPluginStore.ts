@@ -225,6 +225,9 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
     }
     return {
       entries,
+      officialStoreConfigured: roots.some(
+        (source) => source.name === OFFICIAL && source.configured,
+      ),
       canAddOfficialStore:
         options.kind === "scient" &&
         !roots.some((source) => source.name === OFFICIAL && source.configured),
@@ -250,6 +253,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
         total: matching.length,
         ...(offset + limit < matching.length ? { nextCursor: String(offset + limit) } : {}),
         canAddOfficialStore: result.canAddOfficialStore,
+        officialStoreConfigured: result.officialStoreConfigured,
       } satisfies ProviderStorePage;
     },
     Effect.mapError(() => ({ message: "Could not read the configured plugin marketplaces." })),

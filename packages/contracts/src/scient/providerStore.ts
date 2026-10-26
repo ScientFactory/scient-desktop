@@ -50,6 +50,8 @@ export const ProviderStorePage = Schema.Struct({
   nextCursor: Schema.optional(Schema.String),
   total: Schema.Number,
   canAddOfficialStore: Schema.optional(Schema.Boolean),
+  /** The agent's own home has Claude Code's official marketplace configured. */
+  officialStoreConfigured: Schema.optional(Schema.Boolean),
   message: Schema.optional(Schema.String),
 });
 export type ProviderStorePage = typeof ProviderStorePage.Type;

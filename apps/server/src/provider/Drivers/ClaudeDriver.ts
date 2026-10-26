@@ -236,28 +236,31 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       PubSub.unbounded<ProviderNativeInventory>({ replay: 1 }),
       PubSub.shutdown,
     );
-    const inventoryState = yield* Ref.make<ProviderNativeInventory>({});
-    const publishInventory = (incoming: ProviderNativeInventory, accountOnly = false) =>
-      Ref.updateAndGet(inventoryState, (current) => ({
-        ...current,
-        ...incoming,
-        ...(incoming.mcpServers
-          ? {
-              mcpServers: [
-                ...(current.mcpServers ?? []).filter((server) =>
+    // Only MCP servers are merged (session reports omit account connectors); every
+    // report keeps its own fields and sequence so the registry orders it correctly.
+    const mcpServersState = yield* Ref.make<ProviderNativeInventory["mcpServers"]>([]);
+    const publishInventory = (incoming: ProviderNativeInventory, accountOnly = false) => {
+      const reported = incoming.mcpServers;
+      return (
+        reported
+          ? Ref.modify(mcpServersState, (current = []) => {
+              const mcpServers = [
+                ...current.filter((server) =>
                   accountOnly
                     ? server.scope !== "claudeai"
                     : server.scope === "claudeai" &&
-                      !incoming.mcpServers?.some((entry) => entry.scope === "claudeai"),
+                      !reported.some((entry) => entry.scope === "claudeai"),
                 ),
-                ...incoming.mcpServers,
-              ],
-            }
-          : {}),
-      })).pipe(
+                ...reported,
+              ];
+              return [{ ...incoming, mcpServers }, mcpServers] as const;
+            })
+          : Effect.succeed(incoming)
+      ).pipe(
         Effect.flatMap((report) => PubSub.publish(nativeInventory, report)),
         Effect.asVoid,
       );
+    };
     // SCIENT-FORK:END
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {

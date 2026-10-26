@@ -121,6 +121,24 @@ function StoreResults({
     },
   });
   const page = useEnvironmentQuery(atom);
+  // Scient Agent's official entries repeat Claude's only when Claude's own home serves them.
+  const claude = providers.find((item) => item.enabled && item.driver === "claudeAgent");
+  const claudePage = useEnvironmentQuery(
+    extensionsProviderStorePage({
+      environmentId,
+      input: {
+        instanceId:
+          provider.driver === "scient" && claude ? claude.instanceId : provider.instanceId,
+        query,
+        preview,
+        limit: preview ? 6 : 30,
+      },
+    }),
+  );
+  const claudeServesOfficial =
+    provider.driver === "scient" &&
+    claude !== undefined &&
+    claudePage.data?.officialStoreConfigured === true;
   const [next, setNext] = useState<string>();
   const act = useAtomCommand(actOnProviderPlugin);
   const allowed = useAtomValue(actOnProviderPlugin.permissionAtom(environmentId));
@@ -142,13 +160,8 @@ function StoreResults({
     page.data?.entries.filter(
       (entry) =>
         (entry.kind !== "codex" || !preview || !curatedIds.has(entry.name)) &&
-        !(
-          provider.driver === "scient" &&
-          providers.some((item) => item.enabled && item.driver === "claudeAgent") &&
-          entry.marketplace === "claude-plugins-official"
-        ),
+        !(claudeServesOfficial && entry.marketplace === "claude-plugins-official"),
     ) ?? [];
-  const hasClaude = providers.some((item) => item.enabled && item.driver === "claudeAgent");
   return (
     <>
       {page.error ? (
@@ -158,7 +171,7 @@ function StoreResults({
       ) : (
         <>
           {page.data.message ? <MutedLine>{page.data.message}</MutedLine> : null}
-          {page.data.canAddOfficialStore && !hasClaude ? (
+          {page.data.canAddOfficialStore && !claudeServesOfficial ? (
             <Button
               size="sm"
               variant="ghost-primary"
