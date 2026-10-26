@@ -1117,7 +1117,7 @@ int platform_windows_main(int argc, char **argv) {
     GetEnvironmentVariableW(L"SCIENT_TEST_ACCOUNT", user, 256);
     GetEnvironmentVariableW(L"SCIENT_TEST_PASSWORD", password, 256);
     HANDLE token = NULL; DWORD error = 0;
-    if (!LogonUserW(user, L".", password, LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, &token) ||
+    if (!LogonUserW(user, L".", password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, &token) ||
         !ImpersonateLoggedOnUser(token)) error = GetLastError();
     wchar_t *path = wide_path(argv[3]);
     HANDLE file = INVALID_HANDLE_VALUE;
