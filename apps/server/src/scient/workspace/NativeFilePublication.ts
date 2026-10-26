@@ -927,7 +927,8 @@ export async function nativeLinuxFileIdentity(
 ) {
   const helper = helperPath ?? (await resolveNativeFilePublicationHelperPath());
   if (helper === undefined) return null;
-  return decodeLinuxFolderInquiry(
+  const { identity, reason } = decodeLinuxFolderInquiry(
     await invoke(helper, ["--linux-folder=1", path, directoryOnly ? "directory" : "entry"]),
   );
+  return { identity, reason };
 }
