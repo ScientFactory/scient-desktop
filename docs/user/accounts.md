@@ -21,8 +21,17 @@ can enforce it; readable values are supplied to agents through private session f
 | `scient_account_request`         | Make an HTTPS request with a hidden key.               |
 | `scient_account_browser_session` | Supply a site's browser session to scripts.            |
 
-The browser's key button fills a saved sign-in without submitting. After you submit a
-login form, the browser can offer to save it. Capture requires a `<form>` element.
+Saved sign-ins fill automatically as a login form appears, without submitting or replacing
+what you typed. Exact-site matches come first, then your most recently used sign-in. Use the
+small toolbar chip to choose another, or the key button to fill again. Incognito never autofills.
+
+After you submit a login form, Scient offers to save a new sign-in or update a changed password.
+An unchanged password produces no prompt. Capture requires a `<form>` element.
+
+Choose several stores when saving. Updates change every existing copy. If an external write
+fails, Scient keeps the password and reports the failed store. A 1Password vault that rejects a
+write is hidden from the choices until you reconnect 1Password; no setup step is needed.
+Removing an account leaves its external keychain and 1Password copies in place.
 
 CAPTCHAs, push approvals and passkeys need you. Google blocks embedded sign-in; import
 its browser session instead. Hidden values stay out of agent conversations, but Accounts

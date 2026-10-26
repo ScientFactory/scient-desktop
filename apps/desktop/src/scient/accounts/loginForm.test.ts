@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Generate ephemeral synthetic values instead of credential fixtures.
 import * as NodeCrypto from "node:crypto";
 import { expect, it, vi } from "vite-plus/test";
-import { loginFillScript } from "./loginFields.ts";
+import { loginFillScript, loginDocumentState } from "./loginFields.ts";
+import { installLoginFormDetection } from "./autofill.ts";
 import { installSignInCapture } from "./capture.ts";
 
 function fixture() {
@@ -97,4 +98,32 @@ it("captures trusted submit controls and Enter once, after guest permission and 
   time.mockReturnValue(10_000);
   dispatch(form, new Event("submit", { bubbles: true, cancelable: true }));
   expect(captured).toHaveLength(3);
+});
+
+it("automatically fills one untouched document only and rejects typed values or a stale same-origin page", () => {
+  using f = fixture();
+  using _detection = {
+    [Symbol.dispose]: installLoginFormDetection(
+      () => true,
+      () => undefined,
+    ),
+  };
+  const state = loginDocumentState()!;
+  const values = { password: NodeCrypto.randomUUID() };
+  const options = { documentId: state.documentId, automatic: true };
+  expect(
+    window.eval(loginFillScript(values, location.origin, { ...options, documentId: "stale" })),
+  ).toBe(false);
+  f.inputs[0]!.value = NodeCrypto.randomUUID();
+  expect(window.eval(loginFillScript(values, location.origin, options))).toBe(false);
+  f.inputs[0]!.value = "";
+  const edited = new Event("input", { bubbles: true });
+  Object.defineProperty(edited, "isTrusted", { value: true });
+  f.inputs[0]!.dispatchEvent(edited);
+  expect(window.eval(loginFillScript(values, location.origin, options))).toBe(false);
+  state.userEdited = false;
+  expect(window.eval(loginFillScript(values, location.origin, options))).toBe(true);
+  f.inputs[1]!.value = "";
+  expect(window.eval(loginFillScript(values, location.origin, options))).toBe(false);
+  expect(window.eval(loginFillScript(values, location.origin))).toBe(true);
 });

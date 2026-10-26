@@ -10,6 +10,8 @@ import {
   accountCatalogue,
   catalogueDetails,
   capturedSignInInput,
+  automaticSignIn,
+  writableOnePasswordVaults,
   profilePresentation,
   importProfileName,
   matchingAccounts,
@@ -155,4 +157,62 @@ describe("Accounts decisions", () => {
     ).toEqual({ picture: "data:image/png;base64,AA==", color: "#abcdef" });
     expect(profilePresentation({})).toEqual({ picture: undefined, color: undefined });
   });
+});
+
+it("ranks exact-origin sign-ins before recent domain matches and refuses repeated, incognito or edited autofill", () => {
+  const recent = {
+    ...website("default"),
+    accountId: AccountId.make("acc_recent01"),
+    lastUsedAt: "2026-10-26T10:00:00.000Z",
+  };
+  const exact = {
+    ...website("default"),
+    accountId: AccountId.make("acc_exact001"),
+    details: { kind: "website" as const, sites: ["https://example.com"] },
+  };
+  const older = {
+    ...recent,
+    accountId: AccountId.make("acc_older001"),
+    lastUsedAt: "2026-10-25T10:00:00.000Z",
+  };
+  expect(
+    matchingAccounts([older, recent, exact], "https://example.com/login", "default").map(
+      (account) => account.accountId,
+    ),
+  ).toEqual([exact.accountId, recent.accountId, older.accountId]);
+  const current = { tabId: "tab", profileId: "default", url: "https://example.com/login" };
+  const form = {
+    ...current,
+    url: "https://example.com",
+    documentId: "document",
+    userEdited: false,
+    hasValues: false,
+  };
+  expect(automaticSignIn(form, current, null)).toBe(true);
+  expect(automaticSignIn(form, current, form.documentId)).toBe(false);
+  expect(automaticSignIn({ ...form, userEdited: true }, current, null)).toBe(false);
+  expect(automaticSignIn({ ...form, hasValues: true }, current, null)).toBe(false);
+  expect(
+    automaticSignIn(
+      { ...form, profileId: "incognito" },
+      { ...current, profileId: "incognito" },
+      null,
+    ),
+  ).toBe(false);
+  expect(automaticSignIn(form, { ...current, url: "https://other.example.com" }, null)).toBe(false);
+});
+
+it("offers connected vaults until a write rejection marks one read-only", () => {
+  expect(
+    writableOnePasswordVaults({
+      state: "connected",
+      mode: "desktop",
+      label: "Synthetic",
+      vaults: [
+        { id: "blocked", name: "Blocked", readOnly: true },
+        { id: "available", name: "Available", readOnly: false },
+      ],
+    }).map((vault) => vault.id),
+  ).toEqual(["available"]);
+  expect(writableOnePasswordVaults({ state: "not-connected" })).toEqual([]);
 });

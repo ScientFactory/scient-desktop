@@ -95,6 +95,7 @@ it("withholds autofill from an older bridge and drops values after the tab navig
   });
   await screen.rerender(
     <BrowserAccountControls
+      key="current-bridge"
       environmentId={environmentId}
       tabId="synthetic-tab"
       profileId="default"

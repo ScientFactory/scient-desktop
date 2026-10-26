@@ -1,6 +1,8 @@
 import * as Schema from "effect/Schema";
 import {
   ProfilePictureDataUri,
+  INCOGNITO_BROWSER_PROFILE_ID,
+  type DesktopLoginForm,
   ProfileColor,
   DEFAULT_BROWSER_PROFILE_ID,
   ACCOUNT_SECRET_FIELDS,
@@ -8,6 +10,7 @@ import {
   resolveBrowserProfiles,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   type AccountDetails,
+  type AccountStoresStatus,
   type AccountSummary,
   type AccountSaveInput,
   type DesktopCapturedSignIn,
@@ -33,12 +36,27 @@ export function matchingAccounts(
   url: string,
   profileId: string,
 ) {
-  return accounts.filter(
-    ({ details }) =>
-      (details.kind === "website" || details.kind === "library") &&
-      (details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === profileId &&
-      details.sites.some((site) => siteMatchesUrl(site, url)),
-  );
+  return accounts
+    .filter(
+      ({ details }) =>
+        (details.kind === "website" || details.kind === "library") &&
+        (details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === profileId &&
+        details.sites.some((site) => siteMatchesUrl(site, url)),
+    )
+    .sort((a, b) => {
+      const exact = (account: AccountSummary) =>
+        "sites" in account.details &&
+        account.details.sites.some(
+          (site) => site.startsWith("https://") && siteMatchesUrl(site, url),
+        )
+          ? 1
+          : 0;
+      return (
+        exact(b) - exact(a) ||
+        (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "") ||
+        a.accountId.localeCompare(b.accountId)
+      );
+    });
 }
 
 export function mergeProfiles(
@@ -191,4 +209,39 @@ export function profilePresentation({
     picture: picture && isProfilePicture(picture) ? picture : undefined,
     color: color && isProfileColor(color) ? color : undefined,
   };
+}
+
+export function automaticSignIn(
+  form: DesktopLoginForm,
+  current: { tabId: string; profileId: string; url: string },
+  attemptedDocumentId: string | null,
+) {
+  if (
+    current.profileId === INCOGNITO_BROWSER_PROFILE_ID ||
+    form.profileId !== current.profileId ||
+    form.tabId !== current.tabId ||
+    form.documentId === attemptedDocumentId ||
+    form.userEdited ||
+    form.hasValues
+  )
+    return false;
+  try {
+    return new URL(current.url).origin === form.url && form.url.startsWith("https://");
+  } catch {
+    return false;
+  }
+}
+
+export function signInLabel(account: AccountSummary) {
+  const username =
+    account.details.kind === "website" || account.details.kind === "library"
+      ? account.details.username
+      : undefined;
+  return username ? `${account.name} · ${username}` : account.name;
+}
+
+export function writableOnePasswordVaults(status: AccountStoresStatus["onePassword"]) {
+  return status.state === "connected"
+    ? (status.vaults?.filter((vault) => !vault.readOnly) ?? [])
+    : [];
 }

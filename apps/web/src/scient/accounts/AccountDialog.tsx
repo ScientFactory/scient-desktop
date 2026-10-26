@@ -3,6 +3,7 @@ import {
   AccountSaveInput,
   type AccountDetails,
   type AccountSecretInput,
+  type AccountWriteStore,
   type AccountSecretSummary,
   type AccountSummary,
   type AccountsSnapshot,
@@ -32,6 +33,8 @@ import {
   type CatalogueEntry,
 } from "./accountsView";
 
+import { SaveStores } from "./SaveStores";
+
 const decodeSave = Schema.decodeOption(AccountSaveInput);
 
 export function AccountField({ label, children }: { label: string; children: React.ReactNode }) {
@@ -58,6 +61,7 @@ function SecretField({
 }) {
   const [source, setSource] = useState(saved?.source.type ?? "scient");
   const [value, setValue] = useState("");
+  const [saveTo, setSaveTo] = useState<ReadonlyArray<AccountWriteStore>>([{ type: "scient" }]);
   const [service, setService] = useState(
     saved?.source.type === "keychain" ? saved.source.service : "",
   );
@@ -119,19 +123,32 @@ function SecretField({
         </div>
       </div>
       {source === "scient" ? (
-        <Input
-          aria-label={field}
-          type="password"
-          autoComplete="off"
-          value={value}
-          placeholder={saved ? "Saved" : field}
-          onChange={(event) => {
-            setValue(event.target.value);
-            onChange(
-              event.target.value ? { type: "scient", value: event.target.value } : undefined,
-            );
-          }}
-        />
+        <>
+          <Input
+            aria-label={field}
+            type="password"
+            autoComplete="off"
+            value={value}
+            placeholder={saved ? "Saved" : field}
+            onChange={(event) => {
+              setValue(event.target.value);
+              onChange(
+                event.target.value
+                  ? { type: "scient", value: event.target.value, saveTo }
+                  : undefined,
+              );
+            }}
+          />
+          <SaveStores
+            kept={saved}
+            stores={snapshot.stores}
+            selected={saveTo}
+            onChange={(stores) => {
+              setSaveTo(stores);
+              if (value) onChange({ type: "scient", value, saveTo: stores });
+            }}
+          />
+        </>
       ) : source === "keychain" ? (
         <div className="grid gap-2">
           {candidates?.listed ? (

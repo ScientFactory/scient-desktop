@@ -99,6 +99,10 @@ export const accountsState = {
     label: "accounts:keychainCandidates",
     tag: WS_METHODS.accountsKeychainCandidates,
   }),
+  matchSignIn: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:matchSignIn",
+    tag: WS_METHODS.accountsMatchSignIn,
+  }),
   fillValues: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:fillValues",
     tag: WS_METHODS.accountsFillValues,

@@ -36,7 +36,7 @@
     {
       "path": "apps/desktop/src/preview-pick-preload.ts",
       "anchor": "installSignInCapture(",
-      "purpose": "Install submitted sign-in capture in preview guest preloads."
+      "purpose": "Install submitted sign-in capture and login-form reporting in preview guest preloads."
     },
     {
       "path": "apps/desktop/src/preview/Manager.ts",

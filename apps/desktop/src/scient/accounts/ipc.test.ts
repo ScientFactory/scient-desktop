@@ -151,5 +151,7 @@ it.effect("accepts fill only from the application main frame and rejects invalid
     expect(yield* f.run(fill(input, { ...f.mainEvent, senderFrame: {} }))).toBe(false);
     expect(yield* f.run(fill({ ...input, tabId: 42 }, f.mainEvent))).toBe(false);
     expect(yield* f.run(fill({ ...input, password: {} }, f.mainEvent))).toBe(false);
+    rememberAccountsSession(f.guest.session, "synthetic", false);
+    expect(yield* f.run(fill({ ...input, automatic: true }, f.mainEvent))).toBe(false);
   }),
 );

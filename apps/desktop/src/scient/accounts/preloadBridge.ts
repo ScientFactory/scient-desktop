@@ -1,4 +1,8 @@
-import type { DesktopAccountsBridge, DesktopCapturedSignIn } from "@t3tools/contracts";
+import type {
+  DesktopAccountsBridge,
+  DesktopCapturedSignIn,
+  DesktopLoginForm,
+} from "@t3tools/contracts";
 import type { IpcRenderer } from "electron";
 import * as Channels from "./protocol.ts";
 
@@ -11,6 +15,12 @@ export function makeDesktopAccountsBridge(
     signedInSites: (profileId, environmentId) =>
       ipc.invoke(Channels.SIGNED_IN_SITES, { profileId, environmentId }),
     fill: (input) => ipc.invoke(Channels.FILL, input),
+    loginForm: (tabId) => ipc.invoke(Channels.LOGIN_FORM, { tabId }),
+    onLoginFormDetected: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, form: DesktopLoginForm) => listener(form);
+      ipc.on(Channels.LOGIN_FORM_DETECTED, handler);
+      return () => ipc.removeListener(Channels.LOGIN_FORM_DETECTED, handler);
+    },
     onSignInCaptured: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, capture: DesktopCapturedSignIn) =>
         listener(capture);

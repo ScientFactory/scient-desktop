@@ -43,10 +43,33 @@ are its secret variable names. Each field has a source:
 | `1password`    | An `op://` reference                                                                                    | `@1password/sdk`, cached per account for five minutes |
 | `custom-model` | A Custom models connection's key                                                                        | Custom models' own resolver; stored once              |
 
-Links are read when needed, so a value stays in one place. On macOS the user approves Scient once
+A field has one read source and optional copies in other stores. Links are read when needed. On macOS the user approves Scient once
 per keychain item ("Always Allow"). On Windows and Linux any program running as the user can read
 keychain items. Apple Passwords / iCloud Keychain items are not readable by other apps; their
 export file is the way in.
+
+### Copies and password comparison
+
+A raw-value save can select several stores through `saveTo`. Scient is the default source. If only
+external stores are selected and all writes succeed, the first is the read source; otherwise the new
+value stays in Scient. Updates write the source and every existing copy, plus newly selected stores.
+The encrypted value and copy intents commit before external writes; failed copies leave the Scient
+value readable, mark the account for attention, and retry on its next value update. Removing an
+account or clearing a field leaves external items in place. Legacy `scient` inputs without store
+selection still replace a sole linked source; accounts with copies keep propagation on every update.
+
+Keychain copies are generic-password items with service `Scient: <site>` and account equal to the
+sign-in username. Other fields have a field suffix on the service. 1Password copies are Login items
+created with the SDK in the selected vault. Connected vaults are offered without a write probe.
+A permission rejection produces one short error naming the vault and remembers it as read-only in
+this connection's encrypted metadata, including across restart; reconnect resets that observation.
+A transport failure does not classify a vault as read-only. A stable account-and-field tag lets
+1Password reuse an item after an interrupted local commit. External writes are not atomic together.
+
+`accounts.matchSignIn` requires settings-write permission. It resolves candidate passwords and
+compares fixed-length SHA-256 digests with `timingSafeEqual`, returning only `new`,
+`password-changed` or `same` and the matching account id. Optional `profileId` separates accounts
+with the same origin and username in different profiles.
 
 ### Browser profiles
 
@@ -164,12 +187,15 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   chip. "Add profile" lists every profile found on the machine with picture, name and email; picking
   several imports each into a Scient profile of the same name. Refresh re-copies sign-ins.
 - **Save on sign-in**: when the user submits a login form in a desktop tab, the guest preload
-  reports the origin, username and password once; the browser shows "Save sign-in?" with the store
-  and access. Nothing is kept unless the user saves.
-- **Autofill**: a key button appears in the browser toolbar when an account matches the page; it
-  asks the server for that account's values (`accounts.fillValues`, refused unless the page origin
-  matches) and fills the form in the guest. The desktop advertises `originBoundFill`; the web sends
-  `expectedOrigin` so the guest rejects navigation races and cross-origin frames.
+  reports the origin, username and password once. Server comparison chooses "Save sign-in?",
+  "Update password?", or no prompt for an unchanged password, including Scient’s own fills. The
+  prompt offers available stores; nothing is kept unless the user saves.
+- **Autofill**: the persistent desktop guest reports a visible login form after load. Exact-origin
+  accounts rank before bare-domain matches, then most recently used. Scient fills once per document
+  without submitting, only when fields remain empty and the user has not typed. Incognito never
+  autofills. The toolbar chip identifies the filled sign-in and offers other matches; the key button
+  remains available for manual filling. The desktop advertises `originBoundFill`; `expectedOrigin`
+  and the isolated guest's document nonce reject navigation races, including same-origin reloads.
 - **Approval cards** appear above the composer of the thread that asked, and on the Accounts page.
 
 ## Cookie encryption

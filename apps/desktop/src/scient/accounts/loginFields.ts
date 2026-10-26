@@ -52,8 +52,13 @@ function fillLoginForm(
     otp?: string | undefined;
   },
   expectedOrigin: string,
+  options: { documentId?: string | undefined; automatic?: boolean | undefined } = {},
 ) {
-  if (location.origin !== expectedOrigin) return false;
+  if (location.origin !== expectedOrigin || (options.automatic && !options.documentId))
+    return false;
+  const state = loginDocumentState();
+  if (options.documentId !== undefined && state?.documentId !== options.documentId) return false;
+  if (options.automatic && (!state || state.autoFilled || state.userEdited)) return false;
   const roots = [...Array.from(document.forms), document];
   const candidates = roots.map(collectLoginFields);
   const priority = (candidate: ReturnType<typeof collectLoginFields>) =>
@@ -66,6 +71,14 @@ function fillLoginForm(
           : 0;
   candidates.sort((a, b) => priority(b) - priority(a));
   for (const detected of candidates) {
+    if (priority(detected) === 0) continue;
+    if (
+      options.automatic &&
+      [detected.username, detected.password, detected.otp].some((index) =>
+        Boolean(detected.inputs[index]?.value),
+      )
+    )
+      return false;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     if (!setter) return false;
     let filled = false;
@@ -78,7 +91,10 @@ function fillLoginForm(
       input.dispatchEvent(new Event("change", { bubbles: true }));
       filled = true;
     }
-    if (filled) return true;
+    if (filled) {
+      if (options.automatic && state) state.autoFilled = true;
+      return true;
+    }
   }
   return false;
 }
@@ -90,5 +106,35 @@ export const loginFillScript = (
     otp?: string | undefined;
   },
   origin: string,
+  options: { documentId?: string | undefined; automatic?: boolean | undefined } = {},
 ) =>
-  `(() => { const detectLoginFields = ${detectLoginFields.toString()}; const collectLoginFields = ${collectLoginFields.toString()}; return (${fillLoginForm.toString()})(${JSON.stringify(values)}, ${JSON.stringify(origin)}); })()`;
+  `(() => { const loginDocumentState = ${loginDocumentState.toString()}; const detectLoginFields = ${detectLoginFields.toString()}; const collectLoginFields = ${collectLoginFields.toString()}; return (${fillLoginForm.toString()})(${JSON.stringify(values)}, ${JSON.stringify(origin)}, ${JSON.stringify(options)}); })()`;
+
+export interface LoginDocumentState {
+  readonly documentId: string;
+  userEdited: boolean;
+  autoFilled: boolean;
+}
+
+export function loginDocumentState() {
+  // Electron's preload and native fill run in the same isolated world (999).
+  return (globalThis as typeof globalThis & { __scientAccountsLogin?: LoginDocumentState })
+    .__scientAccountsLogin;
+}
+
+export function loginFormReport() {
+  const state = loginDocumentState();
+  if (!state || document.readyState === "loading") return null;
+  const fields = collectLoginFields(document);
+  if (fields.username === -1 && fields.password === -1) return null;
+  return {
+    url: location.origin,
+    documentId: state.documentId,
+    userEdited: state.userEdited,
+    hasValues: [fields.username, fields.password, fields.otp].some((index) =>
+      Boolean(fields.inputs[index]?.value),
+    ),
+  };
+}
+
+export const loginFormReportScript = `(() => { const loginDocumentState = ${loginDocumentState.toString()}; const detectLoginFields = ${detectLoginFields.toString()}; const collectLoginFields = ${collectLoginFields.toString()}; return (${loginFormReport.toString()})(); })()`;

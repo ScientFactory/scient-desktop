@@ -27,7 +27,19 @@ export function useAccountCommand<A, E, I>(
   const run = useAtomCommand(command, { reportFailure: false, reportDefect: false });
   return async (input: I): Promise<{ ok: true; value: A } | { ok: false }> => {
     const result = await run({ environmentId, input });
-    if (result._tag === "Success") return { ok: true, value: result.value };
+    if (result._tag === "Success") {
+      const value = result.value;
+      if (
+        value &&
+        typeof value === "object" &&
+        "warnings" in value &&
+        Array.isArray(value.warnings)
+      ) {
+        for (const warning of value.warnings)
+          if (typeof warning === "string") toastManager.add({ type: "error", title: warning });
+      }
+      return { ok: true, value };
+    }
     toastManager.add({ type: "error", title: "Account action failed" });
     return { ok: false };
   };

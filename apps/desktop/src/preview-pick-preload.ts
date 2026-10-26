@@ -11,9 +11,14 @@ if (process.argv.includes(PASSKEY_BRIDGE_ARGUMENT)) {
 
 // SCIENT-FORK:START — Scient Accounts: capture submitted sign-ins from preview guests.
 import { installSignInCapture } from "./scient/accounts/capture.ts";
-import { CAPTURE, CAPTURE_ALLOWED } from "./scient/accounts/protocol.ts";
+import { installLoginFormDetection } from "./scient/accounts/autofill.ts";
+import { CAPTURE, CAPTURE_ALLOWED, LOGIN_FORM_REPORT } from "./scient/accounts/protocol.ts";
 installSignInCapture(
   () => ipcRenderer.sendSync(CAPTURE_ALLOWED) === true,
   (capture) => ipcRenderer.send(CAPTURE, capture),
+);
+installLoginFormDetection(
+  () => ipcRenderer.sendSync(CAPTURE_ALLOWED) === true,
+  (form) => ipcRenderer.send(LOGIN_FORM_REPORT, form),
 );
 // SCIENT-FORK:END
