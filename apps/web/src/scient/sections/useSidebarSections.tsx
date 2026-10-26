@@ -26,6 +26,7 @@ import { useEnvironmentMachines, useEnvironments } from "../../state/environment
 import { environmentServerConfigsAtom } from "../../state/server";
 import { useUiStateStore } from "../../uiStateStore";
 import { readThreadShell } from "../../state/entities";
+import { sortByPlacement } from "./automaticPlacement";
 import { placementEligible } from "./placementEligibility";
 import { automaticPlacementThreads } from "./placementThreads";
 import { migrateLegacyPlacement } from "./placementMigration";
@@ -266,17 +267,14 @@ export function useSidebarSections(input: {
   const groups = (() => {
     if (!placement.enabled) return canonicalGroups;
     return canonicalGroups.map((group) => {
-      const order = placement.state.groups.find((entry) => entry.id === group.id)?.order;
+      const order = placement.orders.get(group.id);
       if (order === undefined) return group;
-      const rank = new Map(order.map((key, index) => [key, index]));
       const pinned = group.threads.filter((thread) => thread.pinnedAt != null);
-      const active = group.threads
-        .filter((thread) => thread.pinnedAt == null)
-        .toSorted(
-          (left, right) =>
-            (rank.get(scopedThreadKey(scopeThreadRef(left.environmentId, left.id))) ?? Infinity) -
-            (rank.get(scopedThreadKey(scopeThreadRef(right.environmentId, right.id))) ?? Infinity),
-        );
+      const active = sortByPlacement(
+        group.threads.filter((thread) => thread.pinnedAt == null),
+        (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        order,
+      );
       return { ...group, threads: [...pinned, ...active] };
     });
   })();

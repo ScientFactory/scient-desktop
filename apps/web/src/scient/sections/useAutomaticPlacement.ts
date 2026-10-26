@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react"
 
 import {
   EMPTY_PLACEMENT,
+  displayedPlacementOrder,
   manuallyPlaceThread,
   readPlacement,
   reconcilePlacement,
@@ -84,6 +85,16 @@ export function useAutomaticPlacement(input: {
       frozen.size > 0 && frozen.has(parseScopedThreadKey(key)?.environmentId ?? "");
   })();
   const state = !enabled || saved.key !== storageKey ? EMPTY_PLACEMENT : saved.state;
+  // Reconciliation runs after commit; until then, unseen rows show where it will place them.
+  const orders = new Map(
+    groups.map((group) => [
+      group.id,
+      displayedPlacementOrder(
+        state.groups.find((entry) => entry.id === group.id),
+        group.rows,
+      ),
+    ]),
+  );
   const writes = useRef(new Map<string, { before: string | null; after: string }>());
   const moves = useRef(
     new Map<string, { before: string | null; after: string; row: PlacementRow }>(),
@@ -200,17 +211,21 @@ export function useAutomaticPlacement(input: {
     ) => {
       const current = latest.current;
       if (!current.enabled) return;
+      const listed = current.groups.flatMap((group) => group.rows);
+      const moved = movedRow ?? listed.find((row) => row.key === key);
       for (const [id, after] of orderKeys) {
-        const before = current.groups
-          .flatMap((group) => group.rows)
-          .find((row) => row.key === id)?.orderKey;
+        const before = (listed.find((row) => row.key === id) ?? (id === key ? moved : undefined))
+          ?.orderKey;
         if (before !== undefined && before !== after) writes.current.set(id, { before, after });
       }
       const source = current.groups.find((group) => group.rows.some((row) => row.key === key));
-      const moved =
-        movedRow ?? current.groups.flatMap((group) => group.rows).find((row) => row.key === key);
+      // Until its membership arrives, the bridged row already carries its assigned key.
       if (moved && source?.id !== groupId)
-        moves.current.set(key, { before: source?.id ?? null, after: groupId, row: moved });
+        moves.current.set(key, {
+          before: source?.id ?? null,
+          after: groupId,
+          row: { ...moved, orderKey: orderKeys.get(key) ?? moved.orderKey },
+        });
       // A frozen row is placed by its last known eligibility, not its stale copy's.
       const saved = current.isFrozen(key)
         ? current.state.groups.flatMap((group) => group.rows).find((row) => row.key === key)
@@ -256,5 +271,5 @@ export function useAutomaticPlacement(input: {
     },
   );
 
-  return { enabled, state, onManualPlacement, onInteractionChange: setPaused };
+  return { enabled, state, orders, onManualPlacement, onInteractionChange: setPaused };
 }

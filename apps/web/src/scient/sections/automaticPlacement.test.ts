@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   EMPTY_PLACEMENT,
+  displayedPlacementOrder,
   manuallyPlaceThread,
   manualOrderForPlacement,
   readPlacement,
@@ -162,6 +163,38 @@ it("projects only the dragged row onto saved manual order", () => {
     "a",
     "c",
   ]);
+});
+it("shows rows reconciliation has not seen where it will place them", () => {
+  const state = update(EMPTY_PLACEMENT, ["a"]);
+  const next = rows(["n", "x", "a", "b", "c", "m"], ["a", "n"]);
+  expect(displayedPlacementOrder(state.groups[0], next[0]!.rows)).toEqual(
+    order(reconcilePlacement(state, next, null, 0)),
+  );
+  expect(displayedPlacementOrder(state.groups[0], next[0]!.rows)).toEqual([
+    "a",
+    "n",
+    "x",
+    "b",
+    "c",
+    "m",
+  ]);
+  const seed = rows(["x", "a", "b", "c"], ["b", "c"]);
+  expect(displayedPlacementOrder(undefined, seed[0]!.rows)).toEqual(
+    order(reconcilePlacement(EMPTY_PLACEMENT, seed, null, 0)),
+  );
+});
+it("judges a drop by the rows the user saw, not rows a filter hides", () => {
+  const current = rows(["h", "x", "a"], ["a"]);
+  const state: PlacementState = {
+    groups: [
+      { id: "general", rows: current[0]!.rows, order: ["h", "x", "a"], upper: [], aside: ["a"] },
+    ],
+    pending: [],
+  };
+  const dropped = manuallyPlaceThread(state, "general", ["a", "x"], "a", current);
+  expect(order(dropped)).toEqual(["h", "a", "x"]);
+  expect(dropped.groups[0]!.upper).toEqual(["a"]);
+  expect(dropped.groups[0]!.aside).toEqual([]);
 });
 it("honours remote order-key changes", () => {
   const state = update(EMPTY_PLACEMENT, ["a"]);

@@ -6,6 +6,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useUiStateStore } from "../../uiStateStore";
 import { frozenPlacementEnvironmentsKeyAtom } from "../sections/loadedEnvironments";
+import { sortByPlacement } from "../sections/automaticPlacement";
 import { placementEligible } from "../sections/placementEligibility";
 import { useAutomaticPlacement } from "../sections/useAutomaticPlacement";
 import { automaticPlacementThreads } from "../sections/placementThreads";
@@ -46,14 +47,10 @@ export function useStatusAutomaticPlacement(input: {
     knownKeys: input.threads.filter((thread) => thread.archivedAt === null).map(statusPlacementKey),
   });
   const enabled = placement.enabled && active;
-  const rank = new Map(placement.state.groups[0]?.order.map((key, index) => [key, index]));
+  const order = placement.orders.get(GROUP_ID);
   const activeThreads =
-    enabled && input.optimisticOrder === null
-      ? input.activeThreads.toSorted(
-          (left, right) =>
-            (rank.get(statusPlacementKey(left)) ?? Infinity) -
-            (rank.get(statusPlacementKey(right)) ?? Infinity),
-        )
+    enabled && input.optimisticOrder === null && order !== undefined
+      ? sortByPlacement(input.activeThreads, statusPlacementKey, order)
       : input.activeThreads;
   const onManualPlacement = useStableCallback(
     (key: string, order: readonly string[], orderKeys: ReadonlyMap<string, string>) => {

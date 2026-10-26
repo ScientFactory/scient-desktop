@@ -230,6 +230,9 @@ section when un-settled or woken.
   prevent collisions. An arrival appends below existing upper members, then re-forms the
   upper group at the top; transitions that remain eligible keep their place. Departures
   prepend to inactive rows, with simultaneous departures preserving their visible order.
+  Reconciliation runs after commit, so both views render through `displayedPlacementOrder`:
+  saved positions, with rows it has not seen yet already where it will place them. An
+  arrival never renders at the bottom first, including before placement is ready.
 - **Unsynchronized environments:** placement waits only until the catalog lists every
   environment (`frozenPlacementEnvironmentsKeyAtom`). After that, an enabled environment
   without a live thread list is frozen: its rows keep their saved eligibility and order
@@ -244,12 +247,14 @@ section when un-settled or woken.
   intact. The planner projects only the dragged row onto canonical manual neighbours,
   without writing automatically promoted positions of other rows. After successful
   writes, local presentation records the exact drop slot and bridges the old shell values
-  until membership and order echoes arrive. A newer external value releases that bridge.
+  until membership and order echoes arrive; a row woken or moved in from elsewhere is
+  bridged with its assigned key. A newer external value releases that bridge.
   Echoes that precede the command result still belong to that drop: its re-keyed neighbours
   must not be treated as unrelated remote moves. Status holds its preview through this acknowledgement.
   An inactive row dropped above active ones holds until the next arrival re-forms the
   upper group. An active row dropped within or just below the upper group joins it;
-  dropped lower, below inactive rows, it is set aside (`aside`): it stays put and later
+  dropped lower, below inactive rows, it is set aside (`aside`): judged by the rows shown,
+  so rows a project filter hides never set a drop aside. It stays put and later
   arrivals ignore it until it goes inactive, after which its next activation is an
   ordinary arrival. Remotely acknowledged order-key changes are deliberate placement too.
 - **Persistence:** positions live under `scient:sidebar:placement-order:sections`, keyed

@@ -81,6 +81,7 @@ function setup() {
   mocks.frozenKey = "";
   const threads = [thread("x"), thread("a", true), thread("b", true)];
   let value: Placement;
+  const commits: string[][] = [];
   const input: Input = {
     threads,
     activeThreads: threads,
@@ -94,10 +95,12 @@ function setup() {
   };
   const publish = (next: Placement) => {
     value = next;
+    commits.push(next.activeThreads.map((thread) => thread.title));
   };
   return {
     input,
     storage,
+    commits,
     get value() {
       return value;
     },
@@ -173,10 +176,12 @@ it("keeps a manual exception through project filtering, persistence and reload, 
   await using remount = await render(fixture.ui(fixture.input));
   expect(order(remount.container)).toEqual(["b", "x", "a"]);
   const changed = [...fixture.input.threads, thread("c", true)];
+  fixture.commits.length = 0;
   await remount.rerender(
     fixture.ui({ ...fixture.input, threads: changed, activeThreads: changed }),
   );
-  expect(order(remount.container)).toEqual(["b", "c", "x", "a"]);
+  // Every commit, including the one before reconciliation, shows the arrival in its place.
+  expect(new Set(fixture.commits.map((commit) => commit.join()))).toEqual(new Set(["b,c,x,a"]));
 });
 
 it("leaves the Working beta's order intact and stops invisible Status timers", async ({
@@ -191,11 +196,12 @@ it("leaves the Working beta's order intact and stops invisible Status timers", a
   expect(fixture.value.canonicalActiveOrder).toBeUndefined();
   await screen.rerender(fixture.ui(fixture.input));
   const read = [thread("x"), thread("a"), thread("b", true)];
-  await screen.rerender(fixture.ui({ ...fixture.input, threads: read, openKey: "local:a" }));
-  await screen.rerender(fixture.ui({ ...fixture.input, threads: read }));
-  await screen.rerender(fixture.ui({ ...fixture.input, threads: read, visible: false }));
+  const left = { ...fixture.input, threads: read, activeThreads: read };
+  await screen.rerender(fixture.ui({ ...left, openKey: "local:a" }));
+  await screen.rerender(fixture.ui(left));
+  await screen.rerender(fixture.ui({ ...left, visible: false }));
   await advanceTestClock(signal, 4_000);
   expect(vi.getTimerCount()).toBe(0);
-  await screen.rerender(fixture.ui({ ...fixture.input, threads: read }));
+  await screen.rerender(fixture.ui(left));
   expect(order(screen.container)).toEqual(["b", "a", "x"]);
 });
