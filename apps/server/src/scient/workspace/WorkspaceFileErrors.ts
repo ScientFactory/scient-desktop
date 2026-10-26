@@ -2,7 +2,10 @@
  * Errors for Scient's workspace file mutations: a save whose file changed
  * since it was opened, and a create or rename whose destination exists.
  */
-import { overleafFilesystemRefusalText } from "@t3tools/contracts";
+import {
+  overleafFilesystemRefusalText,
+  ScientOverleafFilesystemRefusalReason,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 export function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
@@ -77,12 +80,9 @@ export class WorkspaceFileMutationUnavailableError extends Schema.TaggedError<Wo
     publicationOutcome: Schema.optionalKey(Schema.Literals(["unchanged", "retained-attention"])),
     /** A refusal with a reason of its own; absent for the general one. */
     reason: Schema.optionalKey(
-      Schema.Literals([
-        "kept-folder-not-empty",
-        "file-busy",
-        "alternate-data-streams",
-        "encrypted-file",
-        "multiple-hard-links",
+      Schema.Union([
+        Schema.Literal("kept-folder-not-empty"),
+        ScientOverleafFilesystemRefusalReason,
       ]),
     ),
   },

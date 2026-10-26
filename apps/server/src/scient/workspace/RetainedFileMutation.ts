@@ -5,6 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import type { ScientOverleafFilesystemRefusalReason } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -240,12 +241,7 @@ export interface RetainedMutationHooks {
   readonly at?: (point: MutationPoint) => Promise<void>;
 }
 /** Why a request was refused before anything changed, where a caller can say more. */
-export type RetainedRefusal =
-  | "kept-folder-not-empty"
-  | "file-busy"
-  | "alternate-data-streams"
-  | "encrypted-file"
-  | "multiple-hard-links";
+export type RetainedRefusal = "kept-folder-not-empty" | ScientOverleafFilesystemRefusalReason;
 export class RetainedMutationError extends Error {
   readonly reason: "intent" | "unavailable" | "target" | "recovery";
   readonly recoveryId: string;
@@ -701,7 +697,8 @@ export async function mutateRetainedFile(
   if (
     (kind === "write" || kind === "create") &&
     !(creation
-      ? capabilities.atomicCreateMetadata && parentCapabilities.atomicCreateMetadata
+      ? (capabilities.atomicCreateMetadata && parentCapabilities.atomicCreateMetadata) ||
+        (capabilities.windowsMoveInstall === true && parentCapabilities.windowsMoveInstall === true)
       : capabilities.atomicExchange || capabilities.windowsMoveInstall)
   ) {
     let previous;
