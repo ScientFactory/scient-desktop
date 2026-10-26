@@ -88,7 +88,13 @@ function compileFilePublicationTestHelper(probe: boolean) {
         cwd: directory,
         stdio: "inherit",
       });
-      if (!probe) process.env.SCIENT_FILE_PUBLICATION_HELPER = helper;
+      if (!probe) {
+        process.env.SCIENT_FILE_PUBLICATION_HELPER = helper;
+        const cloud = NodeChildProcess.spawnSync("sc.exe", ["query", "CldFlt"], {
+          encoding: "utf8",
+        });
+        process.stdout.write(`Cloud Files filter: ${cloud.stdout} ${cloud.stderr}\n`);
+      }
       return helper;
     }
     NodeChildProcess.execFileSync("cc", [
