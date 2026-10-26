@@ -167,6 +167,7 @@ describe.skipIf(!linux || !available)("Linux held-folder publication", () => {
       "python3",
       "blkid",
       "losetup",
+      "udevadm",
     ].filter((command) => NodeChildProcess.spawnSync("which", [command]).status !== 0);
     const root = process.getuid?.() === 0;
     const sudo = !root && NodeChildProcess.spawnSync("sudo", ["-n", "true"]).status === 0;

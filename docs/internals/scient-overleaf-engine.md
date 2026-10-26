@@ -412,7 +412,7 @@ sync, HTTP and process-death suites fail discovery when Linux publication author
 is absent, instead of silently skipping. `LinuxFilePublication.test.ts` exercises
 held-folder relocation and staged-create ownership, and invokes privileged loopback
 ext4/XFS/Btrfs, tmpfs and overlay fixtures. Those fixtures require root or passwordless
-sudo plus `e2fsprogs`, `xfsprogs`, `btrfs-progs`, `acl`, Python and util-linux; missing
+sudo plus `e2fsprogs`, `xfsprogs`, `btrfs-progs`, `acl`, Python, util-linux and udev; missing
 prerequisites fail CI and are reported explicitly outside CI. The safety bar is
 process-death recovery; ordinary file and directory `fsync` are best effort for
 machine power loss, not a power-cut qualification.
