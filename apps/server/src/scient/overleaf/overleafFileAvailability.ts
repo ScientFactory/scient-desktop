@@ -4,6 +4,8 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeUtil from "node:util";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { windowsNativeFile } from "../workspace/WindowsNativeFile.ts";
+
 const run = NodeUtil.promisify(NodeChildProcess.execFile);
 export type OverleafFileAvailability = "available" | "online-only-file" | "helper-unavailable";
 
@@ -46,6 +48,15 @@ const macFlags: OverleafFileFlagReader = async (paths) => {
   return flags;
 };
 
+const windowsFlags: OverleafFileFlagReader = async (paths) => {
+  const flags: number[] = [];
+  for (const path of paths) {
+    const info = await windowsNativeFile(path, "flags");
+    flags.push(info.code === 0 ? info.flags : info.code === 2 || info.code === 3 ? 0 : NaN);
+  }
+  return flags;
+};
+
 /** Whether each file's bytes are on this disk, decided from metadata alone. */
 export async function overleafFilesAvailability(
   paths: ReadonlyArray<string>,
@@ -55,7 +66,7 @@ export async function overleafFilesAvailability(
   const answer = (value: OverleafFileAvailability) => new Map(paths.map((path) => [path, value]));
   if (platform === "linux" || paths.length === 0) return answer("available");
   if (platform !== "darwin" && platform !== "win32") return answer("helper-unavailable");
-  const reader = readFlags ?? (platform === "darwin" ? macFlags : undefined);
+  const reader = readFlags ?? (platform === "darwin" ? macFlags : windowsFlags);
   if (reader === undefined) return answer("helper-unavailable");
   const flags = await reader(paths).catch(() => null);
   if (flags === null || flags.length !== paths.length) return answer("helper-unavailable");

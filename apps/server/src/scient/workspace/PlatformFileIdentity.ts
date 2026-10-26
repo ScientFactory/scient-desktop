@@ -4,6 +4,8 @@ import * as NodeFSP from "node:fs/promises";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { windowsFileIdentity } from "./WindowsNativeFile.ts";
+
 const DecimalFileId = Schema.String.check(Schema.isPattern(/^\d{1,40}$/u));
 const MacFields = {
   volume: Schema.String.check(
@@ -47,6 +49,10 @@ const run = (file: string, args: string[]) =>
     ),
   );
 const volumeIdentity: VolumeIdentityResolver = async (path) => {
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    const identity = await windowsFileIdentity(path);
+    return identity ? `\\\\?\\Volume{${identity.dev}}\\` : null;
+  }
   if (HostProcess.Platform.defaultValue() !== "darwin") return null;
   const df = await run("/bin/df", ["-P", path]);
   const device = df?.split("\n")[1]?.split(/\s+/u)[0];
@@ -63,6 +69,16 @@ async function persistentIdentity(
   directoryOnly: boolean,
   volume: VolumeIdentityResolver,
 ): Promise<PersistentFileIdentity | null> {
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    const identity = await windowsFileIdentity(path);
+    if (!identity || (directoryOnly && identity.type !== "directory")) return null;
+    return {
+      version: 1,
+      platform: "windows",
+      volume: `\\\\?\\Volume{${identity.dev}}\\`,
+      fileId: identity.ino,
+    };
+  }
   if (HostProcess.Platform.defaultValue() !== "darwin") return null;
   const stat = await NodeFSP.lstat(path, { bigint: true }).catch(() => null);
   if (
@@ -80,6 +96,11 @@ export const platformFileIdentity = {
   volume: volumeIdentity,
   /** Process-local only: device numbers may change across remounts. */
   async key(path: string): Promise<string> {
+    if (HostProcess.Platform.defaultValue() === "win32") {
+      const identity = await windowsFileIdentity(path);
+      if (!identity) throw new Error("File identity is unavailable.");
+      return `${identity.dev}:${identity.ino}`;
+    }
     const stat = await NodeFSP.stat(path, { bigint: true });
     return `${stat.dev}:${stat.ino}`;
   },

@@ -53,6 +53,9 @@ static int sort_parents(const void *left, const void *right) {
   int identity = compare_parents(left, right);
   return identity ? identity : ((const LeaseParent *)right)->exclusive - ((const LeaseParent *)left)->exclusive;
 }
+#ifdef _WIN32
+int platform_windows_main(int argc, char **argv);
+#endif
 static int publication_main(int argc, char **argv);
 static int lease_main(int argc, char **argv) {
   if (argc < 10 || (argc - 3) % 7 || (argc - 3) / 7 > 256 ||
@@ -159,7 +162,7 @@ static int lease_main(int argc, char **argv) {
     if (!covered) { free(frame); error = platform_invalid(); break; }
     int exit_code = -1, signal = 0;
 #ifdef _WIN32
-    /* Mutex ownership is thread-bound: no independently alive Windows writer. */
+    /* File transactions retain handles across serial commands in this lock holder. */
     exit_code = publication_main(arguments, command);
     int spawn_error = fflush(stdout) ? platform_invalid() : 0;
 #else
@@ -251,6 +254,9 @@ result:
   return ferror(stdout) ? 74 : 0;
 }
 static int publication_main(int argc, char **argv) {
+#ifdef _WIN32
+  if (argc > 1 && !strcmp(argv[1], "--windows=1")) return platform_windows_main(argc, argv);
+#endif
   if (argc > 1 && !strcmp(argv[1], "--lease=1")) return lease_main(argc, argv);
   if (argc > 1 && !strcmp(argv[1], "--directory=1")) return directory_main(argc, argv);
   int error = 0, applied = 0;
@@ -259,10 +265,15 @@ static int publication_main(int argc, char **argv) {
   Flush flush = {-1, -1, -1, -1};
   if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--protocol=1") && !strcmp(argv[2], "capabilities")) {
     printf("{\"version\":1,\"strictCurrentRoot\":%s,\"containment\":\"%s\","
-           "\"atomicExchange\":%s,\"atomicPublicationMetadata\":%s,\"atomicCreateMetadata\":%s,\"exclusiveMove\":true,"
+           "\"windowsMoveInstall\":%s,\"atomicExchange\":%s,\"atomicPublicationMetadata\":%s,\"atomicCreateMetadata\":%s,\"exclusiveMove\":true,"
            "\"exclusiveLink\":true,\"publicationLease\":true,\"sharedPublicationLease\":%s,"
            "\"privateRetentionDirectory\":%s,\"sourceParentMkdir\":%s,\"codeDomain\":\"%s\"}\n",
            platform_strict_available() ? "true" : "false", platform_containment(),
+#ifdef _WIN32
+           "true",
+#else
+           "false",
+#endif
            platform_exchange_available() ? "true" : "false",
            platform_atomic_metadata_available() ? "true" : "false",
            platform_atomic_create_available(argc == 4 ? argv[3] : NULL) ? "true" : "false",
@@ -277,7 +288,11 @@ static int publication_main(int argc, char **argv) {
   int binding = !strcmp(op, "bind");
   if (!binding && strcmp(op, "capture") && strcmp(op, "exchange") &&
       strcmp(op, "create") && strcmp(op, "move") && strcmp(op, "restore") && strcmp(op, "link") &&
-      strcmp(op, "metadata") && strcmp(op, "mkdir") && strcmp(op, "rmdir")) {
+      strcmp(op, "metadata") && strcmp(op, "mkdir") && strcmp(op, "rmdir")
+#ifdef _WIN32
+      && strncmp(op, "win-", 4)
+#endif
+      ) {
     error = platform_invalid(); goto result;
   }
   if (!strcmp(mode, "strict-current-root") && !platform_strict_available()) {

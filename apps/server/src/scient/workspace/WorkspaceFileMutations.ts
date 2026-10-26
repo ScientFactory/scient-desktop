@@ -1593,7 +1593,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         (await fileIdentity(resolved.target)) === null);
     const qualified = creation
       ? capabilities.atomicCreateMetadata && parentCapabilities.atomicCreateMetadata
-      : capabilities.atomicExchange;
+      : capabilities.atomicExchange || capabilities.windowsMoveInstall === true;
     // Plain and native intents share mutation ids: a plain one claims its id before waiting,
     // and a native one refuses an id held for a different intent.
     const fingerprint = plainFingerprint(resolved, intent);

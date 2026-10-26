@@ -47,6 +47,7 @@ const Capabilities = Schema.Struct({
   version: Schema.Literal(1),
   strictCurrentRoot: Schema.Boolean,
   containment: Containment,
+  windowsMoveInstall: Schema.optionalKey(Schema.Boolean),
   atomicExchange: Schema.Boolean,
   atomicPublicationMetadata: Schema.Boolean,
   atomicCreateMetadata: Schema.Boolean,
@@ -84,7 +85,17 @@ export interface NativeFilePublicationRequest {
     | "restore"
     | "metadata"
     | "mkdir"
-    | "rmdir";
+    | "rmdir"
+    | "win-prepare"
+    | "win-prepare-create"
+    | "win-prepare-delete"
+    | "win-resume"
+    | "win-resume-stage"
+    | "win-restrict"
+    | "win-capture"
+    | "win-install"
+    | "win-restore-policy"
+    | "win-release";
   readonly sourceName: string;
   readonly destinationName: string;
   /** bound-object is for qualification only and does not satisfy normal-save authority. */
@@ -487,7 +498,7 @@ export async function ensureNativePrivateRetentionDirectory(
     !result.destinationAfter ||
     result.destinationAfter.type !== "directory" ||
     (result.outcome === "applied" &&
-      (result.flush.sourceDirectory !== 0 || result.flush.destinationDirectory !== 0))
+      (result.flush.sourceDirectory > 0 || result.flush.destinationDirectory > 0))
   )
     throw new NativeFilePublicationError(
       `Native private retention provisioning refused (${result.codeDomain}:${result.code}).`,
@@ -837,17 +848,25 @@ export async function removeNativeRetainedEntry(
   name: string,
 ) {
   let result = await lease.remove(directory, name, "unlink");
-  if (result.codeDomain === "errno" && [1, 21].includes(result.code))
+  if (
+    (result.codeDomain === "errno" && [1, 21].includes(result.code)) ||
+    (result.codeDomain === "win32" && result.code === 267)
+  )
     result = await lease.remove(directory, name, "rmdir");
-  if (result.code !== 0 || result.flush.sourceDirectory !== 0)
+  if (result.code !== 0 || result.flush.sourceDirectory > 0)
     throw new NativeFilePublicationError(
       `Retained removal refused (${result.codeDomain}:${result.code}, flush=${result.flush.sourceDirectory}).`,
       result,
     );
-  const current = await NodeFSP.stat(directory, { bigint: true });
+  const current =
+    HostProcess.Platform.defaultValue() === "win32"
+      ? await import("./WindowsNativeFile.ts").then(({ windowsFileIdentity }) =>
+          windowsFileIdentity(directory),
+        )
+      : await NodeFSP.stat(directory, { bigint: true });
   if (
-    String(current.dev) !== result.binding.parent?.dev ||
-    String(current.ino) !== result.binding.parent.ino
+    String(current?.dev) !== result.binding.parent?.dev ||
+    String(current?.ino) !== result.binding.parent?.ino
   )
     throw new NativeFilePublicationError(
       "Retained folder moved during removal; journal settlement is pending.",
