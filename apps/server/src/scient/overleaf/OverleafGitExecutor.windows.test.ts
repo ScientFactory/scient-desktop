@@ -77,10 +77,13 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("Overleaf Git o
         NodeFS.writeFileSync(token, "dummy-token-canary");
         const directoryAcl = acl(directory);
         expect(directoryAcl.protected).toBe(true);
+        expect(acl(work).rules.some((rule) => rule.sid !== directoryAcl.owner)).toBe(true);
         for (const security of [directoryAcl, acl(token)]) {
           expect(security.rules.length).toBeGreaterThan(0);
           expect(
-            security.rules.every((rule) => rule.type === "Allow" && rule.sid === security.owner),
+            security.rules.every(
+              (rule) => rule.type === "Allow" && rule.sid === directoryAcl.owner,
+            ),
           ).toBe(true);
         }
         const root = NodePath.join(work, "broad");
