@@ -94,11 +94,14 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
       /** Git is missing or older than 2.39. */
       "git-unavailable",
       "git-failed",
+      "helper-unavailable",
     ]),
   },
 ) {
   override get message(): string {
     switch (this.reason) {
+      case "helper-unavailable":
+        return "Repair or reinstall Scient on this project's server before syncing.";
       case "workspace-not-authorized":
         return "This Overleaf link does not belong to this project.";
       case "relink-needed":
@@ -1325,17 +1328,37 @@ export const layer = Layer.unwrap(
                 ];
           });
         }).pipe(Effect.orElseSucceed(() => null));
-        return yield* make({
+        const publicationHelper = yield* Effect.promise(() =>
+          resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
+        );
+        const service = yield* make({
           stateRoot,
           environmentId,
-          publicationHelper:
-            config.filePublicationHelperPath ??
-            (yield* Effect.promise(() =>
-              resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
-            )) ??
-            null,
+          publicationHelper: publicationHelper ?? null,
           activeThreads,
         });
+        const guard =
+          <I, A, E, R>(operation: (input: I) => Effect.Effect<A, E, R>) =>
+          (input: I) =>
+            Effect.gen(function* () {
+              const helper = yield* Effect.promise(() =>
+                resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
+              );
+              if (helper === undefined || helper !== publicationHelper)
+                return yield* new OverleafSyncRefusedError({ reason: "helper-unavailable" });
+              return yield* operation(input);
+            });
+        return {
+          ...service,
+          connect: guard(service.connect),
+          preview: guard(service.preview),
+          sync: guard(service.sync),
+          recover: guard(service.recover),
+          restoreKept: guard(service.restoreKept),
+          undo: guard(service.undo),
+          relink: guard(service.relink),
+          disconnect: guard(service.disconnect),
+        };
       }),
     ).pipe(Layer.provide(engine));
   }),

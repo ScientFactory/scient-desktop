@@ -3378,6 +3378,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         publisherName: [publisherName],
       };
     }
+    buildConfig.afterSign = yield* (yield* Path.Path).fromFileUrl(
+      new URL("./publication-after-sign.ts", import.meta.url),
+    );
     buildConfig.win = winConfig;
   }
 

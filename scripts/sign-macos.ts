@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- native codesign verification runs only on signed macOS builds.
+import { publicationDigest } from "@t3tools/shared/scientPublicationArtifact";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -192,8 +193,52 @@ export function verifySignedConversationPreview(app: string): void {
 }
 
 export default async function sign(options: SignOptions): Promise<void> {
+  const helper = publicationPath(options.app);
+  if (NodeFS.existsSync(helper)) {
+    if (!options.identity)
+      throw new Error("Signing the publication helper requires an explicit identity.");
+    NodeChildProcess.execFileSync("codesign", [
+      "--force",
+      "--sign",
+      options.identity,
+      "--options",
+      "runtime",
+      "--entitlements",
+      publicationEntitlements,
+      ...(options.identity === "-" ? [] : ["--timestamp"]),
+      ...(options.keychain ? ["--keychain", options.keychain] : []),
+      helper,
+    ]);
+    const receipt = NodePath.join(NodePath.dirname(helper), "publication-artifact.json");
+    NodeFS.writeFileSync(
+      receipt,
+      JSON.stringify({
+        ...JSON.parse(NodeFS.readFileSync(receipt, "utf8")),
+        sha256: publicationDigest(NodeFS.readFileSync(helper)),
+      }) + "\n",
+    );
+  }
+  const configured = filePublicationSignOptions(conversationPreviewSignOptions(options));
+  const priorIgnore = configured.ignore;
   await signApplication({
-    ...filePublicationSignOptions(conversationPreviewSignOptions(options)),
+    ...configured,
+    ...(NodeFS.existsSync(helper)
+      ? {
+          binaries: (configured.binaries ?? []).filter((file) => NodePath.resolve(file) !== helper),
+        }
+      : {}),
+    // Seal the final receipt without signing the helper a second time.
+    ...(NodeFS.existsSync(helper)
+      ? {
+          ignore: (file: string) =>
+            NodePath.resolve(file) === helper ||
+            (typeof priorIgnore === "function"
+              ? priorIgnore(file)
+              : ((typeof priorIgnore === "string" ? [priorIgnore] : priorIgnore)?.some((pattern) =>
+                  new RegExp(pattern).test(file),
+                ) ?? false)),
+        }
+      : {}),
     batchCodesignCalls: true,
   });
   verifySignedConversationPreview(options.app);

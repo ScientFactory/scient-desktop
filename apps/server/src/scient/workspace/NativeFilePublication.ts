@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** Host-owned namespace adapter. Policy, records and recovery stay in the mutation service. */
+import { validatePublicationArtifact } from "@t3tools/shared/scientPublicationArtifact";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
@@ -118,54 +119,31 @@ export async function resolveNativeFilePublicationHelperPath(
 ): Promise<string | undefined> {
   const platform = HostProcess.Platform.defaultValue();
   const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
-  if (configuredPath !== undefined && !NodePath.isAbsolute(configuredPath))
-    throw new NativeFilePublicationError("Configured native helper path must be absolute.", null);
-  const candidates: string[] = [];
-  if (configuredPath !== undefined) candidates.push(configuredPath);
-  else {
-    const moduleDirectory = NodeSea.isSea()
-      ? NodePath.dirname(process.execPath)
-      : NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-    candidates.push(
-      NodePath.join(moduleDirectory, "file-exchange", binary),
-      NodePath.resolve(moduleDirectory, "../file-exchange", binary),
-      NodePath.resolve(
-        moduleDirectory,
-        "../../../../../native/file-exchange",
-        `${platform}-${HostProcess.Architecture.defaultValue()}`,
-        binary,
-      ),
-    );
-    if (platform === "darwin")
-      candidates.push(
-        NodePath.resolve(
-          moduleDirectory,
-          "../../../../../native/file-exchange/darwin-universal",
-          binary,
-        ),
-      );
+  const moduleDirectory = NodeSea.isSea()
+    ? NodePath.dirname(process.execPath)
+    : NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+  // Source development has a separate, explicit build location. Installed servers
+  // only inspect their own resources; cwd, PATH and project files grant no authority.
+  const source = moduleDirectory.endsWith(NodePath.join("src", "scient", "workspace"));
+  const desktop = ["app.asar", "server.asar"].some((archive) =>
+    moduleDirectory.endsWith(NodePath.join("resources", archive, "apps/server/dist")),
+  );
+  const candidate =
+    configuredPath ??
+    (desktop
+      ? NodePath.resolve(moduleDirectory, "../../../../file-exchange", binary)
+      : (HostProcess.Environment.defaultValue().SCIENT_FILE_PUBLICATION_HELPER ??
+        (source
+          ? NodePath.resolve(moduleDirectory, "../../../dist/file-exchange", binary)
+          : NodePath.join(moduleDirectory, "file-exchange", binary))));
+  try {
+    await validatePublicationArtifact(candidate);
+    await nativeFilePublicationCapabilities(candidate);
+    return candidate;
+  } catch {
+    // Explicit configuration never falls through to another helper.
+    return undefined;
   }
-  for (const candidate of candidates) {
-    try {
-      const stat = await NodeFSP.lstat(candidate);
-      if (!stat.isFile() || stat.isSymbolicLink()) continue;
-      await NodeFSP.access(
-        candidate,
-        platform === "win32" ? NodeFSP.constants.F_OK : NodeFSP.constants.X_OK,
-      );
-      return candidate;
-    } catch (error) {
-      if (
-        !(
-          error instanceof Error &&
-          "code" in error &&
-          (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "EACCES")
-        )
-      )
-        throw error;
-    }
-  }
-  return undefined;
 }
 /** An invalid/lost reply has an unknown namespace outcome; it is never fallback permission. */
 async function invoke(helperPath: string, args: ReadonlyArray<string>): Promise<string> {
@@ -176,6 +154,8 @@ async function invoke(helperPath: string, args: ReadonlyArray<string>): Promise<
     );
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   const child = NodeChildProcess.spawn(helperPath, args, {
+    // Capability inquiries cannot mutate files, so a wrong protocol may be terminated.
+    ...(args[1] === "capabilities" ? { timeout: 10_000 } : {}),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
