@@ -147,6 +147,8 @@ export const WindowsJournal = Schema.Struct({
   stageName: Schema.String,
   originalSecurity: Schema.Literal("original-security"),
   originalDescriptor: Schema.NullOr(Schema.String),
+  /** Recorded before the restriction runs; recovery restores policy only then. */
+  restrictedOriginal: Schema.optionalKey(Schema.Boolean),
   nativeFailure: Schema.optionalKey(
     Schema.Struct({ operation: Schema.String, code: Schema.Number, outcome: Schema.String }),
   ),
