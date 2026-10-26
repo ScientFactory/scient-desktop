@@ -5,9 +5,19 @@ import type {
   EnvironmentId,
   ThreadId,
 } from "@t3tools/contracts";
+import { resolveBrowserProfiles } from "@t3tools/contracts";
 import { Button } from "~/components/ui/button";
+import { useClientSettings } from "~/hooks/useSettings";
 import { accountsState } from "./accountsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
+
+const ACTION_LABELS: Readonly<Record<AccountApproval["action"], string>> = {
+  "sign-in": "Sign in",
+  credentials: "Read its credentials",
+  request: "Make a request",
+  "browser-session": "Use its sign-in in a script",
+  "open-profile": "Open a browser tab",
+};
 
 export function AccountApprovals({
   environmentId,
@@ -19,6 +29,13 @@ export function AccountApprovals({
   canWrite: boolean;
 }) {
   const respond = useAccountCommand(accountsState.respondApproval, environmentId);
+  const profiles = resolveBrowserProfiles(
+    useClientSettings((settings) => settings.browserProfiles),
+  );
+  const targetName = ({ target, targetName: fallback }: AccountApproval) =>
+    target.type === "profile"
+      ? (profiles.find((profile) => profile.id === target.profileId)?.name ?? fallback)
+      : fallback;
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const run = async (approvalId: string, decision: AccountApprovalDecision) => {
     if (!canWrite || busy.has(approvalId)) return;
@@ -35,7 +52,8 @@ export function AccountApprovals({
       {approvals.map((approval) => (
         <div key={approval.approvalId} className="rounded-lg border bg-card p-3">
           <div className="mb-2 text-sm">
-            {approval.targetName}: {approval.action.replaceAll("-", " ")}
+            <span className="font-medium">{targetName(approval)}</span>
+            <span className="text-muted-foreground"> · {ACTION_LABELS[approval.action]}</span>
           </div>
           <div className="flex flex-wrap gap-2">
             {(
