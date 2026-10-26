@@ -23,7 +23,7 @@ import {
   type NativeFilePublicationResult,
 } from "./NativeFilePublication.ts";
 
-import { windowsFileIdentity } from "./WindowsNativeFile.ts";
+import { windowsFileIdentity, windowsNativeFile } from "./WindowsNativeFile.ts";
 import { runWindowsRetainedMutation } from "./WindowsRetainedFileMutation.ts";
 
 const Identity = Schema.Struct({ dev: Schema.String, ino: Schema.String });
@@ -535,6 +535,15 @@ export async function durableJson(file: string, value: unknown) {
   await syncDirectory(NodePath.dirname(file));
 }
 export async function assertPrivateRetention(directory: string) {
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    const info = await windowsNativeFile(directory, "private");
+    if (info.code !== 0 || info.syncManaged)
+      throw new RetainedMutationError(
+        "unavailable",
+        "Retention must be private and outside sync management.",
+        "storage",
+      );
+  }
   if (!NodePath.isAbsolute(directory) || (await NodeFSP.realpath(directory)) !== directory)
     throw new RetainedMutationError(
       "unavailable",
@@ -986,7 +995,7 @@ async function run(
     return stat && { dev: String(stat.dev), ino: String(stat.ino) };
   };
   /** Whether a `publishing` record's call ran: false if not, the phase it reached if so, null if unknown. */
-  const publicationRan = async (): Promise<false | Partial<RetainedRecord> | null> => {
+  const publicationRan = async (): Promise<false | Partial<typeof Journal.Type> | null> => {
     if (record.publication === "exchange") {
       // An exchange swaps the staged copy with the live file.
       const held = await fileIdentity(slot);

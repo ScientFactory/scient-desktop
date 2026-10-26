@@ -1,3 +1,5 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { ensureNativePrivateRetentionDirectory } from "../workspace/NativeFilePublication.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
 /**
  * The step-5 service over a real local bare repository standing in for
@@ -74,7 +76,12 @@ export const overleafSyncWorld = (input?: {
     yield* Effect.promise(async () => {
       for (const checkout of [main, worktree, elsewhere])
         await NodeFSP.mkdir(NodePath.join(checkout, ".git"), { recursive: true });
-      await NodeFSP.mkdir(stateRoot, { recursive: true, mode: 0o700 });
+      if (HostProcess.Platform.defaultValue() === "win32")
+        await ensureNativePrivateRetentionDirectory(
+          (await filePublicationTestHelper())!,
+          stateRoot,
+        );
+      else await NodeFSP.mkdir(stateRoot, { recursive: true, mode: 0o700 });
     });
 
     const git = yield* OverleafGitExecutor.make({

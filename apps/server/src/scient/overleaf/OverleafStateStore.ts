@@ -4,6 +4,10 @@
  * wait/steal. Acquire lazily so overlap during old-server exit does not permanently disable writes.
  * Reads need no lease; preserve unreadable state as quarantine evidence.
  */
+import {
+  ensureNativePrivateRetentionDirectory,
+  resolveNativeFilePublicationHelperPath,
+} from "../workspace/NativeFilePublication.ts";
 import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -276,6 +280,14 @@ const errorCode = (error: unknown) => (error as NodeJS.ErrnoException | undefine
 
 /** Owner-only, non-symlink directory created by this process's user. */
 async function privateDirectory(directory: string, userId: number | undefined): Promise<boolean> {
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    const helper = await resolveNativeFilePublicationHelperPath(
+      process.env.SCIENT_FILE_PUBLICATION_HELPER,
+    );
+    if (!helper) return false;
+    await ensureNativePrivateRetentionDirectory(helper, directory);
+    return true;
+  }
   // mkdir returns the first directory it created; sync each new entry's parent
   // so a durable record inside it cannot vanish with its directory after a crash.
   const created = await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });

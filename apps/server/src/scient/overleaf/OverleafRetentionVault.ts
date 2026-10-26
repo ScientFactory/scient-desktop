@@ -4,6 +4,8 @@
  * folder ID, not device number, across remounts. Once recorded, missing/replaced vaults must be
  * reported, never silently recreated.
  */
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { windowsPrivateRetention, probeWindowsRetention } from "./WindowsOverleafRetention.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -63,6 +65,10 @@ class Refused extends Error {
 
 /** Creates (or, with `create: false`, only checks) one owner-only, non-symlink directory. */
 async function ensurePrivate(directory: string, userId: number | undefined, create: boolean) {
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    await windowsPrivateRetention(directory, create);
+    return;
+  }
   if (create)
     try {
       await NodeFSP.mkdir(directory, { mode: 0o700 });
@@ -91,6 +97,10 @@ async function ensurePrivate(directory: string, userId: number | undefined, crea
  * development fallback when no helper is configured.
  */
 async function probeCapability(directory: string, publicationHelper: string | null) {
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    await probeWindowsRetention(directory, publicationHelper);
+    return;
+  }
   // Seatbelt subpath rules use the data volume's ordinary spelling, not its firmlink alias.
   const prefix = "/System/Volumes/Data";
   if (directory.startsWith(`${prefix}/`)) {

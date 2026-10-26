@@ -1,3 +1,5 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { ensureNativePrivateRetentionDirectory } from "../workspace/NativeFilePublication.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
 /**
  * A connected folder for coordinator tests: real folders, a real private
@@ -111,7 +113,12 @@ export const world = (input: {
     yield* Effect.promise(async () => {
       await NodeFSP.mkdir(NodePath.join(checkout, ".git"), { recursive: true });
       await NodeFSP.mkdir(folder, { recursive: true });
-      await NodeFSP.mkdir(stateRoot, { recursive: true, mode: 0o700 });
+      if (HostProcess.Platform.defaultValue() === "win32")
+        await ensureNativePrivateRetentionDirectory(
+          (await filePublicationTestHelper())!,
+          stateRoot,
+        );
+      else await NodeFSP.mkdir(stateRoot, { recursive: true, mode: 0o700 });
     });
     yield* write(folder, input.synced);
     yield* write(folder, input.localOnly ?? {});

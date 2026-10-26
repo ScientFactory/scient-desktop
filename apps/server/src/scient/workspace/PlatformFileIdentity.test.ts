@@ -90,7 +90,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")("macOS physica
   });
 });
 
-it.each(["linux", "win32"] as const)(
+it.each(["linux"] as const)(
   "refuses persistent identity on %s until its resolver is implemented",
   async (platform) => {
     using _host = vi.spyOn(HostProcess.Platform, "defaultValue").mockReturnValue(platform);

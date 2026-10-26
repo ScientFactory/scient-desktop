@@ -85,7 +85,7 @@ function compileFilePublicationTestHelper(probe: boolean) {
       );
       NodeChildProcess.execFileSync("cmd.exe", ["/d", "/c", build], {
         cwd: directory,
-        stdio: "pipe",
+        stdio: "inherit",
       });
       if (!probe) process.env.SCIENT_FILE_PUBLICATION_HELPER = helper;
       return helper;
