@@ -42,6 +42,13 @@ it("detects static login steps, refuses look-alike fills, and reads only the req
       '<form><input autocomplete="one-time-code"><button>Verify</button></form>',
     );
     expect((await detect()).otp).not.toBeNull();
+    // regression: a one-form login whose 2FA field is named after the site's own scheme.
+    await page.setContent(
+      '<form><input type="email" name="email"><input type="password" name="password"><input type="text" name="totpmfa"><button>Log in</button></form>',
+    );
+    const oneForm = await detect();
+    expect(oneForm.otp).toContain("input:nth-of-type(3)");
+    expect(oneForm.username).toContain("input:nth-of-type(1)");
     await page.setContent('<div class="captcha">Complete this check</div>');
     expect((await detect()).challenge).toBe("captcha");
     await page.goto("https://example.com.attacker.test");

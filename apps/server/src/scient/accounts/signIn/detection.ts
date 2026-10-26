@@ -29,8 +29,13 @@ export const signInDetectionScript = String.raw`(() => {
     return "html > " + parts.join(" > ");
   };
   const password = inputs.find(input => input.type === "password");
-  const otp = inputs.find(input => input.autocomplete === "one-time-code" || /^(otp|totp|verification.?code|one.?time.?code)$/i.test(input.name || input.id));
-  const username = inputs.find(input => input.autocomplete === "username" || input.type === "email") ?? inputs.find(input => /^(user(name)?|email|login)$/i.test(input.name || input.id));
+  const label = (input) => [input.name, input.id, input.placeholder, input.getAttribute("aria-label")].join(" ");
+  const otp = inputs.find(input => input.autocomplete === "one-time-code")
+    ?? inputs.find(input => input.type !== "password" && input.type !== "email" && /otp|mfa|2fa|two.?factor|verification|one.?time|(auth|security|sms).?code|\bcode\b/i.test(label(input)))
+    ?? inputs.find(input => input.type !== "password" && input.inputMode === "numeric" && input.maxLength >= 4 && input.maxLength <= 8);
+  const username = inputs.find(input => input !== otp && (input.autocomplete === "username" || input.type === "email"))
+    ?? inputs.find(input => input !== otp && /^(user(name)?|email|login)$/i.test(input.name || input.id))
+    ?? (password ? inputs.slice(0, inputs.indexOf(password)).reverse().find(input => input !== otp && (input.type === "text" || input.type === "tel")) : undefined);
   const form = (password ?? otp ?? username)?.form;
   const submit = Array.from((form ?? document).querySelectorAll("button, input[type=submit]")).find(element => visible(element) && !element.hasAttribute("disabled") && (element instanceof HTMLInputElement || element.type === "submit"));
   const text = document.body?.innerText ?? "";

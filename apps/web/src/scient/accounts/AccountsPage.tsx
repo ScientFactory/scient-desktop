@@ -232,7 +232,7 @@ function AccountsContent({
         canWrite={canWrite}
         onImport={() => setDialog("import")}
       />
-      {snapshot.accounts.length > 0 || connectorRows?.length ? (
+      {!firstRun || snapshot.accounts.length > 0 || connectorRows?.length ? (
         <SettingsSection
           id="accounts-list"
           title="Accounts"
