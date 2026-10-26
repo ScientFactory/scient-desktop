@@ -11,6 +11,10 @@ import { useEffect, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useThreadRouteRef } from "~/hooks/useThreadRouteTarget";
+import { useFileContextMenu } from "~/fileContextMenu";
+import { toastManager } from "~/components/ui/toast";
+import { shellEnvironment } from "~/state/shell";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { openFileOnLinkedCopy } from "./askAgentOnLinkedCopy";
 import { listOverleafKeptCopies, overleafRequestId, restoreOverleafKeptCopy } from "./client";
@@ -102,6 +106,9 @@ export function OverleafKeptCopies(props: {
   readonly relativePath: string;
 }) {
   const { environmentId, cwd, relativePath } = props;
+  // The app's own file reveal: offered only where this environment can show a local file.
+  const revealLabel = useFileContextMenu(environmentId).capabilities.revealLabel;
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const workspace = useOverleafWorkspace(environmentId, cwd);
   const connection = connectionForPath(workspace.connections, relativePath);
   // Kept copies belong to the linked copy: from another worktree they aren't this file's.
@@ -151,6 +158,16 @@ export function OverleafKeptCopies(props: {
   const mine = (copies ?? []).filter(
     (copy) => workspacePathOf(connection.folder, copy.relativePath) === relativePath,
   );
+
+  // A kept copy lives outside the workspace, so it is revealed by its absolute path.
+  const reveal = async (copy: KeptCopy) => {
+    const result = await openInEditor({
+      environmentId,
+      input: { cwd: copy.path, editor: "file-manager", reveal: true },
+    });
+    if (result._tag === "Failure")
+      toastManager.add({ type: "error", title: "Unable to reveal file", description: copy.path });
+  };
 
   const restore = async (copy: KeptCopy) => {
     const { keptRevision } = copy;
@@ -204,6 +221,16 @@ export function OverleafKeptCopies(props: {
               >
                 Restore
               </Button>
+              {revealLabel !== undefined ? (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={busy || copy.keptRevision === null || copy.unread}
+                  onClick={() => void reveal(copy)}
+                >
+                  {revealLabel}
+                </Button>
+              ) : null}
             </li>
           ))}
         </ul>

@@ -255,6 +255,8 @@ export interface OverleafKeptCopy {
   readonly applyId: string;
   /** Identifies the copy: a step may keep more than one version of one path. */
   readonly kept: string;
+  /** Absolute location on the project's machine. */
+  readonly path: string;
   readonly relativePath: string;
   readonly state: OverleafConnectionDocument["retention"]["copies"][number]["state"];
   readonly retainedAt: string;
@@ -2031,6 +2033,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         listed.push({
           applyId: copy.applyId,
           kept,
+          path,
           relativePath: copy.relativePath,
           state: copy.state,
           retainedAt: copy.retainedAt,

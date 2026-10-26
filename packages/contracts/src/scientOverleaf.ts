@@ -390,6 +390,8 @@ export const ScientOverleafKeptCopies = Schema.Struct({
     Schema.Struct({
       applyId: Schema.String,
       kept: Schema.String,
+      /** Absolute location on the project's machine. */
+      path: Schema.String,
       relativePath: ManuscriptPath,
       state: Schema.String,
       retainedAt: Schema.String,
