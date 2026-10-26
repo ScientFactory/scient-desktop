@@ -80,6 +80,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
   const connection = yield* Ref.make<
     { readonly client: Client; readonly scope: Scope.Closeable } | undefined
   >(undefined);
+  const activeOperations = yield* Ref.make(0);
   const cache = yield* Ref.make<
     | {
         readonly key: string;
@@ -191,20 +192,31 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
   const withClient = Effect.fn("CodexProviderStore.withClient")(
     function* <A, Err>(run: (client: Client) => Effect.Effect<A, Err>) {
       const client = yield* lock.withPermits(1)(getClient());
+      yield* Ref.update(activeOperations, (count) => count + 1);
       return yield* run(client).pipe(
         Effect.onError(() =>
-          lock.withPermits(1)(
-            Effect.gen(function* () {
-              if ((yield* Ref.get(connection))?.client !== client) return;
-              const previous = yield* Ref.getAndSet(connection, undefined);
-              yield* Ref.set(cache, undefined);
-              if (previous) yield* Scope.close(previous.scope, Exit.void);
-            }),
-          ),
+          Effect.gen(function* () {
+            // One failed or slow operation must not tear down the shared
+            // client while other operations are still using it; the last
+            // failing operation resets it.
+            if ((yield* Ref.get(activeOperations)) > 1) return;
+            yield* lock.withPermits(1)(
+              Effect.gen(function* () {
+                if ((yield* Ref.get(connection))?.client !== client) return;
+                const previous = yield* Ref.getAndSet(connection, undefined);
+                yield* Ref.set(cache, undefined);
+                if (previous) yield* Scope.close(previous.scope, Exit.void);
+              }),
+            );
+          }),
         ),
+        Effect.ensuring(Ref.update(activeOperations, (count) => count - 1)),
       );
     },
-    Effect.timeout("15 seconds"),
+    // A cold app-server's first catalog reads can take well over 15 seconds
+    // in the real server; the budget must outlast them or every retry starts
+    // cold again.
+    Effect.timeout("35 seconds"),
     Effect.mapError(() => ({
       message: "Codex could not finish the store request. Refresh to try again.",
     })),

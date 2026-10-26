@@ -413,3 +413,80 @@ it.effect(
       }),
     ),
 );
+
+it.effect("lets a slow first store request finish instead of timing it out at 15 seconds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fixture = clientFixture([plugin("sample")]);
+      fixture.state.installed.add("sample");
+      const release = yield* Deferred.make<void>();
+      const base = fixture.client;
+      const request = base.request as (
+        method: string,
+        params: unknown,
+      ) => Effect.Effect<unknown, { readonly message: string }>;
+      const client = {
+        ...base,
+        request: (method: string, params: unknown) =>
+          method === "account/read"
+            ? Deferred.await(release).pipe(Effect.andThen(request(method, params)))
+            : request(method, params),
+      } as typeof base;
+      const store = yield* makeCodexProviderStore(
+        () => Effect.succeed(client),
+        () => Effect.succeed(undefined),
+      );
+      const reading = yield* store
+        .contents("sample")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("20 seconds");
+      expect(reading.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(release, undefined);
+      expect((yield* Fiber.join(reading)).skills).toHaveLength(1);
+    }),
+  ),
+);
+
+it.effect("keeps the shared client when one operation fails while another is in flight", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fixture = clientFixture([plugin("sample")]);
+      fixture.state.installed.add("sample");
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let openings = 0;
+      let live = 0;
+      const store = yield* makeCodexProviderStore(
+        () =>
+          Effect.acquireRelease(
+            Effect.sync(() => {
+              openings++;
+              live++;
+              return fixture.client;
+            }),
+            () =>
+              Effect.sync(() => {
+                live--;
+              }),
+          ),
+        (url) =>
+          url
+            ? Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as(undefined),
+              )
+            : Effect.succeed(undefined),
+      );
+      const page = yield* store
+        .search({ limit: 1 })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(started);
+      expect((yield* store.entry("missing").pipe(Effect.result))._tag).toBe("Failure");
+      expect(live).toBe(1);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(page);
+      expect((yield* store.contents("sample")).skills).toHaveLength(1);
+      expect(openings).toBe(1);
+    }),
+  ),
+);
