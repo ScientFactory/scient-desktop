@@ -2,6 +2,15 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import * as Schema from "effect/Schema";
+import type { ScientOverleafFilesystemRefusalReason } from "@t3tools/contracts";
+
+export class WindowsNativeFileError extends Error {
+  readonly reason: ScientOverleafFilesystemRefusalReason;
+  constructor(reason: ScientOverleafFilesystemRefusalReason) {
+    super(reason);
+    this.reason = reason;
+  }
+}
 import { resolveNativeFilePublicationHelperPath } from "./NativeFilePublication.ts";
 
 const run = NodeUtil.promisify(NodeChildProcess.execFile);
@@ -26,7 +35,7 @@ async function invokeWindows(args: string[], helper?: string) {
   const executable =
     helper ??
     (await resolveNativeFilePublicationHelperPath(process.env.SCIENT_FILE_PUBLICATION_HELPER));
-  if (!executable) throw new Error("Windows native file helper is unavailable.");
+  if (!executable) throw new WindowsNativeFileError("helper-unavailable");
   return (await run(executable, args, { windowsHide: true, maxBuffer: 65536 })).stdout;
 }
 const decodeFlags = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.Number)));
@@ -46,6 +55,16 @@ export async function windowsFileIdentity(path: string) {
   const info = await windowsNativeFile(path);
   if (info.code === 2 || info.code === 3) return null;
   if (info.code !== 0 || !info.identity)
-    throw new Error(`Windows file identity refused (${info.code}).`);
+    throw new WindowsNativeFileError(
+      info.code === 536870917
+        ? "network-filesystem"
+        : info.code === 536870918
+          ? "unsupported-filesystem"
+          : info.code === 1150
+            ? "unsupported-windows-version"
+            : info.code === 206
+              ? "path-too-long"
+              : "identity-unavailable",
+    );
   return info.identity;
 }

@@ -1,8 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Synthetic absolute paths.
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { describe, expect, it } from "@effect/vitest";
-import { assertOverleafApplyPaths, overleafHostPathProblem } from "./overleafHostPaths.ts";
+import { describe, expect, it, vi } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
+import { WindowsNativeFileError } from "../workspace/WindowsNativeFile.ts";
+import {
+  assertOverleafApplyPaths,
+  overleafHostPathProblem,
+  overleafDirectoryIdentity,
+} from "./overleafHostPaths.ts";
 
 describe("Overleaf host path budgets", () => {
   it("counts UTF-8 bytes and the terminating NUL on macOS and Linux", () => {
@@ -27,5 +34,17 @@ describe("Overleaf host path budgets", () => {
       expect(() => assertOverleafApplyPaths(cwd, "/vault", ["main.tex"])).toThrow();
       expect(() => assertOverleafApplyPaths("/paper", cwd, ["main.tex"])).toThrow();
     }
+  });
+});
+
+it("returns native disk admission failures through the shared filesystem error channel", async () => {
+  using _identity = vi
+    .spyOn(platformFileIdentity, "directory")
+    .mockRejectedValue(new WindowsNativeFileError("network-filesystem"));
+  const error = await Effect.runPromise(Effect.flip(overleafDirectoryIdentity("network")));
+  expect(error).toMatchObject({
+    _tag: "OverleafFilesystemError",
+    reason: "network-filesystem",
+    path: "network",
   });
 });

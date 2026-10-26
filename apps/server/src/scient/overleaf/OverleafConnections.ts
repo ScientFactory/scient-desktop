@@ -4,6 +4,7 @@
  * with history and kept copies; reconnecting the same folder/project reactivates it.
  * Relink records a moved folder or renewed binding and keeps the base. */
 import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
+import { overleafDirectoryIdentity } from "./overleafHostPaths.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -263,8 +264,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
       : NodePath.join(document.checkout.canonicalRoot, document.folder.relativePath);
 
   /** The volume and file ID of a directory, or null when it is not one or its disk has none. */
-  const identityOf = (path: string) =>
-    Effect.promise(() => platformFileIdentity.directory(path, options.volumeUuid));
+  const identityOf = (path: string) => overleafDirectoryIdentity(path, options.volumeUuid);
 
   /** Every readable connection of this environment, and whether any record could not be read. */
   const readAll = Effect.gen(function* () {
